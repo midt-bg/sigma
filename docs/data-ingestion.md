@@ -6,6 +6,10 @@ product framing of the dataset and its fields see
 [`docs/design/KICKOFF.md`](design/KICKOFF.md), and for the exact columns the
 inline comments in [`packages/db/migrations/0001_raw_aop.sql`](../packages/db/migrations/0001_raw_aop.sql).
 
+This describes the current single-source **Excel bootstrap**. The forward design that pulls
+the АОП data from the data.egov.bg open-data portal (multi-source, refreshable, OCDS-ready) is
+in [etl-pipeline.md](etl-pipeline.md); this pipeline becomes its "xlsx adapter".
+
 ## Source
 
 Two single-sheet workbooks (gitignored), each a denormalised export from the
