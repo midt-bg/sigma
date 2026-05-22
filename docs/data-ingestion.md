@@ -67,9 +67,13 @@ cd apps/api && wrangler d1 execute sigma --local --file ../../scripts/normalize-
 cd apps/api && wrangler d1 execute sigma --local --file ../../scripts/dq-aop.sql   # quality snapshot
 ```
 
-All steps are idempotent (staging starts with `DELETE`; normalize is all
-`INSERT OR IGNORE`). Remote loading is not wired yet — `database_id` is a
-placeholder; create the real D1 with `pnpm bootstrap:apply`, then add `--remote`.
+`load-aop.mjs` reloads staging (`DELETE` + insert); `normalize-aop.sql` is a **full
+rebuild** of the domain — it clears the derived tables and re-inserts, so a re-run
+always reflects the current rules and leaves no stale rows. wrangler runs each file as
+one atomic D1 batch, so a failed run rolls back. After a (re)load the pipeline order is
+**load → normalize → recompute risk scores** (`apps/etl`), since the rebuild clears
+`risk_scores`/`bids` as FK dependents. Remote loading is not wired yet — `database_id`
+is a placeholder; create the real D1 with `pnpm bootstrap:apply`, then add `--remote`.
 
 ## Staging → domain mapping
 
@@ -141,12 +145,25 @@ Model (`migrations/0002_consortia.sql`):
   `sole` company → one row; resolved consortium → one row per member;
   `consortium_unresolved` → the consortium entity itself.
 
-**Attribution rule.** `contract_amount` is the full value repeated per participant.
-Summing it across companies double-counts; for money totals dedupe by `contract_id`
-(verified: it reconciles exactly to the `contracts` total) or divide by
-`member_count`. Member shares are recorded only when documented (`share_pct`) —
-never invented, because a fabricated equal split would produce plausible-but-false
-beneficiary totals.
+**Attribution rule.** `allocated_amount` splits each contract's value across its
+participants so it is **always safe to `SUM`** — at any grouping (per company, per
+person, grand total), with no dedupe. A sole winner or an unresolved consortium
+carries the full value on one row (`is_estimated_split = 0`); resolved consortium
+members get an equal split (`amount / member_count`, `is_estimated_split = 1`) until
+documented shares (`bidder_members.share_pct`) replace it. For the full headline
+contract value, read `contracts.amount`.
+
+**Which sum to use.** There are two correct, additive money lenses — pick by the
+question; never mix them in one total:
+
+| Question | Query | Notes |
+| --- | --- | --- |
+| Money **won** by an entity (Топ бенефициенти, authority spend) | `SUM(amount)` over `contracts`, grouped by `bidder_id` (or by `authority_id` via `tenders`) | one row per contract; a consortium is credited as the single awarded entity |
+| Money **flowing to** participating companies (member- / owner-level totals) | `SUM(allocated_amount)` over `contract_participants`, grouped by `participant_eik` | consortium value is split across resolved members; per-contract value is conserved |
+
+Both are double-count-free. The first is the headline beneficiary number; the second
+pushes consortium money down to member companies once they're resolved (today, with 0
+resolved members, the two lenses give identical totals).
 
 ## Caveats / next steps
 
@@ -154,7 +171,8 @@ beneficiary totals.
   file contains works **and** related services/supplies.
 - Lot rows inherit tender-level fields (`authority_name`, `procedure_type`, `unp`,
   `published_ojeu`) as `NULL` — by design; they live on the parent.
-- Normalised АОП data **coexists** with the demo rows from `scripts/seed.sql`
-  unless you start from a clean DB (`pnpm setup`).
+- `scripts/seed.sql` is a **pre-AOP placeholder** for an empty dev DB; once AOP data
+  is loaded, `normalize-aop.sql` owns the domain and replaces those demo rows (they do
+  not coexist). `pnpm setup` re-seeds an empty DB.
 - **Beneficial ownership** is not in this data (only `contractor_eik`); the
   owner-network layer needs the Търговски регистър joined on ЕИК — see KICKOFF.
