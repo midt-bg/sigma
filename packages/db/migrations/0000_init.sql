@@ -248,6 +248,16 @@ CREATE TABLE fx_rates (
   PRIMARY KEY (base_currency, rate_date)
 );
 
+-- "Data current as of" per feed — the latest real contract date covered + row count, recomputed
+-- by normalize-egov.sql. Surfaces the freshness date the UI needs and lets the OCDS go-forward
+-- catch-up verify the admin↔OCDS boundary (admin wins on overlap; see normalize-egov.sql step 5).
+CREATE TABLE data_freshness (
+  source       TEXT PRIMARY KEY,          -- 'admin' | 'ocds'
+  as_of        TEXT,                       -- MAX(contract_date) ≤ today
+  rows         INTEGER,
+  refreshed_at TEXT NOT NULL
+);
+
 -- ===================================================================================
 -- 4) INDEXES
 -- ===================================================================================
@@ -266,6 +276,7 @@ CREATE INDEX idx_risk_band ON risk_scores(band);
 CREATE INDEX idx_bidder_members_member ON bidder_members(member_eik);
 CREATE INDEX idx_egov_unp ON raw_egov_contracts(unp);
 CREATE INDEX idx_egov_unp_cnum ON raw_egov_contracts(unp, contract_number);
+CREATE INDEX idx_egov_cnum ON raw_egov_contracts(contract_number);  -- admin↔OCDS dedup key (normalize step 5)
 CREATE INDEX idx_egov_eik ON raw_egov_contracts(contractor_eik);
 CREATE INDEX idx_egov_year ON raw_egov_contracts(dataset_year);
 CREATE INDEX idx_egov_needs_enrichment ON raw_egov_contracts(needs_enrichment);

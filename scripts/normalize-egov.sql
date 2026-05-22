@@ -4,12 +4,15 @@
 --   (cd apps/api && wrangler d1 execute sigma --local --file ../../scripts/normalize-egov.sql)
 --
 -- SOURCE MODEL (see docs/etl-pipeline.md): the admin export is the authoritative base for
--- 2020–2026 (raw_egov_contracts + raw_egov_tenders, source 'admin:%'). The OCDS JSON feed
--- is the go-forward delta for new 2026+ data; when those rows land (source 'ocds:%') they
--- carry their procedure fields on the contract row and are picked up here automatically —
--- a contract whose УНП has no tenders-export row gets a synthetic tender (step 2b). When
--- OCDS overlaps the admin snapshot, dedupe must happen at load time (admin wins); the admin
--- export already covers through the snapshot date, so there is no overlap to resolve today.
+-- 2020–2026 (raw_egov_contracts + raw_egov_tenders, source 'admin:%'). The OCDS JSON feed is the
+-- go-forward delta for new 2026+ data (source 'ocds:%'); its rows carry their procedure fields on
+-- the contract row, so they flow through here automatically and a УНП with no tenders-export row
+-- gets a synthetic tender (step 2b). DEDUPE (step 5): where OCDS overlaps the admin snapshot,
+-- ADMIN WINS — an OCDS contract is taken only when no admin row shares its contract_number (the
+-- АОП contract document number, common to both feeds; OCDS keeps its ocid in unp, which never
+-- matches the admin УНП, so contract_number is the cross-source key). Genuinely new OCDS contracts
+-- are added. This makes the OCDS go-live catch-up safe even though OCDS republishes contracts
+-- already in admin. data_freshness records the "current as of" boundary per feed.
 --
 -- FULL REBUILD: clears the derived tables and re-inserts from staging, so a re-run always
 -- reflects the current rules and never leaves stale rows. wrangler runs this file as one
@@ -145,7 +148,7 @@ FROM (
     SELECT
       contractor_name,
       TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
-    FROM raw_egov_contracts WHERE source LIKE 'admin:%'
+    FROM raw_egov_contracts WHERE source LIKE 'admin:%' OR source LIKE 'ocds:%'
   )
 )
 WHERE bidder_key IS NOT NULL
@@ -216,13 +219,32 @@ FROM (
         WHEN c.contractor_name IS NOT NULL AND TRIM(c.contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(c.contractor_name, '  ', ' '), '  ', ' ')))
         ELSE NULL
       END AS bidder_key
-    FROM raw_egov_contracts c WHERE c.source LIKE 'admin:%'
+    FROM raw_egov_contracts c
+    -- admin always; an OCDS row only when no admin row shares its contract_number — admin wins.
+    -- Key is contract_number (the АОП contract document number, common to both feeds), NOT unp:
+    -- OCDS stores its ocid ('ocds-…') in unp, which never matches the admin УНП format. (idx_egov_cnum)
+    WHERE c.source LIKE 'admin:%'
+       OR (c.source LIKE 'ocds:%' AND c.contract_number IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM raw_egov_contracts a
+            WHERE a.source LIKE 'admin:%' AND a.contract_number = c.contract_number))
   ) y
 ) x
 WHERE x.bidder_key IS NOT NULL
   AND COALESCE(x.current_value, x.signing_value) IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
+
+-- Freshness boundary — "data current as of" per feed (latest real contract date + row count),
+-- for the UI and to verify the OCDS go-forward catch-up. Recomputed each run.
+DELETE FROM data_freshness;
+INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
+SELECT
+  CASE WHEN source LIKE 'admin:%' THEN 'admin' WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'other' END AS src,
+  MAX(CASE WHEN contract_date <= date('now') THEN contract_date END),
+  COUNT(*),
+  datetime('now')
+FROM raw_egov_contracts
+GROUP BY src;
 
 -- Summary (last result set printed by `wrangler d1 execute`)
 SELECT
@@ -237,4 +259,5 @@ SELECT
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'annex_suspect') AS annex_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'review')    AS review,
   (SELECT COUNT(*) FROM contracts WHERE fx_converted = 1)         AS fx_converted,
-  (SELECT ROUND(SUM(amount_eur) / 1e9, 2) FROM contracts)        AS clean_total_eur_bn;
+  (SELECT ROUND(SUM(amount_eur) / 1e9, 2) FROM contracts)        AS clean_total_eur_bn,
+  (SELECT GROUP_CONCAT(source || ':' || COALESCE(as_of, '?') || '(' || rows || ')', ' ') FROM data_freshness) AS data_as_of;
