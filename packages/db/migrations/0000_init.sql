@@ -21,7 +21,8 @@ CREATE TABLE authorities (
   name       TEXT NOT NULL,
   bulstat    TEXT,                        -- ЕИК / Булстат
   region     TEXT,
-  type       TEXT,                        -- Вид на възложителя (министерство / община / агенция …)
+  type       TEXT,                        -- Вид на възложителя (ЗОП controlled vocab: Публичноправна организация / Орган на централната власт …)
+  type_group TEXT,                        -- friendly bucket (министерство/община/агенция/болница/образование/държавна компания/друго) — heuristic from name + type (non-critical display)
   -- location — filled from OCDS parties / Trade Register / NSI ЕКАТТЕ; NULL until those loaders run
   nuts         TEXT,                       -- NUTS region code (e.g. BG411 София)
   settlement   TEXT,                       -- населено място (city/town)

@@ -52,6 +52,18 @@ FROM (
 )
 GROUP BY authority_eik;
 
+-- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
+--     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
+UPDATE authorities SET type_group = CASE
+  WHEN name LIKE 'Община%' OR name LIKE 'ОБЩИНА%' OR name LIKE '%Столична община%' OR name LIKE '%СТОЛИЧНА ОБЩИНА%' THEN 'община'
+  WHEN name LIKE 'Министерство%' OR name LIKE 'МИНИСТЕРСТВО%' THEN 'министерство'
+  WHEN name LIKE '%болница%' OR name LIKE '%БОЛНИЦА%' OR name LIKE 'МБАЛ%' OR name LIKE '%МБАЛ%' OR name LIKE '%СБАЛ%' OR name LIKE '%ДКЦ%' OR name LIKE '%лечебно заведение%' THEN 'болница'
+  WHEN name LIKE '%университет%' OR name LIKE '%УНИВЕРСИТЕТ%' OR name LIKE '%училище%' OR name LIKE '%УЧИЛИЩЕ%' OR name LIKE '%гимназия%' OR name LIKE '%ГИМНАЗИЯ%' OR name LIKE '%детска градина%' OR name LIKE '%ДЕТСКА ГРАДИНА%' OR name LIKE '%академия%' THEN 'образование'
+  WHEN name LIKE '%агенция%' OR name LIKE '%Агенция%' OR name LIKE '%АГЕНЦИЯ%' THEN 'агенция'
+  WHEN type LIKE 'Публично предприятие%' OR type LIKE 'Комунални услуги%' THEN 'държавна компания'
+  ELSE 'друго'
+END;
+
 -- 2a) Tenders — the header row of each procurement (lot_id IS NULL): one per УНП, carrying
 --     procedure type, CPV, the procurement-level estimated value, lot count and authority.
 INSERT OR IGNORE INTO tenders

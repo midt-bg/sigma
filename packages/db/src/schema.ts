@@ -6,6 +6,7 @@ export interface AuthorityRow {
   bulstat: string | null;
   region: string | null;
   type: string | null;
+  type_group: string | null; // friendly bucket (heuristic from name + type)
   // location — filled from OCDS parties / Trade Register / NSI ЕКАТТЕ
   nuts: string | null;
   settlement: string | null;
