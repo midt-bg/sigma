@@ -3,6 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Bundle the scoped re-derive script (scripts/refresh-slice.sql) as a text module the Workflow runs.
+# fallthrough keeps wrangler's default text rules (.txt/.html) active alongside this one.
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
 [dev]
 port = 8789
 
@@ -14,6 +21,13 @@ database_id = "00000000-0000-0000-0000-000000000000"
 [[r2_buckets]]
 binding = "RAW"
 bucket_name = "sigma-raw"
+
+# On-platform data refresh (replaces the GitHub cron). scheduled() kicks one durable Workflow run;
+# the Queue fan-out for the TR full backfill is deferred (see docs/etl-pipeline.md).
+[[workflows]]
+binding = "REFRESH"
+name = "sigma-refresh"
+class_name = "RefreshWorkflow"
 
 [triggers]
 crons = ["0 */6 * * *"]

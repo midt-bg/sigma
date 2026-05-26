@@ -305,15 +305,62 @@ what keeps it cheap. Until the Worker is wired, the CLI on a schedule (or manual
 | **1 — Canonical staging + propagation** | migration to the superset schema; refactor the xlsx loader into the first adapter; normalize v2 propagates core-scope fields | multi-source-ready schema **and** the core-scope data-dependencies, in one migration |
 | **2 — egov CSV backfill** (one-time) | fetcher + provenance; egov-contracts / -amendments / -procurements adapters; bulk load of 2007–2025 | the full historical corpus from the portal |
 | **3 — OCDS adapter (2026+)** | release-package parsing → staging; idempotent **incremental** load keyed by `ocid` | the **ongoing/refreshable** feed; multi-supplier awards feed the (parked) consortium members for free |
-| **4 — Scheduling** (optional) | the **OCDS** delta on CI cron, or a thin `apps/etl` Worker Cron Trigger | unattended refresh; freshness surfaced in the UI |
+| **4 — Scheduling** | **done** — `apps/etl` cron-triggered Cloudflare **Workflow** (`RefreshWorkflow`); OCDS off GitHub | unattended on-platform refresh; freshness surfaced in the UI |
 
 **Status against this plan (the phases above are the original portal design; superseded by the
 admin export):** the spike, the egov CSV backfill and the OCDS adapter all ran; the **column-parity
 gap** they exposed (no procedure type / CPV / estimated in the portal CSV) is what motivated sourcing
 the **admin export**, which carries those fields per row — so **normalize v2 is done** against the
 admin staging (see [Current state](#current-state--implemented-may-2026)) and the УНП enrichment
-merge is **obsolete**. **Remaining:** the **remote D1 push** and **Phase 4 scheduling** (the OCDS
-delta on cron / a thin `apps/etl` Worker).
+merge is **obsolete**. **Remaining:** the **remote D1 push** (provision the remote D1 + secrets).
+
+## Daily refresh Workflow (implemented — `apps/etl`)
+
+The regular refresh runs **on Cloudflare, not GitHub** (decision 2026-05-24, superseding the
+GitHub-cron `etl-refresh.yml`, now retired). `apps/etl` hosts a cron-triggered Cloudflare **Workflow**
+(`RefreshWorkflow`, binding `REFRESH`); `scheduled()` calls `env.REFRESH.create()` every 6 h. Durable,
+individually-retried steps:
+
+1. **discover** — `listDatasets` (АОП org 502) → newest OCDS period + its JSON resource. (A fixture
+   `releases[]` payload skips this for local tests.)
+2. **ingest** (per dataset) — `getResourceData` → land the raw package in R2 (`RAW`, `ocds/<source>/…`)
+   → flatten releases (`@sigma/ingest`, the in-Worker port of `load-ocds.mjs`) → upsert the contract
+   staging (scoped `DELETE`+`INSERT`, bound params). The big payload stays inside the step; only the
+   small `{staged}` count is persisted as the step result.
+3. **derive-slice** — run [`scripts/refresh-slice.sql`](../scripts/refresh-slice.sql) via one D1
+   `.batch()`.
+
+**`refresh-slice.sql` — the scoped re-derive (the "incremental normalize" the v1 review flagged).**
+It derives the OCDS go-forward delta into the domain and refreshes **only the affected** rollup/FTS
+rows, never rebuilding the 190k admin base:
+
+- New OCDS contracts get a **stable** id `c:o:<ocid>:<contract_number>` (the staging rowid is volatile
+  across reloads), so the `c:o:%` set is wiped + re-derived deterministically → **idempotent**.
+- **Base wins:** an OCDS row is derived only when no non-`c:o:%` contract already holds its
+  `contract_number` (so a contract the admin export — or a prior full normalize — already has is never
+  double-counted). Probed via `idx_contracts_cnum`.
+- Mirrors `normalize-egov.sql` steps 1/2b/4/5 (authorities, synthetic `неизвестна` tenders, bidder
+  identity, `value_flag` + `amount_eur`/`*_eur`) + `precompute.sql`, scoped: `company_totals` /
+  `authority_totals` / `flow_pairs` / `search_index` are rebuilt for the touched entities only; the
+  small globals (`home_totals`, `sector_totals`, `facet_counts`, `data_freshness`) recompute in full.
+- `c:o:` prefix checks use **`GLOB`** (BINARY, PK-index-usable), not `LIKE`.
+
+A periodic full `normalize-egov.sql` re-bases everything (rebuilds all contracts as `c:`||rowid),
+which the next refresh then no-ops against. The full normalize + the admin bootstrap stay **off** the
+cron path.
+
+**Deferred (not built):** the **Trade Register** delta/backfill and its **Queue fan-out** (the
+1,686-file TR history). When it lands, a Workflow step seeds a Queue and a `queue()` consumer parses
+each TR XML with `fast-xml-parser` (pure JS, in-Worker), batched + retried with a dead-letter queue.
+Trigger to build it: arrival of the TR full backfill.
+
+**Verified locally** (wrangler 4.93 runs Workflows in dev): unit tests for the OCDS mappers + the SQL
+splitter; `refresh-slice.sql` tested against the populated D1 (derivation, base-wins dedup,
+idempotency, base-table reconciliation, unaffected entities intact); and an end-to-end Workflow run
+under `wrangler dev` against a copy of the DB (fixture release → R2 + staging + scoped derive →
+`{datasets:1, staged:2, derived:1}`, idempotent on re-run). The only paths not verifiable offline are
+the live `data.egov.bg` round-trip (mitigated by fixtures + the proven `load-ocds.mjs` logic) and real
+durable-retry timing — both confirmable on a deployed run.
 
 ## Findings (resolved during the build)
 

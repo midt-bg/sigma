@@ -624,6 +624,7 @@ CREATE INDEX idx_contracts_tender ON contracts(tender_id);
 CREATE INDEX idx_contracts_bidder ON contracts(bidder_id);
 CREATE INDEX idx_contracts_value_flag ON contracts(value_flag);
 CREATE INDEX idx_contracts_signed ON contracts(signed_at);            -- contracts list date sort/filter
+CREATE INDEX idx_contracts_cnum ON contracts(contract_number);        -- daily-refresh base-wins dedup
 CREATE INDEX idx_contracts_amount_eur ON contracts(amount_eur);       -- contracts list value sort + keyset
 CREATE INDEX idx_tenders_cpv ON tenders(cpv_code);                     -- sector (CPV-division) filtered fallbacks
 -- Rollups: keyed on grain (PK) + sorted by the leaderboard sort column.

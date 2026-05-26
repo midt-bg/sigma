@@ -65,12 +65,9 @@ importers:
 
   apps/etl:
     dependencies:
-      '@sigma/analysis':
+      '@sigma/ingest':
         specifier: workspace:*
-        version: link:../../packages/analysis
-      '@sigma/db':
-        specifier: workspace:*
-        version: link:../../packages/db
+        version: link:../../packages/ingest
 
   apps/web:
     dependencies:
@@ -174,6 +171,8 @@ importers:
       '@sigma/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/ingest: {}
 
   packages/shared: {}
 

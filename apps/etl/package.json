@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sigma/analysis": "workspace:*",
-    "@sigma/db": "workspace:*"
+    "@sigma/ingest": "workspace:*"
   }
 }
