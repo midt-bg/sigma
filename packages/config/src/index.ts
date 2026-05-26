@@ -89,6 +89,143 @@ export function sectorForCpv(cpvCode: string | null | undefined): CpvSector | nu
 /** The featured sectors (45 Строителство, 15 Храни) — these also drive the price index. */
 export const CURATED_SECTORS: readonly CpvSector[] = CPV_SECTORS.filter((s) => s.curated);
 
+// ── Procedure groups (ЗОП procedure_type → display group) ──────────────────────────────────────
+//
+// A DETERMINISTIC map of the real `tenders.procedure_type` values (verified against the corpus,
+// May 2026) into the seven buckets the explorer shows. Not a heuristic — every distinct value is
+// assigned explicitly. Drives the procedure filter, the "Как купува / Как печели" StackedBar, and
+// the non-competitive share. `competitive`: true = open to all qualified bidders, false = direct /
+// without notice, null = neutral (framework call-offs, design contests, unknown) — never asserted
+// as (non)competitive. Colors are editorial design tokens (ink ramp; accent red marks the
+// non-competitive bucket, the one worth the reader's eye). Counts in comments are corpus tallies.
+
+export type ProcedureGroupKey =
+  | 'open'
+  | 'competition'
+  | 'collection'
+  | 'negotiated_invited'
+  | 'direct'
+  | 'other'
+  | 'unknown';
+
+export interface ProcedureGroup {
+  key: ProcedureGroupKey;
+  /** Short Bulgarian label for the legend / filter. */
+  label: string;
+  /** true = competitive, false = non-competitive, null = neutral / not asserted. */
+  competitive: boolean | null;
+  /** CSS colour (design token var) for the StackedBar segment + legend swatch. */
+  color: string;
+  /** The exact `procedure_type` values that map here. */
+  types: readonly string[];
+}
+
+// Display order: most-open → least-open → neutral → unknown.
+export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
+  {
+    key: 'open',
+    label: 'Открита',
+    competitive: true,
+    color: 'var(--color-ink)',
+    types: [
+      'Открита процедура', // 37 942
+      'Ограничена процедура', // 121
+      'Ограничена процедура по ДСП', // 504
+      'Ограничена процедура по КС', // 66
+    ],
+  },
+  {
+    key: 'competition',
+    label: 'Състезание',
+    competitive: true,
+    color: 'var(--color-ink-mid)',
+    types: [
+      'Публично състезание', // 35 423
+      'Състезателна процедура с договаряне', // 20
+    ],
+  },
+  {
+    key: 'collection',
+    label: 'Събиране на оферти',
+    competitive: true,
+    color: 'var(--color-ink-soft)',
+    types: [
+      'Събиране на оферти с обява', // 33 940
+    ],
+  },
+  {
+    key: 'negotiated_invited',
+    label: 'Договаряне с покана',
+    competitive: null,
+    color: 'oklch(72% 0.05 70)',
+    types: [
+      'Покана до определени лица', // 2 200
+      'Договаряне с предварителна покана за участие', // 954
+      'Договаряне с предварителна покана за участие по КС', // 360
+      'Договаряне с публикуване на обявление за поръчка', // 95
+    ],
+  },
+  {
+    key: 'direct',
+    label: 'Пряко / без обявление',
+    competitive: false,
+    color: 'var(--color-accent)',
+    types: [
+      'Договаряне без предварително обявление', // 8 199
+      'Пряко договаряне', // 6 925
+      'Договаряне без предварителна покана за участие', // 946
+      'Договаряне без публикуване на обявление за поръчка', // 89
+    ],
+  },
+  {
+    key: 'other',
+    label: 'Друго',
+    competitive: null,
+    color: 'oklch(80% 0.03 75)',
+    types: [
+      'Динамична система за покупки', // 151
+      'Квалификационна система', // 89
+      'Конкурс за проект - открит', // 44
+      'Партньорство за иновации', // 1
+      'Конкурс за проект - ограничен', // 1
+    ],
+  },
+  {
+    key: 'unknown',
+    label: 'Неизвестна',
+    competitive: null,
+    color: 'var(--color-rule)',
+    types: [
+      'неизвестна', // 18 954 — synthetic (contract-only) tenders; shown as its own bucket, never dropped
+    ],
+  },
+];
+
+const PROCEDURE_GROUP_BY_TYPE = new Map<string, ProcedureGroup>(
+  PROCEDURE_GROUPS.flatMap((g) => g.types.map((t) => [t, g] as const)),
+);
+
+const PROCEDURE_UNKNOWN = PROCEDURE_GROUPS.find((g) => g.key === 'unknown')!;
+
+/** Map a raw `procedure_type` to its display group. Unrecognised values fall to the „Неизвестна"
+ *  bucket (never silently dropped). Deterministic. */
+export function procedureGroup(procedureType: string | null | undefined): ProcedureGroup {
+  if (!procedureType) return PROCEDURE_UNKNOWN;
+  return PROCEDURE_GROUP_BY_TYPE.get(procedureType.trim()) ?? PROCEDURE_UNKNOWN;
+}
+
+// ── Entity types (bidders.kind → label) ──────────────────────────────────────────────────────────
+//
+// Only the two real `bidders.kind` values. The mock's ЕТ and „чуждестранно" facets are dropped — no
+// real source field for them (no-heuristics rule). `is_consortium`/`kind` are real (company 13 712 /
+// consortium 3 736).
+export type EntityType = 'company' | 'consortium';
+
+export const ENTITY_TYPES: Record<EntityType, string> = {
+  company: 'Дружество',
+  consortium: 'Обединение',
+};
+
 export interface RiskWeights {
   spec: number;
   price: number;

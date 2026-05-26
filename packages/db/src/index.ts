@@ -1,4 +1,5 @@
 export * from './schema';
+export * from './queries';
 
 import type { RiskScoreRow, TenderRow } from './schema';
 

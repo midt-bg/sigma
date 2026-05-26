@@ -116,6 +116,8 @@ CREATE TABLE contracts (
   amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL = excluded (value_suspect)
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
+  signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
+  current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на
@@ -182,6 +184,95 @@ CREATE TABLE beneficial_owners (
   indent_type TEXT,
   source      TEXT NOT NULL,
   PRIMARY KEY (company_eik, owner_name)
+);
+
+-- ===================================================================================
+-- 1b) ROLLUPS + SEARCH — read-optimised artifacts the explorer reads INSTEAD of a
+--     per-request GROUP BY over 190k contracts × joins (D1 meters rows read). Built by
+--     scripts/precompute.sql (full rebuild after normalize; scoped re-derive on the daily
+--     Workflow). Leaderboards/home/flows/sector-facet read these; detail pages still scope
+--     a GROUP BY to one entity. See docs/v1-implementation-plan.md "Precompute layer".
+-- ===================================================================================
+
+-- One row (id = 1). Index KPIs + freshness for the home page.
+CREATE TABLE home_totals (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  contracts    INTEGER NOT NULL,          -- contracts with a clean (non-NULL) amount_eur
+  value_eur    REAL NOT NULL,             -- SUM(amount_eur) over those same rows (count/sum cover one set)
+  authorities  INTEGER NOT NULL,
+  bidders      INTEGER NOT NULL,
+  suspect      INTEGER NOT NULL,          -- value_suspect rows (NULL amount_eur): surfaced, never summed
+  first_date   TEXT,
+  last_date    TEXT,
+  as_of        TEXT,                       -- data_freshness 'admin' as_of (latest real contract date)
+  refreshed_at TEXT NOT NULL
+);
+
+-- Per winning entity (bidder). Companies leaderboard (default sort) + company headline + home top-10.
+CREATE TABLE company_totals (
+  bidder_id      TEXT PRIMARY KEY REFERENCES bidders(id),
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,            -- company | consortium
+  eik            TEXT,                      -- eik_normalized (NULL when name-keyed)
+  eik_valid      INTEGER NOT NULL DEFAULT 0,
+  settlement     TEXT,
+  won_eur        REAL NOT NULL,            -- SUM(amount_eur) of contracts won (clean rows only)
+  contracts      INTEGER NOT NULL,
+  authorities    INTEGER NOT NULL,         -- distinct paying authorities
+  primary_sector TEXT,                      -- CPV division carrying the most won €
+  eu_eur         REAL NOT NULL DEFAULT 0,  -- won € on EU-funded contracts
+  first_date     TEXT,
+  last_date      TEXT
+);
+
+-- Per authority. Authorities leaderboard (default sort) + authority headline + home slices.
+CREATE TABLE authority_totals (
+  authority_id   TEXT PRIMARY KEY REFERENCES authorities(id),
+  name           TEXT NOT NULL,
+  type_group     TEXT,
+  settlement     TEXT,
+  region         TEXT,
+  spent_eur      REAL NOT NULL,
+  contracts      INTEGER NOT NULL,
+  suppliers      INTEGER NOT NULL,         -- distinct winning bidders
+  avg_eur        REAL NOT NULL,
+  primary_sector TEXT,
+  eu_eur         REAL NOT NULL DEFAULT 0,
+  first_date     TEXT,
+  last_date      TEXT
+);
+
+-- Per CPV division. Sector facet + filter counts on the list pages.
+CREATE TABLE sector_totals (
+  division   TEXT PRIMARY KEY,             -- 2-digit CPV division (joins @sigma/config CPV_SECTORS)
+  contracts  INTEGER NOT NULL,
+  value_eur  REAL NOT NULL
+);
+
+-- Per (authority, bidder). Flows Sankey + table (default, all-sector view).
+CREATE TABLE flow_pairs (
+  authority_id   TEXT NOT NULL REFERENCES authorities(id),
+  bidder_id      TEXT NOT NULL REFERENCES bidders(id),
+  authority_name TEXT NOT NULL,
+  bidder_name    TEXT NOT NULL,
+  bidder_kind    TEXT NOT NULL,
+  won_eur        REAL NOT NULL,
+  contracts      INTEGER NOT NULL,
+  PRIMARY KEY (authority_id, bidder_id)
+);
+
+-- FTS5 search over authority names, bidder names + ЕИК, contract subjects + УНП. Cyrillic+Latin,
+-- accent/case-folded (unicode61 remove_diacritics 2) so „ГБС"≈„GBS" and case/diacritics don't matter.
+-- Replaces a naive LIKE (can't case-fold Cyrillic, full-scans). Searchable: title, ident. The rest
+-- are UNINDEXED display fields so a result card renders without re-joining. Rebuilt by precompute.
+CREATE VIRTUAL TABLE search_index USING fts5(
+  kind UNINDEXED,          -- 'authority' | 'company' | 'contract'
+  ref UNINDEXED,           -- route slug (ЕИК / contract id)
+  title,                   -- entity name / contract subject
+  ident,                   -- ЕИК / УНП
+  subtitle UNINDEXED,      -- prerendered meta line (settlement / parties / date)
+  amount UNINDEXED,        -- € figure for display (won / spent / value)
+  tokenize = "unicode61 remove_diacritics 2"
 );
 
 -- ===================================================================================
@@ -520,6 +611,16 @@ CREATE INDEX idx_authorities_ekatte ON authorities(ekatte);
 CREATE INDEX idx_contracts_tender ON contracts(tender_id);
 CREATE INDEX idx_contracts_bidder ON contracts(bidder_id);
 CREATE INDEX idx_contracts_value_flag ON contracts(value_flag);
+CREATE INDEX idx_contracts_signed ON contracts(signed_at);            -- contracts list date sort/filter
+CREATE INDEX idx_contracts_amount_eur ON contracts(amount_eur);       -- contracts list value sort + keyset
+CREATE INDEX idx_tenders_cpv ON tenders(cpv_code);                     -- sector (CPV-division) filtered fallbacks
+-- Rollups: keyed on grain (PK) + sorted by the leaderboard sort column.
+CREATE INDEX idx_company_totals_won ON company_totals(won_eur DESC);
+CREATE INDEX idx_company_totals_kind ON company_totals(kind);
+CREATE INDEX idx_authority_totals_spent ON authority_totals(spent_eur DESC);
+CREATE INDEX idx_authority_totals_type ON authority_totals(type_group);
+CREATE INDEX idx_flow_pairs_won ON flow_pairs(won_eur DESC);
+CREATE INDEX idx_flow_pairs_authority ON flow_pairs(authority_id);
 CREATE INDEX idx_risk_band ON risk_scores(band);
 CREATE INDEX idx_bidder_members_member ON bidder_members(member_eik);
 CREATE INDEX idx_egov_unp ON raw_egov_contracts(unp);

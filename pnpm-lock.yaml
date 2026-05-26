@@ -77,6 +77,12 @@ importers:
       '@sigma/api-contract':
         specifier: workspace:*
         version: link:../../packages/api-contract
+      '@sigma/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@sigma/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@sigma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -159,6 +165,12 @@ importers:
 
   packages/db:
     dependencies:
+      '@sigma/api-contract':
+        specifier: workspace:*
+        version: link:../api-contract
+      '@sigma/config':
+        specifier: workspace:*
+        version: link:../config
       '@sigma/shared':
         specifier: workspace:*
         version: link:../shared

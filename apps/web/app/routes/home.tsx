@@ -1,68 +1,168 @@
+import { Link } from "react-router";
+import { count, money } from "@sigma/shared";
+import { getHomeData } from "@sigma/db";
 import type { Route } from "./+types/home";
-import { API_ROUTES } from "@sigma/api-contract";
-import { riskBand, type RiskBand } from "@sigma/shared";
+import { PageHeader } from "../components/PageHeader";
+import { TotalsStrip } from "../components/TotalsStrip";
 import { publicCache } from "../lib/cache";
 
-const SAMPLE_SCORES = [10, 35, 60, 90];
-
-const BAND_COLOR: Record<RiskBand, string> = {
-  low: "#2e7d32",
-  medium: "#f9a825",
-  high: "#ef6c00",
-  critical: "#c62828",
-};
-
-export function meta({}: Route.MetaArgs) {
+export function meta(_: Route.MetaArgs) {
   return [
-    { title: "Sigma — Прозрачни възлагания" },
+    { title: "Сигма — Платформа за прозрачни възлагания" },
     {
       name: "description",
-      content: "Платформа за прозрачни обществени възлагания (ППВ).",
+      content:
+        "Кой какво купува от държавата и общините и на кого плаща — във всички сектори на обществените поръчки. Без регистрация. Всяко число се проследява до конкретния договор.",
     },
   ];
 }
 
-// Public, anonymous content → cacheable at the edge (see ADR-0001 §2).
 export function headers() {
-  return { "Cache-Control": publicCache(300) };
+  return { "Cache-Control": publicCache(3600) };
 }
 
-export function loader() {
-  // Computed on the server (SSR) — proves the loader runs on Cloudflare Workers
-  // and that the @sigma/* workspace packages execute server-side.
-  const samples = SAMPLE_SCORES.map((score) => ({ score, band: riskBand(score) }));
-  return { samples, searchRoute: API_ROUTES.searchTenders };
+export async function loader({ context }: Route.LoaderArgs) {
+  return getHomeData(context.cloudflare.env.DB);
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { samples, searchRoute } = loaderData;
+  const { totals, topCompanies, topMinistries, topMunicipalities } = loaderData;
   return (
-    <main className="mx-auto max-w-3xl px-4 py-12">
-      <h1 className="text-3xl font-bold">Sigma</h1>
-      <p className="mt-2 text-gray-600">
-        Платформа за прозрачни обществени възлагания (ППВ).
-      </p>
+    <main id="main">
+      <PageHeader
+        kicker="Обществени поръчки"
+        title={
+          <>
+            Къде отиват <em>парите</em> на държавата?
+          </>
+        }
+        lede="Сигма показва кой какво купува от държавата и общините и на кого плаща — във всички сектори на обществените поръчки. Без регистрация, без интерпретация. Всяко число може да бъде проследено до конкретния договор."
+      >
+        <form className="hero-search" role="search" action="/search">
+          <input
+            type="search"
+            name="q"
+            placeholder="Институция, компания, ЕИК или № на договор…"
+            aria-label="Търсене"
+          />
+          <button type="submit">Намери</button>
+        </form>
+      </PageHeader>
 
-      <section className="mt-8">
-        <h2 className="text-xl font-semibold">Рисков скор (0–100)</h2>
-        <ul className="mt-3 space-y-1">
-          {samples.map(({ score, band }) => (
-            <li key={score} className="flex items-center gap-2">
-              <span
-                className="inline-block h-3 w-3 rounded-full"
-                style={{ background: BAND_COLOR[band] }}
-              />
-              {score} / 100 — {band}
-            </li>
-          ))}
-        </ul>
+      <TotalsStrip
+        label="Обзор на данните"
+        totals={[
+          { num: count(totals.contracts), label: "Договора и обособени позиции" },
+          { num: money(totals.valueEur), label: "Обща стойност на договорите" },
+          { num: count(totals.authorities), label: "Институции възложители" },
+          { num: count(totals.bidders), label: "Компании изпълнители" },
+        ]}
+      />
+
+      <section className="section" aria-labelledby="find-yours">
+        <h2 id="find-yours">
+          Намери своята <em>институция</em>
+        </h2>
+        <p className="section-hint">
+          Започни оттук, ако те интересува конкретно министерство, община, агенция или болница.
+          Списъкът показва най-големите по обем на поръчките през 2020–2026 г.
+        </p>
+        <div className="two-col">
+          <div>
+            <p className="subhead">Министерства, агенции и държавни предприятия</p>
+            <div className="muni-grid">
+              {topMinistries.map((a) => (
+                <Link key={a.slug} to={`/authorities/${a.slug}`}>
+                  {a.name} <span className="num">{money(a.spentEur)}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="subhead">Общини</p>
+            <div className="muni-grid">
+              {topMunicipalities.map((a) => (
+                <Link key={a.slug} to={`/authorities/${a.slug}`}>
+                  {a.name} <span className="num">{money(a.spentEur)}</span>
+                </Link>
+              ))}
+            </div>
+            <p className="small muted" style={{ marginTop: 8 }}>
+              <Link to="/authorities">Виж пълния списък на институциите →</Link>
+            </p>
+          </div>
+        </div>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-xl font-semibold">API</h2>
-        <p className="mt-1">
-          Търсене на поръчки: <code>{searchRoute}</code>
+      <section className="section" aria-labelledby="top-bene">
+        <h2 id="top-bene">
+          Топ 10 печеливши <em>компании</em>
+        </h2>
+        <p className="section-hint">
+          Компании, наредени по обща стойност на спечелените договори, 2020–2026. Обединенията
+          (ДЗЗД/консорциуми) се броят като един изпълнител. <Link to="/companies">Виж пълния списък →</Link>
         </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Компания</th>
+                <th scope="col" className="num">Спечелени</th>
+                <th scope="col" className="num">Договори</th>
+                <th scope="col" className="num">Институции</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topCompanies.map((c, i) => (
+                <tr key={c.slug}>
+                  <td className="rank">{i + 1}</td>
+                  <td>
+                    <Link to={`/companies/${c.slug}`}>{c.displayName}</Link>
+                    <br />
+                    <span className="small muted">
+                      {c.kind === "consortium" ? (
+                        <span className="flag soft">обединение</span>
+                      ) : (
+                        <>
+                          {c.eik ? `ЕИК ${c.eik}` : "непотвърден ЕИК"}
+                          {c.sector ? ` · ${c.sector.short}` : ""}
+                        </>
+                      )}
+                    </span>
+                  </td>
+                  <td className="money">{money(c.wonEur)}</td>
+                  <td className="money">{count(c.contracts)}</td>
+                  <td className="money">{count(c.authorities)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="section" aria-labelledby="how">
+        <h2 id="how">
+          Как се чете <em>тази платформа</em>
+        </h2>
+        <div className="two-col">
+          <div>
+            <h3 style={{ marginBottom: 8 }}>Какво показва Сигма</h3>
+            <p>
+              Сигма обединява публични данни от регистъра на обществените поръчки (АОП / ЦАИС ЕОП) —
+              кой възлага, на кого, какво и за колко. Всяко число тук се разлага до конкретните
+              договори, които го съставят.
+            </p>
+          </div>
+          <div>
+            <h3 style={{ marginBottom: 8 }}>Атомен запис: договорът</h3>
+            <p>
+              Всеки агрегат на тази платформа — сума за институция, сума за компания, поток между
+              двете — се разлага до конкретните възложени договори. „Брой оферти" се показва само като
+              броя; самите оферти не са в публичните данни. <Link to="/methodology">Виж методологията →</Link>
+            </p>
+          </div>
+        </div>
       </section>
     </main>
   );

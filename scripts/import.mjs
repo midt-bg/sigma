@@ -11,6 +11,7 @@
 //   3. amendments       scripts/derive-amendments.sql       (current_value + annex_count onto contracts)
 //   4. fx rates         scripts/load-fx.mjs --apply         (ECB signing-date rates for foreign currencies)
 //   5. domain           scripts/normalize-egov.sql          (rebuild authorities/tenders/lots/bidders/contracts)
+//   6. precompute       scripts/precompute.sql              (rollups + FTS search + per-contract EUR timeline)
 //
 // The OCDS feed (scripts/load-ocds.mjs) is the SEPARATE go-forward 2026+ delta — the admin export
 // already covers through its snapshot, so run OCDS afterwards (with dedup, admin wins) only when
@@ -53,5 +54,6 @@ execSql(resolve(root, 'scripts/derive-amendments.sql')); //                3. am
 run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]); //           4. fx rates
 execSql(resolve(root, 'scripts/load-nuts.sql')); //                        4b. NUTS region reference
 execSql(resolve(root, 'scripts/normalize-egov.sql')); //                   5. domain rebuild
+execSql(resolve(root, 'scripts/precompute.sql')); //                       6. rollups + FTS + EUR timeline
 
 console.log('\n==> import complete.');

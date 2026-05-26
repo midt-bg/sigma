@@ -3,6 +3,18 @@
   "name": "sigma-web",
   "compatibility_date": "2025-04-04",
   "main": "./workers/app.ts",
+  // The explorer reads D1 directly via @sigma/db (no hop through apps/api). Same `sigma` database +
+  // database_id as apps/api so local dev shares one miniflare D1 file (see vite.config.ts persistState).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sigma",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  // Memoises hot aggregate reads (home KPIs, filtered counts) with a daily TTL keyed by the refresh stamp.
+  "kv_namespaces": [{ "binding": "CACHE", "id": "00000000000000000000000000000000" }],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

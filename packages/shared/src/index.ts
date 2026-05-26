@@ -1,3 +1,5 @@
+export * from './format';
+
 export type Currency = 'BGN' | 'EUR';
 
 export interface Money {

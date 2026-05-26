@@ -9,20 +9,20 @@ import {
 
 import type { Route } from "./+types/root";
 import { useNonce } from "./nonce";
+import { SiteHeader } from "./components/SiteHeader";
+import { SiteFooter } from "./components/SiteFooter";
 import "./app.css";
 
-export const links: Route.LinksFunction = () => [
-  { rel: "preconnect", href: "https://fonts.googleapis.com" },
-  {
-    rel: "preconnect",
-    href: "https://fonts.gstatic.com",
-    crossOrigin: "anonymous",
-  },
-  {
-    rel: "stylesheet",
-    href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
-  },
-];
+// The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
+export const links: Route.LinksFunction = () => [];
+
+// One cheap read for the chrome: the data current-as-of date shown in the footer on every page.
+export async function loader({ context }: Route.LoaderArgs) {
+  const row = await context.cloudflare.env.DB.prepare(
+    "SELECT as_of FROM home_totals WHERE id = 1",
+  ).first<{ as_of: string | null }>();
+  return { asOf: row?.as_of ?? null };
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useNonce();
@@ -43,8 +43,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function App() {
-  return <Outlet />;
+export default function App({ loaderData }: Route.ComponentProps) {
+  return (
+    <>
+      <a className="skip" href="#main">
+        Към съдържанието
+      </a>
+      <SiteHeader />
+      <Outlet />
+      <SiteFooter asOf={loaderData.asOf} />
+    </>
+  );
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sigma/api-contract": "workspace:*",
+    "@sigma/config": "workspace:*",
     "@sigma/shared": "workspace:*"
   }
 }
