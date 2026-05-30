@@ -13,7 +13,6 @@ import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 
 export interface Env {
   DB: D1Database;
-  RAW: R2Bucket;
   REFRESH: Workflow;
 }
 
@@ -27,10 +26,10 @@ interface RefreshParams {
 }
 
 // The on-platform daily refresh. Durable, individually-retried steps: discover the newest OCDS
-// period → fetch it (+ land raw in R2) → upsert the contract staging → scoped re-derive of the
-// touched slice + refresh its rollup/FTS rows (scripts/refresh-slice.sql). The full-rebuild
-// normalize stays off this path; the Queue fan-out for the TR backfill is deferred. See
-// docs/etl-pipeline.md.
+// period → fetch it → upsert the contract staging → scoped re-derive of the touched slice +
+// refresh its rollup/FTS rows (scripts/refresh-slice.sql). The full-rebuild normalize stays off
+// this path; the Queue fan-out for the TR backfill is deferred. Raw archival is delegated to the
+// external BG feeder (see docs/etl-pipeline.md).
 export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
   override async run(
     event: WorkflowEvent<RefreshParams>,
@@ -69,8 +68,9 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       return out;
     });
 
-    // 2) Per dataset: fetch + land raw in R2 + flatten + upsert staging (big payload stays inside the
-    //    step; only the small {staged} count is persisted as the step result).
+    // 2) Per dataset: fetch + flatten + upsert staging (big payload stays inside the step; only the
+    //    small {staged} count is persisted as the step result). No raw archival — the BG feeder
+    //    owns that.
     let staged = 0;
     for (const ds of datasets) {
       const meta: OcdsMeta = {
@@ -83,7 +83,6 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       const n = await step.do(`ingest:${ds.source}`, async () => {
         const releases: OcdsRelease[] =
           params.releases ?? (await fetchOcdsPackage(ds.resourceUri)).releases ?? [];
-        await this.env.RAW.put(`ocds/${ds.source}/${fetchedAt}.json`, JSON.stringify({ releases }));
         const rows = releases.flatMap((rel) => releaseToContracts(rel, meta));
         return upsertContractStaging(this.env.DB, ds.source, rows);
       });

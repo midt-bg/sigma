@@ -6,17 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 [dev]
 port = 8787
 
-# `database_id` and KV `id` are zero-UUID placeholders for local dev (miniflare). Deploy substitutes
-# SIGMA_D1_ID / SIGMA_KV_CACHE_ID via scripts/wrangler-render.mjs (see docs/deploy.md).
+# `database_id` is a zero-UUID placeholder for local dev (miniflare). Deploy substitutes SIGMA_D1_ID
+# via scripts/wrangler-render.mjs (see docs/deploy.md).
 [[d1_databases]]
 binding = "DB"
 database_name = "sigma"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "../../packages/db/migrations"
-
-[[kv_namespaces]]
-binding = "CACHE"
-id = "0000000000000000000000000000000a"
 
 [observability]
 enabled = false

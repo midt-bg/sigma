@@ -37,8 +37,8 @@ request → apps/web Worker (workers/app.ts) → RR loader → @sigma/db query f
 
 | Package | Change |
 | --- | --- |
-| `apps/web/wrangler.jsonc` | add `d1_databases` binding `DB` → `sigma`, **and** a `kv_namespaces` binding `CACHE` (cached counts / home KPIs) |
-| `apps/web/workers/app.ts` | `Env` already flows via `AppLoadContext.cloudflare.env`; regenerate `worker-configuration.d.ts` so `env.DB`/`env.CACHE` type |
+| `apps/web/wrangler.jsonc` | add `d1_databases` binding `DB` → `sigma` (page caching is done via `Cache-Control` headers — no KV) |
+| `apps/web/workers/app.ts` | `Env` already flows via `AppLoadContext.cloudflare.env`; regenerate `worker-configuration.d.ts` so `env.DB` types |
 | `apps/web/app/routes.ts` | add all routes below |
 | `apps/web/app/components/` | new — the shared UI (shell + primitives + charts) |
 | `apps/web/app/lib/` | new `format.ts`, `filters.ts` (URLSearchParams ↔ typed filter state) |

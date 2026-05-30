@@ -20,10 +20,6 @@ binding = "DB"
 database_name = "sigma"
 database_id = "00000000-0000-0000-0000-000000000000"
 
-[[r2_buckets]]
-binding = "RAW"
-bucket_name = "sigma-raw"
-
 # On-platform data refresh (replaces the GitHub cron). scheduled() kicks one durable Workflow run;
 # the Queue fan-out for the TR full backfill is deferred (see docs/etl-pipeline.md).
 [[workflows]]

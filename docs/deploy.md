@@ -28,29 +28,29 @@ step 1 below).
 ### Minimal API-token scopes
 
 A custom token needs only these **Account**-level permissions (it cannot be scoped to a single
-Worker — see "Access scoping" below): Workers Scripts **Edit**, D1 **Edit**, Workers KV Storage
-**Edit**, R2 Storage **Edit**, Workflows **Edit**, Account Settings **Read**.
+Worker — see "Access scoping" below): Workers Scripts **Edit**, D1 **Edit**, Workflows **Edit**,
+Account Settings **Read**.
 
 ## 1. Provision the resources
 
 ```bash
-pnpm bootstrap:apply   # creates D1 "sigma", KV "CACHE", R2 "sigma-raw"
+pnpm bootstrap:apply   # creates D1 "sigma" (the only Cloudflare resource Sigma needs)
 ```
 
-Capture the printed **D1 `database_id`** and **KV namespace id** and set them as env vars — **not**
-in the committed `wrangler.*` files, which keep zero-UUID dummies that local dev (miniflare) uses
-unchanged. The deploy script renders a sibling `wrangler.deploy.<ext>` with the real values via
+Capture the printed **D1 `database_id`** and set it as an env var — **not** in the committed
+`wrangler.*` files, which keep a zero-UUID dummy that local dev (miniflare) uses unchanged. The
+deploy script renders a sibling `wrangler.deploy.<ext>` with the real value via
 [scripts/wrangler-render.mjs](../scripts/wrangler-render.mjs).
 
-- **Local deploy:** `cp .env.example .env.local`, fill in `SIGMA_D1_ID` and `SIGMA_KV_CACHE_ID`,
-  then `set -a; source .env.local; set +a` before `pnpm deploy`.
-- **CI deploy:** add `SIGMA_D1_ID` and `SIGMA_KV_CACHE_ID` as repo secrets alongside
-  `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`; [deploy.yml](../.github/workflows/deploy.yml)
-  already wires them through.
+- **Local deploy:** `cp .env.example .env.local`, fill in `SIGMA_D1_ID`, then
+  `set -a; source .env.local; set +a` before `pnpm deploy`.
+- **CI deploy:** add `SIGMA_D1_ID` as a repo secret alongside `CLOUDFLARE_API_TOKEN` /
+  `CLOUDFLARE_ACCOUNT_ID`; [deploy.yml](../.github/workflows/deploy.yml) already wires it through.
 
 > The D1 `database_id` **must be identical** in `web` and `etl` so the explorer reads what the refresh
 > writes — a single `SIGMA_D1_ID` env var feeds both. To deploy into another Cloudflare account, just
-> set different env vars; no file edit needed.
+> set a different value; no file edit needed. Page caching is done via `Cache-Control` headers
+> ([apps/web/app/lib/cache.ts](../apps/web/app/lib/cache.ts)) — no KV namespace needed.
 
 ## 2. Load the data into the remote D1
 
@@ -58,11 +58,18 @@ unchanged. The deploy script renders a sibling `wrangler.deploy.<ext>` with the 
 node scripts/import.mjs --remote   # migrate → admin export → fx → NUTS → normalize → precompute
 ```
 
-> **Bulk-load caveat.** `import.mjs` loads via `wrangler d1 execute --file`, which is slow over the
-> API for ~190k rows. For the initial remote load, prefer `wrangler d1 execute … --remote` only for
-> the schema/light steps and **`wrangler d1 import`** (server-side dump import) for the big staging +
-> domain tables. The full DB is ~1.4 GB incl. staging — within the 10 GB Paid limit. After the first
-> load, the daily Workflow keeps it fresh incrementally (it never reloads the base).
+> **Bulk-load caveat.** `import.mjs` runs each step via `wrangler d1 execute --remote --file`, which
+> is the only bulk-import path in wrangler 4.x (there is no `wrangler d1 import` command despite older
+> docs). It's slow over the API for the ~190k-row staging + domain tables but feasible — figure ~20
+> min for a fresh remote load. The full DB is ~1.4 GB incl. staging — within the 10 GB Paid limit.
+>
+> **Two gotchas if you load from a sqlite `.dump`:** D1 rejects `PRAGMA foreign_keys = OFF;`, `BEGIN
+> TRANSACTION;`, `COMMIT;`, and `PRAGMA writable_schema = ON;` (the last is what `.dump` emits to
+> recreate FTS5 virtual tables). Strip those lines, and rebuild `search_index` with the normal
+> `INSERT INTO search_index ... SELECT ... FROM contracts` recipe from
+> [scripts/precompute.sql](../scripts/precompute.sql) — don't ship FTS content via dump.
+>
+> After the first load, the daily Workflow keeps it fresh incrementally (it never reloads the base).
 
 ## 3. Deploy
 

@@ -10,7 +10,6 @@ import { Pagination } from '../components/Pagination';
 import { Callout } from '../components/ui';
 import { getMulti, pageNav, withParams, PAGE_SIZE } from '../lib/filters';
 import { publicCache } from '../lib/cache';
-import { cachedJson } from '../lib/kv';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -49,11 +48,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.contracts,
   };
   const { env } = context.cloudflare;
-  // The filtered count/sum is the only expensive scan; cache it (filter-only key, ignoring sort/page).
-  const sumKey = `csum:${JSON.stringify([params.years, params.sectors, params.procedureGroups, params.valueBucket, params.eu, params.authority, params.bidder])}`;
+  // Page `Cache-Control` (publicCache(1800)) memoises full responses at the edge — no per-query cache.
   const [summary, facets] = await Promise.all([
-    cachedJson(env.CACHE, sumKey, 1800, () => contractsSummary(env.DB, params)),
-    cachedJson(env.CACHE, 'cfacets:v1', 3600, () => getContractFacets(env.DB)),
+    contractsSummary(env.DB, params),
+    getContractFacets(env.DB),
   ]);
   const result = await listContracts(env.DB, params, summary);
   return { result, facets };

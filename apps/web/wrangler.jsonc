@@ -7,9 +7,9 @@
   "main": "./workers/app.ts",
   // The explorer reads D1 directly via @sigma/db (no hop through apps/api). Same `sigma` database +
   // database_id as apps/api so local dev shares one miniflare D1 file (see vite.config.ts persistState).
-  // `database_id` and KV `id` are zero-UUID placeholders for local dev (miniflare uses them as stable
-  // namespacing keys). `pnpm deploy` substitutes SIGMA_D1_ID / SIGMA_KV_CACHE_ID into wrangler.deploy.jsonc
-  // via scripts/wrangler-render.mjs — see docs/deploy.md.
+  // `database_id` is a zero-UUID placeholder for local dev (miniflare uses it as a stable namespacing
+  // key). `pnpm deploy` substitutes SIGMA_D1_ID into wrangler.deploy.jsonc via scripts/wrangler-render.mjs —
+  // see docs/deploy.md. Page caching is done via `Cache-Control` headers (apps/web/app/lib/cache.ts), not KV.
   "d1_databases": [
     {
       "binding": "DB",
@@ -18,8 +18,6 @@
       "migrations_dir": "../../packages/db/migrations"
     }
   ],
-  // Memoises hot aggregate reads (home KPIs, filtered counts) with a daily TTL keyed by the refresh stamp.
-  "kv_namespaces": [{ "binding": "CACHE", "id": "0000000000000000000000000000000a" }],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

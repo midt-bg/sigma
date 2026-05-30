@@ -5,11 +5,9 @@ import { execFileSync } from 'node:child_process';
 
 const apply = process.argv.includes('--apply');
 
-const resources = [
-  { kind: 'D1', cmd: ['d1', 'create', 'sigma'] },
-  { kind: 'KV', cmd: ['kv', 'namespace', 'create', 'CACHE'] },
-  { kind: 'R2', cmd: ['r2', 'bucket', 'create', 'sigma-raw'] },
-];
+// Page caching is done via `Cache-Control` headers + the per-colo Cache API (no KV). Raw archival
+// is delegated to the external BG feeder (no R2). D1 is the only Cloudflare resource Sigma needs.
+const resources = [{ kind: 'D1', cmd: ['d1', 'create', 'sigma'] }];
 
 console.log(apply ? '==> Creating Cloudflare resources' : '==> Dry run (pass --apply to create)');
 
@@ -29,10 +27,9 @@ for (const r of resources) {
 
 if (!apply) {
   console.log(
-    '\nAfter creating, capture the printed IDs and set them as env vars (NOT in the committed' +
-      '\nwrangler files, which keep zero-UUID dummies for local dev):' +
+    '\nAfter creating, capture the printed D1 `database_id` and set it as an env var (NOT in the' +
+      '\ncommitted wrangler files, which keep a zero-UUID dummy for local dev):' +
       '\n  SIGMA_D1_ID=<d1 database_id>' +
-      '\n  SIGMA_KV_CACHE_ID=<kv namespace id>' +
-      '\nFor local deploy, put them in .env.local; for CI, set them as repo secrets. See docs/deploy.md.',
+      '\nFor local deploy, put it in .env.local; for CI, set it as a repo secret. See docs/deploy.md.',
   );
 }

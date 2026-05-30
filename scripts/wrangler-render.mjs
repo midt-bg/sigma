@@ -13,10 +13,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 
 // Sentinel <- env var. The sentinels appear verbatim in the committed wrangler.* files;
-// the values come from the environment at deploy time. Add a row to extend (e.g. another KV).
+// the values come from the environment at deploy time. Add a row to extend (e.g. a future KV).
 const SENTINELS = {
   '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID',          // D1 database_id (UUID v4 shape)
-  '0000000000000000000000000000000a': 'SIGMA_KV_CACHE_ID',         // KV namespace id (32-hex shape)
 };
 
 const input = process.argv[2];

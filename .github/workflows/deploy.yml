@@ -25,10 +25,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      # Real resource IDs substituted into wrangler.deploy.* by scripts/wrangler-render.mjs
-      # (committed wrangler.* hold zero-UUID dummies). See docs/deploy.md.
+      # Real D1 database_id substituted into wrangler.deploy.* by scripts/wrangler-render.mjs
+      # (committed wrangler.* hold a zero-UUID dummy). See docs/deploy.md.
       SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
-      SIGMA_KV_CACHE_ID: ${{ secrets.SIGMA_KV_CACHE_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,7 +43,6 @@ jobs:
           missing=()
           [ -z "${CLOUDFLARE_API_TOKEN}" ] && missing+=("CLOUDFLARE_API_TOKEN")
           [ -z "${SIGMA_D1_ID}" ]          && missing+=("SIGMA_D1_ID")
-          [ -z "${SIGMA_KV_CACHE_ID}" ]    && missing+=("SIGMA_KV_CACHE_ID")
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "Missing repo secrets: ${missing[*]} — skipping deploy."
             echo "ok=false" >> "$GITHUB_OUTPUT"
