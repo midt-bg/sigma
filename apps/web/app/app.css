@@ -583,6 +583,8 @@ main.narrow {
 .page-header h1 {
   margin: 0;
   max-width: 22ch;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .page-header .lede {
   margin: var(--s-5) 0 0;
@@ -638,6 +640,23 @@ main.narrow {
   color: var(--ink-soft);
   font-size: 11px;
   letter-spacing: 0.14em;
+}
+
+/* Touch targets — on coarse pointers, grow the tappable area of small chrome
+   controls (header search/menu, breadcrumb + footer links) to ≥44px without
+   touching the desktop layout or enlarging the visible glyphs/text. */
+@media (hover: none) and (pointer: coarse) {
+  .nav-search,
+  .nav-toggle {
+    padding: 13px 11px;
+    margin: -13px -11px;
+  }
+  .crumbs a,
+  .site-footer a {
+    display: inline-block;
+    padding: 11px 0;
+    margin: -11px 0;
+  }
 }
 
 /* =========== Reusable patterns =========== */
@@ -987,7 +1006,8 @@ a.flag:hover {
   top: var(--s-3);
   min-width: 0;
 }
-.split > section {
+.split > section,
+.split > div {
   min-width: 0;
 }
 
@@ -1105,6 +1125,22 @@ a.flag:hover {
   padding: 0 0 var(--s-4);
 }
 
+/* Filter-rail disclosure — CSS-only, no JS, identical SSR/client markup.
+   Desktop: the rail is the sticky left column and always visible; the toggle is hidden.
+   ≤960px (when .split stacks to one column): the rail collapses behind a tappable „Филтри"
+   label backed by an off-screen checkbox. All rules are scoped to the classes, so absent
+   markup is a no-op. (A native <details> can't be force-opened by CSS, hence the checkbox.) */
+.filter-rail-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.filter-rail-summary {
+  display: none;
+}
+
 @media (max-width: 960px) {
   .split {
     grid-template-columns: 1fr;
@@ -1112,14 +1148,44 @@ a.flag:hover {
   }
   .split > aside {
     position: static;
-  }
-  .split > aside {
     border-top: 1px solid var(--ink);
     border-bottom: 1px solid var(--ink);
     padding: var(--s-3) 0;
   }
   .split aside .filter-group {
     padding: var(--s-2) 0;
+  }
+  /* Stacked rail collapses behind the „Филтри" toggle; the off-screen checkbox drives it. */
+  .filter-rail-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    cursor: pointer;
+    min-height: 44px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+  }
+  .filter-rail-summary::after {
+    content: '+';
+    color: var(--ink-soft);
+    font-size: 16px;
+  }
+  .filter-rail-toggle:checked ~ .filter-rail-summary {
+    color: var(--ink);
+  }
+  .filter-rail-toggle:checked ~ .filter-rail-summary::after {
+    content: '\2013';
+  }
+  .filter-rail-toggle:focus-visible ~ .filter-rail-summary {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .filter-rail-toggle:not(:checked) ~ form {
+    display: none;
   }
 }
 
@@ -1463,10 +1529,13 @@ details.row .body .signal .why {
     display: block;
     width: auto;
   }
-  /* Keep headers for assistive tech, hide them visually */
+  /* Keep headers for assistive tech, hide them visually. left:-9999px pushes
+     the clipped thead fully off-screen so its 1px box can't add ~16px of
+     horizontal page scroll on phones. */
   .tbl-cards thead,
   .tbl-prose thead {
     position: absolute;
+    left: -9999px;
     width: 1px;
     height: 1px;
     margin: -1px;
@@ -1597,6 +1666,25 @@ details.row .body .signal .why {
   }
   .tbl-prose td:first-child {
     font-weight: 600;
+  }
+}
+
+/* Phones: tables that DON'T reflow into cards (e.g. the home top-10) keep
+   their native columns and scroll sideways. Add a right-edge fade + a thin
+   visible scrollbar so the off-screen right-hand columns are discoverable.
+   Pure CSS scroll-shadow: edge "cover" gradients pinned to the content
+   (background-attachment: local) sit over a fade pinned to the scroller, so
+   the fade only shows while there is more to scroll. */
+@media (max-width: 480px) {
+  .table-wrap:not(.tbl-cards):not(.tbl-prose) {
+    scrollbar-width: thin;
+    background:
+      linear-gradient(to right, var(--paper) 30%, transparent) left center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, var(--paper) 30%, transparent) right center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, oklch(18% 0.012 70 / 0.12), transparent) right center / 16px 100%
+        no-repeat scroll;
   }
 }
 
@@ -1811,6 +1899,12 @@ details.row .body .signal .why {
   }
 }
 @media (max-width: 600px) {
+  /* The Sankey is unusable at phone widths even with horizontal scroll — hide
+     it and lean on the top-flows table below, which already reflows to cards. */
+  .flow-scroll,
+  .flow-scroll-hint {
+    display: none;
+  }
   /* Stack the filter controls into a clean vertical list on phones */
   .flow-controls {
     flex-direction: column;
