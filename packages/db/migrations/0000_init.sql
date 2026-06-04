@@ -159,33 +159,6 @@ CREATE TABLE bidder_members (
   PRIMARY KEY (consortium_id, member_eik)
 );
 
--- Company ownership (Търговски регистър, keyed by ЕИК) — partners/shareholders, sole owner, managers,
--- representatives. Personal owners' IDs are HASHED at source (ЗМИП); we keep name + country only.
--- owner_eik is set when the owner is itself a company (IndentType = UIC). Built by normalize-egov.sql
--- from raw_tr_* staging (scripts/load-tr.mjs).
-CREATE TABLE company_owners (
-  company_eik TEXT NOT NULL,               -- the company (ЕИК)
-  role        TEXT NOT NULL,               -- 'partner' | 'sole_capital_owner' | 'manager' | 'representative'
-  owner_name  TEXT,
-  owner_eik   TEXT,                         -- owner's ЕИК when the owner is a company, else NULL
-  indent_type TEXT,                         -- EGN | UIC | BirthDate | …
-  share_pct   REAL,                         -- documented share if known, else NULL
-  country     TEXT,
-  source      TEXT NOT NULL,               -- 'tr:<file date>'
-  PRIMARY KEY (company_eik, role, owner_name)
-);
-
--- Beneficial owners (действителни собственици, чл. 63 ЗМИП) from the Търговски регистър. Personal
--- IDs hashed at source; name + country only.
-CREATE TABLE beneficial_owners (
-  company_eik TEXT NOT NULL,
-  owner_name  TEXT NOT NULL,
-  country     TEXT,
-  indent_type TEXT,
-  source      TEXT NOT NULL,
-  PRIMARY KEY (company_eik, owner_name)
-);
-
 -- ===================================================================================
 -- 1b) ROLLUPS + SEARCH — read-optimised artifacts the explorer reads INSTEAD of a
 --     per-request GROUP BY over 190k contracts × joins (D1 meters rows read). Built by
@@ -526,7 +499,7 @@ CREATE TABLE raw_ocds_award_suppliers (
 );
 
 -- Trade Register (Агенция по вписванията; data.egov.bg dataset 2df0c2af-…) — daily XML deltas, by
--- scripts/load-tr.mjs. One company row per <Deed> (current state) + owner / beneficial-owner rows.
+-- scripts/load-tr.mjs. One company row per <Deed> (current state).
 -- Source 'tr:<file date>'; latest file_date wins on dedup. Personal IDs are hashed at source.
 CREATE TABLE raw_tr_companies (
   id            INTEGER PRIMARY KEY,
@@ -545,31 +518,6 @@ CREATE TABLE raw_tr_companies (
   municipality  TEXT, municipality_ekatte TEXT,
   settlement    TEXT, settlement_ekatte TEXT,
   post_code     TEXT, street TEXT, street_number TEXT
-);
-CREATE TABLE raw_tr_owners (
-  id           INTEGER PRIMARY KEY,
-  source       TEXT NOT NULL,
-  fetched_at   TEXT NOT NULL,
-  file_date    TEXT,
-  uic          TEXT NOT NULL,               -- company ЕИК
-  role         TEXT NOT NULL,               -- partner | sole_capital_owner | manager | representative
-  owner_name   TEXT,
-  owner_indent TEXT,                         -- hashed EGN, or the UIC for company owners
-  indent_type  TEXT,                         -- EGN | UIC | BirthDate
-  owner_uic    TEXT,                         -- owner_indent when indent_type = UIC
-  country      TEXT,
-  legal_form   TEXT,
-  position     TEXT
-);
-CREATE TABLE raw_tr_actual_owners (
-  id          INTEGER PRIMARY KEY,
-  source      TEXT NOT NULL,
-  fetched_at  TEXT NOT NULL,
-  file_date   TEXT,
-  uic         TEXT NOT NULL,
-  owner_name  TEXT,
-  indent_type TEXT,
-  country     TEXT
 );
 
 -- ===================================================================================
@@ -626,12 +574,16 @@ CREATE INDEX idx_contracts_value_flag ON contracts(value_flag);
 CREATE INDEX idx_contracts_signed ON contracts(signed_at);            -- contracts list date sort/filter
 CREATE INDEX idx_contracts_cnum ON contracts(contract_number);        -- daily-refresh base-wins dedup
 CREATE INDEX idx_contracts_amount_eur ON contracts(amount_eur);       -- contracts list value sort + keyset
+CREATE INDEX idx_contracts_value_desc ON contracts(COALESCE(amount_eur, -1));
+CREATE INDEX idx_contracts_value_asc ON contracts(COALESCE(amount_eur, 1e18));
 CREATE INDEX idx_tenders_cpv ON tenders(cpv_code);                     -- sector (CPV-division) filtered fallbacks
 -- Rollups: keyed on grain (PK) + sorted by the leaderboard sort column.
 CREATE INDEX idx_company_totals_won ON company_totals(won_eur DESC);
 CREATE INDEX idx_company_totals_kind ON company_totals(kind);
+CREATE INDEX idx_company_totals_name ON company_totals(name);
 CREATE INDEX idx_authority_totals_spent ON authority_totals(spent_eur DESC);
 CREATE INDEX idx_authority_totals_type ON authority_totals(type_group);
+CREATE INDEX idx_authority_totals_name ON authority_totals(name);
 CREATE INDEX idx_flow_pairs_won ON flow_pairs(won_eur DESC);
 CREATE INDEX idx_flow_pairs_authority ON flow_pairs(authority_id);
 CREATE INDEX idx_risk_band ON risk_scores(band);
@@ -651,11 +603,6 @@ CREATE INDEX idx_ocds_parties_source ON raw_ocds_parties(source);
 CREATE INDEX idx_ocds_award_suppliers_eik ON raw_ocds_award_suppliers(supplier_eik);
 CREATE INDEX idx_ocds_award_suppliers_source ON raw_ocds_award_suppliers(source);
 CREATE INDEX idx_tr_companies_uic ON raw_tr_companies(uic);
-CREATE INDEX idx_tr_owners_uic ON raw_tr_owners(uic);
-CREATE INDEX idx_tr_actual_owners_uic ON raw_tr_actual_owners(uic);
-CREATE INDEX idx_company_owners_company ON company_owners(company_eik);
-CREATE INDEX idx_company_owners_owner ON company_owners(owner_eik);
-CREATE INDEX idx_beneficial_owners_company ON beneficial_owners(company_eik);
 
 -- ===================================================================================
 -- 5) VIEWS — contract_participants (parked owner attribution; SUM-safe per company).
