@@ -27,19 +27,24 @@ describe('computeRiskScore', () => {
     expect(r.score).toBe(25); // 100 * 0.25
     expect(r.band).toBe('medium');
   });
+
+  it('keeps the score finite when a signal is NaN', () => {
+    const r = computeRiskScore({ spec: NaN, price: 0, competition: 0, cartel: 0, process: 0 });
+    expect(Number.isFinite(r.score)).toBe(true);
+    expect(r.score).toBe(0);
+    expect(r.band).toBe('low');
+  });
 });
 
 describe('detectPriceAnomaly', () => {
   it('flags overpricing', () => {
     const a = detectPriceAnomaly({ item: 'хляб', unit: 'kg', price: 3, refPrice: 2 });
-    expect(a.deviationPct).toBe(50);
-    expect(a.severity).toBe(100);
+    expect(a).toMatchObject({ deviationPct: 50, severity: 100 });
   });
 
   it('returns parity at the reference price', () => {
     const a = detectPriceAnomaly({ item: 'хляб', unit: 'kg', price: 2, refPrice: 2 });
-    expect(a.deviationPct).toBe(0);
-    expect(a.severity).toBe(0);
+    expect(a).toMatchObject({ deviationPct: 0, severity: 0 });
   });
 
   it('aggregates an empty set to zero', () => {

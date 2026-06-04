@@ -29,6 +29,10 @@ function dec(n: number, dp: number, stripZeros: boolean): string {
   return s.replace('.', ',');
 }
 
+function rounded(n: number, dp: number): number {
+  return Number(n.toFixed(dp));
+}
+
 /**
  * EUR money in Bulgarian magnitude tiers, e.g. `640 €` · `412 хил. €` · `187 млн. €` · `4,58 млрд. €`.
  * млн. → one decimal (trailing „,0" dropped); млрд. → two decimals under 10, one at/above (so „50,8
@@ -37,17 +41,18 @@ function dec(n: number, dp: number, stripZeros: boolean): string {
  */
 export function money(eur: number | null | undefined): string {
   if (eur == null || !Number.isFinite(eur)) return EM_DASH;
-  const neg = eur < 0;
   const v = Math.abs(eur);
+  const roundedEur = Math.round(v);
   let body: string;
-  if (v < 1000) body = `${Math.round(v)}${NBSP}€`;
-  else if (v < 999_500) body = `${Math.round(v / 1e3)}${NBSP}хил.${NBSP}€`;
-  else if (v < 999_500_000) body = `${dec(v / 1e6, 1, true)}${NBSP}млн.${NBSP}€`;
+  if (roundedEur < 1000) body = `${roundedEur}${NBSP}€`;
+  else if (Math.round(v / 1e3) < 1000) body = `${Math.round(v / 1e3)}${NBSP}хил.${NBSP}€`;
+  else if (rounded(v / 1e6, 1) < 1000) body = `${dec(v / 1e6, 1, true)}${NBSP}млн.${NBSP}€`;
   else {
     const b = v / 1e9;
-    body = `${b < 10 ? dec(b, 2, false) : dec(b, 1, true)}${NBSP}млрд.${NBSP}€`;
+    const useTwoDecimals = rounded(b, 2) < 10;
+    body = `${useTwoDecimals ? dec(b, 2, false) : dec(b, 1, true)}${NBSP}млрд.${NBSP}€`;
   }
-  return neg ? `${MINUS}${body}` : body;
+  return eur < 0 && roundedEur !== 0 ? `${MINUS}${body}` : body;
 }
 
 /** Integer with a space thousands separator: `190429` → `190 429`. */
@@ -69,7 +74,9 @@ export function pct(ratio: number | null | undefined, dp = 1): string {
 /** Signed percentage delta with an explicit sign: `-0.233` → `−23,3%`, `0.05` → `+5%`. */
 export function signedPct(ratio: number | null | undefined, dp = 1): string {
   if (ratio == null || !Number.isFinite(ratio)) return EM_DASH;
+  const roundedMagnitude = rounded(Math.abs(ratio) * 100, dp);
   const body = pct(Math.abs(ratio), dp);
+  if (roundedMagnitude === 0) return body;
   if (ratio < 0) return `${MINUS}${body}`;
   if (ratio > 0) return `+${body}`;
   return body;
@@ -182,7 +189,8 @@ export function plural(n: number, one: string, many: string): string {
  * Normalize a registry display name for the UI. Conservative — a no-op on already-clean names:
  * unifies curly/guillemet double-quotes to a straight " , collapses the space-before-closing-quote
  * that hugs a legal-form suffix („СОФАРМА ТРЕЙДИНГ "АД" → „СОФАРМА ТРЕЙДИНГ" АД"), and drops a single
- * dangling unbalanced quote. Leaves legitimate quoting around a token (ДЕТСКА ГРАДИНА "ЗДРАВЕЦ") alone.
+ * edge (leading/trailing) unbalanced quote. Leaves legitimate quoting around a token
+ * (ДЕТСКА ГРАДИНА "ЗДРАВЕЦ") alone.
  */
 export function cleanName(raw: string): string {
   let s = raw.trim().replace(/[“”„«»]/g, '"');

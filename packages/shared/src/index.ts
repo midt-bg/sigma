@@ -14,9 +14,11 @@ export type RiskBand = 'low' | 'medium' | 'high' | 'critical';
 export type Brand<T, B extends string> = T & { readonly __brand: B };
 
 export function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
   return Math.min(Math.max(value, min), max);
 }
 
+/** Float-scaling rounding; display/threshold-only and keeps the classic 1.005 edge. */
 export function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }

@@ -25,6 +25,7 @@ export function computeRiskScore(
   signals: RiskSignals,
   weights: RiskWeights = DEFAULT_RISK_WEIGHTS,
 ): RiskResult {
+  // Non-finite signals are treated as 0 by the NaN-safe shared clamp.
   const norm = (v: number): number => clamp(v, 0, 100);
   const score = round2(
     norm(signals.spec) * weights.spec +

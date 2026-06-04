@@ -6,6 +6,7 @@ describe('shared utils', () => {
     expect(clamp(120, 0, 100)).toBe(100);
     expect(clamp(-5, 0, 100)).toBe(0);
     expect(clamp(42, 0, 100)).toBe(42);
+    expect(clamp(NaN, 0, 100)).toBe(0);
   });
 
   it('rounds to two decimals', () => {
@@ -15,6 +16,7 @@ describe('shared utils', () => {
 
   it('maps score to risk band', () => {
     expect(riskBand(0)).toBe('low');
+    expect(riskBand(NaN)).toBe('low');
     expect(riskBand(30)).toBe('medium');
     expect(riskBand(60)).toBe('high');
     expect(riskBand(90)).toBe('critical');

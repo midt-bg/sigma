@@ -11,6 +11,7 @@ import {
   pct,
   periodRange,
   plural,
+  parseConsortiumMembers,
   signedPct,
 } from './format';
 
@@ -21,6 +22,8 @@ describe('money', () => {
     expect(money(640)).toBe(`640${NBSP}€`);
     expect(money(412_000)).toBe(`412${NBSP}хил.${NBSP}€`);
     expect(money(187_000_000)).toBe(`187${NBSP}млн.${NBSP}€`);
+    expect(money(4.58e9)).toBe(`4,58${NBSP}млрд.${NBSP}€`);
+    expect(money(50.8e9)).toBe(`50,8${NBSP}млрд.${NBSP}€`);
     expect(money(123_600_000)).toBe(`123,6${NBSP}млн.${NBSP}€`);
     expect(money(50_840_000_000)).toBe(`50,8${NBSP}млрд.${NBSP}€`); // ≥10 млрд → one decimal
     expect(money(4_576_000_000)).toBe(`4,58${NBSP}млрд.${NBSP}€`); //  <10 млрд → two decimals
@@ -28,11 +31,19 @@ describe('money', () => {
   });
   it('rounds at tier boundaries without overflowing a tier', () => {
     expect(money(999)).toBe(`999${NBSP}€`);
+    expect(money(999.4)).toBe(`999${NBSP}€`);
+    expect(money(999.6)).toBe(`1${NBSP}хил.${NBSP}€`);
     expect(money(1000)).toBe(`1${NBSP}хил.${NBSP}€`);
+    expect(money(9.996e9)).toBe(`10${NBSP}млрд.${NBSP}€`);
   });
   it('suppresses absent values rather than printing 0', () => {
     expect(money(null)).toBe('—');
     expect(money(undefined)).toBe('—');
+    expect(money(NaN)).toBe('—');
+  });
+  it('does not emit signed zero', () => {
+    expect(money(-0.3)).toBe(`0${NBSP}€`);
+    expect(money(0)).toBe(`0${NBSP}€`);
   });
   it('keeps a sign for negative deltas', () => {
     expect(money(-1500)).toBe(`−2${NBSP}хил.${NBSP}€`);
@@ -48,6 +59,9 @@ describe('count / pct', () => {
   it('formats ratios as percentages, dropping a trailing ,0', () => {
     expect(pct(0.453)).toBe('45,3%');
     expect(pct(0.78)).toBe('78%');
+    expect(signedPct(0)).toBe('0%');
+    expect(signedPct(0.0001)).toBe('0%');
+    expect(signedPct(-0.0001)).toBe('0%');
     expect(signedPct(-0.233)).toBe('−23,3%');
     expect(signedPct(0.05)).toBe('+5%');
   });
@@ -106,5 +120,33 @@ describe('cleanName', () => {
   });
   it('trims and never throws', () => {
     expect(cleanName('  тест  ')).toBe('тест');
+  });
+});
+
+describe('parseConsortiumMembers', () => {
+  it('parses a clean semicolon-separated member list', () => {
+    const parsed = parseConsortiumMembers('A ООД; B ЕООД; C АД');
+    expect(parsed?.kind).toBe('list');
+    expect(parsed?.kind === 'list' ? parsed.members : []).toHaveLength(3);
+  });
+
+  it('returns null for a single name', () => {
+    expect(parseConsortiumMembers('Едно ООД')).toBeNull();
+  });
+
+  it('keeps prose strings intact', () => {
+    expect(parseConsortiumMembers('съдружници са следните лица')).toEqual({
+      kind: 'prose',
+      raw: 'съдружници са следните лица',
+    });
+  });
+
+  it('returns null for an empty string', () => {
+    expect(parseConsortiumMembers('')).toBeNull();
+  });
+
+  it('dedupes repeated members', () => {
+    const parsed = parseConsortiumMembers('A; A; B');
+    expect(parsed).toEqual({ kind: 'list', members: ['A', 'B'] });
   });
 });
