@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database;
   ADMIN_BASIC_AUTH_USER?: string;
   ADMIN_BASIC_AUTH_PASS?: string;
+  ADMIN_ALLOW_UNAUTH?: string;
 }
 
 const ESCAPE: Record<string, string> = {
@@ -25,16 +26,34 @@ function unauthorized(): Response {
   });
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  let diff = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+
+  for (let i = 0; i < length; i += 1) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+
+  return diff === 0;
+}
+
 function isAuthorized(request: Request, env: Env): boolean {
-  // Open in local dev when no password is configured; enforced in production.
-  if (!env.ADMIN_BASIC_AUTH_PASS) return true;
+  if (!env.ADMIN_BASIC_AUTH_PASS) return env.ADMIN_ALLOW_UNAUTH === 'true';
   const header = request.headers.get('authorization');
   if (!header?.startsWith('Basic ')) return false;
-  const decoded = atob(header.slice('Basic '.length));
-  const sep = decoded.indexOf(':');
-  const user = decoded.slice(0, sep);
-  const pass = decoded.slice(sep + 1);
-  return user === (env.ADMIN_BASIC_AUTH_USER ?? 'admin') && pass === env.ADMIN_BASIC_AUTH_PASS;
+
+  try {
+    const decoded = atob(header.slice('Basic '.length));
+    const sep = decoded.indexOf(':');
+    if (sep < 0) return false;
+
+    const user = decoded.slice(0, sep);
+    const pass = decoded.slice(sep + 1);
+
+    return user === (env.ADMIN_BASIC_AUTH_USER ?? 'admin') && constantTimeEqual(pass, env.ADMIN_BASIC_AUTH_PASS);
+  } catch {
+    return false;
+  }
 }
 
 export default {
