@@ -110,7 +110,8 @@ export function keyset(opts: {
   const sqlDir = effectiveDir.toUpperCase();
   const cmp = effectiveDir === 'desc' ? '<' : '>';
   const orderSql = `ORDER BY ${opts.sortCol} ${sqlDir}, ${opts.idCol} ${sqlDir}`;
-  if (!decoded) return { whereSql: '', params: [], orderSql, reverse: false, cursor: null, cursorToken: token };
+  if (!decoded)
+    return { whereSql: '', params: [], orderSql, reverse: false, cursor: null, cursorToken: token };
   const whereSql = `(${opts.sortCol} ${cmp} ? OR (${opts.sortCol} = ? AND ${opts.idCol} ${cmp} ?))`;
   return {
     whereSql,
@@ -136,12 +137,15 @@ export function pageCursors(opts: {
   const last = rows[rows.length - 1];
   if (decoded?.dir === 'before') {
     return {
-      prevCursor: hasMore && first ? encodeCursor('before', first.sortValue, first.id, sortToken) : null,
+      prevCursor:
+        hasMore && first ? encodeCursor('before', first.sortValue, first.id, sortToken) : null,
       nextCursor: last ? encodeCursor('after', last.sortValue, last.id, sortToken) : null,
     };
   }
   // On the first page (no cursor) there is no Prev. Otherwise Prev anchors before the first row.
-  const prevCursor = decoded && first ? encodeCursor('before', first.sortValue, first.id, sortToken) : null;
-  const nextCursor = hasMore && last ? encodeCursor('after', last.sortValue, last.id, sortToken) : null;
+  const prevCursor =
+    decoded && first ? encodeCursor('before', first.sortValue, first.id, sortToken) : null;
+  const nextCursor =
+    hasMore && last ? encodeCursor('after', last.sortValue, last.id, sortToken) : null;
   return { nextCursor, prevCursor };
 }

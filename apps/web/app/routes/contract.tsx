@@ -411,11 +411,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   (returns application/json, no HTML), so client-side navigation can't render it —
                   React Router would treat the JSON as a route module and crash. target=_blank
                   opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
-              <a
-                href={`/contracts/${c.id}.json`}
-                target="_blank"
-                rel="noopener"
-              >
+              <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в Сигма
               </a>
               <span className="sub">машиночетим, всички полета — /contracts/{c.id}.json</span>

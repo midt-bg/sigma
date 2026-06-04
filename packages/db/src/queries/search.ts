@@ -19,8 +19,27 @@ const GROUPS: { kind: Kind; label: string; amountLabel: string; limit: number }[
 // nothing. We map only the well-known confusable set, and only on the search term (never on stored
 // data). Case-sensitive: e.g. Latin `B` looks like Cyrillic `В`, but lowercase `b` has no twin.
 const HOMOGLYPHS: Record<string, string> = {
-  a: 'а', c: 'с', e: 'е', o: 'о', p: 'р', x: 'х', y: 'у', k: 'к', m: 'м', t: 'т',
-  A: 'А', B: 'В', C: 'С', E: 'Е', H: 'Н', K: 'К', M: 'М', O: 'О', P: 'Р', T: 'Т', X: 'Х',
+  a: 'а',
+  c: 'с',
+  e: 'е',
+  o: 'о',
+  p: 'р',
+  x: 'х',
+  y: 'у',
+  k: 'к',
+  m: 'м',
+  t: 'т',
+  A: 'А',
+  B: 'В',
+  C: 'С',
+  E: 'Е',
+  H: 'Н',
+  K: 'К',
+  M: 'М',
+  O: 'О',
+  P: 'Р',
+  T: 'Т',
+  X: 'Х',
 };
 
 const CYRILLIC = /[\p{Script=Cyrillic}]/u;

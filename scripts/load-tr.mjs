@@ -29,13 +29,34 @@ const MAX_BATCH_BYTES = 90_000;
 const MAX_BATCH_ROWS = 500;
 
 const COMPANY_COLS = [
-  'source', 'fetched_at', 'file_date', 'deed_guid', 'uic', 'company_name', 'legal_form', 'deed_status',
-  'subject_of_activity', 'nkid', 'country', 'district', 'district_ekatte', 'municipality',
-  'municipality_ekatte', 'settlement', 'settlement_ekatte', 'post_code', 'street', 'street_number',
+  'source',
+  'fetched_at',
+  'file_date',
+  'deed_guid',
+  'uic',
+  'company_name',
+  'legal_form',
+  'deed_status',
+  'subject_of_activity',
+  'nkid',
+  'country',
+  'district',
+  'district_ekatte',
+  'municipality',
+  'municipality_ekatte',
+  'settlement',
+  'settlement_ekatte',
+  'post_code',
+  'street',
+  'street_number',
 ];
 
 const sqlLit = (v) =>
-  v === null || v === undefined || v === '' ? 'NULL' : `'${String(v).replace(/[\x00-\x1F]/g, '').replace(/'/g, "''")}'`;
+  v === null || v === undefined || v === ''
+    ? 'NULL'
+    : `'${String(v)
+        .replace(/[\x00-\x1F]/g, '')
+        .replace(/'/g, "''")}'`;
 const asArray = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
 const txt = (v) => {
   if (v === null || v === undefined) return null;
@@ -119,14 +140,25 @@ function deedToRows(deed, ctx) {
     if (!nkid && s?.SubjectOfActivityNKID != null) nkid = txt(s.SubjectOfActivityNKID);
   }
   const company = {
-    source: ctx.source, fetched_at: ctx.fetchedAt, file_date: ctx.fileDate, deed_guid: deed['@_GUID'] || null,
-    uic, company_name: deed['@_CompanyName'] || null, legal_form: deed['@_LegalForm'] || null,
-    deed_status: deed['@_DeedStatus'] || null, subject_of_activity: subject, nkid,
+    source: ctx.source,
+    fetched_at: ctx.fetchedAt,
+    file_date: ctx.fileDate,
+    deed_guid: deed['@_GUID'] || null,
+    uic,
+    company_name: deed['@_CompanyName'] || null,
+    legal_form: deed['@_LegalForm'] || null,
+    deed_status: deed['@_DeedStatus'] || null,
+    subject_of_activity: subject,
+    nkid,
     country: addr ? txt(addr.Country) : null,
-    district: addr ? txt(addr.District) : null, district_ekatte: addr ? txt(addr.DistrictEkatte) : null,
-    municipality: addr ? txt(addr.Municipality) : null, municipality_ekatte: addr ? txt(addr.MunicipalityEkatte) : null,
-    settlement: addr ? txt(addr.Settlement) : null, settlement_ekatte: addr ? txt(addr.SettlementEKATTE) : null,
-    post_code: addr ? txt(addr.PostCode) : null, street: addr ? txt(addr.Street) : null,
+    district: addr ? txt(addr.District) : null,
+    district_ekatte: addr ? txt(addr.DistrictEkatte) : null,
+    municipality: addr ? txt(addr.Municipality) : null,
+    municipality_ekatte: addr ? txt(addr.MunicipalityEkatte) : null,
+    settlement: addr ? txt(addr.Settlement) : null,
+    settlement_ekatte: addr ? txt(addr.SettlementEKATTE) : null,
+    post_code: addr ? txt(addr.PostCode) : null,
+    street: addr ? txt(addr.Street) : null,
     street_number: addr ? txt(addr.StreetNumber) : null,
   };
   return { company };
@@ -147,7 +179,8 @@ function makeBatcher(out, header) {
   };
   const push = async (tuple) => {
     const tb = Buffer.byteLength(tuple, 'utf8') + 2;
-    if (batch.length && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES)) await flush();
+    if (batch.length && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES))
+      await flush();
     batch.push(tuple);
     stmtBytes += tb;
   };
@@ -167,10 +200,14 @@ async function main() {
   if (!arg('limit') && !all && !apply) {
     process.stderr.write(`\nMost-recent ${resources.length} daily resources:\n`);
     for (const r of resources.slice(0, 25)) process.stderr.write(`  ${r.date}  ${r.uri}\n`);
-    process.stderr.write('\nScope: --limit=N or --all  (+ --apply to load D1). Open feed is daily deltas from 2022-09.\n');
+    process.stderr.write(
+      '\nScope: --limit=N or --all  (+ --apply to load D1). Open feed is daily deltas from 2022-09.\n',
+    );
     return;
   }
-  process.stderr.write(`==> processing ${resources.length} daily files in chunks of ${chunkSize} (deltas)\n`);
+  process.stderr.write(
+    `==> processing ${resources.length} daily files in chunks of ${chunkSize} (deltas)\n`,
+  );
 
   const files = {
     companies: resolve(root, 'data/tr-companies-load.sql'),
@@ -184,10 +221,7 @@ async function main() {
     runW(['d1', 'migrations', 'apply', 'sigma', scope]);
     // one-time clear of this source's staging (chunks below only INSERT, so they accumulate)
     const clear = resolve(root, 'data/tr-clear.sql');
-    writeFileSync(
-      clear,
-      "DELETE FROM raw_tr_companies WHERE source LIKE 'tr:%';\n",
-    );
+    writeFileSync(clear, "DELETE FROM raw_tr_companies WHERE source LIKE 'tr:%';\n");
     runW(['d1', 'execute', 'sigma', scope, '--file', clear]);
   }
 
@@ -204,7 +238,10 @@ async function main() {
   writeFileSync(files.companies, '');
   const cOut = createWriteStream(files.companies, { encoding: 'utf8', flags: 'a' });
   await writeChunk(cOut, '-- Generated by scripts/load-tr.mjs (chunks).\n');
-  const cb = makeBatcher(cOut, `INSERT INTO raw_tr_companies (${COMPANY_COLS.join(', ')}) VALUES\n`);
+  const cb = makeBatcher(
+    cOut,
+    `INSERT INTO raw_tr_companies (${COMPANY_COLS.join(', ')}) VALUES\n`,
+  );
 
   try {
     for (let i = 0; i < resources.length; i += chunkSize) {
@@ -244,12 +281,14 @@ async function main() {
     cOut.end();
     await once(cOut, 'finish');
   }
-  if (apply) for (const f of Object.values(files)) runW(['d1', 'execute', 'sigma', scope, '--file', f]);
+  if (apply)
+    for (const f of Object.values(files)) runW(['d1', 'execute', 'sigma', scope, '--file', f]);
 
   process.stderr.write(
     `\n==> done: ${nDeeds.toLocaleString('en-US')} company rows from ${resources.length} files\n`,
   );
-  if (!apply) process.stderr.write('(dry run — SQL written to data/tr-*-load.sql; re-run with --apply)\n');
+  if (!apply)
+    process.stderr.write('(dry run — SQL written to data/tr-*-load.sql; re-run with --apply)\n');
 }
 
 main().catch((err) => {

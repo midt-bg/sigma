@@ -77,7 +77,9 @@ function coerce(kind, v) {
 function lit(kind, value) {
   if (value === null) return 'NULL';
   if (kind === 'int' || kind === 'real' || kind === 'bool') return String(value);
-  return `'${String(value).replace(/[\x00-\x1F]/g, '').replace(/'/g, "''")}'`;
+  return `'${String(value)
+    .replace(/[\x00-\x1F]/g, '')
+    .replace(/'/g, "''")}'`;
 }
 function readSheetInput(file) {
   const buf = readFileSync(file);
@@ -279,9 +281,13 @@ function extractCsv(cat, year) {
   const innerZip = `OpenData_${cfg.dir}_${year}.zip`;
   const tmp = resolve(workDir, `${cat}_${year}`);
   mkdirSync(tmp, { recursive: true });
-  execFileSync('unzip', ['-o', '-j', zipFile, `Open_data_resources/${cfg.dir}/${innerZip}`, '-d', tmp], {
-    stdio: 'ignore',
-  });
+  execFileSync(
+    'unzip',
+    ['-o', '-j', zipFile, `Open_data_resources/${cfg.dir}/${innerZip}`, '-d', tmp],
+    {
+      stdio: 'ignore',
+    },
+  );
   execFileSync('unzip', ['-o', '-j', resolve(tmp, innerZip), '-d', tmp], { stdio: 'ignore' });
   return { csv: resolve(tmp, `OpenData_${cfg.dir}.csv`), tmp };
 }
@@ -365,7 +371,8 @@ async function loadCategory(cat, years, apply, remote) {
       }
       const tuple = `(${vals.join(',')})`;
       const tb = Buffer.byteLength(tuple, 'utf8') + 2;
-      if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES)) await flush();
+      if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES))
+        await flush();
       batch.push(tuple);
       stmtBytes += tb;
       count++;
@@ -377,7 +384,9 @@ async function loadCategory(cat, years, apply, remote) {
 
   out.end();
   await once(out, 'finish');
-  process.stderr.write(`==> ${cat}: ${grand.toLocaleString('en-US')} rows → ${outFile} (max stmt ${maxStmt})\n`);
+  process.stderr.write(
+    `==> ${cat}: ${grand.toLocaleString('en-US')} rows → ${outFile} (max stmt ${maxStmt})\n`,
+  );
 
   if (apply) {
     const scope = remote ? '--remote' : '--local';
@@ -398,7 +407,10 @@ async function main() {
 
   if (apply) {
     const scope = remote ? '--remote' : '--local';
-    execFileSync('wrangler', ['d1', 'migrations', 'apply', 'sigma', scope], { stdio: 'inherit', cwd: apiDir });
+    execFileSync('wrangler', ['d1', 'migrations', 'apply', 'sigma', scope], {
+      stdio: 'inherit',
+      cwd: apiDir,
+    });
   }
   const totals = {};
   for (const cat of cats) totals[cat] = await loadCategory(cat, years, apply, remote);

@@ -125,7 +125,9 @@ function coerce(kind, v) {
 function sqlLiteral(kind, value) {
   if (value === null) return 'NULL';
   if (kind === 'int' || kind === 'real' || kind === 'bool') return String(value);
-  return `'${String(value).replace(/[\x00-\x1F]/g, '').replace(/'/g, "''")}'`;
+  return `'${String(value)
+    .replace(/[\x00-\x1F]/g, '')
+    .replace(/'/g, "''")}'`;
 }
 
 // --- portal API -------------------------------------------------------------
@@ -208,9 +210,14 @@ async function main() {
   if (variant) datasets = datasets.filter((d) => d.variant === variant);
 
   if (!all && year === undefined) {
-    process.stderr.write(`\nDiscovered ${datasets.length} contract datasets (org ${AOP_ORG_ID}):\n`);
-    for (const d of datasets) process.stderr.write(`  ${d.year} ${d.variant}  ${d.uri}  ${d.name}\n`);
-    process.stderr.write('\nPick scope to fetch: --year=YYYY or --all  (add --apply to load D1).\n');
+    process.stderr.write(
+      `\nDiscovered ${datasets.length} contract datasets (org ${AOP_ORG_ID}):\n`,
+    );
+    for (const d of datasets)
+      process.stderr.write(`  ${d.year} ${d.variant}  ${d.uri}  ${d.name}\n`);
+    process.stderr.write(
+      '\nPick scope to fetch: --year=YYYY or --all  (add --apply to load D1).\n',
+    );
     return;
   }
   const selected = all ? datasets : datasets.filter((d) => d.year === year);
@@ -288,7 +295,10 @@ async function main() {
       vals.push('1'); // needs_enrichment
       const tuple = `(${vals.join(',')})`;
       const tupleBytes = Buffer.byteLength(tuple, 'utf8') + 2;
-      if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tupleBytes > MAX_BATCH_BYTES)) {
+      if (
+        batch.length > 0 &&
+        (batch.length >= MAX_BATCH_ROWS || stmtBytes + tupleBytes > MAX_BATCH_BYTES)
+      ) {
         await flush();
       }
       batch.push(tuple);

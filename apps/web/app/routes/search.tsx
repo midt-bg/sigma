@@ -53,7 +53,11 @@ function deHomoglyph(q: string): string {
 }
 
 function normalizedTerms(q: string, limit: number): string[] {
-  const terms = q.slice(0, MAX_QUERY_CHARS).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const terms =
+    q
+      .slice(0, MAX_QUERY_CHARS)
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? [];
   return terms.slice(0, limit).map((t) => (CYRILLIC.test(t) ? deHomoglyph(t) : t));
 }
 
@@ -86,7 +90,8 @@ function highlight(text: string | null, re: RegExp | null): ReactNode {
 export default function Search({ loaderData }: Route.ComponentProps) {
   const { results } = loaderData;
   const tokens = normalizedTerms(results.query, MAX_HIGHLIGHT_TOKENS);
-  const highlightRe = tokens.length > 0 ? new RegExp(`(${tokens.map(escapeRe).join('|')})`, 'giu') : null;
+  const highlightRe =
+    tokens.length > 0 ? new RegExp(`(${tokens.map(escapeRe).join('|')})`, 'giu') : null;
   const hasQuery = results.query.trim().length > 0;
 
   // What the search covers — a description, shown as the lede on the empty-query and no-results
@@ -144,7 +149,8 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                         <>
                           {h.ident && (
                             <>
-                              УНП <span className="mono">{highlight(h.ident, highlightRe)}</span> ·{' '}
+                              УНП <span className="mono">{highlight(h.ident, highlightRe)}</span>{' '}
+                              ·{' '}
                             </>
                           )}
                           {highlight(h.subtitle, highlightRe)}

@@ -34,36 +34,113 @@ const MAX_BATCH_ROWS = 500;
 
 // raw_egov_contracts insert order (must match load-egov.mjs).
 const CONTRACT_COLS = [
-  'source', 'dataset_uri', 'resource_uri', 'dataset_year', 'dataset_variant', 'fetched_at',
-  'seq_no', 'document_number', 'contract_number', 'contract_date', 'published_at', 'unp',
-  'authority_eik', 'authority_name', 'procurement_subject', 'contract_kind', 'eu_funded',
-  'bids_received', 'contract_subject', 'contractor_eik', 'contractor_name', 'signing_value',
-  'currency', 'vat', 'sme', 'procedure_type', 'cpv_code', 'estimated_value', 'current_value',
+  'source',
+  'dataset_uri',
+  'resource_uri',
+  'dataset_year',
+  'dataset_variant',
+  'fetched_at',
+  'seq_no',
+  'document_number',
+  'contract_number',
+  'contract_date',
+  'published_at',
+  'unp',
+  'authority_eik',
+  'authority_name',
+  'procurement_subject',
+  'contract_kind',
+  'eu_funded',
+  'bids_received',
+  'contract_subject',
+  'contractor_eik',
+  'contractor_name',
+  'signing_value',
+  'currency',
+  'vat',
+  'sme',
+  'procedure_type',
+  'cpv_code',
+  'estimated_value',
+  'current_value',
   'needs_enrichment',
 ];
 // raw_egov_amendments insert order (must match load-annexes.mjs).
 const AMEND_COLS = [
-  'source', 'dataset_uri', 'resource_uri', 'dataset_year', 'dataset_variant', 'fetched_at',
-  'seq_no', 'document_number', 'contract_number', 'contract_date', 'published_at', 'unp',
-  'authority_eik', 'authority_name', 'procurement_subject', 'contract_kind', 'eu_funded',
-  'contract_subject', 'contractor_eik', 'contractor_name', 'value_before', 'value_after',
-  'value_delta', 'currency', 'description', 'reason', 'circumstances', 'sme',
+  'source',
+  'dataset_uri',
+  'resource_uri',
+  'dataset_year',
+  'dataset_variant',
+  'fetched_at',
+  'seq_no',
+  'document_number',
+  'contract_number',
+  'contract_date',
+  'published_at',
+  'unp',
+  'authority_eik',
+  'authority_name',
+  'procurement_subject',
+  'contract_kind',
+  'eu_funded',
+  'contract_subject',
+  'contractor_eik',
+  'contractor_name',
+  'value_before',
+  'value_after',
+  'value_delta',
+  'currency',
+  'description',
+  'reason',
+  'circumstances',
+  'sme',
 ];
 // raw_ocds_parties insert order.
 const PARTY_COLS = [
-  'source', 'dataset_uri', 'resource_uri', 'fetched_at', 'ocid', 'party_id', 'eik', 'scheme',
-  'name', 'roles', 'street_address', 'locality', 'postal_code', 'region_nuts', 'country',
-  'contact_name', 'contact_email', 'contact_phone',
+  'source',
+  'dataset_uri',
+  'resource_uri',
+  'fetched_at',
+  'ocid',
+  'party_id',
+  'eik',
+  'scheme',
+  'name',
+  'roles',
+  'street_address',
+  'locality',
+  'postal_code',
+  'region_nuts',
+  'country',
+  'contact_name',
+  'contact_email',
+  'contact_phone',
 ];
 // raw_ocds_award_suppliers insert order (all suppliers per award; >1 = joint venture / consortium).
 const AWARD_SUPPLIER_COLS = [
-  'source', 'dataset_uri', 'resource_uri', 'fetched_at', 'ocid', 'award_id', 'supplier_count',
-  'supplier_eik', 'supplier_name',
+  'source',
+  'dataset_uri',
+  'resource_uri',
+  'fetched_at',
+  'ocid',
+  'award_id',
+  'supplier_count',
+  'supplier_eik',
+  'supplier_name',
 ];
 const COL_KIND = {
-  dataset_year: 'int', eu_funded: 'int', bids_received: 'int', signing_value: 'real',
-  estimated_value: 'real', current_value: 'real', needs_enrichment: 'int',
-  value_before: 'real', value_after: 'real', value_delta: 'real', supplier_count: 'int',
+  dataset_year: 'int',
+  eu_funded: 'int',
+  bids_received: 'int',
+  signing_value: 'real',
+  estimated_value: 'real',
+  current_value: 'real',
+  needs_enrichment: 'int',
+  value_before: 'real',
+  value_after: 'real',
+  value_delta: 'real',
+  supplier_count: 'int',
 };
 const KIND_CATEGORY = { goods: 'Доставки', services: 'Услуги', works: 'Строителство' };
 
@@ -74,7 +151,9 @@ function sqlLiteral(col, value) {
     const n = Number(value);
     return Number.isFinite(n) ? String(n) : 'NULL';
   }
-  return `'${String(value).replace(/[\x00-\x1F]/g, '').replace(/'/g, "''")}'`;
+  return `'${String(value)
+    .replace(/[\x00-\x1F]/g, '')
+    .replace(/'/g, "''")}'`;
 }
 const dateOnly = (s) => (s ? String(s).slice(0, 10) : null);
 function cachePath(resourceUri) {
@@ -112,7 +191,10 @@ async function getResourceData(resourceUri, refresh) {
   return JSON.parse(text);
 }
 async function discoverOcdsDatasets() {
-  const r = await postJSON('listDatasets', { criteria: { org_ids: [AOP_ORG_ID] }, records_per_page: 200 });
+  const r = await postJSON('listDatasets', {
+    criteria: { org_ids: [AOP_ORG_ID] },
+    records_per_page: 200,
+  });
   const out = [];
   for (const ds of r.datasets || []) {
     if (!/стандарт\s+OCDS/i.test(ds.name || '')) continue;
@@ -131,7 +213,8 @@ async function findJsonResource(datasetUri) {
 // Shared per-release context: party map + buyer/tender fields used by both row kinds.
 function relContext(rel, meta) {
   const party = {};
-  for (const p of rel.parties || []) party[p.id] = { eik: p.identifier?.id ?? null, name: p.name ?? null };
+  for (const p of rel.parties || [])
+    party[p.id] = { eik: p.identifier?.id ?? null, name: p.name ?? null };
   const t = rel.tender || {};
   const buyerParty = rel.buyer?.id ? party[rel.buyer.id] : null;
   return {
@@ -139,7 +222,9 @@ function relContext(rel, meta) {
     tender: t,
     contract_kind: KIND_CATEGORY[t.mainProcurementCategory] || t.mainProcurementCategory || null,
     authority_eik:
-      buyerParty?.eik ?? (rel.parties || []).find((p) => (p.roles || []).includes('buyer'))?.identifier?.id ?? null,
+      buyerParty?.eik ??
+      (rel.parties || []).find((p) => (p.roles || []).includes('buyer'))?.identifier?.id ??
+      null,
     authority_name: rel.buyer?.name || buyerParty?.name || null,
     published_at: dateOnly(rel.date || meta.publishedDate),
   };
@@ -160,21 +245,42 @@ function releaseToContracts(rel, meta) {
   const ctx = relContext(rel, meta);
   const t = ctx.tender;
   const procedure_type = t.procurementMethodDetails || t.procurementMethod || null;
-  const cpv = (t.items || []).map((i) => i.classification).find((c) => c && /cpv/i.test(c.scheme || ''))?.id ?? null;
+  const cpv =
+    (t.items || []).map((i) => i.classification).find((c) => c && /cpv/i.test(c.scheme || ''))
+      ?.id ?? null;
   const bids = (rel.bids?.statistics || []).find((s) => s.measure === 'bids')?.value ?? null;
   return rel.contracts.map((c) => {
     const sup = supplierOf(rel, ctx, c);
     return {
-      source: meta.source, dataset_uri: meta.dataset_uri, resource_uri: meta.resource_uri,
-      dataset_year: meta.year, dataset_variant: 'OCDS', fetched_at: meta.fetchedAt,
-      seq_no: null, document_number: rel.id ?? null, contract_number: c.id ?? null,
-      contract_date: dateOnly(c.dateSigned), published_at: ctx.published_at, unp: rel.ocid ?? null,
-      authority_eik: ctx.authority_eik, authority_name: ctx.authority_name,
-      procurement_subject: t.title ?? null, contract_kind: ctx.contract_kind, eu_funded: null,
-      bids_received: bids, contract_subject: c.title || sup.awardTitle || null,
-      contractor_eik: sup.eik, contractor_name: sup.name,
-      signing_value: c.value?.amount ?? null, currency: c.value?.currency ?? null, vat: null, sme: null,
-      procedure_type, cpv_code: cpv, estimated_value: t.value?.amount ?? null, current_value: null,
+      source: meta.source,
+      dataset_uri: meta.dataset_uri,
+      resource_uri: meta.resource_uri,
+      dataset_year: meta.year,
+      dataset_variant: 'OCDS',
+      fetched_at: meta.fetchedAt,
+      seq_no: null,
+      document_number: rel.id ?? null,
+      contract_number: c.id ?? null,
+      contract_date: dateOnly(c.dateSigned),
+      published_at: ctx.published_at,
+      unp: rel.ocid ?? null,
+      authority_eik: ctx.authority_eik,
+      authority_name: ctx.authority_name,
+      procurement_subject: t.title ?? null,
+      contract_kind: ctx.contract_kind,
+      eu_funded: null,
+      bids_received: bids,
+      contract_subject: c.title || sup.awardTitle || null,
+      contractor_eik: sup.eik,
+      contractor_name: sup.name,
+      signing_value: c.value?.amount ?? null,
+      currency: c.value?.currency ?? null,
+      vat: null,
+      sme: null,
+      procedure_type,
+      cpv_code: cpv,
+      estimated_value: t.value?.amount ?? null,
+      current_value: null,
       needs_enrichment: 0,
     };
   });
@@ -182,23 +288,44 @@ function releaseToContracts(rel, meta) {
 
 function releaseToAmendments(rel, meta) {
   const tags = rel.tag || [];
-  if (!(tags.includes('contractAmendment') || tags.includes('contractUpdate')) || !(rel.contracts || []).length)
+  if (
+    !(tags.includes('contractAmendment') || tags.includes('contractUpdate')) ||
+    !(rel.contracts || []).length
+  )
     return [];
   const ctx = relContext(rel, meta);
   return rel.contracts.map((c) => {
     const sup = supplierOf(rel, ctx, c);
     const amd = (c.amendments || []).slice(-1)[0] || null; // latest amendment for rationale/description
     return {
-      source: meta.source, dataset_uri: meta.dataset_uri, resource_uri: meta.resource_uri,
-      dataset_year: meta.year, dataset_variant: 'OCDS', fetched_at: meta.fetchedAt,
-      seq_no: null, document_number: rel.id ?? null, contract_number: c.id ?? null,
-      contract_date: dateOnly(c.dateSigned), published_at: ctx.published_at, unp: rel.ocid ?? null,
-      authority_eik: ctx.authority_eik, authority_name: ctx.authority_name,
-      procurement_subject: ctx.tender.title ?? null, contract_kind: ctx.contract_kind, eu_funded: null,
-      contract_subject: c.title || sup.awardTitle || null, contractor_eik: sup.eik, contractor_name: sup.name,
-      value_before: null, value_after: c.value?.amount ?? null, value_delta: null,
-      currency: c.value?.currency ?? null, description: amd?.description || null, reason: amd?.rationale || null,
-      circumstances: null, sme: null,
+      source: meta.source,
+      dataset_uri: meta.dataset_uri,
+      resource_uri: meta.resource_uri,
+      dataset_year: meta.year,
+      dataset_variant: 'OCDS',
+      fetched_at: meta.fetchedAt,
+      seq_no: null,
+      document_number: rel.id ?? null,
+      contract_number: c.id ?? null,
+      contract_date: dateOnly(c.dateSigned),
+      published_at: ctx.published_at,
+      unp: rel.ocid ?? null,
+      authority_eik: ctx.authority_eik,
+      authority_name: ctx.authority_name,
+      procurement_subject: ctx.tender.title ?? null,
+      contract_kind: ctx.contract_kind,
+      eu_funded: null,
+      contract_subject: c.title || sup.awardTitle || null,
+      contractor_eik: sup.eik,
+      contractor_name: sup.name,
+      value_before: null,
+      value_after: c.value?.amount ?? null,
+      value_delta: null,
+      currency: c.value?.currency ?? null,
+      description: amd?.description || null,
+      reason: amd?.rationale || null,
+      circumstances: null,
+      sme: null,
     };
   });
 }
@@ -209,13 +336,24 @@ function releaseToParties(rel, meta) {
     const a = p.address || {};
     const cp = p.contactPoint || {};
     return {
-      source: meta.source, dataset_uri: meta.dataset_uri, resource_uri: meta.resource_uri,
-      fetched_at: meta.fetchedAt, ocid: rel.ocid ?? null, party_id: p.id ?? null,
-      eik: p.identifier?.id ?? null, scheme: p.identifier?.scheme ?? null, name: p.name ?? null,
+      source: meta.source,
+      dataset_uri: meta.dataset_uri,
+      resource_uri: meta.resource_uri,
+      fetched_at: meta.fetchedAt,
+      ocid: rel.ocid ?? null,
+      party_id: p.id ?? null,
+      eik: p.identifier?.id ?? null,
+      scheme: p.identifier?.scheme ?? null,
+      name: p.name ?? null,
       roles: (p.roles || []).join(',') || null,
-      street_address: a.streetAddress ?? null, locality: a.locality ?? null,
-      postal_code: a.postalCode ?? null, region_nuts: a.region ?? null, country: a.countryName ?? null,
-      contact_name: cp.name ?? null, contact_email: cp.email ?? null, contact_phone: cp.telephone ?? null,
+      street_address: a.streetAddress ?? null,
+      locality: a.locality ?? null,
+      postal_code: a.postalCode ?? null,
+      region_nuts: a.region ?? null,
+      country: a.countryName ?? null,
+      contact_name: cp.name ?? null,
+      contact_email: cp.email ?? null,
+      contact_phone: cp.telephone ?? null,
     };
   });
 }
@@ -223,16 +361,22 @@ function releaseToParties(rel, meta) {
 // Every supplier on every award → one row. supplier_count > 1 marks a joint venture / consortium.
 function releaseToAwardSuppliers(rel, meta) {
   const party = {};
-  for (const p of rel.parties || []) party[p.id] = { eik: p.identifier?.id ?? null, name: p.name ?? null };
+  for (const p of rel.parties || [])
+    party[p.id] = { eik: p.identifier?.id ?? null, name: p.name ?? null };
   const out = [];
   for (const aw of rel.awards || []) {
     const sups = aw.suppliers || [];
     for (const s of sups) {
       const sp = s.id ? party[s.id] : null;
       out.push({
-        source: meta.source, dataset_uri: meta.dataset_uri, resource_uri: meta.resource_uri,
-        fetched_at: meta.fetchedAt, ocid: rel.ocid ?? null, award_id: aw.id ?? null,
-        supplier_count: sups.length, supplier_eik: sp?.eik ?? s.identifier?.id ?? null,
+        source: meta.source,
+        dataset_uri: meta.dataset_uri,
+        resource_uri: meta.resource_uri,
+        fetched_at: meta.fetchedAt,
+        ocid: rel.ocid ?? null,
+        award_id: aw.id ?? null,
+        supplier_count: sups.length,
+        supplier_eik: sp?.eik ?? s.identifier?.id ?? null,
         supplier_name: s.name || sp?.name || null,
       });
     }
@@ -264,7 +408,8 @@ function makeBatcher(out, header) {
   };
   const push = async (tuple) => {
     const tb = Buffer.byteLength(tuple, 'utf8') + 2;
-    if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES)) await flush();
+    if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tb > MAX_BATCH_BYTES))
+      await flush();
     batch.push(tuple);
     stmtBytes += tb;
   };
@@ -316,10 +461,19 @@ async function main() {
       `-- АОП OCDS award suppliers (all suppliers per award; >1 = joint venture / consortium, 2026+).\n` +
       `DELETE FROM raw_ocds_award_suppliers WHERE source LIKE 'ocds:%';\n`,
   );
-  const cb = makeBatcher(cOut, `INSERT INTO raw_egov_contracts (${CONTRACT_COLS.join(', ')}) VALUES\n`);
-  const ab = makeBatcher(aOut, `INSERT INTO raw_egov_amendments (${AMEND_COLS.join(', ')}) VALUES\n`);
+  const cb = makeBatcher(
+    cOut,
+    `INSERT INTO raw_egov_contracts (${CONTRACT_COLS.join(', ')}) VALUES\n`,
+  );
+  const ab = makeBatcher(
+    aOut,
+    `INSERT INTO raw_egov_amendments (${AMEND_COLS.join(', ')}) VALUES\n`,
+  );
   const pb = makeBatcher(pOut, `INSERT INTO raw_ocds_parties (${PARTY_COLS.join(', ')}) VALUES\n`);
-  const sb = makeBatcher(sOut, `INSERT INTO raw_ocds_award_suppliers (${AWARD_SUPPLIER_COLS.join(', ')}) VALUES\n`);
+  const sb = makeBatcher(
+    sOut,
+    `INSERT INTO raw_ocds_award_suppliers (${AWARD_SUPPLIER_COLS.join(', ')}) VALUES\n`,
+  );
   const fetchedAt = new Date().toISOString().replace('.000Z', 'Z');
   let contractRows = 0;
   let amendRows = 0;
@@ -372,14 +526,21 @@ async function main() {
     amendRows += aN;
     partyRows += pN;
     supplierRows += sN;
-    process.stderr.write(`   ${cN.toLocaleString('en-US')} contracts, ${aN.toLocaleString('en-US')} amendments, ${pN.toLocaleString('en-US')} parties, ${sN.toLocaleString('en-US')} award-suppliers\n`);
+    process.stderr.write(
+      `   ${cN.toLocaleString('en-US')} contracts, ${aN.toLocaleString('en-US')} amendments, ${pN.toLocaleString('en-US')} parties, ${sN.toLocaleString('en-US')} award-suppliers\n`,
+    );
   }
 
   cOut.end();
   aOut.end();
   pOut.end();
   sOut.end();
-  await Promise.all([once(cOut, 'finish'), once(aOut, 'finish'), once(pOut, 'finish'), once(sOut, 'finish')]);
+  await Promise.all([
+    once(cOut, 'finish'),
+    once(aOut, 'finish'),
+    once(pOut, 'finish'),
+    once(sOut, 'finish'),
+  ]);
   process.stderr.write(
     `==> wrote ${contractRows.toLocaleString('en-US')} contracts + ${amendRows.toLocaleString('en-US')} amendments + ` +
       `${partyRows.toLocaleString('en-US')} parties + ${supplierRows.toLocaleString('en-US')} award-suppliers ` +
@@ -387,7 +548,9 @@ async function main() {
   );
 
   if (!apply) {
-    process.stderr.write(`\nNext: load ${contractsFile} and ${amendFile}, then run derive-amendments.sql.\n`);
+    process.stderr.write(
+      `\nNext: load ${contractsFile} and ${amendFile}, then run derive-amendments.sql.\n`,
+    );
     return;
   }
   const scope = remote ? '--remote' : '--local';
@@ -400,7 +563,9 @@ async function main() {
   runW(['d1', 'execute', 'sigma', scope, '--file', amendFile]);
   runW(['d1', 'execute', 'sigma', scope, '--file', partiesFile]);
   runW(['d1', 'execute', 'sigma', scope, '--file', awardSuppliersFile]);
-  process.stderr.write(`\n==> done: ${contractRows} contracts, ${amendRows} amendments, ${partyRows} parties, ${supplierRows} award-suppliers\n`);
+  process.stderr.write(
+    `\n==> done: ${contractRows} contracts, ${amendRows} amendments, ${partyRows} parties, ${supplierRows} award-suppliers\n`,
+  );
 }
 
 main().catch((err) => {

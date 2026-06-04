@@ -19,10 +19,7 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
   );
   const vScale = Math.max(1, perSide / 20);
   // viewBox is "minX minY width height"; stretch only the height to match the vertical scale.
-  const viewBoxParts = layout.viewBox
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(Number);
+  const viewBoxParts = layout.viewBox.split(/\s+/).filter(Boolean).map(Number);
   const [vbX, vbY, vbW, vbH] =
     viewBoxParts.length === 4 && viewBoxParts.every(Number.isFinite)
       ? viewBoxParts

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_RISK_WEIGHTS,
-  procedureGroup,
-  requireEnv,
-  sectorForCpv,
-} from './index';
+import { DEFAULT_RISK_WEIGHTS, procedureGroup, requireEnv, sectorForCpv } from './index';
 
 describe('risk weights', () => {
   it('sum to exactly one scoring budget', () => {

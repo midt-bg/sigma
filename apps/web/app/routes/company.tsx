@@ -28,10 +28,7 @@ export function meta({ data }: Route.MetaArgs) {
     { title: `${name} — Сигма` },
     { name: 'description', content: `Профил на ${name} в обществените поръчки 2020–2026.` },
   ];
-  if (
-    data?.company &&
-    isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm)
-  ) {
+  if (data?.company && isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm)) {
     meta.push({ name: 'robots', content: 'noindex' });
   }
   return meta;

@@ -58,7 +58,14 @@ const FIELDS = [
   ['circumstances', ['Обстоятелства'], 'text'],
   ['sme', ['Малко или средно предприятие (МСП)'], 'text'],
 ];
-const META_COLS = ['source', 'dataset_uri', 'resource_uri', 'dataset_year', 'dataset_variant', 'fetched_at'];
+const META_COLS = [
+  'source',
+  'dataset_uri',
+  'resource_uri',
+  'dataset_year',
+  'dataset_variant',
+  'fetched_at',
+];
 const INSERT_COLS = [...META_COLS, ...FIELDS.map(([f]) => f)];
 
 function clean(v) {
@@ -96,7 +103,9 @@ function coerce(kind, v) {
 function sqlLiteral(kind, value) {
   if (value === null) return 'NULL';
   if (kind === 'real' || kind === 'bool') return String(value);
-  return `'${String(value).replace(/[\x00-\x1F]/g, '').replace(/'/g, "''")}'`;
+  return `'${String(value)
+    .replace(/[\x00-\x1F]/g, '')
+    .replace(/'/g, "''")}'`;
 }
 
 async function postJSON(method, body) {
@@ -123,7 +132,10 @@ async function getResourceData(resourceUri, refresh) {
   return JSON.parse(text);
 }
 async function discoverDatasets() {
-  const r = await postJSON('listDatasets', { criteria: { org_ids: [AOP_ORG_ID] }, records_per_page: 200 });
+  const r = await postJSON('listDatasets', {
+    criteria: { org_ids: [AOP_ORG_ID] },
+    records_per_page: 200,
+  });
   const out = [];
   for (const ds of r.datasets || []) {
     const m = (ds.name || '').match(/Договори и изменения на договори\s*-\s*(\d{4})\b/);
@@ -239,7 +251,10 @@ async function main() {
       }
       const tuple = `(${vals.join(',')})`;
       const tupleBytes = Buffer.byteLength(tuple, 'utf8') + 2;
-      if (batch.length > 0 && (batch.length >= MAX_BATCH_ROWS || stmtBytes + tupleBytes > MAX_BATCH_BYTES)) {
+      if (
+        batch.length > 0 &&
+        (batch.length >= MAX_BATCH_ROWS || stmtBytes + tupleBytes > MAX_BATCH_BYTES)
+      ) {
         await flush();
       }
       batch.push(tuple);
@@ -273,7 +288,9 @@ async function main() {
   };
   runW(['d1', 'migrations', 'apply', 'sigma', scope]);
   runW(['d1', 'execute', 'sigma', scope, '--file', outFile]);
-  process.stderr.write(`\n==> loaded: ${JSON.stringify(perDataset)} — now run scripts/derive-amendments.sql\n`);
+  process.stderr.write(
+    `\n==> loaded: ${JSON.stringify(perDataset)} — now run scripts/derive-amendments.sql\n`,
+  );
 }
 
 main().catch((err) => {

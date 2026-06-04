@@ -50,7 +50,10 @@ function isAuthorized(request: Request, env: Env): boolean {
     const user = decoded.slice(0, sep);
     const pass = decoded.slice(sep + 1);
 
-    return user === (env.ADMIN_BASIC_AUTH_USER ?? 'admin') && constantTimeEqual(pass, env.ADMIN_BASIC_AUTH_PASS);
+    return (
+      user === (env.ADMIN_BASIC_AUTH_USER ?? 'admin') &&
+      constantTimeEqual(pass, env.ADMIN_BASIC_AUTH_PASS)
+    );
   } catch {
     return false;
   }

@@ -29,16 +29,20 @@ const stripControls = (s) => String(s).replace(/[\x00-\x1F]/g, '');
 const sqlStr = (s) => (s == null ? 'NULL' : `'${stripControls(s).replace(/'/g, "''")}'`);
 
 function d1(sql) {
-  const out = execFileSync('wrangler', ['d1', 'execute', 'sigma', remoteFlag, '--json', '--command', sql], {
-    cwd: apiDir,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const out = execFileSync(
+    'wrangler',
+    ['d1', 'execute', 'sigma', remoteFlag, '--json', '--command', sql],
+    {
+      cwd: apiDir,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
   return JSON.parse(out.slice(out.indexOf('[')))[0].results;
 }
 
 const pairs = d1(
-  "SELECT DISTINCT currency, contract_date FROM raw_egov_contracts " +
+  'SELECT DISTINCT currency, contract_date FROM raw_egov_contracts ' +
     "WHERE source LIKE 'admin:%' AND currency NOT IN ('BGN','EUR') AND contract_date IS NOT NULL " +
     'ORDER BY currency, contract_date',
 );
@@ -80,7 +84,10 @@ for (const { currency, contract_date } of pairs) {
 
 const now = new Date().toISOString();
 const values = rows
-  .map((r) => `(${sqlStr(r.currency)}, ${sqlStr(r.contract_date)}, ${r.rate}, 'ecb:frankfurter', ${sqlStr(now)})`)
+  .map(
+    (r) =>
+      `(${sqlStr(r.currency)}, ${sqlStr(r.contract_date)}, ${r.rate}, 'ecb:frankfurter', ${sqlStr(now)})`,
+  )
   .join(',\n  ');
 const sql =
   "DELETE FROM fx_rates WHERE source = 'ecb:frankfurter';\n" +
@@ -91,6 +98,9 @@ writeFileSync(outFile, sql);
 console.log(`\nwrote ${rows.length} rates → ${outFile}`);
 
 if (apply) {
-  execFileSync('wrangler', ['d1', 'execute', 'sigma', remoteFlag, '--file', outFile], { cwd: apiDir, stdio: 'inherit' });
+  execFileSync('wrangler', ['d1', 'execute', 'sigma', remoteFlag, '--file', outFile], {
+    cwd: apiDir,
+    stdio: 'inherit',
+  });
   console.log('applied to D1.');
 }

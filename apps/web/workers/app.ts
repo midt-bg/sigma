@@ -67,7 +67,10 @@ async function hardenResponse(response: Response, cacheable: boolean): Promise<R
 
   if (cacheable && isHtml(response)) {
     const body = await response.text();
-    applySecurityHeaders(headers, nonceLessSecurityHeaders(await hashInlineScripts(body), import.meta.env.PROD));
+    applySecurityHeaders(
+      headers,
+      nonceLessSecurityHeaders(await hashInlineScripts(body), import.meta.env.PROD),
+    );
     return new Response(body, {
       status: response.status,
       statusText: response.statusText,

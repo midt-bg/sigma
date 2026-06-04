@@ -190,7 +190,8 @@ describe('splitSqlStatements', () => {
     ]);
   });
   it('does NOT strip a line-comment sequence inside a string literal', () => {
-    const sql = "INSERT INTO t VALUES ('keep -- this text'); -- drop this comment\nDELETE FROM t;\n";
+    const sql =
+      "INSERT INTO t VALUES ('keep -- this text'); -- drop this comment\nDELETE FROM t;\n";
     expect(splitSqlStatements(sql)).toEqual([
       "INSERT INTO t VALUES ('keep -- this text')",
       'DELETE FROM t',

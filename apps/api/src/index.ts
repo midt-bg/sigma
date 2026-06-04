@@ -42,7 +42,8 @@ function toSummary(t: TenderRow): TenderSummary {
     title: t.title,
     // TODO: JOIN authorities for the real display name once the parked API has a tender DTO/query.
     authorityName: t.authority_id.replace(/^auth:/, ''),
-    estimatedValue: t.estimated_value != null ? { amount: t.estimated_value, currency: 'BGN' } : null,
+    estimatedValue:
+      t.estimated_value != null ? { amount: t.estimated_value, currency: 'BGN' } : null,
     status: t.status,
     riskScore: null,
     riskBand: null,
@@ -66,8 +67,9 @@ export default {
       // ?sector= accepts a 2-digit CPV division, a curated short name, or a full division label.
       const sectorParam = url.searchParams.get('sector');
       const division = sectorParam
-        ? (CPV_SECTORS.find((s) => s.code === sectorParam || s.short === sectorParam || s.label === sectorParam)
-            ?.code ?? sectorParam)
+        ? (CPV_SECTORS.find(
+            (s) => s.code === sectorParam || s.short === sectorParam || s.label === sectorParam,
+          )?.code ?? sectorParam)
         : null;
       const rows = await listRecentTenders(env.DB, limit, division);
       const body: SearchTendersResponse = { results: rows.map(toSummary), cursor: null };
