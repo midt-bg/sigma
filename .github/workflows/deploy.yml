@@ -28,6 +28,11 @@ jobs:
       # Real D1 database_id substituted into wrangler.deploy.* by scripts/wrangler-render.mjs
       # (committed wrangler.* hold a zero-UUID dummy). See docs/deploy.md.
       SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
+      # Shared secret for the ETL refresh auth gate (apps/etl). Generate it ONCE with a CSPRNG
+      # (`openssl rand -hex 32`), store it as the repo secret ETL_REFRESH_SECRET; the "Provision ETL
+      # refresh secret" step below pushes it to the Worker as an encrypted Cloudflare secret — it is
+      # never baked into the deploy bundle or committed. Rotate by updating the repo secret + re-running.
+      ETL_REFRESH_SECRET: ${{ secrets.ETL_REFRESH_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,6 +49,8 @@ jobs:
           [ -z "${CLOUDFLARE_API_TOKEN}" ] && missing+=("CLOUDFLARE_API_TOKEN")
           [ -z "${CLOUDFLARE_ACCOUNT_ID}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
           [ -z "${SIGMA_D1_ID}" ]          && missing+=("SIGMA_D1_ID")
+          # Refuse to ship the refresh Worker without its auth secret (it fails closed otherwise).
+          [ -z "${ETL_REFRESH_SECRET}" ]   && missing+=("ETL_REFRESH_SECRET")
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing repo secrets: ${missing[*]} — cannot deploy."
             exit 1
@@ -63,3 +70,11 @@ jobs:
       - name: Deploy refresh Workflow (sigma-etl)
         if: steps.guard.outputs.ok == 'true'
         run: pnpm --filter @sigma/etl run deploy
+
+      # Push the auth secret to the Worker as an encrypted Cloudflare secret (stored separately from
+      # the deploy bundle, not in any config). Runs after deploy so the Worker exists; `wrangler secret
+      # put` reads the value from stdin, is idempotent, and the secret persists across future deploys.
+      # The prior deploy step already rendered apps/etl/wrangler.deploy.toml.
+      - name: Provision ETL refresh secret
+        if: steps.guard.outputs.ok == 'true'
+        run: printf '%s' "$ETL_REFRESH_SECRET" | pnpm --filter @sigma/etl exec wrangler secret put ETL_REFRESH_SECRET --config wrangler.deploy.toml
