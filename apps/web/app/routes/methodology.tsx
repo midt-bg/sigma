@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
-import { count, date, money } from '@sigma/shared';
-import { getHomeData } from '@sigma/db';
+import { count, date, money, pct } from '@sigma/shared';
+import { getMethodologyStats } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -23,8 +23,7 @@ export function headers() {
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  const { totals } = await getHomeData(context.cloudflare.env.DB);
-  return { totals };
+  return getMethodologyStats(context.cloudflare.env.DB);
 }
 
 const TOC = [
@@ -40,34 +39,62 @@ const TOC = [
   ['contact', 'Поправки и обратна връзка'],
 ];
 
-const GAPS: [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'][] = [
-  ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
-  ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
-  ['Стойност (в евро)', 'Договор', 'has', 'да', 'info'],
-  ['УНП · дата · CPV код', 'Преписка / обявление', 'has', 'да', 'info'],
-  ['Сектор (раздел на CPV)', 'Раздел на CPV (детерминиран)', 'has', 'да', 'info'],
-  ['Обект (доставки/услуги/строителство)', 'Обявление', 'has', 'да', 'info'],
-  ['ЕС финансиране (да/не)', 'Обявление / админ. експорт', 'has', 'да', 'info'],
-  ['Брой оферти', 'Решение за избор, протокол', 'gap', '≈90%', 'soft'],
-  ['Тип на институцията', 'Изведен от името (евристика)', 'gap', 'евристика', 'soft'],
-  [
-    'Местоположение (град/област)',
-    'OCDS parties (по ЕИК)',
-    'gap',
-    'инст. ≈46% · фирми ≈23%',
-    'soft',
-  ],
-  ['Програма на ЕС (име)', 'Административен експорт', 'gap', '≈14%', 'soft'],
-  ['Срок и дати на изпълнение', 'Административен експорт', 'gap', '≈87%', 'soft'],
-  ['Текуща стойност (с анекси)', 'Допълнителни споразумения', 'gap', 'при анекс', 'soft'],
-  ['Връзка договор ↔ обособена позиция', 'Обявление / OCDS', 'gap', '≈71%', 'soft'],
-  ['Вторичен (допълнителен) CPV', '—', 'gap', 'не', 'none'],
-  ['Стойности на отделните оферти', '—', 'gap', 'не', 'none'],
-  ['Собственици и свързани лица', 'Търговски регистър', 'gap', 'отложено', 'none'],
-];
+type GapRow = [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'];
 
 export default function Methodology({ loaderData }: Route.ComponentProps) {
   const t = loaderData.totals;
+  const period =
+    loaderData.firstDate && loaderData.lastDate
+      ? `${loaderData.firstDate.slice(0, 4)} г. — ${loaderData.lastDate.slice(0, 4)} г.`
+      : '2020 г. — 2026 г.';
+  const gaps: GapRow[] = [
+    ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
+    ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
+    ['Стойност (в евро)', 'Договор', 'has', 'да', 'info'],
+    ['УНП · дата · CPV код', 'Преписка / обявление', 'has', 'да', 'info'],
+    ['Сектор (раздел на CPV)', 'Раздел на CPV (детерминиран)', 'has', 'да', 'info'],
+    ['Обект (доставки/услуги/строителство)', 'Обявление', 'has', 'да', 'info'],
+    ['ЕС финансиране (да/не)', 'Обявление / админ. експорт', 'has', 'да', 'info'],
+    [
+      'Тип на институцията',
+      'Вид на възложителя (ЗОП); групирането е евристично',
+      'has',
+      'да',
+      'info',
+    ],
+    [
+      'Брой оферти',
+      'Решение за избор, протокол',
+      'gap',
+      `≈${pct(loaderData.coverage.bids, 0)}`,
+      'soft',
+    ],
+    [
+      'Програма на ЕС (име)',
+      'Административен експорт',
+      'gap',
+      `≈${pct(loaderData.coverage.eu, 0)}`,
+      'soft',
+    ],
+    [
+      'Срок и дати на изпълнение',
+      'Административен експорт',
+      'gap',
+      `≈${pct(loaderData.coverage.duration, 0)}`,
+      'soft',
+    ],
+    ['Текуща стойност (с анекси)', 'Допълнителни споразумения', 'gap', 'при анекс', 'soft'],
+    [
+      'Връзка договор ↔ обособена позиция',
+      'Обявление / OCDS',
+      'gap',
+      `≈${pct(loaderData.coverage.lot, 0)}`,
+      'soft',
+    ],
+    ['Вторичен (допълнителен) CPV', '—', 'gap', 'не', 'none'],
+    ['Стойности на отделните оферти', '—', 'gap', 'не', 'none'],
+  ];
+
   return (
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Методология' }]} />
@@ -111,8 +138,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               <h2 id="what">1. Какво показва СИГМА</h2>
               <p>
                 СИГМА — <em>Система за Интегриран Граждански Мониторинг и Анализ</em> — е публичен
-                изследовател на обществените поръчки в България. Показва{' '}
-                <strong>три неща</strong> и връзките между тях:
+                изследовател на обществените поръчки в България. Показва <strong>три неща</strong> и
+                връзките между тях:
               </p>
               <ul>
                 <li>
@@ -153,15 +180,15 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <div className="row">
                   <dt>Покрит период</dt>
                   <dd>
-                    2020 г. — 2026 г. Договори от текущата година влизат с няколко седмици
-                    закъснение.
+                    {period}. Договори от текущата година влизат с няколко седмици закъснение.
                   </dd>
                 </div>
                 <div className="row">
                   <dt>Покрити сектори</dt>
                   <dd>
                     <strong>Всички сектори.</strong> Секторът се определя детерминирано от CPV кода
-                    (раздел = първите две цифри); присъстват и 45-те раздела.
+                    (раздел = първите две цифри); налични са всичките {loaderData.sectors} раздела
+                    на CPV.
                   </dd>
                 </div>
                 <div className="row">
@@ -186,8 +213,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   <dt>Непотвърдени стойности</dt>
                   <dd>
                     {count(t.suspect)} договора с явно недостоверна стойност (напр. анекс ≥100× или
-                    грешка) се изключват от сумите и се отбелязват с „данните се преглеждат", вместо
-                    да се показва измислено число.
+                    грешка) остават в броя записи, но се изключват от сумите и се отбелязват с
+                    „данните се преглеждат", вместо да се показва измислено число.
                   </dd>
                 </div>
               </dl>
@@ -318,9 +345,9 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               </p>
               <p>
                 Всички суми се показват в <strong>евро</strong>. Историческите леви се конвертират
-                по фиксирания курс <strong>1 EUR = 1,95583 BGN</strong> (валутен борд от 1999 г.);
-                чуждите валути — по курса към датата на подписване. Закръгляме до цяло евро (под 1
-                000 €), хиляди, милиони или милиарди.
+                по фиксирания курс <strong>1 EUR = 1,95583 BGN</strong> (валутен борд от 1997 г.;
+                фиксиран курс към еврото от 1999 г.); чуждите валути — по курса към датата на
+                подписване. Закръгляме до цяло евро (под 1 000 €), хиляди, милиони или милиарди.
               </p>
             </section>
 
@@ -367,7 +394,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {GAPS.map(([field, src, cls, badge, variant]) => (
+                    {gaps.map(([field, src, cls, badge, variant]) => (
                       <tr className={cls} key={field}>
                         <td>{field}</td>
                         <td>{src}</td>
@@ -384,9 +411,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 </table>
               </div>
               <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
-                <strong>Собственици и свързани лица</strong> и <strong>рискови сигнали</strong> са
-                нарочно отсъстващи в тази версия — изискват пълно сливане с Търговския регистър и
-                отделен аналитичен слой.
+                <strong>Местоположение (град/област)</strong>,{' '}
+                <strong>собственици и свързани лица</strong> и <strong>рискови сигнали</strong> са в
+                процес на разработка за следваща версия — изискват пълно сливане с допълнителни
+                източници и отделен аналитичен слой.
               </p>
             </section>
 
