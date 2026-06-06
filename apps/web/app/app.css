@@ -2347,13 +2347,6 @@ tbody td,
   height: 1px;
   background: var(--accent);
 }
-.value-history .vh.flag .num,
-.value-history .vh.flag .delta {
-  color: var(--accent);
-}
-.value-history .vh.pos .delta {
-  color: var(--pos);
-}
 .lot-table tbody tr.current td {
   background: var(--paper);
   border-top: 1px solid var(--ink);

@@ -123,9 +123,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 {v.signingEur != null ? money(v.signingEur) : SUSPECT}
               </strong>
             </div>
-            <div
-              className={`vh now${v.deltaPct != null && v.deltaPct >= 0.5 ? ' flag' : v.deltaPct != null && v.deltaPct < 0 ? ' pos' : ''}`}
-            >
+            <div className="vh now">
               <div className="step">Текуща стойност</div>
               <strong className="num">
                 {v.currentEur != null ? money(v.currentEur) : SUSPECT}
