@@ -1,0 +1,114 @@
+import { Link } from 'react-router';
+import type { Route } from './+types/privacy';
+import { Breadcrumbs } from '../components/Breadcrumbs';
+import { PageHeader } from '../components/PageHeader';
+import { publicCache } from '../lib/cache';
+import { contactEmail } from '../lib/contact';
+
+export function meta(_: Route.MetaArgs) {
+  return [
+    { title: 'Политика за поверителност — СИГМА' },
+    {
+      name: 'description',
+      content: 'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
+    },
+  ];
+}
+
+export function headers() {
+  return { 'Cache-Control': publicCache(3600) };
+}
+
+export function loader({ context }: Route.LoaderArgs) {
+  return { contact: contactEmail(context.cloudflare.env) };
+}
+
+export default function Privacy({ loaderData }: Route.ComponentProps) {
+  return (
+    <>
+      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Поверителност' }]} />
+      <main id="main">
+        <PageHeader
+          kicker="Правна информация"
+          title="Политика за поверителност"
+          lede="Тази страница описва как СИГМА използва публични данни за обществените поръчки и как можете да упражните правата си."
+        />
+
+        <section className="section" aria-labelledby="controller">
+          <h2 id="controller">Администратор</h2>
+          <dl className="facts">
+            <div className="row">
+              <dt>Администратор</dt>
+              <dd>Министерство на иновациите и дигиталната трансформация (МИДТ)</dd>
+            </div>
+            <div className="row">
+              <dt>Адрес</dt>
+              <dd>ул. „Княз Александър I&quot; № 12, София 1000</dd>
+            </div>
+            <div className="row">
+              <dt>Контакт</dt>
+              <dd>
+                <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="section" aria-labelledby="data">
+          <h2 id="data">Данни и източници</h2>
+          <p>
+            СИГМА показва публично достъпни данни за обществени поръчки, възложители, изпълнители,
+            договори, стойности, дати, CPV кодове, УНП и свързани идентификатори.
+          </p>
+          <p>
+            Източниците са Агенцията по обществени поръчки (АОП) и ЦАИС ЕОП чрез отворените данни в
+            data.egov.bg, организация № 502. Когато данните съдържат лични данни, уведомяването се
+            извършва по реда на чл. 14 от Общия регламент относно защитата на данните (GDPR), защото
+            данните не са получени пряко от субектите.
+          </p>
+        </section>
+
+        <section className="section" aria-labelledby="basis">
+          <h2 id="basis">Правно основание</h2>
+          <p>
+            Обработването се извършва за изпълнение на задача от обществен интерес по чл. 6, пар. 1,
+            буква (e) от GDPR: публична прозрачност и граждански достъп до данни за разходването на
+            публични средства.
+          </p>
+          <p>
+            Когато е приложимо, обработването се основава и на легитимен интерес по чл. 6, пар. 1,
+            буква (f) от GDPR за поддържане на обществено достъпна аналитична услуга върху вече
+            публикувани данни.
+          </p>
+        </section>
+
+        <section className="section" aria-labelledby="rights">
+          <h2 id="rights">Права на субектите на данни</h2>
+          <p>
+            Можете да поискате информация, достъп, корекция, ограничаване на обработването и преглед
+            на конкретен запис. Имате право на възражение по чл. 21 от GDPR и право на изтриване по
+            чл. 17 от GDPR, когато са налице законовите основания.
+          </p>
+          <p>
+            Заявленията се изпращат на{' '}
+            <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>. Посочете конкретния
+            запис, URL или идентификатор (например ЕИК, УНП или номер на договор), за да бъде
+            заявлението разгледано точно.
+          </p>
+        </section>
+
+        <section className="section" aria-labelledby="retention">
+          <h2 id="retention">Срокове и ограничения</h2>
+          <p>
+            СИГМА не изисква регистрация и не съхранява потребителски профили. Публичните данни за
+            обществени поръчки се показват докато са необходими за прозрачност, анализ и
+            проследимост на публичните разходи или докато законово основание налага промяна.
+          </p>
+          <p>
+            За информация за оператора вижте <Link to="/impressum">Импресум</Link>.
+          </p>
+        </section>
+      </main>
+    </>
+  );
+}

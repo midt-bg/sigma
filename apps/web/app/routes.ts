@@ -15,6 +15,8 @@ export default [
   route('contracts/:id.json', 'routes/contract.json.tsx'),
   route('contracts/:id', 'routes/contract.tsx'),
   route('methodology', 'routes/methodology.tsx'),
+  route('privacy', 'routes/privacy.tsx'),
+  route('impressum', 'routes/impressum.tsx'),
   route('robots.txt', 'routes/robots.tsx'),
   route('sitemap.xml', 'routes/sitemap.tsx'),
   route('sitemap-pages.xml', 'routes/sitemap-pages.tsx'),
