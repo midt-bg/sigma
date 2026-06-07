@@ -2,11 +2,21 @@
 // view has a shareable, reproducible address (a methodology principle). Formatting helpers live in
 // @sigma/shared; this module is only about reading/writing the URL.
 
-import { CPV_CATEGORIES, categoryForDivision } from '@sigma/config';
+import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
+import type { EntityKind } from '@sigma/api-contract';
+import type { CompanySort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
+export const MAX_MULTI_VALUES = 50;
+
+const KNOWN_SECTORS = new Set(CPV_SECTORS.map((s) => s.code));
+
+function allowedMulti(key: string, value: string): boolean {
+  if (key === 'sector') return KNOWN_SECTORS.has(value);
+  return true;
+}
 
 /** Parse a repeated/CSV multi-value param (`?year=2025&year=2024` or `?year=2025,2024`) to a string[]. */
 export function getMulti(params: URLSearchParams, key: string): string[] {
@@ -15,7 +25,20 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .flatMap((v) => v.split(','))
     .map((v) => v.trim())
     .filter(Boolean);
-  return Array.from(new Set(all));
+  return Array.from(new Set(all))
+    .filter((v) => allowedMulti(key, v))
+    .slice(0, MAX_MULTI_VALUES);
+}
+
+export function companyListParams(sp: URLSearchParams) {
+  return {
+    sort: (sp.get('sort') as CompanySort) || 'won',
+    kinds: getMulti(sp, 'kind') as EntityKind[],
+    countBucket: sp.get('count'),
+    sectors: getMulti(sp, 'sector'),
+    years: getMulti(sp, 'year'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+  };
 }
 
 interface SectorFacet {

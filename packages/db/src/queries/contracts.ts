@@ -122,6 +122,8 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
     if (id) {
       where.push(`c.bidder_id = ?`);
       params.push(id);
+    } else {
+      where.push('1=0');
     }
   }
   return { sql: where.length ? ' WHERE ' + where.join(' AND ') : '', params };

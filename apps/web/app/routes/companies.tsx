@@ -1,7 +1,7 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, parseConsortiumMembers } from '@sigma/shared';
-import { getCompanyFacets, listCompanies, type CompanySort } from '@sigma/db';
-import type { CompanyListItem, EntityKind } from '@sigma/api-contract';
+import { getCompanyFacets, listCompanies } from '@sigma/db';
+import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -10,7 +10,14 @@ import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
 import { DataTable, type Column } from '../components/DataTable';
 import { Callout, Chip } from '../components/ui';
-import { buildSectorGroup, getMulti, pageNav, withParams, PAGE_SIZE } from '../lib/filters';
+import {
+  buildSectorGroup,
+  companyListParams,
+  getMulti,
+  pageNav,
+  withParams,
+  PAGE_SIZE,
+} from '../lib/filters';
 import { publicCache } from '../lib/cache';
 
 const COUNT_BUCKETS = [
@@ -38,12 +45,7 @@ export function headers() {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const params = {
-    sort: (sp.get('sort') as CompanySort) || 'won',
-    kinds: getMulti(sp, 'kind') as EntityKind[],
-    countBucket: sp.get('count'),
-    sectors: getMulti(sp, 'sector'),
-    years: getMulti(sp, 'year'),
-    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    ...companyListParams(sp),
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.companies,
   };

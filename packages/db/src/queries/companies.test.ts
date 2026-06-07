@@ -42,12 +42,7 @@ const unfilteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
 ];
 
 function usesFilteredCompanySource(sql: string): boolean {
-  return (
-    sql.includes('FROM (') &&
-    sql.includes('substr(t.cpv_code, 1, 2)') &&
-    sql.includes('substr(c.signed_at, 1, 4)') &&
-    sql.includes('c.eu_funded = 1')
-  );
+  return sql.includes('FROM (') && sql.includes('substr(t.cpv_code, 1, 2)');
 }
 
 function fakeDb(): D1Database {
@@ -97,5 +92,15 @@ describe('streamCompaniesCsv', () => {
 
     expect(csvEiks).toEqual(list.items.map((item) => item.eik));
     expect(csvEiks).toEqual(['111111111']);
+  });
+
+  it('exports fewer rows for a sector filter than for the unfiltered corpus', async () => {
+    const db = fakeDb();
+    const unfiltered = await streamCompaniesCsv(db, {}).text();
+    const filtered = await streamCompaniesCsv(db, { sectors: ['45'] }).text();
+    const countRows = (csv: string) => csv.trim().split('\n').slice(1).length;
+
+    expect(countRows(filtered)).toBeLessThan(countRows(unfiltered));
+    expect(countRows(filtered)).toBe(1);
   });
 });
