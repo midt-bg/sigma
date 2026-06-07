@@ -19,6 +19,7 @@ import {
   PAGE_SIZE,
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
+import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -43,12 +44,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.authorities,
   };
   const db = context.cloudflare.env.DB;
-  const [page, facets] = await Promise.all([listAuthorities(db, params), getAuthorityFacets(db)]);
-  return { page, facets };
+  const [page, facets, coverage] = await Promise.all([
+    listAuthorities(db, params),
+    getAuthorityFacets(db),
+    getCoverageMeta(db),
+  ]);
+  return { page, facets, coverage };
 }
 
 export default function Authorities({ loaderData }: Route.ComponentProps) {
-  const { page, facets } = loaderData;
+  const { page, facets, coverage } = loaderData;
+  const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const sort = sp.get('sort') ?? 'spent';
   const nav = pageNav({
@@ -79,7 +85,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
       label: 'Година',
       type: 'checkbox',
       selected: getMulti(sp, 'year'),
-      options: ['2026', '2025', '2024', '2023', '2022', '2021', '2020'].map((y) => ({
+      options: yearOptions(coverage.coverageEndYear).map((y) => ({
         value: y,
         label: y,
       })),
@@ -180,8 +186,8 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
                 Какво означава „похарчено“?
               </h2>
               <p style={{ margin: 0 }}>
-                Сумата от стойностите (в евро) на всички договори на дадена институция за периода
-                2020–2026. Типът на институцията (министерство, община, болница…) се определя по
+                Сумата от стойностите (в евро) на всички договори на дадена институция за периода{' '}
+                {range}. Типът на институцията (министерство, община, болница…) се определя по
                 името ѝ и е приблизителен. Виж <Link to="/methodology">методология</Link>.
               </p>
             </Callout>

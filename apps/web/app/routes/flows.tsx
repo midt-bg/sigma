@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader';
 import { SankeyDiagram } from '../components/SankeyDiagram';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -24,27 +25,28 @@ export function headers() {
   return { 'Cache-Control': publicCache(1800) };
 }
 
-const YEARS = ['2026', '2025', '2024', '2023', '2022', '2021', '2020'];
-
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const sector = sp.get('sector');
   const year = sp.get('year');
+  const coverage = await getCoverageMeta(context.cloudflare.env.DB);
+  const years = yearOptions(coverage.coverageEndYear);
   // A bogus ?sector (not a CPV division) would filter every flow out and render a blank diagram +
   // empty table silently. Flag it so we show an explicit empty state instead.
   const unknownSector = Boolean(sector) && !CPV_SECTORS.some((s) => s.code === sector);
-  const unknownYear = Boolean(year) && !YEARS.includes(year!);
+  const unknownYear = Boolean(year) && !years.includes(year!);
   const data = await getFlows(context.cloudflare.env.DB, {
     sector: unknownSector ? null : sector,
     year: unknownYear ? null : year,
     funding: (sp.get('funding') as 'eu' | 'national' | null) || 'all',
     top: sp.get('top') === '50' ? 50 : 20,
   });
-  return { data, unknownSector, unknownYear };
+  return { data, coverage, years, unknownSector, unknownYear };
 }
 
 export default function Flows({ loaderData }: Route.ComponentProps) {
-  const { data, unknownSector, unknownYear } = loaderData;
+  const { data, coverage, years, unknownSector, unknownYear } = loaderData;
+  const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
   const sel = (k: string) => sp.get(k) ?? '';
@@ -80,8 +82,8 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
           <label>
             Година:
             <select name="year" defaultValue={unknownYear ? '' : sel('year')}>
-              <option value="">2020–2026</option>
-              {YEARS.map((y) => (
+              <option value="">{range}</option>
+              {years.map((y) => (
                 <option key={y} value={y}>
                   {y}
                 </option>
@@ -109,7 +111,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
           <Callout variant="warning" title="Няма данни за избрания обхват">
             {unknownSector
               ? 'Изборът на сектор не отговаря на нито една категория от номенклатурата CPV.'
-              : 'Изборът на година е извън периода 2020–2026.'}{' '}
+              : `Изборът на година е извън периода ${range}.`}{' '}
             Вижте <Link to="/flows">всички данни</Link> или изберете стойност от списъка по-горе.
           </Callout>
         ) : (

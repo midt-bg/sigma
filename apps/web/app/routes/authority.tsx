@@ -9,12 +9,14 @@ import { StackedBar } from '../components/StackedBar';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, Section, SourceLine } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { coverageRange, getCoverageMeta } from '../lib/coverage';
 
 export function meta({ data }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
+  const range = coverageRange(data?.coverage.coverageEndYear);
   return [
     { title: `${name} — СИГМА` },
-    { name: 'description', content: `Обществени поръчки на ${name}, 2020–2026.` },
+    { name: 'description', content: `Обществени поръчки на ${name}, ${range}.` },
   ];
 }
 
@@ -24,13 +26,18 @@ export function headers() {
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
-  const authority = await getAuthority(context.cloudflare.env.DB, authorityIdFromSlug(params.eik));
+  const db = context.cloudflare.env.DB;
+  const [authority, coverage] = await Promise.all([
+    getAuthority(db, authorityIdFromSlug(params.eik)),
+    getCoverageMeta(db),
+  ]);
   if (!authority) throw new Response('Not Found', { status: 404 });
-  return { authority };
+  return { authority, coverage };
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
+  const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
     .map((s) => `${s.short.toLowerCase()} (${pct(s.sharePct)})`)
@@ -58,7 +65,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={a.name}
-          lede="Общо публични средства, разходвани за обществени поръчки за периода 2020–2026 г. Всяко число по-долу може да бъде разложено до конкретните договори, които го съставят."
+          lede={`Общо публични средства, разходвани за обществени поръчки за периода ${range} г. Всяко число по-долу може да бъде разложено до конкретните договори, които го съставят.`}
         />
 
         <FactsList
@@ -187,7 +194,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           title="Всички договори"
           hint={
             <>
-              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, 2020–2026. Показани
+              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range}. Показани
               са най-скорошните.{' '}
               <Link to={`/contracts?authority=${a.eik}`}>
                 Виж всички / филтрирай / свали като CSV →

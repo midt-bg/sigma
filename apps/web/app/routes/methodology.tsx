@@ -6,6 +6,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Callout, Flag } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { START_YEAR, coverageEndYear } from '../lib/coverage';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -43,10 +44,11 @@ type GapRow = [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'];
 
 export default function Methodology({ loaderData }: Route.ComponentProps) {
   const t = loaderData.totals;
+  const endYear = coverageEndYear(t.asOf);
   const period =
-    loaderData.firstDate && loaderData.lastDate
-      ? `${loaderData.firstDate.slice(0, 4)} г. — ${loaderData.lastDate.slice(0, 4)} г.`
-      : '2020 г. — 2026 г.';
+    loaderData.firstDate && t.asOf
+      ? `${loaderData.firstDate.slice(0, 4)} г. — ${endYear} г. (${endYear} г. частично)`
+      : `${START_YEAR} г. — ${endYear} г. (${endYear} г. частично)`;
   const gaps: GapRow[] = [
     ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
     ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
@@ -104,7 +106,12 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
           title="Методология и речник"
           lede="СИГМА обединява публични данни от Регистъра на обществените поръчки (АОП / ЦАИС ЕОП). На тази страница описваме откъде идват числата, как се сглобяват, какво показваме като неутрален факт и какво — нарочно — не показваме в първата версия."
         />
-        {t.asOf && <p className="doc-version">Издание 1 · данни към {date(t.asOf)}</p>}
+        {(t.asOf || t.refreshedAt) && (
+          <p className="doc-version">
+            Издание 1{t.asOf ? ` · последен договор ${date(t.asOf)}` : ''}
+            {t.refreshedAt ? ` · данни обновени ${date(t.refreshedAt)}` : ''}
+          </p>
+        )}
 
         <div className="split">
           <aside className="toc" aria-label="Съдържание на страницата">
@@ -173,8 +180,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <div className="row">
                   <dt>Първичен източник</dt>
                   <dd>
-                    Регистър на обществените поръчки (АОП / ЦАИС ЕОП) — административен експорт +
-                    отворената емисия (OCDS) от data.egov.bg.
+                    Регистър на обществените поръчки (АОП / ЦАИС ЕОП) — отворени данни от
+                    storage.eop.bg.
                   </dd>
                 </div>
                 <div className="row">
@@ -197,7 +204,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     {count(t.contracts)} договора и обособени позиции, {count(t.authorities)}{' '}
                     институции, {count(t.bidders)} компании, общо{' '}
                     <strong>{money(t.valueEur)}</strong>
-                    {t.asOf ? ` към ${date(t.asOf)}` : ''}.
+                    {t.asOf ? ` до ${date(t.asOf)}` : ''}.
+                    {t.refreshedAt ? ` Данните са обновени на ${date(t.refreshedAt)}.` : ''}
                   </dd>
                 </div>
                 <div className="row">
@@ -348,6 +356,10 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 по фиксирания курс <strong>1 EUR = 1,95583 BGN</strong> (валутен борд от 1997 г.;
                 фиксиран курс към еврото от 1999 г.); чуждите валути — по курса към датата на
                 подписване. Закръгляме до цяло евро (под 1 000 €), хиляди, милиони или милиарди.
+              </p>
+              <p>
+                Договори в чужда валута без намерен курс към датата на подписване се пазят като
+                записи, но се изключват от сумите в евро.
               </p>
             </section>
 

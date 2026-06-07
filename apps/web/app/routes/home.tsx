@@ -1,10 +1,11 @@
 import { Link } from 'react-router';
-import { count, money } from '@sigma/shared';
+import { count, date, money } from '@sigma/shared';
 import { getHomeData } from '@sigma/db';
 import type { Route } from './+types/home';
 import { PageHeader } from '../components/PageHeader';
 import { TotalsStrip } from '../components/TotalsStrip';
 import { publicCache } from '../lib/cache';
+import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -30,6 +31,8 @@ export async function loader({ context }: Route.LoaderArgs) {
 
 export default function Home({ loaderData }: Route.ComponentProps) {
   const { totals, topCompanies, topMinistries, topMunicipalities } = loaderData;
+  const endYear = coverageEndYear(totals.asOf);
+  const range = coverageRange(endYear);
   return (
     <main id="main">
       <PageHeader
@@ -61,6 +64,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           { num: count(totals.bidders), label: 'Компании изпълнители' },
         ]}
       />
+      <p className="small muted" style={{ margin: 'var(--s-2) auto 0', maxWidth: 'var(--measure)' }}>
+        Обхват: {coveragePartialNote(endYear)}
+        {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
+      </p>
 
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">
@@ -68,7 +75,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </h2>
         <p className="section-hint">
           Започни оттук, ако те интересува конкретно министерство, община, агенция или болница.
-          Списъкът показва най-големите по обем на поръчките през 2020–2026 г.
+          Списъкът показва най-големите по обем на поръчките през {range} г.
         </p>
         <div className="two-col">
           <div>
@@ -102,7 +109,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           Топ 10 печеливши <em>компании</em>
         </h2>
         <p className="section-hint">
-          Компании, наредени по обща стойност на спечелените договори, 2020–2026. Обединенията
+          Компании, наредени по обща стойност на спечелените договори, {range}. Обединенията
           (ДЗЗД/консорциуми) се броят като един изпълнител.{' '}
           <Link to="/companies">Виж пълния списък →</Link>
         </p>

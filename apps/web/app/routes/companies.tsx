@@ -20,6 +20,7 @@ import {
   PAGE_SIZE,
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
+import { getCoverageMeta, yearOptions } from '../lib/coverage';
 
 const COUNT_BUCKETS = [
   { value: '1', label: '1 договор' },
@@ -51,8 +52,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.companies,
   };
   const db = context.cloudflare.env.DB;
-  const [page, facets] = await Promise.all([listCompanies(db, params), getCompanyFacets(db)]);
-  return { page, facets };
+  const [page, facets, coverage] = await Promise.all([
+    listCompanies(db, params),
+    getCompanyFacets(db),
+    getCoverageMeta(db),
+  ]);
+  return { page, facets, coverage };
 }
 
 function subtitle(c: CompanyListItem) {
@@ -66,7 +71,7 @@ function subtitle(c: CompanyListItem) {
 }
 
 export default function Companies({ loaderData }: Route.ComponentProps) {
-  const { page, facets } = loaderData;
+  const { page, facets, coverage } = loaderData;
   const [sp] = useSearchParams();
   const sort = sp.get('sort') ?? 'won';
   const nav = pageNav({
@@ -104,7 +109,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
       label: 'Година',
       type: 'checkbox',
       selected: getMulti(sp, 'year'),
-      options: ['2026', '2025', '2024', '2023', '2022', '2021', '2020'].map((y) => ({
+      options: yearOptions(coverage.coverageEndYear).map((y) => ({
         value: y,
         label: y,
       })),

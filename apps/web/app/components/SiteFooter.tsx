@@ -1,15 +1,26 @@
 import { Link } from 'react-router';
 import { date } from '@sigma/shared';
 import { DATA_SOURCE_LICENSE } from '../lib/dataSource';
+import { coverageEndYear, coverageRange } from '../lib/coverage';
 
-// Single mono-caps line: source + coverage window + freshness date. `asOf` is the data current-as-of
-// date from the root loader (home_totals); omitted gracefully when unavailable (e.g. an error page).
-export function SiteFooter({ asOf }: { asOf?: string | null }) {
+// Single mono-caps line: source + coverage window + source and refresh dates.
+export function SiteFooter({
+  asOf,
+  refreshedAt,
+  endYear,
+}: {
+  asOf?: string | null;
+  refreshedAt?: string | null;
+  endYear?: number | null;
+}) {
+  const range = coverageRange(endYear ?? coverageEndYear(asOf));
   return (
     <footer className="site-footer" role="contentinfo">
       <div className="site-footer-inner">
         <span>
-          {DATA_SOURCE_LICENSE} · 2020–2026{asOf ? ` · обновени ${date(asOf)}` : ''}
+          {DATA_SOURCE_LICENSE} · {range}
+          {asOf ? ` · последен договор ${date(asOf)}` : ''}
+          {refreshedAt ? ` · данни обновени ${date(refreshedAt)}` : ''}
         </span>
         <Link to="/methodology">Методология</Link>
         <Link to="/accessibility">Достъпност</Link>

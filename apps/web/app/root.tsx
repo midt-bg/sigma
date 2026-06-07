@@ -19,6 +19,7 @@ import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
+import { getCoverageMeta } from './lib/coverage';
 import './app.css';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
@@ -31,7 +32,7 @@ export const links: Route.LinksFunction = () => [
   { rel: 'stylesheet', href: '/assets/accessibility/accessibility.css' },
 ];
 
-// One cheap read for the chrome: the data current-as-of date shown in the footer on every page.
+// One cheap read for the chrome: coverage and refresh metadata shown in the footer on every page.
 export async function loader({ context, request }: Route.LoaderArgs) {
   // Canonicalise away a trailing slash so `/companies/` (which otherwise silently renders the list
   // and triggers a hydration mismatch) becomes `/companies`. Root loader runs for every route.
@@ -39,10 +40,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
     throw redirect(url.pathname.replace(/\/+$/, '') + url.search, 301);
   }
-  const row = await context.cloudflare.env.DB.prepare(
-    'SELECT as_of FROM home_totals WHERE id = 1',
-  ).first<{ as_of: string | null }>();
-  return { asOf: row?.as_of ?? null };
+  return getCoverageMeta(context.cloudflare.env.DB);
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -122,7 +120,11 @@ export default function App({ loaderData }: Route.ComponentProps) {
       </a>
       <SiteHeader />
       <Outlet />
-      <SiteFooter asOf={loaderData.asOf} />
+      <SiteFooter
+        asOf={loaderData.asOf}
+        refreshedAt={loaderData.refreshedAt}
+        endYear={loaderData.coverageEndYear}
+      />
       <AccessibilityWidget />
     </>
   );

@@ -9,6 +9,7 @@ import { StackedBar } from '../components/StackedBar';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, Section, SourceLine } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { coverageRange, getCoverageMeta } from '../lib/coverage';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -24,9 +25,10 @@ function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): b
 
 export function meta({ data }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
+  const range = coverageRange(data?.coverage.coverageEndYear);
   const meta = [
     { title: `${name} — СИГМА` },
-    { name: 'description', content: `Профил на ${name} в обществените поръчки 2020–2026.` },
+    { name: 'description', content: `Профил на ${name} в обществените поръчки ${range}.` },
   ];
   if (
     data?.company &&
@@ -47,13 +49,15 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
   const id = bidderIdFromSlug(params.eik);
   if (!id) throw new Response('Not Found', { status: 404 });
-  const company = await getCompany(context.cloudflare.env.DB, id);
+  const db = context.cloudflare.env.DB;
+  const [company, coverage] = await Promise.all([getCompany(db, id), getCoverageMeta(db)]);
   if (!company) throw new Response('Not Found', { status: 404 });
-  return { company };
+  return { company, coverage };
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
+  const range = coverageRange(loaderData.coverage.coverageEndYear);
   return (
     <>
       <Breadcrumbs
@@ -78,7 +82,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={c.displayName}
-          lede={`Профил, обобщаващ публичните средства, спечелени от ${c.kind === 'consortium' ? 'това обединение' : 'тази компания'} през регистъра на обществените поръчки за периода 2020–2026 г.`}
+          lede={`Профил, обобщаващ публичните средства, спечелени от ${c.kind === 'consortium' ? 'това обединение' : 'тази компания'} през регистъра на обществените поръчки за периода ${range} г.`}
         />
 
         <FactsList
