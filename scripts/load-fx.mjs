@@ -41,9 +41,11 @@ function d1(sql) {
   return JSON.parse(out.slice(out.indexOf('[')))[0].results;
 }
 
+// EOP is the canonical historical corpus; admin is retained for legacy local staging and OCDS deltas.
 const pairs = d1(
   'SELECT DISTINCT currency, contract_date FROM raw_egov_contracts ' +
-    "WHERE source LIKE 'admin:%' AND currency NOT IN ('BGN','EUR') AND contract_date IS NOT NULL " +
+    "WHERE (source LIKE 'eop:%' OR source LIKE 'admin:%' OR source LIKE 'ocds:%') " +
+    "AND currency NOT IN ('BGN','EUR') AND contract_date IS NOT NULL " +
     'ORDER BY currency, contract_date',
 );
 console.log(`foreign (currency, date) pairs to price: ${pairs.length}`);

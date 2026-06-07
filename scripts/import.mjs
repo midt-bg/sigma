@@ -47,10 +47,38 @@ function run(cmd, args, cwd = root) {
   execFileSync(cmd, args, { stdio: 'inherit', cwd });
 }
 const execSql = (file) => run('wrangler', ['d1', 'execute', 'sigma', loc, '--file', file], apiDir);
+function d1(sql) {
+  const out = execFileSync(
+    'wrangler',
+    ['d1', 'execute', 'sigma', loc, '--json', '--command', sql],
+    {
+      cwd: apiDir,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+  return JSON.parse(out.slice(out.indexOf('[')))[0].results;
+}
+
+function assertFxPopulated() {
+  const rows = d1(
+    "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
+      "AND amount_eur IS NULL AND value_flag <> 'value_suspect'",
+  );
+  const missing = Number(rows[0]?.missing_fx ?? 0);
+  if (missing > 0) {
+    console.error(
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+    );
+    process.exit(1);
+  }
+}
 
 if (reset) {
   if (remote) {
-    console.error('!! --reset is local-only (refusing to wipe remote). Drop/recreate the remote D1 manually.');
+    console.error(
+      '!! --reset is local-only (refusing to wipe remote). Drop/recreate the remote D1 manually.',
+    );
     process.exit(1);
   }
   const state = resolve(apiDir, '.wrangler/state/v3/d1');
@@ -67,6 +95,7 @@ execSql(resolve(root, 'scripts/derive-amendments.sql')); //                3. am
 run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]); //           4. fx rates
 execSql(resolve(root, 'scripts/load-nuts.sql')); //                        4b. NUTS region reference
 execSql(resolve(root, 'scripts/normalize-egov.sql')); //                   5. domain rebuild
+assertFxPopulated(); //                                                    5b. fail on missing FX conversions
 execSql(resolve(root, 'scripts/precompute.sql')); //                       6. rollups + FTS + EUR timeline
 
 console.log('\n==> import complete.');

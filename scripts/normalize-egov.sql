@@ -1,18 +1,18 @@
--- Sigma — normalise the admin ЦАИС ЕОП staging into the domain tables
--- (authorities, tenders, lots, bidders, contracts). Run AFTER scripts/load-admin.mjs
+-- Sigma - normalise the EOP/OCDS staging into the domain tables
+-- (authorities, tenders, lots, bidders, contracts). Run AFTER scripts/load-eop.mjs
 -- (+ scripts/derive-amendments.sql for current_value/annex_count) have populated staging:
 --   (cd apps/api && wrangler d1 execute sigma --local --file ../../scripts/normalize-egov.sql)
 --
--- SOURCE MODEL (see docs/etl-pipeline.md): the admin export is the authoritative base for
--- 2020–2026 (raw_egov_contracts + raw_egov_tenders, source 'admin:%'). The OCDS JSON feed is the
+-- SOURCE MODEL (see docs/etl-pipeline.md): the EOP open-data feed is the authoritative base for
+-- 2020-2026 (raw_egov_contracts + raw_egov_tenders, source 'eop:%'). The OCDS JSON feed is the
 -- go-forward delta for new 2026+ data (source 'ocds:%'); its rows carry their procedure fields on
--- the contract row, so they flow through here automatically and a УНП with no tenders-export row
--- gets a synthetic tender (step 2b). DEDUPE (step 5): where OCDS overlaps the admin snapshot,
--- ADMIN WINS — an OCDS contract is taken only when no admin row shares its contract_number (the
--- АОП contract document number, common to both feeds; OCDS keeps its ocid in unp, which never
--- matches the admin УНП, so contract_number is the cross-source key). Genuinely new OCDS contracts
+-- the contract row, so they flow through here automatically and a UNP with no tenders-export row
+-- gets a synthetic tender (step 2b). DEDUPE (step 5): where OCDS overlaps the EOP corpus,
+-- EOP WINS - an OCDS contract is taken only when no EOP row shares its contract_number (the
+-- public-procurement contract document number, common to both feeds; OCDS keeps its ocid in unp,
+-- which never matches the EOP UNP format, so contract_number is the cross-source key). Genuinely new OCDS contracts
 -- are added. This makes the OCDS go-live catch-up safe even though OCDS republishes contracts
--- already in admin. data_freshness records the "current as of" boundary per feed.
+-- already in EOP. data_freshness records the "current as of" boundary per feed.
 --
 -- FULL REBUILD: clears the derived tables and re-inserts from staging, so a re-run always
 -- reflects the current rules and never leaves stale rows. wrangler runs this file as one
@@ -292,9 +292,9 @@ FROM (
         ELSE NULL
       END AS bidder_key
     FROM raw_egov_contracts c
-    -- admin always; an OCDS row only when no admin row shares its contract_number — admin wins.
-    -- Key is contract_number (the АОП contract document number, common to both feeds), NOT unp:
-    -- OCDS stores its ocid ('ocds-…') in unp, which never matches the admin УНП format. (idx_egov_cnum)
+    -- EOP always; an OCDS row only when no EOP row shares its contract_number - EOP wins.
+    -- Key is contract_number (the public-procurement contract document number, common to both feeds), NOT unp:
+    -- OCDS stores its ocid in unp, which never matches the EOP UNP format. (idx_egov_cnum)
     WHERE c.source LIKE 'eop:%'
        OR (c.source LIKE 'ocds:%' AND c.contract_number IS NOT NULL AND NOT EXISTS (
             SELECT 1 FROM raw_egov_contracts a
