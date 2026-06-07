@@ -28,7 +28,7 @@ const SURVIVAL_STYLE_ID = 'a11y-survival';
 const INIT_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 100;
 const SURVIVAL_CSS = `
-html.a11y-textonly .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
+html.a11y-textonly .sr-only{display:none!important;position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
 html.a11y-textonly .brand-sub{display:none!important}
 html.a11y-textonly .skip:not(:focus){position:absolute!important;left:-9999px!important;top:-9999px!important;width:1px!important;height:1px!important;overflow:hidden!important}
 html.a11y-textonly img,html.a11y-textonly svg,html.a11y-textonly video{display:none!important}
