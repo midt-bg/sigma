@@ -17,6 +17,7 @@ import type { Route } from './+types/root';
 import { useNonce } from './nonce';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
+import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
 import './app.css';
 
@@ -27,6 +28,7 @@ export const links: Route.LinksFunction = () => [
   { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
   { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16.png' },
   { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+  { rel: 'stylesheet', href: '/assets/accessibility/accessibility.css' },
 ];
 
 // One cheap read for the chrome: the data current-as-of date shown in the footer on every page.
@@ -52,6 +54,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <script src="/assets/accessibility/accessibility.js" defer />
       </head>
       <body>
         {children}
@@ -120,6 +123,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
       <SiteHeader />
       <Outlet />
       <SiteFooter asOf={loaderData.asOf} />
+      <AccessibilityWidget />
     </>
   );
 }
