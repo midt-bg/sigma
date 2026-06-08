@@ -3,7 +3,7 @@
 // both route through scripts/load-eop.mjs; only the date window and derive mode differ.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.ts';
@@ -19,7 +19,8 @@ const reset = process.argv.includes('--reset');
 const catchup = process.argv.includes('--catchup');
 const planOnly = process.argv.includes('--plan-only') || process.argv.includes('--dry-run');
 const loc = remote ? '--remote' : '--local';
-const passthru = remote ? ['--remote'] : [];
+const persistTo = arg('persist-to');
+const passthru = remote ? ['--remote'] : persistTo ? ['--persist-to', String(persistTo)] : [];
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
 
 function arg(name) {
@@ -46,16 +47,27 @@ function explicitRangeFlags() {
   return flags;
 }
 
-function run(cmd, args, cwd = root) {
-  console.log(`\n==> ${cmd} ${args.join(' ')}`);
+function run(cmd, args, cwd = root, options = {}) {
+  console.log(`
+==> ${cmd} ${args.join(' ')}`);
+  if (options.inputFile) {
+    execFileSync(cmd, args, {
+      input: execFileSync('cat', [options.inputFile]),
+      stdio: ['pipe', 'inherit', 'inherit'],
+      cwd,
+    });
+    return;
+  }
   execFileSync(cmd, args, { stdio: 'inherit', cwd });
 }
-const execSql = (file) => run('wrangler', ['d1', 'execute', d1Name, loc, '--file', file], apiDir);
+
+const d1PersistArgs = !remote && persistTo ? ['--persist-to', String(persistTo)] : [];
+const execSql = (file) => run('wrangler', ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--file', file], apiDir);
 
 function d1(sql) {
   const out = execFileSync(
     'wrangler',
-    ['d1', 'execute', d1Name, loc, '--json', '--command', sql],
+    ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--json', '--command', sql],
     {
       cwd: apiDir,
       encoding: 'utf8',
@@ -87,6 +99,31 @@ function assertFxPopulated() {
     console.error(
       `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
     );
+    process.exit(1);
+  }
+}
+
+function sqliteFile(dbPath, file) {
+  run('sqlite3', ['-bail', dbPath], root, { inputFile: file });
+}
+
+function sqliteJson(dbPath, sql) {
+  const out = execFileSync('sqlite3', ['-json', dbPath, sql], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  }).trim();
+  return out ? JSON.parse(out) : [];
+}
+
+function assertFxPopulatedSqlite(dbPath) {
+  const rows = sqliteJson(
+    dbPath,
+    "SELECT COUNT(*) AS missing_fx FROM contracts WHERE currency NOT IN ('BGN','EUR') " +
+      "AND amount_eur IS NULL AND value_flag <> 'value_suspect'",
+  );
+  const missing = Number(rows[0]?.missing_fx ?? 0);
+  if (missing > 0) {
+    console.error(`!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`);
     process.exit(1);
   }
 }
@@ -162,6 +199,42 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/refresh-slice.sql'));
 }
 
+function runWorkBackfill() {
+  const rawWorkDb = arg('work-db');
+  const workDb = rawWorkDb === true ? resolve(root, 'data/work/backfill.sqlite') : resolve(root, String(rawWorkDb));
+  const workDir = dirname(workDb);
+  mkdirSync(workDir, { recursive: true });
+  if (existsSync(workDb)) rmSync(workDb, { force: true });
+  console.log(`==> Sigma import (work DB ${workDb})`);
+
+  sqliteFile(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+  sqliteFile(workDb, resolve(root, 'packages/db/migrations/0001_amendments.sql'));
+  sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
+
+  let loadFlags = explicitRangeFlags();
+  if (catchup) {
+    const plan = resolveCatchupPlan();
+    loadFlags = rangeFlags(plan.from, plan.to);
+    console.log(`==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`);
+  }
+
+  run('node', ['scripts/load-eop.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, 'eop-load.sql')}`, ...loadFlags]);
+  sqliteFile(workDb, resolve(root, 'scripts/derive-amendments.sql'));
+  run('node', ['scripts/load-fx.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, 'fx-load.sql')}`]);
+  sqliteFile(workDb, resolve(root, 'scripts/load-nuts.sql'));
+  sqliteFile(workDb, resolve(root, 'scripts/normalize-egov.sql'));
+  sqliteFile(workDb, resolve(root, 'scripts/promote-amendments.sql'));
+  assertFxPopulatedSqlite(workDb);
+
+  const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
+  if (remote) shipArgs.push('--remote', '--yes');
+  if (arg('replace')) shipArgs.push('--replace');
+  if (arg('allow-shrink')) shipArgs.push('--allow-shrink');
+  if (persistTo) shipArgs.push(`--persist-to=${persistTo}`);
+  run('node', shipArgs);
+  console.log('\n==> work import complete.');
+}
+
 if (planOnly) {
   if (!catchup) throw new Error('--plan-only is only supported with --catchup');
   const plan = resolveCatchupPlan();
@@ -179,6 +252,11 @@ if (reset) {
     );
     process.exit(1);
   }
+  const workState = resolve(root, 'data/work');
+  if (existsSync(workState)) {
+    rmSync(workState, { recursive: true, force: true });
+    console.log('==> reset: removed data/work');
+  }
   const state = resolve(apiDir, '.wrangler/state/v3/d1');
   if (existsSync(state)) {
     rmSync(state, { recursive: true, force: true });
@@ -186,8 +264,14 @@ if (reset) {
   }
 }
 
+if (arg('work-db') !== undefined) {
+  runWorkBackfill();
+  process.exit(0);
+}
+
 console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'})`);
-run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc], apiDir);
+run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
+execSql(resolve(root, 'scripts/work-staging-schema.sql'));
 
 let deriveMode = String(arg('derive') || 'full');
 let loadFlags = explicitRangeFlags();

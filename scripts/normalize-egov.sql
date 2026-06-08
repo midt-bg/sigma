@@ -228,7 +228,11 @@ INSERT OR IGNORE INTO contracts
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic)
 SELECT
-  'c:' || x.id,
+  CASE
+    WHEN x.source LIKE 'eop:%' THEN 'c:e:' || x.id
+    WHEN x.source LIKE 'ocds:%' THEN 'c:o:' || x.id
+    ELSE 'c:' || x.id
+  END,
   't:' || x.unp,
   x.bidder_key,
   x.display_native,
@@ -415,16 +419,20 @@ WHERE EXISTS (SELECT 1 FROM raw_tr_companies c WHERE c.uic = bidders.eik_normali
 UPDATE authorities SET region = (SELECT n.nuts3_name FROM nuts_regions n WHERE n.nuts3 = authorities.nuts)
 WHERE authorities.nuts IS NOT NULL AND authorities.region IS NULL;
 
--- Freshness boundary — "data current as of" per feed (latest real contract date + row count),
--- for the UI and to verify the OCDS go-forward catch-up. Recomputed each run.
+-- Freshness boundary from the served domain contract ids. Staging is work-only.
 DELETE FROM data_freshness;
 INSERT INTO data_freshness (source, as_of, rows, refreshed_at)
 SELECT
-  CASE WHEN source LIKE 'eop:%' THEN 'eop' WHEN source LIKE 'admin:%' THEN 'admin' WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'other' END AS src,
-  MAX(CASE WHEN contract_date <= date('now') THEN contract_date END),
+  CASE
+    WHEN id LIKE 'c:e:%' THEN 'eop'
+    WHEN id LIKE 'c:o:%' THEN 'ocds'
+    WHEN id LIKE 'c:%' THEN 'admin'
+    ELSE 'other'
+  END AS src,
+  MAX(CASE WHEN signed_at <= date('now') THEN signed_at END),
   COUNT(*),
   datetime('now')
-FROM raw_egov_contracts
+FROM contracts
 GROUP BY src;
 
 -- Summary (last result set printed by `wrangler d1 execute`)

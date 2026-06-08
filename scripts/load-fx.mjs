@@ -13,15 +13,24 @@
 // normalize carry the latest prior rate forward over weekends/holidays, bounded to 10 days.
 
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/api');
-const outFile = resolve(root, 'data/fx-load.sql');
+function arg(name) {
+  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+  if (!hit) return undefined;
+  const eq = hit.indexOf('=');
+  return eq === -1 ? true : hit.slice(eq + 1);
+}
+const outFile = resolve(root, String(arg('out') || 'data/fx-load.sql'));
 const apply = process.argv.includes('--apply');
 const remoteFlag = process.argv.includes('--remote') ? '--remote' : '--local';
+const workDb = arg('work-db');
+const persistTo = arg('persist-to');
+if (workDb && process.argv.includes('--remote')) throw new Error('--work-db and --remote are mutually exclusive');
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
 const API = 'https://api.frankfurter.app';
 const FX_LOOKBACK_DAYS = 10;
@@ -34,10 +43,18 @@ const addDays = (iso, days) => {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 };
 
-function d1(sql) {
+function queryTarget(sql) {
+  if (workDb) {
+    const out = execFileSync('sqlite3', ['-json', String(workDb), sql], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim();
+    return out ? JSON.parse(out) : [];
+  }
+  const persistArgs = remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
   const out = execFileSync(
     'wrangler',
-    ['d1', 'execute', d1Name, remoteFlag, '--json', '--command', sql],
+    ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--json', '--command', sql],
     {
       cwd: apiDir,
       encoding: 'utf8',
@@ -48,7 +65,7 @@ function d1(sql) {
 }
 
 // EOP is the canonical historical corpus; admin is retained for legacy local staging and OCDS deltas.
-const ranges = d1(
+const ranges = queryTarget(
   'SELECT currency, MIN(contract_date) AS min_date, MAX(contract_date) AS max_date, ' +
     'COUNT(DISTINCT contract_date) AS contract_dates FROM raw_egov_contracts ' +
     "WHERE (source LIKE 'eop:%' OR source LIKE 'admin:%' OR source LIKE 'ocds:%') " +
@@ -121,13 +138,20 @@ for (let i = 0; i < rows.length; i += CHUNK) {
     );
 }
 const sql = stmts.join('\n') + '\n';
+mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, sql);
 console.log(`\nwrote ${rows.length} rates → ${outFile}`);
 
 if (apply) {
-  execFileSync('wrangler', ['d1', 'execute', d1Name, remoteFlag, '--file', outFile], {
-    cwd: apiDir,
-    stdio: 'inherit',
-  });
-  console.log('applied to D1.');
+  if (workDb) {
+    execFileSync('sqlite3', ['-bail', String(workDb)], { input: readFileSync(outFile), stdio: ['pipe', 'inherit', 'inherit'] });
+    console.log('applied to sqlite work DB.');
+  } else {
+    const persistArgs = remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
+    execFileSync('wrangler', ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--file', outFile], {
+      cwd: apiDir,
+      stdio: 'inherit',
+    });
+    console.log('applied to D1.');
+  }
 }
