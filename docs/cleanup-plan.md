@@ -25,11 +25,17 @@ The v1 deploy set is only `@sigma/web` + `@sigma/etl`. Remove:
 - **`apps/api`** — never deployed; the explorer reads D1 directly via `@sigma/db`.
 - **`packages/assistant-tools`** — imported only by `apps/assistant`.
 
-**Relocate the local D1 anchor first (before deleting `apps/api`).** The local miniflare D1 that
-`pnpm import` / `pnpm setup` populate and `pnpm dev` reads is currently rooted under `apps/api`. The
-import/setup/teardown scripts and `apps/web/vite.config.ts` all point at `apps/api/.wrangler/state`.
-Repoint them to `apps/web` (which already declares an identical D1 binding), relocate the existing
-state, and smoke `setup → import → dev` before removing `apps/api`.
+**Relocate the local D1 anchor first (before deleting `apps/api`).** The local miniflare **served** D1
+that `pnpm dev` reads is rooted under `apps/api/.wrangler/state`. Everything that targets it points at
+`apps/api`: `scripts/import.mjs`, `scripts/setup.mjs`, `scripts/teardown.mjs`, **`scripts/ship-domain.mjs`**
+(new — the work-DB-split shipper), and `apps/web/vite.config.ts`. Repoint all of them to `apps/web`
+(which already declares an identical D1 binding), relocate the existing state, and smoke
+`setup → import → dev` before removing `apps/api`.
+
+> Note (work-DB split, now on main): `pnpm import` builds into a **throwaway work DB** at
+> `data/work/backfill.sqlite` (applies the migrations + `work-staging-schema.sql`, runs `load-eop`),
+> then `ship-domain.mjs` ships only the domain/precompute/reference tables to the **served** D1. Only
+> the *served*-D1 location (the `apps/api` anchor) relocates; the work DB path is independent.
 
 **Other references to update:** the "consumed by apps/api" comment in `@sigma/api-contract`; the
 `ADMIN_BASIC_AUTH_*` block in `.dev.vars.example` (keep `AI_GATEWAY_*`); the api/assistant/admin port
@@ -75,9 +81,12 @@ So keep the `raw_egov_*` / `raw_ocds_*` tables, the `idx_egov_*` / `idx_ocds_*` 
 mappers as-is. The `egov` name reflects the data **shape**, independent of the storage.eop.bg source —
 the earlier "rename to eop-named staging" idea was based on a misunderstanding and is dropped.
 
-> **Upcoming (R3, in progress):** a curated **served** parties projection table for OCDS enrichment — a
-> clean domain-style projection, distinct from the transient `raw_ocds_parties` (which stays transient).
-> Account for that table when it lands; it is not part of this cleanup.
+> **R3 has landed:** the curated **served** `parties` table (`packages/db/migrations/0002_parties.sql`)
+> is live and read by `normalize-egov.sql` (authority nuts/address/contact enrichment). It is a clean
+> domain-style projection, distinct from the transient `raw_ocds_parties` — keep it; it is not a cleanup
+> target. (Schema is now four migrations: `0000_init` + `0001_amendments` + `0002_parties` +
+> `0003_tender_eop_id`; the `bidder_members` / `contract_participants` / `risk_scores` objects in §5/§8
+> are still in `0000_init.sql`.)
 
 ---
 
@@ -142,10 +151,10 @@ with them, not before, or the build breaks):**
 
 ## 7. Owner-gated (decide intent before removing)
 
-- **`raw_ocds_award_suppliers`** — staged (a writer exists) but currently **never read** (no `FROM`/`JOIN`).
-  Wired-but-unused supplier normalization. The **R3** served-parties / OCDS-enrichment work (§3) may
-  consume it — confirm against R3 first; remove the table + its writer only if supplier normalization is
-  genuinely abandoned.
+- **`raw_ocds_award_suppliers`** — staged (a writer exists) but **never read** (no `FROM`/`JOIN`), even
+  after R3's `parties` projection landed (R3 enrichment reads `parties`, not this table). Wired-but-unused
+  supplier normalization. Remove the table + its writer only if supplier normalization is confirmed
+  abandoned (any further R3 supplier work would revive it).
 
 ---
 
