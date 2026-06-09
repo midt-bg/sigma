@@ -1,7 +1,11 @@
 # Cleanup plan — single-source EOP, remove stale apps & dead code
 
-**Status:** proposed — nothing executed. A descriptive task list (no line numbers on purpose — the
-working tree is volatile, so anchor on symbol/file names and re-ground at execution time).
+**Status:** EXECUTED on branch `refactor/clean-rebuild-and-cleanup` (sections 1–5 + 7). The dead apps,
+obsolete loaders, admin/TR/consortium/award-supplier code are removed; the served D1 was relocated to
+`apps/web`. Each step gated: per-package typecheck + tests, and production-flow convergence `0/0` on
+all six tables after every SQL-touching change. The `§6` privatizations were applied conservatively
+(symbols imported by their own tests were left exported; the four genuinely-dead `@sigma/shared`
+utilities `ISODate`/`Brand`/`isDefined`/`assert` were left as-is pending a delete-vs-keep call).
 
 **Scope rules (per decisions):**
 - `mocks/` and `docs/` are **left as-is** — out of scope for this cleanup.
