@@ -2400,12 +2400,14 @@ tbody td,
   background: var(--accent);
 }
 .lot-table tbody tr.current td {
-  background: var(--paper);
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
+  background: var(--paper-warm);
 }
+/* Left accent bar marks the current lot — drawn with an inset box-shadow (not a border) so it sits
+   inside the cell and isn't collapsed away by the table's border-collapse. Pad the first cell by the
+   bar width so the lot label clears it. */
 .lot-table tbody tr.current td:first-child {
-  padding-left: 8px;
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: calc(var(--s-3) + 3px);
 }
 @media (max-width: 760px) {
   .value-history {
