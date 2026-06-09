@@ -74,6 +74,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
   // Direct links to the day's raw ЦАИС ЕОП open-data files (storage.eop.bg) this record was
   // published in — empty when there's no usable publication date.
   const sourceFiles = eopSourceFiles(c.publishedAt);
+  // Procurement subjects range from a few words to 200+ chars. Step the editorial h1 down by length
+  // so long titles don't tower; the longest tier (`t-sm`) also line-clamps. Nothing is lost — the
+  // full subject is always shown below in „Подробности → Предмет".
+  const titleClass =
+    c.subject.length > 140 ? 't-sm' : c.subject.length > 70 ? 't-md' : undefined;
   const betweenParties = `/contracts?authority=${c.authority.slug}&bidder=${c.bidder.slug}`;
 
   return (
@@ -95,6 +100,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={c.subject}
+          titleClassName={titleClass}
           lede={
             <>
               {c.signedAt ? `Сключен на ${longDate(c.signedAt)} ` : ''}между{' '}

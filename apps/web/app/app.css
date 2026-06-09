@@ -608,6 +608,24 @@ main.narrow {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* Length-aware title sizing. Short subjects keep the full editorial serif (the base rule above);
+   longer procurement subjects step down in size and widen the measure so they don't tower. The
+   longest tier additionally line-clamps — nothing is lost, the full subject is shown in the
+   „Подробности → Предмет" row below. Tiers are chosen in routes/contract.tsx by subject length. */
+.page-header h1.t-md {
+  max-width: 32ch;
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1.12;
+}
+.page-header h1.t-sm {
+  max-width: 40ch;
+  font-size: clamp(21px, 2.3vw, 30px);
+  line-height: 1.18;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .page-header .lede {
   margin: var(--s-5) 0 0;
   max-width: 60ch;
