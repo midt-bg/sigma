@@ -104,3 +104,17 @@ invisible to the web app. `import.mjs --reset` also cleans `data/work/`.
 
 - `ship-domain.mjs` is idempotent and avoids a global empty served database, but it is still not a zero-downtime ship: each served table is briefly deleted and refilled during its own pass. The served D1 should not be read by the live web app mid-ship. Production remote deployment should use a shadow-table/swap or equivalent zero-downtime promotion.
 - Amendment IDs use a stable natural key. When `document_number`, `correction_number`, and `seq_no` are all missing, the fallback key is deterministic content (`published_at`, values, currency, description). Two genuinely distinct amendments with identical fallback content are intentionally indistinguishable in this phase.
+- Live refresh and full normalize currently assign different surrogate contract IDs. The live slice
+  uses a composite natural key (`c:e:<unp>:<contract_number>:<lot>:<bidder>:<ordinal>`), while the
+  full normalize still uses the staging rowid. Convergence is therefore measured on contract content,
+  not on the surrogate `id`; contract content (`amount`, `value_flag`, `amount_eur`, FX fields) is
+  byte-identical and `SUM(amount_eur)` matches to the cent. Recommended follow-up: move both paths to
+  the composite key, which also removes the pre-existing rowid instability across rebuilds.
+- Synthetic `neizvestna` tenders without a real procurement notice derive placeholder
+  `cpv_code`/`estimated_value` from contracts. The live slice can only aggregate the refreshed
+  window, while full backfill aggregates the full corpus, so a small number of placeholder tenders can
+  differ until the next full re-base. This is accepted as low blast radius and eventual-consistent for
+  this phase.
+- Entities born in a live window whose best contact or enrichment-bearing OCDS party falls outside
+  that window can stay unenriched until the next full re-base. The live slice only sees transient
+  parties for the refreshed window; full backfill sees the whole corpus and reconciles these fields.

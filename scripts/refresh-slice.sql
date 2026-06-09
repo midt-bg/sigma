@@ -53,7 +53,13 @@ FROM (
       WHEN contractor_name IS NOT NULL AND TRIM(contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(contractor_name, '  ', ' '), '  ', ' ')))
       ELSE NULL
     END AS bidder_key,
-    CASE WHEN UPPER(contractor_name) LIKE '%ДЗЗД%' OR UPPER(contractor_name) LIKE '%ОБЕДИНЕНИЕ%' OR UPPER(contractor_name) LIKE '%КОНСОРЦИУМ%' THEN 1 ELSE 0 END AS grp
+    CASE
+      WHEN contractor_name LIKE '%;%'
+        OR UPPER(contractor_name) LIKE '%ДЗЗД%'
+        OR UPPER(contractor_name) LIKE '%ОБЕДИНЕНИЕ%'
+        OR UPPER(contractor_name) LIKE '%КОНСОРЦИУМ%'
+      THEN 1 ELSE 0
+    END AS grp
   FROM (
     SELECT contractor_name,
       TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
@@ -104,34 +110,34 @@ FROM raw_egov_tenders t
 WHERE t.lot_id IS NULL
   AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || t.authority_eik)
 ON CONFLICT(id) DO UPDATE SET
-  source_id = excluded.source_id,
-  title = excluded.title,
-  authority_id = excluded.authority_id,
-  cpv_code = excluded.cpv_code,
-  cpv_description = excluded.cpv_description,
-  estimated_value = excluded.estimated_value,
-  currency = excluded.currency,
-  procedure_type = excluded.procedure_type,
-  contract_kind = excluded.contract_kind,
-  num_lots = excluded.num_lots,
-  status = excluded.status,
-  published_at = excluded.published_at,
-  deadline_at = excluded.deadline_at,
-  legal_basis = excluded.legal_basis,
-  award_criteria = excluded.award_criteria,
-  main_activity = excluded.main_activity,
-  notice_type = excluded.notice_type,
-  place_of_performance = excluded.place_of_performance,
-  start_date = excluded.start_date,
-  end_date = excluded.end_date,
-  duration = excluded.duration,
-  duration_unit = excluded.duration_unit,
-  eu_programme = excluded.eu_programme,
-  green = excluded.green,
-  social = excluded.social,
-  innovation = excluded.innovation,
-  eauction = excluded.eauction,
-  cancelled = excluded.cancelled;
+  source_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.source_id ELSE tenders.source_id END,
+  title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.title ELSE tenders.title END,
+  authority_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.authority_id ELSE tenders.authority_id END,
+  cpv_code = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_code, tenders.cpv_code) ELSE tenders.cpv_code END,
+  cpv_description = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_description, tenders.cpv_description) ELSE tenders.cpv_description END,
+  estimated_value = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.estimated_value, tenders.estimated_value) ELSE tenders.estimated_value END,
+  currency = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.currency, tenders.currency) ELSE tenders.currency END,
+  procedure_type = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.procedure_type ELSE tenders.procedure_type END,
+  contract_kind = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.contract_kind, tenders.contract_kind) ELSE tenders.contract_kind END,
+  num_lots = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.num_lots, tenders.num_lots) ELSE tenders.num_lots END,
+  status = CASE WHEN excluded.status = 'awarded' THEN 'awarded' ELSE tenders.status END,
+  published_at = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.published_at, tenders.published_at) ELSE tenders.published_at END,
+  deadline_at = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.deadline_at, tenders.deadline_at) ELSE tenders.deadline_at END,
+  legal_basis = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.legal_basis, tenders.legal_basis) ELSE tenders.legal_basis END,
+  award_criteria = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.award_criteria, tenders.award_criteria) ELSE tenders.award_criteria END,
+  main_activity = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.main_activity, tenders.main_activity) ELSE tenders.main_activity END,
+  notice_type = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.notice_type, tenders.notice_type) ELSE tenders.notice_type END,
+  place_of_performance = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.place_of_performance, tenders.place_of_performance) ELSE tenders.place_of_performance END,
+  start_date = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.start_date, tenders.start_date) ELSE tenders.start_date END,
+  end_date = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.end_date, tenders.end_date) ELSE tenders.end_date END,
+  duration = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.duration, tenders.duration) ELSE tenders.duration END,
+  duration_unit = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.duration_unit, tenders.duration_unit) ELSE tenders.duration_unit END,
+  eu_programme = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.eu_programme, tenders.eu_programme) ELSE tenders.eu_programme END,
+  green = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.green, tenders.green) ELSE tenders.green END,
+  social = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.social, tenders.social) ELSE tenders.social END,
+  innovation = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.innovation, tenders.innovation) ELSE tenders.innovation END,
+  eauction = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.eauction, tenders.eauction) ELSE tenders.eauction END,
+  cancelled = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cancelled, tenders.cancelled) ELSE tenders.cancelled END;
 
 INSERT OR IGNORE INTO lots (id, tender_id, title, cpv_code, estimated_value)
 SELECT
@@ -150,20 +156,30 @@ WHERE t.lot_id IS NOT NULL
 
 -- Party/contact enrichment for entities touched by the refreshed staging.
 UPDATE authorities SET
-  nuts       = COALESCE(nuts,       (SELECT p.region_nuts    FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND p.region_nuts    IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  settlement = COALESCE(settlement, (SELECT p.locality       FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND p.locality       IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  address    = COALESCE(address,    (SELECT p.street_address FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND p.street_address IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  contact_email = COALESCE(contact_email, (SELECT p.contact_email FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND p.contact_email IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  contact_phone = COALESCE(contact_phone, (SELECT p.contact_phone FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND p.contact_phone IS NOT NULL ORDER BY p.id DESC LIMIT 1))
+  nuts       = COALESCE((SELECT p.region_nuts    FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
+  settlement = COALESCE((SELECT p.locality       FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
+  address    = COALESCE((SELECT p.street_address FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
+  contact_email = COALESCE((SELECT p.contact_email FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
+  contact_phone = COALESCE((SELECT p.contact_phone FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
 WHERE EXISTS (SELECT 1 FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat);
 
 UPDATE bidders SET
-  nuts       = COALESCE(nuts,       (SELECT p.region_nuts    FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND p.region_nuts    IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  settlement = COALESCE(settlement, (SELECT p.locality       FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND p.locality       IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  address    = COALESCE(address,    (SELECT p.street_address FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND p.street_address IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  contact_email = COALESCE(contact_email, (SELECT p.contact_email FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND p.contact_email IS NOT NULL ORDER BY p.id DESC LIMIT 1)),
-  contact_phone = COALESCE(contact_phone, (SELECT p.contact_phone FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND p.contact_phone IS NOT NULL ORDER BY p.id DESC LIMIT 1))
+  nuts       = COALESCE((SELECT p.region_nuts    FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
+  settlement = COALESCE((SELECT p.locality       FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.locality, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), settlement),
+  address    = COALESCE((SELECT p.street_address FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.street_address, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), address),
+  contact_email = COALESCE((SELECT p.contact_email FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_email, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_email),
+  contact_phone = COALESCE((SELECT p.contact_phone FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
 WHERE EXISTS (SELECT 1 FROM raw_ocds_parties p WHERE p.eik = bidders.eik_normalized);
+
+UPDATE authorities
+SET region = (SELECT n.nuts3_name FROM nuts_regions n WHERE n.nuts3 = authorities.nuts)
+WHERE authorities.nuts IS NOT NULL
+  AND EXISTS (SELECT 1 FROM nuts_regions n WHERE n.nuts3 = authorities.nuts)
+  AND (
+    EXISTS (SELECT 1 FROM raw_ocds_parties p WHERE p.eik = authorities.bulstat)
+    OR EXISTS (SELECT 1 FROM raw_egov_contracts c WHERE c.authority_eik = authorities.bulstat)
+    OR EXISTS (SELECT 1 FROM raw_egov_tenders t WHERE t.authority_eik = authorities.bulstat)
+  );
 
 CREATE INDEX IF NOT EXISTS idx_egov_tenders_tender_id ON raw_egov_tenders(tender_id);
 WITH mapped AS (
@@ -203,7 +219,7 @@ INSERT OR IGNORE INTO tenders
 SELECT
   't:' || c.unp, c.unp, COALESCE(MIN(c.procurement_subject), '(без предмет)'),
   'auth:' || MIN(c.authority_eik), MIN(c.cpv_code), MIN(c.estimated_value),
-  COALESCE(MIN(c.currency), 'BGN'), 'неизвестна', MIN(c.contract_kind), 'awarded', NULL, NULL
+  COALESCE(MIN(c.currency), 'BGN'), 'неизвестна', MIN(c.contract_kind), 'awarded', MIN(c.legal_basis), MIN(c.award_criteria)
 FROM raw_egov_contracts c
 WHERE (c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%') AND c.unp IS NOT NULL
   AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || c.authority_eik)
