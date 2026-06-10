@@ -35,25 +35,35 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const range = coverageRange(endYear);
   return (
     <main id="main">
-      <PageHeader
-        kicker="Обществени поръчки"
-        title={
-          <>
-            Къде отиват <em>парите</em> на държавата?
-          </>
-        }
-        lede="СИГМА показва кой какво купува от държавата и общините и на кого плаща — във всички сектори на обществените поръчки. Без регистрация, без интерпретация. Всяко число може да бъде проследено до конкретния договор."
-      >
-        <form className="hero-search" role="search" action="/search">
-          <input
-            type="search"
-            name="q"
-            placeholder="Институция, компания, ЕИК или № на договор…"
-            aria-label="Търсене"
-          />
-          <button type="submit">Намери</button>
-        </form>
-      </PageHeader>
+      <div className="hero-panel">
+        <PageHeader
+          kicker="Обществени поръчки"
+          title={
+            <>
+              Къде отиват <em>парите</em> на държавата?
+            </>
+          }
+          lede="СИГМА показва кой какво купува от държавата и общините и на кого плаща — във всички сектори на обществените поръчки. Без регистрация, без интерпретация. Всяко число може да бъде проследено до конкретния договор."
+        >
+          <form className="hero-search" role="search" action="/search">
+            <input
+              type="search"
+              name="q"
+              placeholder="Институция, компания, ЕИК или № на договор…"
+              aria-label="Търсене"
+            />
+            <button type="submit">Намери</button>
+          </form>
+        </PageHeader>
+        <img
+          className="hero-mark"
+          src="/hero-mark.png"
+          alt=""
+          aria-hidden="true"
+          width={900}
+          height={900}
+        />
+      </div>
 
       <TotalsStrip
         label="Обзор на данните"

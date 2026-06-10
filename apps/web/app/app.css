@@ -263,7 +263,7 @@ code,
   display: block;
   height: 28px;
   width: auto;
-  /* Source wordmark is the deep brand red on transparent — sits on the warm paper masthead. */
+  /* Wordmark: brand-red mark + warm-grey „СИГМА" lettering on transparent — sits on the warm paper masthead. */
 }
 /* The pre-existing brand-sub tagline competes with the editorial mast tone */
 .brand-sub {
@@ -1869,6 +1869,30 @@ details.row .body .signal .why {
 
 /* Hero search — quiet editorial prompt on landing/list pages.
    Grid: chevron (::before) · input · button */
+/* Home hero — title panel on the left, the brand mark as a quiet grey watermark on the right.
+   Folds the image away on narrow screens where the header needs the full measure. */
+.hero-panel {
+  display: flex;
+  align-items: center;
+  gap: var(--s-7);
+  margin: 0 0 var(--s-7);
+}
+.hero-panel .page-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.hero-mark {
+  flex: 0 0 auto;
+  width: clamp(180px, 24vw, 320px);
+  height: auto;
+}
+@media (max-width: 860px) {
+  .hero-mark {
+    display: none;
+  }
+}
+
 .hero-search {
   display: grid;
   grid-template-columns: auto 1fr auto;

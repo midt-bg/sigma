@@ -82,7 +82,7 @@ export function SiteHeader() {
             aria-label="СИГМА — начална страница"
             title="Система за интегриран граждански мониторинг и анализ на обществените поръчки"
           >
-            <img className="brand-logo" src="/logo.png" width={646} height={112} alt="СИГМА" />
+            <img className="brand-logo" src="/logo.svg" width={523} height={115} alt="СИГМА" />
             <span className="brand-sub">Платформа за прозрачност на обществените поръчки</span>
           </Link>
           <nav
