@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { computeWorkerCatchupPlan } from './eop';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { computeWorkerCatchupPlan, listBucketForDay } from './eop';
 
 function fakeDbFromFreshness(maxLoadedDate: string): D1Database {
   const db = {
@@ -28,5 +28,28 @@ describe('computeWorkerCatchupPlan', () => {
     expect(plan.from).toBe('2026-05-29');
     expect(plan.to).toBe('2026-06-07');
     expect(plan.maxLoadedDate).toBe('2026-06-01');
+  });
+});
+
+describe('EOP fetch host allowlist', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects bucket listing redirects to a different final host', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const response = new Response('<ListBucketResult />', { status: 200 });
+        Object.defineProperty(response, 'url', {
+          value: 'https://evil.example/open-data-2026-06-01/',
+        });
+        return response;
+      }) as unknown as typeof fetch,
+    );
+
+    await expect(listBucketForDay('2026-06-01')).rejects.toThrow(
+      /blocked redirected EOP fetch from storage\.eop\.bg to evil\.example/,
+    );
   });
 });

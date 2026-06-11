@@ -70,6 +70,14 @@ const dayUrl = (baseUrl: string, day: string): string =>
 const objectUrl = (bucketUrl: string, key: string): string =>
   `${bucketUrl}${encodeURIComponent(key)}`;
 
+function assertAllowedFinalHost(requestUrl: string, responseUrl: string): void {
+  const requested = new URL(requestUrl);
+  const final = new URL(responseUrl || requestUrl);
+  if (final.host !== requested.host) {
+    throw new Error(`blocked redirected EOP fetch from ${requested.host} to ${final.host}`);
+  }
+}
+
 function decodeXml(s: string): string {
   return s
     .replace(/&lt;/g, '<')
@@ -167,6 +175,7 @@ export async function listBucketForDay(
 ): Promise<BucketListing | null> {
   const bucketUrl = dayUrl(opts.baseUrl ?? DEFAULT_BASE_URL, day);
   const res = await fetch(bucketUrl);
+  assertAllowedFinalHost(bucketUrl, res.url);
   if (res.status === 403 || res.status === 404) return null;
   if (!res.ok) throw new Error(`bucket ${day}: HTTP ${res.status}`);
 
@@ -180,6 +189,7 @@ export async function listBucketForDay(
 
 async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url);
+  assertAllowedFinalHost(url, res.url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   return res.json();
 }
