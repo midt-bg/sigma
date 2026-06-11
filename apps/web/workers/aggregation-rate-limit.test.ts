@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
+import { normalizedPathname } from './rate-limit';
 
 function rateLimiter(success: boolean): { limiter: RateLimit; limit: ReturnType<typeof vi.fn> } {
   const limit = vi.fn(async () => ({ success }));
@@ -21,6 +22,27 @@ describe('rateLimitAggregationRoute', () => {
     expect(limit).toHaveBeenCalledWith({ key: '203.0.113.30' });
     expect(response?.status).toBe(429);
     expect(response?.headers.get('Retry-After')).toBe('60');
+  });
+
+  it('limits aggregation listing requests with a trailing slash', async () => {
+    const { limiter, limit } = rateLimiter(false);
+
+    const response = await rateLimitAggregationRoute(
+      new Request('http://local/companies/', {
+        headers: { 'CF-Connecting-IP': '203.0.113.31' },
+      }),
+      { AGG_RATE_LIMITER: limiter },
+      false,
+    );
+
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.31' });
+    expect(response?.status).toBe(429);
+  });
+
+  it('normalizes trailing slashes while preserving root', () => {
+    expect(normalizedPathname(new Request('http://local/'))).toBe('/');
+    expect(normalizedPathname(new Request('http://local/companies/'))).toBe('/companies');
+    expect(normalizedPathname(new Request('http://local/companies///'))).toBe('/companies');
   });
 
   it('does not limit unrelated paths', async () => {

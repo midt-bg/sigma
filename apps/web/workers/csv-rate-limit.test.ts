@@ -43,6 +43,22 @@ describe('rateLimitCsvExport', () => {
     expect(limit).toHaveBeenNthCalledWith(3, { key: '203.0.113.20' });
   });
 
+  it('matches CSV requests with trailing slashes through shared path normalization', async () => {
+    const { limiter, limit } = rateLimiter(true);
+
+    await expect(
+      rateLimitCsvExport(
+        new Request('http://local/contracts.csv///', {
+          headers: { 'CF-Connecting-IP': '203.0.113.21' },
+        }),
+        { CSV_RATE_LIMITER: limiter },
+        false,
+      ),
+    ).resolves.toBeNull();
+
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.21' });
+  });
+
   it('returns a hardened 429 when the limiter rejects the key', async () => {
     const { limiter, limit } = rateLimiter(false);
 

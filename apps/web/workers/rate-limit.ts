@@ -7,9 +7,9 @@ export function normalizedPathname(request: Request): string {
   const pathname = new URL(request.url).pathname;
 
   try {
-    return decodeURIComponent(pathname).toLowerCase();
+    return decodeURIComponent(pathname).toLowerCase().replace(/\/+$/, '') || '/';
   } catch {
-    return pathname.toLowerCase();
+    return pathname.toLowerCase().replace(/\/+$/, '') || '/';
   }
 }
 
