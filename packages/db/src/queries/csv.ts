@@ -1,4 +1,4 @@
-const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+const FORMULA_PREFIX = /^(?:[ \t\r\n]*[=+\-@]|[\t\r\n])/;
 const QUOTE_TRIGGER = /[",\n\r]/;
 
 export function csvCell(v: unknown): string {
