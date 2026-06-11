@@ -36,11 +36,50 @@ export function clean(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
+const MIN_DATA_YEAR = 1990;
+const MIN_DATA_DAY = `${MIN_DATA_YEAR}-01-01`;
+
+function maxDataYear(): number {
+  return new Date().getUTCFullYear() + 1;
+}
+
+function validYear(year: number): boolean {
+  return Number.isInteger(year) && year >= MIN_DATA_YEAR && year <= maxDataYear();
+}
+
+function validDateOnly(day: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const d = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === day;
+}
+
+function normalizedDateOnly(v: unknown): string | null {
+  const s = clean(v);
+  if (s === null) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\b)/);
+  let day: string | null = null;
+  if (iso) day = `${iso[1]!}-${iso[2]!}-${iso[3]!}`;
+  const m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (!day && m) day = `${m[3]!}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`;
+  if (!day) {
+    const t = Date.parse(s);
+    if (!Number.isFinite(t)) return null;
+    day = new Date(t).toISOString().slice(0, 10);
+  }
+  return validDateOnly(day) && day >= MIN_DATA_DAY ? day : null;
+}
+
+function saneDateCeiling(now: Date): string {
+  return `${now.getUTCFullYear() + 50}-12-31`;
+}
+
 export function toInt(v: unknown): number | null {
   const s = clean(v);
   if (s === null) return null;
-  const n = parseInt(s.replace(/\s/g, ''), 10);
-  return Number.isFinite(n) ? n : null;
+  const compact = s.replace(/\s/g, '');
+  if (!/^\+?\d+$/.test(compact)) return null;
+  const n = Number(compact);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
 export function toReal(v: unknown): number | null {
@@ -48,8 +87,9 @@ export function toReal(v: unknown): number | null {
   if (s === null) return null;
   s = s.replace(/\s/g, '');
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : null;
+  if (!/^\+?(?:\d+(?:\.\d+)?|\.\d+)$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 export function toBool(v: unknown): number | null {
@@ -61,13 +101,17 @@ export function toBool(v: unknown): number | null {
   return null;
 }
 
-export function toISODate(v: unknown): string | null {
-  const s = clean(v);
-  if (s === null) return null;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\b)/);
-  if (iso) return `${iso[1]!}-${iso[2]!}-${iso[3]!}`;
-  const m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
-  return m ? `${m[3]!}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}` : s;
+export function toISODate(v: unknown, now: Date = new Date()): string | null {
+  const day = normalizedDateOnly(v);
+  return day !== null && day <= saneDateCeiling(now) ? day : null;
+}
+
+export function toEventDate(v: unknown, now: Date = new Date()): string | null {
+  return toISODate(v, now);
+}
+
+export function toPeriodDate(v: unknown, now: Date = new Date()): string | null {
+  return toISODate(v, now);
 }
 
 function toSecuredFinancing(v: unknown): number | null {
@@ -98,7 +142,10 @@ const field = (column: string, key: string | null, kind: BaseCoercionKind): Base
   kind,
 });
 
-const yearOf = (day: string): number => Number(day.slice(0, 4));
+const yearOf = (day: string): number | null => {
+  const year = Number(day.slice(0, 4));
+  return validYear(year) ? year : null;
+};
 
 export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
   contracts: {

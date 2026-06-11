@@ -19,6 +19,15 @@ const meta: OcdsMeta = {
   fetchedAt: '2026-05-25T00:00:00Z',
 };
 
+const FIXED_NOW = new Date('2026-06-11T12:00:00Z');
+
+function utcDay(addDays = 0): string {
+  const d = new Date(FIXED_NOW.getTime());
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + addDays);
+  return d.toISOString().slice(0, 10);
+}
+
 const release: OcdsRelease = {
   ocid: 'ocds-bg-2026-000123',
   id: 'release-1',
@@ -109,6 +118,80 @@ describe('releaseToContracts', () => {
       estimated_value: null,
       bids_received: null,
       currency: 'EUR',
+    });
+  });
+
+  it('nulls negative numeric values and out-of-range dates/years without throwing', () => {
+    const rows = releaseToContracts(
+      {
+        ...release,
+        date: '1989-12-31T00:00:00Z',
+        tender: { ...release.tender, value: { amount: -1 } },
+        bids: { statistics: [{ measure: 'bids', value: -3 }] },
+        contracts: [
+          {
+            ...release.contracts![0]!,
+            dateSigned: '3026-01-01',
+            value: { amount: -100, currency: 'EUR' },
+          },
+        ],
+      },
+      { ...meta, year: 3026 },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      dataset_year: null,
+      published_at: null,
+      contract_date: null,
+      signing_value: null,
+      estimated_value: null,
+      bids_received: null,
+    });
+  });
+
+  it('keeps plausible future release and signing dates within the generous sane-date ceiling', () => {
+    const datesFor = (relDate: string, dateSigned: string) =>
+      releaseToContracts(
+        {
+          ...release,
+          date: relDate,
+          contracts: [{ ...release.contracts![0]!, dateSigned }],
+        },
+        meta,
+      )[0]!;
+
+    expect(datesFor('14.05.2024', '2024-05-14')).toMatchObject({
+      published_at: '2024-05-14',
+      contract_date: '2024-05-14',
+    });
+    expect(datesFor(utcDay(), utcDay())).toMatchObject({
+      published_at: utcDay(),
+      contract_date: utcDay(),
+    });
+    expect(datesFor(utcDay(2), utcDay(2))).toMatchObject({
+      published_at: utcDay(2),
+      contract_date: utcDay(2),
+    });
+    expect(datesFor(utcDay(30), utcDay(30))).toMatchObject({
+      published_at: utcDay(30),
+      contract_date: utcDay(30),
+    });
+    expect(datesFor('2027-01-15', '2027-01-15')).toMatchObject({
+      published_at: '2027-01-15',
+      contract_date: '2027-01-15',
+    });
+    expect(datesFor('2029-05-14', '14.05.2029')).toMatchObject({
+      published_at: '2029-05-14',
+      contract_date: '2029-05-14',
+    });
+    expect(datesFor('14.05.2029', '2029-05-14')).toMatchObject({
+      published_at: '2029-05-14',
+      contract_date: '2029-05-14',
+    });
+    expect(datesFor('9999-01-01', '2026-02-31')).toMatchObject({
+      published_at: null,
+      contract_date: null,
     });
   });
 

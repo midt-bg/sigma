@@ -1,6 +1,8 @@
 // OCDS adapter helpers for the procurement ETL. The pure release flatteners here are the single
 // source of truth used by both the Worker-side ingest package and the CLI loaders.
 
+import { toEventDate } from './base';
+
 const KIND_CATEGORY: Record<string, string> = {
   goods: 'Доставки',
   services: 'Услуги',
@@ -8,9 +10,27 @@ const KIND_CATEGORY: Record<string, string> = {
 };
 
 const MS_PER_DAY = 86_400_000;
+const MIN_DATA_YEAR = 1990;
 
-const dateOnly = (s: unknown): string | null => (s ? String(s).slice(0, 10) : null);
-const finiteNum = (v: unknown): number | null => (Number.isFinite(Number(v)) ? Number(v) : null);
+function maxDataYear(): number {
+  return new Date().getUTCFullYear() + 1;
+}
+
+function validYear(year: number): boolean {
+  return Number.isInteger(year) && year >= MIN_DATA_YEAR && year <= maxDataYear();
+}
+
+const dateOnly = (s: unknown): string | null => toEventDate(s);
+const finiteNum = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+const boundedYear = (v: unknown): number | null => {
+  const year = Number(v);
+  return validYear(year) ? year : null;
+};
 const isoCurrency = (v: unknown): string | null => {
   const code = String(v ?? '')
     .trim()
@@ -253,7 +273,7 @@ export function releaseToContracts(rel: OcdsRelease, meta: OcdsMeta): ContractSt
     const sup = supplierOf(rel, ctx, c);
     return {
       ...metaBase(meta),
-      dataset_year: meta.year,
+      dataset_year: boundedYear(meta.year),
       dataset_variant: 'OCDS',
       seq_no: null,
       document_number: rel.id ?? null,
@@ -298,7 +318,7 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
     const amd = (c.amendments ?? []).slice(-1)[0] ?? null;
     return [{
       ...metaBase(meta),
-      dataset_year: meta.year,
+      dataset_year: boundedYear(meta.year),
       dataset_variant: 'OCDS',
       seq_no: null,
       document_number: rel.id ?? null,
