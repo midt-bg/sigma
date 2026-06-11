@@ -1,6 +1,9 @@
 import { createRequestHandler } from 'react-router';
 import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
+import { rateLimitAggregationRoute } from './aggregation-rate-limit';
+import { cacheKey } from './cache-key';
 import { rateLimitCsvExport } from './csv-rate-limit';
+import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 
 declare module 'react-router' {
   export interface AppLoadContext {
@@ -27,12 +30,6 @@ const edgeCache = (caches as unknown as { default: Cache }).default;
 // concept, so we synthesise one by mutating the cache-key URL (the served response is unaffected).
 const DEPLOY_TAG = Date.now().toString(36);
 const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
-
-function cacheKey(request: Request): Request {
-  const url = new URL(request.url);
-  url.searchParams.set('_dt', DEPLOY_TAG);
-  return new Request(url.toString(), request);
-}
 
 function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
@@ -65,6 +62,7 @@ async function hashInlineScripts(html: string): Promise<string[]> {
 async function hardenResponse(response: Response, cacheable: boolean): Promise<Response> {
   const headers = new Headers(response.headers);
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
+  setAllowHeader(headers, response.status);
 
   if (cacheable && isHtml(response)) {
     const body = await response.text();
@@ -88,6 +86,11 @@ async function hardenResponse(response: Response, cacheable: boolean): Promise<R
 
 export default {
   async fetch(request, env, ctx) {
+    const httpsRedirect = redirectCleartextHttp(request, import.meta.env.PROD);
+    if (httpsRedirect) return httpsRedirect;
+
+    if (request.method === 'OPTIONS') return optionsResponse(import.meta.env.PROD);
+
     const csvRateLimitResponse = await rateLimitCsvExport(request, env, import.meta.env.PROD);
     if (csvRateLimitResponse) return csvRateLimitResponse;
 
@@ -95,7 +98,7 @@ export default {
     // (publicCache() in apps/web/app/lib/cache.ts). Deterministic and independent of platform
     // HTML-cache heuristics on *.workers.dev; TTL is driven by s-maxage. The X-Edge-Cache:
     // HIT|MISS|BYPASS header lets `curl -I` verify which path a request took.
-    const key = request.method === 'GET' ? cacheKey(request) : null;
+    const key = request.method === 'GET' ? cacheKey(request, DEPLOY_TAG) : null;
     if (key) {
       const cached = await edgeCache.match(key);
       if (cached) {
@@ -109,6 +112,14 @@ export default {
         });
       }
     }
+
+    const aggregationRateLimitResponse = await rateLimitAggregationRoute(
+      request,
+      env,
+      import.meta.env.PROD,
+    );
+    if (aggregationRateLimitResponse) return aggregationRateLimitResponse;
+
     const response = await requestHandler(request, { cloudflare: { env, ctx } });
     const cacheable =
       key !== null &&

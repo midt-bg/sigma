@@ -27,6 +27,13 @@
         "namespace_id": "1001",
         "simple": { "limit": 10, "period": 60 },
       },
+      {
+        "name": "AGG_RATE_LIMITER",
+        "type": "ratelimit",
+        // Account-unique integer id (the deploy API rejects non-numeric ids; miniflare is lenient).
+        "namespace_id": "1002",
+        "simple": { "limit": 30, "period": 60 },
+      },
     ],
   },
   "observability": {
