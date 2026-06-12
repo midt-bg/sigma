@@ -210,6 +210,7 @@ function runFullDerive() {
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/normalize-raw.sql'));
+  execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
 }
