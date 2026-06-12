@@ -294,7 +294,7 @@ GROUP BY bidder_key;
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, amount, currency, signed_at,
    contract_number, signing_value, current_value, annex_count, eu_funded, bids_received,
-   contract_kind, awarded_to_group, value_flag, amount_eur, fx_converted, fx_rate,
+   contract_kind, awarded_to_group, value_flag, date_flag, amount_eur, fx_converted, fx_rate,
    lot_id, document_number, published_at, contract_subject,
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
@@ -322,6 +322,7 @@ SELECT
   x.contract_kind,
   x.awarded_to_group,
   x.value_flag,
+  x.date_flag,
   CASE
     WHEN x.trusted_native IS NULL THEN NULL
     WHEN COALESCE(x.currency, 'BGN') = 'EUR' THEN x.trusted_native
@@ -399,6 +400,12 @@ FROM (
           WHEN c.estimated_value > 0 AND COALESCE(c.current_value, c.signing_value) / c.estimated_value >= 10 THEN 'review'
           ELSE 'ok'
         END AS value_flag,
+        CASE
+          WHEN c.contract_date IS NOT NULL
+           AND c.published_at IS NOT NULL
+           AND c.contract_date > date(c.published_at, '+2 day') THEN 'signed_after_publication'
+          ELSE 'ok'
+        END AS date_flag,
         CASE
           WHEN TRIM(CASE WHEN c.contractor_eik LIKE 'ЕИК %' THEN SUBSTR(c.contractor_eik, 5) ELSE c.contractor_eik END) NOT GLOB '*[^0-9]*'
            AND LENGTH(TRIM(CASE WHEN c.contractor_eik LIKE 'ЕИК %' THEN SUBSTR(c.contractor_eik, 5) ELSE c.contractor_eik END)) IN (9, 13)
