@@ -6,6 +6,7 @@ import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-c
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
 import { csvCell } from './csv';
 import { filterSignature, keyset, pageCursors } from './keyset';
+import { lookup } from './lookup';
 import { toCompanyListItem, type CompanyTotalsRow } from './rows';
 import { searchMatchQuery } from './search';
 
@@ -23,20 +24,20 @@ export interface CompanyListParams {
   pageSize?: number;
 }
 
-const SORTS: Record<CompanySort, { col: string; dir: 'asc' | 'desc' }> = {
+const SORTS: Record<CompanySort, { col: string; dir: 'asc' | 'desc' }> = lookup({
   won: { col: 'won_eur', dir: 'desc' },
   count: { col: 'contracts', dir: 'desc' },
   authorities: { col: 'authorities', dir: 'desc' },
   name: { col: 'name', dir: 'asc' },
-};
+});
 
-const COUNT_BUCKETS: Record<string, string> = {
+const COUNT_BUCKETS: Record<string, string> = lookup({
   '1': 'contracts = 1',
   '2-5': 'contracts BETWEEN 2 AND 5',
   '6-20': 'contracts BETWEEN 6 AND 20',
   '21-100': 'contracts BETWEEN 21 AND 100',
   '100+': 'contracts > 100',
-};
+});
 
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 

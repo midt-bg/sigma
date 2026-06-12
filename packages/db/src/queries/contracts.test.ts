@@ -45,6 +45,18 @@ describe('listContracts', () => {
     expect(page.items).toEqual([]);
     expect(page.total).toBe(0);
   });
+
+  it('falls back to the default sort instead of throwing (sort=toString)', async () => {
+    await expect(
+      listContracts(fakeDb(), { sort: 'toString' as never, pageSize: 10 }),
+    ).resolves.toBeDefined();
+  });
+
+  it('ignores a reserved value-bucket key instead of a destructure TypeError (value=toString)', async () => {
+    await expect(
+      listContracts(fakeDb(), { valueBucket: 'toString', pageSize: 10 }),
+    ).resolves.toBeDefined();
+  });
 });
 
 describe('getContractFacets', () => {

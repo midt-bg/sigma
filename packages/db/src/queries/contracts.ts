@@ -7,6 +7,7 @@ import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
+import { lookup } from './lookup';
 import { searchMatchQuery } from './search';
 
 export type ContractSort = 'value-desc' | 'value-asc' | 'date-desc' | 'date-asc';
@@ -25,12 +26,12 @@ export interface ContractListParams {
   pageSize?: number;
 }
 
-const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = {
+const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = lookup({
   'value-desc': { expr: 'COALESCE(c.amount_eur, -1)', dir: 'desc' },
   'value-asc': { expr: 'COALESCE(c.amount_eur, 1e18)', dir: 'asc' },
   'date-desc': { expr: "COALESCE(c.signed_at, '')", dir: 'desc' },
   'date-asc': { expr: "COALESCE(c.signed_at, '9999-99')", dir: 'asc' },
-};
+});
 
 // A real signed_at year is YYYY at the head of the date; everything else (null, empty, malformed)
 // lands in the "unknown" bucket, whose facet value/filter token is this sentinel (a non-empty string
@@ -38,13 +39,13 @@ const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = {
 const YEAR_KNOWN = "substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'";
 const YEAR_UNKNOWN = 'unknown';
 
-const VALUE_BUCKETS: Record<string, [number, number | null]> = {
+const VALUE_BUCKETS: Record<string, [number, number | null]> = lookup({
   lt100k: [0, 100_000],
   '100k-1m': [100_000, 1_000_000],
   '1m-10m': [1_000_000, 10_000_000],
   '10m-100m': [10_000_000, 100_000_000],
   gt100m: [100_000_000, null],
-};
+});
 
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 

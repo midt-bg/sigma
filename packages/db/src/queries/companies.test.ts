@@ -104,3 +104,34 @@ describe('streamCompaniesCsv', () => {
     expect(countRows(filtered)).toBe(1);
   });
 });
+
+describe('prototype-key params (untrusted query values)', () => {
+  function spyDb(): { db: D1Database; sql: string[] } {
+    const db = fakeDb();
+    const sql: string[] = [];
+    const real = db.prepare.bind(db);
+    db.prepare = ((q: string) => {
+      sql.push(q);
+      return real(q);
+    }) as typeof db.prepare;
+    return { db, sql };
+  }
+
+  it('falls back to the default sort instead of throwing (sort=toString)', async () => {
+    await expect(listCompanies(fakeDb(), { sort: 'toString' as never })).resolves.toBeDefined();
+  });
+
+  it('does not inject a reserved count-bucket key into the WHERE (count=__proto__)', async () => {
+    // bug: `where.push(COUNT_BUCKETS['__proto__'])` pushes Object.prototype -> '[object Object]' in SQL,
+    // which 500s the page and (because the CSV header flushes first) silently returns an empty export.
+    const { db, sql } = spyDb();
+    await streamCompaniesCsv(db, { countBucket: '__proto__' }).text();
+    expect(sql.some((s) => s.includes('[object Object]'))).toBe(false);
+  });
+
+  it('still applies a valid count bucket (count=1)', async () => {
+    const { db, sql } = spyDb();
+    await streamCompaniesCsv(db, { countBucket: '1' }).text();
+    expect(sql.some((s) => s.includes('contracts = 1'))).toBe(true);
+  });
+});

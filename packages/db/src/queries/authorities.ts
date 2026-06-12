@@ -6,6 +6,7 @@ import type { AuthorityListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS } from '@sigma/config';
 import { csvCell } from './csv';
 import { filterSignature, keyset, pageCursors } from './keyset';
+import { lookup } from './lookup';
 import { toAuthorityListItem, typeLabel, type AuthorityTotalsRow } from './rows';
 import { searchMatchQuery } from './search';
 
@@ -22,12 +23,12 @@ export interface AuthorityListParams {
   pageSize?: number;
 }
 
-const SORTS: Record<AuthoritySort, { col: string; dir: 'asc' | 'desc' }> = {
+const SORTS: Record<AuthoritySort, { col: string; dir: 'asc' | 'desc' }> = lookup({
   spent: { col: 'spent_eur', dir: 'desc' },
   count: { col: 'contracts', dir: 'desc' },
   avg: { col: 'avg_eur', dir: 'desc' },
   name: { col: 'name', dir: 'asc' },
-};
+});
 
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 
