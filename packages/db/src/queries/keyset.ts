@@ -79,12 +79,19 @@ function assertSortDir(dir: string): asserts dir is SortDir {
   if (dir !== 'asc' && dir !== 'desc') throw new Error(`Unsafe keyset dir: ${dir}`);
 }
 
+// Non-cryptographic correctness checksum for cursor binding. This ties a cursor to its exact
+// sort/filter signature so it cannot be accidentally or deliberately replayed across a different
+// sort/filter set. It is not an authentication or integrity control, and is intentionally not keyed
+// or HMAC'd: all paginated data is public, so a forged token can only confuse pagination over
+// already-public rows and has no confidentiality impact.
 function hashToken(input: string): string {
   let h = 5381;
   for (let i = 0; i < input.length; i += 1) h = ((h << 5) + h) ^ input.charCodeAt(i);
   return (h >>> 0).toString(36);
 }
 
+// Build the checksum input from the public sort column, id tiebreaker, direction, and normalized
+// filter signature; this is the exact pagination shape a cursor is allowed to resume.
 function sortToken(sortCol: string, idCol: string, dir: SortDir, filterSignature = ''): string {
   return hashToken(`${sortCol}\u001f${idCol}\u001f${dir}\u001f${filterSignature}`);
 }
