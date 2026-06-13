@@ -162,7 +162,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <section className="section" aria-labelledby="top-bene">
         <h2 id="top-bene">
-          Топ 10 компании <em>по спечелено</em>
+          Топ 10 печеливши <em>компании</em>
         </h2>
         <p className="section-hint">
           Компании, подредени по обща стойност на спечелените договори за {range}. Обединенията
@@ -255,7 +255,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <section className="section" aria-labelledby="how">
         <h2 id="how">
-          Как се чете <em>СИГМА</em>
+          Как да четем <em>данните</em>
         </h2>
         <div className="two-col">
           <div>

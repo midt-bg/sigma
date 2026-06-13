@@ -31,7 +31,7 @@ const TOC = [
   ['what', 'Какво показва СИГМА'],
   ['source', 'Източник и обхват на данните'],
   ['unit', 'Основната единица: договорът'],
-  ['principles', 'Редакторски принципи'],
+  ['principles', 'Принципи'],
   ['glossary', 'Речник на понятията'],
   ['money', 'Валута, закръгляване, периоди'],
   ['identity', 'Имена, ЕИК, УНП'],
@@ -242,7 +242,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
             </section>
 
             <section className="section" aria-labelledby="principles">
-              <h2 id="principles">4. Редакторски принципи</h2>
+              <h2 id="principles">4. Принципи</h2>
               <ol className="principles">
                 <li>
                   <strong>Зад всяко число стоят неговите договори.</strong> Всеки общ обем има
