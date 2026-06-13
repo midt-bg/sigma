@@ -16,6 +16,20 @@ describe('csvCell', () => {
     expect(csvCell('\u0001=cmd')).toBe('"\'\u0001=cmd"');
   });
 
+  it('neutralizes Unicode look-alike formula prefixes', () => {
+    for (const prefix of ['＝', '＋', '－', '﹣', '−', '＠']) {
+      expect(csvCell(`${prefix}cmd`)).toBe(`"'${prefix}cmd"`);
+      expect(csvCell(` \uFEFF${prefix}cmd`)).toBe(`"' \uFEFF${prefix}cmd"`);
+    }
+  });
+
+  it('leaves benign look-alike characters alone when they are not leading triggers', () => {
+    expect(csvCell('value＝cmd')).toBe('value＝cmd');
+    expect(csvCell('value＋cmd')).toBe('value＋cmd');
+    expect(csvCell('value－cmd')).toBe('value－cmd');
+    expect(csvCell('plain')).toBe('plain');
+  });
+
   it('quotes CR-containing cells', () => {
     expect(csvCell('first\rsecond')).toBe('"first\rsecond"');
     expect(csvCell('\r=1+1')).toBe('"\'\r=1+1"');
