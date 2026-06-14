@@ -6,12 +6,14 @@ name: Deploy (web + etl → Cloudflare)
 # real database_id set in the wrangler configs (see docs/deploy.md). Fails clearly without secrets.
 #
 # Event → target mapping (see the `detect` job):
-#   - version TAG on the MAIN repo  → production   (cut a release: git tag v1.0.0 && git push origin v1.0.0)
+#   - version TAG (any repo)        → production   (cut a release: git tag v1.0.0 && git push <remote> v1.0.0)
 #   - push to `main` on the MIRROR  → staging       (continuous staging on midt-bg/sigma-stage)
 #   - workflow_dispatch             → the chosen environment (either repo)
-# Production stays tag-driven and only deploys from the main repo; a push to `main` on the main repo
-# deploys nothing, and the mirror never auto-targets real production. (To deploy on GitHub *Releases*
-# instead of tags, swap the tag trigger for `release: { types: [published] }`.)
+# A tag deploys production from ANY repo, so the full release flow can be rehearsed end-to-end on the
+# private `midt-bg/sigma-stage` mirror (prod is Access-gated / not public during this phase) before the
+# real prod repo exists. A push to `main` on the main repo deploys nothing (prod stays tag-driven).
+# (Re-add a `github.repository` guard once a dedicated prod repo owns releases. To deploy on GitHub
+# *Releases* instead of tags, swap the tag trigger for `release: { types: [published] }`.)
 
 on:
   push:
@@ -36,18 +38,14 @@ jobs:
       - id: pick
         # Map the git event to a deploy target. Empty ("") => no deploy: the deploy job is skipped.
         #   workflow_dispatch              -> the chosen environment (either repo)
-        #   tag v* on the main repo        -> production   (the midt-bg mirror must never auto-target prod)
+        #   tag v*  (any repo)             -> production   (mirror included, so the full release is rehearsable)
         #   push to main on the mirror     -> staging      (continuous staging)
         #   push to main on the main repo  -> nothing      (production stays tag-driven)
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "env=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            if [ "${{ github.repository }}" = "midt-bg/sigma-stage" ]; then
-              echo "env=" >> "$GITHUB_OUTPUT"
-            else
-              echo "env=production" >> "$GITHUB_OUTPUT"
-            fi
+            echo "env=production" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ github.repository }}" = "midt-bg/sigma-stage" ]; then
             echo "env=staging" >> "$GITHUB_OUTPUT"
           else
