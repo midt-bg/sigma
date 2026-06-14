@@ -145,27 +145,70 @@ stored on the contract, so `amount * fx_rate = amount_eur` can be audited withou
 `amount_eur` is the canonical aggregation column. Display in leva is derived as
 `amount_eur * 1.95583`.
 
-### Data quality
+### Data quality (`value_flag`)
 
 Source value errors are handled non-destructively: staging stays raw, while `normalize-raw.sql`
-derives `value_flag` and `amount_eur` on domain contracts.
+(and, identically, `refresh-slice.sql` — the two derive paths are kept byte-consistent) assigns a
+`value_flag` verdict and the safe-to-sum `amount_eur` on each domain contract. All thresholds are
+compared in EUR after FX normalization.
 
-- **Value errors:** roughly 213 source rows have signed or amended values at least 100x the
-  procurement estimate. Raw-cell inspection showed dropped decimal commas at source, and portal
-  cross-checks showed the same wrong values, so they are upstream errors rather than loader artifacts
-  and cannot be reliably recovered.
-- **`value_suspect`:** the signed value itself is at least 100x the estimate. The row is kept and
-  flagged, but excluded from `amount_eur`.
-- **`annex_suspect`:** an amendment pushes `current_value` to an implausible value or negative value
-  while the signing value is sane. The contract falls back to the signing value for `amount_eur`.
-- **`review`:** a gray-zone 10x-100x value. The row is kept, flagged, and included.
+Two estimates drive the verdict, and each flag uses the one that avoids its *own* false-positive
+direction:
+
+- **effective value** `eff` = `COALESCE(current_value, signing_value)`, FX-normalized.
+- **procedure estimate** `procEst` = `tenders.estimated_value` — the procedure-level estimate (the
+  `MIN` across the procedure's staging rows), FX-normalized. Used by the "too high" flags. The
+  per-row/per-lot estimate is per-*unit* for framework and unit-price procurements (medicines, fuel),
+  so checking a whole call-off against it wrongly inflates the ratio; the procedure estimate is the
+  real ceiling.
+- **per-lot estimate** = the contract line's own `raw_contracts.estimated_value`. Used only by the
+  "too low" flag, where the procedure total would instead make small legitimate call-offs look
+  suspiciously tiny.
+
+The CASE is evaluated in order; the first match wins:
+
+1. **`value_suspect`** — recorded value implausibly high: `eff > 2,000,000,000` **or**
+   (`procEst >= 1000` **and** `eff > 200 * procEst`). The row is **repaired, not dropped**:
+   `amount_eur` becomes `procEst` (the procurement's own documented budget) and the displayed native
+   amount becomes the native procedure estimate. It falls to NULL (excluded) only when the procedure
+   has no estimate to repair from. The `procEst >= 1000` guard keeps rows whose *estimate* is the
+   error (a near-zero budget on a real contract — e.g. ballot printing) out of this flag; they fall
+   through to `review` and keep their face value. The signed/current EUR columns stay NULL so the
+   suspect as-recorded figures are never presented as fact.
+2. **`value_low`** — `eff <= 0`, or a tiny signed value (`< 1000` EUR) that is also `< 5%` of the
+   **per-lot** estimate. Kept, flagged, and **counted at face value**. The `< 1000` EUR floor keeps
+   large legitimate framework call-offs (a small share of a huge ceiling, but big in absolute terms)
+   out of this flag.
+3. **`annex_suspect`** — an amendment pushed `current_value` negative or to `>= 100x` the signing
+   value while the signing value is sane. The contract **falls back to the signing value** for
+   `amount_eur`; the inflated current value is suppressed.
+4. **`review`** — a gray-zone overrun: `eff >= 10 * procEst`. Kept, flagged, and **counted at face
+   value**.
+5. **`ok`** — everything else, counted at `eff`.
+
+The guiding principle is **repair over exclusion**: only genuinely unrecoverable rows leave the
+totals. Where the recorded value is unmistakable garbage we substitute the best documented proxy
+(the procedure estimate, or the pre-amendment signing value) so the contract still contributes a
+sensible number; where the value is merely unusual we keep it at face value and label it.
+
+Upstream value errors are real (raw-cell inspection and portal cross-checks show dropped decimal
+commas at source, not loader artifacts), but only the extreme, unambiguous cases meet the
+`value_suspect` bar. On the current corpus (193,019 contracts) that is **3** rows — a 3.55B waste
+contract repaired to 73.3M, an 84.5M dog-food order repaired to 85k, and a 2.35B amendment repaired
+to 58k — alongside ~5,300 `value_low`, ~110 `review`, and a few `annex_suspect`. The grand total of
+`amount_eur` is ≈ 51.6B EUR.
+
+Other quality handling:
+
 - **Recipient identity:** bidder identity uses valid EIK first and normalized name otherwise, avoiding
   the old collapse of withheld-EIK recipients while retaining contractors with names but no valid EIK.
-- **Foreign currency:** non-BGN/non-EUR contracts keep raw `amount`/`currency` and derive
-  `amount_eur` using signing-date FX rates with `fx_converted` and `fx_rate` provenance.
-- **Minor issues:** out-of-range dates, zero-value contracts, rare negative values, and duplicate
-  `(UNP, contract_number)` pairs are surfaced or flagged rather than silently corrected. Most duplicate
-  keys are real multi-lot or source-shape artifacts.
+- **Foreign currency:** non-BGN/non-EUR contracts keep raw `amount`/`currency` and derive `amount_eur`
+  using signing-date FX rates with `fx_converted` and `fx_rate` provenance.
+- **Dates:** a contract signed more than two days after its publication date is flagged
+  `date_flag = 'signed_after_publication'` — kept and surfaced in the UI, not dropped.
+- **Minor issues:** out-of-range dates, zero-value contracts, rare negatives, and duplicate
+  `(UNP, contract_number)` pairs are surfaced or flagged rather than silently corrected. Most
+  duplicate keys are real multi-lot or source-shape artifacts.
 
 ## Worker refresh
 
