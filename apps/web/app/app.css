@@ -2291,6 +2291,27 @@ details.row .body .signal .why {
   white-space: nowrap;
 }
 
+/* Single-offer money-portion (homepage "Поръчки с една оферта"). Reuses the platform's composition
+   bar (.hbar + .hbar-legend): the single-offer share is the accent-red bucket — the established
+   convention for the non-competitive slice — so it reads as a breakdown, not a progress track. */
+.so-portion {
+  margin: var(--s-3) 0 var(--s-4);
+}
+.so-portion-head {
+  margin-bottom: 8px;
+  font: 15px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.so-portion-pct {
+  font: 600 28px/1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.so-portion-cap {
+  margin-top: 6px;
+}
+
 /* CSS-only tabset (homepage single-offer: Скорошни / Най-големи по стойност). No JS. */
 .tabset .tab-input {
   position: absolute;

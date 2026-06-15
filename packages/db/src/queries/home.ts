@@ -50,8 +50,14 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
       };
 
   const placeholders = STATE_TYPES.map(() => '?').join(', ');
-  const [companies, ministries, municipalities, recentSingleOffer, topSingleOffer] =
-    await Promise.all([
+  const [
+    companies,
+    ministries,
+    municipalities,
+    recentSingleOffer,
+    topSingleOffer,
+    singleOfferRow,
+  ] = await Promise.all([
     db
       .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
       .all<CompanyTotalsRow>(),
@@ -68,6 +74,15 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
       .all<AuthorityTotalsRow>(),
     listSingleOfferContracts(db, 'recent', 10),
     listSingleOfferContracts(db, 'value', 10),
+    // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
+    // denominator). Same clean-row basis as the single-offer list above: bids = 1, non-suspect,
+    // positive amount. Edge-cached for an hour, so the full scan runs rarely.
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
+         FROM contracts WHERE bids_received = 1 AND value_flag = 'ok' AND amount_eur > 0`,
+      )
+      .first<{ value_eur: number; contracts: number }>(),
   ]);
 
   return {
@@ -77,5 +92,9 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     topMunicipalities: municipalities.results.map(toAuthorityListItem),
     recentSingleOffer,
     topSingleOffer,
+    singleOffer: {
+      valueEur: singleOfferRow?.value_eur ?? 0,
+      contracts: singleOfferRow?.contracts ?? 0,
+    },
   };
 }

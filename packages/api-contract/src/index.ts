@@ -61,6 +61,8 @@ export interface HomeData {
   /** Single-offer (bids_received = 1) contracts for the homepage section. */
   recentSingleOffer: ContractListItem[];
   topSingleOffer: ContractListItem[];
+  /** Aggregate value/count of single-offer contracts — for the homepage portion bar. */
+  singleOffer: { valueEur: number; contracts: number };
 }
 
 // ── Companies ─────────────────────────────────────────────────────────────────────────────────

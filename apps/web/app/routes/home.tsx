@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, date, money } from '@sigma/shared';
+import { count, date, money, pct } from '@sigma/shared';
 import { getHomeData } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
@@ -84,6 +84,29 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
   );
 }
 
+// Money portion of single-offer contracts vs. the whole corpus. A prominent accent percentage
+// leads, over the platform's composition bar (.hbar): the single-offer share is the accent-red
+// bucket — the established convention for the non-competitive slice — so it reads as a breakdown of
+// the total, not a progress track.
+function SingleOfferPortion({ valueEur, totalEur }: { valueEur: number; totalEur: number }) {
+  const ratio = Math.min(1, Math.max(0, totalEur > 0 ? valueEur / totalEur : 0));
+  return (
+    <div className="so-portion">
+      <p className="so-portion-head">
+        <span className="so-portion-pct">{pct(ratio)}</span> от стойността на всички поръчки са по
+        договори с <em>една оферта</em>.
+      </p>
+      <div className="hbar" aria-hidden="true">
+        <span style={{ width: `${(ratio * 100).toFixed(1)}%`, background: 'var(--accent)' }} />
+        <span style={{ width: `${((1 - ratio) * 100).toFixed(1)}%`, background: 'var(--ink-soft)' }} />
+      </div>
+      <p className="small muted so-portion-cap">
+        {money(valueEur)} от {money(totalEur)}
+      </p>
+    </div>
+  );
+}
+
 export default function Home({ loaderData }: Route.ComponentProps) {
   const {
     totals,
@@ -92,6 +115,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     topMunicipalities,
     recentSingleOffer,
     topSingleOffer,
+    singleOffer,
   } = loaderData;
   const endYear = coverageEndYear(totals.asOf);
   const range = coverageRange(endYear);
@@ -235,6 +259,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           Една оферта означава липса на ценова конкуренция. Ето поръчките с един участник —
           подредени по време или по стойност.
         </p>
+        <SingleOfferPortion valueEur={singleOffer.valueEur} totalEur={totals.valueEur} />
         <div className="tabset">
           <input
             type="radio"
