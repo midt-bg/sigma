@@ -22,6 +22,7 @@ import {
   BASE_CATEGORIES,
   baseInsertColumns,
   baseSqlLiteral,
+  escapeSqlText,
   mapBaseRecord,
 } from '../packages/ingest/src/base.ts';
 import {
@@ -90,9 +91,8 @@ function sqlLiteral(col, value) {
     const n = Number(value);
     return Number.isFinite(n) ? String(n) : 'NULL';
   }
-  return `'${String(value)
-    .replace(/[\x00-\x1F]/g, '')
-    .replace(/'/g, "''")}'`;
+  // Shared hardened text escaping: length cap + NUL/C0/C1 stripping + output invariant.
+  return escapeSqlText(String(value));
 }
 
 const fetchedAt = new Date().toISOString().replace('.000Z', 'Z');
