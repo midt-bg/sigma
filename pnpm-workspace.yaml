@@ -6,8 +6,9 @@ packages:
 # onlyBuiltDependencies live here instead.
 overrides:
   esbuild: 0.28.1
-  # Security pins for dev/build-time transitive deps so CI `pnpm audit --audit-level=high`
-  # passes. None of these ship to the Worker runtime.
+  # Security pins for dev/build-time transitive deps; none ship to the Worker runtime. The
+  # HIGH-severity ones (ws, vite) keep CI `pnpm audit --audit-level=high` green; lower-severity
+  # ones below are defense-in-depth, not required by that gate.
   #   ws <8.21.0  — memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p), via wrangler→miniflare
   #   vite        — server.fs.deny bypass (GHSA-fx2h-pf6j-xcff): v7 via @react-router/dev→
   #                 vite-node, v8 via apps/web + vitest. Patched per-major to avoid forcing
