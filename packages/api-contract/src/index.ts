@@ -383,6 +383,37 @@ export interface FlowsData {
   };
 }
 
+// ── Trend (spending over time) ──────────────────────────────────────────────────────────────────
+// Procurement spend by period for the /trends chart. Contracts without a usable signing date are
+// excluded from the series and reported as coverage, never silently dropped.
+
+export interface TrendPoint {
+  period: string; // 'YYYY-MM' (month granularity) or 'YYYY' (year)
+  valueEur: number;
+  contracts: number;
+}
+
+export interface TrendYear {
+  year: string;
+  valueEur: number;
+  contracts: number;
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year
+}
+
+export interface TrendData {
+  granularity: 'month' | 'year';
+  points: TrendPoint[]; // continuous and zero-filled, sorted by period
+  years: TrendYear[]; // per-year summary with year-over-year change
+  sectors: SectorRef[]; // options for the sector select
+  totalValueEur: number;
+  coverage: { dated: number; total: number; pct: number }; // contracts with a usable signing date
+  scope: {
+    sector: string | null;
+    funding: 'all' | 'eu' | 'national';
+    granularity: 'month' | 'year';
+  };
+}
+
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
