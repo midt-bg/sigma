@@ -49,11 +49,11 @@ html.a11y-textonly .site-nav{display:flex!important;flex-wrap:wrap!important;gap
 html.a11y-textonly .site-nav a{display:inline-block!important;padding:2px 0!important}
 html.a11y-textonly .site-actions{display:flex!important;flex-wrap:wrap!important;gap:18px!important;margin-top:10px!important}
 html.a11y-textonly main{margin-top:8px!important}
-html.a11y-textonly .font-resize{font-size:200%!important}
-@media(min-width:48em){html.a11y-textonly .font-resize{font-size:110%!important}}
-@media(min-width:62em){html.a11y-textonly .font-resize{font-size:120%!important}}
-@media(min-width:75em){html.a11y-textonly .font-resize{font-size:130%!important}}
-@media(min-width:87.5em){html.a11y-textonly body.font-resize{font-size:140%!important}}
+html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:200%!important}
+@media(min-width:48em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:110%!important}}
+@media(min-width:62em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:120%!important}}
+@media(min-width:75em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:130%!important}}
+@media(min-width:87.5em){html.a11y-textonly.font-resize,html.a11y-textonly body.font-resize{font-size:140%!important}}
 html.a11y-textonly.dyslectic-font,html.a11y-textonly.dyslectic-font *{font-family:'adys'!important}
 `;
 
