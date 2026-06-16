@@ -48,7 +48,7 @@ describe('getFlows', () => {
     await getFlows(db, {});
 
     expect(seenSql.some((sql) => sql.includes('FROM flow_pairs'))).toBe(true);
-    expect(seenSql.every((sql) => !sql.includes('JOIN contracts c'))).toBe(true);
+    expect(seenSql.every((sql) => !sql.includes('FROM contracts c'))).toBe(true);
   });
 
   it('falls back to a base aggregation when a sector filter is applied', async () => {
@@ -135,10 +135,12 @@ describe('getFlows', () => {
     const data20 = await getFlows(fakeDb(), { top: 20 });
     const data50 = await getFlows(fakeDb(), { top: 50 });
     const dataDefault = await getFlows(fakeDb(), {});
+    const dataOther = await getFlows(fakeDb(), { top: 100 });
 
     expect(data20.scope.top).toBe(20);
     expect(data50.scope.top).toBe(50);
     expect(dataDefault.scope.top).toBe(20);
+    expect(dataOther.scope.top).toBe(20);
   });
 
   it('includes available sectors in the response', async () => {

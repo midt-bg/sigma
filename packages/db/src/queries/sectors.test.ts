@@ -26,8 +26,9 @@ describe('sectorRef', () => {
     expect(sectorRef('99')).toBeNull();
   });
 
-  it('short is present and matches label when no short form exists, otherwise is shorter', () => {
+  it('always returns a non-empty short field', () => {
     const ref = sectorRef('45');
-    expect(ref?.short).toBeDefined();
+    expect(typeof ref?.short).toBe('string');
+    expect(ref!.short.length).toBeGreaterThan(0);
   });
 });
