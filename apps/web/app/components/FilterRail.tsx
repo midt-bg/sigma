@@ -62,7 +62,7 @@ export function FilterRail({
     for (const key of groupKeys) {
       overrides[key] = data.getAll(key).map(String).filter(Boolean);
     }
-    navigate(withParams(sp, overrides));
+    navigate(withParams(sp, overrides), { preventScrollReset: true });
   };
   const onChange = (e: FormEvent<HTMLFormElement>) => {
     submitForm(e.currentTarget);
