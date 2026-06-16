@@ -383,6 +383,37 @@ export interface FlowsData {
   };
 }
 
+// ── Regions (map) ─────────────────────────────────────────────────────────────────────────────────
+// Spend per Bulgarian region (NUTS3) for the /map choropleth. Region is known for ~half of
+// authorities, so the unattributed bucket and coverage are first-class, never hidden.
+
+export interface RegionSpend {
+  nuts3: string; // joins the map geometry (apps/web/app/lib/bg-region-geometry.ts) and @sigma/config BG_REGIONS
+  name: string;
+  nuts2: string;
+  nuts2Name: string;
+  valueEur: number;
+  contracts: number;
+  authorities: number;
+}
+
+export interface MacroRegionSpend {
+  nuts2: string;
+  name: string;
+  valueEur: number;
+  contracts: number;
+}
+
+export interface RegionalSpending {
+  regions: RegionSpend[]; // all 28 regions, zero-filled when absent, sorted by value desc
+  macroRegions: MacroRegionSpend[]; // the 6 NUTS2 planning regions
+  sectors: SectorRef[]; // options for the sector select
+  unattributed: { valueEur: number; contracts: number; authorities: number }; // region unknown
+  coverage: { withRegion: number; total: number; pct: number }; // share of authorities with a region
+  totalValueEur: number; // sum over the 28 known regions
+  scope: { sector: string | null; year: number | null; funding: 'all' | 'eu' | 'national' };
+}
+
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
