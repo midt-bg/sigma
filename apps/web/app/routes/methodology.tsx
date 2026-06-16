@@ -324,6 +324,15 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </p>
                   <span className="src">→ GROUP BY authority, bidder</span>
                 </dd>
+                <dt>Дата на сключване</dt>
+                <dd>
+                  <p>
+                    Денят, в който договорът е сключен. Графиката на тренда групира разходите по
+                    тази дата; договорите без валидна дата на сключване не влизат в нея, а се
+                    отчитат отделно като покритие.
+                  </p>
+                  <span className="src">→ contracts.signed_at</span>
+                </dd>
               </dl>
             </section>
 

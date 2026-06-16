@@ -4,6 +4,7 @@ export default [
   index('routes/home.tsx'),
   route('search', 'routes/search.tsx'),
   route('flows', 'routes/flows.tsx'),
+  route('trends', 'routes/trends.tsx'),
   route('companies', 'routes/companies.tsx'),
   route('companies.csv', 'routes/companies.csv.tsx'),
   route('companies/:eik', 'routes/company.tsx'),
