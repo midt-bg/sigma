@@ -1,6 +1,5 @@
 import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import { count, moneyBare } from '@sigma/shared';
-import { CPV_SECTORS } from '@sigma/config';
 import { getFlows } from '@sigma/db';
 import type { Route } from './+types/flows';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -10,6 +9,7 @@ import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { singleSelectFilters } from '../lib/filters';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -26,21 +26,14 @@ export function headers() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const sp = new URL(request.url).searchParams;
-  const sector = sp.get('sector');
-  const year = sp.get('year');
-  const coverage = await getCoverageMeta(context.cloudflare.env.DB);
+  const db = context.cloudflare.env.DB;
+  const coverage = await getCoverageMeta(db);
   const years = yearOptions(coverage.coverageEndYear);
-  // A bogus ?sector (not a CPV division) would filter every flow out and render a blank diagram +
-  // empty table silently. Flag it so we show an explicit empty state instead.
-  const unknownSector = Boolean(sector) && !CPV_SECTORS.some((s) => s.code === sector);
-  const unknownYear = Boolean(year) && !years.includes(year!);
-  const data = await getFlows(context.cloudflare.env.DB, {
-    sector: unknownSector ? null : sector,
-    year: unknownYear ? null : year,
-    funding: (sp.get('funding') as 'eu' | 'national' | null) || 'all',
-    top: sp.get('top') === '50' ? 50 : 20,
-  });
+  const { sector, year, funding, top, unknownSector, unknownYear } = singleSelectFilters(
+    new URL(request.url).searchParams,
+    years,
+  );
+  const data = await getFlows(db, { sector, year, funding, top });
   return { data, coverage, years, unknownSector, unknownYear };
 }
 
