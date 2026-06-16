@@ -6,6 +6,7 @@ export default [
   route('search/suggest', 'routes/search.suggest.tsx'),
   route('flows', 'routes/flows.tsx'),
   route('map', 'routes/map.tsx'),
+  route('competition', 'routes/competition.tsx'),
   route('companies', 'routes/companies.tsx'),
   route('companies.csv', 'routes/companies.csv.tsx'),
   route('companies/:eik', 'routes/company.tsx'),

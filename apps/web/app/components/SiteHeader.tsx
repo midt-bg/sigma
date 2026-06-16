@@ -9,6 +9,7 @@ const NAV = [
   { to: '/contracts', label: 'Договори' },
   { to: '/flows', label: 'Потоци' },
   { to: '/map', label: 'Карта' },
+  { to: '/competition', label: 'Конкуренция' },
   { to: '/methodology', label: 'Методология' },
 ];
 

@@ -13,6 +13,7 @@ export * from './authorities';
 export * from './contracts';
 export * from './flows';
 export * from './regions';
+export * from './competition';
 export * from './search';
 export * from './details';
 export * from './sitemaps';
