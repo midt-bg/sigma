@@ -17,10 +17,19 @@ const PAGES: Page[] = [
   { loc: '/accessibility', changefreq: 'yearly', priority: '0.1' },
 ];
 
+// Escape XML special chars before interpolating. PAGES is hardcoded today, but the helper sits on
+// the path that any future dynamic source (CMS-driven pages, generated slugs) would also flow
+// through — keep it safe by default rather than relying on every caller to remember.
+function xmlEscape(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&apos;',
+  );
+}
+
 function entry(origin: string, p: Page): string {
-  const parts = [`<loc>${origin}${p.loc}</loc>`];
-  if (p.changefreq) parts.push(`<changefreq>${p.changefreq}</changefreq>`);
-  if (p.priority) parts.push(`<priority>${p.priority}</priority>`);
+  const parts = [`<loc>${xmlEscape(`${origin}${p.loc}`)}</loc>`];
+  if (p.changefreq) parts.push(`<changefreq>${xmlEscape(p.changefreq)}</changefreq>`);
+  if (p.priority) parts.push(`<priority>${xmlEscape(p.priority)}</priority>`);
   return `<url>${parts.join('')}</url>\n`;
 }
 

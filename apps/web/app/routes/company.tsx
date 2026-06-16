@@ -28,7 +28,7 @@ function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): b
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
-  const meta = seoMeta({
+  const metaTags = seoMeta({
     matches,
     path: `/companies/${params.eik}`,
     title: `${name} — СИГМА`,
@@ -40,9 +40,9 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
       isNaturalPersonProfileName(data.company.displayName) ||
       (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
   ) {
-    meta.push({ name: 'robots', content: 'noindex' });
+    metaTags.push({ name: 'robots', content: 'noindex' });
   }
-  return meta;
+  return metaTags;
 }
 
 export function headers() {
