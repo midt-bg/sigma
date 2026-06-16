@@ -3,21 +3,15 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
+import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Декларация за достъпност — СИГМА';
-  const description = 'Декларация за достъпност на публичната информационна услуга СИГМА.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/accessibility` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/accessibility',
+    title: 'Декларация за достъпност — СИГМА',
+    description: 'Декларация за достъпност на публичната информационна услуга СИГМА.',
+  });
 }
 
 export function headers() {

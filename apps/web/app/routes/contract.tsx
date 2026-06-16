@@ -9,6 +9,7 @@ import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
+import { seoMeta } from '../lib/meta';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -42,22 +43,15 @@ function bidsBreakdown(c: ContractDetail): string | null {
 }
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
   const c = data?.contract;
-  const title = `${c?.subject ?? 'Договор'} — СИГМА`;
-  const description = c
-    ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
-    : '';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/contracts/${params.id}` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: `/contracts/${params.id}`,
+    title: `${c?.subject ?? 'Договор'} — СИГМА`,
+    description: c
+      ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
+      : '',
+  });
 }
 
 export function headers() {

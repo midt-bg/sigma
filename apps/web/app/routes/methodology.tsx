@@ -7,21 +7,15 @@ import { PageHeader } from '../components/PageHeader';
 import { Callout, Flag } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
+import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Методология и речник — СИГМА';
-  const description = 'Откъде идват числата, как се сглобяват и какво съзнателно не показваме.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/methodology` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/methodology',
+    title: 'Методология и речник — СИГМА',
+    description: 'Откъде идват числата, как се сглобяват и какво съзнателно не показваме.',
+  });
 }
 
 export function headers() {

@@ -4,21 +4,16 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
+import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Политика за поверителност — СИГМА';
-  const description = 'Как СИГМА обработва публични данни и какви права имат субектите на данни.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/privacy` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/privacy',
+    title: 'Политика за поверителност — СИГМА',
+    description:
+      'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
+  });
 }
 
 export function headers() {

@@ -9,23 +9,14 @@ import { RankedBars } from '../components/RankedBars';
 import { OwnershipChip } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
+import { seoMeta } from '../lib/meta';
 
 const metaTitle = 'СИГМА — Платформа за прозрачност на обществените поръчки';
 const metaDescription =
   'СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация. Зад всяко число стои конкретен договор.';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((match) => match?.id === 'root')?.data as { origin: string };
-  const origin = rootData.origin;
-  return [
-    { title: metaTitle },
-    { name: 'description', content: metaDescription },
-    { property: 'og:title', content: metaTitle },
-    { property: 'og:description', content: metaDescription },
-    { property: 'og:url', content: `${origin}/` },
-    { name: 'twitter:title', content: metaTitle },
-    { name: 'twitter:description', content: metaDescription },
-  ];
+  return seoMeta({ matches, path: '/', title: metaTitle, description: metaDescription });
 }
 
 export function headers() {

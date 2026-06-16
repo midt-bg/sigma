@@ -18,6 +18,7 @@ import {
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
+import { seoMeta } from '../lib/meta';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -28,20 +29,13 @@ const VALUE_BUCKETS = [
 ];
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Договори — СИГМА';
-  const description =
-    'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/contracts` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/contracts',
+    title: 'Договори — СИГМА',
+    description:
+      'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
+  });
 }
 
 export function headers() {

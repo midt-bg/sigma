@@ -9,22 +9,16 @@ import { SankeyDiagram } from '../components/SankeyDiagram';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
+import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Потоци на пари — СИГМА';
-  const description =
-    'От институциите възложители към компаниите изпълнители. Дебелината на всеки поток отговаря на стойността на договорите.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/flows` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/flows',
+    title: 'Потоци на пари — СИГМА',
+    description:
+      'От институциите възложители към компаниите изпълнители. Дебелината на всеки поток отговаря на стойността на договорите.',
+  });
 }
 
 export function headers() {

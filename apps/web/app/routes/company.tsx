@@ -11,6 +11,7 @@ import { ShareBar, Chip, OwnershipChip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { withDbRetry } from '../lib/retry';
+import { seoMeta } from '../lib/meta';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -25,21 +26,14 @@ function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): b
 }
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
-  const title = `${name} — СИГМА`;
-  const description = `Профил на ${name} в обществените поръчки ${range}.`;
-  const meta = [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/companies/${params.eik}` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  const meta = seoMeta({
+    matches,
+    path: `/companies/${params.eik}`,
+    title: `${name} — СИГМА`,
+    description: `Профил на ${name} в обществените поръчки ${range}.`,
+  });
   if (
     data?.company &&
     (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||

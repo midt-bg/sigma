@@ -3,22 +3,16 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
+import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
-  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
-  const origin = rootData?.origin ?? '';
-  const title = 'Импресум — СИГМА';
-  const description =
-    'Информация за оператора на СИГМА и контакт по чл. 4 от Закона за електронната търговия.';
-  return [
-    { title },
-    { name: 'description', content: description },
-    { property: 'og:title', content: title },
-    { property: 'og:description', content: description },
-    { property: 'og:url', content: `${origin}/impressum` },
-    { name: 'twitter:title', content: title },
-    { name: 'twitter:description', content: description },
-  ];
+  return seoMeta({
+    matches,
+    path: '/impressum',
+    title: 'Импресум — СИГМА',
+    description:
+      'Информация за оператора на СИГМА и контакт по чл. 4 от Закона за електронната търговия.',
+  });
 }
 
 export function headers() {
