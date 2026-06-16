@@ -57,14 +57,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="СИГМА" />
         <meta property="og:locale" content="bg_BG" />
-        {imageUrl && <meta property="og:image" content={imageUrl} />}
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta
-          property="og:image:alt"
-          content="СИГМА — платформа за прозрачност на обществените поръчки"
-        />
-        <meta property="og:image:type" content="image/png" />
+        {imageUrl && (
+          <>
+            <meta property="og:image" content={imageUrl} />
+            <meta property="og:image:width" content="1200" />
+            <meta property="og:image:height" content="630" />
+            <meta
+              property="og:image:alt"
+              content="СИГМА — платформа за прозрачност на обществените поръчки"
+            />
+            <meta property="og:image:type" content="image/png" />
+          </>
+        )}
         <meta name="twitter:card" content="summary_large_image" />
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
