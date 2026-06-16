@@ -324,6 +324,15 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </p>
                   <span className="src">→ GROUP BY authority, bidder</span>
                 </dd>
+                <dt>Област (NUTS3)</dt>
+                <dd>
+                  <p>
+                    Областта на институцията се извежда от адреса ѝ (NUTS код от регистъра), затова
+                    е известна само за част от институциите. На картата на разходите институциите
+                    без посочена област се показват отделно и не се причисляват към никоя област.
+                  </p>
+                  <span className="src">→ authorities.region</span>
+                </dd>
               </dl>
             </section>
 
