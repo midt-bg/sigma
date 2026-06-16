@@ -4,13 +4,19 @@ import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Декларация за достъпност — СИГМА';
+  const description = 'Декларация за достъпност на публичната информационна услуга СИГМА.';
   return [
-    { title: 'Декларация за достъпност — СИГМА' },
-    {
-      name: 'description',
-      content: 'Декларация за достъпност на публичната информационна услуга СИГМА.',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/accessibility` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

@@ -61,7 +61,37 @@ function scrollKey(location: { pathname: string; search: string }): string {
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useNonce();
   const rootData = useRouteLoaderData('root') as { origin?: string } | undefined;
-  const imageUrl = rootData?.origin ? `${rootData.origin}/og.png` : undefined;
+  const origin = rootData?.origin;
+  const imageUrl = origin ? `${origin}/og.png` : undefined;
+  const schemaOrg = origin
+    ? JSON.stringify({
+        '@context': 'https://schema.org',
+        '@graph': [
+          {
+            '@type': 'Organization',
+            '@id': `${origin}/#organization`,
+            name: 'СИГМА',
+            alternateName: 'Система за Интегриран Граждански Мониторинг и Анализ',
+            url: origin,
+            logo: { '@type': 'ImageObject', url: `${origin}/logo.svg` },
+          },
+          {
+            '@type': 'WebSite',
+            '@id': `${origin}/#website`,
+            url: origin,
+            name: 'СИГМА',
+            description: 'Платформа за прозрачност на обществените поръчки в България',
+            inLanguage: 'bg',
+            publisher: { '@id': `${origin}/#organization` },
+            potentialAction: {
+              '@type': 'SearchAction',
+              target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+              'query-input': 'required name=search_term_string',
+            },
+          },
+        ],
+      })
+    : null;
   return (
     <html lang="bg">
       <head>
@@ -86,6 +116,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
         <Links />
+        {schemaOrg && (
+          <script
+            type="application/ld+json"
+            nonce={nonce}
+            dangerouslySetInnerHTML={{ __html: schemaOrg }}
+          />
+        )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>
       <body>

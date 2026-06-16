@@ -27,14 +27,20 @@ const VALUE_BUCKETS = [
   { value: 'gt100m', label: 'Над 100 млн. €' },
 ];
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Договори — СИГМА';
+  const description =
+    'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.';
   return [
-    { title: 'Договори — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/contracts` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

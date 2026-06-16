@@ -30,13 +30,19 @@ const COUNT_BUCKETS = [
   { value: '100+', label: '100+' },
 ];
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Компании — СИГМА';
+  const description = 'Всяка компания, спечелила поне един договор по обществена поръчка.';
   return [
-    { title: 'Компании — СИГМА' },
-    {
-      name: 'description',
-      content: 'Всяка компания, спечелила поне един договор по обществена поръчка.',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/companies` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

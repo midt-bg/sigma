@@ -1,7 +1,17 @@
 import type { Route } from './+types/sitemap-pages';
 import { withDataSource } from '../lib/dataSource';
 
-const PAGES = ['/', '/companies', '/authorities', '/contracts', '/flows', '/methodology'];
+const PAGES = [
+  '/',
+  '/companies',
+  '/authorities',
+  '/contracts',
+  '/flows',
+  '/methodology',
+  '/privacy',
+  '/impressum',
+  '/accessibility',
+];
 
 export function loader({ request }: Route.LoaderArgs) {
   const origin = new URL(request.url).origin;

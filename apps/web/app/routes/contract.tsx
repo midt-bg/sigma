@@ -41,16 +41,22 @@ function bidsBreakdown(c: ContractDetail): string | null {
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-export function meta({ data }: Route.MetaArgs) {
+export function meta({ data, params, matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
   const c = data?.contract;
+  const title = `${c?.subject ?? 'Договор'} — СИГМА`;
+  const description = c
+    ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
+    : '';
   return [
-    { title: `${c?.subject ?? 'Договор'} — СИГМА` },
-    {
-      name: 'description',
-      content: c
-        ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
-        : '',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/contracts/${params.id}` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

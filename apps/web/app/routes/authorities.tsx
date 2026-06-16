@@ -21,10 +21,19 @@ import {
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Институции — СИГМА';
+  const description = 'Всяка институция, възложила поне един договор по обществена поръчка.';
   return [
-    { title: 'Институции — СИГМА' },
-    { name: 'description', content: 'Всяка институция, възложила поне един договор.' },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/authorities` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

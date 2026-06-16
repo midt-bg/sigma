@@ -5,13 +5,19 @@ import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Политика за поверителност — СИГМА';
+  const description = 'Как СИГМА обработва публични данни и какви права имат субектите на данни.';
   return [
-    { title: 'Политика за поверителност — СИГМА' },
-    {
-      name: 'description',
-      content: 'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/privacy` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 

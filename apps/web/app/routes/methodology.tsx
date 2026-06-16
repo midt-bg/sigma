@@ -8,13 +8,19 @@ import { Callout, Flag } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ matches }: Route.MetaArgs) {
+  const rootData = matches.find((m) => m?.id === 'root')?.data as { origin: string };
+  const origin = rootData?.origin ?? '';
+  const title = 'Методология и речник — СИГМА';
+  const description = 'Откъде идват числата, как се сглобяват и какво съзнателно не показваме.';
   return [
-    { title: 'Методология и речник — СИГМА' },
-    {
-      name: 'description',
-      content: 'Откъде идват числата, как се сглобяват и какво съзнателно не показваме.',
-    },
+    { title },
+    { name: 'description', content: description },
+    { property: 'og:title', content: title },
+    { property: 'og:description', content: description },
+    { property: 'og:url', content: `${origin}/methodology` },
+    { name: 'twitter:title', content: title },
+    { name: 'twitter:description', content: description },
   ];
 }
 
