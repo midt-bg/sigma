@@ -217,7 +217,15 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="small muted" style={{ margin: '0 0 8px' }}>
                 {c.bidder.eik ? (
                   <>
-                    ЕИК <span className="mono">{c.bidder.eik}</span>
+                    ЕИК{' '}
+                    <a
+                      href={`https://portal.registryagency.bg/CR/Reports/ActiveConditionTabResult?uic=${c.bidder.eik}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mono"
+                    >
+                      {c.bidder.eik}
+                    </a>
                   </>
                 ) : (
                   'непотвърден ЕИК'
@@ -256,7 +264,15 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   {c.subcontractor.eik && (
                     <>
                       {' '}
-                      · ЕИК <span className="mono">{c.subcontractor.eik}</span>
+                      · ЕИК{' '}
+                      <a
+                        href={`https://portal.registryagency.bg/CR/Reports/ActiveConditionTabResult?uic=${c.subcontractor.eik}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono"
+                      >
+                        {c.subcontractor.eik}
+                      </a>
                     </>
                   )}
                   {c.subcontractor.valueEur != null && <> · {money(c.subcontractor.valueEur)}</>}

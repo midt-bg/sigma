@@ -93,7 +93,19 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <Chip>{c.sector.short}</Chip>
                 </>
               )}
-              {c.hasEik && c.eik && <> · ЕИК&nbsp;{c.eik}</>}
+              {c.hasEik && c.eik && (
+                <>
+                  {' · ЕИК '}
+                  <a
+                    href={`https://portal.registryagency.bg/CR/Reports/ActiveConditionTabResult?uic=${c.eik}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                  >
+                    {c.eik}
+                  </a>
+                </>
+              )}
             </>
           }
           title={c.displayName}
