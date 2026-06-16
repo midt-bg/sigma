@@ -429,15 +429,17 @@ async function ocdsPackageForDay(day, failures, skips) {
 }
 
 export function deleteSqlForEopSources(table, cat, days) {
-  if (days.length === 1) return `DELETE FROM ${table} WHERE source = 'eop:${cat}:${days[0]}';\n`;
-  const sources = days.map((day) => `'eop:${cat}:${day}'`).join(',\n  ');
+  const lit = (day) => escapeSqlText(`eop:${cat}:${day}`);
+  if (days.length === 1) return `DELETE FROM ${table} WHERE source = ${lit(days[0])};\n`;
+  const sources = days.map(lit).join(',\n  ');
   return `DELETE FROM ${table} WHERE source IN (\n  ${sources}\n);\n`;
 }
 
 function deleteSqlForSources(table, sources) {
-  if (sources.length === 1) return `DELETE FROM ${table} WHERE source = '${sources[0]}';\n`;
+  if (sources.length === 1)
+    return `DELETE FROM ${table} WHERE source = ${escapeSqlText(sources[0])};\n`;
   return `DELETE FROM ${table} WHERE source IN (
-  ${sources.map((source) => `'${source}'`).join(',\n  ')}
+  ${sources.map((source) => escapeSqlText(source)).join(',\n  ')}
 );\n`;
 }
 

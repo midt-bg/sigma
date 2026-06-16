@@ -411,7 +411,14 @@ export function assertWellFormedSqlLiteral(literal: string): void {
  *    invariant that catches future escaping regressions before they reach sqlite.
  */
 export function escapeSqlText(value: string): string {
-  const truncated = value.length > MAX_SQL_TEXT_LEN ? value.slice(0, MAX_SQL_TEXT_LEN) : value;
+  let truncated = value;
+  if (value.length > MAX_SQL_TEXT_LEN) {
+    truncated = value.slice(0, MAX_SQL_TEXT_LEN);
+    // A code-unit slice can split a surrogate pair; drop a trailing lone high surrogate so the cut
+    // text stays well-formed UTF-16 (otherwise the UTF-8 file write silently yields U+FFFD).
+    const last = truncated.charCodeAt(truncated.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) truncated = truncated.slice(0, -1);
+  }
   const escaped = truncated.replace(SQL_CONTROL_CHARS, '').replace(/'/g, "''");
   const literal = `'${escaped}'`;
   assertWellFormedSqlLiteral(literal);

@@ -151,6 +151,15 @@ describe('offline SQL literal hardening', () => {
     expect(() => escapeSqlText(quoteHeavy)).not.toThrow();
   });
 
+  it('drops a trailing lone high surrogate when truncation splits a pair', () => {
+    // 💩 is a surrogate pair (2 code units) placed astride the cap; a code-unit slice would keep
+    // only its high surrogate. Assert the lone surrogate is dropped — no U+FFFD, still well-formed.
+    const literal = escapeSqlText('a'.repeat(MAX_SQL_TEXT_LEN - 1) + '💩');
+    expect(literal).not.toContain('�');
+    expect(/[\uD800-\uDBFF]'$/.test(literal)).toBe(false);
+    expect(() => assertWellFormedSqlLiteral(literal)).not.toThrow();
+  });
+
   it('asserts a well-formed quoted literal and rejects malformed ones', () => {
     expect(() => assertWellFormedSqlLiteral("'ok'")).not.toThrow();
     expect(() => assertWellFormedSqlLiteral("'O''Brien'")).not.toThrow();
