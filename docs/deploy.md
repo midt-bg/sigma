@@ -310,7 +310,7 @@ gate-а. Това е стъпката, която хората забравят.
 
 Деплойнатият cron `RefreshWorkflow` ([apps/etl/src/index.ts](../apps/etl/src/index.ts)) дърпа същата
 EOP емисия върху малък скорошен прозорец на всеки 6 часа (cron `0 */6 * * *`), стартирайки durable
-Workflow-а `sigma-refresh`; големите догонвания остават за CLI-то (`pnpm import --catchup`). Подробно
+Workflow-а `sigma-refresh`; големите догонвания остават за CLI-то (`pnpm run import --catchup`). Подробно
 за pipeline-а — в [`docs/etl.md`](etl.md).
 
 > По-ранните pipeline-и през `data.egov.bg` (OCDS) и админ-експорта на АОП са изведени от употреба;
