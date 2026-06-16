@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { ContractMiniTable } from '../components/ContractMiniTable';
-import { ShareBar, Chip, OwnershipChip, Section } from '../components/ui';
+import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { withDbRetry } from '../lib/retry';
@@ -99,7 +99,13 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <Chip>{c.sector.short}</Chip>
                 </>
               )}
-              {c.hasEik && c.eik && <> · ЕИК&nbsp;{c.eik}</>}
+              {c.hasEik && c.eik && (
+                <>
+                  {' '}
+                  · ЕИК&nbsp;{c.eik}
+                  <ExternalEikLink eik={c.eik} />
+                </>
+              )}
             </>
           }
           title={c.displayName}
@@ -306,12 +312,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               className="tab-input"
               defaultChecked
             />
-            <input
-              type="radio"
-              name="company-contracts"
-              id="company-top"
-              className="tab-input"
-            />
+            <input type="radio" name="company-contracts" id="company-top" className="tab-input" />
             <div className="tab-labels">
               <label id="tab-company-recent" htmlFor="company-recent">
                 Най-нови

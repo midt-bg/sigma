@@ -6,7 +6,7 @@ import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
-import { Chip, Flag, Section } from '../components/ui';
+import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -218,6 +218,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 {c.bidder.eik ? (
                   <>
                     ЕИК <span className="mono">{c.bidder.eik}</span>
+                    <ExternalEikLink eik={c.bidder.eik} />
                   </>
                 ) : (
                   'непотвърден ЕИК'
@@ -257,6 +258,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <>
                       {' '}
                       · ЕИК <span className="mono">{c.subcontractor.eik}</span>
+                      <ExternalEikLink eik={c.subcontractor.eik} />
                     </>
                   )}
                   {c.subcontractor.valueEur != null && <> · {money(c.subcontractor.valueEur)}</>}
@@ -492,7 +494,6 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               </ul>
             </>
           )}
-
         </Section>
       </main>
     </>
