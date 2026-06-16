@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   isRouteErrorResponse,
   Link,
@@ -83,8 +83,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
 // Thin top progress bar so cross-route navigation doesn't feel dead on slow networks.
 // `useNavigation().state` is 'idle' on the server and the first client render, so the
 // initial markup matches SSR — the bar only appears once a client-side transition starts.
+// Tracks the user's reduced-motion preference. Initialised false so the first client render
+// matches SSR (no hydration mismatch), then updated after mount — the progress bar only
+// animates on client navigation, so the post-mount value is the one that matters. (WCAG 2.3.3)
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  return reduced;
+}
+
 function RouteProgress() {
   const busy = useNavigation().state !== 'idle';
+  const reduceMotion = usePrefersReducedMotion();
   return (
     <div
       aria-hidden="true"
@@ -97,9 +113,11 @@ function RouteProgress() {
         transformOrigin: 'left',
         transform: busy ? 'scaleX(1)' : 'scaleX(0)',
         opacity: busy ? 1 : 0,
-        transition: busy
-          ? 'transform 1.2s ease-out, opacity 0.1s ease'
-          : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
+        transition: reduceMotion
+          ? 'none'
+          : busy
+            ? 'transform 1.2s ease-out, opacity 0.1s ease'
+            : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
         zIndex: 1000,
         pointerEvents: 'none',
       }}

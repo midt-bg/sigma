@@ -157,6 +157,13 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         <div className="two-col">
           <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
             <table>
+              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Сектор (CPV)</th>
+                  <th scope="col">Стойност и дял</th>
+                </tr>
+              </thead>
               <tbody>
                 {a.sectors.map((s) => (
                   <tr key={s.code}>

@@ -131,7 +131,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           }
           lede="СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация, без тълкуване. Зад всяко число стои конкретен договор — можеш да го отвориш."
         >
-          <form className="hero-search" role="search" action="/search">
+          <form
+            className="hero-search"
+            role="search"
+            aria-label="Търсене на началната страница"
+            action="/search"
+          >
             <input
               type="search"
               name="q"
