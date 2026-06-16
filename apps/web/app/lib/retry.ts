@@ -19,18 +19,20 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * `attempts` times total with a short backoff; the last error propagates if every attempt fails.
  */
 export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  // Clamp so a caller passing attempts <= 0 still runs once and never `throw undefined`.
+  const total = Math.max(1, attempts);
   let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (let attempt = 0; attempt < total; attempt += 1) {
     try {
       return await fn();
     } catch (error) {
       // 404 / redirect — intentional, not a fault. Never retry; surface it on the first throw.
       if (error instanceof Response) throw error;
       lastError = error;
-      if (attempt < attempts - 1) {
+      if (attempt < total - 1) {
         // Logged so the otherwise-silent transient faults are visible in Workers logs.
         console.warn(
-          `[withDbRetry] read failed (attempt ${attempt + 1}/${attempts}), retrying:`,
+          `[withDbRetry] read failed (attempt ${attempt + 1}/${total}), retrying:`,
           error instanceof Error ? error.message : error,
         );
         await delay(BACKOFF_MS[attempt] ?? 150);

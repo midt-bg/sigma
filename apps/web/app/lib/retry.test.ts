@@ -33,4 +33,12 @@ describe('withDbRetry', () => {
     await expect(withDbRetry(fn)).rejects.toBe(notFound);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('runs once and surfaces the real error when attempts <= 0 (never throws undefined)', async () => {
+    const err = new Error('down');
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withDbRetry(fn, 0)).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });

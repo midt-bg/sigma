@@ -21,6 +21,7 @@ import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
+import { withDbRetry } from './lib/retry';
 import './app.css';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
@@ -41,7 +42,9 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
     throw redirect(url.pathname.replace(/\/+$/, '') + url.search, 301);
   }
-  const coverage = await getCoverageMeta(context.cloudflare.env.DB);
+  // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
+  // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
+  const coverage = await withDbRetry(() => getCoverageMeta(context.cloudflare.env.DB));
   return { ...coverage, origin: url.origin };
 }
 
