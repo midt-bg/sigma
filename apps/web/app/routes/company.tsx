@@ -10,6 +10,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, OwnershipChip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
+import { withDbRetry } from '../lib/retry';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -50,9 +51,11 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const id = bidderIdFromSlug(params.eik);
   if (!id) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
-  const [company, coverage] = await Promise.all([getCompany(db, id), getCoverageMeta(db)]);
-  if (!company) throw new Response('Not Found', { status: 404 });
-  return { company, coverage };
+  return withDbRetry(async () => {
+    const [company, coverage] = await Promise.all([getCompany(db, id), getCoverageMeta(db)]);
+    if (!company) throw new Response('Not Found', { status: 404 });
+    return { company, coverage };
+  });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {

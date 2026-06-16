@@ -17,6 +17,7 @@ import {
   PAGE_SIZE,
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
+import { withDbRetry } from '../lib/retry';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -59,12 +60,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
   const { env } = context.cloudflare;
   // Page `Cache-Control` (publicCache(1800)) memoises full responses at the edge — no per-query cache.
-  const [summary, facets] = await Promise.all([
-    contractsSummary(env.DB, params),
-    getContractFacets(env.DB),
-  ]);
-  const result = await listContracts(env.DB, params, summary);
-  return { result, facets };
+  return withDbRetry(async () => {
+    const [summary, facets] = await Promise.all([
+      contractsSummary(env.DB, params),
+      getContractFacets(env.DB),
+    ]);
+    const result = await listContracts(env.DB, params, summary);
+    return { result, facets };
+  });
 }
 
 export default function Contracts({ loaderData }: Route.ComponentProps) {

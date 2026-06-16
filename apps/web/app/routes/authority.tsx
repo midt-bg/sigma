@@ -10,6 +10,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
+import { withDbRetry } from '../lib/retry';
 
 export function meta({ data }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
@@ -25,14 +26,17 @@ export function headers() {
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
-  if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
+  const eik = params.eik;
+  if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
-  const [authority, coverage] = await Promise.all([
-    getAuthority(db, authorityIdFromSlug(params.eik)),
-    getCoverageMeta(db),
-  ]);
-  if (!authority) throw new Response('Not Found', { status: 404 });
-  return { authority, coverage };
+  return withDbRetry(async () => {
+    const [authority, coverage] = await Promise.all([
+      getAuthority(db, authorityIdFromSlug(eik)),
+      getCoverageMeta(db),
+    ]);
+    if (!authority) throw new Response('Not Found', { status: 404 });
+    return { authority, coverage };
+  });
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
