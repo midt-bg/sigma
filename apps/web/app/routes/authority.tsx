@@ -146,7 +146,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </table>
           </div>
           {a.moreContractors > 0 && (
-            <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
+            <p className="small muted mt-s3">
               <Link to={`/contracts?authority=${a.eik}`}>
                 … още {count(a.moreContractors)} изпълнители — виж всички договори →
               </Link>
@@ -224,7 +224,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               <ContractMiniTable items={a.topContracts} counterparty="bidder" />
             </div>
           </div>
-          <p className="small muted" style={{ marginTop: 8 }}>
+          <p className="small muted mt-8">
             <Link to={`/contracts?authority=${a.eik}`}>
               Виж всички / филтрирай / свали като CSV →
             </Link>

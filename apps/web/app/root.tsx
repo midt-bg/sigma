@@ -85,26 +85,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 // initial markup matches SSR — the bar only appears once a client-side transition starts.
 function RouteProgress() {
   const busy = useNavigation().state !== 'idle';
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'fixed',
-        insetInline: 0,
-        top: 0,
-        height: '2px',
-        background: 'var(--accent, #b00020)',
-        transformOrigin: 'left',
-        transform: busy ? 'scaleX(1)' : 'scaleX(0)',
-        opacity: busy ? 1 : 0,
-        transition: busy
-          ? 'transform 1.2s ease-out, opacity 0.1s ease'
-          : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
-        zIndex: 1000,
-        pointerEvents: 'none',
-      }}
-    />
-  );
+  return <div className="route-progress" aria-hidden="true" data-busy={busy} />;
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
@@ -172,7 +153,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           <Link to="/authorities">Институции</Link> · <Link to="/contracts">Договори</Link>
         </p>
         {stack && (
-          <pre className="mono small" style={{ overflowX: 'auto', marginTop: 'var(--s-5)' }}>
+          <pre className="mono small error-stack">
             <code>{stack}</code>
           </pre>
         )}

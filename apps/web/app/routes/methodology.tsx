@@ -110,21 +110,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
 
         <div className="split">
           <aside className="toc" aria-label="Съдържание на страницата">
-            <p
-              className="toc-title"
-              style={{
-                margin: '0 0 var(--s-2)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                lineHeight: 1.3,
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                color: 'var(--ink-soft, #555)',
-                fontWeight: 500,
-              }}
-            >
-              Съдържание
-            </p>
+            <p className="toc-title">Съдържание</p>
             <ol>
               {TOC.map(([id, label], i) => (
                 <li key={id}>
@@ -161,7 +147,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 маркира фирми като рискови.
               </p>
               <Callout title="За какво е подходяща тази версия">
-                <p style={{ margin: 0 }}>
+                <p className="m-0">
                   Журналисти, изследователи, общински съветници, НПО и граждани, които искат да
                   тръгнат от името на институция или фирма и да стигнат до конкретните договори. Не
                   замества правен или одиторски анализ.
@@ -236,7 +222,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 такива договори.
               </p>
               <Callout title="Защо не показваме офертите на отделните участници">
-                <p style={{ margin: 0 }}>
+                <p className="m-0">
                   В регистъра е публикуван <strong>броят</strong> получени оферти, но{' '}
                   <strong>стойностите на отделните оферти</strong> (без тази на победителя) не са в
                   машиночетимия запис. Това поле не съществува в нито един отворен източник и не
@@ -422,7 +408,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </tbody>
                 </table>
               </div>
-              <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
+              <p className="small muted mt-s3">
                 <strong>Място на изпълнение</strong>, <strong>собственици и свързани лица</strong> и{' '}
                 <strong>рискови сигнали</strong> са в процес на разработка за следваща версия —
                 изискват пълно сливане с допълнителни източници и отделен аналитичен слой.

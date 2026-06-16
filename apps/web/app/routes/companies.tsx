@@ -212,17 +212,8 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.companies} />}
             <Callout>
-              <h2
-                style={{
-                  font: '400 18px/1.25 var(--font-serif)',
-                  letterSpacing: '-0.01em',
-                  color: 'var(--ink, #111)',
-                  marginBottom: 6,
-                }}
-              >
-                Какво означава „спечелено“?
-              </h2>
-              <p style={{ margin: 0 }}>
+              <h2>Какво означава „спечелено“?</h2>
+              <p className="m-0">
                 Сборът от стойностите (в евро) на договорите, по които компанията е изпълнител.
                 Когато договорът е възложен на обединение (ДЗЗД/консорциум), цялата сума се води на
                 обединението като един изпълнител; разбивка по членове ще добавим след свързване с

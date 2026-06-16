@@ -24,7 +24,7 @@ export function Pagination({
             ‹ Предишна
           </Link>
         ) : (
-          <span aria-disabled="true" className="disabled" style={{ opacity: 0.4 }}>
+          <span aria-disabled="true" className="disabled">
             ‹ Предишна
           </span>
         )}
@@ -33,7 +33,7 @@ export function Pagination({
             Следваща ›
           </Link>
         ) : (
-          <span aria-disabled="true" className="disabled" style={{ opacity: 0.4 }}>
+          <span aria-disabled="true" className="disabled">
             Следваща ›
           </span>
         )}

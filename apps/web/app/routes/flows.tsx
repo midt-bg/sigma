@@ -217,7 +217,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
                 </tbody>
               </table>
             </div>
-            <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
+            <p className="small muted mt-s3">
               Зад всеки ред стоят неговите договори:{' '}
               <Link to="/contracts?sort=value-desc">виж договорите →</Link>
             </p>

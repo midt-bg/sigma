@@ -1096,6 +1096,7 @@ a.flag:hover {
   background: var(--accent-bg);
   color: var(--ink);
 }
+.callout h2,
 .callout h3 {
   font: 400 18px/1.25 var(--font-serif);
   letter-spacing: -0.01em;
@@ -1905,6 +1906,10 @@ details.row .body .signal .why {
   font: 500 10.5px/1.2 var(--font-mono);
   letter-spacing: 0.14em;
 }
+/* A disabled (boundary) pager control is rendered as a <span> rather than a link. */
+.paging .ctrl span.disabled {
+  opacity: 0.4;
+}
 .paging .ctrl a:hover {
   background: var(--paper-warm);
   color: var(--ink);
@@ -2149,9 +2154,22 @@ details.row .body .signal .why {
   fill: var(--ink);
   font-size: 12px;
 }
+/* The name line of a node label is bold; the value line (.node-label.small) stays regular. */
+.flow-svg .node-label.is-name {
+  font-weight: 700;
+}
 .flow-svg .node-label.small {
   fill: var(--ink-soft);
   font-size: 11px;
+}
+/* Column captions ("Институции" / "Компании") sit a touch larger/bolder than the global .cap. */
+.flow-svg .cap {
+  font-size: 11px;
+  font-weight: 700;
+}
+/* Linked nodes are interactive; show the pointer affordance over the whole anchor. */
+.flow-svg .node-link {
+  cursor: pointer;
 }
 .flow-svg .link {
   fill: var(--ink-mid);
@@ -2779,6 +2797,16 @@ tbody td,
 .toc h4 {
   margin: 0 0 var(--s-2);
 }
+.toc-title {
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
 .toc ol {
   list-style: none;
   padding: 0;
@@ -2905,4 +2933,104 @@ tbody td,
   .principles li {
     padding-left: 44px;
   }
+}
+
+/* ── Static layout helpers ───────────────────────────────────────────────────
+   Small, value-stable rules extracted from former inline `style={…}` attributes
+   so the CSP `style-src` no longer needs `'unsafe-inline'` for these. Only the
+   genuinely dynamic chart-bar widths/colours (StackedBar, RankedBars, ShareBar,
+   SingleOfferPortion) remain inline — those carry per-row computed values and
+   cannot be enumerated as classes. See apps/web/app/lib/security.ts. */
+
+/* Top route-progress bar. Was an inline style toggling transform/opacity on the
+   navigation state; the two states now live in CSS, switched via [data-busy]. */
+.route-progress {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent, #b00020);
+  transform-origin: left;
+  transform: scaleX(0);
+  opacity: 0;
+  transition:
+    transform 0.1s ease,
+    opacity 0.25s ease 0.15s;
+  z-index: 1000;
+  pointer-events: none;
+}
+.route-progress[data-busy='true'] {
+  transform: scaleX(1);
+  opacity: 1;
+  transition:
+    transform 1.2s ease-out,
+    opacity 0.1s ease;
+}
+
+/* Coverage note under the home totals: centred, measure-constrained caption. */
+.coverage-note {
+  margin: var(--s-2) auto 0;
+  max-width: var(--measure);
+}
+
+/* Dev-only error stack in the route ErrorBoundary. */
+.error-stack {
+  overflow-x: auto;
+  margin-top: var(--s-5);
+}
+
+/* Search-tips list inside a Callout. */
+.tips-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* Empty-state quote (e.g. company page with no narrative). */
+.empty-quote {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border-left: 3px solid var(--rule, #ccc);
+  color: var(--ink-soft, #555);
+  white-space: pre-wrap;
+}
+
+/* Contract „кой с кого" figures: a prominent amount line + tight caption rows. */
+.figure-amount {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 6px 0 2px;
+}
+.figure-sub {
+  margin: 0 0 8px;
+}
+.figure-note {
+  margin: 8px 0 0;
+}
+
+/* Fixed table column widths (rank / select cells). */
+.col-w-32 {
+  width: 32px;
+}
+.col-w-60 {
+  width: 60px;
+}
+
+/* Spacing utilities replacing one-off inline margins. */
+.m-0 {
+  margin: 0;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.mb-8 {
+  margin-bottom: 8px;
+}
+.mt-s2 {
+  margin-top: var(--s-2);
+}
+.mt-s3 {
+  margin-top: var(--s-3);
+}
+.mt-s4 {
+  margin-top: var(--s-4);
 }

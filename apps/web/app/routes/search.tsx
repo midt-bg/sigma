@@ -232,7 +232,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
         {!hasResults && <h2 className="sr-only">Помощ при търсене</h2>}
         <Callout title="Съвети за търсене">
-          <ul style={{ margin: 0, paddingLeft: 20 }}>
+          <ul className="tips-list">
             <li>
               Въведи <strong>УНП</strong> като <code>00044-2023-0018</code> или фрагмент от него.
             </li>

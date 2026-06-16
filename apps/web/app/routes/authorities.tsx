@@ -176,17 +176,8 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.authorities} />}
             <Callout>
-              <h2
-                style={{
-                  font: '400 18px/1.25 var(--font-serif)',
-                  letterSpacing: '-0.01em',
-                  color: 'var(--ink, #111)',
-                  marginBottom: 6,
-                }}
-              >
-                Какво означава „похарчено“?
-              </h2>
-              <p style={{ margin: 0 }}>
+              <h2>Какво означава „похарчено“?</h2>
+              <p className="m-0">
                 Сумата от стойностите (в евро) на всички договори на дадена институция за периода{' '}
                 {range}. Видът на институцията (министерство, община, болница…) се определя по името
                 ѝ и е приблизителен. Виж <Link to="/methodology">методология</Link>.
