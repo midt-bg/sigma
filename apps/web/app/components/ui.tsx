@@ -9,43 +9,33 @@ export function Chip({ children }: { children: ReactNode }) {
   return <span className="chip">{children}</span>;
 }
 
+const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult';
+
 export function ExternalEikLink({ eik, className }: { eik: string; className?: string }) {
   return (
     <a
-      href={`https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult?uic=${eik}`}
+      href={`${REGISTRY_URL}?uic=${eik}`}
       target="_blank"
       rel="noopener noreferrer"
-      className={className ? `external-eik-link ${className}` : 'external-eik-link'}
+      className={`external-eik-link${className ? ` ${className}` : ''}`}
+      aria-label={`Отвори ЕИК ${eik} в Търговския регистър`}
       title="Отвори в Търговския регистър"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '2px',
-        marginLeft: '6px',
-        color: 'inherit',
-        textDecoration: 'none',
-      }}
     >
       <svg
         width="14"
         height="14"
-        viewBox="0 0 16 16"
+        viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.5"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         aria-hidden="true"
-        style={{ opacity: 0.7 }}
       >
-        <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
-        <path d="M9 1.75V5.25h3.5" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <polyline points="15 3 21 3 21 9" />
+        <line x1="10" y1="14" x2="21" y2="3" />
       </svg>
-      <span
-        className="cta-ext"
-        aria-hidden="true"
-        style={{ fontSize: '10px', opacity: 0.7, transform: 'translateY(-2px)' }}
-      >
-        ↗
-      </span>
     </a>
   );
 }
