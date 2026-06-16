@@ -263,7 +263,6 @@ function serve(
     env: envWith(r2, opts.refreshedAt),
     request: opts.request ?? new Request('http://local/contracts.csv'),
     route: 'contracts',
-    sort: opts.sort ?? 'value-desc',
     params: opts.params ?? { sort: opts.sort ?? 'value-desc' },
     stream,
   });
@@ -328,11 +327,11 @@ describe('servedCsvExport', () => {
     expect(stream).toHaveBeenCalledTimes(1);
     expect(r2.put).not.toHaveBeenCalled();
     expect(r2.createMultipartUpload).toHaveBeenCalledTimes(1);
-    expect(r2.createMultipartUpload).toHaveBeenCalledWith(`csv/contracts/value-desc/${VERSION}`, {
+    expect(r2.createMultipartUpload).toHaveBeenCalledWith(`csv/contracts/${VERSION}`, {
       httpMetadata: { contentType: CSV_CONTENT_TYPE },
     });
     expect(r2.lastUploadPartCallCount()).toBe(1);
-    expect(r2.get).toHaveBeenLastCalledWith(`csv/contracts/value-desc/${VERSION}`, {
+    expect(r2.get).toHaveBeenLastCalledWith(`csv/contracts/${VERSION}`, {
       onlyIf: expect.any(Headers),
     });
   });
@@ -353,6 +352,22 @@ describe('servedCsvExport', () => {
     expect(await response.text()).toBe(CSV_BODY);
     expect(hitStream).not.toHaveBeenCalled();
     expect(r2.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('does not vary the cache key by sort: a different sort hits the same object', async () => {
+    const r2 = new InMemoryR2();
+    const missStream = vi.fn(() => csvResponse());
+    await (await serve(r2, missStream, { params: { sort: 'value-desc' } })).text();
+    r2.createMultipartUpload.mockClear();
+
+    const hitStream = vi.fn(() => csvResponse('from db\n'));
+    const response = await serve(r2, hitStream, { params: { sort: 'date-asc' } });
+
+    expect(response.headers.get('X-Csv-Cache')).toBe('HIT');
+    expect(await response.text()).toBe(CSV_BODY);
+    expect(hitStream).not.toHaveBeenCalled();
+    expect(r2.createMultipartUpload).not.toHaveBeenCalled();
+    expect(r2.keyCount()).toBe(1);
   });
 
   it('returns 304 for a matching If-None-Match on an unfiltered request', async () => {

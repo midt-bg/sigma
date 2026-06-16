@@ -18,7 +18,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     env: context.cloudflare.env,
     request,
     route: 'authorities',
-    sort,
     params,
     stream: () => streamAuthoritiesCsv(context.cloudflare.env.DB, params),
   });
