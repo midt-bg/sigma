@@ -34,11 +34,11 @@ export function ListControls({
           <span key={s.value}>
             {i > 0 ? ' · ' : ''}
             {s.value === activeSort ? (
-              <Link to={sortHref(base, s.value)} aria-current="true">
+              <Link to={sortHref(base, s.value)} aria-current="true" preventScrollReset>
                 <strong>{s.label}</strong>
               </Link>
             ) : (
-              <Link to={sortHref(base, s.value)}>{s.label}</Link>
+              <Link to={sortHref(base, s.value)} preventScrollReset>{s.label}</Link>
             )}
           </span>
         ))}
