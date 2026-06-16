@@ -201,7 +201,9 @@ export function FilterRail({
           </button>
         </noscript>
         <p className="small muted" style={{ marginTop: 'var(--s-4)' }}>
-          <Link to={clearHref}>Изчисти филтрите</Link>
+          <Link to={clearHref} preventScrollReset>
+            Изчисти филтрите
+          </Link>
           {csvHref && (
             <>
               {' · '}
