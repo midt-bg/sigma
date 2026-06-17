@@ -73,7 +73,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
-        <ScrollRestoration nonce={nonce} />
+        <ScrollRestoration nonce={nonce} getKey={(loc) => loc.pathname} />
         <Scripts nonce={nonce} />
       </body>
     </html>
@@ -111,14 +111,19 @@ export default function App({ loaderData }: Route.ComponentProps) {
   // After a client-side navigation, move focus to the main region so keyboard and
   // screen-reader users aren't stranded on <body> mid-page (and the skip link stays
   // reachable). Skip the first run so SSR/hydration and the initial load are untouched.
+  // Also skip when only search params changed (filter or sort update within the same
+  // page) — clicking a filter checkbox should not yank the user back to the top.
   const location = useLocation();
   const navigationType = useNavigationType();
   const firstRender = useRef(true);
+  const prevPathname = useRef(location.pathname);
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    const isFirst = firstRender.current;
+    firstRender.current = false;
+    const prevPath = prevPathname.current;
+    prevPathname.current = location.pathname;
+    if (isFirst) return;
+    if (location.pathname === prevPath) return;
     const frame = window.requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>('main h1') ?? document.getElementById('main');
       if (el) {
