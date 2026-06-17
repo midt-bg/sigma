@@ -4,6 +4,7 @@ import { getHomeData } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
 import { PageHeader } from '../components/PageHeader';
+import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
 import { RankedBars } from '../components/RankedBars';
 import { OwnershipChip } from '../components/ui';
@@ -90,7 +91,9 @@ function SingleOfferPortion({ valueEur, totalEur }: { valueEur: number; totalEur
       </p>
       <div className="hbar" aria-hidden="true">
         <span style={{ width: `${(ratio * 100).toFixed(1)}%`, background: 'var(--accent)' }} />
-        <span style={{ width: `${((1 - ratio) * 100).toFixed(1)}%`, background: 'var(--ink-soft)' }} />
+        <span
+          style={{ width: `${((1 - ratio) * 100).toFixed(1)}%`, background: 'var(--ink-soft)' }}
+        />
       </div>
       <p className="small muted so-portion-cap">
         {money(valueEur)} от {money(totalEur)}
@@ -123,20 +126,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           }
           lede="СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация, без тълкуване. Зад всяко число стои конкретен договор — можеш да го отвориш."
         >
-          <form
-            className="hero-search"
-            role="search"
-            aria-label="Търсене на началната страница"
-            action="/search"
-          >
-            <input
-              type="search"
-              name="q"
-              placeholder="Институция, компания или договор"
-              aria-label="Търсене"
-            />
-            <button type="submit">Намери</button>
-          </form>
+          <SmartSearch variant="hero" />
         </PageHeader>
         <img
           className="hero-mark"

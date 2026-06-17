@@ -307,6 +307,13 @@ code,
   color: var(--ink);
   border-bottom-color: var(--ink);
 }
+/* Drawer chrome — only present once the nav collapses (≤960px). */
+.site-nav-head {
+  display: none;
+}
+.nav-backdrop {
+  display: none;
+}
 
 /* Search icon button — opens the search drawer below the masthead */
 .nav-search {
@@ -397,8 +404,9 @@ code,
   transform: rotate(-45deg);
 }
 
-/* ≤960px — collapse the inline nav into a full-width slide-down drawer.
-   Six mono nav items get tight before this; the menu toggle takes over. */
+/* ≤960px — six mono nav items get tight, so the inline bar gives way to a menu button that opens a
+   right-side drawer over a dimmed backdrop. The slide is a compositor-friendly transform (not the
+   old layout-bound max-height), and `visibility` takes the panel out of the tab order when closed. */
 @media (max-width: 960px) {
   .site-header-inner {
     padding: 18px var(--gutter) 16px;
@@ -406,29 +414,78 @@ code,
   .nav-toggle {
     display: inline-flex;
   }
+
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: oklch(20% 0 0 / 0.46);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.28s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+  .nav-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .site-nav {
-    order: 3;
-    flex-basis: 100%;
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 31;
+    width: min(20rem, 84vw);
     flex-direction: column;
     align-items: stretch;
     gap: 0;
-    margin: 0 calc(-1 * var(--gutter));
-    padding: 0 var(--gutter);
-    max-height: 0;
-    overflow: hidden;
-    opacity: 0;
+    margin: 0;
+    padding: var(--s-4) var(--gutter) var(--s-6);
+    background: var(--paper);
+    border-left: 1px solid var(--rule);
+    box-shadow: -24px 0 60px -40px rgb(0 0 0 / 0.5);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateX(100%);
+    visibility: hidden;
     transition:
-      max-height 0.28s ease,
-      opacity 0.2s ease,
-      margin-top 0.28s ease;
+      transform 0.3s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
+      visibility 0.3s;
   }
   .site-nav.is-open {
-    max-height: 75vh;
-    opacity: 1;
-    margin-top: var(--s-4);
-    overflow-y: auto;
-    border-top: 1px solid var(--rule);
+    transform: translateX(0);
+    visibility: visible;
   }
+
+  .site-nav-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: var(--s-3);
+    margin-bottom: var(--s-2);
+    border-bottom: 1px solid var(--rule);
+  }
+  .site-nav-head-label {
+    font: 500 11px/1 var(--font-mono);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .site-nav-close {
+    background: transparent;
+    border: 0;
+    color: var(--ink-mid);
+    font: 400 30px/1 var(--font-serif);
+    padding: 0 4px;
+    cursor: pointer;
+  }
+  .site-nav-close:hover {
+    color: var(--accent);
+  }
+  .site-nav-close:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .site-nav a {
     display: flex;
     align-items: center;
@@ -449,6 +506,14 @@ code,
   }
 }
 
+/* Honour reduced-motion: the drawer and backdrop snap rather than slide/fade. */
+@media (prefers-reduced-motion: reduce) {
+  .site-nav,
+  .nav-backdrop {
+    transition: none;
+  }
+}
+
 /* Search drawer — drops below masthead on icon click */
 .search-drawer {
   background: var(--paper);
@@ -461,58 +526,22 @@ code,
   display: none;
 }
 .search-drawer.is-open {
-  max-height: 240px;
+  max-height: 320px;
+  /* Once open, let the suggestions listbox escape the drawer box. Overflow stays hidden only while
+     the drawer is collapsing, so the slide animation still clips cleanly. */
+  overflow: visible;
 }
-.search-drawer-form {
+.search-drawer-inner {
   max-width: var(--max);
   margin: 0 auto;
   padding: var(--s-5) var(--gutter);
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  column-gap: var(--s-3);
-  row-gap: var(--s-3);
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
 }
-.search-drawer-prompt {
-  color: var(--accent);
-  font: 400 24px/1 var(--font-serif);
-  align-self: center;
-  user-select: none;
-}
-.search-drawer-form input {
-  border: 0;
-  border-bottom: 1px solid var(--ink);
-  background: transparent;
-  color: var(--ink);
-  font: 400 20px/1.2 var(--font-serif);
-  letter-spacing: -0.01em;
-  padding: 6px 0 8px;
-  outline: none;
-  width: 100%;
+.search-drawer-inner .smart-search {
+  flex: 1 1 auto;
   min-width: 0;
-}
-.search-drawer-form input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.search-drawer-form input::placeholder {
-  color: var(--ink-soft);
-  font-style: italic;
-}
-.search-drawer-form button[type='submit'] {
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  padding: 10px var(--s-5);
-  font: 500 11px/1 var(--font-mono);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.search-drawer-form button[type='submit']:hover {
-  background: var(--accent);
-  border-color: var(--accent);
 }
 .search-drawer-close {
   background: transparent;
@@ -530,31 +559,11 @@ code,
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-
 @media (max-width: 760px) {
-  .search-drawer-form {
-    grid-template-columns: auto 1fr auto;
-  }
-  /* Pin every cell so the close button can't fall to a third row: row 1 is
-     `› input ×`, the submit button takes the full second row. Without explicit
-     placement, grid's sparse auto-flow strands the × bottom-left. */
-  .search-drawer-prompt {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .search-drawer-form input {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  .search-drawer-form .search-drawer-close {
-    grid-column: 3;
-    grid-row: 1;
-    justify-self: end;
-  }
-  .search-drawer-form button[type='submit'] {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    width: 100%;
+  /* Keep the × pinned to the top of the row while the submit button wraps below the field. */
+  .search-drawer-close {
+    align-self: flex-start;
+    padding-top: 2px;
   }
 }
 
@@ -1958,49 +1967,57 @@ details.row .body .signal .why {
   }
 }
 
-.hero-search {
+/* ── Smart search combobox ──────────────────────────────────────────────────────────────────────
+   One field powers both the hero and the header drawer. It renders a real GET form to /search
+   (works with JS off), and on hydration shows a live, keyboard-navigable suggestions listbox. */
+.smart-search {
+  position: relative;
+}
+.smart-search--hero {
+  margin: var(--s-6) 0 var(--s-2);
+  max-width: 100%;
+}
+.smart-search-form {
   display: grid;
   grid-template-columns: auto 1fr auto;
   column-gap: var(--s-3);
   row-gap: var(--s-3);
   align-items: end;
-  margin: var(--s-6) 0 var(--s-2);
-  max-width: 100%;
 }
-.hero-search::before {
-  content: '›';
+.smart-search-prompt {
+  grid-column: 1;
   color: var(--accent);
   font: 400 28px/1 var(--font-serif);
   align-self: end;
   margin-bottom: 6px;
-  grid-column: 1 / 2;
+  user-select: none;
 }
-.hero-search input {
-  grid-column: 2 / 3;
+.smart-search-input {
+  grid-column: 2;
+  /* The overflow fix: a search field's intrinsic min-width would otherwise blow out the 1fr track
+     on narrow phones (the old hero field pushed the „Намери" button off-screen). min-width:0 lets
+     the track shrink to the viewport. */
+  min-width: 0;
+  width: 100%;
   border: 0;
   border-bottom: 1px solid var(--ink);
   background: transparent;
   color: var(--ink);
   font: 400 24px/1.2 var(--font-serif);
   letter-spacing: -0.01em;
-  padding: 0 0 4px 0;
+  padding: 0 0 4px;
   outline: none;
-  width: 100%;
-  /* No `margin-left` here: `width: 100%` already fills the grid column, so a left
-     margin pushes the field (and its underline) past the column's right edge —
-     ~8px beyond the full-width „Намери" button below it on mobile. The chevron→
-     field spacing is provided by the grid `column-gap`. */
 }
-.hero-search input:focus-visible {
+.smart-search-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.hero-search input::placeholder {
+.smart-search-input::placeholder {
   color: var(--ink-soft);
   font-style: italic;
 }
-.hero-search button {
-  grid-column: 3 / 4;
+.smart-search-submit {
+  grid-column: 3;
   margin-left: var(--s-3);
   border: 1px solid var(--ink);
   background: var(--ink);
@@ -2013,26 +2030,127 @@ details.row .body .signal .why {
   white-space: nowrap;
   align-self: end;
 }
-.hero-search button:hover {
+.smart-search-submit:hover {
   background: var(--accent);
   border-color: var(--accent);
 }
+.smart-search--drawer .smart-search-input {
+  font-size: 20px;
+}
+.smart-search--drawer .smart-search-prompt {
+  font-size: 24px;
+}
+
+/* Suggestions popover — anchored below the field, escapes the drawer via z-index. */
+.smart-search-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  box-shadow: 0 18px 40px -24px rgb(0 0 0 / 0.45);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.smart-search-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-2) 0;
+}
+.smart-search-group + .smart-search-group {
+  border-top: 1px solid var(--rule-soft);
+}
+.smart-search-group-label {
+  margin: 0;
+  padding: var(--s-3) var(--s-4) var(--s-1);
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.smart-search-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.smart-search-option {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 2px var(--s-3);
+  padding: 8px var(--s-4);
+  cursor: pointer;
+}
+.smart-search-option.is-active {
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+.smart-search-option-kind {
+  grid-column: 1;
+  font: 500 9px/1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.smart-search-option-body {
+  grid-column: 2;
+  min-width: 0;
+}
+.smart-search-option-title {
+  display: block;
+  color: var(--ink);
+  font: 400 15px/1.3 var(--font-serif);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.smart-search-option-meta {
+  display: block;
+  color: var(--ink-mid);
+  font: 11px/1.3 var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.smart-search-option-amt {
+  grid-column: 3;
+  font: 500 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.smart-search-see-all {
+  padding: 11px var(--s-4);
+  border-top: 1px solid var(--rule);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  cursor: pointer;
+}
+.smart-search-see-all.is-active {
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+.smart-search-empty {
+  padding: var(--s-3) var(--s-4);
+  color: var(--ink-mid);
+  font: italic 14px/1.4 var(--font-serif);
+}
 
 @media (max-width: 760px) {
-  .hero-search {
+  .smart-search-form {
     grid-template-columns: auto 1fr;
   }
-  /* The 24px desktop serif placeholder cannot fit a phone-width field, so it
-     was clipped mid-phrase. Drop to 16px on mobile so the (shortened)
-     placeholder reads in full down to ~360px while keeping the serif look. */
-  .hero-search::before {
+  /* The 24px desktop serif placeholder cannot fit a phone-width field, so the field drops to 16px
+     and the submit button wraps to its own full-width row below. */
+  .smart-search-prompt {
     font-size: 20px;
   }
-  .hero-search input {
-    grid-column: 2 / 3;
+  .smart-search-input {
     font-size: 16px;
   }
-  .hero-search button {
+  .smart-search-submit {
     grid-column: 1 / -1;
     width: 100%;
     margin-left: 0;
