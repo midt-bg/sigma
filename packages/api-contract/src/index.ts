@@ -383,6 +383,46 @@ export interface FlowsData {
   };
 }
 
+// ── Network (relationship graph) ────────────────────────────────────────────────────────────────
+// Ego network around one entity for the /network graph: the centre plus its direct counterparties
+// (hop 1) and their top other counterparty (hop 2), to reveal shared suppliers / authorities. Built
+// from the flow_pairs rollup; this is a focused neighbourhood, not the full graph.
+
+export interface NetworkNode {
+  id: string; // domain id ('auth:ЕИК' | 'eik:ЕИК' | 'name:...')
+  kind: 'authority' | 'company';
+  label: string;
+  slug: string; // /authorities/:slug | /companies/:slug
+  valueEur: number; // weight = sum of incident edge values in this view
+  hop: number; // 0 centre, 1 direct, 2 second ring
+}
+
+export interface NetworkEdge {
+  from: string; // node id
+  to: string; // node id
+  valueEur: number;
+  contracts: number;
+}
+
+export interface NetworkCenterOption {
+  kind: 'authority' | 'company';
+  label: string;
+  value: string; // ?center= token, e.g. 'a:000695089' | 'c:131468980'
+}
+
+export interface NetworkData {
+  center: {
+    id: string;
+    kind: 'authority' | 'company';
+    label: string;
+    slug: string;
+    valueEur: number;
+  } | null;
+  nodes: NetworkNode[];
+  edges: NetworkEdge[];
+  centerOptions: { authorities: NetworkCenterOption[]; companies: NetworkCenterOption[] };
+}
+
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
