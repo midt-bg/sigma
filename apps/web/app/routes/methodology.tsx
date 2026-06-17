@@ -324,6 +324,15 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   </p>
                   <span className="src">→ GROUP BY authority, bidder</span>
                 </dd>
+                <dt>Мрежа на връзките</dt>
+                <dd>
+                  <p>
+                    Графът показва само преките връзки около избрана институция или фирма и техните
+                    следващи връзки (фокусирана околност), а не целия граф. Една линия е сборът от
+                    договорите между две същности.
+                  </p>
+                  <span className="src">→ flow_pairs</span>
+                </dd>
               </dl>
             </section>
 
