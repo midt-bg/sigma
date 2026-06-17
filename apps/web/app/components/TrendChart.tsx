@@ -29,33 +29,22 @@ export function TrendChart({
     .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
     .filter((t, idx) => granularity === 'year' || points[idx]!.period.endsWith('-01'));
 
+  // viewBox carries 14px of horizontal bleed on each side so the first and last year labels, which are
+  // centred on the edge ticks, are not clipped.
   return (
     <svg
+      className="trend-svg"
       viewBox={`-14 0 ${W + 28} ${H}`}
       role="img"
       aria-label="Разходи за обществени поръчки във времето"
-      style={{ width: '100%', height: 'auto', display: 'block' }}
     >
       {ticks.map((t) => (
-        <line
-          key={`g${t.i}`}
-          x1={x(t.i)}
-          y1={PAD_T}
-          x2={x(t.i)}
-          y2={H - PAD_B}
-          style={{ stroke: '#eceae4', strokeWidth: 1 }}
-        />
+        <line key={`g${t.i}`} x1={x(t.i)} y1={PAD_T} x2={x(t.i)} y2={H - PAD_B} className="grid" />
       ))}
-      <path d={area} style={{ fill: 'oklch(0.62 0.13 250 / 0.16)' }} />
-      <path d={line} style={{ fill: 'none', stroke: 'oklch(0.5 0.16 250)', strokeWidth: 1.5 }} />
+      <path className="area" d={area} />
+      <path className="line" d={line} />
       {ticks.map((t) => (
-        <text
-          key={`t${t.i}`}
-          x={x(t.i)}
-          y={H - 6}
-          textAnchor="middle"
-          style={{ font: '11px var(--font-mono, monospace)', fill: 'var(--ink-soft, #555)' }}
-        >
+        <text key={`t${t.i}`} x={x(t.i)} y={H - 6} textAnchor="middle" className="label">
           {t.year}
         </text>
       ))}

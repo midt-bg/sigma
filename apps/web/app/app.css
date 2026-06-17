@@ -2205,6 +2205,29 @@ details.row .body .signal .why {
   cursor: pointer;
 }
 
+/* Spending trend (/trends): static styling; the area and line path data are computed inline. */
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.trend-svg .grid {
+  stroke: #eceae4;
+  stroke-width: 1;
+}
+.trend-svg .area {
+  fill: oklch(0.62 0.13 250 / 0.16);
+}
+.trend-svg .line {
+  fill: none;
+  stroke: oklch(0.5 0.16 250);
+  stroke-width: 1.5;
+}
+.trend-svg .label {
+  font: 11px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
+
 .flow-controls {
   display: flex;
   gap: var(--s-4);
