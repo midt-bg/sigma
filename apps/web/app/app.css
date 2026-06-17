@@ -2205,6 +2205,24 @@ details.row .body .signal .why {
   cursor: pointer;
 }
 
+/* Relationship graph (/network): static styling only; node fill and edge width are computed inline. */
+.network-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.network-svg .edge {
+  stroke: #d8d6cf;
+}
+.network-svg .node {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.network-svg .node-label {
+  fill: var(--ink, #111);
+  font: 11px var(--font-mono, monospace);
+}
+
 .flow-controls {
   display: flex;
   gap: var(--s-4);

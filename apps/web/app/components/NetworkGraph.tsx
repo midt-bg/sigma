@@ -21,6 +21,7 @@ function truncate(s: string, n = 22): string {
 
 export function NetworkGraph({ data }: { data: NetworkData }) {
   const { nodes, edges, center } = data;
+  // Defensive guard so the component is safe on its own; network.tsx also gates on the same condition.
   if (!center || nodes.length < 2) return null;
 
   const hop1 = nodes.filter((n) => n.hop === 1);
@@ -59,7 +60,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
       viewBox={`-100 -10 ${W + 200} ${H + 20}`}
       role="img"
       aria-label={`Граф на връзките около ${center.label}`}
-      style={{ width: '100%', height: 'auto', display: 'block' }}
+      className="network-svg"
     >
       {edges.map((e, i) => {
         const a = pos.get(e.from);
@@ -68,11 +69,12 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
         return (
           <line
             key={`e${i}`}
+            className="edge"
             x1={a.x}
             y1={a.y}
             x2={b.x}
             y2={b.y}
-            style={{ stroke: '#d8d6cf', strokeWidth: strokeW(e.valueEur) }}
+            style={{ strokeWidth: strokeW(e.valueEur) }}
           />
         );
       })}
@@ -83,19 +85,14 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
         const right = pt.x >= CX;
         return (
           <g key={n.id}>
-            <circle
-              cx={pt.x}
-              cy={pt.y}
-              r={r}
-              style={{ fill: fill(n), stroke: '#fff', strokeWidth: 1.5 }}
-            >
+            <circle className="node" cx={pt.x} cy={pt.y} r={r} style={{ fill: fill(n) }}>
               <title>{`${n.label}: ${money(n.valueEur)}`}</title>
             </circle>
             <text
+              className="node-label"
               x={right ? pt.x + r + 4 : pt.x - r - 4}
               y={pt.y + 3}
               textAnchor={right ? 'start' : 'end'}
-              style={{ font: '11px var(--font-mono, monospace)', fill: 'var(--ink, #111)' }}
             >
               {truncate(n.label)}
             </text>

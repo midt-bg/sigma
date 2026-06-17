@@ -140,7 +140,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               <DataTable
                 columns={columns}
                 rows={rows}
-                getKey={(_r, i) => String(i)}
+                getKey={(r) => `${r.from}-${r.to}`}
                 caption="Връзки в графа"
               />
             </Section>
