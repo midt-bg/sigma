@@ -35,43 +35,24 @@ export function Choropleth({ regions }: { regions: RegionSpend[] }) {
         viewBox={BG_MAP.viewBox}
         role="img"
         aria-label="Карта на България: разходи за обществени поръчки по области"
-        style={{ width: '100%', height: 'auto', maxWidth: 760, display: 'block', margin: '0 auto' }}
       >
         {BG_MAP.regions.map((shape) => {
           const r = byNuts3.get(shape.nuts3);
           const tier = r ? tierOf(r.valueEur) : 0;
           return (
-            <path
-              key={shape.nuts3}
-              d={shape.d}
-              style={{ fill: TIER_FILL[tier], stroke: '#f7f7f4', strokeWidth: 1 }}
-            >
+            <path key={shape.nuts3} d={shape.d} style={{ fill: TIER_FILL[tier] }}>
               <title>{r ? `${r.name}: ${money(r.valueEur)}` : shape.nuts3}</title>
             </path>
           );
         })}
       </svg>
-      <ul
-        className="map-legend"
-        aria-hidden="true"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          listStyle: 'none',
-          padding: 0,
-          margin: '12px auto 0',
-          width: 'fit-content',
-          font: '11px var(--font-mono, monospace)',
-          color: 'var(--ink-soft, #555)',
-        }}
-      >
-        <li>по-малко</li>
+      <div className="map-legend" aria-hidden="true">
+        <span>по-малко</span>
         {TIER_FILL.slice(1).map((fill, i) => (
-          <li key={i} style={{ width: 22, height: 12, background: fill, borderRadius: 2 }} />
+          <span key={i} className="swatch" style={{ background: fill }} />
         ))}
-        <li>повече</li>
-      </ul>
+        <span>повече</span>
+      </div>
     </div>
   );
 }

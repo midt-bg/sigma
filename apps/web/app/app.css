@@ -2205,6 +2205,33 @@ details.row .body .signal .why {
   cursor: pointer;
 }
 
+/* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+.map-wrap svg {
+  width: 100%;
+  height: auto;
+  max-width: 760px;
+  display: block;
+  margin: 0 auto;
+}
+.map-wrap path {
+  stroke: #f7f7f4;
+  stroke-width: 1;
+}
+.map-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 12px auto 0;
+  font: 11px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.map-legend .swatch {
+  width: 22px;
+  height: 12px;
+  border-radius: 2px;
+}
+
 .flow-controls {
   display: flex;
   gap: var(--s-4);
