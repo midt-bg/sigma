@@ -19,6 +19,7 @@ export interface NetworkParams {
 }
 
 const HOP1 = 6; // direct counterparties shown
+const HOP2_SCAN = HOP1 * 10; // rows scanned for hop 2 before the top-1-per-neighbour reduction
 const PICKER_LIMIT = 12; // entities offered in the centre picker
 
 interface PairRow {
@@ -174,7 +175,9 @@ export async function getEntityNetwork(
     neighborIds.push(node.id);
   }
 
-  // hop 2: each direct neighbour's single top OTHER counterparty (same kind as the centre).
+  // hop 2: each direct neighbour's single top OTHER counterparty (same kind as the centre). LIMIT caps
+  // the scan so a high-degree neighbour cannot pull hundreds of rows; the top-1-per-neighbour reduction
+  // then runs in JS over that bounded set.
   if (neighborIds.length) {
     const placeholders = neighborIds.map(() => '?').join(', ');
     const hop2 = (
@@ -182,9 +185,9 @@ export async function getEntityNetwork(
         .prepare(
           `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts
            FROM flow_pairs WHERE ${neighborCol} IN (${placeholders}) AND ${centerCol} != ?
-           ORDER BY won_eur DESC`,
+           ORDER BY won_eur DESC LIMIT ?`,
         )
-        .bind(...neighborIds, p.id)
+        .bind(...neighborIds, p.id, HOP2_SCAN)
         .all<PairRow>()
     ).results;
     const seenNeighbor = new Set<string>();
@@ -194,6 +197,9 @@ export async function getEntityNetwork(
       seenNeighbor.add(neighborId);
       const node = isAuth ? authorityNodeOf(r, 2) : companyNodeOf(r, 2);
       if (node.id === center.id) continue;
+      // hop 1 and hop 2 are always opposite kinds, so a hop-2 row never lands on a hop-1 node. When two
+      // neighbours share the same hop-2 counterparty the node is kept once and both edges are added on
+      // purpose: that shared link is exactly the cluster the graph is meant to surface.
       if (!nodes.has(node.id)) nodes.set(node.id, { ...node, hop: 2 });
       edges.push({ from: neighborId, to: node.id, valueEur: r.won_eur, contracts: r.contracts });
     }
