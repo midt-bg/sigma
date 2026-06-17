@@ -17,7 +17,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'apps/web/app/lib/bg-region-geometry.ts');
 const SCALE = 219; // degrees -> user units; ~1000 wide viewBox for clean rounding
 
-const res = await fetch(SRC);
+const res = await fetch(SRC, { signal: AbortSignal.timeout(30_000) });
 if (!res.ok) throw new Error(`GISCO fetch failed: ${res.status}`);
 const gj = await res.json();
 const bg = gj.features.filter((f) => String(f.properties.NUTS_ID || '').startsWith('BG'));
