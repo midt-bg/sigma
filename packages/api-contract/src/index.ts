@@ -397,7 +397,7 @@ export interface TrendYear {
   year: string;
   valueEur: number;
   contracts: number;
-  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year or when the previous year had zero spend
 }
 
 export interface TrendData {
