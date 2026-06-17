@@ -92,7 +92,7 @@ const concentrationColumns: Column<CompetitionConcentration>[] = [
     key: 'hhi',
     header: 'Концентрация (HHI)',
     align: 'num',
-    cell: (r) => <ShareBar ratio={r.hhi} warn={r.hhi >= 0.5} />,
+    cell: (r) => <ShareBar ratio={r.hhi} warn={r.hhi >= 0.25} />,
   },
   { key: 'suppliers', header: 'Доставчици', align: 'num', cell: (r) => count(r.suppliers) },
   {
