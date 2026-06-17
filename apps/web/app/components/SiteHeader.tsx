@@ -101,6 +101,7 @@ export function SiteHeader() {
             to="/"
             aria-label="СИГМА — начална страница"
             title="Система за интегриран граждански мониторинг и анализ на обществените поръчки"
+            inert={navOpen}
           >
             <img className="brand-logo" src="/logo.svg" width={523} height={115} alt="СИГМА" />
             <span className="brand-sub">Платформа за прозрачност на обществените поръчки</span>
@@ -128,7 +129,7 @@ export function SiteHeader() {
               </NavLink>
             ))}
           </nav>
-          <div className="site-actions">
+          <div className="site-actions" inert={navOpen}>
             <button
               ref={searchToggleRef}
               className="nav-search"
@@ -189,7 +190,7 @@ export function SiteHeader() {
         ref={drawerRef}
         className={`search-drawer${searchOpen ? ' is-open' : ''}`}
         id={drawerId}
-        inert={!searchOpen}
+        inert={!searchOpen || navOpen}
       >
         <div className="search-drawer-inner">
           <SmartSearch

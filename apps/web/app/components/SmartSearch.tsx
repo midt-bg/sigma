@@ -49,6 +49,11 @@ export function SmartSearch({
   const inputRef = externalInputRef ?? localInputRef;
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // Keep the field in sync when the caller navigates between results pages and reopens the drawer.
+  useEffect(() => {
+    setQuery(defaultValue);
+  }, [defaultValue]);
+
   const listboxId = useId();
   const optionId = (i: number) => `${listboxId}-opt-${i}`;
 
