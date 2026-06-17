@@ -89,9 +89,9 @@ pnpm dev      # ежедневно: пуска приложението и ETL w
 | `pnpm typecheck`       | Проверка на типовете в целия проект                                                                                                                                                         |
 | `pnpm test`            | Пуска всички тестове                                                                                                                                                                        |
 | `pnpm lint` / `format` | Prettier проверка / форматиране                                                                                                                                                             |
-| `pnpm run import`      | Зарежда EOP емисията в локалния D1 и преизгражда производните таблици; `--catchup` сам изчислява прозореца за догонване. `run` е задължително, голото `pnpm import` е вградена pnpm команда |
+| `pnpm run import`      | Зарежда EOP емисията в локалния D1 и преизгражда производните таблици; `--catchup` сам изчислява прозореца за догонване. `run` е задължително; голото `pnpm import` е вградена pnpm команда |
 | `pnpm bootstrap`       | Пробно създаване на Cloudflare ресурсите (еднократно за Cloudflare профил); `bootstrap:apply` ги създава реално                                                                             |
-| `pnpm run deploy`      | Деплой на двата Worker-а; в CI се пуска при release tag или ръчно. `run` е задължително — голото `pnpm deploy` е вградена pnpm команда                                                      |
+| `pnpm run deploy`      | Деплой на двата Worker-а; в CI се пуска при release tag или ръчно. `run` е задължително; голото `pnpm deploy` е вградена pnpm команда                                                       |
 | `pnpm teardown`        | Изтрива локалното miniflare състояние (`.wrangler` на двата worker-а)                                                                                                                       |
 
 ## ETL
