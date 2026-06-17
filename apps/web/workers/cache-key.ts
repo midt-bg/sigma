@@ -6,6 +6,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'cursor',
   'eu',
   'funding',
+  'g',
   'kind',
   'p',
   'procedure',
