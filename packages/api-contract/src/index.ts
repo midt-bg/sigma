@@ -456,6 +456,7 @@ export interface CompetitionPair {
   authoritySlug: string;
   authorityName: string;
   bidderSlug: string;
+  /** Cleaned raw name, kept for parity with FlowPair/ContractRow and a future CSV export; the UI renders bidderDisplayName. */
   bidderName: string;
   bidderDisplayName: string;
   bidderKind: EntityKind;
