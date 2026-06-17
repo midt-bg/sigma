@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, date, money, pct } from '@sigma/shared';
+import { count, date, money, moneyBare, pct } from '@sigma/shared';
 import { getHomeData } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
@@ -43,7 +43,7 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
               <th scope="col">Договор</th>
               <th scope="col">Възложител · Изпълнител</th>
               <th scope="col" className="num">
-                Стойност
+                Стойност (€)
               </th>
             </tr>
           </thead>
@@ -61,8 +61,8 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
                   {' · '}
                   <Link to={`/companies/${c.bidderSlug}`}>{c.bidderDisplayName}</Link>
                 </td>
-                <td className="money" data-label="Стойност">
-                  {c.valueEur != null ? money(c.valueEur) : '—'}
+                <td className="money" data-label="Стойност (€)">
+                  {c.valueEur != null ? moneyBare(c.valueEur) : '—'}
                 </td>
               </tr>
             ))}
@@ -204,7 +204,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <th scope="col">#</th>
                 <th scope="col">Компания</th>
                 <th scope="col" className="num">
-                  Спечелено
+                  Спечелено (€)
                 </th>
                 <th scope="col" className="num">
                   Договори
@@ -238,7 +238,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       )}
                     </span>
                   </td>
-                  <td className="money">{money(c.wonEur)}</td>
+                  <td className="money">{moneyBare(c.wonEur)}</td>
                   <td className="money">{count(c.contracts)}</td>
                   <td className="money">{count(c.authorities)}</td>
                 </tr>

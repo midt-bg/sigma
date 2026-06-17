@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, isNaturalPersonProfileName, money, pct, periodRange, plural } from '@sigma/shared';
+import { count, isNaturalPersonProfileName, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import { bidderIdFromSlug, getCompany } from '@sigma/db';
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -197,7 +197,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   <th scope="col">#</th>
                   <th scope="col">Институция</th>
                   <th scope="col" className="num">
-                    Платено на компанията
+                    Платено на компанията (€)
                   </th>
                   <th scope="col" className="num">
                     Договори
@@ -214,8 +214,8 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                     <td className="cell-title" data-label="Институция">
                       <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
                     </td>
-                    <td className="money" data-label="Платено">
-                      {money(a.paidEur)}
+                    <td className="money" data-label="Платено (€)">
+                      {moneyBare(a.paidEur)}
                     </td>
                     <td className="money" data-label="Договори">
                       {count(a.contracts)}
