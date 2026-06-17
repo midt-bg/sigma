@@ -114,6 +114,7 @@ async function authoritiesBySingleOffer(
        WHERE ${where.join(' AND ')}
        GROUP BY t.authority_id
        HAVING COUNT(*) >= ?
+       -- ties on single-offer share break toward more contracts: a larger sample is the more telling case
        ORDER BY (SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) DESC, COUNT(*) DESC, t.authority_id
        LIMIT ?`,
     )
@@ -172,6 +173,7 @@ async function authoritiesByConcentration(
        JOIN authorities a ON a.id = p.authority_id
        WHERE tot.contracts >= ? AND tot.suppliers >= 2
        GROUP BY p.authority_id
+       -- ties on HHI break toward higher spend: the same concentration over more money matters more
        ORDER BY hhi DESC, value_eur DESC, p.authority_id
        LIMIT ?`,
     )
@@ -220,7 +222,9 @@ async function topRecurringPairs(
     rows = results;
   } else {
     const s = scope(p);
-    const where = ['c.amount_eur IS NOT NULL', ...s.where];
+    // Same cleanliness guard as the totals and concentration queries, so a zero or unverified amount
+    // cannot enter the filtered aggregate.
+    const where = ['c.amount_eur > 0', "c.value_flag = 'ok'", ...s.where];
     const { results } = await db
       .prepare(
         `SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id, a.name AS authority_name,
