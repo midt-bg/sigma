@@ -18,6 +18,14 @@ const authorityRow = {
   sort_value: 1000000,
 };
 
+// listAuthorities chooses its FROM clause from the active filters (see authorities.ts `needsBase`):
+// the precomputed `authority_totals` rollup for a plain leaderboard, a scoped base aggregation over
+// `contracts` once a sector/year/EU cross-cut is set. There's no real D1 here, so the branch-selection
+// tests pin that choice by matching the table source in the prepared SQL. Naming the two markers keeps
+// the assertions reading as intent rather than raw query text, and localises any future table rename.
+const usesRollup = (sql: string) => sql.includes('FROM authority_totals');
+const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
+
 function fakeDb(): D1Database {
   return {
     prepare(sql: string) {
@@ -42,6 +50,31 @@ function fakeDb(): D1Database {
   } as D1Database;
 }
 
+// A SQL-capturing fake DB for the branch-selection tests: records every prepared statement and returns
+// one authority row regardless of query, so we can assert *which* table source ran. (Deliberately not a
+// wrapper over fakeDb above — its facet branch would hijack the base-aggregation page query, which also
+// contains `type_group` + `GROUP BY`, and feed back a facet-shaped row that toAuthorityListItem can't map.)
+function spyDb(): { db: D1Database; sql: string[] } {
+  const sql: string[] = [];
+  const db = {
+    prepare(q: string) {
+      sql.push(q);
+      return {
+        bind() {
+          return this;
+        },
+        async all<T>() {
+          return { results: [authorityRow] as T[] };
+        },
+        async first<T>() {
+          return { n: 1 } as T;
+        },
+      };
+    },
+  } as D1Database;
+  return { db, sql };
+}
+
 describe('listAuthorities', () => {
   it('returns a page with items and total for an unfiltered request', async () => {
     const page = await listAuthorities(fakeDb(), { pageSize: 10 });
@@ -59,40 +92,20 @@ describe('listAuthorities', () => {
   });
 
   it('uses the base aggregation source when sector filters are present', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          bind() { return this; },
-          async all<T>() { return { results: [authorityRow] as T[] }; },
-          async first<T>() { return { n: 1 } as T; },
-        };
-      },
-    } as D1Database;
+    const { db, sql } = spyDb();
 
     await listAuthorities(db, { sectors: ['45'], pageSize: 10 });
 
-    expect(seenSql.some((sql) => sql.includes('FROM contracts c'))).toBe(true);
+    expect(sql.some(usesBaseAggregation)).toBe(true);
   });
 
   it('uses the authority_totals rollup when no cross-cut filters are set', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          bind() { return this; },
-          async all<T>() { return { results: [authorityRow] as T[] }; },
-          async first<T>() { return { n: 1 } as T; },
-        };
-      },
-    } as D1Database;
+    const { db, sql } = spyDb();
 
     await listAuthorities(db, { pageSize: 10 });
 
-    expect(seenSql.some((sql) => sql.includes('FROM authority_totals'))).toBe(true);
-    expect(seenSql.every((sql) => !sql.includes('FROM contracts c'))).toBe(true);
+    expect(sql.some(usesRollup)).toBe(true);
+    expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
   });
 });
 
@@ -123,8 +136,8 @@ describe('getAuthorityFacets', () => {
 
 describe('streamAuthoritiesCsv', () => {
   it('returns a Response with CSV content-type and attachment disposition', () => {
-    const db: D1Database = {
-      prepare() {
+    const db = {
+      prepare(_sql: string) {
         return {
           bind() { return this; },
           async all<T>() { return { results: [] as T[] }; },

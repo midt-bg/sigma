@@ -11,6 +11,15 @@ const pairRow = {
   contracts: 10,
 };
 
+// getFlows picks its source from the active filters (see flows.ts `topPairs`): the precomputed
+// `flow_pairs` rollup top-N for an unfiltered view, a scoped base aggregation over `contracts` once a
+// sector/year/funding filter is set. There's no real D1 here, so the branch-selection tests pin that
+// choice by matching the table source (and the year predicate) in the prepared SQL. Naming the markers
+// keeps the assertions reading as intent rather than raw query text, and localises any future change.
+const usesFlowPairsRollup = (sql: string) => sql.includes('FROM flow_pairs');
+const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
+const filtersByYear = (sql: string) => sql.includes('substr(c.signed_at, 1, 4) = ?');
+
 function fakeDb(rows: typeof pairRow[] = [pairRow]): D1Database {
   return {
     prepare(sql: string) {
@@ -29,66 +38,51 @@ function fakeDb(rows: typeof pairRow[] = [pairRow]): D1Database {
   } as D1Database;
 }
 
+// SQL-capturing fake DB for the branch-selection tests: records every prepared statement, returns no
+// available sectors and a single flow pair otherwise — enough to assert which source query ran.
+function spyDb(): { db: D1Database; sql: string[] } {
+  const sql: string[] = [];
+  const db = {
+    prepare(q: string) {
+      sql.push(q);
+      return {
+        bind() {
+          return this;
+        },
+        async all<T>() {
+          if (q.includes('sector_totals')) return { results: [] as T[] };
+          return { results: [pairRow] as T[] };
+        },
+      };
+    },
+  } as D1Database;
+  return { db, sql };
+}
+
 describe('getFlows', () => {
   it('uses the flow_pairs rollup for an unfiltered request', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          bind() { return this; },
-          async all<T>() {
-            if (sql.includes('sector_totals')) return { results: [] as T[] };
-            return { results: [pairRow] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    const { db, sql } = spyDb();
 
     await getFlows(db, {});
 
-    expect(seenSql.some((sql) => sql.includes('FROM flow_pairs'))).toBe(true);
-    expect(seenSql.every((sql) => !sql.includes('FROM contracts c'))).toBe(true);
+    expect(sql.some(usesFlowPairsRollup)).toBe(true);
+    expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
   });
 
   it('falls back to a base aggregation when a sector filter is applied', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          bind() { return this; },
-          async all<T>() {
-            if (sql.includes('sector_totals')) return { results: [] as T[] };
-            return { results: [pairRow] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    const { db, sql } = spyDb();
 
     await getFlows(db, { sector: '45' });
 
-    expect(seenSql.some((sql) => sql.includes('FROM contracts c'))).toBe(true);
+    expect(sql.some(usesBaseAggregation)).toBe(true);
   });
 
   it('falls back to a base aggregation when a year filter is applied', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          bind() { return this; },
-          async all<T>() {
-            if (sql.includes('sector_totals')) return { results: [] as T[] };
-            return { results: [pairRow] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    const { db, sql } = spyDb();
 
     await getFlows(db, { year: '2024' });
 
-    expect(seenSql.some((sql) => sql.includes('substr(c.signed_at, 1, 4) = ?'))).toBe(true);
+    expect(sql.some(filtersByYear)).toBe(true);
   });
 
   it('returns pairs with rank, slugs, names, and amounts', async () => {
