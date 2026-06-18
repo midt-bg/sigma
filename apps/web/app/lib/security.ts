@@ -13,8 +13,9 @@ function csp(scriptSrc: string[]): string {
   ].join('; ');
 }
 
-// Security response headers shared by HTML and resource routes. CSP is layered on separately:
-// nonce-based for uncached SSR, hash-based for cacheable HTML stored at the edge.
+// Security response headers shared by HTML and resource routes. CSP is layered on separately by the
+// SSR render (entry.server.tsx) as a per-request nonce policy; the worker preserves that header on
+// both fresh and edge-cached responses rather than re-deriving CSP from the response body.
 export function baseSecurityHeaders(isProd: boolean): Headers {
   const headers = new Headers({
     'X-Content-Type-Options': 'nosniff',
@@ -39,11 +40,5 @@ export function baseSecurityHeaders(isProd: boolean): Headers {
 export function securityHeaders(nonce: string, isProd: boolean): Headers {
   const headers = baseSecurityHeaders(isProd);
   if (isProd) headers.set('Content-Security-Policy', csp([`'nonce-${nonce}'`]));
-  return headers;
-}
-
-export function nonceLessSecurityHeaders(scriptHashes: string[], isProd: boolean): Headers {
-  const headers = baseSecurityHeaders(isProd);
-  if (isProd) headers.set('Content-Security-Policy', csp(scriptHashes));
   return headers;
 }

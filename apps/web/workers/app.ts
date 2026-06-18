@@ -1,9 +1,10 @@
 import { createRequestHandler } from 'react-router';
-import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
+import { baseSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { cacheKey } from './cache-key';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
+import { rateLimitSearchRoute } from './search-rate-limit';
 import { withRequestLog } from './request-log';
 
 declare module 'react-router' {
@@ -30,7 +31,6 @@ const edgeCache = (caches as unknown as { default: Cache }).default;
 // orphaned and TTL out, new requests populate under the new tag. The Cache API has no namespace
 // concept, so we synthesise one by mutating the cache-key URL (the served response is unaffected).
 const DEPLOY_TAG = Date.now().toString(36);
-const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
 
 function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
@@ -44,39 +44,16 @@ function isAnonymous(request: Request, response: Response): boolean {
   );
 }
 
-function isHtml(response: Response): boolean {
-  return (response.headers.get('Content-Type') ?? '').toLowerCase().includes('text/html');
-}
-
-async function sha256Source(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const binary = String.fromCharCode(...new Uint8Array(digest));
-  return `'sha256-${btoa(binary)}'`;
-}
-
-async function hashInlineScripts(html: string): Promise<string[]> {
-  const scripts = Array.from(html.matchAll(INLINE_SCRIPT_RE), (match) => match[1] ?? '');
-  return Promise.all(Array.from(new Set(scripts)).map(sha256Source));
-}
-
-async function hardenResponse(response: Response, cacheable: boolean): Promise<Response> {
+// Apply the shared base headers and preserve the nonce-based CSP the SSR render already set
+// (entry.server.tsx). We deliberately do NOT recompute CSP from the response body: hashing whatever
+// inline <script> tags appear would self-authorize any injected inline script on cached pages,
+// stripping the very defense CSP is meant to provide. The per-request nonce is stored in the cached
+// body alongside this header, so a cache hit serves a self-consistent nonce + CSP; an injected script
+// without that nonce is blocked.
+function hardenResponse(response: Response): Response {
   const headers = new Headers(response.headers);
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
   setAllowHeader(headers, response.status);
-
-  if (cacheable && isHtml(response)) {
-    const body = await response.text();
-    applySecurityHeaders(
-      headers,
-      nonceLessSecurityHeaders(await hashInlineScripts(body), import.meta.env.PROD),
-    );
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  }
 
   return new Response(response.body, {
     status: response.status,
@@ -126,13 +103,16 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   );
   if (aggregationRateLimitResponse) return aggregationRateLimitResponse;
 
+  const searchRateLimitResponse = await rateLimitSearchRoute(request, env, import.meta.env.PROD);
+  if (searchRateLimitResponse) return searchRateLimitResponse;
+
   const response = await requestHandler(request, { cloudflare: { env, ctx } });
   const cacheable =
     key !== null &&
     response.ok &&
     isAnonymous(request, response) &&
     /s-maxage=\d/.test(response.headers.get('Cache-Control') ?? '');
-  const hardened = await hardenResponse(response, cacheable);
+  const hardened = hardenResponse(response);
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
   return hardened;
