@@ -46,6 +46,14 @@ const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = looku
   'date-asc': { expr: "COALESCE(c.signed_at, '9999-99')", dir: 'asc' },
 });
 
+// Collapse an untrusted ?sort value to a known key (default otherwise). The query layer already
+// falls back internally, but callers must normalize before the value reaches a cache key (edge or
+// the CSV R2 object key) — an unvalidated sort would mint unbounded distinct keys for identical
+// content. `value in SORTS` is null-prototype-safe (see lookup()).
+export function normalizeContractSort(value: string | null | undefined): ContractSort {
+  return value != null && value in SORTS ? (value as ContractSort) : 'value-desc';
+}
+
 // A real signed_at year is YYYY at the head of the date; everything else (null, empty, malformed)
 // lands in the "unknown" bucket, whose facet value/filter token is this sentinel (a non-empty string
 // so it survives the URL round-trip — getMulti drops falsy tokens).
@@ -108,7 +116,9 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
     }
     // `NOT (GLOB)` is NULL (falsy) for a NULL signed_at, so spell out the NULL case to match the facet.
     if (wantUnknown) {
-      ors.push(`(c.signed_at IS NULL OR NOT (${YEAR_KNOWN}) OR CAST(substr(c.signed_at, 1, 4) AS INTEGER) > ?)`);
+      ors.push(
+        `(c.signed_at IS NULL OR NOT (${YEAR_KNOWN}) OR CAST(substr(c.signed_at, 1, 4) AS INTEGER) > ?)`,
+      );
       params.push(new Date().getUTCFullYear());
     }
     if (ors.length) where.push(ors.length > 1 ? `(${ors.join(' OR ')})` : ors.join(''));

@@ -38,6 +38,12 @@ const SORTS: Record<AuthoritySort, { col: string; dir: 'asc' | 'desc' }> = looku
   name: { col: 'name', dir: 'asc' },
 });
 
+// Collapse an untrusted ?sort value to a known key before it reaches any cache key. See
+// normalizeContractSort in contracts.ts for the rationale.
+export function normalizeAuthoritySort(value: string | null | undefined): AuthoritySort {
+  return value != null && value in SORTS ? (value as AuthoritySort) : 'spent';
+}
+
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 
 const COLS = `authority_id, name, type_group, settlement, region, spent_eur, contracts, suppliers, avg_eur, primary_sector, eu_eur, first_date, last_date`;
