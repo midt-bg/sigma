@@ -27,11 +27,16 @@ export function encodeCursor(
   return `${dir}:${payload}`;
 }
 
+// A real cursor is base64 of [sortValue, id, sortToken] — a few dozen chars. Reject anything far
+// larger before the atob/unescape/decodeURIComponent/JSON.parse pipeline runs, so an oversized
+// ?cursor cannot force megabyte-scale allocations per request.
+export const MAX_CURSOR_CHARS = 512;
+
 export function decodeCursor(
   cursor: string | null | undefined,
   expectedSortToken?: string,
 ): DecodedCursor | null {
-  if (!cursor) return null;
+  if (!cursor || cursor.length > MAX_CURSOR_CHARS) return null;
   const i = cursor.indexOf(':');
   if (i < 0) return null;
   const dir = cursor.slice(0, i);

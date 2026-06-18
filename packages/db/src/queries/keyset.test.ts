@@ -44,6 +44,11 @@ describe('cursor encode/decode', () => {
     expect(decodeCursor('garbage')).toBeNull();
     expect(decodeCursor('sideways:Zm9v')).toBeNull();
   });
+  it('rejects oversized cursors before decoding them', () => {
+    // A multi-KB ?cursor must be refused outright, not run through atob/JSON.parse.
+    const huge = `after:${'A'.repeat(5000)}`;
+    expect(decodeCursor(huge)).toBeNull();
+  });
   it('ignores cursors bound to a different sort token', () => {
     const c = encodeCursor('after', 10, 'x', 'old-sort');
     expect(decodeCursor(c, 'new-sort')).toBeNull();
