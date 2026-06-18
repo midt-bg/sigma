@@ -2,15 +2,14 @@ function csp(scriptSrc: string[]): string {
   return [
     "default-src 'self'",
     `script-src 'self' ${scriptSrc.join(' ')}`.trim(),
-    // `script-src` is strict (nonce in uncached SSR, per-script hashes for edge-cached HTML).
-    // `style-src` still needs 'unsafe-inline': the only remaining inline `style=` attributes carry
+    // `style-src` keeps 'unsafe-inline': the only remaining inline `style=` attributes carry
     // genuinely dynamic, per-row values that cannot be enumerated as classes — chart-bar widths
     // (StackedBar, RankedBars, ShareBar, SingleOfferPortion) and the procedure-mix segment colours
-    // (trusted @sigma/config tokens, never user input). A CSP nonce authorises <style> ELEMENTS, not
-    // inline style ATTRIBUTES, so it can't cover these; and the edge-cache layer (workers/app.ts)
-    // re-derives the policy from script hashes on a cached body, where a stale nonce wouldn't match.
-    // All static inline styles have been migrated to classes in app.css, shrinking this to a handful
-    // of injection-free numeric/colour values. Defense-in-depth: there is no HTML sink today.
+    // (trusted @sigma/config tokens, never user input). A CSP nonce authorises <style>/<script>
+    // ELEMENTS, not inline style ATTRIBUTES, so it cannot cover these — independent of how
+    // `script-src` is enforced. All static inline styles have been migrated to classes in app.css,
+    // shrinking this to a handful of injection-free numeric/colour values; with no HTML-injection
+    // sink today, this stays defense-in-depth.
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data:",
