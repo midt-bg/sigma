@@ -45,6 +45,16 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   return { ...coverage, origin: url.origin };
 }
 
+// Scroll-restoration key for list pages. Filters and sort live in the query string under a stable
+// pathname, so keying on pathname alone preserves the visitor's scroll position when they change a
+// filter or sort instead of jumping to the top (issue #13). Pagination is the deliberate exception:
+// Prev/Next carry a keyset `cursor` (which a filter or sort change resets), so a URL with a cursor
+// gets its own key and lands at the top — the conventional paging behaviour.
+function scrollKey(location: { pathname: string; search: string }): string {
+  const cursor = new URLSearchParams(location.search).get('cursor');
+  return cursor ? `${location.pathname}?cursor=${cursor}` : location.pathname;
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useNonce();
   const rootData = useRouteLoaderData('root') as { origin?: string } | undefined;
@@ -73,7 +83,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
-        <ScrollRestoration nonce={nonce} getKey={(loc) => loc.pathname} />
+        <ScrollRestoration nonce={nonce} getKey={scrollKey} />
         <Scripts nonce={nonce} />
       </body>
     </html>
