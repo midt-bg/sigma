@@ -14,9 +14,12 @@ export function ContractMiniTable({
   counterparty: 'authority' | 'bidder';
 }) {
   const colLabel = counterparty === 'authority' ? 'Институция' : 'Изпълнител';
+  const caption =
+    counterparty === 'authority' ? 'Договори на компанията' : 'Договори на институцията';
   return (
     <div className="table-wrap tbl-cards">
       <table>
+        <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
             <th scope="col">Дата</th>

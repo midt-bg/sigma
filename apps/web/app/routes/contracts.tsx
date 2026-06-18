@@ -206,6 +206,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
             ) : (
               <div className="table-wrap tbl-cards" aria-busy={busy || undefined}>
                 <table>
+                  <caption className="sr-only">Договори по обществени поръчки</caption>
                   <thead>
                     <tr>
                       <th scope="col" style={{ width: 32 }}>

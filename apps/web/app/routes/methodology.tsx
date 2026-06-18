@@ -398,6 +398,9 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               </p>
               <div className="table-wrap">
                 <table className="gap-table">
+                  <caption className="sr-only">
+                    Наличност на полетата спрямо източника в АОП
+                  </caption>
                   <thead>
                     <tr>
                       <th scope="col">Поле</th>
