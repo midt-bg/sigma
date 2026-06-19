@@ -119,7 +119,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {schemaOrg && (
           <script
             type="application/ld+json"
-            nonce={nonce}
             dangerouslySetInnerHTML={{ __html: schemaOrg }}
           />
         )}
