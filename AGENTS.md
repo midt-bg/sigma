@@ -12,7 +12,7 @@ Single repo, trunk-based:
 midt-bg/sigma   ← origin; `main` is the only long-lived branch
 ```
 
-No fork, no `develop`, no `staging`. Work happens on short-lived feature branches off `main` and merges back via PR.
+No `develop`, no `staging`. Maintainers with write access work on short-lived feature branches off `main`; external contributors fork and open PRs from their fork (see [CONTRIBUTING.md](CONTRIBUTING.md)). Either way, work merges back into `main` via PR.
 
 ## Branching
 
