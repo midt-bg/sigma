@@ -12,9 +12,12 @@ overrides:
   #   vite        — server.fs.deny bypass (GHSA-fx2h-pf6j-xcff): v7 via @react-router/dev→
   #                 vite-node, v8 via apps/web + vitest. Patched per-major to avoid forcing
   #                 vite-node (which needs v7) onto v8.
+  #   undici <7.28.0 — DoS via WebSocket fragment-count bypass + SOCKS5 proxy pool reuse
+  #                 (GHSA-vmh5-mc38-953g / -vxpw-j846-p89q / -hm92-r4w5-c3mj), via wrangler→miniflare.
   ws: "^8.21.0"
   vite@7: "^7.3.5"
   vite@8: "^8.0.16"
+  undici: "^7.28.0"
 
 onlyBuiltDependencies:
   - esbuild
