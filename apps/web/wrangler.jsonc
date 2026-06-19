@@ -18,7 +18,24 @@
       "migrations_dir": "../../packages/db/migrations",
     },
   ],
-  "r2_buckets": [{ "binding": "CSV_CACHE", "bucket_name": "sigma-csv-cache" }],
+  "r2_buckets": [
+    { "binding": "CSV_CACHE", "bucket_name": "sigma-csv-cache" },
+    // AI assistant: immutable report snapshots (see docs/spec/ai-assistant.md §5).
+    { "binding": "REPORTS", "bucket_name": "sigma-reports" },
+  ],
+  // AI assistant (docs/spec/ai-assistant.md): Workers AI for RAG embeddings + a Vectorize index for
+  // schema-grounding and semantic search. The BgGPT API key is a SECRET — set with
+  // `wrangler secret put BGGPT_API_KEY`, never committed.
+  "ai": { "binding": "AI" },
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "sigma-assistant" }],
+  // Public config for the assistant. AI_GATEWAY_BASE_URL routes BgGPT through the Cloudflare AI
+  // Gateway (spec §9.5); empty string falls back to api.bggpt.ai.
+  "vars": {
+    "AI_GATEWAY_BASE_URL": "",
+    "BGGPT_MODEL": "bggpt-gemma-3-27b-fp8",
+    "MAX_STEPS": "6",
+    "BGGPT_RATE_LIMIT_RPM": "120",
+  },
   "unsafe": {
     "bindings": [
       {
