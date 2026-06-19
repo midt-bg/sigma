@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, longDate, money, plural, signedPct } from '@sigma/shared';
+import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
@@ -392,10 +392,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <th scope="col">Участък</th>
                     <th scope="col">Изпълнител</th>
                     <th scope="col" className="num">
-                      Прогнозна
+                      Прогнозна (€)
                     </th>
                     <th scope="col" className="num">
-                      При сключване
+                      При сключване (€)
                     </th>
                   </tr>
                 </thead>
@@ -424,9 +424,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                         )}
                       </td>
                       <td className="money">
-                        {l.estimatedEur != null ? money(l.estimatedEur) : '—'}
+                        {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
                       </td>
-                      <td className="money">{l.signingEur != null ? money(l.signingEur) : '—'}</td>
+                      <td className="money">
+                        {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
