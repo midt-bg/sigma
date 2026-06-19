@@ -1,0 +1,31 @@
+name: Предложение за функционалност
+description: Идея за нова възможност или подобрение.
+title: '[Идея]: '
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какъв проблем решава
+      description: Кое затруднение или нужда адресира предложението.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предложение
+      description: Как си го представяте. Линкове към docs/ или съществуващи страници помагат.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Алтернативи (по желание)
+      description: Други подходи, които обмисляхте.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Преди да изпратите
+      options:
+        - label: Проверих docs/ и съществуващите issue-та за нещо подобно.
+          required: true

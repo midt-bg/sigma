@@ -1,0 +1,37 @@
+name: Проблем с данните / класификацията
+description: Неточна стойност, дублиран запис, грешна категория на възложител и подобни.
+title: '[Данни]: '
+labels: ['data-quality']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        За проблеми с точността или класификацията на данните за обществените поръчки.
+        Припомняме: самите данни за поръчките са публични по дизайн — обхватът тук е дали ги
+        показваме вярно.
+  - type: textarea
+    id: what
+    attributes:
+      label: Какъв е проблемът с данните
+      description: Какво е грешно или непоследователно и как би трябвало да изглежда.
+    validations:
+      required: true
+  - type: input
+    id: example
+    attributes:
+      label: Конкретен пример (адрес / ЕИК / УНП)
+      placeholder: напр. /authorities/000695089, ЕИК 103267194 или УНП 00044-2023-0018
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Източник за правилната стойност (по желание)
+      placeholder: напр. запис в АОП / ЦАИС ЕОП или в Търговския регистър
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Преди да изпратите
+      options:
+        - label: Потърсих съществуващ issue за същия запис или проблем.
+          required: true

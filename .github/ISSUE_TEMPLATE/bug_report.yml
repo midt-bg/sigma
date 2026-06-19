@@ -1,0 +1,51 @@
+name: Доклад за бъг
+description: Нещо в сайта или кода не работи както трябва.
+title: '[Бъг]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: Благодарим, че отделяте време! Попълнете каквото е приложимо.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Какво се случва
+      description: Опишете проблема и какво очаквахте да стане вместо това.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Стъпки за възпроизвеждане
+      placeholder: |
+        1. Отидете на „…"
+        2. Кликнете „…"
+        3. Вижте грешката
+  - type: input
+    id: url
+    attributes:
+      label: Засегнат адрес (URL)
+      placeholder: https://sigma.midt.bg/contracts?…
+  - type: dropdown
+    id: area
+    attributes:
+      label: Къде се проявява
+      options:
+        - Уеб (sigma.midt.bg)
+        - ETL / обработка на данни
+        - API / CSV / JSON експорт
+        - Друго / не съм сигурен(на)
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Среда
+      description: Браузър и устройство (за уеб) или контекст за код/ETL.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Преди да изпратите
+      options:
+        - label: Потърсих съществуващ issue за същия проблем.
+          required: true
