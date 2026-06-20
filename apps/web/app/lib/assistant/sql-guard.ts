@@ -1,16 +1,15 @@
 // run_sql safety — read-only enforcement (spec §7, hardened by §9 point 4).
 //
-// LAYERED DEFENCE — this module is the CHEAP, deploy-independent layer. Two stronger guards must
-// wrap it before run_sql is exposed (tracked in the README roadmap; they need deps/bindings this
-// pure module can't carry):
-//   1. AST validation with node-sql-parser (SQLite dialect): assert the parsed statement is a single
-//      read-only SELECT / WITH…SELECT. Blocklists are bypassable via casing/comments/stacking — the
-//      parser is the real guard. Must be fuzzed adversarially and FAIL CLOSED on parse error.
-//   2. A read-only data path: the binding exposed to run_sql must not have write rights to the
-//      served D1 (spec §9.4) — `env.DB` is read-write, so a parser miss would be UPDATE/DELETE on
-//      production, not a "weird report".
-// What this layer adds: strip comments, reject stacked statements, require a leading SELECT/WITH,
-// keyword blocklist, and a hard injected LIMIT + result byte cap. Fails closed.
+// LAYERED DEFENCE — this module is the CHEAP, deploy-independent first layer. What it adds: strip
+// comments, reject stacked statements, require a leading SELECT/WITH, keyword blocklist, and a hard
+// injected LIMIT + result byte cap. Fails closed.
+//
+// Blocklists are bypassable in principle (casing/comments/stacking), so run_sql also runs the
+// stronger AST guard in sql-ast-guard.ts (node-sql-parser, SQLite grammar) — it parses the statement
+// and FAILS CLOSED unless it is a single read-only SELECT. The remaining belt-and-braces layer (still
+// open, tracked in the README roadmap) is a read-only data path: the binding handed to run_sql must
+// not have write rights to the served D1 (spec §9.4) — `env.DB` is read-write today, so a parser miss
+// would be UPDATE/DELETE on production, not a "weird report".
 
 export const MAX_ROWS = 500;
 export const RESULT_BYTE_CAP = 64 * 1024; // bytes of JSON returned to the model (spec §7)
