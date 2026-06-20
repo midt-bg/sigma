@@ -26,6 +26,12 @@
   // AI assistant (docs/spec/ai-assistant.md): Workers AI for RAG embeddings + a Vectorize index for
   // schema-grounding and semantic search. The BgGPT API key is a SECRET — set with
   // `wrangler secret put BGGPT_API_KEY`, never committed.
+  //
+  // ⚠️ DEPLOY GATE (review #80): these bindings reference resources that must EXIST before
+  // `wrangler deploy` — the Vectorize index `sigma-assistant`, the R2 bucket `sigma-reports`, and the
+  // BGGPT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
+  // CD. Provision first (see app/lib/assistant/README.md → „Provisioning gate"); until then the
+  // assistant route degrades to a 503 rather than crashing.
   "ai": { "binding": "AI" },
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "sigma-assistant" }],
   // Public config for the assistant. AI_GATEWAY_BASE_URL routes BgGPT through the Cloudflare AI
