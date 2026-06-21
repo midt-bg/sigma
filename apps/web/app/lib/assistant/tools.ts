@@ -7,8 +7,8 @@
 // to SDK `tool()`s and runs streamText against BgGPT via the AI Gateway — it carries no logic.
 
 import { describeSchema } from './describe-schema';
-import { assertReadOnlySelect, enforceLimit } from './sql-guard';
-import { assertReadOnlyAst } from './sql-ast-guard';
+import { assertReadOnlySelect } from './sql-guard';
+import { guardSelect } from './sql-ast-guard';
 import { forModel, resultHandle, toQueryResult } from './tool-results';
 import { semanticSearch, type EmbeddingRunner, type VectorIndex } from './rag';
 import { fetchEopDay, validateEopDate, type FetchImpl } from './eop-fetch';
@@ -56,12 +56,13 @@ const runSqlTool: AssistantTool = {
     properties: { sql: { type: 'string', description: 'единичен read-only SELECT/WITH…SELECT' } },
   },
   async execute(args, ctx) {
-    // Two-layer read-only guard (spec §9.4): cheap structural check, then a fail-closed AST parse.
+    // Two-layer read-only guard (spec §9.4): cheap structural check, then a fail-closed AST parse that
+    // also enforces the table allowlist, rejects cross-joins/recursion, and bounds the outer LIMIT.
     const guard = assertReadOnlySelect(str(args.sql));
     if (!guard.ok) return `Заявката е отхвърлена: ${guard.reason}.`;
-    const ast = assertReadOnlyAst(guard.sql);
-    if (!ast.ok) return `Заявката е отхвърлена: ${ast.reason}.`;
-    const sql = enforceLimit(guard.sql);
+    const scoped = guardSelect(guard.sql);
+    if (!scoped.ok) return `Заявката е отхвърлена: ${scoped.reason}.`;
+    const sql = scoped.sql;
     try {
       const { results } = await ctx.db.prepare(sql).all<Record<string, string | number | null>>();
       const qr = toQueryResult(resultHandle(ctx.results.length), results ?? []);
