@@ -40,7 +40,7 @@ function authorityNodeOf(r: PairRow, hop: number): NetworkNode {
     kind: 'authority',
     label: cleanName(r.authority_name),
     slug: authoritySlug(r.authority_id),
-    valueEur: r.won_eur,
+    valueEur: 0, // node size is the incident-edge sum, set in getEntityNetwork below
     hop,
   };
 }
@@ -52,7 +52,7 @@ function companyNodeOf(r: PairRow, hop: number): NetworkNode {
     kind: 'company',
     label: entityName(name, r.bidder_kind),
     slug: companySlug(r.bidder_id),
-    valueEur: r.won_eur,
+    valueEur: 0, // node size is the incident-edge sum, set in getEntityNetwork below
     hop,
   };
 }
