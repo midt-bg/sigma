@@ -2227,6 +2227,21 @@ details.row .body .signal .why {
   font: 11px var(--font-mono, monospace);
   fill: var(--ink-soft, #555);
 }
+.trend-svg .line-partial {
+  fill: none;
+  stroke: oklch(0.5 0.16 250);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.trend-svg .dot-partial {
+  fill: #fff;
+  stroke: oklch(0.5 0.16 250);
+  stroke-width: 1.5;
+}
+.trend-svg .label-partial {
+  font: 10px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
 
 .flow-controls {
   display: flex;

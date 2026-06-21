@@ -48,7 +48,17 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
   const sel = (k: string) => sp.get(k) ?? '';
 
   const yearColumns: Column<TrendYear>[] = [
-    { key: 'year', header: 'Година', isTitle: true, cell: (r) => r.year },
+    {
+      key: 'year',
+      header: 'Година',
+      isTitle: true,
+      cell: (r) => (
+        <>
+          {r.year}
+          {r.partial && <span className="muted"> (частично)</span>}
+        </>
+      ),
+    },
     { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
     { key: 'contracts', header: 'Договори', align: 'num', cell: (r) => count(r.contracts) },
     {
@@ -141,7 +151,8 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
         <Callout title="За покритието на данните">
           <p style={{ margin: 0 }}>
             Графиката включва договорите с валидна дата на сключване ({pct(data.coverage.pct)} от
-            тях). Виж методологията за подробности.
+            тях). Последният период е непълен и е отбелязан като „частично". Виж методологията за
+            подробности.
           </p>
         </Callout>
       </main>
