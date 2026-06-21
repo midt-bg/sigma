@@ -25,9 +25,21 @@ function latestUserText(messages: UIMessage[]): string {
   return '';
 }
 
+const MAX_BODY_BYTES = 256 * 1024; // ~256 KB of posted history — bounds memory + token blow-up (review #80)
+const MAX_MESSAGES = 24; // keep only the most recent turns (the model has a big window; still bound it)
+
 export async function action({ request, context }: Route.ActionArgs) {
-  const body = (await request.json().catch(() => ({}))) as { messages?: UIMessage[] };
-  const messages = body.messages ?? [];
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return Response.json({ error: 'историята е твърде голяма' }, { status: 413 });
+  }
+  let parsed: { messages?: UIMessage[] };
+  try {
+    parsed = JSON.parse(raw) as { messages?: UIMessage[] };
+  } catch {
+    return Response.json({ error: 'invalid JSON' }, { status: 400 });
+  }
+  const messages = (parsed.messages ?? []).slice(-MAX_MESSAGES); // most recent turns only
   if (messages.length === 0) return Response.json({ error: 'no messages' }, { status: 400 });
 
   const env = context.cloudflare.env;
@@ -48,7 +60,13 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   try {
-    return await runAssistant({ env: env as unknown as AgentEnv, ctx, messages, schemaContext });
+    return await runAssistant({
+      env: env as unknown as AgentEnv,
+      ctx,
+      messages,
+      schemaContext,
+      abortSignal: request.signal,
+    });
   } catch (error) {
     // Setup-time failure (missing key, bad config, malformed history) — degrade to a readable 503
     // rather than an unhandled 500. Mid-stream BgGPT errors are handled by the stream's onError.

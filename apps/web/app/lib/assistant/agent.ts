@@ -83,6 +83,7 @@ export interface RunAssistantOptions {
   messages: UIMessage[];
   schemaContext?: string[];
   freshness?: string;
+  abortSignal?: AbortSignal; // wire `request.signal` so a disconnect cancels the BgGPT loop (review #80)
 }
 
 /**
@@ -99,6 +100,12 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     messages,
     tools: buildToolSet(opts.ctx),
     stopWhen: stepCountIs(maxSteps),
+    // Bound worst-case resource use (review #80): cancel on client disconnect; one explicit retry
+    // (the SDK default of 2 silently multiplies the per-step call count beyond the visible step cap);
+    // a per-step output backstop (the model emits block structure + refs, not the bound data values).
+    abortSignal: opts.abortSignal,
+    maxRetries: 1,
+    maxOutputTokens: 4096,
   });
   return result.toUIMessageStreamResponse({
     // Graceful degradation (§7): a BgGPT outage / rate-limit / timeout surfaces mid-stream as a
