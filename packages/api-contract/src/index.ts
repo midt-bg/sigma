@@ -391,13 +391,15 @@ export interface TrendPoint {
   period: string; // 'YYYY-MM' (month granularity) or 'YYYY' (year)
   valueEur: number;
   contracts: number;
+  partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
 }
 
 export interface TrendYear {
   year: string;
   valueEur: number;
   contracts: number;
-  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year or when the previous year had zero spend
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, or the partial final year
+  partial: boolean; // the as_of year, still incomplete; YoY is suppressed and it is marked in the UI
 }
 
 export interface TrendData {

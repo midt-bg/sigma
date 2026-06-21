@@ -1,5 +1,5 @@
 // Spending over time — procurement value per period (month or year) for the /trends chart. Live
-// aggregation over contracts on the clean-value basis (value_flag = 'ok', amount_eur > 0), within the
+// aggregation over contracts on the site-wide value basis (amount_eur IS NOT NULL, matching the rollups), within the
 // 2020 -> today window; missing periods are zero-filled so the line is continuous. Contracts without a
 // usable signing date are excluded from the series and reported as coverage. Edge-cached at the route,
 // like getFlows; precompute is a possible follow-up.
@@ -29,9 +29,11 @@ interface CoverageRow {
   total: number;
 }
 
-// Shared clean-value + sector/funding scope (the date window lives only on the series query).
+// Shared value + sector/funding scope (the date window lives only on the series query).
 function scope(p: TrendParams): { join: string; where: string[]; params: unknown[] } {
-  const where = ["c.value_flag = 'ok'", 'c.amount_eur > 0'];
+  // One value basis for the whole site: the rollups (authority_totals / home_totals / flow_pairs) sum
+  // amount_eur IS NOT NULL, so the trend must too, or the same total differs between pages.
+  const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   let join = '';
   if (p.sector) {
@@ -81,7 +83,7 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
   const s = scope(p);
 
   const seriesWhere = [YEAR_KNOWN, 'c.signed_at >= ?', "c.signed_at <= date('now')", ...s.where];
-  const [series, coverageRow, sectors] = await Promise.all([
+  const [series, coverageRow, sectors, asOfRow] = await Promise.all([
     db
       .prepare(
         `SELECT substr(c.signed_at, 1, ${periodLen}) AS period,
@@ -95,14 +97,20 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
     db
       .prepare(
         `SELECT
-           COALESCE(SUM(CASE WHEN ${YEAR_KNOWN} AND c.signed_at >= ? AND c.signed_at <= date('now') THEN 1 ELSE 0 END), 0) AS dated,
+           COALESCE(SUM(CASE WHEN ${YEAR_KNOWN} THEN 1 ELSE 0 END), 0) AS dated,
            COUNT(*) AS total
          FROM contracts c ${s.join} WHERE ${s.where.join(' AND ')}`,
       )
-      .bind(START, ...s.params)
+      .bind(...s.params)
       .first<CoverageRow>(),
     sectorOptions(db),
+    db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
   ]);
+  // The final period (the as_of period) is still being filled; mark it so the chart and table do not
+  // read its dip as a real decline, and so YoY is not computed against a partial year.
+  const asOf = asOfRow?.as_of ?? null;
+  const partialPeriod = asOf ? asOf.slice(0, periodLen) : null;
+  const partialYear = asOf ? asOf.slice(0, 4) : null;
 
   const rows = series.results;
   let points: TrendPoint[] = [];
@@ -111,7 +119,12 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
     points = fillPeriods(rows[0]!.period, rows[rows.length - 1]!.period, granularity).map(
       (period) => {
         const r = byPeriod.get(period);
-        return { period, valueEur: r?.value_eur ?? 0, contracts: r?.contracts ?? 0 };
+        return {
+          period,
+          valueEur: r?.value_eur ?? 0,
+          contracts: r?.contracts ?? 0,
+          partial: period === partialPeriod,
+        };
       },
     );
   }
@@ -129,11 +142,17 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
   const years: TrendYear[] = sortedYears.map((year, i) => {
     const cur = yearMap.get(year)!;
     const prev = i > 0 ? yearMap.get(sortedYears[i - 1]!)! : null;
+    const partial = year === partialYear;
     return {
       year,
       valueEur: cur.valueEur,
       contracts: cur.contracts,
-      yoyPct: prev && prev.valueEur > 0 ? (cur.valueEur - prev.valueEur) / prev.valueEur : null,
+      // No YoY for the partial final year: a partial year against a full one reads as a false collapse.
+      yoyPct:
+        partial || !prev || prev.valueEur <= 0
+          ? null
+          : (cur.valueEur - prev.valueEur) / prev.valueEur,
+      partial,
     };
   });
 

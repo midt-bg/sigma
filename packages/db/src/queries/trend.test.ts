@@ -13,7 +13,7 @@ const SERIES = [
 ];
 const COVERAGE = { dated: 80, total: 100 };
 
-function fakeDb(capture?: string[]): D1Database {
+function fakeDb(capture?: string[], asOf: string | null = null): D1Database {
   return {
     prepare(sql: string) {
       capture?.push(sql);
@@ -25,6 +25,7 @@ function fakeDb(capture?: string[]): D1Database {
           return { results: SERIES as T[] };
         },
         async first<T>() {
+          if (sql.includes('as_of')) return { as_of: asOf } as T;
           return COVERAGE as T;
         },
       };
@@ -44,9 +45,18 @@ describe('getSpendingTrend', () => {
   it('folds months into a per-year summary with year-over-year change', async () => {
     const { years } = await getSpendingTrend(fakeDb(), {});
     expect(years).toEqual([
-      { year: '2022', valueEur: 4000, contracts: 40, yoyPct: null },
-      { year: '2023', valueEur: 5000, contracts: 50, yoyPct: 0.25 }, // (5000 - 4000) / 4000
+      { year: '2022', valueEur: 4000, contracts: 40, yoyPct: null, partial: false },
+      { year: '2023', valueEur: 5000, contracts: 50, yoyPct: 0.25, partial: false }, // (5000 - 4000) / 4000
     ]);
+  });
+
+  it('marks the as_of period and year partial and suppresses the partial year YoY', async () => {
+    const { points, years } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {});
+    expect(points.at(-1)).toMatchObject({ period: '2023-01', partial: true });
+    expect(points.find((p) => p.period === '2022-03')).toMatchObject({ partial: false });
+    const y2023 = years.find((y) => y.year === '2023')!;
+    expect(y2023).toMatchObject({ partial: true, yoyPct: null });
+    expect(years.find((y) => y.year === '2022')!.partial).toBe(false);
   });
 
   it('reports coverage of contracts with a usable signing date', async () => {
