@@ -37,7 +37,9 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
       .all<RegionRow>();
     return results;
   }
-  const where = ['c.amount_eur > 0', "c.value_flag = 'ok'"];
+  // Site-wide value basis (amount_eur IS NOT NULL), matching authority_totals (the unfiltered path)
+  // and the rest of the site, so a region's spend does not change basis when a filter is applied.
+  const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   if (p.sector) {
     where.push('substr(t.cpv_code, 1, 2) = ?');
