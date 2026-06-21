@@ -99,6 +99,11 @@ export interface EmitReportInput {
 // ── What the RENDERER consumes (resolved, server-owned values) ────────────────────────────────────
 export interface ResolvedRow {
   cells: (string | number | null)[];
+  // Raw entity id per column for columns that declare a `link` (else null), aligned to `columns`.
+  // The renderer builds the canonical href via entityHref(kind, id); kept separate so the id need not
+  // be a visible column (§4 "links by entity-ref, not URL"). Without this an immutable R2 report could
+  // not reconstruct its links.
+  links?: (string | null)[];
 }
 export type ResolvedBlock =
   | { type: 'text'; md: string }
@@ -130,6 +135,36 @@ export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; err
 // renderer must additionally render the result as markdown WITHOUT raw-HTML passthrough.
 export function sanitizeProse(md: string): string {
   return md.replace(/<[^>]*>/g, '').trim();
+}
+
+// Data cells carry submitter-influenceable text (company/authority names, contract subjects). Tag-strip
+// string values so no markup survives into the public report even if a renderer forgets to escape —
+// defence-in-depth on top of React's default escaping (spec §7). Numbers/null are never markup.
+export function sanitizeCell(v: string | number | null): string | number | null {
+  return typeof v === 'string' ? sanitizeProse(v) : v;
+}
+
+// Guardrail E2 (spec addendum): a DETERMINISTIC check that model prose carries no material number —
+// not a prompt rule. The model must place numbers in value slots (totals/table/…) which the server
+// binds; a number inside `text`/`callout` is unbound and unverifiable — the "12 млрд." defamation
+// vector. Flags currency amounts, magnitude words (млн/млрд/хил.), grouped numbers (1 234 / 1,234,567 /
+// 1.234.567) and integers ≥ 5 digits. Bare ≤4-digit numbers (years, small counts, ordinals) pass, to
+// keep false positives low.
+const PROSE_NUMBER_PATTERNS: RegExp[] = [
+  /(?:€|eur)\s*\d[\d.,\s]*/giu, // €1234, EUR 1 234
+  /\d[\d.,\s]*\s*(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
+  /\d[\d.,\s]*\s*(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
+  /\d{1,3}(?:[.,\s]\d{3})+/gu, // grouped: 1 234, 1,234,567, 1.234.567
+  /\d{5,}/gu, // 10000+ (years are ≤4 digits)
+];
+
+/** Return the material-number tokens found in prose (empty ⇒ clean). Used to gate text/callout. */
+export function findProseNumbers(text: string): string[] {
+  const hits: string[] = [];
+  for (const re of PROSE_NUMBER_PATTERNS) {
+    for (const m of text.matchAll(re)) hits.push(m[0].trim());
+  }
+  return [...new Set(hits)].filter(Boolean);
 }
 
 function asNumber(v: string | number | null): number | null {
@@ -193,18 +228,30 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
   input.blocks.forEach((b, bi) => {
     const at = `block[${bi}] (${b.type})`;
     switch (b.type) {
-      case 'text':
+      case 'text': {
+        const nums = findProseNumbers(b.md);
+        if (nums.length)
+          errors.push(
+            `${at}: material numbers belong in a value block, not text prose (${nums.join(', ')})`,
+          );
         blocks.push({ type: 'text', md: sanitizeProse(b.md) });
         break;
-      case 'callout':
+      }
+      case 'callout': {
+        const nums = [...findProseNumbers(b.title), ...findProseNumbers(b.md)];
+        if (nums.length)
+          errors.push(
+            `${at}: material numbers belong in a value block, not callout prose (${nums.join(', ')})`,
+          );
         blocks.push({ type: 'callout', title: sanitizeProse(b.title), md: sanitizeProse(b.md) });
         break;
+      }
       case 'totals':
         blocks.push({
           type: 'totals',
           items: b.items.map((it) => ({
             label: it.label,
-            value: cell(it.ref, at),
+            value: sanitizeCell(cell(it.ref, at)),
             format: it.format,
           })),
         });
@@ -212,24 +259,34 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
       case 'facts':
         blocks.push({
           type: 'facts',
-          items: b.items.map((it) => ({ term: it.term, value: cell(it.ref, at), sub: it.sub })),
+          items: b.items.map((it) => ({
+            term: it.term,
+            value: sanitizeCell(cell(it.ref, at)),
+            sub: it.sub,
+          })),
         });
         break;
       case 'table': {
         const r = requireResult(b.resultId, at);
-        if (
-          r &&
-          requireCols(
-            r,
-            b.columns.map((c) => c.key),
-            at,
-          )
-        ) {
+        // Require both the display columns AND the link id columns to exist — without the latter an
+        // immutable report could not reconstruct its entity links.
+        const needed = [
+          ...b.columns.map((c) => c.key),
+          ...b.columns.flatMap((c) => (c.link ? [c.link.idCol] : [])),
+        ];
+        if (r && requireCols(r, needed, at)) {
           const idx = b.columns.map((c) => r.columns.indexOf(c.key));
+          const linkIdx = b.columns.map((c) => (c.link ? r.columns.indexOf(c.link.idCol) : -1));
           blocks.push({
             type: 'table',
             columns: b.columns,
-            rows: r.rows.map((row) => ({ cells: idx.map((i) => row[i] ?? null) })),
+            rows: r.rows.map((row) => ({
+              cells: idx.map((i) => sanitizeCell(row[i] ?? null)),
+              links: linkIdx.map((i) => {
+                const v = i < 0 ? null : row[i];
+                return v == null ? null : String(v);
+              }),
+            })),
           });
         }
         break;
@@ -241,7 +298,10 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
           const vals = colValues(r, b.valueCol);
           blocks.push({
             type: 'bar',
-            points: labels.map((label, i) => ({ label, value: asNumber(vals[i] ?? null) ?? 0 })),
+            points: labels.map((label, i) => ({
+              label: sanitizeCell(label),
+              value: asNumber(vals[i] ?? null) ?? 0,
+            })),
           });
         }
         break;
@@ -255,8 +315,8 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
           blocks.push({
             type: 'flows',
             edges: from.map((f, i) => ({
-              from: String(f ?? ''),
-              to: String(to[i] ?? ''),
+              from: sanitizeProse(String(f ?? '')),
+              to: sanitizeProse(String(to[i] ?? '')),
               valueEur: asNumber(val[i] ?? null) ?? 0,
             })),
           });
@@ -270,7 +330,10 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
           const vals = colValues(r, b.valueCol);
           blocks.push({
             type: 'timeseries',
-            points: period.map((p, i) => ({ period: p, value: asNumber(vals[i] ?? null) ?? 0 })),
+            points: period.map((p, i) => ({
+              period: sanitizeCell(p),
+              value: asNumber(vals[i] ?? null) ?? 0,
+            })),
           });
         }
         break;

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { bindReport, sanitizeProse, type EmitReportInput, type QueryResult } from './report-schema';
+import {
+  bindReport,
+  findProseNumbers,
+  sanitizeProse,
+  type EmitReportInput,
+  type QueryResult,
+} from './report-schema';
 
 const results: QueryResult[] = [
   {
@@ -129,6 +135,116 @@ describe('bindReport — server owns the values', () => {
       expect(out.report.watermark).toBe('ai-generated');
       expect(out.report.question).toBe('кои са най-големите възложители?');
     }
+  });
+});
+
+describe('entity links, cell sanitisation, prose gate (review #80)', () => {
+  it('resolves entity-link ids per row so an immutable report can rebuild its links', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id' },
+            },
+            { key: 'spent_eur', header: 'Похарчено (€)', align: 'right', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const row0 = out.report.blocks[0].rows[0]!;
+      expect(row0.cells).toEqual(['Министерство на финансите', 1234567]);
+      expect(row0.links).toEqual(['auth:000695089', null]); // id for the linked col, null otherwise
+    }
+  });
+
+  it('rejects a table whose link idCol is absent from the result', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R2', // only total_eur — no id column
+          columns: [
+            {
+              key: 'total_eur',
+              header: 'x',
+              format: 'money',
+              link: { kind: 'authority', idCol: 'nope' },
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/no column "nope"/);
+  });
+
+  it('tag-strips submitter-influenceable text cells (defence-in-depth XSS)', () => {
+    const poisoned: QueryResult[] = [
+      {
+        handle: 'R1',
+        columns: ['name', 'spent_eur'],
+        rows: [['<img src=x onerror=alert(1)>Фирма', 5]],
+      },
+    ];
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            { key: 'name', header: 'Име', format: 'text' },
+            { key: 'spent_eur', header: '€', format: 'money' },
+          ],
+        },
+      ]),
+      poisoned,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      expect(out.report.blocks[0].rows[0]!.cells[0]).toBe('Фирма'); // markup stripped
+    }
+  });
+
+  it('gates material numbers in prose (guardrail E2)', () => {
+    const out = bindReport(
+      emit([{ type: 'text', md: 'Похарчени са 1 234 567 €, тоест над 12 млрд.' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/value block, not text/);
+  });
+
+  it('allows years, small counts and ordinals in prose', () => {
+    const out = bindReport(
+      emit([
+        { type: 'text', md: 'През 2023 топ 5 възложители спечелиха 3-те най-големи поръчки.' },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+  });
+});
+
+describe('findProseNumbers', () => {
+  it('flags currency, magnitude words, grouped numbers and big integers', () => {
+    expect(findProseNumbers('общо 1 234 567 лв')).not.toHaveLength(0);
+    expect(findProseNumbers('над 12 млрд')).not.toHaveLength(0);
+    expect(findProseNumbers('€4500 на договор')).not.toHaveLength(0);
+    expect(findProseNumbers('сумата 1234567')).not.toHaveLength(0);
+  });
+
+  it('ignores years, small counts and ordinals', () => {
+    expect(findProseNumbers('през 2023 г., топ 5, 3-ти по ред, към 2026-06-18')).toHaveLength(0);
   });
 });
 
