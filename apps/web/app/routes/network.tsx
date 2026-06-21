@@ -47,6 +47,11 @@ function parseCenter(token: string | null): NetworkParams | null {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const center = parseCenter(new URL(request.url).searchParams.get('center'));
   const data = await getEntityNetwork(context.cloudflare.env.DB, center);
+  // A well-formed but non-existent ?center should 404 like the other entity pages, not render an
+  // empty 200 that then gets edge-cached. A missing or malformed ?center keeps the default centre.
+  if (center && !data.center) {
+    throw new Response('Not Found', { status: 404 });
+  }
   return { data };
 }
 
@@ -65,12 +70,21 @@ export default function Network({ loaderData }: Route.ComponentProps) {
     : '';
 
   const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
-  const rows: LinkRow[] = data.edges.map((e) => ({
-    from: nodeById.get(e.from)?.label ?? e.from,
-    to: nodeById.get(e.to)?.label ?? e.to,
-    valueEur: e.valueEur,
-    contracts: e.contracts,
-  }));
+  // Normalise each row to the real procurement direction (authority -> company), regardless of how the
+  // edge is oriented in the graph topology: the institution awards and pays the company, never the
+  // reverse. Every edge connects one authority and one company.
+  const rows: LinkRow[] = data.edges.map((e) => {
+    const a = nodeById.get(e.from);
+    const b = nodeById.get(e.to);
+    const authority = a?.kind === 'authority' ? a : b;
+    const company = a?.kind === 'authority' ? b : a;
+    return {
+      from: authority?.label ?? e.from,
+      to: company?.label ?? e.to,
+      valueEur: e.valueEur,
+      contracts: e.contracts,
+    };
+  });
   const columns: Column<LinkRow>[] = [
     { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
     { key: 'to', header: 'Към', cell: (r) => r.to },
