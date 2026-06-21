@@ -58,7 +58,8 @@ interface TotalsRow {
 }
 
 // Headline: of contracts with a KNOWN offer count (bids_received >= 1), what share were awarded on a
-// single offer, by contract count and by (clean) value. Same clean-value basis as the homepage.
+// single offer, by contract count and by value (amount_eur IS NOT NULL, the same basis the homepage
+// and the rollups use, so the totals match across the site).
 async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<CompetitionTotals> {
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
@@ -67,8 +68,8 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
       `SELECT
          COUNT(*) AS contracts,
          SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,
-         COALESCE(SUM(CASE WHEN c.value_flag = 'ok' AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur,
-         COALESCE(SUM(CASE WHEN c.bids_received = 1 AND c.value_flag = 'ok' AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS single_value_eur
+         COALESCE(SUM(c.amount_eur), 0) AS value_eur,
+         COALESCE(SUM(CASE WHEN c.bids_received = 1 THEN c.amount_eur ELSE 0 END), 0) AS single_value_eur
        FROM contracts c ${s.join} WHERE ${where.join(' AND ')}`,
     )
     .bind(...s.params)
@@ -109,7 +110,7 @@ async function authoritiesBySingleOffer(
       `SELECT t.authority_id AS authority_id, a.name AS name, a.type_group AS type_group,
               COUNT(*) AS contracts,
               SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,
-              COALESCE(SUM(CASE WHEN c.value_flag = 'ok' AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur
+              COALESCE(SUM(c.amount_eur), 0) AS value_eur
        FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
        WHERE ${where.join(' AND ')}
        GROUP BY t.authority_id
@@ -151,7 +152,8 @@ async function authoritiesByConcentration(
   top: number,
 ): Promise<CompetitionConcentration[]> {
   const s = scope(p);
-  const where = ['c.amount_eur > 0', "c.value_flag = 'ok'", ...s.where];
+  // Site-wide value basis (amount_eur IS NOT NULL), matching the rollups and the other panels.
+  const where = ['c.amount_eur IS NOT NULL', ...s.where];
   const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
   const { results } = await db
     .prepare(
@@ -222,9 +224,8 @@ async function topRecurringPairs(
     rows = results;
   } else {
     const s = scope(p);
-    // Same cleanliness guard as the totals and concentration queries, so a zero or unverified amount
-    // cannot enter the filtered aggregate.
-    const where = ['c.amount_eur > 0', "c.value_flag = 'ok'", ...s.where];
+    // Same value basis as the totals and concentration queries and the site-wide rollups.
+    const where = ['c.amount_eur IS NOT NULL', ...s.where];
     const { results } = await db
       .prepare(
         `SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id, a.name AS authority_name,

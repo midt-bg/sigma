@@ -67,7 +67,7 @@ const HHI_SQL = `
 WITH pair AS (
   SELECT t.authority_id AS aid, c.bidder_id AS bid, SUM(c.amount_eur) AS spent
   FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE c.amount_eur > 0 AND c.value_flag = 'ok'
+  WHERE c.amount_eur IS NOT NULL
   GROUP BY t.authority_id, c.bidder_id
 ),
 tot AS (SELECT aid, SUM(spent) AS total, COUNT(*) AS suppliers FROM pair GROUP BY aid)
