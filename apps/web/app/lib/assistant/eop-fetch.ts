@@ -64,18 +64,17 @@ export async function fetchEopDay(
         const res = await fetchImpl(url);
         if (!res.ok) return { label, error: `HTTP ${res.status}` };
         const body = await res.text();
-        const truncated = body.length > maxBytes;
-        const slice = truncated ? body.slice(0, maxBytes) : body;
+        if (body.length > maxBytes) {
+          // Oversized untrusted file: do NOT parse it. Parsing the full body would defeat the cap
+          // (the model would still see everything) and risks a memory blow-up on a huge JSON array.
+          // Surface a soft error instead. (review #80 — the cap was previously a no-op.)
+          return { label, error: 'отговорът е твърде голям (отрязан)', truncated: true };
+        }
         try {
-          const parsed = JSON.parse(truncated ? body : slice) as unknown;
-          return { label, rows: Array.isArray(parsed) ? parsed : [parsed], truncated };
+          const parsed = JSON.parse(body) as unknown;
+          return { label, rows: Array.isArray(parsed) ? parsed : [parsed], truncated: false };
         } catch {
-          // Truncation can break JSON; surface as a soft error rather than poisoning the report.
-          return {
-            label,
-            error: truncated ? 'отговорът е твърде голям (отрязан)' : 'невалиден JSON',
-            truncated,
-          };
+          return { label, error: 'невалиден JSON' };
         }
       } catch (e) {
         return { label, error: e instanceof Error ? e.message : 'fetch error' };

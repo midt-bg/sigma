@@ -53,10 +53,12 @@ describe('fetchEopDay', () => {
     expect(files.every((f) => f.error === 'HTTP 403')).toBe(true);
   });
 
-  it('caps an oversized response instead of letting it reach the model', async () => {
+  it('withholds an oversized response instead of parsing it to the model', async () => {
     const huge = JSON.stringify(Array.from({ length: 5000 }, (_, i) => ({ i })));
     const fetchImpl: FetchImpl = async () => ({ ok: true, status: 200, text: async () => huge });
     const files = await fetchEopDay('2023-05-01', fetchImpl, 256);
-    expect(files.every((f) => f.truncated)).toBe(true);
+    // The cap must WITHHOLD the rows, not merely flag truncation — the old code parsed the full body
+    // (valid JSON) and returned every row despite the cap.
+    expect(files.every((f) => f.truncated && f.rows === undefined && !!f.error)).toBe(true);
   });
 });
