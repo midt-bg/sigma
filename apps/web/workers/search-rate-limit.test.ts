@@ -48,7 +48,9 @@ describe('rateLimitSearchRoute', () => {
     expect(limit).not.toHaveBeenCalled();
   });
 
-  it('fails open when the binding is missing or throws', async () => {
+  it('fails open and logs a degrade event when the binding is missing or throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
     await expect(
       rateLimitSearchRoute(new Request('http://local/search?q=a'), {}, false),
     ).resolves.toBeNull();
@@ -63,5 +65,21 @@ describe('rateLimitSearchRoute', () => {
         false,
       ),
     ).resolves.toBeNull();
+
+    const events = warn.mock.calls.map(([line]) => JSON.parse(line as string));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'rate_limit_missing_binding',
+        limiter: 'SEARCH_RATE_LIMITER',
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'rate_limit_limiter_error',
+        limiter: 'SEARCH_RATE_LIMITER',
+      }),
+    );
+
+    warn.mockRestore();
   });
 });

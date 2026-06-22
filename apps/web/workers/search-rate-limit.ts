@@ -11,7 +11,13 @@ export async function rateLimitSearchRoute(
 ): Promise<Response | null> {
   if (!isSearchRequest(request)) return null;
 
-  return rateLimitRequest(request, env.SEARCH_RATE_LIMITER, isProd, 'Too many search requests');
+  return rateLimitRequest(
+    request,
+    env.SEARCH_RATE_LIMITER,
+    isProd,
+    'Too many search requests',
+    'SEARCH_RATE_LIMITER',
+  );
 }
 
 function isSearchRequest(request: Request): boolean {
