@@ -72,6 +72,9 @@ embed cap + проверка за брой, без raw D1 грешка към м
 - **Фаза 2 — устойчивост:** глобален budget + circuit-breaker / exponential backoff пред BgGPT
   (per-IP rate-limit и graceful degradation вече са налице — остава глобалният таван).
 - **Фаза 3:** глас (`/assistant/transcribe` → Whisper).
+- **`semantic_search` — `ns: 'entity'` е празен** докато не се добави entity indexer (ETL pipeline,
+  Фаза 2). Инструментът е регистриран и работи, но ще връща 0 попадения за всяко запитване, докато
+  pipeline-ът не напълни Vectorize с имена на компании/договори/възложители.
 - **Втвърдяване:** read-only D1 data path + неотменяем per-query timeout за `run_sql` (§9.4 — AST guard-ът
   и allowlist-ът вече са налице); HMAC-подпис на сървърните съобщения (§9.3); memoize
   `(sql_hash, freshness)` + дедуп на справки (§9.8); golden-report CI, вкл. adversarial prompt-injection
