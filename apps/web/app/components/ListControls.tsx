@@ -24,7 +24,7 @@ export function ListControls({
   const busy = useNavigation().state !== 'idle';
   return (
     <div className="list-controls" aria-busy={busy || undefined}>
-      <p className="muted small">
+      <p className="muted small" aria-live="polite">
         {count}
         {busy ? <span className="muted small"> · Зарежда…</span> : null}
       </p>

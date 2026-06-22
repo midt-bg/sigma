@@ -7,6 +7,7 @@
     "dev": "wrangler dev",
     "deploy": "node ../../scripts/wrangler-render.mjs wrangler.toml && wrangler deploy --config wrangler.deploy.toml",
     "build": "wrangler deploy --dry-run --outdir dist",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

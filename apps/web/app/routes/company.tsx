@@ -10,6 +10,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, OwnershipChip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
+import { withDbRetry } from '../lib/retry';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -50,9 +51,11 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const id = bidderIdFromSlug(params.eik);
   if (!id) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
-  const [company, coverage] = await Promise.all([getCompany(db, id), getCoverageMeta(db)]);
-  if (!company) throw new Response('Not Found', { status: 404 });
-  return { company, coverage };
+  return withDbRetry(async () => {
+    const [company, coverage] = await Promise.all([getCompany(db, id), getCoverageMeta(db)]);
+    if (!company) throw new Response('Not Found', { status: 404 });
+    return { company, coverage };
+  });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
@@ -183,6 +186,9 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         >
           <div className="table-wrap tbl-cards">
             <table>
+              <caption className="sr-only">
+                Институции платци, подредени по сумата, платена на компанията
+              </caption>
               <thead>
                 <tr>
                   <th scope="col">#</th>
@@ -243,6 +249,13 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
           >
             <table>
+              <caption className="sr-only">Брой оферти на спечелените търгове</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Брой оферти</th>
+                  <th scope="col">Брой търгове</th>
+                </tr>
+              </thead>
               <tbody>
                 <tr>
                   <td>1 оферта</td>
@@ -282,7 +295,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             </span>
           }
         >
-          <div className="tabset">
+          <div className="tabset" role="radiogroup" aria-label="Подреждане на договорите">
             <input
               type="radio"
               name="company-contracts"
@@ -297,13 +310,27 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               className="tab-input"
             />
             <div className="tab-labels">
-              <label htmlFor="company-recent">Най-нови</label>
-              <label htmlFor="company-top">Най-големи по стойност</label>
+              <label id="tab-company-recent" htmlFor="company-recent">
+                Най-нови
+              </label>
+              <label id="tab-company-top" htmlFor="company-top">
+                Най-големи по стойност
+              </label>
             </div>
-            <div className="tab-panel" data-tab="recent">
+            <div
+              className="tab-panel"
+              data-tab="recent"
+              role="group"
+              aria-labelledby="tab-company-recent"
+            >
               <ContractMiniTable items={c.recentContracts} counterparty="authority" />
             </div>
-            <div className="tab-panel" data-tab="top">
+            <div
+              className="tab-panel"
+              data-tab="top"
+              role="group"
+              aria-labelledby="tab-company-top"
+            >
               <ContractMiniTable items={c.topContracts} counterparty="authority" />
             </div>
           </div>

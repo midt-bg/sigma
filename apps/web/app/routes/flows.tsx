@@ -1,4 +1,4 @@
-import { Form, Link, useSearchParams, useSubmit } from 'react-router';
+import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import { count, money } from '@sigma/shared';
 import { CPV_SECTORS } from '@sigma/config';
 import { getFlows } from '@sigma/db';
@@ -49,6 +49,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
+  const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
   return (
@@ -106,6 +107,11 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
         </Form>
+
+        {/* Filters auto-submit on change; announce the swap for screen-reader users (WCAG 4.1.3). */}
+        <p className="sr-only" role="status">
+          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+        </p>
 
         {unknownSector || unknownYear ? (
           <Callout variant="warning" title="Няма данни за избрания обхват">

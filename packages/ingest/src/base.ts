@@ -367,6 +367,64 @@ export function mapBaseRecord(
   return row;
 }
 
+// Hard ceiling on a single text literal's character length. EOP/registry text fields
+// (subjects, descriptions, names) are well under this; anything larger is corrupt or
+// hostile and is truncated rather than passed to sqlite (avoids SQLITE_TOOBIG / abuse of
+// the offline `.sql` files). Chosen well below SQLite's default 1e9-byte string limit.
+export const MAX_SQL_TEXT_LEN = 1_000_000;
+
+// Strip NUL and every C0 (\x00-\x1F) and C1 (\x7F-\x9F) control character. These have no
+// place in a one-line SQL literal and DEL/C1 in particular can corrupt the generated file
+// or confuse downstream tooling. Printable text (incl. all Cyrillic / Unicode) is untouched.
+const SQL_CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F]/g;
+
+/**
+ * Assert that `literal` is a well-formed single-quoted SQL string literal: it starts and
+ * ends with a single quote and contains no unescaped (odd-run) single quote. Throws on
+ * violation so a broken escape can never silently reach sqlite.
+ */
+export function assertWellFormedSqlLiteral(literal: string): void {
+  if (literal.length < 2 || literal[0] !== "'" || literal[literal.length - 1] !== "'") {
+    throw new Error('escapeSqlText produced a literal not delimited by single quotes');
+  }
+  // Inner content must contain only paired single quotes (each `'` doubled as `''`).
+  const inner = literal.slice(1, -1);
+  for (let i = 0; i < inner.length; i += 1) {
+    if (inner[i] !== "'") continue;
+    if (inner[i + 1] !== "'") {
+      throw new Error('escapeSqlText produced a literal with an unescaped single quote');
+    }
+    i += 1; // skip the paired quote
+  }
+}
+
+/**
+ * Build a safely-escaped single-quoted SQL string literal for OFFLINE `.sql` generation
+ * (executed via `wrangler d1 execute --file` / `sqlite3`, never from an HTTP request).
+ *
+ * Hardening invariants:
+ *  - input is truncated to {@link MAX_SQL_TEXT_LEN} characters before escaping;
+ *  - all NUL / C0 / C1 control chars are removed;
+ *  - every single quote is doubled;
+ *  - the result is asserted to be a well-formed quoted literal (delimited by single
+ *    quotes with no unescaped single quote inside) and throws otherwise — a cheap
+ *    invariant that catches future escaping regressions before they reach sqlite.
+ */
+export function escapeSqlText(value: string): string {
+  let truncated = value;
+  if (value.length > MAX_SQL_TEXT_LEN) {
+    truncated = value.slice(0, MAX_SQL_TEXT_LEN);
+    // A code-unit slice can split a surrogate pair; drop a trailing lone high surrogate so the cut
+    // text stays well-formed UTF-16 (otherwise the UTF-8 file write silently yields U+FFFD).
+    const last = truncated.charCodeAt(truncated.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) truncated = truncated.slice(0, -1);
+  }
+  const escaped = truncated.replace(SQL_CONTROL_CHARS, '').replace(/'/g, "''");
+  const literal = `'${escaped}'`;
+  assertWellFormedSqlLiteral(literal);
+  return literal;
+}
+
 export function baseSqlLiteral(
   cat: BaseCategory,
   column: string,
@@ -377,9 +435,7 @@ export function baseSqlLiteral(
   if (['int', 'real', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
     return String(value);
   }
-  return `'${String(value)
-    .replace(/[\x00-\x1F]/g, '')
-    .replace(/'/g, "''")}'`;
+  return escapeSqlText(String(value));
 }
 
 export const BASE_CONTRACT_COLS = baseInsertColumns('contracts');
