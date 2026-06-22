@@ -13,7 +13,7 @@ export function Pagination({
   unit?: string;
 }) {
   return (
-    <div className="paging">
+    <nav className="paging" aria-label="Навигация по страници">
       <div>
         Страница <strong>{fmtCount(nav.page)}</strong> от <strong>{fmtCount(nav.pageCount)}</strong>{' '}
         · по {pageSize} на страница{unit ? ` (${unit})` : ''}
@@ -38,6 +38,6 @@ export function Pagination({
           </span>
         )}
       </div>
-    </div>
+    </nav>
   );
 }

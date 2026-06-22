@@ -35,10 +35,13 @@ export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
   const width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
   return (
     <span className="share">
-      <span className={`share-bar${warn ? ' warn' : ''}`}>
+      <span className={`share-bar${warn ? ' warn' : ''}`} aria-hidden="true">
         <i style={{ width }} />
       </span>
-      <span className="share-num">{pct(ratio)}</span>
+      <span className="share-num">
+        {pct(ratio)}
+        {warn && <span className="sr-only"> — висок дял</span>}
+      </span>
     </span>
   );
 }

@@ -6,8 +6,9 @@ packages:
 # onlyBuiltDependencies live here instead.
 overrides:
   esbuild: 0.28.1
-  # Security pins for dev/build-time transitive deps so CI `pnpm audit --audit-level=high`
-  # passes. None of these ship to the Worker runtime.
+  # Security pins for dev/build-time transitive deps; none ship to the Worker runtime. The
+  # HIGH-severity ones (ws, vite) keep CI `pnpm audit --audit-level=high` green; lower-severity
+  # ones below are defense-in-depth, not required by that gate.
   #   ws <8.21.0  — memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p), via wrangler→miniflare
   #   vite        — server.fs.deny bypass (GHSA-fx2h-pf6j-xcff): v7 via @react-router/dev→
   #                 vite-node, v8 via apps/web + vitest. Patched per-major to avoid forcing
@@ -15,6 +16,9 @@ overrides:
   ws: "^8.21.0"
   vite@7: "^7.3.5"
   vite@8: "^8.0.16"
+  #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
+  #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
+  "@babel/core": "^7.29.6"
 
 onlyBuiltDependencies:
   - esbuild

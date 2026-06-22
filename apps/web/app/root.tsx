@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   isRouteErrorResponse,
   Link,
@@ -21,6 +21,7 @@ import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
+import { withDbRetry } from './lib/retry';
 import './app.css';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
@@ -41,8 +42,20 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   if (url.pathname.length > 1 && url.pathname.endsWith('/')) {
     throw redirect(url.pathname.replace(/\/+$/, '') + url.search, 301);
   }
-  const coverage = await getCoverageMeta(context.cloudflare.env.DB);
+  // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
+  // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
+  const coverage = await withDbRetry(() => getCoverageMeta(context.cloudflare.env.DB));
   return { ...coverage, origin: url.origin };
+}
+
+// Scroll-restoration key for list pages. Filters and sort live in the query string under a stable
+// pathname, so keying on pathname alone preserves the visitor's scroll position when they change a
+// filter or sort instead of jumping to the top (issue #13). Pagination is the deliberate exception:
+// Prev/Next carry a keyset `cursor` (which a filter or sort change resets), so a URL with a cursor
+// gets its own key and lands at the top — the conventional paging behaviour.
+function scrollKey(location: { pathname: string; search: string }): string {
+  const cursor = new URLSearchParams(location.search).get('cursor');
+  return cursor ? `${location.pathname}?cursor=${cursor}` : location.pathname;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -57,14 +70,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="СИГМА" />
         <meta property="og:locale" content="bg_BG" />
-        {imageUrl && <meta property="og:image" content={imageUrl} />}
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta
-          property="og:image:alt"
-          content="СИГМА — платформа за прозрачност на обществените поръчки"
-        />
-        <meta property="og:image:type" content="image/png" />
+        {imageUrl && (
+          <>
+            <meta property="og:image" content={imageUrl} />
+            <meta property="og:image:width" content="1200" />
+            <meta property="og:image:height" content="630" />
+            <meta
+              property="og:image:alt"
+              content="СИГМА — платформа за прозрачност на обществените поръчки"
+            />
+            <meta property="og:image:type" content="image/png" />
+          </>
+        )}
         <meta name="twitter:card" content="summary_large_image" />
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
@@ -73,7 +90,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         {children}
-        <ScrollRestoration nonce={nonce} />
+        <ScrollRestoration nonce={nonce} getKey={scrollKey} />
         <Scripts nonce={nonce} />
       </body>
     </html>
@@ -83,8 +100,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
 // Thin top progress bar so cross-route navigation doesn't feel dead on slow networks.
 // `useNavigation().state` is 'idle' on the server and the first client render, so the
 // initial markup matches SSR — the bar only appears once a client-side transition starts.
+// Tracks the user's reduced-motion preference. Initialised false so the first client render
+// matches SSR (no hydration mismatch), then updated after mount — the progress bar only
+// animates on client navigation, so the post-mount value is the one that matters. (WCAG 2.3.3)
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  return reduced;
+}
+
 function RouteProgress() {
   const busy = useNavigation().state !== 'idle';
+  const reduceMotion = usePrefersReducedMotion();
   return (
     <div
       aria-hidden="true"
@@ -97,9 +130,11 @@ function RouteProgress() {
         transformOrigin: 'left',
         transform: busy ? 'scaleX(1)' : 'scaleX(0)',
         opacity: busy ? 1 : 0,
-        transition: busy
-          ? 'transform 1.2s ease-out, opacity 0.1s ease'
-          : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
+        transition: reduceMotion
+          ? 'none'
+          : busy
+            ? 'transform 1.2s ease-out, opacity 0.1s ease'
+            : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
         zIndex: 1000,
         pointerEvents: 'none',
       }}
@@ -111,14 +146,19 @@ export default function App({ loaderData }: Route.ComponentProps) {
   // After a client-side navigation, move focus to the main region so keyboard and
   // screen-reader users aren't stranded on <body> mid-page (and the skip link stays
   // reachable). Skip the first run so SSR/hydration and the initial load are untouched.
+  // Also skip when only search params changed (filter or sort update within the same
+  // page) — clicking a filter checkbox should not yank the user back to the top.
   const location = useLocation();
   const navigationType = useNavigationType();
   const firstRender = useRef(true);
+  const prevPathname = useRef(location.pathname);
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    const isFirst = firstRender.current;
+    firstRender.current = false;
+    const prevPath = prevPathname.current;
+    prevPathname.current = location.pathname;
+    if (isFirst) return;
+    if (location.pathname === prevPath) return;
     const frame = window.requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>('main h1') ?? document.getElementById('main');
       if (el) {

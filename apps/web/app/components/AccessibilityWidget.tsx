@@ -1,3 +1,7 @@
+// The accessibility toolbar is a vendored third-party script (Информационно обслужване АД) under
+// public/assets/accessibility/. It has minor keyboard/ARIA rough edges this wrapper can't change
+// without forking the script; they are catalogued in docs/accessibility.md ("Вградена приставка за
+// достъпност — наблюдения"). This wrapper only initialises it and installs survival CSS.
 import { useEffect } from 'react';
 
 type AccessibilityOptions = {
@@ -28,6 +32,7 @@ const SURVIVAL_STYLE_ID = 'a11y-survival';
 const INIT_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 100;
 const SURVIVAL_CSS = `
+@font-face{font-family:'adys';src:url(/assets/accessibility/ADYS-Regular-V5-4.ttf);font-weight:normal;font-style:normal}
 html.a11y-textonly .sr-only{display:none!important;position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
 html.a11y-textonly .brand-sub{display:inline-block!important;font-weight:700!important;font-size:1.1em!important}
 html.a11y-textonly .skip:not(:focus){position:absolute!important;left:-9999px!important;top:-9999px!important;width:1px!important;height:1px!important;overflow:hidden!important}
@@ -48,6 +53,12 @@ html.a11y-textonly .site-nav{display:flex!important;flex-wrap:wrap!important;gap
 html.a11y-textonly .site-nav a{display:inline-block!important;padding:2px 0!important}
 html.a11y-textonly .site-actions{display:flex!important;flex-wrap:wrap!important;gap:18px!important;margin-top:10px!important}
 html.a11y-textonly main{margin-top:8px!important}
+html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:200%!important}
+@media(min-width:48em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:110%!important}}
+@media(min-width:62em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:120%!important}}
+@media(min-width:75em){html.a11y-textonly.font-resize,html.a11y-textonly .font-resize{font-size:130%!important}}
+@media(min-width:87.5em){html.a11y-textonly.font-resize,html.a11y-textonly body.font-resize{font-size:140%!important}}
+html.a11y-textonly.dyslectic-font,html.a11y-textonly.dyslectic-font *{font-family:'adys'!important}
 `;
 
 function getAccessibilityInitializer() {
