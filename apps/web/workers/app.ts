@@ -1,7 +1,8 @@
 import { createRequestHandler } from 'react-router';
-import { baseSecurityHeaders } from '../app/lib/security';
+import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { cacheKey } from './cache-key';
+import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
@@ -44,16 +45,33 @@ function isAnonymous(request: Request, response: Response): boolean {
   );
 }
 
-// Apply the shared base headers and preserve the nonce-based CSP the SSR render already set
-// (entry.server.tsx). We deliberately do NOT recompute CSP from the response body: hashing whatever
-// inline <script> tags appear would self-authorize any injected inline script on cached pages,
-// stripping the very defense CSP is meant to provide. The per-request nonce is stored in the cached
-// body alongside this header, so a cache hit serves a self-consistent nonce + CSP; an injected script
-// without that nonce is blocked.
-function hardenResponse(response: Response): Response {
+function isHtml(response: Response): boolean {
+  return (response.headers.get('Content-Type') ?? '').toLowerCase().includes('text/html');
+}
+
+// Apply the shared base headers, and for edge-cacheable HTML swap the per-request nonce CSP for a
+// nonce-LESS, hash-based one so a frozen cache entry doesn't replay one nonce to every visitor for
+// the whole s-maxage lifetime (the regression 88fd683 fixed). The hashes cover only the nonce-bearing
+// framework scripts (hashTrustedInlineScripts), so the policy stays cache-safe WITHOUT
+// self-authorizing an injected inline script. Non-cacheable / non-HTML responses keep the nonce CSP.
+async function hardenResponse(response: Response, cacheable: boolean): Promise<Response> {
   const headers = new Headers(response.headers);
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
   setAllowHeader(headers, response.status);
+
+  const nonce = cacheable && isHtml(response) ? cspNonce(headers) : null;
+  if (nonce !== null) {
+    const body = await response.text();
+    applySecurityHeaders(
+      headers,
+      nonceLessSecurityHeaders(await hashTrustedInlineScripts(body, nonce), import.meta.env.PROD),
+    );
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 
   return new Response(response.body, {
     status: response.status,
@@ -112,7 +130,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     response.ok &&
     isAnonymous(request, response) &&
     /s-maxage=\d/.test(response.headers.get('Cache-Control') ?? '');
-  const hardened = hardenResponse(response);
+  const hardened = await hardenResponse(response, cacheable);
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
   return hardened;
