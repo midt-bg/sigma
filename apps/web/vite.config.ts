@@ -4,7 +4,7 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
-// Local dev reads the miniflare D1 that `pnpm import` ships into apps/web/.wrangler/state (the seed of
+// Local dev reads the miniflare D1 that `pnpm run import` ships into apps/web/.wrangler/state (the seed of
 // ~4.9k authorities / ~190k contracts) — no re-import here. `scripts/ship-domain.mjs` writes that D1.
 const persistPath = fileURLToPath(new URL('.wrangler/state', import.meta.url));
 

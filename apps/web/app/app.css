@@ -20,7 +20,9 @@
   --color-paper-deep: oklch(94% 0.014 78);
   --color-ink: oklch(18% 0.012 70);
   --color-ink-mid: oklch(38% 0.01 70);
-  --color-ink-soft: oklch(56% 0.008 70);
+  --color-ink-soft: oklch(
+    50% 0.008 70
+  ); /* ≥4.5:1 on paper / paper-warm / accent-bg — WCAG 1.4.3 AA */
   --color-rule: oklch(86% 0.008 75);
   --color-rule-soft: oklch(91% 0.008 75);
   --color-accent: oklch(48% 0.18 28); /* red — links/warnings */
@@ -488,6 +490,10 @@ code,
   outline: none;
   width: 100%;
   min-width: 0;
+}
+.search-drawer-form input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .search-drawer-form input::placeholder {
   color: var(--ink-soft);
@@ -1970,6 +1976,10 @@ details.row .body .signal .why {
      ~8px beyond the full-width „Намери" button below it on mobile. The chevron→
      field spacing is provided by the grid `column-gap`. */
 }
+.hero-search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .hero-search input::placeholder {
   color: var(--ink-soft);
   font-style: italic;
@@ -2904,5 +2914,42 @@ tbody td,
   }
   .principles li {
     padding-left: 44px;
+  }
+}
+
+/* Visually-hidden but screen-reader-available — for table <caption>s, hidden <thead>s and
+   colour-only cue text (WCAG 1.3.1 / 1.4.1). Defined here so the app's own accessibility no
+   longer depends on the identically-named class from the vendored accessibility widget CSS. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Keyboard focus indicator for native controls that otherwise fall back to the faint UA
+   default ring on the warm paper background (WCAG 2.4.7). Low-specificity :where() so the
+   component-specific focus styles above still win. */
+:where(button, select, summary, [type='checkbox'], [type='radio']):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Honour a reduced-motion preference: neutralise transitions, animations and smooth
+   scrolling (WCAG 2.3.3). The top progress bar uses an inline transition and is gated
+   separately in root.tsx, which a CSS media query cannot reach. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
