@@ -20,9 +20,12 @@ export async function rateLimitSearchRoute(
   );
 }
 
+// Match /search and any sub-path (/search/suggest etc.) so every FTS-backed search route shares the
+// limiter — covers #59's per-keystroke /search/suggest without hardcoding its exact path.
 function isSearchRequest(request: Request): boolean {
+  const path = normalizedPathname(request);
   return (
     (request.method === 'GET' || request.method === 'HEAD') &&
-    normalizedPathname(request) === '/search'
+    (path === '/search' || path.startsWith('/search/'))
   );
 }

@@ -35,16 +35,32 @@ describe('rateLimitSearchRoute', () => {
     expect(response?.status).toBe(429);
   });
 
+  it('limits search sub-paths such as /search/suggest', async () => {
+    const { limiter } = rateLimiter(false);
+
+    const response = await rateLimitSearchRoute(
+      new Request('http://local/search/suggest?q=стр', {
+        headers: { 'CF-Connecting-IP': '203.0.113.42' },
+      }),
+      { SEARCH_RATE_LIMITER: limiter },
+      false,
+    );
+
+    expect(response?.status).toBe(429);
+  });
+
   it('does not limit unrelated paths', async () => {
     const { limiter, limit } = rateLimiter(false);
 
-    await expect(
-      rateLimitSearchRoute(
-        new Request('http://local/contracts'),
-        { SEARCH_RATE_LIMITER: limiter },
-        false,
-      ),
-    ).resolves.toBeNull();
+    for (const path of ['/contracts', '/searchx', '/search-history']) {
+      await expect(
+        rateLimitSearchRoute(
+          new Request(`http://local${path}`),
+          { SEARCH_RATE_LIMITER: limiter },
+          false,
+        ),
+      ).resolves.toBeNull();
+    }
     expect(limit).not.toHaveBeenCalled();
   });
 
