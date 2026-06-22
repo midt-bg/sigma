@@ -14,7 +14,9 @@ function csp(scriptSrc: string[]): string {
 }
 
 // Security response headers shared by HTML and resource routes. CSP is layered on separately:
-// nonce-based for uncached SSR, hash-based for cacheable HTML stored at the edge.
+// the SSR render (entry.server.tsx) sets a per-request nonce policy; for edge-cacheable HTML the
+// worker swaps that for a nonce-LESS, hash-based policy so a frozen cache entry never replays one
+// nonce to every visitor for the whole s-maxage lifetime (see workers/app.ts).
 export function baseSecurityHeaders(isProd: boolean): Headers {
   const headers = new Headers({
     'X-Content-Type-Options': 'nosniff',
@@ -42,6 +44,10 @@ export function securityHeaders(nonce: string, isProd: boolean): Headers {
   return headers;
 }
 
+// Cache-safe CSP for edge-cacheable HTML: a nonce is per-request and would freeze across the cache
+// lifetime, so the worker instead allow-lists the SHA-256 hashes of the response's *trusted* inline
+// scripts (the nonce-bearing framework scripts — see workers/app.ts). Hash sources, unlike a nonce,
+// are identical for every visitor of a cached page, so no secret is replayed.
 export function nonceLessSecurityHeaders(scriptHashes: string[], isProd: boolean): Headers {
   const headers = baseSecurityHeaders(isProd);
   if (isProd) headers.set('Content-Security-Policy', csp(scriptHashes));

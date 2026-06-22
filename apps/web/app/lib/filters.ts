@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import type { CompanySort } from '@sigma/db';
+import { normalizeCompanySort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -32,7 +32,7 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
 
 export function companyListParams(sp: URLSearchParams) {
   return {
-    sort: (sp.get('sort') as CompanySort) || 'won',
+    sort: normalizeCompanySort(sp.get('sort')),
     kinds: getMulti(sp, 'kind') as EntityKind[],
     countBucket: sp.get('count'),
     sectors: getMulti(sp, 'sector'),

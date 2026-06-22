@@ -13,7 +13,13 @@ export async function rateLimitAggregationRoute(
 ): Promise<Response | null> {
   if (!isAggregationRequest(request)) return null;
 
-  return rateLimitRequest(request, env.AGG_RATE_LIMITER, isProd, 'Too many aggregation requests');
+  return rateLimitRequest(
+    request,
+    env.AGG_RATE_LIMITER,
+    isProd,
+    'Too many aggregation requests',
+    'AGG_RATE_LIMITER',
+  );
 }
 
 function isAggregationRequest(request: Request): boolean {

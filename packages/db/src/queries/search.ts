@@ -11,6 +11,10 @@ export type SearchKind = 'authority' | 'company' | 'contract';
 
 export const MAX_QUERY_CHARS = 160;
 export const MAX_QUERY_TOKENS = 8;
+// Single-character `*`-prefix terms (e.g. „и*") match a huge slice of the FTS index, turning one
+// request into a full-index COUNT + rank scan. Require ≥2 chars per term so a token actually narrows
+// the postings list; shorter tokens are dropped, and a query with nothing left reads as empty.
+export const MIN_QUERY_TOKEN_CHARS = 2;
 
 const GROUPS: {
   kind: SearchKind;
@@ -79,7 +83,8 @@ export function searchMatchQuery(q: string): string | null {
   const terms = q
     .slice(0, MAX_QUERY_CHARS)
     .toLowerCase()
-    .match(/[\p{L}\p{N}]+/gu);
+    .match(/[\p{L}\p{N}]+/gu)
+    ?.filter((t) => t.length >= MIN_QUERY_TOKEN_CHARS);
   if (!terms || terms.length === 0) return null;
   return terms
     .slice(0, MAX_QUERY_TOKENS)

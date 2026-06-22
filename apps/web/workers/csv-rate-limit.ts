@@ -11,7 +11,13 @@ export async function rateLimitCsvExport(
 ): Promise<Response | null> {
   if (!isCsvRequest(request)) return null;
 
-  return rateLimitRequest(request, env.CSV_RATE_LIMITER, isProd, 'Too many CSV export requests');
+  return rateLimitRequest(
+    request,
+    env.CSV_RATE_LIMITER,
+    isProd,
+    'Too many CSV export requests',
+    'CSV_RATE_LIMITER',
+  );
 }
 
 function isCsvRequest(request: Request): boolean {
