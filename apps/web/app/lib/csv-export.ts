@@ -25,7 +25,6 @@ interface ServedCsvExportOptions {
   env: CsvExportEnv;
   request: Request;
   route: CsvExportRoute;
-  sort: string;
   params: object;
   stream: () => Response;
 }
@@ -184,7 +183,6 @@ export async function servedCsvExport({
   env,
   request,
   route,
-  sort,
   params,
   stream,
 }: ServedCsvExportOptions): Promise<Response> {
@@ -193,7 +191,10 @@ export async function servedCsvExport({
   }
 
   const version = await freshnessVersion(env.DB);
-  const key = `csv/${route}/${sort}/${version}`;
+  // The CSV streamers order strictly by the keyset id column and ignore `sort`, so the unfiltered
+  // export bytes are identical regardless of the URL's `sort`. Keying on `sort` would mint a distinct
+  // R2 object per arbitrary value (storage/scan amplification) for no benefit, so it is excluded.
+  const key = `csv/${route}/${version}`;
   // Only pass `range` when the client actually sent a Range header — otherwise R2 (miniflare)
   // returns the full object with `obj.range` set, which would make a plain GET a 206 instead of 200.
   const getOpts: R2GetOptions = request.headers.has('Range')

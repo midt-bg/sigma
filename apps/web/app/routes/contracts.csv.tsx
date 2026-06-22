@@ -22,7 +22,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     env: context.cloudflare.env,
     request,
     route: 'contracts',
-    sort,
     params,
     stream: () => streamContractsCsv(context.cloudflare.env.DB, params),
   });
