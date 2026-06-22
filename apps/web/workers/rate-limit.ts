@@ -22,17 +22,51 @@ export async function rateLimitRequest(
   limiter: RateLimit | undefined,
   isProd: boolean,
   body: string,
+  name: string,
 ): Promise<Response | null> {
-  if (!limiter) return null;
+  if (!limiter) {
+    logRateLimitDegrade('missing_binding', name);
+    return null;
+  }
 
   try {
     const outcome = await limiter.limit({ key: rateLimitKey(request) });
     if (outcome.success) return null;
-  } catch {
+  } catch (error) {
+    logRateLimitDegrade('limiter_error', name, error);
     return null;
   }
 
   return rateLimitExceededResponse(request, isProd, body);
+}
+
+// A missing binding is a constant for the isolate's lifetime, so log it once per limiter to surface
+// the misconfiguration without flooding logs on every request; limiter throws are exceptional and
+// logged each time. Structured single-line JSON, in the same shape as request-log.ts entries.
+const loggedMissingBinding = new Set<string>();
+
+function logRateLimitDegrade(
+  event: 'missing_binding' | 'limiter_error',
+  name: string,
+  error?: unknown,
+): void {
+  try {
+    if (event === 'missing_binding') {
+      if (loggedMissingBinding.has(name)) return;
+      loggedMissingBinding.add(name);
+    }
+    console.warn(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'warn',
+        event: `rate_limit_${event}`,
+        limiter: name,
+        ...(error !== undefined ? { error: String(error) } : {}),
+      }),
+    );
+  } catch {
+    // Logging must not affect rate-limiting behaviour.
+  }
 }
 
 export function rateLimitExceededResponse(

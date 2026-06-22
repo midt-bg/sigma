@@ -40,6 +40,12 @@ const SORTS: Record<CompanySort, { col: string; dir: 'asc' | 'desc' }> = lookup(
   name: { col: 'name', dir: 'asc' },
 });
 
+// Collapse an untrusted ?sort value to a known key before it reaches any cache key. See
+// normalizeContractSort in contracts.ts for the rationale.
+export function normalizeCompanySort(value: string | null | undefined): CompanySort {
+  return value != null && value in SORTS ? (value as CompanySort) : 'won';
+}
+
 const COUNT_BUCKETS: Record<string, string> = lookup({
   '1': 'contracts = 1',
   '2-5': 'contracts BETWEEN 2 AND 5',

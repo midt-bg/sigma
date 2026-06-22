@@ -1,4 +1,4 @@
-import { streamContractsCsv, type ContractSort } from '@sigma/db';
+import { streamContractsCsv, normalizeContractSort } from '@sigma/db';
 import type { Route } from './+types/contracts.csv';
 import { servedCsvExport } from '../lib/csv-export';
 import { getMulti } from '../lib/filters';
@@ -6,7 +6,7 @@ import { getMulti } from '../lib/filters';
 // Resource route (no default export): a streamed text/csv Response honouring the list filters.
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
-  const sort = (sp.get('sort') as ContractSort) || 'value-desc';
+  const sort = normalizeContractSort(sp.get('sort'));
   const params = {
     sort,
     years: getMulti(sp, 'year'),
@@ -22,7 +22,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     env: context.cloudflare.env,
     request,
     route: 'contracts',
-    sort,
     params,
     stream: () => streamContractsCsv(context.cloudflare.env.DB, params),
   });

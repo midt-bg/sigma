@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money } from '@sigma/shared';
-import { getAuthorityFacets, listAuthorities, type AuthoritySort } from '@sigma/db';
+import { getAuthorityFacets, listAuthorities, normalizeAuthoritySort } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -35,7 +35,7 @@ export function headers() {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const params = {
-    sort: (sp.get('sort') as AuthoritySort) || 'spent',
+    sort: normalizeAuthoritySort(sp.get('sort')),
     types: getMulti(sp, 'type'),
     sectors: getMulti(sp, 'sector'),
     years: getMulti(sp, 'year'),

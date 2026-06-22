@@ -35,6 +35,14 @@
         "namespace_id": "1002",
         "simple": { "limit": 30, "period": 60 },
       },
+      {
+        "name": "SEARCH_RATE_LIMITER",
+        "type": "ratelimit",
+        // /search runs a COUNT + per-group ranked FTS MATCH per request and is uncacheable in
+        // practice (an attacker varies ?q to force a miss every time), so it needs its own limit.
+        "namespace_id": "1003",
+        "simple": { "limit": 20, "period": 60 },
+      },
     ],
   },
   "observability": {
