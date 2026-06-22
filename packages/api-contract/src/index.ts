@@ -423,8 +423,8 @@ export interface CompetitionTotals {
   contracts: number; // contracts with a known offer count (the denominator)
   singleOffer: number; // of those, awarded on a single offer (bids_received = 1)
   singleOfferShare: number; // 0 to 1, by contract count
-  valueEur: number; // clean value (value_flag = 'ok', amount_eur > 0) over known-offer contracts
-  singleOfferValueEur: number; // clean value of the single-offer subset
+  valueEur: number; // value over known-offer contracts (amount_eur IS NOT NULL, the site-wide basis)
+  singleOfferValueEur: number; // value of the single-offer subset (same basis)
   singleOfferValueShare: number; // 0 to 1, by value
 }
 
