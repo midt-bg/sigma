@@ -13,9 +13,14 @@ overrides:
   #   vite        — server.fs.deny bypass (GHSA-fx2h-pf6j-xcff): v7 via @react-router/dev→
   #                 vite-node, v8 via apps/web + vitest. Patched per-major to avoid forcing
   #                 vite-node (which needs v7) onto v8.
+  #   undici <7.28.0 — three HIGH advisories via wrangler→miniflare: SOCKS5 TLS-cert bypass
+  #                 (GHSA-vmh5-mc38-953g), WebSocket DoS via fragment-count bypass
+  #                 (GHSA-vxpw-j846-p89q), cross-origin routing via SOCKS5 pool reuse
+  #                 (GHSA-hm92-r4w5-c3mj). miniflare's local fetch only; never ships to the Worker.
   ws: "^8.21.0"
   vite@7: "^7.3.5"
   vite@8: "^8.0.16"
+  undici: "^7.28.0"
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   "@babel/core": "^7.29.6"
