@@ -10,6 +10,7 @@ import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
+import { withDbRetry } from '../lib/retry';
 
 export function meta({ data }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
@@ -25,14 +26,17 @@ export function headers() {
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
-  if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
+  const eik = params.eik;
+  if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
-  const [authority, coverage] = await Promise.all([
-    getAuthority(db, authorityIdFromSlug(params.eik)),
-    getCoverageMeta(db),
-  ]);
-  if (!authority) throw new Response('Not Found', { status: 404 });
-  return { authority, coverage };
+  return withDbRetry(async () => {
+    const [authority, coverage] = await Promise.all([
+      getAuthority(db, authorityIdFromSlug(eik)),
+      getCoverageMeta(db),
+    ]);
+    if (!authority) throw new Response('Not Found', { status: 404 });
+    return { authority, coverage };
+  });
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
@@ -157,6 +161,13 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
         <div className="two-col">
           <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
             <table>
+              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Сектор (CPV)</th>
+                  <th scope="col">Стойност и дял</th>
+                </tr>
+              </thead>
               <tbody>
                 {a.sectors.map((s) => (
                   <tr key={s.code}>
@@ -199,7 +210,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </span>
           }
         >
-          <div className="tabset">
+          <div className="tabset" role="radiogroup" aria-label="Подреждане на договорите">
             <input
               type="radio"
               name="authority-contracts"
@@ -214,13 +225,27 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               className="tab-input"
             />
             <div className="tab-labels">
-              <label htmlFor="authority-recent">Най-нови</label>
-              <label htmlFor="authority-top">Най-големи по стойност</label>
+              <label id="tab-authority-recent" htmlFor="authority-recent">
+                Най-нови
+              </label>
+              <label id="tab-authority-top" htmlFor="authority-top">
+                Най-големи по стойност
+              </label>
             </div>
-            <div className="tab-panel" data-tab="recent">
+            <div
+              className="tab-panel"
+              data-tab="recent"
+              role="group"
+              aria-labelledby="tab-authority-recent"
+            >
               <ContractMiniTable items={a.recentContracts} counterparty="bidder" />
             </div>
-            <div className="tab-panel" data-tab="top">
+            <div
+              className="tab-panel"
+              data-tab="top"
+              role="group"
+              aria-labelledby="tab-authority-top"
+            >
               <ContractMiniTable items={a.topContracts} counterparty="bidder" />
             </div>
           </div>

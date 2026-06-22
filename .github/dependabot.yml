@@ -1,0 +1,19 @@
+# Keeps the SHA-pinned GitHub Actions in .github/workflows/ fresh. Dependabot rewrites the pinned
+# commit SHA and updates the trailing `# vX.Y.Z` comment, so we keep the supply-chain safety of
+# pinning without the pins silently going stale. Scoped to github-actions only — the npm/pnpm
+# dependency surface is handled separately (and the security-sensitive @babel/core pin is a manual
+# override in pnpm-workspace.yaml).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # One batched PR per week instead of one per action, so routine pin bumps stay low-noise.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+      include: scope

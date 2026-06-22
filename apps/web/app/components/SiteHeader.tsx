@@ -155,6 +155,7 @@ export function SiteHeader() {
         <form
           className="search-drawer-form"
           role="search"
+          aria-label="Търсене в сайта"
           action="/search"
           method="get"
           onSubmit={(e) => {

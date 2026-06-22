@@ -102,7 +102,7 @@ export function FilterRail({
         ))}
         {groups.map((g) => {
           return (
-            <details className="filter-group" key={g.key} open>
+            <details className="filter-group" key={g.key} open role="group" aria-label={g.label}>
               <summary>
                 {g.label}
                 {g.selected.length > 0 && (
