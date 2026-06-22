@@ -64,7 +64,11 @@ export async function fetchEopDay(
         const res = await fetchImpl(url);
         if (!res.ok) return { label, error: `HTTP ${res.status}` };
         const body = await res.text();
-        if (body.length > maxBytes) {
+        // Use UTF-8 byte count — body.length is UTF-16 code units, which undercount Cyrillic chars
+        // by ~2× (each Cyrillic char is 2 UTF-8 bytes, 1 UTF-16 unit), so the cap fires at ~2×
+        // the intended limit when using body.length directly (review #80, Bozhidar).
+        const bodyBytes = new TextEncoder().encode(body).length;
+        if (bodyBytes > maxBytes) {
           // Oversized untrusted file: do NOT parse it. Parsing the full body would defeat the cap
           // (the model would still see everything) and risks a memory blow-up on a huge JSON array.
           // Surface a soft error instead. (review #80 — the cap was previously a no-op.)
