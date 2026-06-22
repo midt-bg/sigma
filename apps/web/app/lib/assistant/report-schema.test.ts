@@ -235,6 +235,148 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
   });
 });
 
+describe('guardrail E2 — model-controlled labels, title, and headers (review #80, M1)', () => {
+  it('rejects a material number in a totals label', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'totals',
+          items: [
+            {
+              label: 'Надплатени 12 млрд. лв.',
+              ref: { resultId: 'R2', row: 0, col: 'total_eur' },
+              format: 'money',
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/material number in totals label/);
+  });
+
+  it('rejects a material number in a facts term', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'facts',
+          items: [
+            { term: 'Общо 1 234 567 лв', ref: { resultId: 'R2', row: 0, col: 'total_eur' } },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/material number in facts term/);
+  });
+
+  it('rejects a material number in the report title', () => {
+    const out = bindReport(
+      { title: 'Справка за 12 млрд. лв.', question: 'въпрос', blocks: [] },
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/material number in title/);
+  });
+
+  it('rejects a material number in a table column header', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            { key: 'authority', header: 'Топ 12 000 институции', format: 'text' },
+            { key: 'spent_eur', header: '€', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/material number in column header/);
+  });
+
+  it('sanitizes markup in totals label and facts term', () => {
+    const poisoned: QueryResult[] = [{ handle: 'R2', columns: ['total_eur'], rows: [[42]] }];
+    const out = bindReport(
+      {
+        title: 'Справка',
+        question: 'въпрос',
+        blocks: [
+          {
+            type: 'totals',
+            items: [
+              {
+                label: '<b>Общо</b>',
+                ref: { resultId: 'R2', row: 0, col: 'total_eur' },
+                format: 'money',
+              },
+            ],
+          },
+        ],
+      },
+      poisoned,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'totals') {
+      expect(out.report.blocks[0].items[0]!.label).toBe('Общо');
+    }
+  });
+});
+
+describe('null values in chart blocks (review #80)', () => {
+  it('drops bar points with a null numeric value instead of charting them as zero', () => {
+    const r: QueryResult[] = [
+      {
+        handle: 'R1',
+        columns: ['period', 'amount_eur'],
+        rows: [
+          ['Q1', 1000],
+          ['Q2', null], // value_suspect — should be dropped
+          ['Q3', 2000],
+        ],
+      },
+    ];
+    const out = bindReport(
+      emit([{ type: 'bar', resultId: 'R1', labelCol: 'period', valueCol: 'amount_eur' }]),
+      r,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'bar') {
+      const pts = out.report.blocks[0].points;
+      expect(pts).toHaveLength(2); // Q2 (null) dropped
+      expect(pts.map((p) => p.label)).toEqual(['Q1', 'Q3']);
+    }
+  });
+
+  it('drops timeseries points with a null value', () => {
+    const r: QueryResult[] = [
+      {
+        handle: 'R1',
+        columns: ['month', 'total'],
+        rows: [
+          ['2024-01', 500],
+          ['2024-02', null],
+        ],
+      },
+    ];
+    const out = bindReport(
+      emit([
+        { type: 'timeseries', resultId: 'R1', periodCol: 'month', valueCol: 'total' },
+      ]),
+      r,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'timeseries') {
+      expect(out.report.blocks[0].points).toHaveLength(1);
+      expect(out.report.blocks[0].points[0]!.period).toBe('2024-01');
+    }
+  });
+});
+
 describe('findProseNumbers', () => {
   it('flags currency, magnitude words, grouped numbers and big integers', () => {
     expect(findProseNumbers('общо 1 234 567 лв')).not.toHaveLength(0);

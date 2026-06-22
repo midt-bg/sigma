@@ -249,21 +249,42 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
       case 'totals':
         blocks.push({
           type: 'totals',
-          items: b.items.map((it) => ({
-            label: it.label,
-            value: sanitizeCell(cell(it.ref, at)),
-            format: it.format,
-          })),
+          items: b.items.map((it) => {
+            const nums = findProseNumbers(it.label);
+            if (nums.length)
+              errors.push(
+                `${at}: material number in totals label — put it in a value slot (${nums.join(', ')})`,
+              );
+            return {
+              label: sanitizeProse(it.label),
+              value: sanitizeCell(cell(it.ref, at)),
+              format: it.format,
+            };
+          }),
         });
         break;
       case 'facts':
         blocks.push({
           type: 'facts',
-          items: b.items.map((it) => ({
-            term: it.term,
-            value: sanitizeCell(cell(it.ref, at)),
-            sub: it.sub,
-          })),
+          items: b.items.map((it) => {
+            const numsT = findProseNumbers(it.term);
+            if (numsT.length)
+              errors.push(
+                `${at}: material number in facts term — put it in a value slot (${numsT.join(', ')})`,
+              );
+            if (it.sub) {
+              const numsS = findProseNumbers(it.sub);
+              if (numsS.length)
+                errors.push(
+                  `${at}: material number in facts sub — put it in a value slot (${numsS.join(', ')})`,
+                );
+            }
+            return {
+              term: sanitizeProse(it.term),
+              value: sanitizeCell(cell(it.ref, at)),
+              sub: it.sub != null ? sanitizeProse(it.sub) : undefined,
+            };
+          }),
         });
         break;
       case 'table': {
@@ -275,11 +296,18 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
           ...b.columns.flatMap((c) => (c.link ? [c.link.idCol] : [])),
         ];
         if (r && requireCols(r, needed, at)) {
+          for (const col of b.columns) {
+            const nums = findProseNumbers(col.header);
+            if (nums.length)
+              errors.push(
+                `${at}: material number in column header "${col.key}" (${nums.join(', ')})`,
+              );
+          }
           const idx = b.columns.map((c) => r.columns.indexOf(c.key));
           const linkIdx = b.columns.map((c) => (c.link ? r.columns.indexOf(c.link.idCol) : -1));
           blocks.push({
             type: 'table',
-            columns: b.columns,
+            columns: b.columns.map((c) => ({ ...c, header: sanitizeProse(c.header) })),
             rows: r.rows.map((row) => ({
               cells: idx.map((i) => sanitizeCell(row[i] ?? null)),
               links: linkIdx.map((i) => {
@@ -296,13 +324,12 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
         if (r && requireCols(r, [b.labelCol, b.valueCol], at)) {
           const labels = colValues(r, b.labelCol);
           const vals = colValues(r, b.valueCol);
-          blocks.push({
-            type: 'bar',
-            points: labels.map((label, i) => ({
-              label: sanitizeCell(label),
-              value: asNumber(vals[i] ?? null) ?? 0,
-            })),
-          });
+          const points: { label: string | number | null; value: number }[] = [];
+          for (let i = 0; i < labels.length; i++) {
+            const value = asNumber(vals[i] ?? null);
+            if (value !== null) points.push({ label: sanitizeCell(labels[i] ?? null), value });
+          }
+          blocks.push({ type: 'bar', points });
         }
         break;
       }
@@ -312,14 +339,17 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
           const from = colValues(r, b.fromCol);
           const to = colValues(r, b.toCol);
           const val = colValues(r, b.valueCol);
-          blocks.push({
-            type: 'flows',
-            edges: from.map((f, i) => ({
-              from: sanitizeProse(String(f ?? '')),
-              to: sanitizeProse(String(to[i] ?? '')),
-              valueEur: asNumber(val[i] ?? null) ?? 0,
-            })),
-          });
+          const edges: { from: string; to: string; valueEur: number }[] = [];
+          for (let i = 0; i < from.length; i++) {
+            const valueEur = asNumber(val[i] ?? null);
+            if (valueEur !== null)
+              edges.push({
+                from: sanitizeProse(String(from[i] ?? '')),
+                to: sanitizeProse(String(to[i] ?? '')),
+                valueEur,
+              });
+          }
+          blocks.push({ type: 'flows', edges });
         }
         break;
       }
@@ -328,13 +358,12 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
         if (r && requireCols(r, [b.periodCol, b.valueCol], at)) {
           const period = colValues(r, b.periodCol);
           const vals = colValues(r, b.valueCol);
-          blocks.push({
-            type: 'timeseries',
-            points: period.map((p, i) => ({
-              period: sanitizeCell(p),
-              value: asNumber(vals[i] ?? null) ?? 0,
-            })),
-          });
+          const points: { period: string | number | null; value: number }[] = [];
+          for (let i = 0; i < period.length; i++) {
+            const value = asNumber(vals[i] ?? null);
+            if (value !== null) points.push({ period: sanitizeCell(period[i] ?? null), value });
+          }
+          blocks.push({ type: 'timeseries', points });
         }
         break;
       }
@@ -342,11 +371,16 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
   });
 
   if (!input.title.trim()) errors.push('report title is empty');
+  const titleNums = findProseNumbers(input.title);
+  if (titleNums.length)
+    errors.push(
+      `report title: material number in title — put it in a value block (${titleNums.join(', ')})`,
+    );
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     report: {
-      title: input.title.trim(),
+      title: sanitizeProse(input.title.trim()),
       question: sanitizeProse(input.question),
       blocks,
       watermark: 'ai-generated',
