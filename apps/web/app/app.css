@@ -1390,6 +1390,16 @@ a.flag:hover {
   }
 }
 
+/* The same launcher hard-codes its fill and 5px ring as pure CSS `red`, which clashes with
+   Sigma's brick-red brand accent — two different reds on screen at once (issue #82). Repaint it
+   with the brand accent so the chrome reads as one palette; the darker accent also lifts the
+   white glyph's contrast a touch. The `html` prefix outranks the vendored rule by specificity,
+   so the pinned stylesheet stays untouched and no load-order `!important` is needed. */
+html .a11y-tools__button {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Stacked horizontal bar */
 .hbar {
   display: flex;
