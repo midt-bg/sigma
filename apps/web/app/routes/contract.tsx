@@ -383,6 +383,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           >
             <div className="table-wrap">
               <table className="lot-table">
+                <caption className="sr-only">Обособени позиции по преписката</caption>
                 <thead>
                   <tr>
                     <th scope="col" style={{ width: 60 }}>
