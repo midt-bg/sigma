@@ -45,6 +45,7 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
     <>
       <div className="table-wrap tbl-cards">
         <table>
+          <caption className="sr-only">Поръчки с една оферта</caption>
           <thead>
             <tr>
               <th scope="col">Дата</th>
@@ -131,7 +132,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           }
           lede="СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация, без тълкуване. Зад всяко число стои конкретен договор — можеш да го отвориш."
         >
-          <form className="hero-search" role="search" action="/search">
+          <form
+            className="hero-search"
+            role="search"
+            aria-label="Търсене на началната страница"
+            action="/search"
+          >
             <input
               type="search"
               name="q"
@@ -202,6 +208,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </p>
         <div className="table-wrap">
           <table>
+            <caption className="sr-only">
+              Топ печеливши компании по стойност на спечелените договори
+            </caption>
             <thead>
               <tr>
                 <th scope="col">#</th>
@@ -260,7 +269,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           подредени по време или по стойност.
         </p>
         <SingleOfferPortion valueEur={singleOffer.valueEur} totalEur={totals.valueEur} />
-        <div className="tabset">
+        <div
+          className="tabset"
+          role="radiogroup"
+          aria-label="Подреждане на поръчките с една оферта"
+        >
           <input
             type="radio"
             name="single-offer"
@@ -270,16 +283,20 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           />
           <input type="radio" name="single-offer" id="so-top" className="tab-input" />
           <div className="tab-labels">
-            <label htmlFor="so-recent">Скорошни</label>
-            <label htmlFor="so-top">Най-големи по стойност</label>
+            <label id="tab-so-recent" htmlFor="so-recent">
+              Скорошни
+            </label>
+            <label id="tab-so-top" htmlFor="so-top">
+              Най-големи по стойност
+            </label>
           </div>
-          <div className="tab-panel" data-tab="recent">
+          <div className="tab-panel" data-tab="recent" role="group" aria-labelledby="tab-so-recent">
             <SingleOfferTable
               items={recentSingleOffer}
               allHref="/contracts?bids=1&sort=date-desc"
             />
           </div>
-          <div className="tab-panel" data-tab="top">
+          <div className="tab-panel" data-tab="top" role="group" aria-labelledby="tab-so-top">
             <SingleOfferTable items={topSingleOffer} allHref="/contracts?bids=1&sort=value-desc" />
           </div>
         </div>
