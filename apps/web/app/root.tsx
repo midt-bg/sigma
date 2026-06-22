@@ -22,11 +22,15 @@ import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { withDbRetry } from './lib/retry';
-import './app.css';
+import stylesheet from './app.css?url';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
 // Brand favicons (white „С“ on the deep-red tile) live in /public; declare them so the head is explicit.
 export const links: Route.LinksFunction = () => [
+  // Link the global stylesheet explicitly (instead of a side-effect import) so it is a real
+  // <link> in the document head in dev too, not injected by JS after first paint - which avoids
+  // a flash of unstyled content on a full reload. In production both paths emit the same <link>.
+  { rel: 'stylesheet', href: stylesheet },
   { rel: 'icon', href: '/favicon.ico', sizes: '48x48' },
   { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
   { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16.png' },
