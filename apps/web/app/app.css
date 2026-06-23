@@ -2216,11 +2216,11 @@ details.row .body .signal .why {
   stroke-width: 1;
 }
 .trend-svg .area {
-  fill: oklch(0.62 0.13 250 / 0.16);
+  fill: color-mix(in oklch, var(--ink) 16%, transparent);
 }
 .trend-svg .line {
   fill: none;
-  stroke: oklch(0.5 0.16 250);
+  stroke: var(--ink);
   stroke-width: 1.5;
 }
 .trend-svg .label {
@@ -2229,13 +2229,13 @@ details.row .body .signal .why {
 }
 .trend-svg .line-partial {
   fill: none;
-  stroke: oklch(0.5 0.16 250);
+  stroke: var(--ink);
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
 .trend-svg .dot-partial {
   fill: #fff;
-  stroke: oklch(0.5 0.16 250);
+  stroke: var(--ink);
   stroke-width: 1.5;
 }
 .trend-svg .label-partial {
