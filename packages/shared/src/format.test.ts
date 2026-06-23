@@ -7,6 +7,7 @@ import {
   isNaturalPersonProfileName,
   longDate,
   money,
+  moneyBare,
   monthYear,
   pct,
   periodRange,
@@ -47,6 +48,23 @@ describe('money', () => {
   });
   it('keeps a sign for negative deltas', () => {
     expect(money(-1500)).toBe(`−2${NBSP}хил.${NBSP}€`);
+  });
+});
+
+describe('moneyBare', () => {
+  it('formats like money() but without the trailing € unit', () => {
+    expect(moneyBare(640)).toBe('640');
+    expect(moneyBare(412_000)).toBe(`412${NBSP}хил.`);
+    expect(moneyBare(187_000_000)).toBe(`187${NBSP}млн.`);
+    expect(moneyBare(4.58e9)).toBe(`4,58${NBSP}млрд.`);
+  });
+  it('returns a dash for absent values', () => {
+    expect(moneyBare(null)).toBe('—');
+    expect(moneyBare(undefined)).toBe('—');
+    expect(moneyBare(NaN)).toBe('—');
+  });
+  it('keeps a sign for negative values', () => {
+    expect(moneyBare(-1500)).toBe(`−2${NBSP}хил.`);
   });
 });
 

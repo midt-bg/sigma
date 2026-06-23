@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, date, money } from '@sigma/shared';
+import { count, date, money, moneyBare } from '@sigma/shared';
 import {
   contractsSummary,
   getContractFacets,
@@ -226,7 +226,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                         Процедура · Дата
                       </th>
                       <th scope="col" className="num">
-                        Стойност
+                        Стойност (€)
                       </th>
                     </tr>
                   </thead>
@@ -261,9 +261,9 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           <br />
                           {date(c.signedAt)}
                         </td>
-                        <td className="money" data-label="Стойност">
+                        <td className="money" data-label="Стойност (€)">
                           {c.valueEur != null ? (
-                            money(c.valueEur)
+                            moneyBare(c.valueEur)
                           ) : (
                             <span className="suspect">данните се проверяват</span>
                           )}

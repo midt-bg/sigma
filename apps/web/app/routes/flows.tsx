@@ -1,5 +1,5 @@
 import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
-import { count, money } from '@sigma/shared';
+import { count, moneyBare } from '@sigma/shared';
 import { CPV_SECTORS } from '@sigma/config';
 import { getFlows } from '@sigma/db';
 import type { Route } from './+types/flows';
@@ -193,7 +193,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
                     <th scope="col">Институция</th>
                     <th scope="col">Компания</th>
                     <th scope="col" className="num">
-                      Сума
+                      Сума (€)
                     </th>
                     <th scope="col" className="num">
                       Договори
@@ -212,8 +212,8 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
                       <td data-label="Компания">
                         <Link to={`/companies/${p.bidderSlug}`}>{p.bidderDisplayName}</Link>
                       </td>
-                      <td className="money" data-label="Сума">
-                        {money(p.wonEur)}
+                      <td className="money" data-label="Сума (€)">
+                        {moneyBare(p.wonEur)}
                       </td>
                       <td className="money" data-label="Договори">
                         {count(p.contracts)}
