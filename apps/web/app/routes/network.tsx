@@ -1,4 +1,4 @@
-import { Form, Link, useSubmit } from 'react-router';
+import { Form, Link, useNavigation, useSubmit } from 'react-router';
 import { count, money } from '@sigma/shared';
 import {
   authorityIdFromSlug,
@@ -65,6 +65,7 @@ interface LinkRow {
 export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
   const submit = useSubmit();
+  const navigating = useNavigation().state !== 'idle';
   const centerValue = data.center
     ? `${data.center.kind === 'authority' ? 'a' : 'c'}:${data.center.slug}`
     : '';
@@ -135,6 +136,10 @@ export default function Network({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
         </Form>
+
+        <p className="sr-only" role="status">
+          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+        </p>
 
         {data.center && data.nodes.length >= 2 ? (
           <>
