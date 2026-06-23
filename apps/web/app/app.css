@@ -415,6 +415,13 @@ code,
     display: inline-flex;
   }
 
+  /* The drawer (z-31) and backdrop (z-30) are positioned siblings in the root context only if the
+     header doesn't trap the drawer: drop the header's stacking context on mobile so the open menu
+     sits above the scrim (otherwise .site-header{z-index:20} keeps the drawer under the backdrop). */
+  .site-header {
+    z-index: auto;
+  }
+
   .nav-backdrop {
     display: block;
     position: fixed;
