@@ -2331,6 +2331,104 @@ details.row .body .signal .why {
   cursor: pointer;
 }
 
+/* Relationship graph (/network): static styling only; node fill and edge width are computed inline. */
+.network-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.network-svg .edge {
+  stroke: #d8d6cf;
+}
+.network-svg .node {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.network-svg .node-label {
+  fill: var(--ink, #111);
+  font: 11px var(--font-mono, monospace);
+}
+.net-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font: 11px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.net-legend .key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+}
+.net-legend .key.center,
+.net-legend .key.authority {
+  border-radius: 50%;
+}
+.net-legend .key.center {
+  background: var(--accent);
+}
+.net-legend .key.authority {
+  background: var(--ink);
+}
+.net-legend .key.company {
+  border-radius: 2px;
+  background: var(--ink-mid);
+}
+/* Sankey-style: let the fixed-width graph scroll horizontally on phones instead of squashing. */
+@media (max-width: 760px) {
+  .flow-scroll .network-svg {
+    min-width: 700px;
+  }
+}
+
+/* Spending trend (/trends): static styling; the area and line path data are computed inline. */
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.trend-svg .grid {
+  stroke: #eceae4;
+  stroke-width: 1;
+}
+.trend-svg .area {
+  fill: color-mix(in oklch, var(--ink) 16%, transparent);
+}
+.trend-svg .line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.trend-svg .label {
+  font: 11px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
+.trend-svg .line-partial {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.trend-svg .dot-partial {
+  fill: #fff;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.trend-svg .label-partial {
+  font: 10px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
+
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
 .map-wrap svg {
   width: 100%;
