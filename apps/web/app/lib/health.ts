@@ -8,9 +8,17 @@ export interface HealthPayload {
 
 export async function pingDb(db: D1Database): Promise<HealthDbStatus> {
   try {
-    await db.prepare('SELECT 1 AS ok').first();
+    await db.prepare('SELECT 1').first();
     return 'ok';
-  } catch {
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'error',
+        event: 'health_db_ping_failed',
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
     return 'error';
   }
 }

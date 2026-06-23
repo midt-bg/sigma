@@ -16,7 +16,11 @@ describe('pingDb', () => {
   });
 
   it('returns error when D1 throws', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await pingDb(mockDb(null, true))).toBe('error');
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('health_db_ping_failed');
+    errorSpy.mockRestore();
   });
 });
 

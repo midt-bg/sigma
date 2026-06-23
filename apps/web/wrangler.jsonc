@@ -43,6 +43,13 @@
         "namespace_id": "1003",
         "simple": { "limit": 20, "period": 60 },
       },
+      {
+        "name": "HEALTH_RATE_LIMITER",
+        "type": "ratelimit",
+        // /health does a D1 read on every request; cap abuse without blocking normal uptime probes.
+        "namespace_id": "1004",
+        "simple": { "limit": 60, "period": 60 },
+      },
     ],
   },
   "observability": {

@@ -288,6 +288,7 @@ gate-а. Това е стъпката, която хората забравят.
 > не се нуждае от нищо тук — `sigma-etl` е cron-only без публична повърхност.
 >
 > **Readiness probe.** `GET /health` връща `{ ok, ts, db }` — лек D1 ping (`SELECT 1`), без кеш.
+> Защитен от `HEALTH_RATE_LIMITER` (60/60s на IP); D1 грешки се логват в Workers logs.
 > Deploy workflow-ът (`.github/workflows/deploy.yml`) прави smoke check след web deploy. За
 > Access-заключени URL-и задайте `CF_ACCESS_CLIENT_ID` и `CF_ACCESS_CLIENT_SECRET` като Environment
 > secrets (service token с достъп до staging/production). Външни uptime монитори могат да ползват
