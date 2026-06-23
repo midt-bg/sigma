@@ -149,7 +149,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         label="Накратко"
         totals={[
           { num: count(totals.contracts), label: 'Договори и обособени позиции' },
-          { num: money(totals.valueEur), label: 'Обща стойност на договорите' },
+          { num: moneyBare(totals.valueEur), label: 'Обща стойност на договорите (€)' },
           { num: count(totals.authorities), label: 'Институции възложители' },
           { num: count(totals.bidders), label: 'Компании изпълнители' },
         ]}

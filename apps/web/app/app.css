@@ -871,9 +871,11 @@ main.narrow {
 }
 .totals .num {
   display: block;
-  font: 400 36px/1 var(--font-serif);
+  /* Scale down on narrower viewports so the widest value ("51,6 млрд.") never overruns its cell. */
+  font: 400 clamp(26px, 2.8vw, 36px) / 1 var(--font-serif);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  white-space: nowrap;
   color: var(--ink);
 }
 .totals .label {
@@ -884,12 +886,13 @@ main.narrow {
   text-transform: uppercase;
   color: var(--ink-soft);
 }
-@media (max-width: 760px) {
+@media (max-width: 960px) {
   .totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .totals .cell:nth-child(odd) {
     border-right: 1px solid var(--rule);
+    padding-left: 0;
   }
   .totals .cell:nth-child(even) {
     border-right: 0;
@@ -1592,21 +1595,33 @@ details.row .body .signal .why {
   .tiles {
     grid-template-columns: repeat(2, 1fr);
   }
+  .tile:nth-child(2n + 1) {
+    padding-left: 0;
+  }
+  .tile:nth-child(2n) {
+    border-right: 0;
+  }
 }
 @media (max-width: 560px) {
   .tiles {
     grid-template-columns: 1fr;
   }
+  .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
 }
 .tile {
   border-bottom: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
-  padding: var(--s-5) var(--s-5) var(--s-6) 0;
+  padding: var(--s-5) var(--s-5) var(--s-6) var(--s-5);
 }
-.tile + .tile {
-  padding-left: var(--s-5);
+/* Column-aware dividers: the grid wraps to 2×2 (and 1-col), so the leftmost tile of each row sits
+   flush and the rightmost has no divider — independent of how many rows the tiles wrap into. */
+.tile:nth-child(4n + 1) {
+  padding-left: 0;
 }
-.tile:last-child {
+.tile:nth-child(4n) {
   border-right: 0;
 }
 .tile .kicker {
@@ -2761,6 +2776,9 @@ tbody td,
   }
   .totals .cell + .cell {
     padding-left: var(--s-4);
+  }
+  .totals .cell:nth-child(odd) {
+    padding-left: 0;
   }
   .totals .num {
     font-size: 28px;
