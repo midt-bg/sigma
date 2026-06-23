@@ -13,6 +13,8 @@ export * from './authorities';
 export * from './contracts';
 export * from './flows';
 export * from './network';
+export * from './trend';
+export * from './regions';
 export * from './search';
 export * from './details';
 export * from './sitemaps';

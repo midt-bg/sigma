@@ -1,12 +1,12 @@
 import { Link } from 'react-router';
-import { count, longDate, money, plural, signedPct } from '@sigma/shared';
+import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
-import { Chip, Flag, Section } from '../components/ui';
+import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -218,6 +218,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 {c.bidder.eik ? (
                   <>
                     ЕИК <span className="mono">{c.bidder.eik}</span>
+                    <ExternalEikLink eik={c.bidder.eik} />
                   </>
                 ) : (
                   'непотвърден ЕИК'
@@ -257,6 +258,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <>
                       {' '}
                       · ЕИК <span className="mono">{c.subcontractor.eik}</span>
+                      {/^\d{9}(\d{4})?$/.test(c.subcontractor.eik) && (
+                        <ExternalEikLink eik={c.subcontractor.eik} />
+                      )}
                     </>
                   )}
                   {c.subcontractor.valueEur != null && <> · {money(c.subcontractor.valueEur)}</>}
@@ -392,10 +396,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <th scope="col">Участък</th>
                     <th scope="col">Изпълнител</th>
                     <th scope="col" className="num">
-                      Прогнозна
+                      Прогнозна (€)
                     </th>
                     <th scope="col" className="num">
-                      При сключване
+                      При сключване (€)
                     </th>
                   </tr>
                 </thead>
@@ -424,9 +428,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                         )}
                       </td>
                       <td className="money">
-                        {l.estimatedEur != null ? money(l.estimatedEur) : '—'}
+                        {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
                       </td>
-                      <td className="money">{l.signingEur != null ? money(l.signingEur) : '—'}</td>
+                      <td className="money">
+                        {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -492,7 +498,6 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               </ul>
             </>
           )}
-
         </Section>
       </main>
     </>

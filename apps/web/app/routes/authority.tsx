@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, money, pct, periodRange, plural } from '@sigma/shared';
+import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import { authorityIdFromSlug, getAuthority } from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -115,7 +115,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   <th scope="col">#</th>
                   <th scope="col">Компания</th>
                   <th scope="col" className="num">
-                    Спечелено
+                    Спечелено (€)
                   </th>
                   <th scope="col" className="num">
                     Договори
@@ -138,8 +138,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                         </>
                       )}
                     </td>
-                    <td className="money" data-label="Спечелено">
-                      {money(co.wonEur)}
+                    <td className="money" data-label="Спечелено (€)">
+                      {moneyBare(co.wonEur)}
                     </td>
                     <td className="money" data-label="Договори">
                       {count(co.contracts)}
