@@ -20,7 +20,6 @@ const ANALYTICS_LINKS = [
   { href: '/flows', title: 'Потоци', desc: 'Парите от възложители към изпълнители.' },
   { href: '/map', title: 'Карта', desc: 'Разходи по области.' },
   { href: '/trends', title: 'Тренд', desc: 'Разходи във времето.' },
-  { href: '/network', title: 'Мрежа', desc: 'Връзки около институция или фирма.' },
   { href: '/competition', title: 'Конкуренция', desc: 'Една оферта и концентрация.' },
 ];
 
