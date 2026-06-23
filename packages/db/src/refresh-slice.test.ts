@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
@@ -943,6 +944,69 @@ describe('refresh-slice EOP base derivation', () => {
         // …and each bidder is enriched from its own data, never cross-contaminated.
         expect(sqliteJson(db, bidderByEik)).toEqual(expectedBidders);
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Same contract_number+unp, two windows, different contractor → the slice re-attributes the contract
+// from bidder A to bidder B. Authority is held constant (same authority_eik) to isolate the bidder move.
+function seedReattrContract(dbPath: string, source: string, eik: string, name: string): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+       published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+       cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+       lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+       awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+       eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+    VALUES
+      (${sqlValue(source)}, 2026, 'eop', '2026-06-08T00:00:00Z', 0, 'DOC-REATTR',
+       '2026-06-02', 'UNP-REATTR', 'TENDER-REATTR', 'open', 'Reattr tender', '45000000',
+       'Construction', 'works', 1000, 'BGN', 'basis', 'lowest', 'Reattr authority', '923456789',
+       'public', 'activity', 'notice', NULL, 'CONTRACT-REATTR', '2026-06-02', 100, 'BGN',
+       'Reattr contract', 0, ${sqlValue(eik)}, ${sqlValue(name)}, 'BG', 'small', 0, 1, 1, 0, 0, 30);`,
+  );
+}
+
+describe('refresh-slice integrity gate', () => {
+  // The slice path rebuilds authority_totals/company_totals scoped to the touched entity set, then the
+  // import calls assertIntegrity. The headline rollup reconciliation holds only if the touched set
+  // includes the OLD entity on re-attribution — otherwise the old rollup row goes stale and the gate
+  // would exit 1 on the daily refresh. refresh-slice captures the old bidder/authority BEFORE the
+  // delete and the new one AFTER the insert; this regression test locks that in.
+  it('stays green after a bidder re-attribution (old + new rollups both rebuilt)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-gate-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
+    const wonEur = (eik: string) =>
+      sqliteJson<{ won_eur: number }>(
+        dbPath,
+        `SELECT won_eur FROM company_totals WHERE bidder_id = 'eik:${eik}'`,
+      )[0]?.won_eur ?? 0;
+    try {
+      initWorkDb(dbPath);
+      // window 1: contract attributed to bidder A
+      seedReattrContract(dbPath, 'eop:contracts:2026-06-02', '111111111', 'Company A');
+      readScript(dbPath, refreshSlicePath);
+      expect(wonEur('111111111')).toBeGreaterThan(0);
+
+      // window 2: same contract_number+unp re-imported with a different contractor → re-attribution
+      resetRawStaging(dbPath);
+      seedReattrContract(dbPath, 'eop:contracts:2026-06-05', '222222222', 'Company B');
+      readScript(dbPath, refreshSlicePath);
+
+      // A's scoped rollup was rebuilt to empty (the value moved), B now carries it…
+      expect(wonEur('111111111')).toBe(0);
+      expect(wonEur('222222222')).toBeGreaterThan(0);
+
+      // …so the gate reconciles on the slice-built DB (rollup check runs; staging self-skips here).
+      const results = assertIntegrity(run, { label: 'test-slice', exit: false });
+      expect(results.every((r) => r.ok)).toBe(true);
+      expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

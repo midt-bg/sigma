@@ -13,6 +13,7 @@ import {
   assertIntegrity,
   checkDateSanity,
   checkEikValidity,
+  checkNonEmptyCorpus,
   checkNoNegativeValues,
   checkRollupReconciliation,
   checkStagingReconciliation,
@@ -95,8 +96,18 @@ describe('reconciliation gate — clean corpus', () => {
     );
     const results = assertIntegrity(run, { label: 'test-clean', exit: false });
     expect(results.every((r) => r.ok)).toBe(true);
-    expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
-    expect(results.find((r) => r.name === 'staging-reconciliation')?.skipped).toBe(false);
+    expect(results.every((r) => !r.warn)).toBe(true); // clean corpus warns about nothing
+    // A SKIP also satisfies `ok`, so assert every check that MUST apply here actually ran — otherwise a
+    // check silently turning into a no-op SKIP would pass this test while the gate is inert for it.
+    for (const nm of [
+      'non-empty-corpus',
+      'rollup-reconciliation',
+      'no-negative-values',
+      'eik-validity',
+      'date-sanity',
+      'staging-reconciliation',
+    ])
+      expect(results.find((r) => r.name === nm)?.skipped, `${nm} must not skip`).toBe(false);
   });
 
   it('rollup reconciliation self-skips before precompute (empty rollups)', () => {
@@ -133,12 +144,44 @@ describe('reconciliation gate — injected violations', () => {
     expect(result.detail).toMatch(/orphan|unattributed/);
   });
 
-  it('no-negative-values catches a negative ok amount_eur', () => {
+  it('no-negative-values catches a negative ok amount_eur (Sigma derivation bug → hard fail)', () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET amount_eur = -100 WHERE id = 'c:1';");
     const result = checkNoNegativeValues(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/negative amount_eur/);
+  });
+
+  it('no-negative-values WARNs (does NOT fail) on a non-ok negative amount_eur (upstream value_low)', () => {
+    const db = track(freshDb());
+    // a value_low row keeps a populated, negative amount_eur that precompute still sums — upstream
+    // source defect (#19–27) Sigma cannot fix, so it is surfaced loudly but must not break the import.
+    sqlite(db, "UPDATE contracts SET value_flag = 'value_low', amount_eur = -5 WHERE id = 'c:1';");
+    const result = checkNoNegativeValues(runner(db));
+    expect(result.ok).toBe(true);
+    expect(result.warn).toBe(true);
+    expect(result.detail).toMatch(/non-'ok'.*negative amount_eur/);
+  });
+
+  it('no-negative-values catches a negative rollup total (after precompute — exercises the rollup branch)', () => {
+    const db = track(freshDb());
+    precompute(db); // build the rollups so the branch actually runs (the ok-amount test does not)
+    sqlite(
+      db,
+      'UPDATE authority_totals SET spent_eur = -1 WHERE authority_id = (SELECT MIN(authority_id) FROM authority_totals);',
+    );
+    const result = checkNoNegativeValues(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/authority_totals\.spent_eur rows are negative/);
+  });
+
+  it('non-empty-corpus fails on an empty corpus (a silent empty ship cannot pass green)', () => {
+    const db = track(freshDb());
+    sqlite(db, 'DELETE FROM contracts;');
+    const result = checkNonEmptyCorpus(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(result.detail).toMatch(/EMPTY corpus/);
   });
 
   it('eik-validity catches eik_valid=1 with a non-numeric eik_normalized', () => {
