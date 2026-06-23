@@ -15,11 +15,15 @@
 // never folded into the epsilon. See docs/integrity-gate.md.
 
 // amount_eur is REAL euros (not integer cents). Summing ~200k euro-valued doubles grouped by
-// authority vs summed flat can differ in the sub-euro tail purely from float reassociation; one
-// euro absorbs that with margin. It cannot mask a real drop: a missing/duplicated/ sign-flipped
-// contract moves a rollup sum by its whole value (≥ thousands), and structural gaps are caught
-// by the exact orphan-row counts below, not by this epsilon.
-const EPS_EUR = 1.0;
+// authority vs summed flat can differ in the tail purely from float reassociation. Worst-case
+// rounding error of a length-N sum is ~(N-1)·u·Σ|xᵢ| with u = 2⁻⁵³; at N≈2e5 and Σ≈5e10 € that is
+// ~1 € per sum, so the rollup-of-subtotals vs flat difference is ~2 € worst case — EPS = 5 € clears
+// it with margin. It cannot mask a real drop: a missing/duplicated/sign-flipped contract moves a
+// sum by its whole value (the lowest kept amount_eur is ≫ 5 €), and structural gaps are caught by
+// the exact orphan-row counts below, not by this epsilon. The bound is analytic; once the gate has
+// run against the real corpus, tighten or confirm it against the observed tail (see
+// docs/integrity-gate.md).
+const EPS_EUR = 5.0;
 
 function num(v) {
   return v === null || v === undefined ? 0 : Number(v);

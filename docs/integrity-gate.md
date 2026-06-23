@@ -54,12 +54,26 @@ site with no per-site branching:
    contracts count. The gate asserts no contract appeared without an eligible candidate
    (`inserted ≤ candidates`) and that a non-empty corpus actually landed.
 
+   **Known blind spot — under-insertion.** `candidates` counts raw eligible rows *before* the
+   cumulative-bucket dedup (the same logical EOP contract recurs across daily buckets), so the
+   `candidates − inserted` gap is large and legitimate, and only `inserted > candidates` or an empty
+   corpus fails. That means **silent under-insertion is not caught here**: if half the eligible
+   contracts were dropped, `inserted ≤ candidates` still holds, and the missing rows are absent from
+   the rollups too, so rollup reconciliation (invariant 1) stays consistent as well. Asserting it
+   exactly needs the dedup drop tracked separately — record `candidates_deduped = COUNT(DISTINCT
+   <domain contract id>)` over the eligible set in `pipeline_stats` and assert
+   `inserted == candidates_deduped`, or rely on **#99 golden totals** (an independent recount of the
+   expected corpus). Tracked as the follow-up; this gate covers over-insertion and empty-corpus.
+
 ## Tolerances (and what is *not* tolerated)
 
-- **The only tolerance is `EPS_EUR = 1.0`** (one euro), for float reassociation when `SUM()`ing the
+- **The only tolerance is `EPS_EUR = 5.0`** (five euros), for float reassociation when `SUM()`ing the
   REAL `amount_eur` column in different group orders (grouped by authority vs summed flat) across
-  ~200k rows. It cannot mask a real drop: a missing / duplicated / sign-flipped contract moves a
-  rollup sum by its whole value (≥ thousands).
+  ~200k rows. Worst-case rounding error of a length-N sum is `~(N-1)·u·Σ|xᵢ|` with `u = 2⁻⁵³`; at
+  `N≈2e5`, `Σ≈5e10 €` that is ~1 € per sum, ~2 € between the two — 5 € clears it with margin. It
+  cannot mask a real drop: a missing / duplicated / sign-flipped contract moves a sum by its whole
+  value (the lowest kept `amount_eur` is ≫ 5 €). The bound is **analytic** — the first real-corpus
+  run should confirm the observed tail sits under it (and tighten if comfortably so).
 - **Structural exclusions are never absorbed into the epsilon.** The unattributed remainder
   (invariant 1) is asserted by **exact row count = 0**, not by a value tolerance.
 - **NULL `signed_at` is allowed** (invariant 4). Many real contracts carry no recorded signing date;
