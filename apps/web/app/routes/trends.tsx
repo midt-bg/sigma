@@ -1,4 +1,4 @@
-import { Form, useSearchParams, useSubmit } from 'react-router';
+import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { TrendYear } from '@sigma/api-contract';
 import { count, money, pct, signedPct } from '@sigma/shared';
 import { CPV_SECTORS } from '@sigma/config';
@@ -45,6 +45,7 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
   const { data, unknownSector } = loaderData;
   const [sp] = useSearchParams();
   const submit = useSubmit();
+  const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
   const yearColumns: Column<TrendYear>[] = [
@@ -116,6 +117,10 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
             <button type="submit">Покажи</button>
           </noscript>
         </Form>
+
+        <p className="sr-only" role="status">
+          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+        </p>
 
         {unknownSector && (
           <Callout variant="warning" title="Непознат филтър">
