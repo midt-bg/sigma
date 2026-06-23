@@ -11,9 +11,11 @@ const CX = W / 2;
 const CY = H / 2;
 const R1 = 150;
 const R2 = 250;
-const CENTER_FILL = 'oklch(0.5 0.18 30)'; // centre
-const AUTH_FILL = 'oklch(0.55 0.13 250)'; // authorities (blue)
-const COMP_FILL = 'oklch(0.6 0.12 150)'; // companies (green)
+// Palette tokens only: the centre is the accent, authorities and companies sit on the ink scale and
+// are told apart by shape (circle vs square) + the legend, not by an off-palette blue/green pair.
+const CENTER_FILL = 'var(--accent)'; // centre (focus)
+const AUTH_FILL = 'var(--ink)'; // authorities
+const COMP_FILL = 'var(--ink-mid)'; // companies
 
 function truncate(s: string, n = 22): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
@@ -56,49 +58,81 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
     n.hop === 0 ? CENTER_FILL : n.kind === 'authority' ? AUTH_FILL : COMP_FILL;
 
   return (
-    <svg
-      viewBox={`-100 -10 ${W + 200} ${H + 20}`}
-      role="img"
-      aria-label={`Граф на връзките около ${center.label}`}
-      className="network-svg"
-    >
-      {edges.map((e, i) => {
-        const a = pos.get(e.from);
-        const b = pos.get(e.to);
-        if (!a || !b) return null;
-        return (
-          <line
-            key={`e${i}`}
-            className="edge"
-            x1={a.x}
-            y1={a.y}
-            x2={b.x}
-            y2={b.y}
-            style={{ strokeWidth: strokeW(e.valueEur) }}
-          />
-        );
-      })}
-      {nodes.map((n) => {
-        const pt = pos.get(n.id);
-        if (!pt) return null;
-        const r = radius(n);
-        const right = pt.x >= CX;
-        return (
-          <g key={n.id}>
-            <circle className="node" cx={pt.x} cy={pt.y} r={r} style={{ fill: fill(n) }}>
-              <title>{`${n.label}: ${money(n.valueEur)}`}</title>
-            </circle>
-            <text
-              className="node-label"
-              x={right ? pt.x + r + 4 : pt.x - r - 4}
-              y={pt.y + 3}
-              textAnchor={right ? 'start' : 'end'}
-            >
-              {truncate(n.label)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <>
+      {/* Sankey-style horizontal scroll so the fixed-width graph does not squash on phones; the
+          connections table below is the accessible fallback. */}
+      <div className="flow-scroll">
+        <svg
+          viewBox={`-100 -10 ${W + 200} ${H + 20}`}
+          role="img"
+          aria-label={`Граф на връзките около ${center.label}`}
+          className="network-svg"
+        >
+          {edges.map((e, i) => {
+            const a = pos.get(e.from);
+            const b = pos.get(e.to);
+            if (!a || !b) return null;
+            return (
+              <line
+                key={`e${i}`}
+                className="edge"
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                style={{ strokeWidth: strokeW(e.valueEur) }}
+              />
+            );
+          })}
+          {nodes.map((n) => {
+            const pt = pos.get(n.id);
+            if (!pt) return null;
+            const r = radius(n);
+            const right = pt.x >= CX;
+            const label = `${n.label}: ${money(n.valueEur)}`;
+            return (
+              <g key={n.id}>
+                {n.kind === 'company' ? (
+                  <rect
+                    className="node"
+                    x={pt.x - r}
+                    y={pt.y - r}
+                    width={r * 2}
+                    height={r * 2}
+                    rx={3}
+                    style={{ fill: fill(n) }}
+                  >
+                    <title>{label}</title>
+                  </rect>
+                ) : (
+                  <circle className="node" cx={pt.x} cy={pt.y} r={r} style={{ fill: fill(n) }}>
+                    <title>{label}</title>
+                  </circle>
+                )}
+                <text
+                  className="node-label"
+                  x={right ? pt.x + r + 4 : pt.x - r - 4}
+                  y={pt.y + 3}
+                  textAnchor={right ? 'start' : 'end'}
+                >
+                  {truncate(n.label)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <ul className="net-legend" aria-hidden="true">
+        <li>
+          <span className="key center" /> Център
+        </li>
+        <li>
+          <span className="key authority" /> Институция
+        </li>
+        <li>
+          <span className="key company" /> Фирма
+        </li>
+      </ul>
+    </>
   );
 }

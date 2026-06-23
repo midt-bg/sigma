@@ -2222,6 +2222,48 @@ details.row .body .signal .why {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
 }
+.net-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font: 11px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.net-legend .key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+}
+.net-legend .key.center,
+.net-legend .key.authority {
+  border-radius: 50%;
+}
+.net-legend .key.center {
+  background: var(--accent);
+}
+.net-legend .key.authority {
+  background: var(--ink);
+}
+.net-legend .key.company {
+  border-radius: 2px;
+  background: var(--ink-mid);
+}
+/* Sankey-style: let the fixed-width graph scroll horizontally on phones instead of squashing. */
+@media (max-width: 760px) {
+  .flow-scroll .network-svg {
+    min-width: 700px;
+  }
+}
 
 .flow-controls {
   display: flex;
