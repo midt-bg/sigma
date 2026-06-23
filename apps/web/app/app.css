@@ -794,6 +794,49 @@ main.narrow {
   color: var(--ink);
 }
 
+/* Risk Indicators */
+.risk-indicators {
+  margin: var(--s-6) 0;
+  padding: var(--s-5);
+  background: var(--warning-bg);
+  border-left: 3px solid var(--warning);
+}
+.risk-title {
+  margin: 0 0 var(--s-3);
+  font: 500 13px/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--warning-strong);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.risk-title svg {
+  flex: none;
+}
+.risk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: 400 14px/1.5 var(--font-sans);
+  color: var(--ink);
+}
+.risk-list li {
+  margin: 0 0 var(--s-2);
+  padding-left: 20px;
+  position: relative;
+}
+.risk-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--warning);
+  font-weight: bold;
+}
+.risk-list li:last-child {
+  margin-bottom: 0;
+}
+
 /* Key facts panel — ink top rule, hairline rows, mono labels */
 .facts {
   border-top: 1px solid var(--ink);
