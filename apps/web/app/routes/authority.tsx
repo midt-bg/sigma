@@ -57,6 +57,9 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
+  const ct = competition.totals;
+  // Single-offer portion by value — mirrors the home-page treatment; guarded against a zero base.
+  const soValueRatio = ct.valueEur > 0 ? Math.min(1, Math.max(0, ct.singleOfferValueEur / ct.valueEur)) : 0;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -134,21 +137,34 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             title="Една оферта"
             hint="Дял на договорите с известен брой оферти, възложени само с една оферта."
           >
-            {competition.totals.contracts > 0 ? (
-              <>
-                <ShareBar
-                  ratio={competition.totals.singleOfferShare}
-                  warn={competition.totals.singleOfferShare >= 0.5}
-                />
-                <p className="small muted mt-8">
-                  {count(competition.totals.singleOffer)} от {count(competition.totals.contracts)}{' '}
-                  договора; {money(competition.totals.singleOfferValueEur)} от{' '}
-                  {money(competition.totals.valueEur)} по стойност.
+            {ct.contracts > 0 ? (
+              <div className="so-portion">
+                <p className="so-portion-head">
+                  <span className="so-portion-pct">{pct(soValueRatio)}</span> от стойността на
+                  поръчките са по договори с <em>една оферта</em>.
+                </p>
+                <div className="hbar" aria-hidden="true">
+                  <span
+                    style={{
+                      width: `${(soValueRatio * 100).toFixed(1)}%`,
+                      background: 'var(--accent)',
+                    }}
+                  />
+                  <span
+                    style={{
+                      width: `${((1 - soValueRatio) * 100).toFixed(1)}%`,
+                      background: 'var(--ink-soft)',
+                    }}
+                  />
+                </div>
+                <p className="small muted so-portion-cap">
+                  {count(ct.singleOffer)} от {count(ct.contracts)} договора ·{' '}
+                  {money(ct.singleOfferValueEur)} от {money(ct.valueEur)} по стойност
                 </p>
                 <p className="small muted mt-8">
                   <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
                 </p>
-              </>
+              </div>
             ) : (
               <p className="muted">Няма договори с известен брой оферти.</p>
             )}
