@@ -16,6 +16,14 @@ const metaTitle = 'СИГМА — Платформа за прозрачност
 const metaDescription =
   'СИГМА показва как държавните институции и общините харчат парите на данъкоплатците чрез обществени поръчки във всички сектори. Без регистрация. Зад всяко число стои конкретен договор.';
 
+const ANALYTICS_LINKS = [
+  { href: '/flows', title: 'Потоци', desc: 'Парите от възложители към изпълнители.' },
+  { href: '/map', title: 'Карта', desc: 'Разходи по области.' },
+  { href: '/trends', title: 'Тренд', desc: 'Разходи във времето.' },
+  { href: '/network', title: 'Мрежа', desc: 'Връзки около институция или фирма.' },
+  { href: '/competition', title: 'Конкуренция', desc: 'Една оферта и концентрация.' },
+];
+
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({ matches, path: '/', title: metaTitle, description: metaDescription });
 }
@@ -151,6 +159,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         Обхват: {coveragePartialNote(endYear)}
         {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
       </p>
+
+      <section className="section" aria-labelledby="analytics">
+        <h2 id="analytics">
+          <Link to="/analytics">Анализи</Link>
+        </h2>
+        <p className="section-hint">
+          Избери гледна точка към същите договори: движение на пари, място, време, връзки или
+          конкуренция.
+        </p>
+        <div className="tiles">
+          {ANALYTICS_LINKS.map((item) => (
+            <article className="tile" key={item.href}>
+              <p className="kicker info">Анализ</p>
+              <h3>
+                <Link to={item.href}>{item.title}</Link>
+              </h3>
+              <p className="desc">{item.desc}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">
