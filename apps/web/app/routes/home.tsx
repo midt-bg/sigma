@@ -159,27 +159,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
       </p>
 
-      <section className="section" aria-labelledby="analytics">
-        <h2 id="analytics">
-          <Link to="/analytics">Анализи</Link>
-        </h2>
-        <p className="section-hint">
-          Избери гледна точка към същите договори: движение на пари, място, време, връзки или
-          конкуренция.
-        </p>
-        <div className="tiles">
-          {ANALYTICS_LINKS.map((item) => (
-            <article className="tile" key={item.href}>
-              <p className="kicker info">Анализ</p>
-              <h3>
-                <Link to={item.href}>{item.title}</Link>
-              </h3>
-              <p className="desc">{item.desc}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">
           Най-активните <em>институции</em>
@@ -305,6 +284,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="tab-panel" data-tab="top" role="group" aria-labelledby="tab-so-top">
             <SingleOfferTable items={topSingleOffer} allHref="/contracts?bids=1&sort=value-desc" />
           </div>
+        </div>
+      </section>
+
+      <section className="section" aria-labelledby="analytics">
+        <h2 id="analytics">
+          <Link to="/analytics">Анализи</Link>
+        </h2>
+        <p className="section-hint">
+          Избери гледна точка към същите договори: движение на пари, място, време, връзки или
+          конкуренция.
+        </p>
+        <div className="tiles">
+          {ANALYTICS_LINKS.map((item) => (
+            <article className="tile" key={item.href}>
+              <p className="kicker info">Анализ</p>
+              <h3>
+                <Link to={item.href}>{item.title}</Link>
+              </h3>
+              <p className="desc">{item.desc}</p>
+            </article>
+          ))}
         </div>
       </section>
 
