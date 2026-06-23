@@ -14,7 +14,7 @@ const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveCondi
 export function ExternalEikLink({ eik, className }: { eik: string; className?: string }) {
   return (
     <a
-      href={`${REGISTRY_URL}?uic=${eik}`}
+      href={`${REGISTRY_URL}?uic=${encodeURIComponent(eik)}`}
       target="_blank"
       rel="noopener noreferrer"
       className={`external-eik-link${className ? ` ${className}` : ''}`}

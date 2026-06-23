@@ -258,7 +258,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <>
                       {' '}
                       · ЕИК <span className="mono">{c.subcontractor.eik}</span>
-                      <ExternalEikLink eik={c.subcontractor.eik} />
+                      {/^\d{9}(\d{4})?$/.test(c.subcontractor.eik) && (
+                        <ExternalEikLink eik={c.subcontractor.eik} />
+                      )}
                     </>
                   )}
                   {c.subcontractor.valueEur != null && <> · {money(c.subcontractor.valueEur)}</>}
