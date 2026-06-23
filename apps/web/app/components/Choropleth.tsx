@@ -5,15 +5,15 @@ import { BG_MAP } from '../lib/bg-region-geometry';
 // Static SVG choropleth of the 28 regions, coloured by spend. Same spirit as SankeyDiagram: geometry
 // is a committed asset, tiers are computed server-side, no chart JS ships. The accessible data lives
 // in the ranked table beside it; the SVG is a visual summary (role="img" + aria-label) with a native
-// <title> per region for hover. Sequential ramp from --paper to --pos (palette tokens, not a raw
-// off-palette blue), so the map speaks the site's colour language.
+// <title> per region for hover. Sequential monochrome ramp from --paper to --ink (palette tokens, no
+// off-palette blue or green), matching the site's ink-based viz language like Sankey and /trends.
 const TIER_FILL = [
-  'color-mix(in oklch, var(--pos) 8%, var(--paper))', // 0 = no / negligible spend
-  'color-mix(in oklch, var(--pos) 26%, var(--paper))',
-  'color-mix(in oklch, var(--pos) 44%, var(--paper))',
-  'color-mix(in oklch, var(--pos) 62%, var(--paper))',
-  'color-mix(in oklch, var(--pos) 80%, var(--paper))',
-  'var(--pos)', // 5 = highest
+  'color-mix(in oklch, var(--ink) 8%, var(--paper))', // 0 = no / negligible spend
+  'color-mix(in oklch, var(--ink) 26%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 44%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 62%, var(--paper))',
+  'color-mix(in oklch, var(--ink) 80%, var(--paper))',
+  'var(--ink)', // 5 = highest
 ];
 
 // Quantile tiers over the non-zero values, so one dominant region (София) does not flatten the rest.
