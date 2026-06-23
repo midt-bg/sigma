@@ -6,6 +6,8 @@ function makeGroup(count: number): SearchGroup {
   return {
     kind: 'authority',
     label: 'Институции',
+    total: count,
+    moreHref: null,
     hits: Array.from({ length: count }, (_, i) => ({
       kind: 'authority' as const,
       slug: `slug-${i}`,
@@ -14,6 +16,7 @@ function makeGroup(count: number): SearchGroup {
       subtitle: null,
       ident: null,
       amountEur: null,
+      amountLabel: '',
     })),
   };
 }
