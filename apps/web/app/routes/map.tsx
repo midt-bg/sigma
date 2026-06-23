@@ -1,4 +1,4 @@
-import { Form, useSearchParams, useSubmit } from 'react-router';
+import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
 import { CPV_SECTORS } from '@sigma/config';
@@ -51,6 +51,7 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
+  const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
   const total = data.totalValueEur;
 
@@ -155,6 +156,10 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
             <button type="submit">Покажи</button>
           </noscript>
         </Form>
+
+        <p className="sr-only" role="status">
+          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+        </p>
 
         {(unknownSector || unknownYear) && (
           <Callout variant="warning" title="Непознат филтър">
