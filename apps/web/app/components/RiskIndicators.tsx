@@ -1,35 +1,38 @@
 import type { ContractDetail } from '@sigma/api-contract';
+import { pct } from '@sigma/shared';
 
 export function RiskIndicators({ contract }: { contract: ContractDetail }) {
   const flags: React.ReactNode[] = [];
 
-  // 1. Липса на конкуренция (Единствен кандидат)
-  if (contract.bidsReceived === 1) {
-    flags.push(
-      <>
-        <strong>Липса на конкуренция:</strong> Този договор е сключен след получаване на само една
-        оферта.
-      </>,
-    );
-  }
+  const admitted =
+    contract.bidsReceived != null ? contract.bidsReceived - (contract.bidsRejected || 0) : null;
 
-  // 2. Риск при европейско финансиране (Кръстосан индикатор)
-  if (contract.bidsReceived === 1 && contract.euFunded) {
-    flags.push(
-      <>
-        <strong>Риск при Еврофондове:</strong> Проектът е финансиран с европейски средства, но е
-        възложен без реална конкуренция (повишен риск според стандартите на ОЛАФ).
-      </>,
-    );
+  if (admitted === 1) {
+    if (contract.euFunded) {
+      // 2. Риск при европейско финансиране (по-силно от липса на конкуренция)
+      flags.push(
+        <>
+          <strong>Риск при Еврофондове:</strong> Проектът е финансиран с европейски средства, но е
+          възложен без реална конкуренция (повишен риск според стандартите на ОЛАФ).
+        </>,
+      );
+    } else {
+      // 1. Липса на конкуренция (Единствен допуснат кандидат)
+      flags.push(
+        <>
+          <strong>Липса на конкуренция:</strong> Този договор е сключен след допускане на само една
+          оферта.
+        </>,
+      );
+    }
   }
 
   // 3. Значително оскъпяване (над 20%) чрез анекси
   if (contract.value.deltaPct != null && contract.value.deltaPct > 0.2) {
-    const deltaStr = (contract.value.deltaPct * 100).toFixed(1).replace('.0', '');
     flags.push(
       <>
-        <strong>Значително оскъпяване:</strong> Стойността на договора е нараснала с {deltaStr}%
-        спрямо първоначално обявената чрез допълнителни анекси.
+        <strong>Значително оскъпяване:</strong> Стойността на договора е нараснала с{' '}
+        {pct(contract.value.deltaPct)} спрямо първоначално обявената чрез допълнителни анекси.
       </>,
     );
   }
@@ -38,8 +41,8 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
   if (contract.dateSuspect || contract.value.suspect) {
     flags.push(
       <>
-        <strong>Аномалии в данните:</strong> Системата е засякла логически несъответствия в датите
-        или стойностите, подадени към АОП от възложителя.
+        <strong>Аномалии в данните:</strong> Стойността на договора (или някои от датите) е извън
+        обичайния диапазон и подлежи на допълнителна проверка.
       </>,
     );
   }
@@ -50,7 +53,7 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
 
   return (
     <div className="risk-indicators">
-      <h3 className="risk-title">
+      <h2 className="risk-title">
         <svg
           width="16"
           height="16"
@@ -67,12 +70,10 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
           <path d="M12 17h.01" />
         </svg>
         Индикатори за риск
-      </h3>
+      </h2>
       <ul className="risk-list">
         {flags.map((flag, i) => (
-          <li key={i} className="risk-item">
-            {flag}
-          </li>
+          <li key={i}>{flag}</li>
         ))}
       </ul>
     </div>
