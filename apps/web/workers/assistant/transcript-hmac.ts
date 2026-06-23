@@ -39,6 +39,7 @@ export interface AssistantHmacEnv {
 
 export type DropReason =
   | 'unsigned'
+  | 'malformed-slot'
   | 'invalid-signature'
   | 'wrong-conversation'
   | 'replay'
@@ -120,6 +121,18 @@ function integerField(name: string, value: number): string {
   return String(value);
 }
 
+// Slot fields are caller-supplied (untrusted on the verify/filter path). True only when both are
+// non-negative integers — i.e. when canonical encoding will not throw. Lets verification reject
+// malformed input gracefully instead of letting `integerField` throw out of a verify call.
+function hasValidSlot(msg: TranscriptMessage): boolean {
+  return (
+    Number.isInteger(msg.turnIndex) &&
+    msg.turnIndex >= 0 &&
+    Number.isInteger(msg.position) &&
+    msg.position >= 0
+  );
+}
+
 async function computeSignature(env: AssistantHmacEnv, msg: TranscriptMessage): Promise<string> {
   const key = await importedKey(keyMaterial(env));
   const signature = await crypto.subtle.sign('HMAC', key, canonicalBytes(msg) as BufferSource);
@@ -157,6 +170,7 @@ export async function verifyMessage(
   msg: TranscriptMessage,
 ): Promise<boolean> {
   if (!msg.sig) return false;
+  if (!hasValidSlot(msg)) return false;
   const expected = await computeSignature(env, msg);
   return constantTimeEqual(msg.sig, expected);
 }
@@ -189,6 +203,10 @@ export async function filterIncomingTranscript(
 
     if (!message.sig) {
       dropped.push({ message, reason: 'unsigned' });
+      continue;
+    }
+    if (!hasValidSlot(message)) {
+      dropped.push({ message, reason: 'malformed-slot' });
       continue;
     }
     if (!(await verifyMessage(env, message))) {

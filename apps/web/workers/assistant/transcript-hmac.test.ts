@@ -111,6 +111,12 @@ describe('signMessage / verifyMessage', () => {
     await expect(signMessage(env, msg({ turnIndex: 1.5 }))).rejects.toThrow(/turnIndex/);
     await expect(signMessage(env, msg({ position: -1 }))).rejects.toThrow(/position/);
   });
+
+  it('verifyMessage returns false (never throws) for a malformed slot', async () => {
+    const m = await signed();
+    expect(await verifyMessage(env, { ...m, position: -1 })).toBe(false);
+    expect(await verifyMessage(env, { ...m, turnIndex: 1.5 })).toBe(false);
+  });
 });
 
 describe('filterIncomingTranscript', () => {
@@ -140,6 +146,14 @@ describe('filterIncomingTranscript', () => {
     const { kept, dropped } = await filterIncomingTranscript(env, messages, 'conv-1');
     expect(kept).toHaveLength(0);
     expect(dropped[0]?.reason).toBe('unsigned');
+  });
+
+  it('drops a signed message with a malformed slot instead of throwing', async () => {
+    const m = await signed({ position: 1 });
+    const malformed = { ...m, position: -1 };
+    const { kept, dropped } = await filterIncomingTranscript(env, [malformed], 'conv-1');
+    expect(kept).toHaveLength(0);
+    expect(dropped[0]?.reason).toBe('malformed-slot');
   });
 
   it('drops messages with an invalid signature', async () => {
