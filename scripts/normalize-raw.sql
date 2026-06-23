@@ -687,15 +687,21 @@ SELECT
 FROM contracts
 GROUP BY src;
 
--- Summary (last result set printed by `wrangler d1 execute`)
-SELECT
-  (SELECT COUNT(*) FROM authorities)                              AS authorities,
-  (SELECT COUNT(*) FROM tenders)                                  AS tenders,
-  (SELECT COUNT(*) FROM lots)                                     AS lots,
-  (SELECT COUNT(*) FROM bidders)                                  AS bidders,
-  (SELECT COUNT(*) FROM bidders WHERE eik_valid = 0)              AS bidders_name_keyed,
-  (SELECT COUNT(*) FROM bidders WHERE kind = 'consortium')        AS consortia,
-  (SELECT COUNT(*) FROM contracts)                                AS contracts,
+-- Pipeline reconciliation stats (#97): persist the eligible-candidate count (the SAME expression
+-- the summary below prints) and the resulting contracts count, so the integrity gate
+-- (scripts/integrity-checks.mjs) and the printed summary read ONE computation and cannot disagree.
+-- ETL-internal, single row, recomputed every full rebuild; NOT shipped to the served D1
+-- (ship-domain.mjs ships domain/reference tables only), so the staging-reconciliation check
+-- self-skips there.
+CREATE TABLE IF NOT EXISTS pipeline_stats (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  contract_candidates INTEGER NOT NULL,
+  contracts_inserted INTEGER NOT NULL,
+  computed_at TEXT NOT NULL
+);
+DELETE FROM pipeline_stats;
+INSERT INTO pipeline_stats (id, contract_candidates, contracts_inserted, computed_at)
+SELECT 1,
   (SELECT COUNT(*) FROM (
     SELECT c.id
     FROM (
@@ -803,7 +809,20 @@ SELECT
       END IS NOT NULL
       AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || c.unp)
       AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_key)
-  )) AS contract_candidates,
+  )),
+  (SELECT COUNT(*) FROM contracts),
+  datetime('now');
+
+-- Summary (last result set printed by `wrangler d1 execute`)
+SELECT
+  (SELECT COUNT(*) FROM authorities)                              AS authorities,
+  (SELECT COUNT(*) FROM tenders)                                  AS tenders,
+  (SELECT COUNT(*) FROM lots)                                     AS lots,
+  (SELECT COUNT(*) FROM bidders)                                  AS bidders,
+  (SELECT COUNT(*) FROM bidders WHERE eik_valid = 0)              AS bidders_name_keyed,
+  (SELECT COUNT(*) FROM bidders WHERE kind = 'consortium')        AS consortia,
+  (SELECT COUNT(*) FROM contracts)                                AS contracts,
+  (SELECT contract_candidates FROM pipeline_stats)                AS contract_candidates,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'value_suspect') AS value_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'annex_suspect') AS annex_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'review')    AS review,

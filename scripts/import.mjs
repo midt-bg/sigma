@@ -11,6 +11,7 @@ import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
+import { assertIntegrity } from './integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -214,6 +215,7 @@ function runFullDerive() {
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
+  assertIntegrity(d1, { label: 'full derive (D1)' });
 }
 
 function runSliceDerive() {
@@ -222,6 +224,7 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
+  assertIntegrity(d1, { label: 'slice derive (D1)' });
 }
 
 function runRefreshSliceBatches() {
@@ -271,6 +274,10 @@ function runWorkBackfill() {
   sqliteFile(workDb, resolve(root, 'scripts/normalize-raw.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulatedSqlite(workDb);
+  // Rollup checks self-skip here: the work DB's rollups are built later by precompute on the served
+  // D1 (ship-domain.mjs), which runs its own assertIntegrity. This validates the work DB's
+  // contract-level invariants and the staging→domain reconciliation before shipping.
+  assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
 
   const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
   if (remote) shipArgs.push('--remote', '--yes');

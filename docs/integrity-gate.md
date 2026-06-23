@@ -1,0 +1,76 @@
+# Pipeline reconciliation gate (#97)
+
+`scripts/normalize-raw.sql` and `scripts/precompute.sql` **print** a consistency summary (rollup
+counts, suspect/annex/review tallies, the clean total, freshness). Printing is not asserting —
+nothing failed on drift. On a minister-visible site, silent numeric drift is unacceptable. This gate
+promotes those printed numbers into **hard asserts that fail the import/CI with a non-zero exit
+code**, generalising the single prior guard (the FX check, `assertFxPopulated*` in `import.mjs`).
+
+## Where it runs
+
+`scripts/integrity-checks.mjs` exports pure check functions over an injected `runner(sql) => rows[]`,
+so the same logic runs against D1 (wrangler) and local sqlite. `assertIntegrity(runner)` runs every
+check, prints one line each, and ends the process non-zero on the first real violation. It is wired
+in after the rollups are (re)built — mirroring how `assertFxPopulated()` is called per backend:
+
+| Call site | Backend | Notes |
+|---|---|---|
+| `import.mjs` → `runFullDerive()` | D1 | after `precompute.sql` |
+| `import.mjs` → `runSliceDerive()` | D1 | after the refresh-slice batches |
+| `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxPopulatedSqlite`; rollup checks self-skip (rollups are built later, on the served D1) |
+| `ship-domain.mjs` | served D1 | after `precompute.sql` on the database users read |
+
+Each check **self-skips** when it cannot apply, so the same `assertIntegrity` call is correct at every
+site with no per-site branching:
+
+- **Rollup checks** require precompute to have run — detected via the single `home_totals` row it
+  always writes. On the pre-ship work DB (rollups cleared by normalize, rebuilt later on D1) they skip.
+- **Staging→domain reconciliation** requires `pipeline_stats` (written only by `normalize-raw.sql`,
+  and not shipped to the served D1) and that it is **fresh** (its recorded `contracts_inserted` still
+  equals the live `COUNT(*)`), so it runs right after a full normalize and skips on the slice path and
+  the served D1.
+
+## Invariants
+
+1. **Rollup ↔ contracts reconciliation (headline).** With
+   `clean_total = SUM(amount_eur) WHERE amount_eur IS NOT NULL`:
+   - `SUM(authority_totals.spent_eur)` equals the clean sum over contracts inner-joined
+     tenders→authorities (precompute's own join);
+   - `SUM(company_totals.won_eur)` equals the clean sum over contracts joined bidders **and** tenders;
+   - `SUM(flow_pairs.won_eur)` equals the clean sum over contracts joined tenders→authorities **and**
+     bidders;
+   - `home_totals.value_eur` equals `clean_total`;
+   - the **unattributed remainder** (clean contracts that resolve to no authority, or no bidder/tender)
+     is **exactly 0 rows**. Bound = 0: normalize gives every contract a parent tender (synthetic when
+     the staging has none) with a non-null authority, and a bidder row.
+2. **No negative clean values.** Zero rows with `value_flag='ok' AND amount_eur < 0`, and no negative
+   `spent_eur` / `won_eur` in any rollup.
+3. **EIK validity** (canonical home: `bidders`). `eik_valid = 1` ⇒ `eik_normalized` is a numeric
+   9- or 13-digit ЕИК; `eik_valid <> 1` ⇒ `eik_normalized IS NULL`. (`normalize-raw.sql` sets
+   `eik_normalized` only when `eik_valid = 1`; the gate proves the guarantee held.)
+4. **Date sanity.** Every non-null `signed_at` falls in `[2007-01-01, today UTC]`.
+5. **Staging → domain reconciliation.** `normalize-raw.sql` records, in one `pipeline_stats` row, the
+   eligible-candidate count (the **same expression** the printed summary now reads) and the resulting
+   contracts count. The gate asserts no contract appeared without an eligible candidate
+   (`inserted ≤ candidates`) and that a non-empty corpus actually landed.
+
+## Tolerances (and what is *not* tolerated)
+
+- **The only tolerance is `EPS_EUR = 1.0`** (one euro), for float reassociation when `SUM()`ing the
+  REAL `amount_eur` column in different group orders (grouped by authority vs summed flat) across
+  ~200k rows. It cannot mask a real drop: a missing / duplicated / sign-flipped contract moves a
+  rollup sum by its whole value (≥ thousands).
+- **Structural exclusions are never absorbed into the epsilon.** The unattributed remainder
+  (invariant 1) is asserted by **exact row count = 0**, not by a value tolerance.
+- **NULL `signed_at` is allowed** (invariant 4). Many real contracts carry no recorded signing date;
+  record-level completeness is a data-quality concern (#19–27), out of scope here. The gate asserts
+  only that *present* dates are sane.
+- **The candidates − inserted gap** (invariant 5) is the legitimate cumulative-bucket dedup drop
+  (`INSERT OR IGNORE` over the composite contract id); it is reported, and only `inserted > candidates`
+  (a phantom/orphan contract) or an empty corpus fails.
+
+## Scope
+
+This gate **asserts** that everything already agrees on the canonical `amount_eur IS NOT NULL` value
+basis. It does **not** change that basis, and it does not address record-level data-quality issues
+(#19–27). Foundational for #98/#99.
