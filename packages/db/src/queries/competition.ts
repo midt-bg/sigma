@@ -24,6 +24,7 @@ export interface CompetitionParams {
   funding?: 'all' | 'eu' | 'national';
   top?: number;
   minContracts?: number;
+  authorityId?: string | null;
 }
 
 const DEFAULT_TOP = 20;
@@ -44,6 +45,10 @@ function scope(p: CompetitionParams): { join: string; where: string[]; params: u
   if (p.year) {
     where.push('substr(c.signed_at, 1, 4) = ?');
     params.push(p.year);
+  }
+  if (p.authorityId) {
+    where.push('t.authority_id = ?');
+    params.push(p.authorityId);
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
@@ -211,7 +216,9 @@ async function topRecurringPairs(
   p: CompetitionParams,
   top: number,
 ): Promise<CompetitionPair[]> {
-  const filtered = Boolean(p.sector || p.year || (p.funding && p.funding !== 'all'));
+  const filtered = Boolean(
+    p.sector || p.year || p.authorityId || (p.funding && p.funding !== 'all'),
+  );
   let rows: PairRow[];
   if (!filtered) {
     const { results } = await db

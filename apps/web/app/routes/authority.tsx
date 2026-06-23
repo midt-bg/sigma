@@ -1,11 +1,19 @@
 import { Link } from 'react-router';
 import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
-import { authorityIdFromSlug, getAuthority } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  getAuthority,
+  getCompetition,
+  getEntityNetwork,
+  getSpendingTrend,
+} from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
+import { TrendChart } from '../components/TrendChart';
+import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
@@ -32,18 +40,23 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const eik = params.eik;
   if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
+  const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage] = await Promise.all([
-      getAuthority(db, authorityIdFromSlug(eik)),
+    const [authority, coverage, trend, network, competition] = await Promise.all([
+      getAuthority(db, authorityId),
       getCoverageMeta(db),
+      getSpendingTrend(db, { authorityId, granularity: 'month' }),
+      getEntityNetwork(db, { kind: 'authority', id: authorityId }),
+      getCompetition(db, { authorityId, minContracts: 1 }),
     ]);
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage };
+    return { authority, coverage, trend, network, competition };
   });
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
+  const { trend, network, competition } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -102,6 +115,62 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        <div className="two-col">
+          <Section
+            id="trend"
+            title="Тренд"
+            hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
+          >
+            {trend.points.length >= 2 ? (
+              <TrendChart points={trend.points} granularity={trend.granularity} />
+            ) : (
+              <p className="muted">Няма достатъчно данни за времева графика.</p>
+            )}
+          </Section>
+
+          <Section
+            id="single-offer"
+            title="Една оферта"
+            hint="Дял на договорите с известен брой оферти, възложени само с една оферта."
+          >
+            {competition.totals.contracts > 0 ? (
+              <>
+                <ShareBar
+                  ratio={competition.totals.singleOfferShare}
+                  warn={competition.totals.singleOfferShare >= 0.5}
+                />
+                <p className="small muted mt-8">
+                  {count(competition.totals.singleOffer)} от {count(competition.totals.contracts)}{' '}
+                  договора; {money(competition.totals.singleOfferValueEur)} от{' '}
+                  {money(competition.totals.valueEur)} по стойност.
+                </p>
+                <p className="small muted mt-8">
+                  <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
+                </p>
+              </>
+            ) : (
+              <p className="muted">Няма договори с известен брой оферти.</p>
+            )}
+          </Section>
+        </div>
+
+        <Section
+          id="network"
+          title="Мрежа"
+          hint={
+            <span>
+              Най-силните преки връзки около институцията и по една следваща връзка за всеки
+              контрагент. <Link to={`/network?center=a:${a.eik}`}>Виж пълната мрежа →</Link>
+            </span>
+          }
+        >
+          {network.center && network.nodes.length >= 2 ? (
+            <NetworkGraph data={network} />
+          ) : (
+            <p className="muted">Няма достатъчно връзки за граф.</p>
+          )}
+        </Section>
 
         <Section
           id="top-contractors"
