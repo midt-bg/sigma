@@ -2030,6 +2030,7 @@ details.row .body .signal .why {
   background: var(--ink);
   color: var(--paper);
   padding: 10px var(--s-5);
+  box-sizing: border-box;
   font: 500 11px/1 var(--font-mono);
   letter-spacing: 0.18em;
   text-transform: uppercase;
