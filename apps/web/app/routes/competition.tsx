@@ -1,4 +1,4 @@
-import { Form, Link, useSearchParams, useSubmit } from 'react-router';
+import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type {
   CompetitionAuthority,
   CompetitionConcentration,
@@ -127,6 +127,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
+  const navigating = useNavigation().state !== 'idle';
   const sel = (k: string) => sp.get(k) ?? '';
 
   const totals: Total[] = [
@@ -193,6 +194,10 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
             <button type="submit">Покажи</button>
           </noscript>
         </Form>
+
+        <p className="sr-only" role="status">
+          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+        </p>
 
         {(unknownSector || unknownYear) && (
           <Callout variant="warning" title="Непознат филтър">
