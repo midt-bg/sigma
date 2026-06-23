@@ -18,8 +18,8 @@ export function ExternalEikLink({ eik, className }: { eik: string; className?: s
       target="_blank"
       rel="noopener noreferrer"
       className={`external-eik-link${className ? ` ${className}` : ''}`}
-      aria-label={`Отвори ЕИК ${eik} в Търговския регистър`}
-      title="Отвори в Търговския регистър"
+      aria-label={`Отвори ЕИК ${eik} в Търговския регистър (в нов раздел)`}
+      title="Отвори в Търговския регистър (в нов раздел)"
     >
       <svg
         width="14"
