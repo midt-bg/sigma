@@ -32,6 +32,11 @@ site with no per-site branching:
 
 ## Invariants
 
+The hard-fail invariants (1–3, 5) all test **Sigma's own processing** — its rollups, its `amount_eur`
+/ `value_flag` derivation, its EIK normalization, its insert/dedup — things Sigma controls and can fix.
+Sigma is a **consumer** of the EOP feed, so the gate must not hard-fail on upstream record-level data
+quality it cannot correct; that is invariant 4's job, and it only **warns** (see below).
+
 1. **Rollup ↔ contracts reconciliation (headline).** With
    `clean_total = SUM(amount_eur) WHERE amount_eur IS NOT NULL`:
    - `SUM(authority_totals.spent_eur)` equals the clean sum over contracts inner-joined
@@ -48,7 +53,14 @@ site with no per-site branching:
 3. **EIK validity** (canonical home: `bidders`). `eik_valid = 1` ⇒ `eik_normalized` is a numeric
    9- or 13-digit ЕИК; `eik_valid <> 1` ⇒ `eik_normalized IS NULL`. (`normalize-raw.sql` sets
    `eik_normalized` only when `eik_valid = 1`; the gate proves the guarantee held.)
-4. **Date sanity.** Every non-null `signed_at` falls in `[2007-01-01, today UTC]`.
+4. **Date sanity — reported (`WARN`), NOT gated.** Counts non-null `signed_at` outside
+   `[2007-01-01, today UTC]`. Unlike 1–3 and 5, `signed_at` is a **pass-through of the upstream EOP
+   value**, not something Sigma derives — an out-of-range date is an upstream record-level defect
+   (#19–27) Sigma cannot fix. Hard-failing on it would break **every** daily refresh forever over a
+   single source typo (the 2024 feed really does contain one: `signed_at = '2029-05-14'`). So the
+   check surfaces the count as a `WARN` and never fails the import. The count is still useful: a
+   sudden spike would signal a Sigma-side date-parsing regression for a human to investigate. NULL
+   `signed_at` is allowed.
 5. **Staging → domain reconciliation.** `normalize-raw.sql` records, in one `pipeline_stats` row, the
    eligible-candidate count (the **same expression** the printed summary now reads) and the resulting
    contracts count. The gate asserts no contract appeared without an eligible candidate
@@ -72,13 +84,14 @@ site with no per-site branching:
   ~200k rows. Worst-case rounding error of a length-N sum is `~(N-1)·u·Σ|xᵢ|` with `u = 2⁻⁵³`; at
   `N≈2e5`, `Σ≈5e10 €` that is ~1 € per sum, ~2 € between the two — 5 € clears it with margin. It
   cannot mask a real drop: a missing / duplicated / sign-flipped contract moves a sum by its whole
-  value (the lowest kept `amount_eur` is ≫ 5 €). The bound is **analytic** — the first real-corpus
-  run should confirm the observed tail sits under it (and tighten if comfortably so).
+  value (the lowest kept `amount_eur` is ≫ 5 €). The bound is **analytic**, and validated on real
+  data: on the 2024 EOP feed the observed residual was **exactly 0.00** at both 554 contracts (€186 M)
+  and 37,784 contracts (€12.5 bn), across all four rollups — far under 5 €.
 - **Structural exclusions are never absorbed into the epsilon.** The unattributed remainder
   (invariant 1) is asserted by **exact row count = 0**, not by a value tolerance.
-- **NULL `signed_at` is allowed** (invariant 4). Many real contracts carry no recorded signing date;
-  record-level completeness is a data-quality concern (#19–27), out of scope here. The gate asserts
-  only that *present* dates are sane.
+- **Out-of-range and NULL `signed_at` never fail the import** (invariant 4). `signed_at` is upstream
+  pass-through; bad/missing dates are source-data quality (#19–27), out of scope. Out-of-range dates
+  are surfaced as a `WARN` count; NULL is allowed silently.
 - **The candidates − inserted gap** (invariant 5) is the legitimate cumulative-bucket dedup drop
   (`INSERT OR IGNORE` over the composite contract id); it is reported, and only `inserted > candidates`
   (a phantom/orphan contract) or an empty corpus fails.

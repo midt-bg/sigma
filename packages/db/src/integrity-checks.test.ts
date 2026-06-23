@@ -157,18 +157,37 @@ describe('reconciliation gate — injected violations', () => {
     expect(result.detail).toMatch(/eik_valid<>1/);
   });
 
-  it('date-sanity catches a signed_at before 2007', () => {
+  it('date-sanity reports (warns, does NOT fail) a signed_at before 2007', () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET signed_at = '1999-01-01' WHERE id = 'c:1';");
     const result = checkDateSanity(runner(db));
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.warn).toBe(true);
+    expect(result.detail).toMatch(/outside .* reported not gated/);
   });
 
-  it('date-sanity catches a future signed_at', () => {
+  it('date-sanity reports (warns, does NOT fail) a future signed_at', () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET signed_at = date('now','+5 day') WHERE id = 'c:1';");
     const result = checkDateSanity(runner(db));
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.warn).toBe(true);
+  });
+
+  it('an out-of-range upstream date alone does NOT fail the import (consumer cannot fix source #19–27)', () => {
+    const db = track(freshDb());
+    precompute(db);
+    const inserted = Number(runner(db)('SELECT COUNT(*) AS n FROM contracts')[0].n);
+    sqlite(
+      db,
+      `CREATE TABLE pipeline_stats (id INTEGER PRIMARY KEY CHECK (id=1), contract_candidates INTEGER NOT NULL, contracts_inserted INTEGER NOT NULL, computed_at TEXT NOT NULL);
+       INSERT INTO pipeline_stats VALUES (1, ${inserted}, ${inserted}, datetime('now'));`,
+    );
+    // the exact real-world defect: a future signed_at typo in the source feed
+    sqlite(db, "UPDATE contracts SET signed_at = '2029-05-14' WHERE id = 'c:1';");
+    const results = assertIntegrity(runner(db), { label: 'test-baddate', exit: false });
+    expect(results.every((r) => r.ok)).toBe(true); // gate passes — import is NOT broken
+    expect(results.find((r) => r.name === 'date-sanity')?.warn).toBe(true);
   });
 
   it('staging-reconciliation catches more inserted than eligible candidates', () => {

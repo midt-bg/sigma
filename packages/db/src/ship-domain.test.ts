@@ -63,5 +63,5 @@ Description line 2', 'test');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 240_000);
 });

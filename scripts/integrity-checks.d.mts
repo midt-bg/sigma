@@ -13,6 +13,9 @@ export interface IntegrityResult {
   ok: boolean;
   /** true when the check could not apply on this database (e.g. rollups not yet built) */
   skipped: boolean;
+  /** true when the check found a non-fatal, reported-not-gated condition (e.g. out-of-range
+   *  upstream dates) — printed as WARN, never fails the gate */
+  warn?: boolean;
   /** human-readable summary or the list of violations */
   detail: string;
 }
