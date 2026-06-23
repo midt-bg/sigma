@@ -797,8 +797,13 @@ SELECT 1,
         FROM raw_contracts c
         LEFT JOIN tenders t ON t.id = 't:' || c.unp
       ) c
+      -- Eligibility must mirror the INSERT INTO contracts WHERE exactly, so this candidate count is a
+      -- true superset of what lands (inserted <= candidates holds by construction; the gap is only the
+      -- EOP cumulative-bucket dedup). The OCDS branch deliberately has NO `contract_number IS NOT NULL`
+      -- guard — the INSERT's OCDS branch keeps a null-contract_number row (NOT EXISTS over a NULL join
+      -- is TRUE), so requiring it here would undercount and make a real insert look like inserted>candidates.
       WHERE c.source LIKE 'eop:%'
-         OR (c.source LIKE 'ocds:%' AND c.contract_number IS NOT NULL AND NOT EXISTS (
+         OR (c.source LIKE 'ocds:%' AND NOT EXISTS (
               SELECT 1 FROM raw_contracts a
               WHERE a.source LIKE 'eop:%' AND a.contract_number = c.contract_number))
     ) c

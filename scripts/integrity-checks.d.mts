@@ -20,6 +20,7 @@ export interface IntegrityResult {
   detail: string;
 }
 
+export function checkNonEmptyCorpus(runner: IntegrityRunner): IntegrityResult;
 export function checkRollupReconciliation(runner: IntegrityRunner): IntegrityResult;
 export function checkNoNegativeValues(runner: IntegrityRunner): IntegrityResult;
 export function checkEikValidity(runner: IntegrityRunner): IntegrityResult;

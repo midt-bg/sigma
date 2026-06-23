@@ -46,6 +46,26 @@ function tableExists(runner, name) {
   );
 }
 
+// 0) Non-empty corpus — UNCONDITIONAL hard guard. A catastrophic upstream failure (0 candidates) or
+//    a botched derive can leave 0 contracts. On the served D1 the staging check self-skips (no
+//    pipeline_stats) and every rollup sum is 0 == 0, so without this an empty database would pass the
+//    whole gate green. Asserted on every backend so a silent empty ship cannot slip through.
+export function checkNonEmptyCorpus(runner) {
+  const name = 'non-empty-corpus';
+  if (!tableExists(runner, 'contracts'))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
+  const n = num(scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
+  return {
+    name,
+    ok: n > 0,
+    skipped: false,
+    detail:
+      n > 0
+        ? `${n} contracts present`
+        : 'EMPTY corpus: 0 contracts (catastrophic derive / upstream failure)',
+  };
+}
+
 // 1) Rollup ↔ contracts reconciliation (the headline check). Each precompute rollup must sum to
 //    exactly the clean contract value it attributes (mirroring precompute's own joins), and the
 //    unattributed remainder must be exactly 0 rows. Requires precompute to have run; self-skips on
@@ -112,11 +132,9 @@ export function checkRollupReconciliation(runner) {
     );
   if (orphanBidderRows !== 0)
     fails.push(`${orphanBidderRows} clean contracts attribute to no bidder/tender`);
-  // Value remainder: with 0 orphan rows this is float noise; bound is 0 (documented).
-  if (Math.abs(cleanTotal - authAttr) > EPS_EUR)
-    fails.push(
-      `unattributed clean value ${cleanTotal - authAttr} > 0 (authority-attributed ${authAttr} of ${cleanTotal})`,
-    );
+  // No separate clean_total vs authAttr value check: with orphanAuthRows === 0 every clean contract
+  // joins an authority, so authAttr === clean_total identically — the orphan row count above already
+  // proves it. (The home_value vs clean_total check covers the home rollup.)
 
   return {
     name,
@@ -128,33 +146,61 @@ export function checkRollupReconciliation(runner) {
   };
 }
 
-// 2) No negative clean values: no value_flag='ok' contract may carry a negative amount_eur, and no
-//    rollup may carry a negative total. Rollup rows are checked only where the rollup table exists.
+// 2) No negative values feeding the totals. Two classes, split by who controls the defect:
+//    - value_flag='ok' AND amount_eur<0 → HARD fail. A clean row cannot be negative except via a Sigma
+//      derivation bug (e.g. a sign flip); Sigma owns and can fix it.
+//    - any other flag with amount_eur<0 → WARN. normalize keeps value_low rows (set on
+//      COALESCE(current,signing)<=0) with a populated, possibly negative amount_eur, and precompute
+//      sums every amount_eur IS NOT NULL row regardless of flag — so a negative source value silently
+//      understates a minister-visible total. The negative VALUE is upstream (#19–27) and Sigma cannot
+//      correct the source, so this must not break the daily import; but it does corrupt the published
+//      number, so it is surfaced loudly rather than hidden. (The accuracy-correct end state is to stop
+//      summing negatives in the value basis — tracked as a follow-up; out of this gate's #97 scope.)
+//    - no rollup total may be negative → HARD fail (a whole-group negative is structural corruption).
 export function checkNoNegativeValues(runner) {
   const name = 'no-negative-values';
+  if (!tableExists(runner, 'contracts'))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
   const fails = [];
-  const negOk = num(
-    scalar(
+  const warns = [];
+  // One read for both contract classes (ok-negative is a Sigma bug; non-ok-negative is upstream).
+  const c =
+    rows(
       runner,
-      "SELECT COUNT(*) AS n FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0",
-      'n',
-    ),
-  );
+      'SELECT' +
+        " (SELECT COUNT(*) FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0) AS neg_ok," +
+        " (SELECT COUNT(*) FROM contracts WHERE value_flag <> 'ok' AND amount_eur < 0) AS neg_other",
+    )[0] || {};
+  const negOk = num(c.neg_ok);
+  const negOther = num(c.neg_other);
   if (negOk !== 0) fails.push(`${negOk} contracts with value_flag='ok' have negative amount_eur`);
-  for (const [tbl, col] of [
-    ['authority_totals', 'spent_eur'],
-    ['company_totals', 'won_eur'],
-    ['flow_pairs', 'won_eur'],
-  ]) {
-    if (!tableExists(runner, tbl)) continue;
-    const n = num(scalar(runner, `SELECT COUNT(*) AS n FROM ${tbl} WHERE ${col} < 0`, 'n'));
-    if (n !== 0) fails.push(`${n} ${tbl}.${col} rows are negative`);
+  if (negOther !== 0)
+    warns.push(
+      `${negOther} non-'ok' contract(s) carry a negative amount_eur still summed into the rollups ` +
+        '(upstream value_low<=0, understates totals — #19–27, basis fix tracked)',
+    );
+  // The three rollups are created together by precompute, so one existence check gates all three, and
+  // the three counts fold into a single SELECT (on D1 each runner call is a process spawn).
+  if (tableExists(runner, 'home_totals')) {
+    const r =
+      rows(
+        runner,
+        'SELECT' +
+          ' (SELECT COUNT(*) FROM authority_totals WHERE spent_eur < 0) AS a,' +
+          ' (SELECT COUNT(*) FROM company_totals WHERE won_eur < 0) AS c,' +
+          ' (SELECT COUNT(*) FROM flow_pairs WHERE won_eur < 0) AS f',
+      )[0] || {};
+    if (num(r.a) !== 0) fails.push(`${num(r.a)} authority_totals.spent_eur rows are negative`);
+    if (num(r.c) !== 0) fails.push(`${num(r.c)} company_totals.won_eur rows are negative`);
+    if (num(r.f) !== 0) fails.push(`${num(r.f)} flow_pairs.won_eur rows are negative`);
   }
+  const ok = fails.length === 0;
   return {
     name,
-    ok: fails.length === 0,
+    ok,
     skipped: false,
-    detail: fails.length ? fails.join('; ') : 'no negative clean values',
+    warn: ok && warns.length > 0,
+    detail: [...fails, ...warns].join('; ') || 'no negative clean values',
   };
 }
 
@@ -163,6 +209,8 @@ export function checkNoNegativeValues(runner) {
 //    eik_normalized only when eik_valid=1); the gate proves the guarantee held.
 export function checkEikValidity(runner) {
   const name = 'eik-validity';
+  if (!tableExists(runner, 'bidders'))
+    return { name, ok: true, skipped: true, detail: 'bidders table absent' };
   const fails = [];
   const badValid = num(
     scalar(
@@ -201,6 +249,8 @@ export function checkEikValidity(runner) {
 //    regression for a human to notice) but always return ok. NULL is allowed.
 export function checkDateSanity(runner) {
   const name = 'date-sanity';
+  if (!tableExists(runner, 'contracts'))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
   const n = num(
     scalar(
       runner,
@@ -238,18 +288,19 @@ export function checkStagingReconciliation(runner) {
     };
   const row = rows(
     runner,
-    'SELECT contract_candidates, contracts_inserted FROM pipeline_stats WHERE id = 1',
+    'SELECT contract_candidates, contracts_inserted, computed_at FROM pipeline_stats WHERE id = 1',
   )[0];
   if (!row) return { name, ok: true, skipped: true, detail: 'pipeline_stats empty' };
   const candidates = num(row.contract_candidates);
   const recorded = num(row.contracts_inserted);
+  const computedAt = row.computed_at ?? 'unknown';
   const current = num(scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
   if (recorded !== current)
     return {
       name,
       ok: true,
       skipped: true,
-      detail: `pipeline_stats stale (recorded ${recorded} != current contracts ${current}); recon runs only right after a full normalize`,
+      detail: `pipeline_stats stale (recorded ${recorded} at ${computedAt} != current contracts ${current}); recon runs only right after a full normalize`,
     };
 
   const fails = [];
@@ -265,11 +316,12 @@ export function checkStagingReconciliation(runner) {
     skipped: false,
     detail: fails.length
       ? fails.join('; ')
-      : `candidates=${candidates} inserted=${current} dedup_drop=${candidates - current}`,
+      : `candidates=${candidates} inserted=${current} dedup_drop=${candidates - current} (computed ${computedAt})`,
   };
 }
 
 export const CHECKS = [
+  checkNonEmptyCorpus,
   checkRollupReconciliation,
   checkNoNegativeValues,
   checkEikValidity,
