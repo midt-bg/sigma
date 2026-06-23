@@ -5,15 +5,15 @@ import { BG_MAP } from '../lib/bg-region-geometry';
 // Static SVG choropleth of the 28 regions, coloured by spend. Same spirit as SankeyDiagram: geometry
 // is a committed asset, tiers are computed server-side, no chart JS ships. The accessible data lives
 // in the ranked table beside it; the SVG is a visual summary (role="img" + aria-label) with a native
-// <title> per region for hover. Sequential oklch ramp (matches the palette in @sigma/config).
-
+// <title> per region for hover. Sequential ramp from --paper to --pos (palette tokens, not a raw
+// off-palette blue), so the map speaks the site's colour language.
 const TIER_FILL = [
-  'oklch(0.96 0.01 250)', // 0 = no / negligible spend
-  'oklch(0.88 0.05 250)',
-  'oklch(0.78 0.09 250)',
-  'oklch(0.67 0.13 250)',
-  'oklch(0.56 0.16 250)',
-  'oklch(0.45 0.17 250)', // 5 = highest
+  'color-mix(in oklch, var(--pos) 8%, var(--paper))', // 0 = no / negligible spend
+  'color-mix(in oklch, var(--pos) 26%, var(--paper))',
+  'color-mix(in oklch, var(--pos) 44%, var(--paper))',
+  'color-mix(in oklch, var(--pos) 62%, var(--paper))',
+  'color-mix(in oklch, var(--pos) 80%, var(--paper))',
+  'var(--pos)', // 5 = highest
 ];
 
 // Quantile tiers over the non-zero values, so one dominant region (София) does not flatten the rest.
