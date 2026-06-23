@@ -11,12 +11,11 @@ import type {
   CompetitionData,
   CompetitionPair,
   CompetitionTotals,
-  SectorRef,
 } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { typeLabel } from './rows';
+import { sectorOptions } from './sectors';
 
 export interface CompetitionParams {
   sector?: string | null;
@@ -30,7 +29,6 @@ export interface CompetitionParams {
 const DEFAULT_TOP = 20;
 const MAX_TOP = 50;
 const DEFAULT_MIN_CONTRACTS = 20;
-const SECTOR_OPTION_LIMIT = 12;
 
 // Shared contract-scope filter, identical across panels: sector via the parent tender's CPV division,
 // year via signed_at, EU funding via eu_funded. Every contract has a parent tender (synthetic when the
@@ -269,19 +267,6 @@ async function topRecurringPairs(
       wonEur: r.won_eur,
     };
   });
-}
-
-// Sector select options: the present sectors by value (curated label), capped. Same source as getFlows.
-async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
-  const { results } = await db
-    .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
-    .bind(SECTOR_OPTION_LIMIT)
-    .all<{ division: string }>();
-  const byCode = new Map(CPV_SECTORS.map((s) => [s.code, s]));
-  return results
-    .map((r) => byCode.get(r.division))
-    .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
 }
 
 export async function getCompetition(
