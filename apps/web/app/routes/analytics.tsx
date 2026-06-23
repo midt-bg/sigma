@@ -4,6 +4,7 @@ import { count, money, pct } from '@sigma/shared';
 import type { Route } from './+types/analytics';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { Choropleth } from '../components/Choropleth';
 import { TrendChart } from '../components/TrendChart';
 import { Section, ShareBar } from '../components/ui';
 import { publicCache } from '../lib/cache';
@@ -58,6 +59,7 @@ export async function loader({ context }: Route.LoaderArgs) {
   return {
     flows: flows.pairs.slice(0, 3),
     regions: regional.regions.filter((region) => region.valueEur > 0).slice(0, 3),
+    allRegions: regional.regions,
     regionTotal: regional.totalValueEur,
     trend: {
       points: trend.points,
@@ -114,7 +116,7 @@ function SingleOfferPreview({
 }
 
 export default function Analytics({ loaderData }: Route.ComponentProps) {
-  const { flows, regions, regionTotal, trend, competition } = loaderData;
+  const { flows, regions, allRegions, regionTotal, trend, competition } = loaderData;
 
   return (
     <>
@@ -166,6 +168,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
               </h3>
               <p className="desc">{LENSES[1]!.desc}</p>
               <div className="lens-preview">
+                <div className="lens-map">
+                  <Choropleth regions={allRegions} />
+                </div>
                 <p className="lens-preview-title">Водещи области по стойност</p>
                 {regions.length ? (
                   <ul className="lens-list">
@@ -202,9 +207,9 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                     <dl className="lens-metrics">
                       {trend.latest && (
                         <div>
-                          <dt>Последна година</dt>
+                          <dt>{trend.latest.partial ? 'Текуща година' : 'Последна година'}</dt>
                           <dd>
-                            {money(trend.latest.valueEur)}
+                            {trend.latest.year} · {money(trend.latest.valueEur)}
                             {trend.latest.partial && <span className="muted"> · частично</span>}
                           </dd>
                         </div>
