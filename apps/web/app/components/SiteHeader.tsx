@@ -1,17 +1,22 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, NavLink, useSearchParams } from 'react-router';
+import { Link, NavLink, useLocation, useSearchParams } from 'react-router';
 import { SmartSearch } from './SmartSearch';
 
-const NAV = [
+const ANALYTICS_PATHS = ['/flows', '/network', '/trends', '/map', '/competition'];
+
+type NavItem = {
+  to: string;
+  label: string;
+  end?: boolean;
+  activePaths?: string[];
+};
+
+const NAV: NavItem[] = [
   { to: '/', label: 'Начало', end: true },
   { to: '/authorities', label: 'Институции' },
   { to: '/companies', label: 'Компании' },
   { to: '/contracts', label: 'Договори' },
-  { to: '/flows', label: 'Потоци' },
-  { to: '/network', label: 'Мрежа' },
-  { to: '/trends', label: 'Тренд' },
-  { to: '/map', label: 'Карта' },
-  { to: '/competition', label: 'Конкуренция' },
+  { to: '/analytics', label: 'Анализи', activePaths: ANALYTICS_PATHS },
   { to: '/methodology', label: 'Методология' },
 ];
 
@@ -20,6 +25,7 @@ const NAV = [
 // external script — so the strict CSP needs no script allowance beyond the framework nonce. SSR
 // renders everything closed; the handlers wire up on hydration.
 export function SiteHeader() {
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   // Prefill from the active query so reopening search on a results page shows it.
   const activeQuery = searchParams.get('q') ?? '';
@@ -128,7 +134,17 @@ export function SiteHeader() {
               </button>
             </div>
             {NAV.map((item) => (
-              <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setNavOpen(false)}>
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  isActive || item.activePaths?.some((path) => location.pathname === path)
+                    ? 'active'
+                    : undefined
+                }
+                onClick={() => setNavOpen(false)}
+              >
                 {item.label}
               </NavLink>
             ))}
