@@ -1582,9 +1582,21 @@ details.row .body .signal .why {
 /* Story tiles (home page + similar) */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  /* Four lenses: stay 4-up on desktop, fall to a 2×2 square on mid widths, then stack.
+     (Avoids the auto-fit 3-column state that left a lone "orphan" tile on a second row.) */
+  grid-template-columns: repeat(4, 1fr);
   gap: 0;
   border-top: 1px solid var(--ink);
+}
+@media (max-width: 1024px) {
+  .tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
 }
 .tile {
   border-bottom: 1px solid var(--rule);
