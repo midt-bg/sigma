@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, parseConsortiumMembers } from '@sigma/shared';
+import { count, money, moneyBare, parseConsortiumMembers } from '@sigma/shared';
 import { getCompanyFacets, listCompanies } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
@@ -163,7 +163,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
         </>
       ),
     },
-    { key: 'won', header: 'Спечелено', align: 'money', cell: (c) => money(c.wonEur) },
+    { key: 'won', header: 'Спечелено (€)', align: 'money', cell: (c) => moneyBare(c.wonEur) },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (c) => count(c.contracts) },
     { key: 'authorities', header: 'Институции', align: 'money', cell: (c) => count(c.authorities) },
   ];

@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, date, money } from '@sigma/shared';
+import { count, date, moneyBare } from '@sigma/shared';
 import type { ContractListItem } from '@sigma/api-contract';
 import { Chip } from './ui';
 
@@ -30,7 +30,7 @@ export function ContractMiniTable({
               Оферти
             </th>
             <th scope="col" className="num">
-              Стойност
+              Стойност (€)
             </th>
           </tr>
         </thead>
@@ -58,9 +58,9 @@ export function ContractMiniTable({
               <td className="num-left" data-label="Оферти">
                 {c.bidsReceived != null ? count(c.bidsReceived) : '—'}
               </td>
-              <td className="money" data-label="Стойност">
+              <td className="money" data-label="Стойност (€)">
                 {c.valueEur != null ? (
-                  money(c.valueEur)
+                  moneyBare(c.valueEur)
                 ) : (
                   <span className="suspect">проверяват</span>
                 )}

@@ -33,6 +33,22 @@ function rounded(n: number, dp: number): number {
   return Number(n.toFixed(dp));
 }
 
+function moneyBody(eur: number, withUnit: boolean): string {
+  const v = Math.abs(eur);
+  const roundedEur = Math.round(v);
+  const u = withUnit ? `${NBSP}€` : '';
+  let body: string;
+  if (roundedEur < 1000) body = `${roundedEur}${u}`;
+  else if (Math.round(v / 1e3) < 1000) body = `${Math.round(v / 1e3)}${NBSP}хил.${u}`;
+  else if (rounded(v / 1e6, 1) < 1000) body = `${dec(v / 1e6, 1, true)}${NBSP}млн.${u}`;
+  else {
+    const b = v / 1e9;
+    const useTwoDecimals = rounded(b, 2) < 10;
+    body = `${useTwoDecimals ? dec(b, 2, false) : dec(b, 1, true)}${NBSP}млрд.${u}`;
+  }
+  return body;
+}
+
 /**
  * EUR money in Bulgarian magnitude tiers, e.g. `640 €` · `412 хил. €` · `187 млн. €` · `4,58 млрд. €`.
  * млн. → one decimal (trailing „,0" dropped); млрд. → two decimals under 10, one at/above (so „50,8
@@ -41,17 +57,19 @@ function rounded(n: number, dp: number): number {
  */
 export function money(eur: number | null | undefined): string {
   if (eur == null || !Number.isFinite(eur)) return EM_DASH;
-  const v = Math.abs(eur);
-  const roundedEur = Math.round(v);
-  let body: string;
-  if (roundedEur < 1000) body = `${roundedEur}${NBSP}€`;
-  else if (Math.round(v / 1e3) < 1000) body = `${Math.round(v / 1e3)}${NBSP}хил.${NBSP}€`;
-  else if (rounded(v / 1e6, 1) < 1000) body = `${dec(v / 1e6, 1, true)}${NBSP}млн.${NBSP}€`;
-  else {
-    const b = v / 1e9;
-    const useTwoDecimals = rounded(b, 2) < 10;
-    body = `${useTwoDecimals ? dec(b, 2, false) : dec(b, 1, true)}${NBSP}млрд.${NBSP}€`;
-  }
+  const roundedEur = Math.round(Math.abs(eur));
+  const body = moneyBody(eur, true);
+  return eur < 0 && roundedEur !== 0 ? `${MINUS}${body}` : body;
+}
+
+/**
+ * Like `money()` but without the trailing `€` — for table cells where the column header already
+ * carries `(€)`. E.g. `412 хил.` instead of `412 хил. €`.
+ */
+export function moneyBare(eur: number | null | undefined): string {
+  if (eur == null || !Number.isFinite(eur)) return EM_DASH;
+  const roundedEur = Math.round(Math.abs(eur));
+  const body = moneyBody(eur, false);
   return eur < 0 && roundedEur !== 0 ? `${MINUS}${body}` : body;
 }
 

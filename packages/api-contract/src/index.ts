@@ -383,6 +383,175 @@ export interface FlowsData {
   };
 }
 
+// ── Network (relationship graph) ────────────────────────────────────────────────────────────────
+// Ego network around one entity for the /network graph: the centre plus its direct counterparties
+// (hop 1) and their top other counterparty (hop 2), to reveal shared suppliers / authorities. Built
+// from the flow_pairs rollup; this is a focused neighbourhood, not the full graph.
+
+export interface NetworkNode {
+  id: string; // domain id ('auth:ЕИК' | 'eik:ЕИК' | 'name:...')
+  kind: 'authority' | 'company';
+  label: string;
+  slug: string; // /authorities/:slug | /companies/:slug
+  valueEur: number; // weight = sum of incident edge values in this view
+  hop: number; // 0 centre, 1 direct, 2 second ring
+}
+
+export interface NetworkEdge {
+  from: string; // node id
+  to: string; // node id
+  valueEur: number;
+  contracts: number;
+}
+
+export interface NetworkCenterOption {
+  kind: 'authority' | 'company';
+  label: string;
+  value: string; // ?center= token, e.g. 'a:000695089' | 'c:131468980'
+}
+
+export interface NetworkData {
+  center: {
+    id: string;
+    kind: 'authority' | 'company';
+    label: string;
+    slug: string;
+    valueEur: number;
+  } | null;
+  nodes: NetworkNode[];
+  edges: NetworkEdge[];
+  centerOptions: { authorities: NetworkCenterOption[]; companies: NetworkCenterOption[] };
+}
+
+// ── Trend (spending over time) ──────────────────────────────────────────────────────────────────
+// Procurement spend by period for the /trends chart. Contracts without a usable signing date are
+// excluded from the series and reported as coverage, never silently dropped.
+
+export interface TrendPoint {
+  period: string; // 'YYYY-MM' (month granularity) or 'YYYY' (year)
+  valueEur: number;
+  contracts: number;
+  partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
+}
+
+export interface TrendYear {
+  year: string;
+  valueEur: number;
+  contracts: number;
+  yoyPct: number | null; // change vs the previous year (0-based ratio); null for the first year, a zero previous year, or the partial final year
+  partial: boolean; // the as_of year, still incomplete; YoY is suppressed and it is marked in the UI
+}
+
+export interface TrendData {
+  granularity: 'month' | 'year';
+  points: TrendPoint[]; // continuous and zero-filled, sorted by period
+  years: TrendYear[]; // per-year summary with year-over-year change
+  sectors: SectorRef[]; // options for the sector select
+  totalValueEur: number;
+  coverage: { dated: number; total: number; pct: number }; // contracts with a usable signing date
+  scope: {
+    sector: string | null;
+    funding: 'all' | 'eu' | 'national';
+    granularity: 'month' | 'year';
+  };
+}
+
+// ── Regions (map) ─────────────────────────────────────────────────────────────────────────────────
+// Spend per Bulgarian region (NUTS3) for the /map choropleth. Region is known for ~half of
+// authorities, so the unattributed bucket and coverage are first-class, never hidden.
+
+export interface RegionSpend {
+  nuts3: string; // joins the map geometry (apps/web/app/lib/bg-region-geometry.ts) and @sigma/config BG_REGIONS
+  name: string;
+  nuts2: string;
+  nuts2Name: string;
+  valueEur: number;
+  contracts: number;
+  authorities: number;
+}
+
+export interface MacroRegionSpend {
+  nuts2: string;
+  name: string;
+  valueEur: number;
+  contracts: number;
+}
+
+export interface RegionalSpending {
+  regions: RegionSpend[]; // all 28 regions, zero-filled when absent, sorted by value desc
+  macroRegions: MacroRegionSpend[]; // the 6 NUTS2 planning regions
+  sectors: SectorRef[]; // options for the sector select
+  unattributed: { valueEur: number; contracts: number; authorities: number }; // region unknown
+  coverage: { withRegion: number; total: number; pct: number }; // share of authorities with a region
+  totalValueEur: number; // sum over the 28 known regions
+  scope: { sector: string | null; year: number | null; funding: 'all' | 'eu' | 'national' };
+}
+
+// ── Competition ─────────────────────────────────────────────────────────────────────────────────
+// Neutral competition indicators (the /competition page). A high single-offer share or HHI is a
+// weak-competition SIGNAL, never a verdict. See the methodology glossary.
+
+/** Headline numbers for the competition KPI strip. */
+export interface CompetitionTotals {
+  contracts: number; // contracts with a known offer count (the denominator)
+  singleOffer: number; // of those, awarded on a single offer (bids_received = 1)
+  singleOfferShare: number; // 0 to 1, by contract count
+  valueEur: number; // value over known-offer contracts (amount_eur IS NOT NULL, the site-wide basis)
+  singleOfferValueEur: number; // value of the single-offer subset (same basis)
+  singleOfferValueShare: number; // 0 to 1, by value
+}
+
+/** One authority on the single-offer leaderboard. */
+export interface CompetitionAuthority {
+  slug: string;
+  name: string;
+  typeLabel: string | null;
+  contracts: number;
+  singleOffer: number;
+  singleOfferShare: number; // 0 to 1
+  valueEur: number;
+}
+
+/** One authority on the supplier-concentration leaderboard (HHI over its spend per supplier). */
+export interface CompetitionConcentration {
+  slug: string;
+  name: string;
+  typeLabel: string | null;
+  suppliers: number;
+  contracts: number;
+  valueEur: number;
+  hhi: number; // 0 to 1 (1 = one supplier takes everything)
+}
+
+/** A recurring authority/company pairing (many separate contracts between the same two parties). */
+export interface CompetitionPair {
+  rank: number;
+  authoritySlug: string;
+  authorityName: string;
+  bidderSlug: string;
+  /** Cleaned raw name, kept for parity with FlowPair/ContractRow and a future CSV export; the UI renders bidderDisplayName. */
+  bidderName: string;
+  bidderDisplayName: string;
+  bidderKind: EntityKind;
+  contracts: number;
+  wonEur: number;
+}
+
+export interface CompetitionData {
+  totals: CompetitionTotals;
+  bySingleOffer: CompetitionAuthority[];
+  byConcentration: CompetitionConcentration[];
+  topPairs: CompetitionPair[];
+  sectors: SectorRef[]; // options for the sector select
+  scope: {
+    sector: string | null;
+    year: number | null;
+    funding: 'all' | 'eu' | 'national';
+    top: number;
+    minContracts: number;
+  };
+}
+
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {

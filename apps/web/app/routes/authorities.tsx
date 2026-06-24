@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money } from '@sigma/shared';
+import { count, money, moneyBare } from '@sigma/shared';
 import { getAuthorityFacets, listAuthorities, normalizeAuthoritySort } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
@@ -130,9 +130,9 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
       secondary: true,
       cell: (a) => (a.typeLabel ? <Chip>{a.typeLabel}</Chip> : null),
     },
-    { key: 'spent', header: 'Похарчено', align: 'money', cell: (a) => money(a.spentEur) },
+    { key: 'spent', header: 'Похарчено (€)', align: 'money', cell: (a) => moneyBare(a.spentEur) },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (a) => count(a.contracts) },
-    { key: 'avg', header: 'Средна стойност', align: 'money', cell: (a) => money(a.avgEur) },
+    { key: 'avg', header: 'Средна стойност (€)', align: 'money', cell: (a) => moneyBare(a.avgEur) },
   ];
 
   return (

@@ -350,3 +350,60 @@ export const ENTITY_TYPES: Record<EntityType, string> = {
   company: 'Дружество',
   consortium: 'Обединение',
 };
+
+// ── Bulgarian regions (NUTS3) ────────────────────────────────────────────────────────────────────
+//
+// The 28 области (NUTS3), grouped into the 6 NUTS2 planning regions. Mirrors scripts/load-nuts.sql
+// (the DB seed), kept here as the front-end source of truth for the /map choropleth: names, NUTS3
+// ids (join the bg-region-geometry asset) and macro-region grouping. `name` must match
+// authorities.region verbatim (both come from the same NUTS table) so the spend aggregation keys cleanly.
+
+export interface BgRegion {
+  /** NUTS3 id, e.g. 'BG411'; joins the map geometry in apps/web/app/lib/bg-region-geometry.ts. */
+  nuts3: string;
+  /** Region name, verbatim as in authorities.region (e.g. 'София (столица)'). */
+  name: string;
+  /** NUTS2 macro-region id. */
+  nuts2: string;
+  /** NUTS2 macro-region name. */
+  nuts2Name: string;
+}
+
+export const BG_REGIONS: readonly BgRegion[] = [
+  { nuts3: 'BG311', name: 'Видин', nuts2: 'BG31', nuts2Name: 'Северозападен' },
+  { nuts3: 'BG312', name: 'Монтана', nuts2: 'BG31', nuts2Name: 'Северозападен' },
+  { nuts3: 'BG313', name: 'Враца', nuts2: 'BG31', nuts2Name: 'Северозападен' },
+  { nuts3: 'BG314', name: 'Плевен', nuts2: 'BG31', nuts2Name: 'Северозападен' },
+  { nuts3: 'BG315', name: 'Ловеч', nuts2: 'BG31', nuts2Name: 'Северозападен' },
+  { nuts3: 'BG321', name: 'Велико Търново', nuts2: 'BG32', nuts2Name: 'Северен централен' },
+  { nuts3: 'BG322', name: 'Габрово', nuts2: 'BG32', nuts2Name: 'Северен централен' },
+  { nuts3: 'BG323', name: 'Русе', nuts2: 'BG32', nuts2Name: 'Северен централен' },
+  { nuts3: 'BG324', name: 'Разград', nuts2: 'BG32', nuts2Name: 'Северен централен' },
+  { nuts3: 'BG325', name: 'Силистра', nuts2: 'BG32', nuts2Name: 'Северен централен' },
+  { nuts3: 'BG331', name: 'Варна', nuts2: 'BG33', nuts2Name: 'Североизточен' },
+  { nuts3: 'BG332', name: 'Добрич', nuts2: 'BG33', nuts2Name: 'Североизточен' },
+  { nuts3: 'BG333', name: 'Шумен', nuts2: 'BG33', nuts2Name: 'Североизточен' },
+  { nuts3: 'BG334', name: 'Търговище', nuts2: 'BG33', nuts2Name: 'Североизточен' },
+  { nuts3: 'BG341', name: 'Бургас', nuts2: 'BG34', nuts2Name: 'Югоизточен' },
+  { nuts3: 'BG342', name: 'Сливен', nuts2: 'BG34', nuts2Name: 'Югоизточен' },
+  { nuts3: 'BG343', name: 'Ямбол', nuts2: 'BG34', nuts2Name: 'Югоизточен' },
+  { nuts3: 'BG344', name: 'Стара Загора', nuts2: 'BG34', nuts2Name: 'Югоизточен' },
+  { nuts3: 'BG411', name: 'София (столица)', nuts2: 'BG41', nuts2Name: 'Югозападен' },
+  { nuts3: 'BG412', name: 'София', nuts2: 'BG41', nuts2Name: 'Югозападен' },
+  { nuts3: 'BG413', name: 'Благоевград', nuts2: 'BG41', nuts2Name: 'Югозападен' },
+  { nuts3: 'BG414', name: 'Перник', nuts2: 'BG41', nuts2Name: 'Югозападен' },
+  { nuts3: 'BG415', name: 'Кюстендил', nuts2: 'BG41', nuts2Name: 'Югозападен' },
+  { nuts3: 'BG421', name: 'Пловдив', nuts2: 'BG42', nuts2Name: 'Южен централен' },
+  { nuts3: 'BG422', name: 'Хасково', nuts2: 'BG42', nuts2Name: 'Южен централен' },
+  { nuts3: 'BG423', name: 'Пазарджик', nuts2: 'BG42', nuts2Name: 'Южен централен' },
+  { nuts3: 'BG424', name: 'Смолян', nuts2: 'BG42', nuts2Name: 'Южен централен' },
+  { nuts3: 'BG425', name: 'Кърджали', nuts2: 'BG42', nuts2Name: 'Южен централен' },
+];
+
+const BG_REGION_BY_NAME = new Map(BG_REGIONS.map((r) => [r.name, r] as const));
+
+/** Resolve an authorities.region name to its NUTS3 region, or null if unknown/unattributed. */
+export function regionByName(name: string | null | undefined): BgRegion | null {
+  if (!name) return null;
+  return BG_REGION_BY_NAME.get(name.trim()) ?? null;
+}
