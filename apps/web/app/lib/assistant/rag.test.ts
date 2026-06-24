@@ -76,7 +76,7 @@ describe('indexSchemaCorpus', () => {
 });
 
 describe('retrieveSchemaContext', () => {
-  it('returns the matched chunk texts', async () => {
+  it('returns the matched chunk texts and queries the schema namespace', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
       { id: 'schema:trap:0', score: 0.9, metadata: { text: 'СУМИРАЙ САМО amount_eur' } },
@@ -84,16 +84,25 @@ describe('retrieveSchemaContext', () => {
     expect(await retrieveSchemaContext(ai, index, 'обща сума')).toEqual([
       'СУМИРАЙ САМО amount_eur',
     ]);
+    // Pin the namespace filter — a swapped schema/entity filter would poison the prompt yet still map.
+    expect(index.query).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ filter: { ns: 'schema' } }),
+    );
   });
 });
 
 describe('semanticSearch', () => {
-  it('maps matches into hits', async () => {
+  it('maps matches into hits and queries the entity namespace', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
       { id: 'e1', score: 0.8, metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } },
     ]);
     const out = await semanticSearch(ai, index, 'детски градини');
     expect(out[0]).toMatchObject({ kind: 'company', ref: 'eik:1', title: 'Фирма', score: 0.8 });
+    expect(index.query).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ filter: { ns: 'entity' } }),
+    );
   });
 });

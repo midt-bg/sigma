@@ -28,4 +28,10 @@ describe('entityHref', () => {
     expect(entityHref('company', 'eik:103267194')).toBe('/companies/103267194');
     expect(entityHref('contract', 'c:abc123')).toBe('/contracts/abc123');
   });
+
+  it('URL-encodes a malformed id so it cannot break out of the href (review #80)', () => {
+    const href = entityHref('authority', 'auth:00 6<x>');
+    expect(href.startsWith('/authorities/')).toBe(true);
+    expect(href).not.toMatch(/[ <>]/); // space / angle brackets are percent-encoded, never literal
+  });
 });
