@@ -449,4 +449,22 @@ describe('sanitizeProse — no raw HTML reaches a public report', () => {
     // a genuine "less than" in prose is NOT a tag-open and is preserved
     expect(sanitizeProse('3 < 5 договора')).toBe('3 < 5 договора');
   });
+
+  it('loops to a fixpoint so a nested/overlapping tag cannot reassemble (review #80, ydimitrof H2)', () => {
+    // a single `<[^>]*>` pass can reassemble a live tag from overlapping input; the loop removes it
+    const out = sanitizeProse('<scr<script>ipt>alert(1)</script>');
+    expect(out).not.toMatch(/<\/?[a-zA-Z]/); // no tag-open survives
+    expect(out).not.toContain('<script');
+  });
+
+  it('defangs javascript:/data: URIs a markdown link could carry (review #80 sweep)', () => {
+    expect(sanitizeProse('[виж тук](javascript:alert(document.cookie))')).not.toMatch(
+      /javascript:/i,
+    );
+    expect(sanitizeProse('![x](data:text/html;base64,PHN2Zz4=)')).not.toMatch(/data:/i);
+    // a normal https source link is left intact
+    expect(sanitizeProse('[източник](https://app.eop.bg/today/1)')).toContain(
+      'https://app.eop.bg/today/1',
+    );
+  });
 });

@@ -131,16 +131,25 @@ export interface ResolvedReport {
 
 export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; errors: string[] };
 
-// Strip raw HTML so model prose can never inject markup into the public report (spec §7/§9). Tags are
-// removed, plus a trailing UNTERMINATED tag (`<img src=x onerror=…` with no closing `>`) that a single
-// `<[^>]*>` pass would leave behind (review #80). This is defence-in-depth: the renderer must STILL
-// render the result as markdown WITHOUT raw-HTML passthrough — that, not this strip, is the load-bearing
-// guard.
+// Strip raw HTML so model prose can never inject markup into the public report (spec §7/§9). Loops the
+// strip to a FIXPOINT: a single `<[^>]*>` pass can REASSEMBLE a live tag from nested/overlapping input
+// (`<scr<script>ipt>` collapses to `<script>`), so it must repeat until the string stops changing
+// (review #80, ydimitrof H2). Each pass also drops a trailing UNTERMINATED tag-open (`<img src=x
+// onerror=…` with no closing `>`). Until the Phase-2 markdown renderer (no raw-HTML passthrough) lands
+// as the second layer, this strip is the SOLE barrier, so it must hold on its own.
 export function sanitizeProse(md: string): string {
-  return md
-    .replace(/<[^>]*>/g, '') // complete tags
-    .replace(/<\/?[a-zA-Z][^>]*$/g, '') // a trailing, unterminated tag-open
-    .trim();
+  let prev: string;
+  let out = md;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '').replace(/<\/?[a-zA-Z][^>]*$/g, '');
+  } while (out !== prev);
+  // Defang dangerous URL schemes a markdown link/image target could carry — `[t](javascript:…)` is NOT
+  // inside <…>, so the tag strip misses it, and a markdown renderer would emit an executable href
+  // (review #80). The Phase-2 renderer MUST additionally allowlist URL schemes (urlTransform →
+  // http/https/mailto only); this is the defence-in-depth until it lands.
+  out = out.replace(/\b(?:javascript|vbscript|data|file)\s*:/gi, 'unsafe:');
+  return out.trim();
 }
 
 // Data cells carry submitter-influenceable text (company/authority names, contract subjects). Tag-strip
