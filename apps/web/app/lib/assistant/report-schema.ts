@@ -131,10 +131,16 @@ export interface ResolvedReport {
 
 export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; errors: string[] };
 
-// Strip raw HTML so model prose can never inject markup into the public report (spec §7/§9). The
-// renderer must additionally render the result as markdown WITHOUT raw-HTML passthrough.
+// Strip raw HTML so model prose can never inject markup into the public report (spec §7/§9). Tags are
+// removed, plus a trailing UNTERMINATED tag (`<img src=x onerror=…` with no closing `>`) that a single
+// `<[^>]*>` pass would leave behind (review #80). This is defence-in-depth: the renderer must STILL
+// render the result as markdown WITHOUT raw-HTML passthrough — that, not this strip, is the load-bearing
+// guard.
 export function sanitizeProse(md: string): string {
-  return md.replace(/<[^>]*>/g, '').trim();
+  return md
+    .replace(/<[^>]*>/g, '') // complete tags
+    .replace(/<\/?[a-zA-Z][^>]*$/g, '') // a trailing, unterminated tag-open
+    .trim();
 }
 
 // Data cells carry submitter-influenceable text (company/authority names, contract subjects). Tag-strip
@@ -154,15 +160,26 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /(?:€|eur)\s*\d[\d.,\s]*/giu, // €1234, EUR 1 234
   /\d[\d.,\s]*\s*(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
   /\d[\d.,\s]*\s*(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
-  /\d{1,3}(?:[.,\s]\d{3})+/gu, // grouped: 1 234, 1,234,567, 1.234.567
+  /\d{1,3}(?:[.,\s'’]\d{3})+/gu, // grouped: 1 234, 1,234,567, 1.234.567, 12'000'000 (apostrophe)
+  /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
 ];
+
+// Markdown can split a number from its unit/magnitude word with markup a reader still collapses —
+// `**12** **млрд.**` renders to "12 млрд.". Strip emphasis/formatting and collapse whitespace before
+// scanning so the gate is not blinded by markup (review #80).
+function deMarkdown(text: string): string {
+  return text.replace(/[*_`~\\]/g, '').replace(/\s+/g, ' ');
+}
 
 /** Return the material-number tokens found in prose (empty ⇒ clean). Used to gate text/callout. */
 export function findProseNumbers(text: string): string[] {
   const hits: string[] = [];
-  for (const re of PROSE_NUMBER_PATTERNS) {
-    for (const m of text.matchAll(re)) hits.push(m[0].trim());
+  // Scan the raw text AND a markdown-stripped copy so neither plain nor markup-split numbers slip.
+  for (const scan of [text, deMarkdown(text)]) {
+    for (const re of PROSE_NUMBER_PATTERNS) {
+      for (const m of scan.matchAll(re)) hits.push(m[0].trim());
+    }
   }
   return [...new Set(hits)].filter(Boolean);
 }
@@ -199,7 +216,10 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
       );
       return null;
     }
-    return r.rows[ref.row]![colIdx]!;
+    // Guard the cell access: a ragged row (shorter than columns) would make a non-null assertion lie
+    // and surface `undefined`. Real results from toQueryResult are rectangular, so this is defensive.
+    const value = r.rows[ref.row]?.[colIdx];
+    return value === undefined ? null : value;
   };
 
   const requireResult = (resultId: string, where: string): QueryResult | null => {

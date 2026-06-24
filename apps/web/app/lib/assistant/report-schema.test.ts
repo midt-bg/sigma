@@ -261,15 +261,22 @@ describe('guardrail E2 — model-controlled labels, title, and headers (review #
       emit([
         {
           type: 'facts',
-          items: [
-            { term: 'Общо 1 234 567 лв', ref: { resultId: 'R2', row: 0, col: 'total_eur' } },
-          ],
+          items: [{ term: 'Общо 1 234 567 лв', ref: { resultId: 'R2', row: 0, col: 'total_eur' } }],
         },
       ]),
       results,
     );
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors.join(' ')).toMatch(/material number in facts term/);
+  });
+
+  it('rejects a material number in a callout title', () => {
+    const out = bindReport(
+      emit([{ type: 'callout', title: 'Надхвърлят 12 млрд. лв.', md: 'кратко обяснение' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/value block, not callout/);
   });
 
   it('rejects a material number in the report title', () => {
@@ -364,9 +371,7 @@ describe('null values in chart blocks (review #80)', () => {
       },
     ];
     const out = bindReport(
-      emit([
-        { type: 'timeseries', resultId: 'R1', periodCol: 'month', valueCol: 'total' },
-      ]),
+      emit([{ type: 'timeseries', resultId: 'R1', periodCol: 'month', valueCol: 'total' }]),
       r,
     );
     expect(out.ok).toBe(true);
@@ -387,6 +392,13 @@ describe('findProseNumbers', () => {
 
   it('ignores years, small counts and ordinals', () => {
     expect(findProseNumbers('през 2023 г., топ 5, 3-ти по ред, към 2026-06-18')).toHaveLength(0);
+  });
+
+  it('catches markup-split and alternative number forms (review #80)', () => {
+    // a magnitude word split from its digits by markdown bold still reads as "12 млрд." to a human
+    expect(findProseNumbers('усвоени **12** **млрд.** евро')).not.toHaveLength(0);
+    expect(findProseNumbers('1.2e10 от средствата')).not.toHaveLength(0); // scientific notation
+    expect(findProseNumbers("укрити 12'000'000 лв")).not.toHaveLength(0); // apostrophe grouping
   });
 });
 
@@ -429,5 +441,12 @@ describe('sanitizeProse — no raw HTML reaches a public report', () => {
       expect(out.report.blocks[0].title).toBe('Бележка');
       expect(out.report.blocks[0].md).toBe('виж  тук');
     }
+  });
+
+  it('strips a trailing UNTERMINATED tag a single pass would leave live (review #80)', () => {
+    // `<img src=x onerror=…` with no closing `>` survives /<[^>]*>/; the second pass removes it
+    expect(sanitizeProse('виж <img src=x onerror=alert(1)')).toBe('виж');
+    // a genuine "less than" in prose is NOT a tag-open and is preserved
+    expect(sanitizeProse('3 < 5 договора')).toBe('3 < 5 договора');
   });
 });
