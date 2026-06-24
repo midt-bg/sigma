@@ -70,6 +70,13 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
       return { ok: false, reason: `forbidden keyword: ${kw}` };
     }
   }
+
+  // `\bPRAGMA\b` above does NOT catch the table-valued *function* form `pragma_table_info(...)` (the
+  // `_` is a word char, so there is no boundary). Block the `pragma_*` identifiers here too — the AST
+  // guard rejects all table-valued functions, this is the cheap belt-and-braces layer (review #80).
+  if (/\bpragma_\w+/i.test(sql)) {
+    return { ok: false, reason: 'pragma functions are not allowed' };
+  }
   return { ok: true, sql };
 }
 

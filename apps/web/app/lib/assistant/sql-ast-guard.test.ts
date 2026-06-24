@@ -80,4 +80,48 @@ describe('guardSelect', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/LIMIT offset, count/);
   });
+
+  it('rejects table-valued functions in FROM (pragma_/json_each schema-enum + amplification, review #80)', () => {
+    // tableList() returns [] for the function form, so the table allowlist never sees these — fail closed.
+    for (const sql of [
+      "SELECT * FROM pragma_table_info('contracts')",
+      "SELECT * FROM json_each('[1,2,3]')",
+      "SELECT c.id FROM contracts c JOIN json_each('[1,2]') ON 1 = 1",
+    ]) {
+      expect(guardSelect(sql).ok, sql).toBe(false);
+    }
+  });
+
+  it('rejects an explicit JOIN / CROSS JOIN with no ON/USING (Cartesian product, review #80)', () => {
+    expect(guardSelect('SELECT * FROM contracts JOIN bidders').ok).toBe(false);
+    expect(guardSelect('SELECT * FROM contracts CROSS JOIN bidders').ok).toBe(false);
+    // a JOIN that DOES carry a condition is accepted
+    expect(guardSelect('SELECT * FROM contracts c JOIN bidders b ON b.id = c.bidder_id').ok).toBe(
+      true,
+    );
+  });
+
+  it('still allowlists tables referenced inside a sub-query in FROM', () => {
+    expect(guardSelect('SELECT x.id FROM (SELECT id FROM contracts) x').ok).toBe(true);
+    const bad = guardSelect('SELECT x.name FROM (SELECT name FROM sqlite_master) x');
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.reason).toMatch(/table not allowed: sqlite_master/);
+  });
+
+  it('blocks schema enumeration through the other arm of a UNION', () => {
+    const r = guardSelect('SELECT name FROM authorities UNION SELECT sql FROM sqlite_master');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/table not allowed: sqlite_master/);
+  });
+
+  it('clamps a compound (UNION) outer LIMIT without emitting a double LIMIT (review #80)', () => {
+    const r = guardSelect(
+      'SELECT id FROM contracts UNION ALL SELECT id FROM authority_totals LIMIT 100000',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sql).toMatch(/LIMIT 500\b/);
+      expect(r.sql).not.toMatch(/LIMIT\s+\d+\s+LIMIT/i); // not `… LIMIT 100000 LIMIT 500` (SQLite syntax error)
+    }
+  });
 });

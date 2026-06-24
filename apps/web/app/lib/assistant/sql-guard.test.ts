@@ -36,6 +36,13 @@ describe('assertReadOnlySelect', () => {
   it('rejects a non-SELECT leading token', () => {
     expect(assertReadOnlySelect('EXPLAIN SELECT 1').ok).toBe(false);
   });
+
+  it('rejects the table-valued pragma function form that \\bPRAGMA\\b misses (review #80)', () => {
+    // `\bPRAGMA\b` does not match `pragma_table_info` (the `_` is a word char), so this is a separate guard.
+    const r = assertReadOnlySelect("SELECT * FROM pragma_table_info('contracts')");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/pragma/i);
+  });
 });
 
 describe('enforceLimit', () => {
