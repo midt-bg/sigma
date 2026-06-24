@@ -4,7 +4,7 @@ import { count, money, moneyBare, pct, periodRange, plural, signedPct } from '@s
 import {
   authorityIdFromSlug,
   getAuthority,
-  getCompetition,
+  getAuthoritySingleOffer,
   getEntityNetwork,
   getSpendingTrend,
 } from '@sigma/db';
@@ -17,6 +17,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
+import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
@@ -105,9 +106,9 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     const [authority, coverage, trend, network, competition] = await Promise.all([
       getAuthority(db, authorityId),
       getCoverageMeta(db),
-      getSpendingTrend(db, { authorityId, granularity: 'month' }),
-      getEntityNetwork(db, { kind: 'authority', id: authorityId }),
-      getCompetition(db, { authorityId, minContracts: 1 }),
+      getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
+      getEntityNetwork(db, { kind: 'authority', id: authorityId }, { includeCenterOptions: false }),
+      getAuthoritySingleOffer(db, authorityId),
     ]);
     if (!authority) throw new Response('Not Found', { status: 404 });
     return { authority, coverage, trend, network, competition };
@@ -117,10 +118,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
-  const ct = competition.totals;
-  // Single-offer portion by value — mirrors the home-page treatment; guarded against a zero base.
-  const soValueRatio =
-    ct.valueEur > 0 ? Math.min(1, Math.max(0, ct.singleOfferValueEur / ct.valueEur)) : 0;
+  const ct = competition;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -209,29 +207,15 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             hint="Дял на договорите с известен брой оферти, възложени само с една оферта."
           >
             {ct.contracts > 0 ? (
-              <div className="so-portion">
-                <p className="so-portion-head">
-                  <span className="so-portion-pct">{pct(soValueRatio)}</span> от стойността на
-                  поръчките са по договори с <em>една оферта</em>.
-                </p>
-                <div className="hbar" aria-hidden="true">
-                  <span
-                    style={{
-                      width: `${(soValueRatio * 100).toFixed(1)}%`,
-                      background: 'var(--accent)',
-                    }}
-                  />
-                  <span
-                    style={{
-                      width: `${((1 - soValueRatio) * 100).toFixed(1)}%`,
-                      background: 'var(--ink-soft)',
-                    }}
-                  />
-                </div>
-                <p className="small muted so-portion-cap">
-                  {count(ct.singleOffer)} от {count(ct.contracts)} договора ·{' '}
-                  {money(ct.singleOfferValueEur)} от {money(ct.valueEur)} по стойност
-                </p>
+              <div>
+                <SingleOfferPortion
+                  valueEur={ct.singleOfferValueEur}
+                  totalEur={ct.valueEur}
+                  singleOffer={ct.singleOffer}
+                  contracts={ct.contracts}
+                  scopeLabel="на поръчките"
+                  captionSuffix="по стойност"
+                />
                 <p className="small muted mt-8">
                   <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
                 </p>

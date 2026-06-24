@@ -129,8 +129,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     const [company, coverage, trend, network] = await Promise.all([
       getCompany(db, id),
       getCoverageMeta(db),
-      getSpendingTrend(db, { bidderId: id, granularity: 'month' }),
-      getEntityNetwork(db, { kind: 'company', id }),
+      getSpendingTrend(db, { bidderId: id, granularity: 'month' }, { includeSectors: false }),
+      getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
     return { company, coverage, trend, network };
