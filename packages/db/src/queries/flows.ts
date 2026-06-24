@@ -180,9 +180,12 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
 }
 
 const SECTOR_OPTION_LIMIT = 12;
+const DEFAULT_TOP = 20;
+const MAX_TOP = 50;
 
 export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsData> {
-  const top = p.top === 50 ? 50 : 20;
+  const requestedTop = Number.isInteger(p.top) ? p.top! : DEFAULT_TOP;
+  const top = requestedTop >= 1 && requestedTop <= MAX_TOP ? requestedTop : DEFAULT_TOP;
   const rows = await topPairs(db, p, top);
   const pairs: FlowPair[] = rows.map((r, i) => {
     const authorityName = cleanName(r.authority_name);

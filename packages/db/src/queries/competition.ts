@@ -93,6 +93,20 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
   };
 }
 
+export async function getCompetitionTotals(
+  db: D1Database,
+  p: CompetitionParams = {},
+): Promise<CompetitionTotals> {
+  return competitionTotals(db, p);
+}
+
+export async function getAuthoritySingleOffer(
+  db: D1Database,
+  authorityId: string,
+): Promise<CompetitionTotals> {
+  return competitionTotals(db, { authorityId });
+}
+
 interface AuthorityShareRow {
   authority_id: string;
   name: string;
@@ -305,4 +319,21 @@ export async function getCompetition(
       minContracts,
     },
   };
+}
+
+export async function getCompetitionSummary(
+  db: D1Database,
+  p: CompetitionParams = {},
+): Promise<{
+  totals: CompetitionTotals;
+  topConcentration: CompetitionConcentration | null;
+}> {
+  const top = 1;
+  const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
+  const scoped = { ...p, minContracts };
+  const [totals, byConcentration] = await Promise.all([
+    competitionTotals(db, p),
+    authoritiesByConcentration(db, scoped, top),
+  ]);
+  return { totals, topConcentration: byConcentration[0] ?? null };
 }

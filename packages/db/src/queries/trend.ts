@@ -15,6 +15,10 @@ export interface TrendParams {
   bidderId?: string | null;
 }
 
+export interface TrendQueryOptions {
+  includeSectors?: boolean;
+}
+
 const START = '2020-01-01';
 // A real signing year is YYYY at the head of signed_at; null/malformed dates are excluded from the
 // series (and counted as undated for coverage). Mirrors the check in queries/contracts.ts.
@@ -86,7 +90,12 @@ async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
     .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
 }
 
-export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<TrendData> {
+export async function getSpendingTrend(
+  db: D1Database,
+  p: TrendParams,
+  options: TrendQueryOptions = {},
+): Promise<TrendData> {
+  const includeSectors = options.includeSectors ?? true;
   const granularity = p.granularity === 'year' ? 'year' : 'month';
   const periodLen = granularity === 'year' ? 4 : 7; // substr length: 'YYYY' vs 'YYYY-MM'
   const s = scope(p);
@@ -112,7 +121,7 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
       )
       .bind(...s.params)
       .first<CoverageRow>(),
-    sectorOptions(db),
+    includeSectors ? sectorOptions(db) : Promise.resolve([]),
     db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
   ]);
   // The final period (the as_of period) is still being filled; mark it so the chart and table do not
