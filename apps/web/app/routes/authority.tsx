@@ -59,7 +59,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
   const { trend, network, competition } = loaderData;
   const ct = competition.totals;
   // Single-offer portion by value — mirrors the home-page treatment; guarded against a zero base.
-  const soValueRatio = ct.valueEur > 0 ? Math.min(1, Math.max(0, ct.singleOfferValueEur / ct.valueEur)) : 0;
+  const soValueRatio =
+    ct.valueEur > 0 ? Math.min(1, Math.max(0, ct.singleOfferValueEur / ct.valueEur)) : 0;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -293,8 +294,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           title="Договори"
           hint={
             <span>
-              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} —
-              превключи между най-новите и най-големите по стойност.
+              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} — превключи
+              между най-новите и най-големите по стойност.
             </span>
           }
         >
