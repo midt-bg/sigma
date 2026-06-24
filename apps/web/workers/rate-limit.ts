@@ -22,17 +22,36 @@ export async function rateLimitRequest(
   limiter: RateLimit | undefined,
   isProd: boolean,
   body: string,
+  failClosed = false,
 ): Promise<Response | null> {
-  if (!limiter) return null;
+  // `failClosed` callers (expensive/paid endpoints) must NOT run unthrottled in production when the
+  // limiter is unprovisioned or throws — reject with a 503 instead of silently allowing. Non-prod
+  // (dev/preview, where the binding is routinely absent) still degrades to a no-op so local work is
+  // not blocked (review #80). CSV/aggregation keep the default fail-open behaviour.
+  const closed = failClosed && isProd;
+
+  if (!limiter) return closed ? rateLimitUnavailableResponse(request, isProd) : null;
 
   try {
     const outcome = await limiter.limit({ key: rateLimitKey(request) });
     if (outcome.success) return null;
   } catch {
-    return null;
+    return closed ? rateLimitUnavailableResponse(request, isProd) : null;
   }
 
   return rateLimitExceededResponse(request, isProd, body);
+}
+
+/** 503 for a fail-closed limiter whose binding is missing or errored — distinct from a 429 throttle. */
+export function rateLimitUnavailableResponse(request: Request, isProd: boolean): Response {
+  const headers = new Headers({ 'Retry-After': String(RATE_LIMIT_PERIOD_SECONDS) });
+  if (request.method !== 'HEAD') headers.set('Content-Type', 'text/plain; charset=utf-8');
+  for (const [key, value] of baseSecurityHeaders(isProd)) headers.set(key, value);
+
+  return new Response(request.method === 'HEAD' ? null : 'Rate limiting unavailable', {
+    status: 503,
+    headers,
+  });
 }
 
 export function rateLimitExceededResponse(

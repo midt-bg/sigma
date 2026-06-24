@@ -53,7 +53,27 @@ describe('rateLimitAssistantRoute', () => {
     expect(limit).not.toHaveBeenCalled();
   });
 
-  it('fails open when the binding is missing', async () => {
+  it('fails open in non-prod when the binding is missing (dev/preview)', async () => {
     await expect(rateLimitAssistantRoute(post(), {}, false)).resolves.toBeNull();
+  });
+
+  it('fails CLOSED with a 503 in production when the binding is missing (review #80)', async () => {
+    const response = await rateLimitAssistantRoute(post(), {}, true);
+    expect(response?.status).toBe(503);
+    expect(response?.headers.get('Retry-After')).toBe('60');
+  });
+
+  it('fails CLOSED with a 503 in production when the limiter throws', async () => {
+    const limiter = {
+      limit: vi.fn(async () => {
+        throw new Error('limiter down');
+      }),
+    } as unknown as RateLimit;
+    const response = await rateLimitAssistantRoute(
+      post(),
+      { ASSISTANT_RATE_LIMITER: limiter },
+      true,
+    );
+    expect(response?.status).toBe(503);
   });
 });
