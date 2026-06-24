@@ -22,11 +22,11 @@ const localStorageMock = (() => {
     }
   };
 })();
-Object.defineProperty(global, 'localStorage', {
+Object.defineProperty(globalThis, 'localStorage', {
   value: localStorageMock,
   writable: true
 });
-Object.defineProperty(global, 'window', {
+Object.defineProperty(globalThis, 'window', {
   value: {
     addEventListener: () => {},
     removeEventListener: () => {},
