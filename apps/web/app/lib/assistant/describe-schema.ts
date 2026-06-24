@@ -90,7 +90,8 @@ export const TABLES: TableDoc[] = [
   {
     name: 'flow_pairs',
     grain: 'поток възложител→изпълнител',
-    columns: 'authority_id, bidder_id, won_eur, contracts',
+    columns:
+      'authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts',
   },
   {
     name: 'search_index',
@@ -143,6 +144,11 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
   {
     intent: 'Разход по област (NUTS3) — от rollup-а; празно region = неразпределени',
     sql: 'SELECT region, SUM(spent_eur) AS value_eur, SUM(contracts) AS contracts\nFROM authority_totals GROUP BY region ORDER BY value_eur DESC;',
+  },
+  {
+    intent:
+      'Най-големи потоци възложител→изпълнител (ребрата на графа на връзките; за един субект добави WHERE authority_id = … или bidder_id = …)',
+    sql: 'SELECT authority_name, bidder_name, won_eur, contracts\nFROM flow_pairs ORDER BY won_eur DESC LIMIT 20;',
   },
 ];
 
