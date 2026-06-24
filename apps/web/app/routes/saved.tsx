@@ -22,6 +22,34 @@ export default function SavedItems() {
   const authorities = items.filter((i) => i.kind === 'authority');
   const contracts = items.filter((i) => i.kind === 'contract');
 
+  const renderSection = (title: string, list: typeof items) => {
+    if (list.length === 0) return null;
+    return (
+      <Section id={list[0].kind} title={`${title} (${list.length})`}>
+        <ul className="saved-list">
+          {list.map((item) => (
+            <li key={item.id} className="saved-item">
+              <div className="saved-item-info">
+                <Link to={item.href} className="saved-item-title">
+                  {item.title}
+                </Link>
+                <div className="saved-item-sub">{item.subtitle}</div>
+              </div>
+              <button
+                className="saved-item-remove"
+                onClick={() => removeItem(item.id)}
+                type="button"
+                aria-label={`Премахни ${item.title}`}
+              >
+                ✕ Премахни
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Section>
+    );
+  };
+
   return (
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Запазени' }]} />
@@ -31,11 +59,9 @@ export default function SavedItems() {
           lede="Тук се запазват профилите и договорите, които сте маркирали за по-късен преглед. Данните се пазят локално във вашия браузър."
         >
           {items.length > 0 && (
-            <div style={{ marginTop: '16px' }}>
-              <button className="btn" type="button" onClick={clearAll}>
-                Изчисти всички
-              </button>
-            </div>
+            <button className="source-cta" style={{ marginTop: '16px' }} type="button" onClick={clearAll}>
+              Изчисти всички
+            </button>
           )}
         </PageHeader>
 
@@ -51,77 +77,9 @@ export default function SavedItems() {
           </Section>
         ) : (
           <div className="two-col">
-            {contracts.length > 0 && (
-              <Section id="contracts" title={`Договори (${contracts.length})`}>
-                <div>
-                  {contracts.map((item) => (
-                    <div key={item.id} className="saved-item">
-                      <Link to={item.href} className="saved-item-title">
-                        {item.title}
-                      </Link>
-                      <div className="saved-item-sub">{item.subtitle}</div>
-                      <div className="saved-item-actions">
-                        <button
-                          className="btn-link muted small"
-                          onClick={() => removeItem(item.id)}
-                          type="button"
-                        >
-                          Премахни
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {companies.length > 0 && (
-              <Section id="companies" title={`Компании (${companies.length})`}>
-                <div>
-                  {companies.map((item) => (
-                    <div key={item.id} className="saved-item">
-                      <Link to={item.href} className="saved-item-title">
-                        {item.title}
-                      </Link>
-                      <div className="saved-item-sub">{item.subtitle}</div>
-                      <div className="saved-item-actions">
-                        <button
-                          className="btn-link muted small"
-                          onClick={() => removeItem(item.id)}
-                          type="button"
-                        >
-                          Премахни
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {authorities.length > 0 && (
-              <Section id="authorities" title={`Институции (${authorities.length})`}>
-                <div>
-                  {authorities.map((item) => (
-                    <div key={item.id} className="saved-item">
-                      <Link to={item.href} className="saved-item-title">
-                        {item.title}
-                      </Link>
-                      <div className="saved-item-sub">{item.subtitle}</div>
-                      <div className="saved-item-actions">
-                        <button
-                          className="btn-link muted small"
-                          onClick={() => removeItem(item.id)}
-                          type="button"
-                        >
-                          Премахни
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-            )}
+            {renderSection('Договори', contracts)}
+            {renderSection('Компании', companies)}
+            {renderSection('Институции', authorities)}
           </div>
         )}
       </main>
