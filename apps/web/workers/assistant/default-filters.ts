@@ -1,8 +1,9 @@
 // E3 — Guard A: default filters.
 //
 // When the assistant queries the contracts corpus it must apply the safe defaults deterministically,
-// not at the model's discretion: exclude suspect-value rows (they would distort sums), exclude
-// synthetic tenders (procedure_type = 'неизвестна', headers we fabricated for orphan contracts), and
+// not at the model's discretion: exclude rows with no summable canonical amount (amount_eur IS NULL —
+// the same row-set the rollups cover, so live aggregates reconcile against them), exclude synthetic
+// tenders (procedure_type = 'неизвестна', headers we fabricated for orphan contracts), and
 // reason about time by `signed_at` (when the deal was struck) rather than `published_at`. Each
 // default can be explicitly opted out of, but every opt-out emits a callout line naming the risk, so
 // the assumption is always surfaced to the reader. This module is pure: it produces the descriptor,
@@ -11,8 +12,11 @@
 export type DateField = 'signed_at' | 'published_at';
 
 export interface DefaultFilterOptions {
-  /** Include rows flagged `value_suspect` (distorts monetary sums). */
-  includeValueSuspect?: boolean;
+  /**
+   * Include rows with no summable canonical amount (`amount_eur IS NULL`). These are absent from the
+   * rollups, so including them makes live aggregates diverge from E4's reconcile basis.
+   */
+  includeUnsummable?: boolean;
   /** Include synthetic tenders (procedure_type = 'неизвестна'). */
   includeSynthetic?: boolean;
   /** Reason about time by this column. Defaults to `signed_at`. */
@@ -20,7 +24,7 @@ export interface DefaultFilterOptions {
 }
 
 export interface DefaultFilterDescriptor {
-  excludeValueSuspect: boolean;
+  excludeNullAmount: boolean;
   excludeSynthetic: boolean;
   dateField: DateField;
 }
@@ -35,7 +39,6 @@ export interface DefaultFilterResult {
   sql: { fragment: string; params: unknown[] };
 }
 
-const VALUE_SUSPECT = 'value_suspect';
 const SYNTHETIC_PROCEDURE = 'неизвестна';
 
 const DATE_COLUMN: Record<DateField, string> = {
@@ -43,13 +46,13 @@ const DATE_COLUMN: Record<DateField, string> = {
   published_at: 'c.published_at',
 };
 
-const CALLOUT_DEFAULT_VALUE_SUSPECT =
-  'По подразбиране са изключени договори със съмнителна стойност (value_suspect).';
+const CALLOUT_DEFAULT_NULL_AMOUNT =
+  'По подразбиране са изключени договори без съпоставима канонична стойност (amount_eur липсва); те не се сумират и не са включени в обобщените тотали (rollups).';
 const CALLOUT_DEFAULT_SYNTHETIC =
   'По подразбиране са изключени синтетични поръчки с неизвестна процедура.';
 const CALLOUT_DEFAULT_SIGNED_AT = 'Времевият анализ е по дата на подписване (signed_at).';
-const CALLOUT_OPTOUT_VALUE_SUSPECT =
-  'ВНИМАНИЕ: по изрично искане са включени договори със съмнителна стойност (value_suspect); сумите може да са изкривени.';
+const CALLOUT_OPTOUT_NULL_AMOUNT =
+  'ВНИМАНИЕ: по изрично искане са включени договори без канонична стойност (amount_eur липсва); тези редове няма да се съгласуват с обобщените тотали (rollups).';
 const CALLOUT_OPTOUT_SYNTHETIC =
   'ВНИМАНИЕ: по изрично искане са включени синтетични поръчки (неизвестна процедура).';
 const CALLOUT_OPTOUT_PUBLISHED_AT =
@@ -57,9 +60,13 @@ const CALLOUT_OPTOUT_PUBLISHED_AT =
 
 /**
  * Resolve the default contract filters against an explicit opt-out set. Deterministic and pure.
+ *
+ * The emitted `sql.fragment` assumes the query aliases `contracts` as `c` and the joined `tenders`
+ * as `t`. The synthetic-tender guard keeps `t.procedure_type IS NULL` rows (LEFT-joined orphans)
+ * and excludes only the `'неизвестна'` sentinel.
  */
 export function applyDefaultFilters(options: DefaultFilterOptions = {}): DefaultFilterResult {
-  const excludeValueSuspect = options.includeValueSuspect !== true;
+  const excludeNullAmount = options.includeUnsummable !== true;
   const excludeSynthetic = options.includeSynthetic !== true;
   const dateField: DateField = options.dateField ?? 'signed_at';
 
@@ -67,12 +74,14 @@ export function applyDefaultFilters(options: DefaultFilterOptions = {}): Default
   const conditions: string[] = [];
   const params: unknown[] = [];
 
-  if (excludeValueSuspect) {
-    conditions.push('c.value_flag != ?');
-    params.push(VALUE_SUSPECT);
-    callout.push(CALLOUT_DEFAULT_VALUE_SUSPECT);
+  if (excludeNullAmount) {
+    // Match the rollup basis exactly (amount_eur IS NOT NULL). Corrected value_suspect rows carry a
+    // non-NULL procEst amount and ARE summed in the rollups, so they must NOT be excluded here; only
+    // truly unrecoverable rows (no procEst → NULL amount_eur) fall out. Constant predicate, no bind.
+    conditions.push('c.amount_eur IS NOT NULL');
+    callout.push(CALLOUT_DEFAULT_NULL_AMOUNT);
   } else {
-    callout.push(CALLOUT_OPTOUT_VALUE_SUSPECT);
+    callout.push(CALLOUT_OPTOUT_NULL_AMOUNT);
   }
 
   if (excludeSynthetic) {
@@ -87,7 +96,7 @@ export function applyDefaultFilters(options: DefaultFilterOptions = {}): Default
   callout.push(dateField === 'signed_at' ? CALLOUT_DEFAULT_SIGNED_AT : CALLOUT_OPTOUT_PUBLISHED_AT);
 
   return {
-    descriptor: { excludeValueSuspect, excludeSynthetic, dateField },
+    descriptor: { excludeNullAmount, excludeSynthetic, dateField },
     dateColumn: DATE_COLUMN[dateField],
     callout,
     sql: { fragment: conditions.join(' AND '), params },
