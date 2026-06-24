@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
-import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
+import type { NetworkData, TrendYear } from '@sigma/api-contract';
+import { count, money, moneyBare, pct, periodRange, plural, signedPct } from '@sigma/shared';
 import {
   authorityIdFromSlug,
   getAuthority,
@@ -12,6 +13,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
+import { DataTable, type Column } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
@@ -34,6 +36,64 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
 
 export function headers() {
   return { 'Cache-Control': publicCache(3600) };
+}
+
+interface LinkRow {
+  from: string;
+  to: string;
+  valueEur: number;
+  contracts: number;
+}
+
+const trendYearColumns: Column<TrendYear>[] = [
+  {
+    key: 'year',
+    header: 'Година',
+    isTitle: true,
+    cell: (r) => (
+      <>
+        {r.year}
+        {r.partial && <span className="muted"> (частично)</span>}
+      </>
+    ),
+  },
+  { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+  { key: 'contracts', header: 'Договори', align: 'num', cell: (r) => count(r.contracts) },
+  {
+    key: 'yoy',
+    header: 'Спрямо предходната',
+    align: 'num',
+    cell: (r) => (r.yoyPct == null ? '' : signedPct(r.yoyPct)),
+  },
+];
+
+const networkColumns: Column<LinkRow>[] = [
+  { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
+  { key: 'to', header: 'Към', cell: (r) => r.to },
+  { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+  {
+    key: 'contracts',
+    header: 'Договори',
+    align: 'num',
+    secondary: true,
+    cell: (r) => count(r.contracts),
+  },
+];
+
+function networkRows(data: NetworkData): LinkRow[] {
+  const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
+  return data.edges.map((e) => {
+    const a = nodeById.get(e.from);
+    const b = nodeById.get(e.to);
+    const authority = a?.kind === 'authority' ? a : b;
+    const company = a?.kind === 'authority' ? b : a;
+    return {
+      from: authority?.label ?? e.from,
+      to: company?.label ?? e.to,
+      valueEur: e.valueEur,
+      contracts: e.contracts,
+    };
+  });
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
@@ -127,7 +187,17 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
           >
             {trend.points.length >= 2 ? (
-              <TrendChart points={trend.points} granularity={trend.granularity} />
+              <>
+                <TrendChart points={trend.points} granularity={trend.granularity} />
+                <div className="sr-only">
+                  <DataTable
+                    columns={trendYearColumns}
+                    rows={trend.years}
+                    getKey={(r) => r.year}
+                    caption="Разходи по години"
+                  />
+                </div>
+              </>
             ) : (
               <p className="muted">Няма достатъчно данни за времева графика.</p>
             )}
@@ -183,7 +253,17 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           }
         >
           {network.center && network.nodes.length >= 2 ? (
-            <NetworkGraph data={network} />
+            <>
+              <NetworkGraph data={network} />
+              <div className="sr-only">
+                <DataTable
+                  columns={networkColumns}
+                  rows={networkRows(network)}
+                  getKey={(r) => `${r.from}-${r.to}`}
+                  caption="Връзки в графа"
+                />
+              </div>
+            </>
           ) : (
             <p className="muted">Няма достатъчно връзки за граф.</p>
           )}
