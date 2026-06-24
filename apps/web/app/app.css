@@ -1726,7 +1726,7 @@ details.row .body .signal .why {
   max-height: 150px;
 }
 .lens-map {
-  margin: var(--s-2) 0 var(--s-3);
+  margin: var(--s-2) auto var(--s-3);
   max-width: 320px;
 }
 .lens-map .map-wrap svg {
