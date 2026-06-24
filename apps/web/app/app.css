@@ -2159,36 +2159,78 @@ details.row .body .signal .why {
   background: var(--surface);
   border-color: var(--ink);
 }
+/* Save Button (Watchlist) — shares geometry with source-cta */
+.save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+  padding: 11px var(--s-5);
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font: 500 12px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.save-btn:hover {
+  background: var(--surface);
+}
 .save-btn.is-saved {
-  background: var(--warning-bg);
-  border-color: var(--warning);
-  color: var(--warning-strong);
+  background: var(--ink);
+  color: var(--paper);
 }
 .save-btn.is-saved:hover {
-  background: #ffe3ca; /* Slightly darker warning-bg */
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.save-btn svg {
+  flex: none;
 }
 
 /* Saved Items List */
+.saved-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .saved-item {
-  padding: var(--s-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: var(--surface);
-  margin-bottom: var(--s-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--s-4) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.saved-item-info {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
 }
 .saved-item-title {
-  font-weight: 600;
-  color: var(--brand);
+  font: 600 15px/1.3 var(--font-sans);
+  color: var(--ink);
+  text-decoration: none;
+}
+.saved-item-title:hover {
+  color: var(--accent);
 }
 .saved-item-sub {
-  font-size: 13px;
-  color: var(--muted);
+  font: 400 13px/1.4 var(--font-mono);
+  color: var(--ink-soft);
 }
-.saved-item-actions {
-  margin-top: var(--s-2);
+.saved-item-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: 400 13px/1 var(--font-mono);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.saved-item-remove:hover {
+  color: var(--accent);
 }
 
 /* Button */
