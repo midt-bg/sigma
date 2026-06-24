@@ -10,6 +10,7 @@ import {
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { SaveButton } from '../components/SaveButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -90,7 +91,15 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           }
           title={a.name}
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
-        />
+        >
+          <SaveButton
+            id={a.eik}
+            kind="authority"
+            title={a.name}
+            subtitle={a.typeLabel ? a.typeLabel : 'Институция'}
+            href={`/authorities/${a.eik}`}
+          />
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"
