@@ -12,6 +12,7 @@ import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend } from
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { SaveButton } from '../components/SaveButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -127,7 +128,15 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           }
           title={c.displayName}
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
-        />
+        >
+          <SaveButton
+            id={c.slug}
+            kind="company"
+            title={c.displayName}
+            subtitle={c.eik ? `ЕИК ${c.eik}` : 'Фирма'}
+            href={`/companies/${c.slug}`}
+          />
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"
