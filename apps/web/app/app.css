@@ -711,6 +711,10 @@ main.narrow {
   font-size: 13px;
   opacity: 0.75;
 }
+.clear-watchlist-btn {
+  margin-top: 16px;
+  cursor: pointer;
+}
 
 /* Footer — minimal, single mono-caps line; collapse legacy 3-col gov footer */
 .site-footer {

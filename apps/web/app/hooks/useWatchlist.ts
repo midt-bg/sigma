@@ -30,11 +30,13 @@ function getWatchlist(): WatchlistItem[] {
 
 function setWatchlist(list: WatchlistItem[]) {
   if (typeof window === 'undefined') return;
-  memoryCache = list;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch {}
-  listeners.forEach((l) => l());
+    memoryCache = list;
+    listeners.forEach((l) => l());
+  } catch (err) {
+    console.warn('Watchlist storage quota exceeded or unavailable', err);
+  }
 }
 
 function subscribe(listener: () => void) {
@@ -58,12 +60,12 @@ export function useWatchlist() {
   // React 18+ useSyncExternalStore handles this gracefully, but we must be careful.
   const items = useSyncExternalStore(subscribe, getWatchlist, () => []);
 
-  const isSaved = (id: string) => items.some((i) => i.id === id);
+  const isSaved = (kind: WatchlistItemKind, id: string) => items.some((i) => i.kind === kind && i.id === id);
 
   const toggleItem = (item: Omit<WatchlistItem, 'addedAt'>) => {
     const list = getWatchlist();
-    if (list.some((i) => i.id === item.id)) {
-      setWatchlist(list.filter((i) => i.id !== item.id));
+    if (list.some((i) => i.kind === item.kind && i.id === item.id)) {
+      setWatchlist(list.filter((i) => !(i.kind === item.kind && i.id === item.id)));
     } else {
       setWatchlist([{ ...item, addedAt: new Date().toISOString() }, ...list]);
     }
@@ -71,8 +73,8 @@ export function useWatchlist() {
 
   const clearAll = () => setWatchlist([]);
 
-  const removeItem = (id: string) => {
-    setWatchlist(getWatchlist().filter((i) => i.id !== id));
+  const removeItem = (kind: WatchlistItemKind, id: string) => {
+    setWatchlist(getWatchlist().filter((i) => !(i.kind === kind && i.id === id)));
   };
 
   return { items, isSaved, toggleItem, clearAll, removeItem };
