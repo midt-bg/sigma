@@ -37,7 +37,7 @@ export default function SavedItems() {
               </div>
               <button
                 className="saved-item-remove"
-                onClick={() => removeItem(item.id)}
+                onClick={() => removeItem(item.kind, item.id)}
                 type="button"
                 aria-label={`Премахни ${item.title}`}
               >
@@ -59,7 +59,7 @@ export default function SavedItems() {
           lede="Тук се запазват профилите и договорите, които сте маркирали за по-късен преглед. Данните се пазят локално във вашия браузър."
         >
           {items.length > 0 && (
-            <button className="source-cta" style={{ marginTop: '16px' }} type="button" onClick={clearAll}>
+            <button className="source-cta clear-watchlist-btn" type="button" onClick={clearAll}>
               Изчисти всички
             </button>
           )}

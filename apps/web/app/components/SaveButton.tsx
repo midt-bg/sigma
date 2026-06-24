@@ -22,7 +22,7 @@ export function SaveButton({
   }, []);
 
   // Избягваме hydration mismatch
-  const saved = mounted ? isSaved(id) : false;
+  const saved = mounted ? isSaved(kind, id) : false;
 
   return (
     <button
