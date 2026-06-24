@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   attachSignature,
   filterIncomingTranscript,
+  resetKeyCache,
   signMessage,
   verifyMessage,
   type AssistantHmacEnv,
@@ -30,8 +31,8 @@ async function signed(
 }
 
 afterEach(() => {
-  // Reset the cached key after tests that swap key material, since the module caches by material.
-  // A no-op sign with the default key re-primes the cache for the next test.
+  // Drop the module-level key cache so tests that swap key material stay order-independent.
+  resetKeyCache();
 });
 
 describe('signMessage / verifyMessage', () => {
@@ -74,10 +75,7 @@ describe('signMessage / verifyMessage', () => {
 
   it('fails when verified under a different key', async () => {
     const m = await signed({}, env);
-    // Sign deterministically primes the cache; verify under the other key must fail.
     expect(await verifyMessage(otherEnv, m)).toBe(false);
-    // Re-prime default-key cache for subsequent tests.
-    await signMessage(env, msg());
   });
 
   it('cannot be forged via canonical-form field-boundary injection', async () => {
@@ -140,8 +138,6 @@ describe('signMessage / verifyMessage', () => {
 
   it('throws when the signing key is unset (fail closed)', async () => {
     await expect(signMessage({}, msg())).rejects.toThrow(/ASSISTANT_HMAC_KEY/);
-    // Re-prime default-key cache.
-    await signMessage(env, msg());
   });
 
   it('rejects non-integer or negative slot values', async () => {

@@ -87,6 +87,16 @@ function importedKey(material: string): Promise<CryptoKey> {
   return cachedKeyPromise;
 }
 
+/**
+ * Test seam: drop the module-level key cache so the next sign/verify re-imports its key. The cache
+ * is keyed by material (rotation-safe in production), so this only matters for tests that swap
+ * `ASSISTANT_HMAC_KEY` between cases and want to stay order-independent.
+ */
+export function resetKeyCache(): void {
+  cachedKeyMaterial = null;
+  cachedKeyPromise = null;
+}
+
 function hex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
