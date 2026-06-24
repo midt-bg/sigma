@@ -64,7 +64,8 @@ export const TABLES: TableDoc[] = [
   {
     name: 'authority_totals',
     grain: 'rollup на възложител',
-    columns: 'authority_id, spent_eur, contracts, suppliers, …',
+    columns:
+      'authority_id, name, region (NUTS3; NULL=неразпределени), spent_eur, contracts, suppliers, …',
   },
   {
     name: 'company_totals',
@@ -125,6 +126,23 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
   {
     intent: 'Разход по CPV сектор',
     sql: 'SELECT s.division, s.value_eur, s.contracts\nFROM sector_totals s ORDER BY s.value_eur DESC LIMIT 20;',
+  },
+  {
+    intent: 'Възложители с най-висок дял договори с една оферта (сигнал за слаба конкуренция)',
+    sql: 'SELECT a.name, t.authority_id AS authority_id, COUNT(*) AS contracts,\n  SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,\n  SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS single_offer_share\nFROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id\nWHERE c.bids_received >= 1\nGROUP BY t.authority_id HAVING COUNT(*) >= 20\nORDER BY single_offer_share DESC, contracts DESC LIMIT 20;',
+  },
+  {
+    intent:
+      'Концентрация на доставчици при възложител (HHI — близо до 1 = малко доставчици взимат всичко)',
+    sql: 'WITH pair AS (\n  SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id, SUM(c.amount_eur) AS spent\n  FROM contracts c JOIN tenders t ON t.id = c.tender_id\n  WHERE c.amount_eur IS NOT NULL\n  GROUP BY t.authority_id, c.bidder_id\n), tot AS (\n  SELECT authority_id, SUM(spent) AS total, COUNT(*) AS suppliers FROM pair GROUP BY authority_id\n)\nSELECT a.name, p.authority_id AS authority_id, tot.suppliers AS suppliers,\n  SUM((p.spent / tot.total) * (p.spent / tot.total)) AS hhi\nFROM pair p JOIN tot ON tot.authority_id = p.authority_id JOIN authorities a ON a.id = p.authority_id\nWHERE tot.suppliers >= 2\nGROUP BY p.authority_id ORDER BY hhi DESC LIMIT 20;',
+  },
+  {
+    intent: 'Разход по месеци (timeseries) — само валидно датирани, чисти EUR редове',
+    sql: "SELECT substr(c.signed_at, 1, 7) AS period, SUM(c.amount_eur) AS total_eur, COUNT(*) AS contracts\nFROM contracts c\nWHERE c.amount_eur IS NOT NULL AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'\n  AND c.signed_at >= '2020-01-01' AND c.signed_at <= date('now')\nGROUP BY period ORDER BY period;",
+  },
+  {
+    intent: 'Разход по област (NUTS3) — от rollup-а; празно region = неразпределени',
+    sql: 'SELECT region, SUM(spent_eur) AS value_eur, SUM(contracts) AS contracts\nFROM authority_totals GROUP BY region ORDER BY value_eur DESC;',
   },
 ];
 
