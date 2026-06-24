@@ -189,7 +189,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             {trend.points.length >= 2 ? (
               <>
                 <TrendChart points={trend.points} granularity={trend.granularity} />
-                <div className="sr-only">
+                <div className="mt-8">
                   <DataTable
                     columns={trendYearColumns}
                     rows={trend.years}
