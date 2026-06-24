@@ -65,7 +65,7 @@ pnpm dev      # ежедневно: пуска приложението и ETL w
 
 > **Статус:** прототип. Приложението и refresh worker-ът работят локално и се деплойват на Cloudflare през GitHub Actions; аналитичният слой (оценка на риска, аномалии, картели) е в плана за развитие.
 
-## Структура на репозиторието
+## Структура на хранилището
 
 СИГМА използва изпитан единен TypeScript monorepo (pnpm + turbo) върху edge платформата на Cloudflare. Днес продуктът използва Workers (React Router v7 SSR) + D1 + Cloudflare Workflows; останалите услуги на платформата (Durable Objects, Vectorize, Workers AI, Queues, KV, R2, AI Gateway) са на разположение за аналитичния слой.
 

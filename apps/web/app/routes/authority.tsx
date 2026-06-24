@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, money, pct, periodRange, plural } from '@sigma/shared';
+import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import { authorityIdFromSlug, getAuthority } from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -11,14 +11,17 @@ import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { withDbRetry } from '../lib/retry';
+import { seoMeta } from '../lib/meta';
 
-export function meta({ data }: Route.MetaArgs) {
+export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
   const range = coverageRange(data?.coverage.coverageEndYear);
-  return [
-    { title: `${name} — СИГМА` },
-    { name: 'description', content: `Обществени поръчки на ${name}, ${range}.` },
-  ];
+  return seoMeta({
+    matches,
+    path: `/authorities/${params.eik}`,
+    title: `${name} — СИГМА`,
+    description: `Обществени поръчки на ${name}, ${range}.`,
+  });
 }
 
 export function headers() {
@@ -112,7 +115,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   <th scope="col">#</th>
                   <th scope="col">Компания</th>
                   <th scope="col" className="num">
-                    Спечелено
+                    Спечелено (€)
                   </th>
                   <th scope="col" className="num">
                     Договори
@@ -135,8 +138,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                         </>
                       )}
                     </td>
-                    <td className="money" data-label="Спечелено">
-                      {money(co.wonEur)}
+                    <td className="money" data-label="Спечелено (€)">
+                      {moneyBare(co.wonEur)}
                     </td>
                     <td className="money" data-label="Договори">
                       {count(co.contracts)}
@@ -150,7 +153,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </table>
           </div>
           {a.moreContractors > 0 && (
-            <p className="small muted" style={{ marginTop: 'var(--s-3)' }}>
+            <p className="small muted mt-s3">
               <Link to={`/contracts?authority=${a.eik}`}>
                 … още {count(a.moreContractors)} изпълнители — виж всички договори →
               </Link>
@@ -249,7 +252,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               <ContractMiniTable items={a.topContracts} counterparty="bidder" />
             </div>
           </div>
-          <p className="small muted" style={{ marginTop: 8 }}>
+          <p className="small muted mt-8">
             <Link to={`/contracts?authority=${a.eik}`}>
               Виж всички / филтрирай / свали като CSV →
             </Link>

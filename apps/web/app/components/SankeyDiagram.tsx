@@ -36,16 +36,10 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
           role="img"
           aria-label="Поток на средства от институции към компании"
         >
-          <text
-            x="135"
-            y="12"
-            textAnchor="end"
-            className="cap"
-            style={{ fontSize: 11, fontWeight: 700 }}
-          >
+          <text x="135" y="12" textAnchor="end" className="cap">
             Институции
           </text>
-          <text x="565" y="12" className="cap" style={{ fontSize: 11, fontWeight: 700 }}>
+          <text x="565" y="12" className="cap">
             Компании
           </text>
 
@@ -79,8 +73,7 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
                       x={tx}
                       y={labelY - 1}
                       textAnchor={isAuth ? 'end' : 'start'}
-                      className="node-label"
-                      style={{ fontWeight: 700 }}
+                      className="node-label is-name"
                     >
                       {n.label}
                     </text>
@@ -102,7 +95,6 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
                 href={n.href}
                 className="node-link"
                 aria-label={`${n.label} (${kind}): ${money(n.valueEur)}`}
-                style={{ cursor: 'pointer' }}
               >
                 {body}
               </a>

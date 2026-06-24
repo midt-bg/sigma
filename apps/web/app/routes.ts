@@ -3,8 +3,13 @@ import { type RouteConfig, index, route } from '@react-router/dev/routes';
 export default [
   index('routes/home.tsx'),
   route('search', 'routes/search.tsx'),
+  route('search/suggest', 'routes/search.suggest.tsx'),
   route('assistant/chat', 'routes/assistant.chat.tsx'),
   route('flows', 'routes/flows.tsx'),
+  route('network', 'routes/network.tsx'),
+  route('trends', 'routes/trends.tsx'),
+  route('map', 'routes/map.tsx'),
+  route('competition', 'routes/competition.tsx'),
   route('companies', 'routes/companies.tsx'),
   route('companies.csv', 'routes/companies.csv.tsx'),
   route('companies/:eik', 'routes/company.tsx'),

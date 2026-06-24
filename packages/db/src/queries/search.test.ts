@@ -99,6 +99,13 @@ describe('search helpers', () => {
   it('keeps normal short MATCH query behavior unchanged', () => {
     expect(searchMatchQuery('Стрoителствo София 123')).toBe('строителство* софия* 123*');
   });
+
+  it('drops single-character terms so a 1-char prefix cannot scan the whole index', () => {
+    // Every token is one char → nothing survives the min-length filter → empty query.
+    expect(searchMatchQuery('и а с по')).toBe('по*');
+    expect(searchMatchQuery('и')).toBeNull();
+    expect(searchMatchQuery('a b c')).toBeNull();
+  });
 });
 
 describe('search', () => {

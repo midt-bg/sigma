@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Докладване на уязвимост в сигурността
+    url: https://github.com/midt-bg/sigma/security/policy
+    about: Моля, не отваряйте публичен issue за уязвимости — докладвайте насаме чрез раздела Security на хранилището. (Частната политика се финализира в #61.)

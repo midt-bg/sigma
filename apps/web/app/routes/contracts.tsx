@@ -1,6 +1,11 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, date, money } from '@sigma/shared';
-import { contractsSummary, getContractFacets, listContracts, type ContractSort } from '@sigma/db';
+import { count, date, money, moneyBare } from '@sigma/shared';
+import {
+  contractsSummary,
+  getContractFacets,
+  listContracts,
+  normalizeContractSort,
+} from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -18,6 +23,7 @@ import {
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
+import { seoMeta } from '../lib/meta';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -27,15 +33,14 @@ const VALUE_BUCKETS = [
   { value: 'gt100m', label: 'Над 100 млн. €' },
 ];
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Договори — СИГМА' },
-    {
-      name: 'description',
-      content:
-        'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/contracts',
+    title: 'Договори — СИГМА',
+    description:
+      'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
+  });
 }
 
 export function headers() {
@@ -45,7 +50,7 @@ export function headers() {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const params = {
-    sort: (sp.get('sort') as ContractSort) || 'value-desc',
+    sort: normalizeContractSort(sp.get('sort')),
     years: getMulti(sp, 'year'),
     sectors: getMulti(sp, 'sector'),
     procedureGroups: getMulti(sp, 'procedure'),
@@ -212,7 +217,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                   <caption className="sr-only">Договори по обществени поръчки</caption>
                   <thead>
                     <tr>
-                      <th scope="col" style={{ width: 32 }}>
+                      <th scope="col" className="col-w-32">
                         #
                       </th>
                       <th scope="col">Договор</th>
@@ -221,7 +226,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                         Процедура · Дата
                       </th>
                       <th scope="col" className="num">
-                        Стойност
+                        Стойност (€)
                       </th>
                     </tr>
                   </thead>
@@ -256,9 +261,9 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           <br />
                           {date(c.signedAt)}
                         </td>
-                        <td className="money" data-label="Стойност">
+                        <td className="money" data-label="Стойност (€)">
                           {c.valueEur != null ? (
-                            money(c.valueEur)
+                            moneyBare(c.valueEur)
                           ) : (
                             <span className="suspect">данните се проверяват</span>
                           )}
@@ -273,17 +278,8 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
             {result.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.contracts} />}
 
             <Callout>
-              <h2
-                style={{
-                  font: '400 18px/1.25 var(--font-serif)',
-                  letterSpacing: '-0.01em',
-                  color: 'var(--ink, #111)',
-                  marginBottom: 6,
-                }}
-              >
-                Какво е „договор“ в СИГМА
-              </h2>
-              <p style={{ margin: 0 }}>
+              <h2>Какво е „договор“ в СИГМА</h2>
+              <p className="m-0">
                 Един възложен договор по обществена поръчка, на ниво обособена позиция (лот).
                 Стойностите са в евро — изчистена, съпоставима стойност на договора.
               </p>

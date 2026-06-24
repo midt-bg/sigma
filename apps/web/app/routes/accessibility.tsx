@@ -3,15 +3,15 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
+import { seoMeta } from '../lib/meta';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Декларация за достъпност — СИГМА' },
-    {
-      name: 'description',
-      content: 'Декларация за достъпност на публичната информационна услуга СИГМА.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/accessibility',
+    title: 'Декларация за достъпност — СИГМА',
+    description: 'Декларация за достъпност на публичната информационна услуга СИГМА.',
+  });
 }
 
 export function headers() {

@@ -4,15 +4,16 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
+import { seoMeta } from '../lib/meta';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Политика за поверителност — СИГМА' },
-    {
-      name: 'description',
-      content: 'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
-    },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/privacy',
+    title: 'Политика за поверителност — СИГМА',
+    description:
+      'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
+  });
 }
 
 export function headers() {

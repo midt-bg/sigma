@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import type { CompanySort } from '@sigma/db';
+import { normalizeCompanySort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -32,13 +32,44 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
 
 export function companyListParams(sp: URLSearchParams) {
   return {
-    sort: (sp.get('sort') as CompanySort) || 'won',
+    sort: normalizeCompanySort(sp.get('sort')),
     kinds: getMulti(sp, 'kind') as EntityKind[],
     countBucket: sp.get('count'),
     sectors: getMulti(sp, 'sector'),
     years: getMulti(sp, 'year'),
     eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
     q: sp.get('q'),
+  };
+}
+
+export interface SingleSelectFilters {
+  sector: string | null;
+  year: string | null;
+  funding: 'all' | 'eu' | 'national';
+  top: number;
+  unknownSector: boolean;
+  unknownYear: boolean;
+}
+
+/**
+ * Single-select explorer filters (sector / year / funding / top) shared by the visual pages
+ * (/flows, /competition). A bogus ?sector or ?year is flagged and dropped from the params, so the
+ * page can show an explicit empty state instead of silently filtering everything out. `years` is the
+ * valid set for the current coverage window.
+ */
+export function singleSelectFilters(sp: URLSearchParams, years: string[]): SingleSelectFilters {
+  const sector = sp.get('sector');
+  const year = sp.get('year');
+  const unknownSector = Boolean(sector) && !KNOWN_SECTORS.has(sector!);
+  const unknownYear = Boolean(year) && !years.includes(year!);
+  const funding = sp.get('funding');
+  return {
+    sector: unknownSector ? null : sector,
+    year: unknownYear ? null : year,
+    funding: funding === 'eu' || funding === 'national' ? funding : 'all',
+    top: sp.get('top') === '50' ? 50 : 20,
+    unknownSector,
+    unknownYear,
   };
 }
 

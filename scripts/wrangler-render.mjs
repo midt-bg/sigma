@@ -19,6 +19,10 @@ const SENTINELS = {
   '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID',          // D1 database_id (UUID v4 shape)
 };
 
+// Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
+// rate-limit namespace_ids to be account-unique — a duplicate silently merges two buckets.
+const REQUIRED_RATE_LIMITERS = ['CSV_RATE_LIMITER', 'AGG_RATE_LIMITER', 'SEARCH_RATE_LIMITER'];
+
 const input = process.argv[2];
 if (!input) {
   console.error('usage: wrangler-render.mjs <wrangler.toml|wrangler.jsonc>');
@@ -54,6 +58,10 @@ if (ext === '.json' || ext === '.jsonc') {
   if (names.webName || names.d1Name || names.csvCacheName) {
     out = renderJson(out, names);
   }
+  // Rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
+  // namespace_id collision would silently disable a limiter rather than erroring. Catch both here so
+  // the deploy fails loudly instead.
+  assertRateLimiters(out, input);
 } else if (ext === '.toml') {
   const names = {
     etlName: process.env.SIGMA_ETL_NAME || '',
@@ -68,6 +76,37 @@ if (ext === '.json' || ext === '.jsonc') {
 const outPath = join(dirname(input), basename(input).replace(/^wrangler\./, 'wrangler.deploy.'));
 writeFileSync(outPath, out);
 console.log(`wrangler-render: ${input} → ${outPath}`);
+
+function assertRateLimiters(text, source) {
+  // wrangler.jsonc is JSONC: strip line comments and trailing commas before JSON.parse.
+  const obj = JSON.parse(stripJsonLineComments(text).replace(/,(\s*[}\]])/g, '$1'));
+  const limiters = (obj.unsafe?.bindings ?? []).filter((b) => b?.type === 'ratelimit');
+  const errors = [];
+
+  for (const name of REQUIRED_RATE_LIMITERS) {
+    if (!limiters.some((b) => b.name === name)) errors.push(`missing rate-limit binding ${name}`);
+  }
+
+  const seen = new Map();
+  for (const b of limiters) {
+    const id = String(b.namespace_id ?? '').trim();
+    if (!id) {
+      errors.push(`rate-limit binding ${b.name} has an empty namespace_id`);
+      continue;
+    }
+    if (seen.has(id)) {
+      errors.push(`namespace_id ${id} is shared by ${seen.get(id)} and ${b.name}`);
+    } else {
+      seen.set(id, b.name);
+    }
+  }
+
+  if (errors.length) {
+    console.error(`✘ wrangler-render: ${source} rate-limit config invalid:`);
+    for (const error of errors) console.error(`  - ${error}`);
+    process.exit(1);
+  }
+}
 
 function renderJson(text, names) {
   const obj = JSON.parse(stripJsonLineComments(text));

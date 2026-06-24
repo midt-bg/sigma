@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { getContractFacets, listContracts } from './contracts';
+import { getContractFacets, listContracts, normalizeContractSort } from './contracts';
+
+describe('normalizeContractSort', () => {
+  it('passes known sort keys through', () => {
+    expect(normalizeContractSort('date-asc')).toBe('date-asc');
+    expect(normalizeContractSort('value-desc')).toBe('value-desc');
+  });
+  it('collapses unknown / missing / prototype keys to the default', () => {
+    expect(normalizeContractSort(null)).toBe('value-desc');
+    expect(normalizeContractSort('')).toBe('value-desc');
+    expect(normalizeContractSort('../../etc')).toBe('value-desc');
+    expect(normalizeContractSort('__proto__')).toBe('value-desc');
+    expect(normalizeContractSort('toString')).toBe('value-desc');
+  });
+});
 
 const contractRow = {
   id: 'c:1',

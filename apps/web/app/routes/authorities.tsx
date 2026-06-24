@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money } from '@sigma/shared';
-import { getAuthorityFacets, listAuthorities, type AuthoritySort } from '@sigma/db';
+import { count, money, moneyBare } from '@sigma/shared';
+import { getAuthorityFacets, listAuthorities, normalizeAuthoritySort } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -20,12 +20,15 @@ import {
 } from '../lib/filters';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
+import { seoMeta } from '../lib/meta';
 
-export function meta(_: Route.MetaArgs) {
-  return [
-    { title: 'Институции — СИГМА' },
-    { name: 'description', content: 'Всяка институция, възложила поне един договор.' },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return seoMeta({
+    matches,
+    path: '/authorities',
+    title: 'Институции — СИГМА',
+    description: 'Всяка институция, възложила поне един договор по обществена поръчка.',
+  });
 }
 
 export function headers() {
@@ -35,7 +38,7 @@ export function headers() {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const params = {
-    sort: (sp.get('sort') as AuthoritySort) || 'spent',
+    sort: normalizeAuthoritySort(sp.get('sort')),
     types: getMulti(sp, 'type'),
     sectors: getMulti(sp, 'sector'),
     years: getMulti(sp, 'year'),
@@ -127,9 +130,9 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
       secondary: true,
       cell: (a) => (a.typeLabel ? <Chip>{a.typeLabel}</Chip> : null),
     },
-    { key: 'spent', header: 'Похарчено', align: 'money', cell: (a) => money(a.spentEur) },
+    { key: 'spent', header: 'Похарчено (€)', align: 'money', cell: (a) => moneyBare(a.spentEur) },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (a) => count(a.contracts) },
-    { key: 'avg', header: 'Средна стойност', align: 'money', cell: (a) => money(a.avgEur) },
+    { key: 'avg', header: 'Средна стойност (€)', align: 'money', cell: (a) => moneyBare(a.avgEur) },
   ];
 
   return (
@@ -176,17 +179,8 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.authorities} />}
             <Callout>
-              <h2
-                style={{
-                  font: '400 18px/1.25 var(--font-serif)',
-                  letterSpacing: '-0.01em',
-                  color: 'var(--ink, #111)',
-                  marginBottom: 6,
-                }}
-              >
-                Какво означава „похарчено“?
-              </h2>
-              <p style={{ margin: 0 }}>
+              <h2>Какво означава „похарчено“?</h2>
+              <p className="m-0">
                 Сумата от стойностите (в евро) на всички договори на дадена институция за периода{' '}
                 {range}. Видът на институцията (министерство, община, болница…) се определя по името
                 ѝ и е приблизителен. Виж <Link to="/methodology">методология</Link>.

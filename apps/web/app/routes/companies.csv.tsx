@@ -10,7 +10,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     env: context.cloudflare.env,
     request,
     route: 'companies',
-    sort: params.sort,
     params,
     stream: () => streamCompaniesCsv(context.cloudflare.env.DB, params),
   });

@@ -22,6 +22,7 @@ export async function rateLimitAssistantRoute(
     env.ASSISTANT_RATE_LIMITER,
     isProd,
     'Too many assistant requests',
+    'ASSISTANT_RATE_LIMITER',
     true, // fail closed: never run the paid agent loop unthrottled in production
   );
 }

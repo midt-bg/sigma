@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   isRouteErrorResponse,
   Link,
@@ -22,11 +22,15 @@ import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { withDbRetry } from './lib/retry';
-import './app.css';
+import stylesheet from './app.css?url';
 
 // The editorial design uses a system serif/mono/sans stack (see app.css @theme) — no webfont request.
 // Brand favicons (white „С“ on the deep-red tile) live in /public; declare them so the head is explicit.
 export const links: Route.LinksFunction = () => [
+  // Link the global stylesheet explicitly (instead of a side-effect import) so it is a real
+  // <link> in the document head in dev too, not injected by JS after first paint - which avoids
+  // a flash of unstyled content on a full reload. In production both paths emit the same <link>.
+  { rel: 'stylesheet', href: stylesheet },
   { rel: 'icon', href: '/favicon.ico', sizes: '48x48' },
   { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
   { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16.png' },
@@ -61,7 +65,37 @@ function scrollKey(location: { pathname: string; search: string }): string {
 export function Layout({ children }: { children: React.ReactNode }) {
   const nonce = useNonce();
   const rootData = useRouteLoaderData('root') as { origin?: string } | undefined;
-  const imageUrl = rootData?.origin ? `${rootData.origin}/og.png` : undefined;
+  const origin = rootData?.origin;
+  const imageUrl = origin ? `${origin}/og.png` : undefined;
+  const schemaOrg = origin
+    ? JSON.stringify({
+        '@context': 'https://schema.org',
+        '@graph': [
+          {
+            '@type': 'Organization',
+            '@id': `${origin}/#organization`,
+            name: 'СИГМА',
+            alternateName: 'Система за Интегриран Граждански Мониторинг и Анализ',
+            url: origin,
+            logo: { '@type': 'ImageObject', url: `${origin}/logo.svg` },
+          },
+          {
+            '@type': 'WebSite',
+            '@id': `${origin}/#website`,
+            url: origin,
+            name: 'СИГМА',
+            description: 'Платформа за прозрачност на обществените поръчки в България',
+            inLanguage: 'bg',
+            publisher: { '@id': `${origin}/#organization` },
+            potentialAction: {
+              '@type': 'SearchAction',
+              target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+              'query-input': 'required name=search_term_string',
+            },
+          },
+        ],
+      })
+    : null;
   return (
     <html lang="bg">
       <head>
@@ -86,6 +120,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
         <Links />
+        {schemaOrg && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: schemaOrg }}
+          />
+        )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>
       <body>
@@ -100,46 +140,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 // Thin top progress bar so cross-route navigation doesn't feel dead on slow networks.
 // `useNavigation().state` is 'idle' on the server and the first client render, so the
 // initial markup matches SSR — the bar only appears once a client-side transition starts.
-// Tracks the user's reduced-motion preference. Initialised false so the first client render
-// matches SSR (no hydration mismatch), then updated after mount — the progress bar only
-// animates on client navigation, so the post-mount value is the one that matters. (WCAG 2.3.3)
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const sync = () => setReduced(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
-  return reduced;
-}
-
 function RouteProgress() {
   const busy = useNavigation().state !== 'idle';
-  const reduceMotion = usePrefersReducedMotion();
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'fixed',
-        insetInline: 0,
-        top: 0,
-        height: '2px',
-        background: 'var(--accent, #b00020)',
-        transformOrigin: 'left',
-        transform: busy ? 'scaleX(1)' : 'scaleX(0)',
-        opacity: busy ? 1 : 0,
-        transition: reduceMotion
-          ? 'none'
-          : busy
-            ? 'transform 1.2s ease-out, opacity 0.1s ease'
-            : 'transform 0.1s ease, opacity 0.25s ease 0.15s',
-        zIndex: 1000,
-        pointerEvents: 'none',
-      }}
-    />
-  );
+  // States live in CSS (.route-progress[data-busy]), so no inline style is needed — that is the
+  // point of the style-src CSP tightening. Reduced motion is honoured by the global
+  // `@media (prefers-reduced-motion: reduce)` rule in app.css, which now reaches this element.
+  return <div className="route-progress" aria-hidden="true" data-busy={busy} />;
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
@@ -212,7 +218,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           <Link to="/authorities">Институции</Link> · <Link to="/contracts">Договори</Link>
         </p>
         {stack && (
-          <pre className="mono small" style={{ overflowX: 'auto', marginTop: 'var(--s-5)' }}>
+          <pre className="mono small error-stack">
             <code>{stack}</code>
           </pre>
         )}
