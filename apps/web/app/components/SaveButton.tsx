@@ -15,22 +15,16 @@ export function SaveButton({
   href: string;
 }) {
   const { isSaved, toggleItem } = useWatchlist();
-  const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Избягваме hydration mismatch
-  const saved = mounted ? isSaved(kind, id) : false;
+  const saved = isSaved(kind, id);
 
   return (
     <button
       type="button"
       onClick={() => toggleItem({ id, kind, title, subtitle, href })}
       className={`save-btn ${saved ? 'is-saved' : ''}`}
-      aria-label={saved ? 'Премахни от наблюдение' : 'Добави за наблюдение'}
-      title={saved ? 'Премахни от запазени' : 'Запази за по-късно'}
+      aria-label={saved ? 'Премахни от запазени' : 'Добави в запазени'}
+      title={saved ? 'Премахни от запазени' : 'Добави в запазени'}
     >
       <svg
         width="16"
