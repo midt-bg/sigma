@@ -7,3 +7,7 @@
 
 # Web worker privacy-preserving request log IP HMAC key.
 LOG_IP_KEY=dev-only-log-ip-key-change-me
+
+# AI assistant transcript signing key (HMAC-SHA-256 over server-emitted messages).
+# Prod: `wrangler secret put ASSISTANT_HMAC_KEY`. Never commit the real value.
+ASSISTANT_HMAC_KEY=dev-only-assistant-hmac-key-change-me
