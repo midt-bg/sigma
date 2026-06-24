@@ -28,7 +28,7 @@ export default function SavedItems() {
       <Section id={list[0].kind} title={`${title} (${list.length})`}>
         <ul className="saved-list">
           {list.map((item) => (
-            <li key={item.id} className="saved-item">
+            <li key={`${item.kind}:${item.id}`} className="saved-item">
               <div className="saved-item-info">
                 <Link to={item.href} className="saved-item-title">
                   {item.title}

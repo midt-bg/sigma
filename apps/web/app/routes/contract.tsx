@@ -110,10 +110,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </>
           }
         >
-          <div
-            className="header-actions"
-            style={{ display: 'flex', gap: '16px', alignItems: 'center' }}
-          >
+          <div className="header-actions">
             <SaveButton
               id={c.id}
               kind="contract"
