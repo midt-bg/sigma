@@ -34,9 +34,16 @@ export type ResolvedBlock =
     }
   | { type: 'facts'; items: { term: string; value: string | number | null; sub?: string }[] }
   | { type: 'table'; columns: ResolvedColumn[]; rows: ResolvedRow[] }
-  | { type: 'bar'; points: { label: string | number | null; value: number }[] }
+  // `bar` carries an optional `key` per spec §4 (Block речник: `[{label, value, key?}]`) — the renderer
+  // uses it for palette determinism across stacked segments.
+  | { type: 'bar'; points: { label: string | number | null; value: number; key?: string }[] }
   | { type: 'flows'; edges: { from: string; to: string; valueEur: number }[] }
-  | { type: 'timeseries'; points: { period: string | number | null; value: number }[] };
+  // `timeseries` is single- OR multi-series per spec §4 (`[{period, value}]` (+ optional multi-series)).
+  | {
+      type: 'timeseries';
+      points?: { period: string | number | null; value: number }[];
+      series?: { label: string; points: { period: string | number | null; value: number }[] }[];
+    };
 
 export interface ResolvedReport {
   title: string;
