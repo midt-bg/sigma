@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import reportFixture from './__fixtures__/report.fixture.json';
-import type { CellFormat, ResolvedReport } from './contract';
-import { isReportPending, projectChip, reportOutputFromMessage } from './report-projection';
+import type { ReportArtifact } from './contract';
+import { leadStat, reportViewFromMessage } from './report-projection';
 
 // Mock the site formatters so we assert WHICH formatter is applied to WHICH value — not @sigma/shared's
 // own output (that has its own tests). Each returns an identifiable string.
@@ -12,134 +11,134 @@ vi.mock('@sigma/shared', () => ({
   date: (v: unknown) => `date:${v}`,
 }));
 
-const totalsReport = (value: string | number | null, format: CellFormat): ResolvedReport => ({
-  title: 'Тест',
-  question: 'q',
-  watermark: 'ai-generated',
-  blocks: [{ type: 'totals', items: [{ label: 'Етикет', value, format }] }],
-});
+const artifact = (blocks: ReportArtifact['blocks']): ReportArtifact => ({ title: 'Тест', blocks });
 
-describe('reportOutputFromMessage', () => {
-  it('returns the output of a settled emit_report part', () => {
-    const output = { ok: true, report: totalsReport(1, 'money') };
-    const message = {
-      parts: [{ type: 'text' }, { type: 'tool-emit_report', state: 'output-available', output }],
-    };
-
-    expect(reportOutputFromMessage(message)).toBe(output);
-  });
-
-  it('returns the failed output so the caller can fall back to prose', () => {
-    const output = { ok: false, errors: ['не успях'] };
-    const message = { parts: [{ type: 'tool-emit_report', state: 'output-available', output }] };
-
-    expect(reportOutputFromMessage(message)).toEqual({ ok: false, errors: ['не успях'] });
-  });
-
-  it('returns null while the report tool is still running', () => {
-    const message = { parts: [{ type: 'tool-emit_report', state: 'input-available' }] };
-
-    expect(reportOutputFromMessage(message)).toBeNull();
-  });
-
-  it('returns null for a prose-only message', () => {
-    expect(reportOutputFromMessage({ parts: [{ type: 'text' }] })).toBeNull();
-  });
-
-  it('returns null when a settled output is malformed (missing ok)', () => {
-    const message = {
-      parts: [{ type: 'tool-emit_report', state: 'output-available', output: { report: {} } }],
-    };
-
-    expect(reportOutputFromMessage(message)).toBeNull();
-  });
-});
-
-describe('projectChip', () => {
-  it('uses the report title', () => {
-    expect(projectChip(totalsReport(1000, 'money')).title).toBe('Тест');
-  });
-
+describe('leadStat', () => {
   it('formats a money lead stat from the first totals item', () => {
-    expect(projectChip(totalsReport(2604567, 'money')).leadStat).toBe('Етикет: money:2604567');
+    const report = artifact([
+      { type: 'totals', items: [{ label: 'Похарчено', value: 2604567, format: 'money' }] },
+    ]);
+
+    expect(leadStat(report)).toBe('Похарчено: money:2604567');
   });
 
   it('formats a number lead stat', () => {
-    expect(projectChip(totalsReport(3, 'number')).leadStat).toBe('Етикет: count:3');
+    const report = artifact([
+      { type: 'totals', items: [{ label: 'Брой', value: 3, format: 'number' }] },
+    ]);
+
+    expect(leadStat(report)).toBe('Брой: count:3');
   });
 
   it('formats a percent lead stat', () => {
-    expect(projectChip(totalsReport(0.42, 'percent')).leadStat).toBe('Етикет: pct:0.42');
+    const report = artifact([
+      { type: 'totals', items: [{ label: 'Дял', value: 0.42, format: 'percent' }] },
+    ]);
+
+    expect(leadStat(report)).toBe('Дял: pct:0.42');
   });
 
   it('formats a date lead stat', () => {
-    expect(projectChip(totalsReport('2026-06-18', 'date')).leadStat).toBe(
-      'Етикет: date:2026-06-18',
-    );
+    const report = artifact([
+      { type: 'totals', items: [{ label: 'Дата', value: '2026-06-18', format: 'date' }] },
+    ]);
+
+    expect(leadStat(report)).toBe('Дата: date:2026-06-18');
   });
 
-  it('falls back to the first facts item when there are no totals', () => {
-    const report: ResolvedReport = {
-      title: 'Тест',
-      question: 'q',
-      watermark: 'ai-generated',
-      blocks: [{ type: 'facts', items: [{ term: 'Компания', value: 'Алфа ООД' }] }],
-    };
+  it('defaults the totals format to text when absent', () => {
+    const report = artifact([{ type: 'totals', items: [{ label: 'Бележка', value: 'превю' }] }]);
 
-    expect(projectChip(report).leadStat).toBe('Компания: Алфа ООД');
+    expect(leadStat(report)).toBe('Бележка: превю');
   });
 
-  it('shows an em-dash for a facts value that is not a primitive', () => {
-    const report: ResolvedReport = {
-      title: 'Тест',
-      question: 'q',
-      watermark: 'ai-generated',
-      blocks: [{ type: 'facts', items: [{ term: 'Поле', value: {} as unknown as string }] }],
-    };
+  it('falls back to the first facts row when there are no totals', () => {
+    const report = artifact([{ type: 'facts', rows: [{ term: 'Компания', value: 'Алфа ООД' }] }]);
 
-    expect(projectChip(report).leadStat).toBe('Поле: —');
+    expect(leadStat(report)).toBe('Компания: Алфа ООД');
   });
 
   it('has no lead stat for a report without totals or facts', () => {
-    const report: ResolvedReport = {
-      title: 'Тест',
-      question: 'q',
-      watermark: 'ai-generated',
-      blocks: [{ type: 'text', md: 'само текст' }],
-    };
-
-    expect(projectChip(report).leadStat).toBeNull();
+    expect(leadStat(artifact([{ type: 'text', content: 'само текст' }]))).toBeNull();
   });
 
-  it('projects the vendored fixture report title', () => {
-    const report = reportFixture as unknown as ResolvedReport;
+  it('shows an em-dash for a facts value that is not a primitive', () => {
+    const report = artifact([
+      { type: 'facts', rows: [{ term: 'Поле', value: {} as unknown as string }] },
+    ]);
 
-    expect(projectChip(report).title).toBe('Най-големи възложители по похарчено');
-  });
-
-  it('projects the vendored fixture report lead stat', () => {
-    const report = reportFixture as unknown as ResolvedReport;
-
-    expect(projectChip(report).leadStat).toBe('Похарчено (топ 3): money:2604567');
+    expect(leadStat(report)).toBe('Поле: —');
   });
 });
 
-describe('isReportPending', () => {
-  it('is pending while the report tool is still running', () => {
-    expect(
-      isReportPending({ parts: [{ type: 'tool-emit_report', state: 'input-available' }] }),
-    ).toBe(true);
+describe('reportViewFromMessage', () => {
+  const emitPart = (state: string, extra: Record<string, unknown>) => ({
+    parts: [{ type: 'tool-emit_report', state, ...extra }],
   });
 
-  it('is not pending once the report output is available', () => {
-    expect(
-      isReportPending({
-        parts: [{ type: 'tool-emit_report', state: 'output-available', output: {} }],
+  it('projects a finished report to a chip (title and href from the result)', () => {
+    const view = reportViewFromMessage(
+      emitPart('output-available', {
+        input: artifact([
+          { type: 'totals', items: [{ label: 'Похарчено', value: 100, format: 'money' }] },
+        ]),
+        output: { id: 'r_abc', title: 'Заглавие', url: '/reports/r_abc' },
       }),
-    ).toBe(false);
+    );
+
+    expect(view.chip).toEqual({
+      title: 'Заглавие',
+      href: '/reports/r_abc',
+      leadStat: 'Похарчено: money:100',
+    });
   });
 
-  it('is not pending for a prose-only message', () => {
-    expect(isReportPending({ parts: [{ type: 'text' }] })).toBe(false);
+  it('falls back to /reports/:id when the result url is empty', () => {
+    const view = reportViewFromMessage(
+      emitPart('output-available', {
+        input: artifact([]),
+        output: { id: 'r_x', title: 'T', url: '' },
+      }),
+    );
+
+    expect(view.chip?.href).toBe('/reports/r_x');
+  });
+
+  it('surfaces an emit_report error result', () => {
+    const view = reportViewFromMessage(
+      emitPart('output-available', { output: { error: 'Справката е твърде голяма.' } }),
+    );
+
+    expect(view.error).toBe('Справката е твърде голяма.');
+  });
+
+  it('returns no chip for a malformed result (missing id)', () => {
+    const view = reportViewFromMessage(
+      emitPart('output-available', { output: { title: 'no id' } }),
+    );
+
+    expect(view.chip).toBeNull();
+  });
+
+  it('labels the in-flight report tool', () => {
+    expect(reportViewFromMessage(emitPart('input-available', {})).pendingLabel).toBe(
+      'Подготвям справка…',
+    );
+  });
+
+  it('labels another in-flight tool by name', () => {
+    const view = reportViewFromMessage({
+      parts: [{ type: 'tool-run_sql', state: 'input-streaming' }],
+    });
+
+    expect(view.pendingLabel).toBe('Изпълнява заявка…');
+  });
+
+  it('is empty for a prose-only message', () => {
+    expect(reportViewFromMessage({ parts: [{ type: 'text' }] })).toEqual({
+      chip: null,
+      error: null,
+      pendingLabel: null,
+    });
   });
 });

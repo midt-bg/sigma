@@ -7,7 +7,7 @@ afterEach(() => {
   cleanup();
 });
 
-const renderChip = (props: { title: string; leadStat: string | null; href?: string }) => {
+const renderChip = (props: { title: string; leadStat: string | null; href: string }) => {
   const Stub = createRoutesStub([{ path: '/', Component: () => <ReportChip {...props} /> }]);
   render(<Stub />);
 };
@@ -39,11 +39,5 @@ describe('ReportChip', () => {
     renderChip({ title: 'X', leadStat: null, href: '/reports/r_abc' });
 
     expect(screen.getByRole('link', { name: 'Отвори' })).toHaveAttribute('href', '/reports/r_abc');
-  });
-
-  it('omits „Отвори" when there is no report URL', () => {
-    renderChip({ title: 'X', leadStat: null });
-
-    expect(screen.queryByRole('link', { name: 'Отвори' })).not.toBeInTheDocument();
   });
 });
