@@ -47,6 +47,24 @@ describe('rateLimitAssistantRoute', () => {
     ).resolves.toBeNull();
   });
 
+  it('limits PUT/PATCH/DELETE too — a RR resource route runs its action for them (review #80, follow-up)', async () => {
+    // assistant.chat exports only `action`, which React Router dispatches for EVERY mutation method, so
+    // gating the limiter on `method === 'POST'` let PUT/PATCH/DELETE reach the paid loop unthrottled.
+    for (const method of ['PUT', 'PATCH', 'DELETE']) {
+      const { limiter, limit } = rateLimiter(false);
+      const response = await rateLimitAssistantRoute(
+        new Request('http://local/assistant/chat', {
+          method,
+          headers: { 'CF-Connecting-IP': '203.0.113.42' },
+        }),
+        { ASSISTANT_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(limit, method).toHaveBeenCalled();
+      expect(response?.status, method).toBe(429);
+    }
+  });
+
   it('does not limit other methods or paths', async () => {
     const { limiter, limit } = rateLimiter(false);
     // GET on the same path

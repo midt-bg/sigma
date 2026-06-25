@@ -28,6 +28,13 @@ export async function rateLimitAssistantRoute(
   );
 }
 
+// A React Router resource route runs its `action` for EVERY mutation method (POST/PUT/PATCH/DELETE),
+// not just POST — and assistant.chat exports only `action`, so a `PUT /assistant/chat` runs the full
+// embeddings + BgGPT loop. Gating on `method === 'POST'` let those non-POST methods reach the paid loop
+// completely unthrottled. Throttle any non-GET/HEAD request to the path instead (GET/HEAD hit no loader
+// and 405 cheaply) so no method that triggers the action can bypass the limiter (review #80, follow-up).
 function isAssistantRequest(request: Request): boolean {
-  return request.method === 'POST' && normalizedPathname(request) === '/assistant/chat';
+  const method = request.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+  return normalizedPathname(request) === '/assistant/chat';
 }
