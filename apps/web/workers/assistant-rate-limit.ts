@@ -8,8 +8,9 @@ interface AssistantRateLimitEnv {
 // BgGPT agent loop, so it is far more expensive than a normal page. Mirrors the CSV/aggregation
 // limiters, but FAILS CLOSED in production (the `failClosed` option below): if the limiter binding is
 // unprovisioned or errors, the paid agent loop is rejected with a 503 rather than running unthrottled.
-// In dev/preview it still degrades to a no-op. A global budget / circuit-breaker
-// (BGGPT_RATE_LIMIT_RPM) is the remaining launch-gate layer.
+// In dev/preview it still degrades to a no-op. A global (account-wide) budget / circuit-breaker is a
+// remaining launch-gate TODO: the `BGGPT_RATE_LIMIT_RPM` var is declared for it but is NOT yet read or
+// enforced — only this per-IP limiter is active today.
 export async function rateLimitAssistantRoute(
   request: Request,
   env: AssistantRateLimitEnv,

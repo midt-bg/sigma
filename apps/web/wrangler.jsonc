@@ -40,6 +40,7 @@
     "AI_GATEWAY_BASE_URL": "",
     "BGGPT_MODEL": "bggpt-gemma-3-27b-fp8",
     "MAX_STEPS": "6",
+    // Reserved for the launch-gate global circuit-breaker — declared but NOT yet read by any code.
     "BGGPT_RATE_LIMIT_RPM": "120",
     // Per-turn D1 rows-read budget — Denial-of-Wallet guard (issue #122). D1 bills on rows READ, not
     // returned, and LIMIT caps only returned rows; once a chat turn's cumulative rows_read crosses
@@ -72,8 +73,9 @@
       },
       {
         // Per-IP throttle for POST /assistant/chat — each call runs embeddings + the BgGPT agent loop
-        // (review #80). Tight, since it is far costlier than a page view. A global budget /
-        // circuit-breaker (BGGPT_RATE_LIMIT_RPM) is the remaining launch-gate layer.
+        // (review #80). Tight, since it is far costlier than a page view. A global (account-wide) budget
+        // / circuit-breaker is a launch-gate TODO: BGGPT_RATE_LIMIT_RPM (below) is declared for it but
+        // not yet read — only this per-IP limiter is active today.
         "name": "ASSISTANT_RATE_LIMITER",
         "type": "ratelimit",
         "namespace_id": "1004",
