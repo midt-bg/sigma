@@ -40,9 +40,8 @@ jobs:
       - name: Dependency audit
         run: pnpm audit --audit-level=high
       - name: Lint
-        continue-on-error: true
-        # TODO: flip to blocking after a dedicated repo-wide `pnpm format` clears the
-        # pre-existing prettier debt (mocks/, legacy scripts, root docs).
+        # Blocking: the repo-wide `pnpm format` pass cleared the pre-existing prettier debt, so
+        # `pnpm lint` (prettier --check .) now gates merges and keeps the tree formatted (#88).
         run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
