@@ -1,19 +1,16 @@
-// Projection helpers between a useChat message and the dock's transcript affordances (spec §1).
+// Projection helpers between a useChat message and the dock's compact report chip (spec §1).
 //
-// A turn runs server-side tools (describe_schema, run_sql, …) and finishes with `emit_report`. Each tool
-// surfaces as a `tool-<name>` part: while it runs we show a per-tool progress line; when `emit_report`
-// settles, its RESULT (`{ id, title, url }`) gives the chip's title + „Отвори" href and its INPUT (the
-// ReportArtifact) gives the lead statistic.
+// A finished report arrives as a `tool-emit_report` part on the assistant message (contract §3); the
+// chip is a projection of that report's title + one lead statistic.
 
 import { count, date, money, pct } from '@sigma/shared';
-import type { FormatHint, ReportArtifact } from './contract';
+import type { CellFormat, EmitReportOutput, ResolvedReport } from './contract';
 
-// Minimal shape we read from a useChat tool UIMessage part (SDK v6): `type`, `state`, and the tool
-// `input` (args) / `output` (result). Avoids coupling to the SDK's full part typing.
+// Minimal shape we read from a useChat UIMessage part — avoids coupling to the SDK's full part typing
+// (we only ever read `type`, `state`, and `output`).
 interface MessagePartLike {
   type: string;
   state?: string;
-  input?: unknown;
   output?: unknown;
 }
 interface MessageLike {
@@ -21,54 +18,49 @@ interface MessageLike {
 }
 
 const EMIT_REPORT_PART = 'tool-emit_report';
-const PENDING_STATES = new Set(['input-streaming', 'input-available']);
-
-// Per-tool progress copy shown while a tool is in flight (mirrors the server's tool set).
-const TOOL_LABELS: Record<string, string> = {
-  'tool-describe_schema': 'Чете схемата…',
-  'tool-run_sql': 'Изпълнява заявка…',
-  'tool-search_entities': 'Търси…',
-  'tool-get_company': 'Зарежда компания…',
-  'tool-get_authority': 'Зарежда институция…',
-  'tool-get_contract': 'Зарежда договор…',
-  'tool-emit_report': 'Подготвям справка…',
-};
 
 export interface ReportChipData {
   title: string;
   leadStat: string | null;
-  href: string;
 }
 
-export interface MessageReportView {
-  /** A finished report → render the chip. */
-  chip: ReportChipData | null;
-  /** emit_report returned an error (e.g. report too large) → render the failure line. */
-  error: string | null;
-  /** A tool is in flight → render this progress line. */
-  pendingLabel: string | null;
-}
+// The tool `output` crosses an untrusted boundary, so narrow it to the contract union before use rather
+// than casting — a partial/unexpected object (missing `ok`) is treated as "no report" (prose fallback).
+const isEmitReportOutput = (value: unknown): value is EmitReportOutput => {
+  if (typeof value !== 'object' || value === null || !('ok' in value)) return false;
+  if (value.ok === true) return 'report' in value && value.report != null;
+  if (value.ok === false) return 'errors' in value && Array.isArray(value.errors);
+  return false;
+};
 
-// The emit_report RESULT crosses an untrusted boundary; narrow it rather than cast.
-const isReportRef = (value: unknown): value is { id: string; title: string; url: string } =>
-  typeof value === 'object' &&
-  value !== null &&
-  'id' in value &&
-  typeof value.id === 'string' &&
-  'title' in value &&
-  typeof value.title === 'string' &&
-  'url' in value &&
-  typeof value.url === 'string';
+/**
+ * The emit_report tool output from a settled part of this message, or null if the turn has no report yet
+ * (prose-only, the tool is still running, or the output is malformed). Returns the `{ ok: false }` form
+ * too, so the caller can surface a failure affordance.
+ */
+export const reportOutputFromMessage = (message: MessageLike): EmitReportOutput | null => {
+  for (const part of message.parts ?? []) {
+    if (
+      part.type === EMIT_REPORT_PART &&
+      part.state === 'output-available' &&
+      part.output != null
+    ) {
+      return isEmitReportOutput(part.output) ? part.output : null;
+    }
+  }
+  return null;
+};
 
-const isErrorResult = (value: unknown): value is { error: string } =>
-  typeof value === 'object' &&
-  value !== null &&
-  'error' in value &&
-  typeof value.error === 'string';
+const PENDING_REPORT_STATES = new Set(['input-streaming', 'input-available']);
 
-// The emit_report INPUT — we only read `blocks` for the lead stat, so that is all we validate.
-const isReportArtifact = (value: unknown): value is ReportArtifact =>
-  typeof value === 'object' && value !== null && 'blocks' in value && Array.isArray(value.blocks);
+/**
+ * True while an `emit_report` tool call is in flight (before its output settles), so the transcript can
+ * show a "preparing report" affordance between the streamed prose and the finished chip.
+ */
+export const isReportPending = (message: MessageLike): boolean =>
+  (message.parts ?? []).some(
+    (part) => part.type === EMIT_REPORT_PART && PENDING_REPORT_STATES.has(part.state ?? ''),
+  );
 
 const toNumber = (value: string | number | null): number | null => {
   if (value == null) return null;
@@ -77,9 +69,10 @@ const toNumber = (value: string | number | null): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-// Mirrors the foundation's report renderer formatting so the chip's lead stat reads like the rest of the
+// Mirrors the foundation's render-format.formatCell so the chip's lead stat reads like the rest of the
 // site (money in EUR, percent as a 0..1 ratio, blank as an em-dash).
-const formatByHint = (value: string | number | null, format: FormatHint): string => {
+// TODO(foundation-merge): replace with `formatCell` from `~/lib/assistant/render-format`.
+const formatByHint = (value: string | number | null, format: CellFormat): string => {
   switch (format) {
     case 'money':
       return money(toNumber(value));
@@ -91,8 +84,9 @@ const formatByHint = (value: string | number | null, format: FormatHint): string
       return date(value == null ? null : String(value));
     case 'text':
     default:
-      // Typed string | number, but it crosses an untrusted tool boundary; guard against a non-primitive
-      // slipping through (String({}) → '[object Object]') by showing the em-dash instead.
+      // value is typed string | number | null, but it crosses an untrusted tool boundary; guard against
+      // a non-primitive slipping through (String({}) → '[object Object]' in the chip) by showing the
+      // em-dash instead.
       if (typeof value === 'string') return value === '' ? '—' : value;
       if (typeof value === 'number') return String(value);
       return '—';
@@ -101,42 +95,22 @@ const formatByHint = (value: string | number | null, format: FormatHint): string
 
 // The first totals/facts value is the most informative one-line stat; a report with neither (e.g. a bare
 // table or chart) shows just the title.
-export const leadStat = (artifact: ReportArtifact): string | null => {
-  for (const block of artifact.blocks) {
+const leadStat = (report: ResolvedReport): string | null => {
+  for (const block of report.blocks) {
     if (block.type === 'totals' && block.items[0]) {
       const item = block.items[0];
-      return `${item.label}: ${formatByHint(item.value, item.format ?? 'text')}`;
+      return `${item.label}: ${formatByHint(item.value, item.format)}`;
     }
-    if (block.type === 'facts' && block.rows[0]) {
-      const row = block.rows[0];
-      return `${row.term}: ${formatByHint(row.value, 'text')}`;
+    if (block.type === 'facts' && block.items[0]) {
+      const item = block.items[0];
+      return `${item.term}: ${formatByHint(item.value, 'text')}`;
     }
   }
   return null;
 };
 
-/**
- * Single pass over a message's tool parts → the transcript's three (mutually exclusive in practice)
- * affordances: a finished report chip, an emit_report error line, or a per-tool progress line.
- */
-export const reportViewFromMessage = (message: MessageLike): MessageReportView => {
-  const view: MessageReportView = { chip: null, error: null, pendingLabel: null };
-  for (const part of message.parts ?? []) {
-    if (!part.type.startsWith('tool-')) continue;
-    if (part.type === EMIT_REPORT_PART && part.state === 'output-available') {
-      if (isReportRef(part.output)) {
-        const artifact = isReportArtifact(part.input) ? part.input : null;
-        view.chip = {
-          title: part.output.title,
-          href: part.output.url || `/reports/${part.output.id}`,
-          leadStat: artifact ? leadStat(artifact) : null,
-        };
-      } else if (isErrorResult(part.output)) {
-        view.error = part.output.error;
-      }
-    } else if (PENDING_STATES.has(part.state ?? '')) {
-      view.pendingLabel = TOOL_LABELS[part.type] ?? '…';
-    }
-  }
-  return view;
-};
+/** Project a finished report to the compact chip: its title + a single lead statistic. */
+export const projectChip = (report: ResolvedReport): ReportChipData => ({
+  title: report.title,
+  leadStat: leadStat(report),
+});

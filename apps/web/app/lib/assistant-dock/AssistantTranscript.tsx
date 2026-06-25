@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { UIMessage } from 'ai';
-import { reportViewFromMessage } from './report-projection';
+import { isReportPending, projectChip, reportOutputFromMessage } from './report-projection';
 import { AssistantMessage } from './AssistantMessage';
 import { ReportChip } from './ReportChip';
 
@@ -48,14 +48,16 @@ export const AssistantTranscript = ({ messages }: AssistantTranscriptProps) => {
       aria-label="Разговор с асистента"
     >
       {messages.map((message) => {
-        const report = reportViewFromMessage(message);
+        const report = reportOutputFromMessage(message);
         return (
           <div key={message.id} className="assistant-turn">
             <AssistantMessage message={message} />
-            {report.chip ? <ReportChip {...report.chip} /> : null}
-            {report.error ? <p className="assistant-transcript__error">{report.error}</p> : null}
-            {report.pendingLabel ? (
-              <p className="assistant-transcript__pending">{report.pendingLabel}</p>
+            {report?.ok ? <ReportChip {...projectChip(report.report)} /> : null}
+            {report && !report.ok ? (
+              <p className="assistant-transcript__error">Справката не можа да бъде съставена.</p>
+            ) : null}
+            {isReportPending(message) ? (
+              <p className="assistant-transcript__pending">Подготвям справка…</p>
             ) : null}
           </div>
         );
