@@ -11,6 +11,7 @@ import {
   type VectorIndex,
 } from '../lib/assistant/rag';
 import { resolveRowsReadBudget, type ToolContext } from '../lib/assistant/tools';
+import { selectClientMessages } from '../lib/assistant/chat-input';
 
 function latestUserText(messages: UIMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -49,7 +50,10 @@ export async function action({ request, context }: Route.ActionArgs) {
   } catch {
     return Response.json({ error: 'invalid JSON' }, { status: 400 });
   }
-  const messages = (parsed.messages ?? []).slice(-MAX_MESSAGES); // most recent turns only
+  // Keep only the user/assistant turns the dock sends, most-recent first — drops any client-supplied
+  // `system`/`tool` message that would otherwise reach BgGPT as a second system instruction (review #80,
+  // red-team R1). See selectClientMessages for why filtering precedes the recency slice.
+  const messages = selectClientMessages(parsed.messages, MAX_MESSAGES);
   if (messages.length === 0) return Response.json({ error: 'no messages' }, { status: 400 });
   // The total body cap leaves room for ONE message to dominate (re-billed as prompt tokens every step);
   // reject an oversized individual message too (review #80).
