@@ -3,44 +3,50 @@
 
 import type { UIMessage } from 'ai';
 
-// A part is well-formed only if it is a non-null object AND — when it is a `text` part — carries a string
-// `text`. messageTextChars/latestUserText filter on `type === 'text'` and then deref `p.text.length`
-// BEFORE the route's try/catch, so a `{ "type": "text" }` with no `text` (a non-null object that the
-// plain object check accepted) crashes to an unhandled 500 on the public endpoint (review #80, follow-up).
-function isWellFormedPart(p: unknown): boolean {
-  if (!p || typeof p !== 'object') return false;
-  const part = p as { type?: unknown; text?: unknown };
-  if (part.type === 'text' && typeof part.text !== 'string') return false;
-  return true;
+// The well-formed TEXT parts of a message, in order. Only a `text` part carrying a string `text` survives.
+// The server OWNS tool execution and value binding (ctx.results is rebuilt per turn), so a client-supplied
+// assistant `tool-*` part — a fabricated `tool-emit_report` output carrying made-up numbers, or a
+// `tool-result` — must never reach the model as history. Reducing each message to its text parts drops
+// those tool/file/data parts AND any malformed part (a `{ "type": "text" }` with no string `text` simply
+// does not survive), so messageTextChars/latestUserText/convertToModelMessages only ever see clean text
+// downstream (review #80, follow-up).
+function textParts(parts: unknown): { type: 'text'; text: string }[] {
+  if (!Array.isArray(parts)) return [];
+  return parts.filter(
+    (p): p is { type: 'text'; text: string } =>
+      !!p &&
+      typeof p === 'object' &&
+      (p as { type?: unknown }).type === 'text' &&
+      typeof (p as { text?: unknown }).text === 'string',
+  );
 }
 
 /**
- * Select the client messages that may be sent to the model: keep only `user`/`assistant` turns, then the
- * most recent `max`. The server OWNS the system prompt (passed via streamText's `system` option) — a
- * client-supplied `system` (or `tool`) message would otherwise be converted to a model message and reach
- * BgGPT as a second system instruction, a prompt-injection amplifier the AI SDK itself warns about.
- * Filtering BEFORE the recency slice stops injected messages from evicting real turns from the window
- * (review #80, red-team R1).
+ * Select + sanitise the client messages that may be sent to the model: keep only `user`/`assistant` turns
+ * reduced to their text parts, then the most recent `max`. Two boundaries, both because the server owns the
+ * trusted state:
+ *   1. Role — a client-supplied `system`/`tool` message is dropped; otherwise it converts to a model
+ *      message and reaches BgGPT as a second system instruction, a prompt-injection amplifier the AI SDK
+ *      itself warns about (review #80, red-team R1).
+ *   2. Parts — each kept message is reduced to its TEXT parts (textParts). The chat is a stateless control
+ *      plane; the server re-executes tools and rebinds values per turn (ctx.results), so a client must not
+ *      smuggle an assistant `tool-emit_report` output (a fabricated report/numbers) or a `tool-result` into
+ *      the model's history. Text is the only conversational context the model needs (review #80, follow-up).
+ *
+ * Filtering/reduction run BEFORE the recency slice so an injected or now-empty message cannot evict a real
+ * turn from the window. A message left with no text part is dropped — which also closes the malformed-payload
+ * shapes that once 500'd the route (non-array `messages`, missing/`null`/primitive parts simply yield nothing).
  */
 export function selectClientMessages(messages: unknown, max: number): UIMessage[] {
-  // `messages` is UNTRUSTED client JSON: it may be a non-array, or carry items without a `parts` array.
-  // Validate structurally here so downstream (messageTextChars/latestUserText/convertToModelMessages)
-  // never deref `.parts` on a bad shape — otherwise a payload like {"messages":"x"} or
-  // {"messages":[{"role":"user"}]} throws and surfaces as a 500 on a public endpoint (review #80).
   if (!Array.isArray(messages)) return [];
   return messages
-    .filter((m): m is UIMessage => {
-      if (!m || typeof m !== 'object') return false;
+    .flatMap((m) => {
+      if (!m || typeof m !== 'object') return [];
       const msg = m as { role?: unknown; parts?: unknown };
-      // Validate the parts ELEMENTS too, not just that `parts` is an array: a null/primitive part
-      // (`parts:[null]`) slips an array check but then crashes the `p.type` deref in messageTextChars /
-      // latestUserText — which run BEFORE the route's try/catch — surfacing as an unhandled 500 on the
-      // public endpoint (the malformed-payload class the array check alone did not fully close; #80).
-      return (
-        (msg.role === 'user' || msg.role === 'assistant') &&
-        Array.isArray(msg.parts) &&
-        msg.parts.every(isWellFormedPart)
-      );
+      if (msg.role !== 'user' && msg.role !== 'assistant') return [];
+      const parts = textParts(msg.parts);
+      if (parts.length === 0) return [];
+      return [{ ...(m as UIMessage), parts } as UIMessage];
     })
     .slice(-max);
 }
