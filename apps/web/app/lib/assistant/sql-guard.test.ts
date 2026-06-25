@@ -98,6 +98,32 @@ describe('assertReadOnlySelect', () => {
     expect(w.ok).toBe(false);
     if (!w.ok) expect(w.reason).toMatch(/SELECT or WITH/);
   });
+
+  it('rejects printf/format string-width bombs (review #80, follow-up)', () => {
+    // printf('%1000000d', x) builds a ~1 MB string per row that materialises before capRows can measure
+    // it — the same memory-amplification class as randomblob/zeroblob, via functions the blocklist missed.
+    for (const sql of [
+      "SELECT printf('%1000000d', id) FROM contracts",
+      "SELECT format('%1000000d', id) FROM contracts",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it('strips comments without corrupting string literals (review #80, follow-up)', () => {
+    // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
+    // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).
+    const a = assertReadOnlySelect("SELECT id FROM bidders WHERE name = 'a/*b*/c'");
+    expect(a.ok).toBe(true);
+    if (a.ok) expect(a.sql).toContain("'a/*b*/c'");
+    const b = assertReadOnlySelect("SELECT 'cost -- est' AS label, id FROM contracts");
+    expect(b.ok).toBe(true);
+    if (b.ok) expect(b.sql).toContain("'cost -- est'");
+    // a REAL trailing line comment is still stripped (single statement, leading SELECT preserved)
+    expect(assertReadOnlySelect('SELECT id FROM contracts -- top earners').ok).toBe(true);
+  });
 });
 
 describe('enforceLimit', () => {

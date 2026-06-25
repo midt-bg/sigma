@@ -40,10 +40,53 @@ const FORBIDDEN = [
   'REVOKE',
 ];
 
+// Strip `/* block */` and `-- line` comments, but NOT when they fall inside a single-quoted string
+// literal — a regex pass that ignored literals silently corrupted query semantics: `name = 'a/*b*/c'`
+// became `name = 'a c'` (wrong rows), and `'x -- y'` was truncated to an unterminated string (fail-closed
+// false-deny). The executed SQL is this stripped string, so the corruption is invisible. Mirror the
+// literal/`''`-escape handling of splitStatements below so both layers model strings the same way
+// (review #80, follow-up). A `--`/`/*` inside a literal is preserved as data.
 function stripComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ') // /* block */
-    .replace(/--[^\n]*/g, ' '); // -- line
+  let out = '';
+  let i = 0;
+  const n = sql.length;
+  let inString = false;
+  while (i < n) {
+    const ch = sql[i]!;
+    if (inString) {
+      if (ch === "'" && sql[i + 1] === "'") {
+        out += "''"; // escaped quote inside a literal — consume both, stay in the string
+        i += 2;
+        continue;
+      }
+      out += ch;
+      if (ch === "'") inString = false;
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inString = true;
+      out += ch;
+      i++;
+      continue;
+    }
+    if (ch === '-' && sql[i + 1] === '-') {
+      i += 2;
+      while (i < n && sql[i] !== '\n') i++; // to end of line (the newline is kept, handled next loop)
+      out += ' ';
+      continue;
+    }
+    if (ch === '/' && sql[i + 1] === '*') {
+      i += 2;
+      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+      i += 2; // skip the closing */ (overshooting n is harmless)
+      out += ' ';
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 // Split on `;` at the top level, treating a `;` inside a single-quoted string literal as data, not a
@@ -124,10 +167,11 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
 
   // Dangerous SCALAR functions the table-allowlist / TVF guards don't see (they sit in the SELECT list,
   // not a FROM source): `load_extension` loads a dynamic library (RCE where SQLite enables it — D1
-  // disables it, but block defensively), and `randomblob`/`zeroblob` build arbitrarily large blobs that
-  // materialise in Worker memory before capRows can measure the row. No analytics query needs any of
-  // them (review #80, red-team R2).
-  if (/\b(?:load_extension|randomblob|zeroblob)\s*\(/i.test(sql)) {
+  // disables it, but block defensively); `randomblob`/`zeroblob` build arbitrarily large blobs; and
+  // `printf`/`format` with a width specifier (`printf('%1000000d', x)`) build arbitrarily large STRINGS.
+  // All materialise in Worker memory before capRows can measure the row — a single row can OOM the
+  // isolate. No analytics query needs any of them (review #80, red-team R2; printf/format f/u).
+  if (/\b(?:load_extension|randomblob|zeroblob|printf|format)\s*\(/i.test(sql)) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };
@@ -151,9 +195,10 @@ export function capRows(
   cap = RESULT_BYTE_CAP,
 ): { rows: (string | number | null)[][]; truncated: boolean } {
   const out: (string | number | null)[][] = [];
+  const enc = new TextEncoder(); // hoisted: one encoder for the whole result, not one per row (≤500)
   let bytes = 2; // []
   for (const row of rows) {
-    const size = new TextEncoder().encode(JSON.stringify(row)).length + 1;
+    const size = enc.encode(JSON.stringify(row)).length + 1;
     if (bytes + size > cap) {
       // Keep at least the first row even if it alone exceeds the cap: otherwise a successful query whose
       // first row is huge yields rows:[], and a model `row:0` ref then errors "out of range (0..-1)" on
