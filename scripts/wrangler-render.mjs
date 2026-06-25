@@ -21,7 +21,15 @@ const SENTINELS = {
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
 // rate-limit namespace_ids to be account-unique — a duplicate silently merges two buckets.
-const REQUIRED_RATE_LIMITERS = ['CSV_RATE_LIMITER', 'AGG_RATE_LIMITER', 'SEARCH_RATE_LIMITER'];
+// ASSISTANT_RATE_LIMITER is the most important to assert: unlike the others (which fail OPEN), it fails
+// CLOSED in prod, so a dropped/typo'd binding silently 503s every assistant request rather than merely
+// disabling a throttle (review #80, follow-up).
+const REQUIRED_RATE_LIMITERS = [
+  'CSV_RATE_LIMITER',
+  'AGG_RATE_LIMITER',
+  'SEARCH_RATE_LIMITER',
+  'ASSISTANT_RATE_LIMITER',
+];
 
 const input = process.argv[2];
 if (!input) {
@@ -58,9 +66,10 @@ if (ext === '.json' || ext === '.jsonc') {
   if (names.webName || names.d1Name || names.csvCacheName) {
     out = renderJson(out, names);
   }
-  // Rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
-  // namespace_id collision would silently disable a limiter rather than erroring. Catch both here so
-  // the deploy fails loudly instead.
+  // Most rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
+  // namespace_id collision would silently disable a limiter rather than erroring; ASSISTANT_RATE_LIMITER
+  // fails CLOSED, where the same misconfig instead 503s the whole endpoint. Catch both here so the deploy
+  // fails loudly instead of shipping a silently-broken limiter either way.
   assertRateLimiters(out, input);
 } else if (ext === '.toml') {
   const names = {
