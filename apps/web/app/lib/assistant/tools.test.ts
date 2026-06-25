@@ -10,7 +10,7 @@ import {
 
 function ctx(
   rows: Record<string, string | number | null>[] = [],
-  opts: { rowsRead?: number; rowsReadBudget?: number } = {},
+  opts: { rowsRead?: number; rowsReadBudget?: number; totalAttempts?: number } = {},
 ): ToolContext {
   const db = {
     prepare(_sql: string) {
@@ -19,7 +19,10 @@ function ctx(
           return this;
         },
         async all<T>() {
-          return { results: rows as T[], meta: { rows_read: opts.rowsRead ?? 0 } };
+          return {
+            results: rows as T[],
+            meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
+          };
         },
         async first<T>() {
           return null as T;
@@ -75,6 +78,14 @@ describe('run_sql', () => {
     await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
     await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
     expect(c.rowsRead).toBe(500);
+  });
+
+  it('multiplies rows_read by total_attempts so a D1-retried full scan is not under-billed (review #80)', async () => {
+    // meta.rows_read is the LAST attempt only; a query D1 auto-retried scanned the table on each attempt.
+    // Without the ×total_attempts factor a retried full scan under-bills the Denial-of-Wallet budget.
+    const c = ctx([{ n: 1 }], { rowsRead: 100, totalAttempts: 3 });
+    await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    expect(c.rowsRead).toBe(300); // 100 × 3, not 100
   });
 
   it('refuses further run_sql once the per-turn rows-read budget is exceeded (issue #122)', async () => {
