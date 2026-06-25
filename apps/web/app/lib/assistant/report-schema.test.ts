@@ -114,6 +114,20 @@ describe('bindReport — server owns the values', () => {
     if (!oor.ok) expect(oor.errors[0]).toMatch(/row 99 out of range/);
   });
 
+  it('self-defends against a non-integer row index instead of silently binding null (review #80, ydimitrof)', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'facts',
+          items: [{ term: 'x', ref: { resultId: 'R1', row: 1.5, col: 'spent_eur' } }],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/out of range/);
+  });
+
   it('computes bar points from result values (renderer owns shares/colours)', () => {
     const out = bindReport(
       emit([{ type: 'bar', resultId: 'R1', labelCol: 'authority', valueCol: 'spent_eur' }]),
@@ -522,5 +536,12 @@ describe('sanitizeProse — no raw HTML reaches a public report', () => {
     );
     // `data:` as a plain prose word (not a link target) is NOT mangled
     expect(sanitizeProse('виж данните data: важни числа')).toContain('data:');
+  });
+
+  it('decodes numeric HTML entities before defang/strip so an encoded scheme/tag cannot survive (review #80, ydimitrof)', () => {
+    // `javascript&#58;` decodes to `javascript:` — the defang must run AFTER entity decoding
+    expect(sanitizeProse('[x](javascript&#58;alert(1))')).not.toMatch(/javascript:/i);
+    // an entity-encoded tag is likewise stripped once decoded
+    expect(sanitizeProse('&#60;script&#62;alert(1)&#60;/script&#62;')).not.toMatch(/<script/i);
   });
 });

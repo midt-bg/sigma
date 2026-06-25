@@ -148,7 +148,9 @@ export interface BindOptions {
 // as the second layer, this strip is the SOLE barrier, so it must hold on its own.
 export function sanitizeProse(md: string): string {
   let prev: string;
-  let out = md;
+  // Decode numeric HTML entities first so an entity-encoded tag or scheme (`&#60;script&#62;`,
+  // `javascript&#58;…`) is seen by the tag strip and the scheme defang below (review #80, ydimitrof).
+  let out = decodeNumericEntities(md);
   do {
     prev = out;
     out = out.replace(/<[^>]*>/g, '').replace(/<\/?[a-zA-Z][^>]*$/g, '');
@@ -192,6 +194,16 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
 const codePoint = (n: number, fallback: string): string =>
   Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : fallback;
 
+// Decode numeric HTML entities (`&#58;` / `&#x3a;`) to their character. A markdown renderer decodes
+// these, so the sanitizer must see through them before stripping tags / defanging schemes — otherwise an
+// entity-encoded tag or scheme (`&#60;script&#62;`, `javascript&#58;…`) survives sanitizeProse, the SOLE
+// pre-renderer barrier — and the number gate must decode them before scanning (review #80, ydimitrof).
+function decodeNumericEntities(s: string): string {
+  return s
+    .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
+    .replace(/&#x([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
+}
+
 // Fold every Unicode decimal digit to its ASCII value so the number gate is not blinded by a digit a
 // reader still reads as a number — fullwidth (１２), superscript (¹²), circled (⑫), Arabic-Indic,
 // Devanagari, … NFKC folds the compatibility forms; the \p{Nd} pass then folds the remaining script
@@ -212,10 +224,7 @@ function foldDigits(text: string): string {
 // collapses zero-width separators (`1​234​567` → "1234567") and decodes numeric HTML entities
 // (`12&#48;&#48;&#48;` → "12000"). Decode/strip those, drop emphasis, collapse whitespace (review #80).
 function deMarkdown(text: string): string {
-  const decoded = text
-    .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
-    .replace(/&#x([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
-  return foldDigits(decoded)
+  return foldDigits(decodeNumericEntities(text))
     .replace(/[\u200b-\u200d\ufeff]/g, '') // zero-width space / non-joiner / joiner / BOM
     .replace(/[*_`~\\]/g, '')
     .replace(/\s+/g, ' ');
@@ -263,7 +272,10 @@ export function bindReport(
       errors.push(`${where}: result "${ref.resultId}" has no column "${ref.col}"`);
       return null;
     }
-    if (ref.row < 0 || ref.row >= r.rows.length) {
+    // Self-defend against a non-integer row (`1.5`): `1.5 >= length` can be false, then `rows[1.5]` is
+    // undefined and the slot would silently bind null. Don't rely on validateEmitShape running first
+    // (review #80, ydimitrof).
+    if (!Number.isInteger(ref.row) || ref.row < 0 || ref.row >= r.rows.length) {
       errors.push(
         `${where}: result "${ref.resultId}" row ${ref.row} out of range (0..${r.rows.length - 1})`,
       );
