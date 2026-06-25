@@ -154,7 +154,13 @@ export function capRows(
   let bytes = 2; // []
   for (const row of rows) {
     const size = new TextEncoder().encode(JSON.stringify(row)).length + 1;
-    if (bytes + size > cap) return { rows: out, truncated: true };
+    if (bytes + size > cap) {
+      // Keep at least the first row even if it alone exceeds the cap: otherwise a successful query whose
+      // first row is huge yields rows:[], and a model `row:0` ref then errors "out of range (0..-1)" on
+      // a query that actually worked. Flag truncation either way (review #80).
+      if (out.length === 0) out.push(row);
+      return { rows: out, truncated: true };
+    }
     out.push(row);
     bytes += size;
   }

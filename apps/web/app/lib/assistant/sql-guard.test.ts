@@ -136,4 +136,17 @@ describe('capRows', () => {
     expect(truncated).toBe(true);
     expect(rows.length).toBeLessThan(big.length);
   });
+  it('keeps the first row even if it alone exceeds the cap (review #80, ultra #11)', () => {
+    const huge = 'x'.repeat(200_000);
+    const { rows, truncated } = capRows(
+      [
+        [1, huge],
+        [2, 'b'],
+      ],
+      1024,
+    );
+    expect(rows).toHaveLength(1); // first row kept — not dropped to [] (a row:0 ref would then error)
+    expect(rows[0]![0]).toBe(1);
+    expect(truncated).toBe(true);
+  });
 });
