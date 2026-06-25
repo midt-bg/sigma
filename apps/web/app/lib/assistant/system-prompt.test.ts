@@ -41,6 +41,6 @@ describe('buildSystemPrompt', () => {
 
   it('includes a per-source freshness line when supplied', () => {
     const p = buildSystemPrompt({ freshness: 'D1: 2026-06-18; EOP: на живо' });
-    expect(p).toContain('СВЕЖЕСT НА ДАННИТЕ: D1: 2026-06-18; EOP: на живо');
+    expect(p).toContain('СВЕЖЕСТ НА ДАННИТЕ: D1: 2026-06-18; EOP: на живо');
   });
 });

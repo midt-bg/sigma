@@ -60,7 +60,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     VALUES_BY_REFERENCE_RULE,
     DATA_TRUST_RULE,
     EDITORIAL_SKELETON,
-    input.freshness ? `СВЕЖЕСT НА ДАННИТЕ: ${input.freshness} — цитирай я в callout.` : '',
+    input.freshness ? `СВЕЖЕСТ НА ДАННИТЕ: ${input.freshness} — цитирай я в callout.` : '',
     schema,
   ];
   return parts.filter(Boolean).join('\n\n');
