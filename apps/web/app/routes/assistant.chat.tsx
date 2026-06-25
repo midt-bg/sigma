@@ -27,6 +27,14 @@ function latestUserText(messages: UIMessage[]): string {
 
 const MAX_BODY_BYTES = 256 * 1024; // ~256 KB of posted history — bounds memory + token blow-up (review #80)
 const MAX_MESSAGES = 24; // keep only the most recent turns (the model has a big window; still bound it)
+const MAX_MESSAGE_CHARS = 64 * 1024; // per-message text cap — one giant message must not dominate the prompt
+
+/** Total length of a message's text parts (the only parts that become BgGPT prompt tokens). */
+function messageTextChars(m: UIMessage): number {
+  return m.parts
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+    .reduce((n, p) => n + p.text.length, 0);
+}
 
 export async function action({ request, context }: Route.ActionArgs) {
   const raw = await request.text();
@@ -43,8 +51,19 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
   const messages = (parsed.messages ?? []).slice(-MAX_MESSAGES); // most recent turns only
   if (messages.length === 0) return Response.json({ error: 'no messages' }, { status: 400 });
+  // The total body cap leaves room for ONE message to dominate (re-billed as prompt tokens every step);
+  // reject an oversized individual message too (review #80).
+  if (messages.some((m) => messageTextChars(m) > MAX_MESSAGE_CHARS)) {
+    return Response.json({ error: 'съобщението е твърде дълго' }, { status: 413 });
+  }
 
   const env = context.cloudflare.env;
+  // Fail fast and CLEARLY if the model key is unprovisioned, rather than starting a turn that surfaces a
+  // generic mid-stream BgGPT 401 indistinguishable from a real outage (review #80).
+  if (!(env as unknown as AgentEnv).BGGPT_API_KEY) {
+    console.error('[assistant] BGGPT_API_KEY is not set — endpoint not provisioned');
+    return Response.json({ error: 'Асистентът все още не е конфигуриран.' }, { status: 503 });
+  }
   const ai = env.AI as unknown as EmbeddingRunner | undefined;
   const vectorize = env.VECTORIZE as unknown as VectorIndex | undefined;
   const ctx: ToolContext = {
