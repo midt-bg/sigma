@@ -163,11 +163,16 @@ const eopFetchTool: AssistantTool = {
     const v = validateEopDate(str(args.date));
     if (!v.ok) return `Невалидна дата: ${v.reason}.`;
     const files = await fetchEopDay(v.day, ctx.fetchImpl ?? ((u) => fetch(u)));
-    return files
+    const summary = files
       .map((f) =>
         f.error ? `${f.label}: грешка (${f.error})` : `${f.label}: ${f.rows?.length ?? 0} реда`,
       )
       .join('\n');
+    // EOP data is untrusted external content and is NOT a server-executed result set, so it has no R-handle
+    // and cannot be bound by emit_report. Say so explicitly: without this the model — driven by the
+    // emit_report policy — emits a report referencing a non-existent handle, fails to bind, and retries
+    // until the step cap with no answer. Tell it to summarise in prose instead (review #80, follow-up).
+    return `${summary}\n(Справочни външни данни — не могат да се подават към emit_report; обобщи ги в текст.)`;
   },
 };
 
