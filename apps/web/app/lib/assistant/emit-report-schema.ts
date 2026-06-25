@@ -21,15 +21,24 @@ const BLOCK_TYPES = new Set([
   'timeseries',
 ]);
 
+const ENTITY_KINDS = new Set(['company', 'authority', 'contract']);
+
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isNonEmptyStr = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
-const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+// row indices are 0-based, non-negative INTEGERS. A non-integer (1.5) slips bindReport's `row < length`
+// range check, then `rows[1.5]` is undefined and the slot silently binds null (review #80).
+const isIndex = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const isFormat = (v: unknown): v is CellFormat => isStr(v) && FORMATS.has(v as CellFormat);
+// A table column's optional entity link. `kind` must be a known EntityKind (it reaches entityHref,
+// where an unknown kind silently builds a wrong-entity `/contracts/…` citation — review #80).
+const isLink = (v: unknown): boolean =>
+  v === undefined ||
+  (isObj(v) && isStr(v.kind) && ENTITY_KINDS.has(v.kind) && isNonEmptyStr(v.idCol));
 
 function isCellRef(v: unknown): v is CellRef {
-  return isObj(v) && isNonEmptyStr(v.resultId) && isNum(v.row) && isNonEmptyStr(v.col);
+  return isObj(v) && isNonEmptyStr(v.resultId) && isIndex(v.row) && isNonEmptyStr(v.col);
 }
 
 export type ShapeResult = { ok: true; value: EmitReportInput } | { ok: false; errors: string[] };
@@ -85,8 +94,12 @@ export function validateEmitShape(input: unknown): ShapeResult {
         if (Array.isArray(b.columns))
           b.columns.forEach((c, j) =>
             need(
-              isObj(c) && isNonEmptyStr(c.key) && isStr(c.header) && isFormat(c.format),
-              `columns[${j}] needs {key, header, format}`,
+              isObj(c) &&
+                isNonEmptyStr(c.key) &&
+                isStr(c.header) &&
+                isFormat(c.format) &&
+                isLink(c.link),
+              `columns[${j}] needs {key, header, format, link?:{kind:company|authority|contract, idCol}}`,
             ),
           );
         break;

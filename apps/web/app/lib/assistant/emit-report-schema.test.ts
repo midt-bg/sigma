@@ -76,6 +76,34 @@ describe('validateEmitShape', () => {
       }).ok,
     ).toBe(false);
   });
+
+  it('rejects a table column with an invalid link kind, accepts a valid one (review #80)', () => {
+    const tbl = (link: unknown) => ({
+      title: 't',
+      question: '',
+      blocks: [
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'name', header: 'Име', format: 'text', link }],
+        },
+      ],
+    });
+    expect(validateEmitShape(tbl({ kind: 'evil', idCol: 'eik' })).ok).toBe(false);
+    expect(validateEmitShape(tbl({ kind: 'company', idCol: 'eik' })).ok).toBe(true);
+    expect(validateEmitShape(tbl({ kind: 'company' })).ok).toBe(false); // idCol required
+  });
+
+  it('rejects a non-integer ref row (review #80)', () => {
+    const out = validateEmitShape({
+      title: 't',
+      question: '',
+      blocks: [
+        { type: 'facts', items: [{ term: 'x', ref: { resultId: 'R1', row: 1.5, col: 'c' } }] },
+      ],
+    });
+    expect(out.ok).toBe(false);
+  });
 });
 
 describe('EMIT_REPORT_JSON_SCHEMA', () => {
