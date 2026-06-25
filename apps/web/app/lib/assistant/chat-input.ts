@@ -3,6 +3,17 @@
 
 import type { UIMessage } from 'ai';
 
+// A part is well-formed only if it is a non-null object AND — when it is a `text` part — carries a string
+// `text`. messageTextChars/latestUserText filter on `type === 'text'` and then deref `p.text.length`
+// BEFORE the route's try/catch, so a `{ "type": "text" }` with no `text` (a non-null object that the
+// plain object check accepted) crashes to an unhandled 500 on the public endpoint (review #80, follow-up).
+function isWellFormedPart(p: unknown): boolean {
+  if (!p || typeof p !== 'object') return false;
+  const part = p as { type?: unknown; text?: unknown };
+  if (part.type === 'text' && typeof part.text !== 'string') return false;
+  return true;
+}
+
 /**
  * Select the client messages that may be sent to the model: keep only `user`/`assistant` turns, then the
  * most recent `max`. The server OWNS the system prompt (passed via streamText's `system` option) — a
@@ -28,7 +39,7 @@ export function selectClientMessages(messages: unknown, max: number): UIMessage[
       return (
         (msg.role === 'user' || msg.role === 'assistant') &&
         Array.isArray(msg.parts) &&
-        msg.parts.every((p) => !!p && typeof p === 'object')
+        msg.parts.every(isWellFormedPart)
       );
     })
     .slice(-max);

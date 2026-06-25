@@ -66,4 +66,14 @@ describe('selectClientMessages', () => {
     );
     expect(out.map(textOf)).toEqual(['ok']);
   });
+
+  it('drops a message with a text part missing its `text` string (avoids a 500 deref — review #80, follow-up)', () => {
+    // messageTextChars filters type==='text' then derefs `p.text.length` BEFORE the route try/catch, so a
+    // `{ type: 'text' }` with no `text` (a non-null object the plain object check accepted) 500s.
+    const out = selectClientMessages(
+      [{ role: 'user', parts: [{ type: 'text' }] }, msg('user', 'ok')],
+      5,
+    );
+    expect(out.map(textOf)).toEqual(['ok']);
+  });
 });
