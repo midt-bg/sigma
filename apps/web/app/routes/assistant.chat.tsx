@@ -48,13 +48,13 @@ export async function action({ request, context }: Route.ActionArgs) {
   try {
     parsed = JSON.parse(raw) as { messages?: UIMessage[] };
   } catch {
-    return Response.json({ error: 'invalid JSON' }, { status: 400 });
+    return Response.json({ error: 'невалиден JSON' }, { status: 400 });
   }
   // Keep only the user/assistant turns the dock sends, most-recent first — drops any client-supplied
   // `system`/`tool` message that would otherwise reach BgGPT as a second system instruction (review #80,
   // red-team R1). See selectClientMessages for why filtering precedes the recency slice.
   const messages = selectClientMessages(parsed.messages, MAX_MESSAGES);
-  if (messages.length === 0) return Response.json({ error: 'no messages' }, { status: 400 });
+  if (messages.length === 0) return Response.json({ error: 'няма съобщения' }, { status: 400 });
   // The total body cap leaves room for ONE message to dominate (re-billed as prompt tokens every step);
   // reject an oversized individual message too (review #80).
   if (messages.some((m) => messageTextChars(m) > MAX_MESSAGE_CHARS)) {

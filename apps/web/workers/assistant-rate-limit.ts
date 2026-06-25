@@ -22,7 +22,9 @@ export async function rateLimitAssistantRoute(
     request,
     env.ASSISTANT_RATE_LIMITER,
     isProd,
-    'Too many assistant requests',
+    // User-facing 429 body — Bulgarian, consistent with the route's error responses (the only
+    // English left is the shared infra-level fail-closed 503, see assistant-contracts.md §3).
+    'Твърде много заявки към асистента. Опитай отново след малко.',
     'ASSISTANT_RATE_LIMITER',
     { failClosed: true }, // never run the paid agent loop unthrottled in production
   );
