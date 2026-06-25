@@ -71,6 +71,23 @@ describe('assertReadOnlySelect', () => {
       expect(assertReadOnlySelect(sql).ok, sql).toBe(false);
     }
   });
+
+  it('rejects dangerous scalar functions: load_extension and blob bombs (review #80, red-team R2)', () => {
+    for (const sql of [
+      "SELECT load_extension('evil')",
+      'SELECT zeroblob(1000000000)',
+      'SELECT randomblob(1000000000)',
+      'SELECT hex(randomblob(500000000)) FROM contracts',
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+    // a legitimate aggregate/scalar query is untouched
+    expect(
+      assertReadOnlySelect('SELECT SUM(amount_eur), substr(signed_at,1,4) FROM contracts').ok,
+    ).toBe(true);
+  });
 });
 
 describe('enforceLimit', () => {

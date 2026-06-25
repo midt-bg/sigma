@@ -118,6 +118,15 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   if (/\bsqlite_(?:master|schema)\b/i.test(sql)) {
     return { ok: false, reason: 'system catalog tables are not allowed' };
   }
+
+  // Dangerous SCALAR functions the table-allowlist / TVF guards don't see (they sit in the SELECT list,
+  // not a FROM source): `load_extension` loads a dynamic library (RCE where SQLite enables it — D1
+  // disables it, but block defensively), and `randomblob`/`zeroblob` build arbitrarily large blobs that
+  // materialise in Worker memory before capRows can measure the row. No analytics query needs any of
+  // them (review #80, red-team R2).
+  if (/\b(?:load_extension|randomblob|zeroblob)\s*\(/i.test(sql)) {
+    return { ok: false, reason: 'function not allowed' };
+  }
   return { ok: true, sql };
 }
 
