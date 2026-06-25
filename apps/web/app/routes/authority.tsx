@@ -208,8 +208,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           title="Договори"
           hint={
             <span>
-              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} —
-              превключи между най-новите и най-големите по стойност.
+              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} — превключи
+              между най-новите и най-големите по стойност.
             </span>
           }
         >

@@ -401,7 +401,8 @@ describe('refreshSliceStatementGroups', () => {
 
 describe('transient staging SQL helpers', () => {
   it('selects only transient-staging DDL and excludes non-staging tables', async () => {
-    const { transientStagingStatements, dropTransientStagingStatements } = await import('./refresh');
+    const { transientStagingStatements, dropTransientStagingStatements } =
+      await import('./refresh');
     const sql = `
       CREATE TABLE raw_contracts (id INTEGER);
       CREATE TABLE some_other_table (id INTEGER);
@@ -416,9 +417,7 @@ describe('transient staging SQL helpers', () => {
       'CREATE TABLE raw_ocds_lots (id INTEGER)',
     ]);
     expect(dropTransientStagingStatements()).toContain('DROP TABLE IF EXISTS raw_contracts');
-    expect(dropTransientStagingStatements()).toContain(
-      'DROP TABLE IF EXISTS raw_egov_contracts',
-    );
+    expect(dropTransientStagingStatements()).toContain('DROP TABLE IF EXISTS raw_egov_contracts');
     expect(dropTransientStagingStatements()).not.toContain('DROP TABLE IF EXISTS some_other_table');
   });
 });

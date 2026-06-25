@@ -16,7 +16,7 @@ import { basename, dirname, extname, join } from 'node:path';
 // Sentinel <- env var. The sentinels appear verbatim in the committed wrangler.* files;
 // the values come from the environment at deploy time. Add a row to extend (e.g. a future KV).
 const SENTINELS = {
-  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID',          // D1 database_id (UUID v4 shape)
+  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID', // D1 database_id (UUID v4 shape)
 };
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
@@ -44,7 +44,9 @@ for (const [sentinel, envVar] of Object.entries(SENTINELS)) {
 
 if (missing.length) {
   console.error(`✘ wrangler-render: ${input} needs ${missing.join(', ')}`);
-  console.error('  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.');
+  console.error(
+    '  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.',
+  );
   process.exit(1);
 }
 

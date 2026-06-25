@@ -29,21 +29,36 @@ describe('served migrations', () => {
       readScript(dbPath, migration0);
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='amendments';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='amendments';",
+        ).trim(),
       ).toBe('1');
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name='natural_key' AND \"notnull\"=1;").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name='natural_key' AND \"notnull\"=1;",
+        ).trim(),
       ).toBe('1');
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='parties';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='parties';",
+        ).trim(),
       ).toBe('1');
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('parties') WHERE name='party_key' AND pk=1;").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('parties') WHERE name='party_key' AND pk=1;",
+        ).trim(),
       ).toBe('1');
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name='eop_tender_id';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name='eop_tender_id';",
+        ).trim(),
       ).toBe('1');
 
       // The served schema must never carry raw_* staging tables.

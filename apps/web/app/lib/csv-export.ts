@@ -64,7 +64,8 @@ function rangeInfo(obj: R2ObjectBody): { start: number; end: number; length: num
 
   if ('offset' in range && range.offset !== undefined) {
     const start = range.offset;
-    const length = 'length' in range && range.length !== undefined ? range.length : obj.size - start;
+    const length =
+      'length' in range && range.length !== undefined ? range.length : obj.size - start;
     return { start, end: start + length - 1, length };
   }
 
@@ -82,9 +83,16 @@ function rangeInfo(obj: R2ObjectBody): { start: number; end: number; length: num
   return null;
 }
 
-function responseFromR2Object(obj: R2Object | R2ObjectBody, route: CsvExportRoute, cache: CsvCacheState) {
+function responseFromR2Object(
+  obj: R2Object | R2ObjectBody,
+  route: CsvExportRoute,
+  cache: CsvCacheState,
+) {
   if (!hasBody(obj)) {
-    return markCsvCache(new Response(null, { status: 304, headers: { ETag: obj.httpEtag } }), cache);
+    return markCsvCache(
+      new Response(null, { status: 304, headers: { ETag: obj.httpEtag } }),
+      cache,
+    );
   }
 
   const range = rangeInfo(obj);

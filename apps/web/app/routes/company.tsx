@@ -1,5 +1,13 @@
 import { Link } from 'react-router';
-import { count, isNaturalPersonProfileName, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
+import {
+  count,
+  isNaturalPersonProfileName,
+  money,
+  moneyBare,
+  pct,
+  periodRange,
+  plural,
+} from '@sigma/shared';
 import { bidderIdFromSlug, getCompany } from '@sigma/db';
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
