@@ -14,7 +14,6 @@ export const EOP_EARLIEST_DAY = '2020-01-01'; // corpus coverage start (README/e
 export const EOP_MAX_BYTES = 256 * 1024; // per-file byte cap on the untrusted response before it is parsed
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const UNP_RE = /^\d{4,5}-\d{4}-\d{4}$/; // e.g. 00044-2023-0018
 
 export type DateValidation = { ok: true; day: string } | { ok: false; reason: string };
 
@@ -35,11 +34,6 @@ export function validateEopDate(raw: string, today = sofiaToday()): DateValidati
     return { ok: false, reason: `преди началото на обхвата (${EOP_EARLIEST_DAY})` };
   if (day > today) return { ok: false, reason: 'бъдеща дата' };
   return { ok: true, day };
-}
-
-/** Sanity-bound a УНП token before it is used as a filter (never as part of a URL). */
-export function isValidUnp(raw: string): boolean {
-  return UNP_RE.test((raw ?? '').trim());
 }
 
 export interface EopFile {

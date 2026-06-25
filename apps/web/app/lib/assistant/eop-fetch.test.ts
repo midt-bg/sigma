@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  EOP_EARLIEST_DAY,
-  fetchEopDay,
-  isValidUnp,
-  validateEopDate,
-  type FetchImpl,
-} from './eop-fetch';
+import { EOP_EARLIEST_DAY, fetchEopDay, validateEopDate, type FetchImpl } from './eop-fetch';
 
 describe('validateEopDate', () => {
   const today = '2026-06-19';
@@ -24,14 +18,6 @@ describe('validateEopDate', () => {
     expect(validateEopDate('2019-12-31', today).ok).toBe(false);
     expect(validateEopDate('2027-01-01', today).ok).toBe(false);
     expect(validateEopDate(EOP_EARLIEST_DAY, today).ok).toBe(true);
-  });
-});
-
-describe('isValidUnp', () => {
-  it('accepts a УНП shape and rejects junk', () => {
-    expect(isValidUnp('00044-2023-0018')).toBe(true);
-    expect(isValidUnp('not-a-unp')).toBe(false);
-    expect(isValidUnp('0; DROP TABLE')).toBe(false);
   });
 });
 
