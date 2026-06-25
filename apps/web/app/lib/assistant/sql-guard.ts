@@ -14,11 +14,14 @@
 export const MAX_ROWS = 500;
 export const RESULT_BYTE_CAP = 64 * 1024; // bytes of JSON returned to the model (spec §7)
 
+// `REPLACE` is intentionally absent: it would also reject the safe, common scalar string function
+// `REPLACE(col, a, b)` (e.g. normalising Cyrillic↔Latin look-alikes). The write form `REPLACE INTO` is
+// already blocked by the leading-token check (only SELECT/WITH may lead) and, inside a CTE, by the AST
+// guard's statement-type/parse check — so dropping it from this list loses no coverage (review #80).
 const FORBIDDEN = [
   'INSERT',
   'UPDATE',
   'DELETE',
-  'REPLACE',
   'UPSERT',
   'MERGE',
   'DROP',
@@ -140,7 +143,7 @@ export function enforceLimit(sql: string, max = MAX_ROWS): string {
 }
 
 /**
- * Cap the JSON the model sees (spec §7): keep prepending rows while under the byte budget, and flag
+ * Cap the JSON the model sees (spec §7): keep appending rows while under the byte budget, and flag
  * truncation so the report callout can say "results truncated". Pure — the caller supplies rows.
  */
 export function capRows(

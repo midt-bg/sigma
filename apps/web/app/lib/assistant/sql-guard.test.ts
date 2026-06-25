@@ -88,6 +88,16 @@ describe('assertReadOnlySelect', () => {
       assertReadOnlySelect('SELECT SUM(amount_eur), substr(signed_at,1,4) FROM contracts').ok,
     ).toBe(true);
   });
+
+  it('allows the scalar REPLACE() function, still blocks the REPLACE INTO write (review #80)', () => {
+    // REPLACE() is a safe read-only string function (e.g. Cyrillic↔Latin normalisation) — it must pass
+    // the structural layer (the AST guard then confirms it is a SELECT).
+    expect(assertReadOnlySelect("SELECT REPLACE(name, 'а', 'a') AS n FROM bidders").ok).toBe(true);
+    // the bare REPLACE INTO write is still rejected — by the leading-token check (only SELECT/WITH lead).
+    const w = assertReadOnlySelect('REPLACE INTO contracts VALUES (1)');
+    expect(w.ok).toBe(false);
+    if (!w.ok) expect(w.reason).toMatch(/SELECT or WITH/);
+  });
 });
 
 describe('enforceLimit', () => {
