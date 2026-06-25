@@ -178,11 +178,20 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
 ];
 
-// Markdown can split a number from its unit/magnitude word with markup a reader still collapses —
-// `**12** **млрд.**` renders to "12 млрд.". Strip emphasis/formatting and collapse whitespace before
-// scanning so the gate is not blinded by markup (review #80).
+const codePoint = (n: number, fallback: string): string =>
+  Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : fallback;
+
+// Normalise prose to what a reader/renderer actually sees, so the number gate is not blinded by markup.
+// Markdown can split a number from its magnitude word (`**12** **млрд.**` → "12 млрд."); a renderer
+// collapses zero-width separators (`1​234​567` → "1234567") and decodes numeric HTML entities
+// (`12&#48;&#48;&#48;` → "12000"). Decode/strip those, drop emphasis, collapse whitespace (review #80).
 function deMarkdown(text: string): string {
-  return text.replace(/[*_`~\\]/g, '').replace(/\s+/g, ' ');
+  return text
+    .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
+    .replace(/&#x([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m))
+    .replace(/[\u200b-\u200d\ufeff]/g, '') // zero-width space / non-joiner / joiner / BOM
+    .replace(/[*_`~\\]/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 /** Return the material-number tokens found in prose (empty ⇒ clean). Used to gate text/callout. */

@@ -400,6 +400,12 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('1.2e10 от средствата')).not.toHaveLength(0); // scientific notation
     expect(findProseNumbers("укрити 12'000'000 лв")).not.toHaveLength(0); // apostrophe grouping
   });
+
+  it('sees through zero-width separators and numeric HTML entities (review #80)', () => {
+    const zwsp = String.fromCharCode(0x200b);
+    expect(findProseNumbers(`укрити 1${zwsp}234${zwsp}567 лв`)).not.toHaveLength(0);
+    expect(findProseNumbers('сума 12&#48;&#48;&#48; над лимита')).not.toHaveLength(0);
+  });
 });
 
 describe('prompt-injection content binds as data, never interpreted (review #80)', () => {
