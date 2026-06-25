@@ -94,6 +94,20 @@ describe('semantic_search', () => {
       /не е налично/,
     );
   });
+
+  it('degrades gracefully when embedding throws instead of surfacing the raw error (review #80)', async () => {
+    const c = ctx();
+    c.ai = {
+      run: async () => {
+        throw new Error('AI down');
+      },
+    } as unknown as NonNullable<ToolContext['ai']>;
+    c.vectorize = {
+      upsert: async () => ({}),
+      query: async () => ({ matches: [] }),
+    } as unknown as NonNullable<ToolContext['vectorize']>;
+    expect(await runTool('semantic_search', { query: 'x' }, c)).toMatch(/не е налично/);
+  });
 });
 
 describe('finalizeReport', () => {
@@ -121,6 +135,18 @@ describe('finalizeReport', () => {
   it('rejects a structurally invalid report before binding', () => {
     const out = finalizeReport({ title: '', question: '', blocks: [] }, ctx());
     expect(out.ok).toBe(false);
+  });
+
+  it('uses the server-provided user question over the model echo (review #80)', () => {
+    const c = ctx();
+    c.userQuestion = 'кои са топ 5?';
+    c.results.push({ handle: 'R1', columns: ['total_eur'], rows: [[1]] });
+    const out = finalizeReport(
+      { title: 't', question: 'усвоени 12 млрд', blocks: [{ type: 'text', md: 'ок' }] },
+      c,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.report.question).toBe('кои са топ 5?');
   });
 
   it('rejects a report referencing a handle that was never produced this turn', () => {

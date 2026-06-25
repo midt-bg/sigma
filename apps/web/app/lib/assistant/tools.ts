@@ -47,6 +47,9 @@ export interface ToolContext {
   // DEFAULT_ROWS_READ_BUDGET). The orchestrator resets both per chat turn, alongside `results`.
   rowsRead?: number;
   rowsReadBudget?: number;
+  // The actual latest user message text, set by the chat route. bindReport uses it as the
+  // server-authoritative report question instead of the model's echo — see BindOptions (review #80).
+  userQuestion?: string;
 }
 
 export interface AssistantTool {
@@ -131,9 +134,17 @@ const semanticSearchTool: AssistantTool = {
   },
   async execute(args, ctx) {
     if (!ctx.ai || !ctx.vectorize) return 'Семантичното търсене не е налично в момента.';
-    const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query));
-    if (hits.length === 0) return 'Няма семантични съвпадения.';
-    return hits.map((h) => `${h.kind} ${h.ref} — ${h.title} (${h.score.toFixed(3)})`).join('\n');
+    try {
+      const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query));
+      if (hits.length === 0) return 'Няма семантични съвпадения.';
+      return hits.map((h) => `${h.kind} ${h.ref} — ${h.title} (${h.score.toFixed(3)})`).join('\n');
+    } catch (e) {
+      // embed() throws on an AI-provider error or a vector-count mismatch; degrade to a friendly,
+      // retry-able message instead of surfacing the raw error to the model (consistent with run_sql
+      // and the route's retrieveSchemaContext fallback — review #80).
+      console.error('[assistant] semantic_search failed', e);
+      return 'Семантичното търсене не е налично в момента.';
+    }
   },
 };
 
@@ -206,5 +217,7 @@ export async function runTool(
 export function finalizeReport(input: unknown, ctx: ToolContext): BindResult {
   const shape = validateEmitShape(input);
   if (!shape.ok) return { ok: false, errors: shape.errors };
-  return bindReport(shape.value, ctx.results);
+  // The route sets ctx.userQuestion to the real user message — it owns the displayed question so the
+  // model's echo cannot smuggle an unbound number into the question slot (§9.1, review #80).
+  return bindReport(shape.value, ctx.results, { question: ctx.userQuestion });
 }

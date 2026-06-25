@@ -131,6 +131,15 @@ export interface ResolvedReport {
 
 export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; errors: string[] };
 
+export interface BindOptions {
+  // Server-authoritative question text (the actual latest user message), set by the chat route. When
+  // present it OWNS the displayed question instead of the model's echo — closing the vector where the
+  // model places an unbound material number in the question slot, and guaranteeing the shown question
+  // is the one the user actually asked. When absent (model-only path), the model's question is gated
+  // for material numbers like all other model-authored text (§9.1 / guardrail E2, review #80).
+  question?: string;
+}
+
 // Strip raw HTML so model prose can never inject markup into the public report (spec §7/§9). Loops the
 // strip to a FIXPOINT: a single `<[^>]*>` pass can REASSEMBLE a live tag from nested/overlapping input
 // (`<scr<script>ipt>` collapses to `<script>`), so it must repeat until the string stops changing
@@ -217,7 +226,11 @@ function asNumber(v: string | number | null): number | null {
  * sourced here from `results`; the model's blocks only select/label/shape. Returns validation
  * errors instead of a report if any reference is dangling — the model then retries (spec §4).
  */
-export function bindReport(input: EmitReportInput, results: QueryResult[]): BindResult {
+export function bindReport(
+  input: EmitReportInput,
+  results: QueryResult[],
+  opts: BindOptions = {},
+): BindResult {
   const errors: string[] = [];
   const byHandle = new Map(results.map((r) => [r.handle, r]));
 
@@ -418,12 +431,23 @@ export function bindReport(input: EmitReportInput, results: QueryResult[]): Bind
     errors.push(
       `report title: material number in title — put it in a value block (${titleNums.join(', ')})`,
     );
+  // The displayed question is server-owned when the route supplies the real user text (the user's own
+  // question may legitimately carry numbers — it is not a model claim). Only the model-authored
+  // fallback is number-gated, so a model cannot smuggle an unbound number through the question slot.
+  const serverQuestion = opts.question?.trim() ? opts.question : undefined;
+  if (serverQuestion === undefined) {
+    const questionNums = findProseNumbers(input.question);
+    if (questionNums.length)
+      errors.push(
+        `report question: material number in question — the server fills it from the user's message (${questionNums.join(', ')})`,
+      );
+  }
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     report: {
       title: sanitizeProse(input.title.trim()),
-      question: sanitizeProse(input.question),
+      question: sanitizeProse(serverQuestion ?? input.question),
       blocks,
       watermark: 'ai-generated',
     },

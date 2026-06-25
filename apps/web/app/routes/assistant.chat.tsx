@@ -66,11 +66,16 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
   const ai = env.AI as unknown as EmbeddingRunner | undefined;
   const vectorize = env.VECTORIZE as unknown as VectorIndex | undefined;
+  // The latest user message text — used both to RAG-ground the prompt and as the server-authoritative
+  // report question, so the model's echo can never smuggle an unbound number into the question slot
+  // (review #80).
+  const question = latestUserText(messages);
   const ctx: ToolContext = {
     db: env.DB,
     ai,
     vectorize,
     results: [],
+    userQuestion: question,
     // Per-turn Denial-of-Wallet guard (issue #122): bound the D1 rows-read cost of this turn's run_sql
     // calls. `LIMIT` caps only returned rows; D1 bills on rows scanned.
     rowsRead: 0,
@@ -80,7 +85,6 @@ export async function action({ request, context }: Route.ActionArgs) {
   // RAG grounding (best-effort): the most relevant schema chunks for the latest question; on any
   // failure the system prompt falls back to the full static dictionary.
   let schemaContext: string[] | undefined;
-  const question = latestUserText(messages);
   if (ai && vectorize && question) {
     try {
       schemaContext = await retrieveSchemaContext(ai, vectorize, question);
