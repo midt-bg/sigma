@@ -468,6 +468,17 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers(`укрити ${arabicIndic('1234567')} лв`)).not.toHaveLength(0); // \p{Nd} fold
     expect(findProseNumbers('над ¹²³⁴⁵ договора')).not.toHaveLength(0); // superscript (NFKC)
   });
+
+  it('stays linear on a long digit/space run (ReDoS regression, review #80)', () => {
+    // An unbounded `[\d.,\s]*` before a currency alternation backtracked quadratically (~6.7 s on a
+    // 64 KB field); the {0,40} bound keeps it linear. A bare run with no unit must stay clean and fast.
+    const adversarial = '€' + '9 '.repeat(40_000); // ~80 KB
+    const start = performance.now();
+    const hits = findProseNumbers(adversarial);
+    expect(performance.now() - start).toBeLessThan(1000); // unbounded: >6000 ms; bounded: tens of ms
+    expect(hits.length).toBeGreaterThan(0); // the €-led amount is still caught
+    expect(findProseNumbers('9 '.repeat(40_000))).toHaveLength(0); // no unit ⇒ no match, no blow-up
+  });
 });
 
 describe('prompt-injection content binds as data, never interpreted (review #80)', () => {

@@ -216,11 +216,16 @@ export function sanitizeCell(v: string | number | null): string | number | null 
 // 1.234.567) and integers ≥ 5 digits. Bare ≤4-digit numbers (years, small counts, ordinals) pass, to
 // keep false positives low.
 const PROSE_NUMBER_PATTERNS: RegExp[] = [
-  /(?:€|eur)\s*\d[\d.,\s]*/giu, // €1234, EUR 1 234 (currency-first; nothing trails → linear)
-  // NB: NO separate trailing `\s*` before the unit — it overlapped `[\d.,\s]*` and backtracked
-  // quadratically on a digit/space run with no unit (`9 9 9 …`); the class already absorbs the space.
-  /\d[\d.,\s]*(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
-  /\d[\d.,\s]*(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн (review #80 ReDoS)
+  // The digit/sep/space run is BOUNDED ({0,40}). An UNbounded `[\d.,\s]*` before an alternation unit
+  // backtracks quadratically on a long run whose unit is absent or at another position (`€` + `9 9 9 …`
+  // → O(n²), ~6.7 s on a 64 KB field); dropping a separate trailing `\s*` cut the constant but not the
+  // quadratic. The input is also length-capped (gateProse, MAX_PROSE_LEN); bounding the quantifier makes
+  // the regex itself linear so findProseNumbers is safe for ANY caller — belt and braces (review #80
+  // ReDoS). 40 ≫ any real number's digit/sep/space width, and matchAll still anchors on a digit within
+  // 40 chars of the unit, so no legitimate amount is missed.
+  /(?:€|eur)\s*\d[\d.,\s]{0,40}/giu, // €1234, EUR 1 234 (currency-first)
+  /\d[\d.,\s]{0,40}(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
+  /\d[\d.,\s]{0,40}(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
   /\d{1,3}(?:[.,\s'’]\d{3})+/gu, // grouped: 1 234, 1,234,567, 1.234.567, 12'000'000 (apostrophe)
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
