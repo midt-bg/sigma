@@ -35,7 +35,7 @@ const deny = (reason: string): GuardResult => ({ ok: false, reason });
 
 // Loose view over the parsed statement — node-sql-parser's union types are awkward to narrow, and we
 // only read a few discriminant fields.
-type LimitNode = { value?: unknown[] } | null | undefined;
+type LimitNode = { seperator?: string; value?: unknown[] } | null | undefined;
 type FromEntry = {
   table?: string | null; // a plain table reference
   join?: unknown; // join kind for entries after the first ('INNER JOIN', …)
@@ -205,17 +205,22 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   const badTable = denyDisallowedTable(ast, new Set<string>());
   if (badTable) return deny(badTable);
 
-  // Bound the OUTER result with an AST-authoritative LIMIT. The SQLite LIMIT offset, count form fools
-  // the regex-based enforceLimit — it captures the offset (the first number), not the count, so a
-  // query like `LIMIT 5, 10000` is passed through unclamped. Reject the comma form outright and ask
-  // for the standard LIMIT n (OFFSET m) syntax (review #80, L1). outerLimit() also covers compound
-  // selects, whose trailing LIMIT lives on the last arm rather than the top-level node.
+  // Bound the OUTER result with an AST-authoritative LIMIT. The SQLite `LIMIT offset, count` COMMA form
+  // fools the regex-based enforceLimit — it captures the offset (the first number), not the count, so a
+  // query like `LIMIT 5, 10000` would pass through unclamped; reject the comma form outright. The
+  // standard `LIMIT n OFFSET m` form parses to the same value.length but `seperator: 'offset'`, and is
+  // SAFE: enforceLimit's regex captures the count `n` (OFFSET carries no `limit` keyword) and clamps it
+  // while leaving OFFSET intact — so allow it (review #80, L1). Distinguish by `seperator`, NOT by
+  // value.length (which is 2 for both forms). outerLimit() also covers compound selects, whose trailing
+  // LIMIT lives on the last arm rather than the top-level node.
   const lim = outerLimit(ast);
   const limitValues = Array.isArray(lim?.value) ? lim.value : [];
-  if (limitValues.length > 1) {
-    return deny('LIMIT offset, count is not allowed; use LIMIT n or LIMIT n OFFSET m');
+  if (lim?.seperator === ',') {
+    return deny('LIMIT offset, count is not allowed; use LIMIT n OFFSET m');
   }
-  const hasOuterLimit = limitValues.length === 1;
+  // Any explicit count (plain `LIMIT n`, or `LIMIT n OFFSET m`) routes through enforceLimit, which
+  // clamps the count; only a fully absent LIMIT gets one appended.
+  const hasOuterLimit = limitValues.length >= 1;
   const limited = hasOuterLimit
     ? enforceLimit(sql, maxRows)
     : `${sql.replace(/;?\s*$/u, '')} LIMIT ${maxRows}`;

@@ -81,6 +81,22 @@ describe('guardSelect', () => {
     if (!r.ok) expect(r.reason).toMatch(/LIMIT offset, count/);
   });
 
+  it('accepts the standard LIMIT n OFFSET m form and clamps only the count (review #80 L1)', () => {
+    // The OFFSET form parses to the same value.length as the rejected comma form; distinguishing by
+    // `seperator` lets this through. A within-bounds count is untouched; OFFSET must survive intact and
+    // no second LIMIT may be appended (that would be a SQLite syntax error).
+    const within = guardSelect('SELECT name FROM authorities LIMIT 100 OFFSET 20');
+    expect(within.ok).toBe(true);
+    if (within.ok) {
+      expect(within.sql).toMatch(/LIMIT 100 OFFSET 20/i);
+      expect((within.sql.match(/\blimit\b/gi) ?? []).length).toBe(1); // no double LIMIT
+    }
+    // An oversized count is clamped to the row cap while OFFSET is preserved.
+    const oversized = guardSelect('SELECT name FROM authorities LIMIT 100000 OFFSET 20');
+    expect(oversized.ok).toBe(true);
+    if (oversized.ok) expect(oversized.sql).toMatch(/LIMIT 500 OFFSET 20/i);
+  });
+
   it('rejects table-valued functions in FROM (pragma_/json_each schema-enum + amplification, review #80)', () => {
     // tableList() returns [] for the function form, so the table allowlist never sees these — fail closed.
     for (const sql of [
