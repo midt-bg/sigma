@@ -43,8 +43,12 @@ export function formatCell(value: string | number | null, format: CellFormat): s
  * the rest of the site.
  */
 export function entityHref(kind: EntityKind, id: string): string {
-  // encodeURI (not encodeURIComponent — keep the path separators) as defence-in-depth: the slug
-  // helpers already yield URL-safe segments for well-formed ids; this bounds a malformed/edge id so it
-  // cannot break out of the href (review #80).
-  return encodeURI(hrefForEntity(kind, id));
+  // encodeURI (not encodeURIComponent — keep the path separators) as defence-in-depth: the slug helpers
+  // already yield URL-safe segments for well-formed ids. encodeURI leaves `# ? &` though, which would
+  // split a malformed id into a fragment/query or inject a param — so encode those three too, bounding a
+  // bad id strictly within the path (review #80).
+  return encodeURI(hrefForEntity(kind, id)).replace(
+    /[#?&]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }

@@ -34,4 +34,10 @@ describe('entityHref', () => {
     expect(href.startsWith('/authorities/')).toBe(true);
     expect(href).not.toMatch(/[ <>]/); // space / angle brackets are percent-encoded, never literal
   });
+
+  it('also encodes # ? & that encodeURI leaves through (review #80, ultra #13)', () => {
+    const href = entityHref('authority', 'auth:1#a?b&c');
+    expect(href.startsWith('/authorities/')).toBe(true);
+    expect(href).not.toMatch(/[#?&]/); // no fragment/query/param can be injected via a malformed id
+  });
 });
