@@ -425,13 +425,13 @@ a.flag:hover {
    oversized serif numerics and section padding tighten up on phones. */
 
 /* Let long names/links break instead of forcing horizontal overflow */
-.participants-list,
-.participants-list li,
-.toc ol li a,
 tbody td,
 .muni-grid a,
 .linklist li,
 .tile h3,
+.participants-list,
+.participants-list li,
+.toc ol li a,
 .section,
 .facts,
 .two-col,
