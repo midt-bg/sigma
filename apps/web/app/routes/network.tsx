@@ -1,11 +1,6 @@
 import { Form, Link, useNavigation, useSubmit } from 'react-router';
 import { count, money } from '@sigma/shared';
-import {
-  authorityIdFromSlug,
-  bidderIdFromSlug,
-  getEntityNetwork,
-  type NetworkParams,
-} from '@sigma/db';
+import { getEntityNetwork } from '@sigma/db';
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -13,6 +8,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { centerToken, parseCenter } from '../lib/network-center';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -27,21 +23,6 @@ export function meta(_: Route.MetaArgs) {
 
 export function headers() {
   return { 'Cache-Control': publicCache(1800) };
-}
-
-// ?center=a:<eik> | c:<slug>; null falls back to the biggest authority in the query layer.
-function parseCenter(token: string | null): NetworkParams | null {
-  if (!token) return null;
-  const i = token.indexOf(':');
-  if (i < 1) return null;
-  const kind = token.slice(0, i);
-  const slug = token.slice(i + 1);
-  if (kind === 'a' && slug) return { kind: 'authority', id: authorityIdFromSlug(slug) };
-  if (kind === 'c' && slug) {
-    const id = bidderIdFromSlug(slug);
-    return id ? { kind: 'company', id } : null;
-  }
-  return null;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -66,9 +47,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
   const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
-  const centerValue = data.center
-    ? `${data.center.kind === 'authority' ? 'a' : 'c'}:${data.center.slug}`
-    : '';
+  const centerValue = data.center ? centerToken(data.center) : '';
 
   const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
   // Normalise each row to the real procurement direction (authority -> company), regardless of how the
