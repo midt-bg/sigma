@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useFetcher } from 'react-router';
 import type { NetworkData, NetworkNode } from '@sigma/api-contract';
 import { count, money, moneyBare } from '@sigma/shared';
+import { centerToken, isAdoptableNetwork } from '../lib/network-center';
 
 // Server-rendered radial ego graph (no chart JS, like SankeyDiagram). Centre in the middle, direct
 // counterparties on an inner ring, their top other counterparty on an outer ring. Node size is the sum
@@ -34,12 +35,9 @@ function truncate(s: string, n = 22): string {
 }
 
 // Each non-centre node's profile (hero) page — the no-JS click target and the "Open" button target.
+// (centerToken — the `?center` grammar — is shared with the loader via ../lib/network-center.)
 const heroHref = (n: { kind: string; slug: string }) =>
   n.kind === 'authority' ? `/authorities/${n.slug}` : `/companies/${n.slug}`;
-
-// The /network loader's ?center grammar (parsed by parseCenter there): a:<authority-slug> | c:<company-slug>.
-const centerToken = (n: { kind: string; slug: string }) =>
-  `${n.kind === 'authority' ? 'a' : 'c'}:${n.slug}`;
 
 export function NetworkGraph({ data }: { data: NetworkData }) {
   // `data` is the root ego-network the page rendered server-side (matches the URL). When the user
@@ -67,7 +65,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
     if (!pending.current || fetcher.state !== 'idle') return;
     pending.current = false;
     const next = fetcher.data?.data;
-    if (next?.center && next.nodes.length >= 2) {
+    if (next && isAdoptableNetwork(next)) {
       setBrowsed(next);
       setFailed(false);
     } else {
@@ -273,12 +271,11 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                 {truncate(n.label)}
               </text>
             );
-            // Centre node is the current focus → not a link. Every other node is an anchor to its
-            // profile page (the no-JS fallback). With JS, the click is intercepted and re-centres the
-            // graph in place instead; "Отвори профила" is the explicit way to follow the link.
-            // No label on the centre node: it is already named in the page title, the centre
-            // dropdown and the legend (it is the only accent-red node). A label here would either
-            // collide with a neighbour or sit on an edge. Ring nodes label outward.
+            // Centre node is the current focus → not a link. It also carries NO text label: it is
+            // already named in the page title, the centre dropdown and the legend (the only accent
+            // node), and a label here would collide with a neighbour or sit on an edge (aligns with
+            // #124). Every other node is an anchor to its profile page (the no-JS fallback); with JS
+            // the click is intercepted and re-centres the graph in place ("Отвори профила" follows it).
             return isCenter ? (
               <g key={n.id}>{shape}</g>
             ) : (
