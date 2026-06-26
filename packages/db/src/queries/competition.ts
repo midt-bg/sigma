@@ -93,13 +93,6 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
   };
 }
 
-export async function getCompetitionTotals(
-  db: D1Database,
-  p: CompetitionParams = {},
-): Promise<CompetitionTotals> {
-  return competitionTotals(db, p);
-}
-
 export async function getAuthoritySingleOffer(
   db: D1Database,
   authorityId: string,
