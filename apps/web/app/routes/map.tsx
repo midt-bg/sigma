@@ -168,7 +168,7 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
         <TotalsStrip totals={totals} label="Обобщение по области" />
 
         <Section id="map" title="Разходи по области">
-          <Choropleth regions={data.regions} total={total} />
+          <Choropleth regions={data.regions} macroRegions={data.macroRegions} total={total} />
         </Section>
 
         <Section
