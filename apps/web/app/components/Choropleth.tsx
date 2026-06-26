@@ -2,6 +2,14 @@ import { useState } from 'react';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
 import { BG_MAP } from '../lib/bg-region-geometry';
+import {
+  type Grouping,
+  isActiveShape,
+  shareLabel,
+  shareOfTotal,
+  tierer,
+  tierForShape,
+} from '../lib/choropleth';
 
 // Static SVG choropleth of the 28 regions, coloured by spend. Same spirit as SankeyDiagram: geometry
 // is a committed asset, tiers are computed server-side, no chart JS ships. The accessible data lives
@@ -21,17 +29,6 @@ const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 80%, var(--paper))',
   'var(--ink)', // 5 = highest
 ];
-
-// Quantile tiers over the non-zero values, so one dominant zone (София) does not flatten the rest.
-function tierer(values: number[]): (v: number) => number {
-  const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
-  if (!sorted.length) return () => 0;
-  const at = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
-  const breaks = [at(0.2), at(0.4), at(0.6), at(0.8)];
-  return (v) => (v <= 0 ? 0 : 1 + breaks.filter((b) => v > b).length);
-}
-
-type Grouping = 'oblast' | 'region';
 
 // `total` enables the Information Card + grouping toggle (the /map page passes it, along with
 // macroRegions). Omitted on the compact analytics-hub preview, where only the bare oblast map is wanted.
@@ -58,18 +55,6 @@ export function Choropleth({
   // The entity whose stats the card shows, by mode.
   const active = withCard ? (group === 'region' ? hoveredMacro : hoveredRegion) : null;
 
-  // Tier (colour) for a geometry path, by mode: its own oblast value, or its parent район's value.
-  const tierForShape = (r: RegionSpend | undefined): number => {
-    if (!r) return 0;
-    if (group === 'region') return tierRegion(macroByNuts2.get(r.nuts2)?.valueEur ?? 0);
-    return tierOblast(r.valueEur);
-  };
-  // A path is highlighted when it's the hovered oblast (oblast mode) or shares the hovered район (region mode).
-  const isActiveShape = (r: RegionSpend | undefined): boolean => {
-    if (!r || !hoveredRegion) return false;
-    return group === 'region' ? r.nuts2 === hoveredRegion.nuts2 : r.nuts3 === hoveredRegion.nuts3;
-  };
-
   const map = (
     <div className="map-wrap">
       <svg
@@ -90,8 +75,10 @@ export function Choropleth({
             <path
               key={shape.nuts3}
               d={shape.d}
-              className={isActiveShape(r) ? 'region is-active' : 'region'}
-              style={{ fill: TIER_FILL[tierForShape(r)] }}
+              className={isActiveShape(r, hoveredRegion, group) ? 'region is-active' : 'region'}
+              style={{
+                fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
+              }}
               onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
             >
               <title>{label}</title>
@@ -149,8 +136,8 @@ export function Choropleth({
                   <dd>{money(active.valueEur)}</dd>
                 </div>
                 <div>
-                  <dt>Дял от всички области</dt>
-                  <dd>{pct(total && total > 0 ? active.valueEur / total : 0)}</dd>
+                  <dt>{shareLabel(group)}</dt>
+                  <dd>{pct(shareOfTotal(active.valueEur, total))}</dd>
                 </div>
                 <div>
                   <dt>Договори</dt>
