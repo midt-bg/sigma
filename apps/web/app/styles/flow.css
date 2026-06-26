@@ -33,9 +33,6 @@
   .flow-scroll-hint {
     display: block;
   }
-  .flow-scroll .network-svg {
-    min-width: 700px;
-  }
 }
 @media (max-width: 600px) {
   /* The Sankey is unusable at phone widths even with horizontal scroll — hide

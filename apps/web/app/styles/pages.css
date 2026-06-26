@@ -460,6 +460,11 @@
 .net-legend .key.center { background: var(--accent); }
 .net-legend .key.authority { background: var(--ink); }
 .net-legend .key.company { border-radius: 2px; background: var(--ink-mid); }
+@media (max-width: 760px) {
+  .flow-scroll .network-svg {
+    min-width: 700px;
+  }
+}
 
 /* Spending trend (/trends): static styling; the area and line path data are computed inline. */
 .trend-svg { width: 100%; height: auto; display: block; }

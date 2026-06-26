@@ -586,12 +586,6 @@ main {
 main.narrow {
   max-width: var(--max-narrow);
 }
-@media (max-width: 600px) {
-  main {
-    padding-top: var(--s-6);
-  }
-}
-
 /* Page header — editorial: eyebrow + serif display + lede */
 .page-header {
   margin: 0 0 var(--s-7);

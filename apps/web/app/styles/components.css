@@ -462,6 +462,9 @@ tbody td,
   .section {
     margin-top: var(--s-6);
   }
+  main {
+    padding-top: var(--s-6);
+  }
 }
 
 @media (max-width: 460px) {
