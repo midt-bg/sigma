@@ -2497,6 +2497,94 @@ details.row .body .signal .why {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
 }
+/* Per-edge value label, rotated in the component to lie along the edge. A thick white halo
+   (paint-order: stroke) keeps the number readable where it crosses edges/nodes. Toggle hides it. */
+.network-svg .edge-label {
+  fill: var(--ink, #222);
+  font: 600 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3.25px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* Non-centre nodes are anchors to a profile page → show the click affordance and an accent ring. */
+.network-svg a {
+  cursor: pointer;
+}
+.network-svg a:hover .node,
+.network-svg a:focus-visible .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.network-svg a:focus-visible {
+  outline: none;
+}
+/* Edge-label toggle (pure CSS, no JS): unchecked hides every .edge-label. */
+/* Controls row above the graph: the edge-value toggle plus, once you've browsed to another node,
+   the Open / Reset actions. Wraps on narrow screens. */
+.net-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+.net-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+  user-select: none;
+}
+.net-toggle input {
+  accent-color: var(--accent);
+}
+.net-graph:has(.net-toggle input:not(:checked)) .edge-label {
+  display: none;
+}
+/* Browse actions — appear only after a client-side re-centre (no JS = no recentre = hidden). */
+.net-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.net-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font: 600 12px var(--font-mono, monospace);
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.net-btn:hover {
+  filter: brightness(0.94);
+}
+.net-btn-ghost {
+  color: var(--ink, #222);
+  background: transparent;
+  border-color: var(--rule, #d8d6cf);
+}
+.net-loading {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-hint {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #888);
+}
+.net-error {
+  font: 12px var(--font-mono, monospace);
+  color: var(--danger, #b3261e);
+}
 .net-legend {
   display: flex;
   flex-wrap: wrap;

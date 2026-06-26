@@ -1,10 +1,13 @@
+import { Link } from 'react-router';
 import { count, money, signedPct } from '@sigma/shared';
 import type { NetworkData, TrendYear } from '@sigma/api-contract';
 import { type Column } from '../components/DataTable';
 
 export interface LinkRow {
   from: string;
+  fromHref: string;
   to: string;
+  toHref: string;
   valueEur: number;
   contracts: number;
 }
@@ -32,8 +35,13 @@ export const trendYearColumns: Column<TrendYear>[] = [
 ];
 
 export const networkColumns: Column<LinkRow>[] = [
-  { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-  { key: 'to', header: 'Към', cell: (r) => r.to },
+  {
+    key: 'from',
+    header: 'От',
+    isTitle: true,
+    cell: (r) => (r.fromHref ? <Link to={r.fromHref}>{r.from}</Link> : r.from),
+  },
+  { key: 'to', header: 'Към', cell: (r) => (r.toHref ? <Link to={r.toHref}>{r.to}</Link> : r.to) },
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
   {
     key: 'contracts',
@@ -53,7 +61,9 @@ export function networkRows(data: NetworkData): LinkRow[] {
     const company = a?.kind === 'authority' ? b : a;
     return {
       from: authority?.label ?? e.from,
+      fromHref: authority ? `/authorities/${authority.slug}` : '',
       to: company?.label ?? e.to,
+      toHref: company ? `/companies/${company.slug}` : '',
       valueEur: e.valueEur,
       contracts: e.contracts,
     };
