@@ -2618,6 +2618,31 @@ details.row .body .signal .why {
   padding: 16px 18px;
   background: color-mix(in oklch, var(--ink) 3%, var(--paper));
 }
+/* Grouping toggle, kept inside the card so all map controls sit together. */
+.map-toggle {
+  display: flex;
+  gap: 0;
+  margin: 0 0 14px;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.map-toggle button {
+  flex: 1;
+  padding: 6px 8px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  background: var(--paper, #fff);
+  border: 0;
+  cursor: pointer;
+}
+.map-toggle button + button {
+  border-left: 1px solid var(--rule, #d8d6cf);
+}
+.map-toggle button.is-on {
+  color: #fff;
+  background: var(--accent);
+}
 .map-card-title {
   margin: 0;
   font-size: 1.05rem;
