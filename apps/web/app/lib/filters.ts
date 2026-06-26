@@ -65,7 +65,7 @@ export function singleSelectFilters(
   const sector = sp.get('sector');
   const year = sp.get('year');
   const unknownSector = Boolean(sector) && !KNOWN_SECTORS.has(sector!);
-  const unknownYear = Boolean(year) && !years.includes(year!);
+  const unknownYear = years.length > 0 && Boolean(year) && !years.includes(year!);
   const funding = sp.get('funding');
   return {
     sector: unknownSector ? null : sector,
