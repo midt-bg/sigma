@@ -4,6 +4,7 @@ import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { cacheKey } from './cache-key';
 import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
+import { rateLimitHealthRoute } from './health-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
 import { withRequestLog } from './request-log';
@@ -123,6 +124,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
   const searchRateLimitResponse = await rateLimitSearchRoute(request, env, import.meta.env.PROD);
   if (searchRateLimitResponse) return searchRateLimitResponse;
+
+  const healthRateLimitResponse = await rateLimitHealthRoute(request, env, import.meta.env.PROD);
+  if (healthRateLimitResponse) return healthRateLimitResponse;
 
   const response = await requestHandler(request, { cloudflare: { env, ctx } });
   const cacheable =

@@ -126,6 +126,31 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: pnpm --filter @sigma/web run deploy
 
+      # Cheap readiness probe: confirms the worker is live and the D1 binding answers after deploy.
+      # When Cloudflare Access gates the target URL, set CF_ACCESS_CLIENT_ID + CF_ACCESS_CLIENT_SECRET
+      # as Environment secrets (service token) — see docs/deploy.md.
+      - name: Smoke — verify /health after web deploy
+        if: steps.guard.outputs.ok == 'true'
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          if [ "${{ needs.detect.outputs.env }}" = "production" ]; then
+            base="https://sigma.midt.bg"
+          else
+            base="https://${SIGMA_WEB_NAME}.cf-midt.workers.dev"
+          fi
+          url="${base}/health"
+          curl_opts=(--fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused)
+          if [ -n "${CF_ACCESS_CLIENT_ID}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET}" ]; then
+            curl_opts+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}")
+            curl_opts+=(-H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
+          fi
+          echo "Probing ${url}"
+          body="$(curl "${curl_opts[@]}" "$url")"
+          echo "$body"
+          printf '%s' "$body" | jq -e '.ok == true and .db == "ok"'
+
       - name: Initialize LOG_IP_KEY secret if absent
         if: steps.guard.outputs.ok == 'true'
         run: |

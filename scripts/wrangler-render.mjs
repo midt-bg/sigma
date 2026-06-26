@@ -21,7 +21,12 @@ const SENTINELS = {
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
 // rate-limit namespace_ids to be account-unique — a duplicate silently merges two buckets.
-const REQUIRED_RATE_LIMITERS = ['CSV_RATE_LIMITER', 'AGG_RATE_LIMITER', 'SEARCH_RATE_LIMITER'];
+const REQUIRED_RATE_LIMITERS = [
+  'CSV_RATE_LIMITER',
+  'AGG_RATE_LIMITER',
+  'SEARCH_RATE_LIMITER',
+  'HEALTH_RATE_LIMITER',
+];
 
 const input = process.argv[2];
 if (!input) {

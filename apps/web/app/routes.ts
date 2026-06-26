@@ -20,6 +20,7 @@ export default [
   route('contracts/:id.json', 'routes/contract.json.tsx'),
   route('contracts/:id', 'routes/contract.tsx'),
   route('methodology', 'routes/methodology.tsx'),
+  route('health', 'routes/health.tsx'),
   route('accessibility', 'routes/accessibility.tsx'),
   route('privacy', 'routes/privacy.tsx'),
   route('impressum', 'routes/impressum.tsx'),
