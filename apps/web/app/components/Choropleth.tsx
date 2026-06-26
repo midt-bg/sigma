@@ -1,12 +1,17 @@
+import { useState } from 'react';
 import type { RegionSpend } from '@sigma/api-contract';
-import { money } from '@sigma/shared';
+import { count, money, pct } from '@sigma/shared';
 import { BG_MAP } from '../lib/bg-region-geometry';
 
 // Static SVG choropleth of the 28 regions, coloured by spend. Same spirit as SankeyDiagram: geometry
 // is a committed asset, tiers are computed server-side, no chart JS ships. The accessible data lives
 // in the ranked table beside it; the SVG is a visual summary (role="img" + aria-label) with a native
-// <title> per region for hover. Sequential monochrome ramp from --paper to --ink (palette tokens, no
-// off-palette blue or green), matching the site's ink-based viz language like Sankey and /trends.
+// <title> per region for hover (the no-JS fallback). Sequential monochrome ramp from --paper to --ink
+// (palette tokens, no off-palette blue or green), matching the site's ink-based viz language.
+//
+// Progressive enhancement: with JS, hovering a region fills an Information Card beside the map (not an
+// overlay) with that region's summary stats — the same figures the ranked table lists. No JS → the
+// native <title> tooltip still works and the card shows its prompt.
 const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 8%, var(--paper))', // 0 = no / negligible spend
   'color-mix(in oklch, var(--ink) 26%, var(--paper))',
@@ -25,22 +30,35 @@ function tierer(values: number[]): (v: number) => number {
   return (v) => (v <= 0 ? 0 : 1 + breaks.filter((b) => v > b).length);
 }
 
-export function Choropleth({ regions }: { regions: RegionSpend[] }) {
+// `total` enables the Information Card (the /map page passes it). Omitted on the compact analytics-hub
+// preview, where only the bare map is wanted.
+export function Choropleth({ regions, total }: { regions: RegionSpend[]; total?: number }) {
   const byNuts3 = new Map(regions.map((r) => [r.nuts3, r]));
   const tierOf = tierer(regions.map((r) => r.valueEur));
+  const [hovered, setHovered] = useState<string | null>(null);
+  const withCard = total != null;
+  const active = withCard && hovered ? (byNuts3.get(hovered) ?? null) : null;
 
-  return (
+  const map = (
     <div className="map-wrap">
       <svg
         viewBox={BG_MAP.viewBox}
         role="img"
         aria-label="Карта на България: разходи за обществени поръчки по области"
+        onMouseLeave={() => setHovered(null)}
       >
         {BG_MAP.regions.map((shape) => {
           const r = byNuts3.get(shape.nuts3);
           const tier = r ? tierOf(r.valueEur) : 0;
+          const isActive = active?.nuts3 === shape.nuts3;
           return (
-            <path key={shape.nuts3} d={shape.d} style={{ fill: TIER_FILL[tier] }}>
+            <path
+              key={shape.nuts3}
+              d={shape.d}
+              className={isActive ? 'region is-active' : 'region'}
+              style={{ fill: TIER_FILL[tier] }}
+              onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
+            >
               <title>{r ? `${r.name}: ${money(r.valueEur)}` : shape.nuts3}</title>
             </path>
           );
@@ -53,6 +71,46 @@ export function Choropleth({ regions }: { regions: RegionSpend[] }) {
         ))}
         <span>повече</span>
       </div>
+    </div>
+  );
+
+  if (!withCard) return map;
+
+  return (
+    <div className="map-layout">
+      {map}
+      {/* Information Card beside the map (not an overlay). aria-live so the stats are announced as the
+          pointer moves; the ranked table below remains the primary accessible/keyboard data path. */}
+      <aside className="map-card" aria-live="polite">
+        {active ? (
+          <>
+            <h3 className="map-card-title">{active.name}</h3>
+            <p className="map-card-sub muted">Район: {active.nuts2Name}</p>
+            <dl className="map-card-stats">
+              <div>
+                <dt>Стойност</dt>
+                <dd>{money(active.valueEur)}</dd>
+              </div>
+              <div>
+                <dt>Дял от всички области</dt>
+                <dd>{pct(total && total > 0 ? active.valueEur / total : 0)}</dd>
+              </div>
+              <div>
+                <dt>Договори</dt>
+                <dd>{count(active.contracts)}</dd>
+              </div>
+              <div>
+                <dt>Институции</dt>
+                <dd>{count(active.authorities)}</dd>
+              </div>
+            </dl>
+          </>
+        ) : (
+          <p className="map-card-hint muted">
+            Посочи област на картата, за да видиш обобщени данни.
+          </p>
+        )}
+      </aside>
     </div>
   );
 }

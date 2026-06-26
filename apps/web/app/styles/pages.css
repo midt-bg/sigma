@@ -588,6 +588,17 @@
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+/* Map + Information Card side by side; the card wraps under the map on narrow screens. */
+.map-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.map-layout .map-wrap {
+  flex: 1 1 460px;
+  min-width: 0;
+}
 .map-wrap svg {
   width: 100%;
   height: auto;
@@ -598,6 +609,57 @@
 .map-wrap path {
   stroke: #f7f7f4;
   stroke-width: 1;
+}
+/* Hover highlight for the focused region (mouse-driven; the table is the keyboard/AT path). */
+.map-wrap path.region {
+  transition: fill 0.1s ease;
+}
+.map-wrap path.is-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+/* The Information Card beside the map. */
+.map-card {
+  flex: 0 0 250px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+.map-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.map-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.map-card-stats {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.map-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.map-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.map-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.map-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
 }
 .map-legend {
   display: flex;
