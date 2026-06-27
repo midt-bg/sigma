@@ -418,6 +418,17 @@ interface ContractDetailRow {
   bidder_settlement: string | null;
 }
 
+interface AmendmentRow {
+  value_before: number | null;
+  value_after: number | null;
+  value_delta: number | null;
+  currency: string | null;
+  published_at: string | null;
+  document_number: string | null;
+  description: string | null;
+  fx_rate: number | null;
+}
+
 export async function getContract(
   db: D1Database,
   contractId: string,
@@ -449,7 +460,7 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  const [authTotals, compTotals, lotRows] = await Promise.all([
+  const [authTotals, compTotals, lotRows, amendmentRows] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -483,6 +494,17 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
+    db
+      .prepare(
+        `SELECT am.value_before, am.value_after, am.value_delta, am.currency, am.published_at,
+                am.document_number, am.description,
+                (SELECT f.eur_per_unit FROM fx_rates f WHERE f.base_currency = am.currency AND f.rate_date = am.published_at) AS fx_rate
+         FROM amendments am
+         WHERE am.unp = ? AND am.contract_number = ?
+         ORDER BY am.published_at, am.document_number`,
+      )
+      .bind(r.unp, r.contract_number)
+      .all<AmendmentRow>(),
   ]);
 
   // value_low values ARE populated (counted in sums) but stay labelled, so include them here so the
@@ -608,6 +630,26 @@ export async function getContract(
   const frameworkAwards =
     r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
 
+  // Amendment (annex) history — the recorded sequence behind signing → current. Native annex values
+  // are normalised to EUR (peg / FX by the annex's own date) to match the rest of the page. Oldest first.
+  const amendments: ContractDetail['amendments'] = amendmentRows.results.map((am) => {
+    const beforeEur = eurFromNative(am.value_before, am.currency, am.fx_rate);
+    const afterEur = eurFromNative(am.value_after, am.currency, am.fx_rate);
+    return {
+      date: am.published_at,
+      documentNumber: am.document_number,
+      description: am.description?.trim() || null,
+      valueBeforeEur: beforeEur,
+      valueAfterEur: afterEur,
+      deltaEur:
+        am.value_delta != null
+          ? eurFromNative(am.value_delta, am.currency, am.fx_rate)
+          : beforeEur != null && afterEur != null
+            ? afterEur - beforeEur
+            : null,
+    };
+  });
+
   const detail: ContractDetail = {
     id: contractSlug(r.id),
     subject: r.contract_subject?.trim() || r.title,
@@ -639,6 +681,7 @@ export async function getContract(
     bidder,
     lots,
     subcontractor,
+    amendments,
   };
 
   return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };
