@@ -12,6 +12,7 @@ import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend } from
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -127,7 +128,19 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           }
           title={c.displayName}
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
-        />
+        >
+          <div className="header-actions">
+            <CopyCitationButton
+              textToCopy={[
+                `Компания: ${c.displayName}`,
+                `ЕИК: ${c.eik || 'Няма'}`,
+                `Общо спечелено: ${money(c.wonEur)} евро`,
+                `Брой договори: ${count(c.contracts)}`,
+                `Връзка: https://sigma.midt.bg/companies/${c.slug}`,
+              ].join('\n')}
+            />
+          </div>
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"

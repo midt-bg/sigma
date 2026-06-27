@@ -5,6 +5,7 @@ import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { RiskIndicators } from '../components/RiskIndicators';
@@ -109,36 +110,47 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </>
           }
         >
-          {c.eopTenderId && (
-            // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
-            // documents are published and downloadable. The portal keys this page on the numeric EOP
-            // tenderId (preserved on the parent tender as `eop_tender_id`), NOT the noticeId/document
-            // number. The portal is a client-rendered SPA, so this is a clickable deep link, not a
-            // scrapeable file list.
-            <a
-              className="source-cta"
-              href={`https://app.eop.bg/today/${c.eopTenderId}`}
-              target="_blank"
-              rel="noopener"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                aria-hidden="true"
+          <div className="header-actions">
+            <CopyCitationButton
+              textToCopy={[
+                `Договор: ${c.subject}`,
+                `Възложител: ${c.authority.name}`,
+                `Изпълнител: ${c.bidder.displayName}`,
+                `Стойност: ${money(c.value.current)} ${c.value.currency}`,
+                `Връзка: https://sigma.midt.bg/contracts/${c.id}`,
+              ].join('\n')}
+            />
+            {c.eopTenderId && (
+              // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
+              // documents are published and downloadable. The portal keys this page on the numeric EOP
+              // tenderId (preserved on the parent tender as `eop_tender_id`), NOT the noticeId/document
+              // number. The portal is a client-rendered SPA, so this is a clickable deep link, not a
+              // scrapeable file list.
+              <a
+                className="source-cta"
+                href={`https://app.eop.bg/today/${c.eopTenderId}`}
+                target="_blank"
+                rel="noopener"
               >
-                <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
-                <path d="M9 1.75V5.25h3.5" />
-              </svg>
-              Виж документите в ЦАИС ЕОП
-              <span className="cta-ext" aria-hidden="true">
-                ↗
-              </span>
-            </a>
-          )}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  aria-hidden="true"
+                >
+                  <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
+                  <path d="M9 1.75V5.25h3.5" />
+                </svg>
+                Виж документите в ЦАИС ЕОП
+                <span className="cta-ext" aria-hidden="true">
+                  ↗
+                </span>
+              </a>
+            )}
+          </div>
         </PageHeader>
 
         <Section

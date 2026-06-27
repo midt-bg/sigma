@@ -3548,3 +3548,44 @@ tbody td,
 .external-eik-link svg {
   opacity: 0.7;
 }
+
+/* =========== Print Styles =========== */
+@media print {
+  /* Hide navigation, footers, search drawer, and actions */
+  .site-header,
+  .site-nav,
+  .nav-backdrop,
+  .search-drawer,
+  .site-footer,
+  .header-actions,
+  .source-cta,
+  .save-btn {
+    display: none !important;
+  }
+
+  /* Ensure background and text colors are optimized for printing */
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Prevent elements from breaking mid-page */
+  .section,
+  .table-wrap,
+  .result,
+  .facts-list {
+    break-inside: avoid;
+  }
+
+  /* Clean up page margins */
+  @page {
+    margin: 1.5cm;
+  }
+
+  /* Expand the content to fill the page width */
+  #main,
+  .page-header {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}
