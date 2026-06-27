@@ -253,7 +253,7 @@ export async function getEntityNetwork(
 export async function getEntityCounterparties(
   db: D1Database,
   p: NetworkParams,
-  opts: { cursor?: string | null; pageSize?: number } = {},
+  opts: { cursor?: string | null; pageSize?: number; total?: number } = {},
 ): Promise<NetworkCounterpartyPage> {
   const isAuth = p.kind === 'authority';
   const centerCol = isAuth ? 'authority_id' : 'bidder_id';
@@ -270,6 +270,10 @@ export async function getEntityCounterparties(
   });
   const where = ks.whereSql ? `${centerCol} = ? AND ${ks.whereSql}` : `${centerCol} = ?`;
 
+  // The counterparty total is the same `COUNT(*) FROM flow_pairs WHERE <centre> = ?` getEntityNetwork
+  // already runs. On /network both run, so the caller passes the known total here and we skip a second
+  // identical scan (D1 charges per row read). Standalone callers omit it and we count once, in parallel
+  // with the page query.
   const [rowsRes, totalRow] = await Promise.all([
     db
       .prepare(
@@ -278,10 +282,12 @@ export async function getEntityCounterparties(
       )
       .bind(p.id, ...ks.params, pageSize + 1)
       .all<PairRow>(),
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM flow_pairs WHERE ${centerCol} = ?`)
-      .bind(p.id)
-      .first<{ n: number }>(),
+    opts.total !== undefined
+      ? Promise.resolve({ n: opts.total })
+      : db
+          .prepare(`SELECT COUNT(*) AS n FROM flow_pairs WHERE ${centerCol} = ?`)
+          .bind(p.id)
+          .first<{ n: number }>(),
   ]);
 
   const hasMore = rowsRes.results.length > pageSize;
