@@ -78,6 +78,52 @@ GROUP BY p.aid
 ORDER BY hhi DESC, a.name;
 `;
 
+// Direct-award fixture (authority В, isolated from А/Б so the assertions above are untouched): 4
+// open-procedure + 6 direct-award contracts = 10 classified → direct share 0.6; plus 2 „неизвестна"
+// (synthetic) contracts that must be EXCLUDED from the denominator, so the share stays 0.6.
+const DIRECT_AWARD_FIXTURE = `
+INSERT INTO authorities (id, name, bulstat, type_group) VALUES
+  ('auth:C', 'Институция В', '100000003', 'агенция');
+INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+  ('t:C-open',   'UNP-C-open',   'Открита поръчка', 'auth:C', '45', 'Открита процедура', 'awarded'),
+  ('t:C-direct', 'UNP-C-direct', 'Пряко възлагане', 'auth:C', '45', 'Пряко договаряне', 'awarded'),
+  ('t:C-unk',    'UNP-C-unk',    'Без процедура',   'auth:C', '45', 'неизвестна', 'awarded');
+INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur) VALUES
+  ('c:C1',  't:C-open',   'eik:X', 1000, 'EUR', '2024-03-01', 'ok', 1000),
+  ('c:C2',  't:C-open',   'eik:X', 1000, 'EUR', '2024-03-02', 'ok', 1000),
+  ('c:C3',  't:C-open',   'eik:X', 1000, 'EUR', '2024-03-03', 'ok', 1000),
+  ('c:C4',  't:C-open',   'eik:X', 1000, 'EUR', '2024-03-04', 'ok', 1000),
+  ('c:C5',  't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-05', 'ok', 1000),
+  ('c:C6',  't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-06', 'ok', 1000),
+  ('c:C7',  't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-07', 'ok', 1000),
+  ('c:C8',  't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-08', 'ok', 1000),
+  ('c:C9',  't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-09', 'ok', 1000),
+  ('c:C10', 't:C-direct', 'eik:X', 1000, 'EUR', '2024-03-10', 'ok', 1000),
+  ('c:C11', 't:C-unk',    'eik:X', 1000, 'EUR', '2024-03-11', 'ok', 1000),
+  ('c:C12', 't:C-unk',    'eik:X', 1000, 'EUR', '2024-03-12', 'ok', 1000);
+`;
+
+// Mirrors authoritiesByDirectAward: numerator = non-competitive procedure types, denominator =
+// classified (competitive OR non-competitive) types, so the synthetic „неизвестна" rows drop out.
+// The procedure-type lists mirror @sigma/config (whose membership is asserted in config/index.test.ts).
+const DIRECT_AWARD_SQL = `
+SELECT a.name,
+       ROUND(SUM(CASE WHEN t.procedure_type IN (
+         'Договаряне без предварително обявление','Пряко договаряне',
+         'Договаряне без предварителна покана за участие','Договаряне без публикуване на обявление за поръчка'
+       ) THEN 1 ELSE 0 END) * 1.0 / COUNT(*), 2) AS share,
+       COUNT(*) AS classified
+FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
+WHERE t.procedure_type IN (
+        'Открита процедура','Ограничена процедура','Ограничена процедура по ДСП','Ограничена процедура по КС',
+        'Публично състезание','Състезателна процедура с договаряне','Събиране на оферти с обява',
+        'Договаряне без предварително обявление','Пряко договаряне',
+        'Договаряне без предварителна покана за участие','Договаряне без публикуване на обявление за поръчка'
+      )
+  AND a.id = 'auth:C'
+GROUP BY t.authority_id;
+`;
+
 describe('competition SQL (real SQLite)', () => {
   function withDb<T>(fn: (dbPath: string) => T): T {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-competition-'));
@@ -102,6 +148,14 @@ describe('competition SQL (real SQLite)', () => {
     withDb((dbPath) => {
       // Б has a single supplier (excluded); А splits 6:4 → 0.36 + 0.16 = 0.52 over 2 suppliers.
       expect(sqlite(dbPath, HHI_SQL)).toBe('Институция А|0.52|2');
+    });
+  });
+
+  it('computes the direct-award share over the classified denominator only', () => {
+    withDb((dbPath) => {
+      sqlite(dbPath, DIRECT_AWARD_FIXTURE);
+      // 6 direct of 10 classified → 0.6; the 2 synthetic „неизвестна" rows are not in the denominator.
+      expect(sqlite(dbPath, DIRECT_AWARD_SQL)).toBe('Институция В|0.6|10');
     });
   });
 });
