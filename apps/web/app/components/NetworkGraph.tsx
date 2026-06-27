@@ -406,7 +406,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                   <dd>{money(hoveredNode.valueEur)}</dd>
                 </div>
                 <div>
-                  <dt>{hoveredIsCenter ? 'Преки контрагенти' : 'Връзки в графа'}</dt>
+                  <dt>{hoveredIsCenter ? 'Връзки общо' : 'Връзки в графа'}</dt>
                   <dd>{count(hoveredRelations)}</dd>
                 </div>
               </dl>
@@ -436,9 +436,9 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
       </ul>
       {truncated && center && (
         <p className="net-caption muted">
-          Графиката показва {count(directShown)} от общо {count(counterpartyTotal)} преки
-          контрагента (най-големите по стойност).{' '}
-          <a href={`/network?center=${encodeURIComponent(centerToken(center))}#counterparties`}>
+          Графиката показва {count(directShown)} от общо {count(counterpartyTotal)} връзки
+          (най-големите по стойност).{' '}
+          <a href={`/network?center=${encodeURIComponent(centerToken(center))}#links`}>
             Виж всички
           </a>
           .
