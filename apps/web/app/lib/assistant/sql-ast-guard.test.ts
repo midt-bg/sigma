@@ -271,4 +271,21 @@ describe('guardSelect', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/negative LIMIT/i);
   });
+
+  it('rejects a non-integer LIMIT literal the regex cannot clamp (LIMIT 1e9 / 1.5 — review #80, ydimitrof)', () => {
+    // The AST accepts `1e9` (type 'bigint') and `1.5`, but enforceLimit's `\d+` regex does not, so it
+    // would emit `LIMIT 1e9 LIMIT 500` (a SQLite syntax error that only fails closed by accident).
+    for (const sql of [
+      'SELECT name FROM authorities LIMIT 1e9',
+      'SELECT name FROM authorities LIMIT 1.5',
+    ]) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/integer/i);
+    }
+    // a plain integer LIMIT (even a large one) is still accepted and clamped to the row cap
+    const ok = guardSelect('SELECT name FROM authorities LIMIT 1000000');
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.sql).toMatch(/LIMIT 500/);
+  });
 });

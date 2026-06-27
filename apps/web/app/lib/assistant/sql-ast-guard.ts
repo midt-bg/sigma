@@ -345,7 +345,14 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   // misses the `-` and would append a second LIMIT that only fails by an accidental syntax error — make
   // the rejection explicit (review #80, ydimitrof).
   for (const v of limitValues) {
-    if (limitCount(v) < 0) return deny('negative LIMIT/OFFSET is not allowed');
+    const n = limitCount(v);
+    if (n < 0) return deny('negative LIMIT/OFFSET is not allowed');
+    // Require a plain non-negative INTEGER literal. node-sql-parser parses `1e9` as
+    // { type: 'bigint', value: '1e9' } and `1.5` with a string value — limitCount returns NaN for both,
+    // and enforceLimit's `\d+` regex cannot clamp them, so it would append a SECOND LIMIT
+    // (`LIMIT 1e9 LIMIT 500`), a SQLite syntax error that only fails closed by accident. Reject so the AST
+    // and the regex text models agree on the count (review #80, ydimitrof).
+    if (!Number.isInteger(n)) return deny('LIMIT/OFFSET must be a plain non-negative integer');
   }
   if (lim?.seperator === ',') {
     return deny('LIMIT offset, count is not allowed; use LIMIT n OFFSET m');
