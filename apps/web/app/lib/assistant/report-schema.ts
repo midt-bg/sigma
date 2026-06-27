@@ -254,9 +254,19 @@ const codePoint = (n: number, fallback: string): string =>
 // case-insensitive on the `x`, so an uppercase `&#X31;` is decoded by renderers too and a case-sensitive
 // `x`-only match let it bypass both the number gate and the tag strip (review #80, follow-up).
 function decodeNumericEntities(s: string): string {
-  return s
-    .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
-    .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
+  // Decode to a FIXPOINT, not a single pass: a double-encoded entity (`1&#38;#50;000` → `1&#50;000` →
+  // `12000`) survives one pass — it passes the number gate as `1&#50;000` while a renderer decodes it the
+  // rest of the way to a fabricated `12000` (review #80, ydimitrof). Each pass turns an entity into one
+  // char so the string strictly shrinks and converges; the iteration bound is a cheap pathology backstop.
+  let prev = s;
+  for (let i = 0; i < 8; i++) {
+    const next = prev
+      .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
+      .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (m, h) => codePoint(parseInt(h, 16), m));
+    if (next === prev) break;
+    prev = next;
+  }
+  return prev;
 }
 
 // Fold every Unicode decimal digit to its ASCII value so the number gate is not blinded by a digit a

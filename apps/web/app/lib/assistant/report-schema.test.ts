@@ -460,6 +460,13 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('сума 12&#48;&#48;&#48; над лимита')).not.toHaveLength(0);
   });
 
+  it('decodes DOUBLE-encoded entities to a fixpoint (would render as a real number — review #80, ydimitrof)', () => {
+    // `&#38;` is `&`, so `1&#38;#50;000` survives one decode as `1&#50;000` (no digit run → old gate
+    // passed) but a renderer decodes it the rest of the way to `12000`. Fixpoint decoding catches it.
+    expect(findProseNumbers('усвоени 1&#38;#50;000 над лимита')).not.toHaveLength(0);
+    expect(findProseNumbers('сумата &#38;#x31;&#38;#x32; млрд')).not.toHaveLength(0);
+  });
+
   it('sees through HTML-tag-split digits and uppercase hex entities (review #80, follow-up)', () => {
     // sanitizeProse STRIPS tags before display, so digits split by inert tags re-join on the page; the
     // gate must strip them too (via deMarkdown) or a fabricated number lands unbound on the report.
