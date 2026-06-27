@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getEntityNetwork } from './network';
+import { getEntityCounterparties, getEntityNetwork } from './network';
 
 // Fake D1 keyed by SQL markers (same approach as the other query tests). Verifies the ego-network
 // shaping: centre + hop-1 neighbours + hop-2 (top-1 other per neighbour), node de-duplication, the
@@ -63,6 +63,9 @@ function fakeDb(): D1Database {
         async all<T>() {
           if (sql.includes('ORDER BY spent_eur')) return { results: PICKER_AUTH as T[] };
           if (sql.includes('FROM company_totals')) return { results: PICKER_COMP as T[] };
+          // The counterparties keyset query is the only flow_pairs read that tiebreaks on the id
+          // column ("won_eur DESC, bidder_id"); the hop-1 graph read orders by "won_eur DESC LIMIT".
+          if (sql.includes('won_eur DESC, bidder_id')) return { results: HOP1 as T[] };
           if (sql.includes('FROM flow_pairs WHERE authority_id = ?'))
             return { results: HOP1 as T[] };
           if (sql.includes('WHERE bidder_id IN')) return { results: HOP2 as T[] };
@@ -70,6 +73,7 @@ function fakeDb(): D1Database {
         },
         async first<T>() {
           if (sql.includes('FROM authority_totals WHERE authority_id')) return CENTER_AUTH as T;
+          if (sql.includes('COUNT(*)')) return { n: 42 } as T;
           return null as T;
         },
       };
@@ -107,5 +111,39 @@ describe('getEntityNetwork', () => {
     const { centerOptions } = await getEntityNetwork(fakeDb(), { kind: 'authority', id: 'auth:C' });
     expect(centerOptions.authorities.length).toBeGreaterThan(0);
     expect(centerOptions.authorities[0]).toMatchObject({ kind: 'authority', value: 'a:C' });
+  });
+
+  it('reports the full counterparty count, not just the drawn cap', async () => {
+    const { counterpartyTotal } = await getEntityNetwork(fakeDb(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(counterpartyTotal).toBe(42); // COUNT(*) over flow_pairs, not the HOP1 cap (2 drawn)
+  });
+});
+
+describe('getEntityCounterparties', () => {
+  it('returns the full count and normalises rows to authority -> company', async () => {
+    const page = await getEntityCounterparties(fakeDb(), { kind: 'authority', id: 'auth:C' });
+    expect(page.total).toBe(42);
+    expect(page.rows[0]).toMatchObject({
+      authorityLabel: 'Център Институция',
+      authoritySlug: 'C',
+      companyLabel: 'Фирма А',
+      companySlug: 'A',
+      valueEur: 5000,
+      contracts: 5,
+    });
+  });
+
+  it('emits a next cursor when more rows exist than fit on the page', async () => {
+    // The fake returns 2 rows; pageSize 1 means an extra row is seen -> there is a next page.
+    const page = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { pageSize: 1 },
+    );
+    expect(page.rows).toHaveLength(1);
+    expect(page.nextCursor).not.toBeNull();
   });
 });
