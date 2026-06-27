@@ -55,10 +55,17 @@ FROM (
 )
 GROUP BY authority_eik;
 
--- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
---     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
+-- 1b) Friendly authority type buckets. 'община' is keyed on ЕИК against the canonical 265-municipality
+--     registry (municipality_eik, from scripts/seed-municipalities.sql); the other buckets are
+--     name/ЗОП-type heuristics (case-sensitive LIKE covers Title- and UPPER-case). The CREATE is
+--     defensive so a derive run without the seed (e.g. unit tests) sees an empty table, not an error.
+CREATE TABLE IF NOT EXISTS municipality_eik (
+  eik TEXT PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  region TEXT
+);
 UPDATE authorities SET type_group = CASE
-  WHEN name LIKE 'Община%' OR name LIKE 'ОБЩИНА%' OR name LIKE '%Столична община%' OR name LIKE '%СТОЛИЧНА ОБЩИНА%' THEN 'община'
+  WHEN bulstat IN (SELECT eik FROM municipality_eik) THEN 'община'
   WHEN name LIKE 'Министерство%' OR name LIKE 'МИНИСТЕРСТВО%' THEN 'министерство'
   WHEN name LIKE '%болница%' OR name LIKE '%БОЛНИЦА%' OR name LIKE 'МБАЛ%' OR name LIKE '%МБАЛ%' OR name LIKE '%СБАЛ%' OR name LIKE '%ДКЦ%' OR name LIKE '%лечебно заведение%' THEN 'болница'
   WHEN name LIKE '%университет%' OR name LIKE '%УНИВЕРСИТЕТ%' OR name LIKE '%училище%' OR name LIKE '%УЧИЛИЩЕ%' OR name LIKE '%гимназия%' OR name LIKE '%ГИМНАЗИЯ%' OR name LIKE '%детска градина%' OR name LIKE '%ДЕТСКА ГРАДИНА%' OR name LIKE '%академия%' THEN 'образование'

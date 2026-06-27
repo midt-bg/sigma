@@ -213,6 +213,7 @@ for (const table of TABLES) {
 
 console.log('==> precompute on served D1');
 d1File(resolve(root, 'scripts/seed-state-owned.sql'));
+d1File(resolve(root, 'scripts/seed-municipalities.sql'));
 d1File(resolve(root, 'scripts/precompute.sql'));
 
 // Reconciliation gate (#97) on the served D1: rollups now exist (just precomputed), so the rollup

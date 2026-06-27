@@ -211,6 +211,7 @@ function runFullDerive() {
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
+  execSql(resolve(root, 'scripts/seed-municipalities.sql'));
   execSql(resolve(root, 'scripts/normalize-raw.sql'));
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
@@ -223,6 +224,7 @@ function runSliceDerive() {
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
+  execSql(resolve(root, 'scripts/seed-municipalities.sql'));
   runRefreshSliceBatches();
   assertIntegrity(d1, { label: 'slice derive (D1)' });
 }
@@ -271,6 +273,7 @@ function runWorkBackfill() {
   run('node', ['scripts/load-fx.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, `${stem}.fx-load.sql`)}`]);
   sqliteFile(workDb, resolve(root, 'scripts/load-nuts.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/seed-state-owned.sql'));
+  sqliteFile(workDb, resolve(root, 'scripts/seed-municipalities.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/normalize-raw.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulatedSqlite(workDb);
