@@ -43,5 +43,11 @@ jobs:
         # Blocking: the repo-wide `pnpm format` pass cleared the pre-existing prettier debt, so
         # `pnpm lint` (prettier --check .) now gates merges and keeps the tree formatted (#88).
         run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+      # Run regardless of a Lint failure so a formatting nit doesn't mask the type/test signal — all
+      # three checks report in one run. `!cancelled()` still skips them if the run is cancelled.
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm typecheck
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: pnpm test
