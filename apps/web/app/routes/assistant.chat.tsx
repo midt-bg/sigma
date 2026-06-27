@@ -12,6 +12,7 @@ import {
 } from '../lib/assistant/rag';
 import { resolveRowsReadBudget, type ToolContext } from '../lib/assistant/tools';
 import { selectClientMessages } from '../lib/assistant/chat-input';
+import { firstPartyRejection } from '../lib/assistant/request-guard';
 
 function latestUserText(messages: UIMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -38,6 +39,23 @@ function messageTextChars(m: UIMessage): number {
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
+  // First-party guard BEFORE buffering the body: a cross-site page must not be able to start a paid BgGPT
+  // turn from a victim's browser (CSRF → denial-of-wallet). Requiring application/json forces a preflight
+  // on any cross-origin fetch (never green-lit) and blocks <form> CSRF (review #80, lyubomir-bozhinov).
+  const rejection = firstPartyRejection({
+    method: request.method,
+    contentType: request.headers.get('Content-Type'),
+    secFetchSite: request.headers.get('Sec-Fetch-Site'),
+  });
+  if (rejection) return Response.json({ error: rejection.error }, { status: rejection.status });
+
+  // Reject an over-cap body by its DECLARED Content-Length before buffering it into Worker memory; the
+  // post-read UTF-8 check below is the fallback for an absent/under-stated header (review #80, ydimitrof).
+  const declaredLength = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return Response.json({ error: 'историята е твърде голяма' }, { status: 413 });
+  }
+
   const raw = await request.text();
   // Measure UTF-8 bytes, not raw.length (UTF-16 code units): a Cyrillic-heavy body is ~2 UTF-8 bytes per
   // char, so raw.length would pass at ~2× the intended cap (same pitfall fixed in eop-fetch.ts, review #80).
