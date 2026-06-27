@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
 import { BG_MAP } from '../lib/bg-region-geometry';
@@ -49,6 +49,11 @@ export function Choropleth({
   const withCard = total != null;
   const [group, setGroup] = useState<Grouping>('oblast');
   const [hovered, setHovered] = useState<string | null>(null); // always a nuts3 (the geometry unit)
+  // The grouping toggle only does anything with JS (it flips client state), so render it only after
+  // hydration — otherwise no-JS users get a real-looking but inert control. The no-JS map stays in the
+  // default „области" colouring, which is what the static aria-label below describes.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   const hoveredRegion = hovered ? (byNuts3.get(hovered) ?? null) : null;
   const hoveredMacro = hoveredRegion ? (macroByNuts2.get(hoveredRegion.nuts2) ?? null) : null;
@@ -60,7 +65,9 @@ export function Choropleth({
       <svg
         viewBox={BG_MAP.viewBox}
         role="img"
-        aria-label="Карта на България: разходи за обществени поръчки по области"
+        aria-label={`Карта на България: разходи за обществени поръчки по ${
+          group === 'region' ? 'райони' : 'области'
+        }`}
         onMouseLeave={() => setHovered(null)}
       >
         {BG_MAP.regions.map((shape) => {
@@ -105,24 +112,26 @@ export function Choropleth({
           controls sit together. aria-live announces the stats as the pointer moves; the ranked tables
           below remain the primary accessible/keyboard data path. */}
       <aside className="map-card">
-        <div className="map-toggle" role="group" aria-label="Групиране на картата">
-          <button
-            type="button"
-            className={group === 'oblast' ? 'is-on' : undefined}
-            aria-pressed={group === 'oblast'}
-            onClick={() => setGroup('oblast')}
-          >
-            По области
-          </button>
-          <button
-            type="button"
-            className={group === 'region' ? 'is-on' : undefined}
-            aria-pressed={group === 'region'}
-            onClick={() => setGroup('region')}
-          >
-            По райони
-          </button>
-        </div>
+        {hydrated && (
+          <div className="map-toggle" role="group" aria-label="Групиране на картата">
+            <button
+              type="button"
+              className={group === 'oblast' ? 'is-on' : undefined}
+              aria-pressed={group === 'oblast'}
+              onClick={() => setGroup('oblast')}
+            >
+              По области
+            </button>
+            <button
+              type="button"
+              className={group === 'region' ? 'is-on' : undefined}
+              aria-pressed={group === 'region'}
+              onClick={() => setGroup('region')}
+            >
+              По райони
+            </button>
+          </div>
+        )}
         <div aria-live="polite">
           {active ? (
             <>
