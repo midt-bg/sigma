@@ -871,9 +871,11 @@ main.narrow {
 }
 .totals .num {
   display: block;
-  font: 400 36px/1 var(--font-serif);
+  /* Scale down on narrower viewports so the widest value ("51,6 млрд.") never overruns its cell. */
+  font: 400 clamp(26px, 2.8vw, 36px) / 1 var(--font-serif);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  white-space: nowrap;
   color: var(--ink);
 }
 .totals .label {
@@ -884,12 +886,13 @@ main.narrow {
   text-transform: uppercase;
   color: var(--ink-soft);
 }
-@media (max-width: 760px) {
+@media (max-width: 960px) {
   .totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .totals .cell:nth-child(odd) {
     border-right: 1px solid var(--rule);
+    padding-left: 0;
   }
   .totals .cell:nth-child(even) {
     border-right: 0;
@@ -1582,19 +1585,43 @@ details.row .body .signal .why {
 /* Story tiles (home page + similar) */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  /* Four lenses: stay 4-up on desktop, fall to a 2×2 square on mid widths, then stack.
+     (Avoids the auto-fit 3-column state that left a lone "orphan" tile on a second row.) */
+  grid-template-columns: repeat(4, 1fr);
   gap: 0;
   border-top: 1px solid var(--ink);
+}
+@media (max-width: 1024px) {
+  .tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tile:nth-child(2n + 1) {
+    padding-left: 0;
+  }
+  .tile:nth-child(2n) {
+    border-right: 0;
+  }
+}
+@media (max-width: 560px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
 }
 .tile {
   border-bottom: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
-  padding: var(--s-5) var(--s-5) var(--s-6) 0;
+  padding: var(--s-5) var(--s-5) var(--s-6) var(--s-5);
 }
-.tile + .tile {
-  padding-left: var(--s-5);
+/* Column-aware dividers: the grid wraps to 2×2 (and 1-col), so the leftmost tile of each row sits
+   flush and the rightmost has no divider — independent of how many rows the tiles wrap into. */
+.tile:nth-child(4n + 1) {
+  padding-left: 0;
 }
-.tile:last-child {
+.tile:nth-child(4n) {
   border-right: 0;
 }
 .tile .kicker {
@@ -1623,6 +1650,128 @@ details.row .body .signal .why {
 .tile .desc {
   font: 14px/1.55 var(--font-sans);
   color: var(--ink-mid);
+}
+
+/* Richer analytics hub lens cards: keep the editorial tile chrome, but give each lens room for a
+   live data teaser. */
+.tiles.analytics-lenses {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.tiles.analytics-lenses .tile:nth-child(2n + 1) {
+  padding-left: 0;
+}
+.tiles.analytics-lenses .tile:nth-child(2n) {
+  border-right: 0;
+}
+.lens-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+}
+.lens-preview {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule-soft);
+}
+.lens-preview-title {
+  margin-bottom: var(--s-2);
+  font: 500 10.5px/1.35 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.lens-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+.lens-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px var(--s-3);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  align-items: baseline;
+}
+.lens-name {
+  min-width: 0;
+  font: 14px/1.35 var(--font-sans);
+  color: var(--ink);
+}
+.lens-value {
+  font: 12px/1.2 var(--font-mono);
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.lens-meta,
+.lens-share {
+  grid-column: 1 / -1;
+  font: 12px/1.35 var(--font-mono);
+  color: var(--ink-soft);
+}
+.lens-share .share {
+  width: 100%;
+  justify-content: space-between;
+}
+.lens-share .share-bar {
+  flex: 1;
+  width: auto;
+}
+.lens-chart {
+  margin: var(--s-2) 0 var(--s-3);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.lens-chart .trend-svg {
+  max-height: 150px;
+}
+.lens-map {
+  margin: var(--s-2) auto var(--s-3);
+  max-width: 320px;
+}
+.lens-map .map-wrap svg {
+  max-width: 100%;
+}
+.lens-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin: 0;
+}
+.lens-metrics dt {
+  margin-bottom: 4px;
+  font: 500 10.5px/1.25 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.lens-metrics dd {
+  margin: 0;
+  font: 14px/1.35 var(--font-sans);
+  color: var(--ink);
+}
+.lens-link {
+  margin-top: auto;
+  padding-top: var(--s-4);
+  font: 500 14px/1.3 var(--font-sans);
+}
+.lens-link a {
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .tiles.analytics-lenses {
+    grid-template-columns: 1fr;
+  }
+  .tiles.analytics-lenses .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
+  .lens-card {
+    min-height: 0;
+  }
+  .lens-metrics {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Helper text */
@@ -2749,6 +2898,9 @@ tbody td,
   }
   .totals .cell + .cell {
     padding-left: var(--s-4);
+  }
+  .totals .cell:nth-child(odd) {
+    padding-left: 0;
   }
   .totals .num {
     font-size: 28px;

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertIntegrity } from './integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -213,4 +214,10 @@ for (const table of TABLES) {
 console.log('==> precompute on served D1');
 d1File(resolve(root, 'scripts/seed-state-owned.sql'));
 d1File(resolve(root, 'scripts/precompute.sql'));
+
+// Reconciliation gate (#97) on the served D1: rollups now exist (just precomputed), so the rollup
+// checks run here — this is the database users read. Staging/pipeline_stats are not shipped, so the
+// staging-reconciliation check self-skips. Fails the ship with a non-zero exit on any drift.
+console.log('==> integrity gate on served D1');
+assertIntegrity(d1Json, { label: `served D1 ${remote ? 'remote' : 'local'}` });
 console.log('==> ship complete');

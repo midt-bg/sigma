@@ -11,6 +11,12 @@ export interface TrendParams {
   sector?: string | null;
   funding?: 'all' | 'eu' | 'national';
   granularity?: 'month' | 'year';
+  authorityId?: string | null;
+  bidderId?: string | null;
+}
+
+export interface TrendQueryOptions {
+  includeSectors?: boolean;
 }
 
 const START = '2020-01-01';
@@ -35,11 +41,18 @@ function scope(p: TrendParams): { join: string; where: string[]; params: unknown
   // amount_eur IS NOT NULL, so the trend must too, or the same total differs between pages.
   const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
-  let join = '';
+  const join = p.sector || p.authorityId ? 'JOIN tenders t ON t.id = c.tender_id' : '';
   if (p.sector) {
-    join = 'JOIN tenders t ON t.id = c.tender_id';
     where.push('substr(t.cpv_code, 1, 2) = ?');
     params.push(p.sector);
+  }
+  if (p.authorityId) {
+    where.push('t.authority_id = ?');
+    params.push(p.authorityId);
+  }
+  if (p.bidderId) {
+    where.push('c.bidder_id = ?');
+    params.push(p.bidderId);
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
@@ -77,7 +90,12 @@ async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
     .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
 }
 
-export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<TrendData> {
+export async function getSpendingTrend(
+  db: D1Database,
+  p: TrendParams,
+  options: TrendQueryOptions = {},
+): Promise<TrendData> {
+  const includeSectors = options.includeSectors ?? true;
   const granularity = p.granularity === 'year' ? 'year' : 'month';
   const periodLen = granularity === 'year' ? 4 : 7; // substr length: 'YYYY' vs 'YYYY-MM'
   const s = scope(p);
@@ -103,7 +121,7 @@ export async function getSpendingTrend(db: D1Database, p: TrendParams): Promise<
       )
       .bind(...s.params)
       .first<CoverageRow>(),
-    sectorOptions(db),
+    includeSectors ? sectorOptions(db) : Promise.resolve([]),
     db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
   ]);
   // The final period (the as_of period) is still being filled; mark it so the chart and table do not

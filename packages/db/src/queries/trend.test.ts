@@ -13,6 +13,11 @@ const SERIES = [
 ];
 const COVERAGE = { dated: 80, total: 100 };
 
+interface QueryCall {
+  sql: string;
+  args: unknown[];
+}
+
 function fakeDb(capture?: string[], asOf: string | null = null): D1Database {
   return {
     prepare(sql: string) {
@@ -27,6 +32,48 @@ function fakeDb(capture?: string[], asOf: string | null = null): D1Database {
         async first<T>() {
           if (sql.includes('as_of')) return { as_of: asOf } as T;
           return COVERAGE as T;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+const SCOPED_SERIES = {
+  national: [
+    { period: '2022', value_eur: 9000, contracts: 90 },
+    { period: '2023', value_eur: 3000, contracts: 30 },
+  ],
+  authority: [
+    { period: '2022', value_eur: 4000, contracts: 40 },
+    { period: '2023', value_eur: 1000, contracts: 10 },
+  ],
+  bidder: [
+    { period: '2022', value_eur: 2000, contracts: 20 },
+    { period: '2023', value_eur: 500, contracts: 5 },
+  ],
+};
+
+function scopedFakeDb(calls: QueryCall[]): D1Database {
+  return {
+    prepare(sql: string) {
+      return {
+        args: [] as unknown[],
+        bind(...args: unknown[]) {
+          this.args = args;
+          calls.push({ sql, args });
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes('FROM sector_totals')) return { results: [{ division: '45' }] as T[] };
+          if (this.args.includes('auth:111')) return { results: SCOPED_SERIES.authority as T[] };
+          if (this.args.includes('eik:222')) return { results: SCOPED_SERIES.bidder as T[] };
+          return { results: SCOPED_SERIES.national as T[] };
+        },
+        async first<T>() {
+          if (sql.includes('as_of')) return { as_of: null } as T;
+          if (this.args.includes('auth:111')) return { dated: 50, total: 60 } as T;
+          if (this.args.includes('eik:222')) return { dated: 25, total: 30 } as T;
+          return { dated: 120, total: 140 } as T;
         },
       };
     },
@@ -83,5 +130,47 @@ describe('getSpendingTrend', () => {
     const filtered: string[] = [];
     await getSpendingTrend(fakeDb(filtered), { sector: '45' });
     expect(filtered.some((s) => s.includes('JOIN tenders t'))).toBe(true);
+  });
+
+  it('scopes the trend by authorityId through the tender authority', async () => {
+    const national = await getSpendingTrend(scopedFakeDb([]), { granularity: 'year' });
+    const calls: QueryCall[] = [];
+    const scoped = await getSpendingTrend(scopedFakeDb(calls), {
+      authorityId: 'auth:111',
+      granularity: 'year',
+    });
+
+    expect(scoped.totalValueEur).toBe(5000);
+    expect(scoped.totalValueEur).toBeLessThan(national.totalValueEur);
+    expect(scoped.years).toMatchObject([
+      { year: '2022', valueEur: 4000, contracts: 40 },
+      { year: '2023', valueEur: 1000, contracts: 10 },
+    ]);
+
+    const series = calls.find((c) => c.sql.includes('GROUP BY period'))!;
+    expect(series.sql).toContain('JOIN tenders t ON t.id = c.tender_id');
+    expect(series.sql).toContain('t.authority_id = ?');
+    expect(series.args).toEqual(['2020-01-01', 'auth:111']);
+  });
+
+  it('scopes the trend by bidderId through the contract bidder', async () => {
+    const national = await getSpendingTrend(scopedFakeDb([]), { granularity: 'year' });
+    const calls: QueryCall[] = [];
+    const scoped = await getSpendingTrend(scopedFakeDb(calls), {
+      bidderId: 'eik:222',
+      granularity: 'year',
+    });
+
+    expect(scoped.totalValueEur).toBe(2500);
+    expect(scoped.totalValueEur).toBeLessThan(national.totalValueEur);
+    expect(scoped.years).toMatchObject([
+      { year: '2022', valueEur: 2000, contracts: 20 },
+      { year: '2023', valueEur: 500, contracts: 5 },
+    ]);
+
+    const series = calls.find((c) => c.sql.includes('GROUP BY period'))!;
+    expect(series.sql).toContain('c.bidder_id = ?');
+    expect(series.sql).not.toContain('JOIN tenders t');
+    expect(series.args).toEqual(['2020-01-01', 'eik:222']);
   });
 });

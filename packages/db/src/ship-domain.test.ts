@@ -37,9 +37,9 @@ describe('ship-domain', () => {
         workDb,
         `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority line 1
 Authority line 2', '1', 'public');
-         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:2', 'Bidder', '2', '2', 1, 'company');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:200000007', 'Bidder', '200000007', '200000007', 1, 'company');
          INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status) VALUES ('t:1', '1', 'Tender', 'auth:1', 'BGN', 'open', 'awarded');
-         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:2', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:200000007', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
          INSERT INTO amendments (id, natural_key, contract_number, unp, description, source) VALUES ('am:1:C1:A1', 'am:1:C1:A1', 'C1', '1', 'Description line 1
 Description line 2', 'test');
          INSERT INTO nuts_regions (nuts3, nuts3_name, nuts2, nuts2_name, nuts1, nuts1_name)
@@ -63,5 +63,5 @@ Description line 2', 'test');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 240_000);
 });

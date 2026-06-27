@@ -1,15 +1,26 @@
 import { Link } from 'react-router';
 import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
-import { authorityIdFromSlug, getAuthority } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  getAuthority,
+  getAuthoritySingleOffer,
+  getEntityNetwork,
+  getSpendingTrend,
+} from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
+import { DataTable } from '../components/DataTable';
+import { TrendChart } from '../components/TrendChart';
+import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
+import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
+import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -32,18 +43,24 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const eik = params.eik;
   if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
+  const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage] = await Promise.all([
-      getAuthority(db, authorityIdFromSlug(eik)),
+    const [authority, coverage, trend, network, competition] = await Promise.all([
+      getAuthority(db, authorityId),
       getCoverageMeta(db),
+      getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
+      getEntityNetwork(db, { kind: 'authority', id: authorityId }, { includeCenterOptions: false }),
+      getAuthoritySingleOffer(db, authorityId),
     ]);
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage };
+    return { authority, coverage, trend, network, competition };
   });
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
+  const { trend, network, competition } = loaderData;
+  const ct = competition;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -102,6 +119,81 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        <div className="two-col">
+          <Section
+            id="trend"
+            title="Тренд"
+            hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
+          >
+            {trend.points.length >= 2 ? (
+              <>
+                <TrendChart points={trend.points} granularity={trend.granularity} />
+                <div className="mt-8">
+                  <DataTable
+                    columns={trendYearColumns}
+                    rows={trend.years}
+                    getKey={(r) => r.year}
+                    caption="Разходи по години"
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="muted">Няма достатъчно данни за времева графика.</p>
+            )}
+          </Section>
+
+          <Section
+            id="single-offer"
+            title="Една оферта"
+            hint="Дял на договорите с известен брой оферти, възложени само с една оферта."
+          >
+            {ct.contracts > 0 ? (
+              <div>
+                <SingleOfferPortion
+                  valueEur={ct.singleOfferValueEur}
+                  totalEur={ct.valueEur}
+                  singleOffer={ct.singleOffer}
+                  contracts={ct.contracts}
+                  scopeLabel="на поръчките"
+                  captionSuffix="по стойност"
+                />
+                <p className="small muted mt-8">
+                  <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
+                </p>
+              </div>
+            ) : (
+              <p className="muted">Няма договори с известен брой оферти.</p>
+            )}
+          </Section>
+        </div>
+
+        <Section
+          id="network"
+          title="Мрежа"
+          hint={
+            <span>
+              Най-силните преки връзки около институцията и по една следваща връзка за всеки
+              контрагент. <Link to={`/network?center=a:${a.eik}`}>Виж пълната мрежа →</Link>
+            </span>
+          }
+        >
+          {network.center && network.nodes.length >= 2 ? (
+            <>
+              <NetworkGraph data={network} />
+              <div className="sr-only">
+                <DataTable
+                  columns={networkColumns}
+                  rows={networkRows(network)}
+                  getKey={(r) => `${r.from}-${r.to}`}
+                  caption="Връзки в графа"
+                />
+              </div>
+            </>
+          ) : (
+            <p className="muted">Няма достатъчно връзки за граф.</p>
+          )}
+        </Section>
 
         <Section
           id="top-contractors"
@@ -208,8 +300,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           title="Договори"
           hint={
             <span>
-              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} —
-              превключи между най-новите и най-големите по стойност.
+              {count(a.contracts)} {plural(a.contracts, 'договор', 'договора')}, {range} — превключи
+              между най-новите и най-големите по стойност.
             </span>
           }
         >

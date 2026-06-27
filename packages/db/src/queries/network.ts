@@ -18,6 +18,10 @@ export interface NetworkParams {
   id: string;
 }
 
+export interface NetworkQueryOptions {
+  includeCenterOptions?: boolean;
+}
+
 const HOP1 = 6; // direct counterparties shown
 const HOP2_SCAN = HOP1 * 10; // rows scanned for hop 2 before the top-1-per-neighbour reduction
 const PICKER_LIMIT = 12; // entities offered in the centre picker
@@ -92,6 +96,13 @@ async function loadCenterOptions(
   };
 }
 
+function emptyCenterOptions(): {
+  authorities: NetworkCenterOption[];
+  companies: NetworkCenterOption[];
+} {
+  return { authorities: [], companies: [] };
+}
+
 async function loadCenter(
   db: D1Database,
   p: NetworkParams,
@@ -130,7 +141,9 @@ async function loadCenter(
 export async function getEntityNetwork(
   db: D1Database,
   p: NetworkParams | null,
+  options: NetworkQueryOptions = {},
 ): Promise<NetworkData> {
+  const includeCenterOptions = options.includeCenterOptions ?? true;
   if (!p) {
     // Default centre: the biggest authority by spend, so the page shows something on first load.
     const top = await db
@@ -141,7 +154,12 @@ export async function getEntityNetwork(
       )
       .first<{ authority_id: string }>();
     if (!top) {
-      return { center: null, nodes: [], edges: [], centerOptions: await loadCenterOptions(db) };
+      return {
+        center: null,
+        nodes: [],
+        edges: [],
+        centerOptions: includeCenterOptions ? await loadCenterOptions(db) : emptyCenterOptions(),
+      };
     }
     p = { kind: 'authority', id: top.authority_id };
   }
@@ -150,7 +168,7 @@ export async function getEntityNetwork(
   const neighborCol = isAuth ? 'bidder_id' : 'authority_id';
 
   const [centerOptions, hop1res] = await Promise.all([
-    loadCenterOptions(db),
+    includeCenterOptions ? loadCenterOptions(db) : Promise.resolve(emptyCenterOptions()),
     db
       .prepare(
         `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts

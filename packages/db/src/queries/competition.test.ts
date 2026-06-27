@@ -40,6 +40,11 @@ const FLOW_PAIRS = [
   },
 ];
 
+interface QueryCall {
+  sql: string;
+  args: unknown[];
+}
+
 function fakeDb(capture?: string[]): D1Database {
   return {
     prepare(sql: string) {
@@ -57,6 +62,69 @@ function fakeDb(capture?: string[]): D1Database {
         },
         async first<T>() {
           return TOTALS as T;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+const SCOPED_TOTALS = { contracts: 4, single_offer: 1, value_eur: 600, single_value_eur: 150 };
+const SCOPED_SINGLE_OFFER_ROWS = [
+  {
+    authority_id: 'auth:111',
+    name: 'Община Тест',
+    type_group: 'община',
+    contracts: 4,
+    single_offer: 1,
+    value_eur: 600,
+  },
+];
+const SCOPED_CONCENTRATION_ROWS = [
+  {
+    authority_id: 'auth:111',
+    name: 'Община Тест',
+    type_group: 'община',
+    suppliers: 2,
+    contracts: 4,
+    value_eur: 600,
+    hhi: 0.625,
+  },
+];
+const SCOPED_FLOW_PAIRS = [
+  {
+    authority_id: 'auth:111',
+    bidder_id: 'eik:444',
+    authority_name: 'Община Тест',
+    bidder_name: 'Скоп Фирма АД',
+    bidder_kind: 'company',
+    won_eur: 600,
+    contracts: 4,
+  },
+];
+
+function scopedFakeDb(calls: QueryCall[]): D1Database {
+  return {
+    prepare(sql: string) {
+      return {
+        args: [] as unknown[],
+        bind(...args: unknown[]) {
+          this.args = args;
+          calls.push({ sql, args });
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes('FROM sector_totals')) return { results: [{ division: '45' }] as T[] };
+          if (!this.args.includes('auth:111')) {
+            if (sql.includes('FROM flow_pairs')) return { results: FLOW_PAIRS as T[] };
+            if (sql.includes('WITH pair AS')) return { results: CONCENTRATION_ROWS as T[] };
+            return { results: SINGLE_OFFER_ROWS as T[] };
+          }
+          if (sql.includes('JOIN bidders b')) return { results: SCOPED_FLOW_PAIRS as T[] };
+          if (sql.includes('WITH pair AS')) return { results: SCOPED_CONCENTRATION_ROWS as T[] };
+          return { results: SCOPED_SINGLE_OFFER_ROWS as T[] };
+        },
+        async first<T>() {
+          return (this.args.includes('auth:111') ? SCOPED_TOTALS : TOTALS) as T;
         },
       };
     },
@@ -126,5 +194,42 @@ describe('getCompetition', () => {
     expect(totals.singleOfferShare).toBe(0);
     expect(totals.singleOfferValueShare).toBe(0);
     expect(bySingleOffer).toEqual([]);
+  });
+
+  it('scopes competition indicators by authorityId', async () => {
+    const national = await getCompetition(scopedFakeDb([]), { minContracts: 1 });
+    const calls: QueryCall[] = [];
+    const scoped = await getCompetition(scopedFakeDb(calls), {
+      authorityId: 'auth:111',
+      minContracts: 1,
+    });
+
+    expect(scoped.totals).toMatchObject({
+      contracts: 4,
+      singleOffer: 1,
+      singleOfferShare: 0.25,
+      valueEur: 600,
+      singleOfferValueEur: 150,
+      singleOfferValueShare: 0.25,
+    });
+    expect(scoped.totals.valueEur).toBeLessThan(national.totals.valueEur);
+    expect(scoped.bySingleOffer).toHaveLength(1);
+    expect(scoped.bySingleOffer[0]).toMatchObject({
+      slug: '111',
+      contracts: 4,
+      singleOffer: 1,
+      singleOfferShare: 0.25,
+    });
+    expect(scoped.byConcentration[0]).toMatchObject({ slug: '111', suppliers: 2, hhi: 0.625 });
+    expect(scoped.topPairs[0]).toMatchObject({
+      authoritySlug: '111',
+      bidderSlug: '444',
+      wonEur: 600,
+      contracts: 4,
+    });
+
+    expect(calls.some((c) => c.sql.includes('FROM flow_pairs'))).toBe(false);
+    expect(calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
+    expect(calls.filter((c) => c.args.includes('auth:111'))).toHaveLength(4);
   });
 });
