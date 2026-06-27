@@ -94,6 +94,30 @@ Gate-ът е вързан **само в operator скриптовете** (`impo
 
 ---
 
+## 6. Scoped vs full rollup при частично опресняване
+
+`refresh-slice` е scoped — пише само за „touched" entity-та. Но не всички rollup-и са scoped:
+
+| Rollup | Поведение | Глобална консистентност |
+|--------|-----------|--------------------------|
+| `company_totals`, `authority_totals` | **scoped** към touched множеството (`refresh-slice.sql:1262`) | зависи от touched множеството |
+| `home_totals`, `sector_totals`, `facet_counts`, `flow_pairs`, `data_freshness` | **full-recompute** всеки run | по конструкция ✅ |
+
+Touched множеството се строи от **новата** атрибуция (`refresh-slice.sql:1198–1239`), след DELETE+INSERT на договорите. Contract id-то вгражда `bidder_key` (`refresh-slice.sql:527`), а DELETE-ът мачва само по `contract_number + tender` (ред 499).
+
+➡️ **Out-of-window staleness.** Преатрибутиран договор (нов bidder/authority) → ново id → DELETE на стар ред + INSERT на нов. Touched хваща новия entity; **старият** се преизчислява само ако е иначе в прозореца. Иначе scoped-ият му rollup остава stale (брои изтрит договор). Това е тих overcount, независим от observe-vs-gate — проследен в #160.
+
+**Следствие за gate-а при частично опресняване:**
+
+- Slice-local проверка е **негодна** — старият entity по дефиниция е извън touched множеството. Само **глобалната** реконсилиация (`assertIntegrity` Invariant 1) го лови (двойно броене → `SUM(rollup) > SUM(contracts)`).
+- Глобалната сума пак има **#99 blind spot**: симетричната in-window re-attribution запазва грандтотала → минава, докато и двете страници са грешни.
+- В staging→promote модел глобалната проверка иска **композитно четене**: touched(staging) ∪ untouched(live) ∪ contracts; атомична промоция само при pass.
+- `last-known-good` е **чист** тук: само slice-ът се е сменил, тоест „при провал остави live" = напълно консистентен предишен snapshot.
+
+**Операционно:** cron-ът никога не е gate-вал → възможна натрупана staleness. Първо пълен CLI rebuild → зелена базова линия → чак тогава cron gate.
+
+---
+
 ## TL;DR
 
 | Компонент | Реконсилиация | FX | Бележка |
@@ -101,4 +125,4 @@ Gate-ът е вързан **само в operator скриптовете** (`impo
 | CLI (`import.mjs`, `ship-domain.mjs`) | ✅ (но post-publish) | ✅ | „ship-and-alert" |
 | **Worker cron (`sigma-etl`)** | ❌ | ❌ | автономният път, без предпазна мрежа |
 
-Изводи и решение → #139 (observe), #154 (gate преди публикуване), #158 (FX стъпка).
+Изводи и решение → #139 (observe), #154 (gate преди публикуване), #158 (FX стъпка), #160 (scoped rollup staleness), #99 (golden totals).
