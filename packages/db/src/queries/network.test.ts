@@ -190,4 +190,40 @@ describe('getEntityCounterparties', () => {
     );
     expect(page.total).toBe(7); // the passed value, not the fake's COUNT(*) sentinel (42)
   });
+
+  it('walks forward then backward through the keyset (before/reverse path)', async () => {
+    const p = { kind: 'authority', id: 'auth:C' } as const;
+    // page 1 (no cursor) → has a forward cursor
+    const page1 = await getEntityCounterparties(fakeDb(), p, { pageSize: 1 });
+    expect(page1.rows).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+    // page 2 (forward) → has a backward cursor
+    const page2 = await getEntityCounterparties(fakeDb(), p, {
+      pageSize: 1,
+      cursor: page1.nextCursor,
+    });
+    expect(page2.prevCursor).not.toBeNull();
+    // back (a `before` cursor) → exercises ks.reverse + rows.reverse() without throwing
+    const back = await getEntityCounterparties(fakeDb(), p, {
+      pageSize: 1,
+      cursor: page2.prevCursor,
+    });
+    expect(back.rows).toHaveLength(1);
+  });
+
+  it('drops a cursor minted for a different centre (cursor is centre-bound)', async () => {
+    // A cursor from centre auth:C must not paginate centre auth:X — the signature mismatch resets it.
+    const fromC = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { pageSize: 1 },
+    );
+    const onX = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:X' },
+      { pageSize: 1, cursor: fromC.nextCursor },
+    );
+    // Decodes to null → treated as page 1 (no Prev), not a mis-anchored page.
+    expect(onX.prevCursor).toBeNull();
+  });
 });

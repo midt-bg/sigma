@@ -32,7 +32,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const center = parseCenter(sp.get('center'));
   const db = context.cloudflare.env.DB;
-  const data = await getEntityNetwork(db, center);
+  // `g=1` marks a client re-centre fetch (NetworkGraph.recentre): it consumes only the graph data, so
+  // skip the centre-picker options (unchanged) and the counterparties page (the address bar — and the
+  // table — don't change on re-centre). Avoids paying for queries the result throws away.
+  const graphOnly = sp.get('g') === '1';
+  const data = await getEntityNetwork(db, center, { includeCenterOptions: !graphOnly });
   // A well-formed but non-existent ?center should 404 like the other entity pages, not render an
   // empty 200 that then gets edge-cached. A missing or malformed ?center keeps the default centre.
   if (center && !data.center) {
@@ -41,14 +45,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Exhaustive, paginated counterparty list for the resolved centre (`data.center` is the effective
   // centre — the default hub when ?center is absent). The graph caps at the top few; this is the full
   // set, so a big hub's hundreds of counterparties are all reachable below the graph.
-  const counterparties = data.center
-    ? await getEntityCounterparties(
-        db,
-        { kind: data.center.kind, id: data.center.id },
-        // Reuse the count getEntityNetwork already computed — no second identical COUNT(*) on /network.
-        { cursor: sp.get('cursor'), pageSize: PAGE_SIZE.network, total: data.counterpartyTotal },
-      )
-    : null;
+  const counterparties =
+    !graphOnly && data.center
+      ? await getEntityCounterparties(
+          db,
+          { kind: data.center.kind, id: data.center.id },
+          // Reuse the count getEntityNetwork already computed — no second identical COUNT(*) on /network.
+          { cursor: sp.get('cursor'), pageSize: PAGE_SIZE.network, total: data.counterpartyTotal },
+        )
+      : null;
   return { data, counterparties };
 }
 

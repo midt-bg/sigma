@@ -166,7 +166,10 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
   const recentre = (n: NetworkNode) => {
     setFailed(false);
     pending.current = true;
-    fetcher.load(`/network?center=${centerToken(n)}`);
+    // `g=1` = graph-only fetch: the loader skips the centre-picker options and the paginated
+    // counterparties (both unchanged by a re-centre and never read from this result), so a node click
+    // doesn't pay for queries it throws away.
+    fetcher.load(`/network?center=${centerToken(n)}&g=1`);
   };
   const reset = () => {
     pending.current = false;
@@ -360,6 +363,10 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                     key={n.id}
                     href={heroHref(n)}
                     aria-label={`Пренасочи графа към ${n.label}`}
+                    // Off the keyboard tab path: a `role="img"` SVG must not contain interactive
+                    // descendants, and the relations table below is the canonical keyboard/AT path. The
+                    // pointer click + no-JS <a> fallback still work; only sequential focus is removed.
+                    tabIndex={-1}
                     data-node-id={n.id}
                     data-draggable="1"
                     className={nodeClass(n.id)}
@@ -438,10 +445,9 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
         <p className="net-caption muted">
           Графиката показва {count(directShown)} от общо {count(counterpartyTotal)} връзки
           (най-големите по стойност).{' '}
-          <a href={`/network?center=${encodeURIComponent(centerToken(center))}#links`}>
-            Виж всички
-          </a>
-          .
+          {/* Raw token (no encodeURIComponent), matching recentre() — the `a:`/`c:` grammar is
+              provably URL-safe (digits or base64url; the only `:` is the separator the loader splits on). */}
+          <a href={`/network?center=${centerToken(center)}#links`}>Виж всички</a>.
         </p>
       )}
     </div>

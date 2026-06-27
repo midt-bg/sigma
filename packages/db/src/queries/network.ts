@@ -12,7 +12,7 @@ import type {
 } from '@sigma/api-contract';
 import { cleanName, entityName } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
-import { keyset, pageCursors } from './keyset';
+import { filterSignature, keyset, pageCursors } from './keyset';
 
 export type NetworkCenterKind = 'authority' | 'company';
 export interface NetworkParams {
@@ -261,11 +261,15 @@ export async function getEntityCounterparties(
   const pageSize = opts.pageSize ?? COUNTERPARTY_PAGE_SIZE;
 
   // Keyset on (won_eur desc, <neighbour id>) — O(1) at any depth, same scheme as the contracts list.
+  // Bind the cursor to this centre: a cursor minted for centre A is structurally valid on centre B
+  // (same idCol), so without this a shared/hand-edited `?center=B&cursor=<from A>` would mispaginate
+  // instead of resetting. The signature mismatch makes such a cursor decode to null → page 1.
   const ks = keyset({
     sortCol: 'won_eur',
     idCol: neighborCol,
     dir: 'desc',
     cursor: opts.cursor,
+    filterSignature: filterSignature({ center: p.id }),
     allowedIdCols: ['authority_id', 'bidder_id'],
   });
   const where = ks.whereSql ? `${centerCol} = ? AND ${ks.whereSql}` : `${centerCol} = ?`;
