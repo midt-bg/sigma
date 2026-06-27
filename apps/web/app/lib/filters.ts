@@ -215,6 +215,14 @@ export function pageNav(opts: {
     pageCount,
     prevHref:
       page > 1 && prevCursor ? withParams(base, { cursor: prevCursor, page: page - 1 }) : null,
-    nextHref: nextCursor ? withParams(base, { cursor: nextCursor, page: page + 1 }) : null,
+    // Gate Next on the displayed page too, not only on the cursor. When the URL's `page` marker has
+    // drifted to (or past) pageCount while the keyset still yields rows, the old `nextCursor ? …`
+    // kept Next enabled and emitted page+1 — which re-clamps to pageCount, so „Страница N от M" and
+    // the rank column froze while the rows kept advancing (#87). Stopping at the displayed last page
+    // keeps the marker, the rank, and the rows in sync.
+    nextHref:
+      nextCursor && page < pageCount
+        ? withParams(base, { cursor: nextCursor, page: page + 1 })
+        : null,
   };
 }

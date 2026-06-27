@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
-import { companyListParams, getMulti, leaderboardRankOffset, MAX_MULTI_VALUES } from './filters';
+import {
+  companyListParams,
+  getMulti,
+  leaderboardRankOffset,
+  MAX_MULTI_VALUES,
+  pageNav,
+} from './filters';
 
 describe('getMulti', () => {
   it('caps repeated and CSV multi-value params', () => {
@@ -55,5 +61,57 @@ describe('leaderboardRankOffset', () => {
     expect(leaderboardRankOffset(1, 25)).toBe(0);
     expect(leaderboardRankOffset(2, 25)).toBe(25);
     expect(leaderboardRankOffset(3, 15)).toBe(30);
+  });
+});
+
+describe('pageNav', () => {
+  const sp = (qs: string) => new URLSearchParams(qs);
+
+  it('forces page 1 and offers Next when there is no cursor', () => {
+    const nav = pageNav({ base: sp(''), total: 100, pageSize: 25, nextCursor: 'c2', prevCursor: null });
+    expect(nav.page).toBe(1);
+    expect(nav.pageCount).toBe(4);
+    expect(nav.prevHref).toBeNull();
+    expect(nav.nextHref).toContain('page=2');
+  });
+
+  it('keeps Next enabled mid-list and advances both cursor and page marker', () => {
+    const nav = pageNav({
+      base: sp('cursor=c2&page=2'),
+      total: 100,
+      pageSize: 25,
+      nextCursor: 'c3',
+      prevCursor: 'c1',
+    });
+    expect(nav.page).toBe(2);
+    expect(nav.nextHref).toContain('page=3');
+    expect(nav.prevHref).toContain('page=1');
+  });
+
+  it('disables Next on the displayed last page even while a cursor remains (#87)', () => {
+    // A stale/forged ?page beyond pageCount clamps to pageCount; Next must not keep walking past it
+    // with a frozen „N от M" / rank. Before the fix nextHref was non-null here.
+    const nav = pageNav({
+      base: sp('cursor=c4&page=9'),
+      total: 100,
+      pageSize: 25,
+      nextCursor: 'c5',
+      prevCursor: 'c3',
+    });
+    expect(nav.pageCount).toBe(4);
+    expect(nav.page).toBe(4); // clamped to pageCount
+    expect(nav.nextHref).toBeNull();
+    expect(nav.prevHref).not.toBeNull();
+  });
+
+  it('disables Next at the true end when the cursor is exhausted', () => {
+    const nav = pageNav({
+      base: sp('cursor=c4&page=4'),
+      total: 100,
+      pageSize: 25,
+      nextCursor: null,
+      prevCursor: 'c3',
+    });
+    expect(nav.nextHref).toBeNull();
   });
 });
