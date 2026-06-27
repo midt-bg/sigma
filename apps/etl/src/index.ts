@@ -9,6 +9,7 @@ import {
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
 import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { runServedIntegrityGate } from './integrity';
 
 export interface Env {
   DB: D1Database;
@@ -126,6 +127,17 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       }
       derived = await step.do('derive-slice:count', async () =>
         refreshDerivedContractCount(this.env.DB),
+      );
+
+      // Reconciliation gate (#97) on the served D1 the refresh just wrote — the CLI paths gate every
+      // derive, but this steady-state path did not. A real violation fails the step (surfaced in
+      // Cloudflare observability) rather than silently serving drifted numbers. See issue #154.
+      await step.do('integrity-gate', async () =>
+        runServedIntegrityGate(this.env.DB, {
+          info: (e) => console.log(JSON.stringify({ level: 'info', ...e })),
+          warn: (e) => console.warn(JSON.stringify({ level: 'warn', ...e })),
+          error: (e) => console.error(JSON.stringify({ level: 'error', ...e })),
+        }),
       );
 
       return { ...plan, days: results.length, staged, derived };
