@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, moneyBare } from '@sigma/shared';
-import { getAuthorityFacets, listAuthorities, normalizeAuthoritySort } from '@sigma/db';
+import { getAuthorityFacets, listAuthorities } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -11,6 +11,7 @@ import { Pagination } from '../components/Pagination';
 import { DataTable, type Column } from '../components/DataTable';
 import { Callout, Chip } from '../components/ui';
 import {
+  authorityListFilters,
   buildSectorGroup,
   getMulti,
   leaderboardRankOffset,
@@ -37,13 +38,9 @@ export function headers() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
+  // Shared parser so the HTML list and CSV export apply an identical filter set (#138).
   const params = {
-    sort: normalizeAuthoritySort(sp.get('sort')),
-    types: getMulti(sp, 'type'),
-    sectors: getMulti(sp, 'sector'),
-    years: getMulti(sp, 'year'),
-    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
-    q: sp.get('q'),
+    ...authorityListFilters(sp),
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.authorities,
   };

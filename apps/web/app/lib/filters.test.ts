@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
 import {
+  authorityListFilters,
   companyListParams,
   contractListFilters,
   getMulti,
@@ -24,6 +25,21 @@ describe('contractListFilters', () => {
 
   it('normalises an unknown sort to the default rather than passing it through', () => {
     expect(contractListFilters(new URLSearchParams('sort=bogus')).sort).toBe('value-desc');
+  });
+});
+
+describe('authorityListFilters', () => {
+  it('parses the same filter set the HTML list and CSV export must share (#138)', () => {
+    const f = authorityListFilters(
+      new URLSearchParams('type=municipality&sector=45&year=2025&eu=eu&q=път'),
+    );
+    expect(f).toMatchObject({
+      types: ['municipality'],
+      sectors: ['45'],
+      years: ['2025'],
+      eu: 'eu',
+      q: 'път',
+    });
   });
 });
 

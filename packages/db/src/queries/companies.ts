@@ -33,6 +33,16 @@ export const COMPANY_FILTER_KEYS = [
   'q',
 ] as const satisfies readonly (keyof CompanyListParams)[];
 
+// Compile-time completeness guard (issue #138 bug class — see contracts.ts). Every CompanyListParams
+// field except sort/pagination must be declared in COMPANY_FILTER_KEYS, so a new filter can't reach the
+// query without entering the cache signature + the csv-export classifier. If this errors, add the new
+// key to COMPANY_FILTER_KEYS.
+type CompanyFilterField = Exclude<keyof CompanyListParams, 'sort' | 'cursor' | 'pageSize'>;
+const _companyFilterKeysComplete: CompanyFilterField extends (typeof COMPANY_FILTER_KEYS)[number]
+  ? true
+  : never = true;
+void _companyFilterKeysComplete;
+
 const SORTS: Record<CompanySort, { col: string; dir: 'asc' | 'desc' }> = lookup({
   won: { col: 'won_eur', dir: 'desc' },
   count: { col: 'contracts', dir: 'desc' },

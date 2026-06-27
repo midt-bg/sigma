@@ -31,6 +31,16 @@ export const AUTHORITY_FILTER_KEYS = [
   'q',
 ] as const satisfies readonly (keyof AuthorityListParams)[];
 
+// Compile-time completeness guard (issue #138 bug class — see contracts.ts). Every AuthorityListParams
+// field except sort/pagination must be declared in AUTHORITY_FILTER_KEYS, so a new filter can't reach
+// the query without entering the cache signature + the csv-export classifier. If this errors, add the
+// new key to AUTHORITY_FILTER_KEYS.
+type AuthorityFilterField = Exclude<keyof AuthorityListParams, 'sort' | 'cursor' | 'pageSize'>;
+const _authorityFilterKeysComplete: AuthorityFilterField extends (typeof AUTHORITY_FILTER_KEYS)[number]
+  ? true
+  : never = true;
+void _authorityFilterKeysComplete;
+
 const SORTS: Record<AuthoritySort, { col: string; dir: 'asc' | 'desc' }> = lookup({
   spent: { col: 'spent_eur', dir: 'desc' },
   count: { col: 'contracts', dir: 'desc' },

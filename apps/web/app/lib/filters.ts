@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import { normalizeCompanySort, normalizeContractSort } from '@sigma/db';
+import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -50,6 +50,22 @@ export function contractListFilters(sp: URLSearchParams) {
     bidder: sp.get('bidder'),
     q: sp.get('q'),
     bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+  };
+}
+
+/**
+ * The authorities list filter set — the single source of truth shared by /authorities and
+ * /authorities.csv (same #138 drift-prevention rationale as contractListFilters). Only pagination is
+ * route-specific. Keep aligned with @sigma/db AUTHORITY_FILTER_KEYS.
+ */
+export function authorityListFilters(sp: URLSearchParams) {
+  return {
+    sort: normalizeAuthoritySort(sp.get('sort')),
+    types: getMulti(sp, 'type'),
+    sectors: getMulti(sp, 'sector'),
+    years: getMulti(sp, 'year'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    q: sp.get('q'),
   };
 }
 
