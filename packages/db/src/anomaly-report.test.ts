@@ -1,0 +1,136 @@
+/// <reference types="node" />
+// Per-refresh anomaly report (#100) — exercises the PURE detection logic with plain fixture arrays
+// and an injected runner, so it runs locally with no sqlite (unlike the integrity-gate test, whose
+// SQL is exercised against the sqlite3 CLI). The SQL fetch itself is trivial (SELECT only); all the
+// statistics + thresholds under test live in JS here.
+import { describe, expect, it } from 'vitest';
+import {
+  ANOMALY_DEFAULTS,
+  buildAnomalyReport,
+  cohortStats,
+  cpvCohortOutliers,
+  decimalShiftSuspects,
+  formatAnomalyReport,
+  percentile,
+  type AnomalyRunner,
+} from '../../../scripts/anomaly-report.mjs';
+
+describe('percentile', () => {
+  it('interpolates and clamps', () => {
+    expect(percentile([], 0.5)).toBe(0);
+    expect(percentile([42], 0.95)).toBe(42);
+    expect(percentile([0, 10], 0.5)).toBe(5);
+    expect(percentile([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5);
+    expect(percentile([5, 1, 4, 2, 3], 0)).toBe(1); // sorts internally
+  });
+});
+
+// A realistically-sized cohort of `n` "normal" contracts TIGHTLY clustered around `base` in one CPV
+// division. Real divisions hold hundreds–thousands of rows, so a couple of outliers don't move p95;
+// the fixture must mirror that (a tiny cohort would let the outliers inflate their own p95 and dodge
+// detection — which is exactly why minCohort exists).
+function cohort(
+  division: string,
+  n: number,
+  base: number,
+): { id: string; division: string; amountEur: number }[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `${division}-${i}`,
+    division,
+    amountEur: base + (i % 25) * (base * 0.01), // clustered in [base, base + 0.24·base]
+  }));
+}
+
+describe('cohortStats', () => {
+  it('skips null/blank divisions and non-finite amounts', () => {
+    const stats = cohortStats([
+      { division: '45', amountEur: 100 },
+      { division: '', amountEur: 100 },
+      { division: '45', amountEur: Number.NaN },
+      { division: '45', amountEur: 200 },
+    ]);
+    expect(stats.get('45')!.count).toBe(2);
+    expect(stats.has('')).toBe(false);
+  });
+});
+
+describe('cpvCohortOutliers', () => {
+  it('flags a gross outlier above cohortFactor × p95 and sorts by ratio', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000), // p95 ≈ 138k
+      { id: 'big', division: '45', amountEur: 50_000_000 }, // ~360× p95
+      { id: 'bigger', division: '45', amountEur: 90_000_000 },
+    ];
+    const out = cpvCohortOutliers(rows);
+    expect(out.total).toBe(2);
+    expect(out.examples[0].id).toBe('bigger'); // highest ratio first
+    expect(out.examples[0].ratio).toBeGreaterThan(ANOMALY_DEFAULTS.cohortFactor);
+  });
+
+  it('does NOT flag when the cohort is too small to trust', () => {
+    const rows = [
+      { id: 'a', division: '99', amountEur: 100 },
+      { id: 'b', division: '99', amountEur: 200 },
+      { id: 'huge', division: '99', amountEur: 100_000_000 },
+    ];
+    expect(cpvCohortOutliers(rows).total).toBe(0); // cohort < minCohort(12)
+  });
+
+  it('does NOT flag a merely-large (within factor) contract', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000),
+      { id: 'large', division: '45', amountEur: 1_000_000 },
+    ];
+    expect(cpvCohortOutliers(rows).total).toBe(0); // ~7× p95 < 25×
+  });
+});
+
+describe('decimalShiftSuspects', () => {
+  it('flags a gross outlier whose ÷10 or ÷100 lands back near the cohort median', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000), // median ≈ 119k
+      { id: 'shift100', division: '45', amountEur: 100_000 * 100 }, // ÷100 → 100k ≈ median
+    ];
+    const out = decimalShiftSuspects(rows);
+    expect(out.total).toBe(1);
+    expect(out.examples[0]).toMatchObject({ id: 'shift100', rescaledBy: 100 });
+  });
+
+  it('does NOT flag a gross outlier that stays gross after rescale', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000),
+      { id: 'truly-huge', division: '45', amountEur: 5_000_000_000 },
+    ];
+    // ÷100 = 50M, still ≫ median×8 → not a decimal shift, just huge
+    expect(decimalShiftSuspects(rows).total).toBe(0);
+  });
+});
+
+describe('buildAnomalyReport / formatAnomalyReport', () => {
+  const fixtureRows = [
+    ...cohort('45', 200, 100_000),
+    { id: 'big', division: '45', amountEur: 90_000_000 },
+    { id: 'shift', division: '45', amountEur: 100_000 * 100 },
+  ];
+  const runner: AnomalyRunner = (sql: string) =>
+    sql.includes('FROM contracts') ? (fixtureRows as Array<Record<string, unknown>>) : [];
+
+  it('assembles findings without throwing (observe, not gate)', () => {
+    const report = buildAnomalyReport(runner);
+    expect(report.sampled).toBe(fixtureRows.length);
+    expect(report.findings.map((f) => f.key)).toEqual(['cpv-cohort-outlier', 'decimal-shift']);
+    expect(report.total).toBeGreaterThan(0);
+  });
+
+  it('formats a bounded, human-readable summary', () => {
+    const text = formatAnomalyReport(buildAnomalyReport(runner));
+    expect(text).toContain('anomaly report');
+    expect(text).toMatch(/cpv-cohort-outlier/);
+    expect(text.split('\n').length).toBeLessThan(40); // bounded
+  });
+
+  it('tolerates an empty corpus', () => {
+    const empty = buildAnomalyReport(() => []);
+    expect(empty).toMatchObject({ sampled: 0, total: 0 });
+  });
+});
