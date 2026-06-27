@@ -53,6 +53,28 @@ const HOP2 = [
   },
 ];
 
+// Counterparties of a COMPANY centre (eik:A): the authorities that paid it, ordered by won_eur desc.
+const COMP_COUNTERPARTIES = [
+  {
+    authority_id: 'auth:C',
+    bidder_id: 'eik:A',
+    authority_name: 'Център Институция',
+    bidder_name: 'Фирма А',
+    bidder_kind: 'company',
+    won_eur: 5000,
+    contracts: 5,
+  },
+  {
+    authority_id: 'auth:X',
+    bidder_id: 'eik:A',
+    authority_name: 'Друга Институция',
+    bidder_name: 'Фирма А',
+    bidder_kind: 'company',
+    won_eur: 2000,
+    contracts: 2,
+  },
+];
+
 function fakeDb(): D1Database {
   return {
     prepare(sql: string) {
@@ -63,8 +85,12 @@ function fakeDb(): D1Database {
         async all<T>() {
           if (sql.includes('ORDER BY spent_eur')) return { results: PICKER_AUTH as T[] };
           if (sql.includes('FROM company_totals')) return { results: PICKER_COMP as T[] };
-          // The counterparties keyset query is the only flow_pairs read that tiebreaks on the id
-          // column ("won_eur DESC, bidder_id"); the hop-1 graph read orders by "won_eur DESC LIMIT".
+          // The counterparties keyset query tiebreaks on the neighbour id column: for an authority
+          // centre that is "won_eur DESC, bidder_id"; for a COMPANY centre it is "won_eur DESC,
+          // authority_id" (the other ORDER BY the reviewer flagged as untested). The hop-1 graph read
+          // orders by "won_eur DESC LIMIT" (no id tiebreak).
+          if (sql.includes('won_eur DESC, authority_id'))
+            return { results: COMP_COUNTERPARTIES as T[] };
           if (sql.includes('won_eur DESC, bidder_id')) return { results: HOP1 as T[] };
           if (sql.includes('FROM flow_pairs WHERE authority_id = ?'))
             return { results: HOP1 as T[] };
@@ -145,5 +171,23 @@ describe('getEntityCounterparties', () => {
     );
     expect(page.rows).toHaveLength(1);
     expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('handles a company centre (other neighbour column + ORDER BY)', async () => {
+    // Company centre keysets on authority_id, not bidder_id — exercises the previously-untested path.
+    const page = await getEntityCounterparties(fakeDb(), { kind: 'company', id: 'eik:A' });
+    expect(page.rows).toHaveLength(2);
+    expect(page.rows.map((r) => r.authoritySlug)).toEqual(['C', 'X']);
+    expect(page.rows[0]).toMatchObject({ companySlug: 'A', valueEur: 5000 });
+  });
+
+  it('reuses a caller-supplied total instead of a second COUNT(*)', async () => {
+    // The /network route passes the count getEntityNetwork already ran (avoids a duplicate D1 scan).
+    const page = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { total: 7 },
+    );
+    expect(page.total).toBe(7); // the passed value, not the fake's COUNT(*) sentinel (42)
   });
 });

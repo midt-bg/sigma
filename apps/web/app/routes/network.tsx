@@ -45,7 +45,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ? await getEntityCounterparties(
         db,
         { kind: data.center.kind, id: data.center.id },
-        { cursor: sp.get('cursor'), pageSize: PAGE_SIZE.network },
+        // Reuse the count getEntityNetwork already computed — no second identical COUNT(*) on /network.
+        { cursor: sp.get('cursor'), pageSize: PAGE_SIZE.network, total: data.counterpartyTotal },
       )
     : null;
   return { data, counterparties };
@@ -138,7 +139,9 @@ export default function Network({ loaderData }: Route.ComponentProps) {
                 <DataTable
                   columns={networkColumns}
                   rows={counterpartyRows(counterparties)}
-                  getKey={(r) => `${r.from}-${r.to}`}
+                  // Key on the slug hrefs, not the display labels — two different entities can share a
+                  // de-branded name and would otherwise collide (React key warning).
+                  getKey={(r) => `${r.fromHref}-${r.toHref}`}
                   caption="Всички връзки"
                 />
                 {cpNav && counterparties.total > PAGE_SIZE.network && (
