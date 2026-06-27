@@ -33,6 +33,24 @@ export function checkStagingReconciliation(runner: IntegrityRunner): Promise<Int
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;
 
+export interface IntegritySummary {
+  /** true when no check is a hard failure (warnings/skips don't break the gate) */
+  ok: boolean;
+  violations: IntegrityResult[];
+  warned: IntegrityResult[];
+  ran: number;
+  skipped: number;
+  /** canonical failure message, or null when ok — the single source both callers report */
+  message: string | null;
+}
+
+/** Reduce check results to the gate verdict + canonical message (shared by assertIntegrity and the
+ *  apps/etl Worker gate, so the two never diverge). */
+export function summarizeIntegrity(
+  results: IntegrityResult[],
+  label?: string,
+): IntegritySummary;
+
 export interface AssertIntegrityOptions {
   /** label shown in the failure line, identifying the call site/backend */
   label?: string;

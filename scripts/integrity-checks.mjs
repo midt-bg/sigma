@@ -347,28 +347,43 @@ export async function runIntegrityChecks(runner) {
   return results;
 }
 
+// Reduce raw check results to the gate verdict + a single canonical failure message, so every caller
+// (CLI assertIntegrity, the apps/etl Worker gate) reports the SAME decision and message instead of
+// re-deriving it. `violations` are the hard failures; `warned` are the non-gating WARNs.
+export function summarizeIntegrity(results, label = 'integrity') {
+  const violations = results.filter((r) => !r.skipped && !r.ok);
+  const warned = results.filter((r) => r.warn);
+  const ran = results.filter((r) => !r.skipped).length;
+  return {
+    ok: violations.length === 0,
+    violations,
+    warned,
+    ran,
+    skipped: results.length - ran,
+    message:
+      violations.length === 0
+        ? null
+        : `integrity gate failed: ${violations.length} of ${results.length} checks broke (${label}).`,
+  };
+}
+
 // Run all checks, print a one-line summary per check, and FAIL non-zero on any real violation.
 // `exit: true` (default) mirrors assertFxPopulated — print to stderr and process.exit(1). Tests pass
 // `exit: false` to get a thrown Error instead (the assertion still fails the same way).
 export async function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
   const results = await runIntegrityChecks(runner);
-  let failed = 0;
   for (const r of results) {
     const tag = r.skipped ? 'SKIP' : r.warn ? 'WARN' : r.ok ? ' ok ' : 'FAIL';
     console.log(`   [${tag}] ${r.name}: ${r.detail}`);
-    if (!r.skipped && !r.ok) failed += 1;
   }
-  if (failed > 0) {
-    const msg = `!! integrity gate failed: ${failed} of ${results.length} checks broke (${label}).`;
-    console.error(msg);
+  const summary = summarizeIntegrity(results, label);
+  if (!summary.ok) {
+    console.error(`!! ${summary.message}`);
     if (exit) process.exit(1);
-    throw new Error(msg);
+    throw new Error(summary.message);
   }
-  const ran = results.filter((r) => !r.skipped).length;
-  const skipped = results.length - ran;
-  const warned = results.filter((r) => r.warn).length;
   console.log(
-    `==> integrity gate passed (${ran} run, ${skipped} skipped${warned ? `, ${warned} warned` : ''}).`,
+    `==> integrity gate passed (${summary.ran} run, ${summary.skipped} skipped${summary.warned.length ? `, ${summary.warned.length} warned` : ''}).`,
   );
   return results;
 }
