@@ -51,7 +51,11 @@
 - Добавяйте адитивни, идемпотентни миграции (`IF NOT EXISTS`), които преживяват ship-а
   (`DELETE`+`INSERT`, не `DROP TABLE`).
 
-## AI асистент (`/assistant/chat`)
+## AI асистент (`/assistant/chat`) — планиран
+
+> Този раздел е **изпреварващ стандарт** за планирания асистент (виж
+> [`spec/ai-assistant.md`](spec/ai-assistant.md)). Маршрутът `/assistant/chat`, `run_sql` и
+> `eop_fetch` **още не съществуват** в кода — правилата важат, когато слоят се появи.
 
 - Rate-limit **преди** embeddings/agent-loop, `failClosed: true` (503 при липсваща връзка).
 - CSRF guard: изисквай `POST` + `Content-Type: application/json` + `Sec-Fetch-Site: same-origin`.
