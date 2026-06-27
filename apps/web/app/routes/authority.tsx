@@ -10,6 +10,7 @@ import {
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -90,7 +91,18 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           }
           title={a.name}
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
-        />
+        >
+          <div className="header-actions">
+            <CopyCitationButton
+              textToCopy={[
+                `Институция: ${a.name}`,
+                `Общо похарчено: ${money(a.spentEur)} евро`,
+                `Брой договори: ${count(a.contracts)}`,
+                `Връзка: https://sigma.midt.bg/authorities/${a.slug}`,
+              ].join('\n')}
+            />
+          </div>
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"
