@@ -11,7 +11,7 @@ import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { PAGE_SIZE, pageNav } from '../lib/filters';
 import { centerToken, parseCenter } from '../lib/network-center';
-import { counterpartyRows, networkColumns, networkRows } from '../lib/entity-tables';
+import { counterpartyRows, networkColumns } from '../lib/entity-tables';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -123,35 +123,26 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               <NetworkGraph data={data} />
             </Section>
 
-            <Section id="links" title="Връзки в графа">
-              <DataTable
-                columns={networkColumns}
-                rows={networkRows(data)}
-                getKey={(r) => `${r.from}-${r.to}`}
-                caption="Връзки в графа"
-              />
-            </Section>
-
             {counterparties && counterparties.total > 0 && (
               <Section
-                id="counterparties"
-                title={`Всички преки контрагенти (${count(counterparties.total)})`}
+                id="links"
+                title={`Всички връзки (${count(counterparties.total)})`}
                 hint={
                   counterparties.total > data.edges.filter((e) => e.from === data.center?.id).length
                     ? `Графиката показва само най-големите по стойност; тук е пълният списък с ${count(
                         counterparties.total,
-                      )} преки контрагента, по страници.`
-                    : 'Пълният списък с преките контрагенти на избраната същност.'
+                      )} връзки, по страници.`
+                    : 'Пълният списък с връзките на избраната същност.'
                 }
               >
                 <DataTable
                   columns={networkColumns}
                   rows={counterpartyRows(counterparties)}
                   getKey={(r) => `${r.from}-${r.to}`}
-                  caption="Всички преки контрагенти"
+                  caption="Всички връзки"
                 />
                 {cpNav && counterparties.total > PAGE_SIZE.network && (
-                  <Pagination nav={cpNav} pageSize={PAGE_SIZE.network} unit="контрагента" />
+                  <Pagination nav={cpNav} pageSize={PAGE_SIZE.network} unit="връзки" />
                 )}
               </Section>
             )}
