@@ -1,14 +1,14 @@
 import { Form, Link, useNavigation, useSubmit } from 'react-router';
-import { count, money } from '@sigma/shared';
 import { getEntityNetwork } from '@sigma/db';
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { DataTable, type Column } from '../components/DataTable';
+import { DataTable } from '../components/DataTable';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { centerToken, parseCenter } from '../lib/network-center';
+import { networkColumns, networkRows } from '../lib/entity-tables';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -36,47 +36,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return { data };
 }
 
-interface LinkRow {
-  from: string;
-  to: string;
-  valueEur: number;
-  contracts: number;
-}
-
 export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
   const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const centerValue = data.center ? centerToken(data.center) : '';
-
-  const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
-  // Normalise each row to the real procurement direction (authority -> company), regardless of how the
-  // edge is oriented in the graph topology: the institution awards and pays the company, never the
-  // reverse. Every edge connects one authority and one company.
-  const rows: LinkRow[] = data.edges.map((e) => {
-    const a = nodeById.get(e.from);
-    const b = nodeById.get(e.to);
-    const authority = a?.kind === 'authority' ? a : b;
-    const company = a?.kind === 'authority' ? b : a;
-    return {
-      from: authority?.label ?? e.from,
-      to: company?.label ?? e.to,
-      valueEur: e.valueEur,
-      contracts: e.contracts,
-    };
-  });
-  const columns: Column<LinkRow>[] = [
-    { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-    { key: 'to', header: 'Към', cell: (r) => r.to },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
-    {
-      key: 'contracts',
-      header: 'Договори',
-      align: 'num',
-      secondary: true,
-      cell: (r) => count(r.contracts),
-    },
-  ];
 
   return (
     <>
@@ -136,8 +100,8 @@ export default function Network({ loaderData }: Route.ComponentProps) {
 
             <Section id="links" title="Връзки в графа">
               <DataTable
-                columns={columns}
-                rows={rows}
+                columns={networkColumns}
+                rows={networkRows(data)}
                 getKey={(r) => `${r.from}-${r.to}`}
                 caption="Връзки в графа"
               />

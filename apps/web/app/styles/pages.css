@@ -496,6 +496,137 @@
   height: auto;
   display: block;
 }
+/* Hydrated force view: the canvas is a pan/zoom surface; nodes are draggable. */
+.net-canvas {
+  position: relative;
+}
+.network-svg.is-interactive {
+  cursor: grab;
+  touch-action: none; /* let d3-zoom own touch gestures instead of the page scrolling */
+}
+.network-svg.is-interactive:active {
+  cursor: grabbing;
+}
+.network-svg.is-interactive a[data-draggable='1'] {
+  cursor: grab;
+}
+/* Zoom controls — overlaid top-right of the canvas, client-only (rendered after hydration). */
+.net-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.net-zoom button {
+  width: 30px;
+  height: 30px;
+  font: 600 16px var(--font-mono, monospace);
+  line-height: 1;
+  color: var(--ink, #222);
+  background: var(--paper, #fff);
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.net-zoom button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Graph + side Information Card layout (mirrors /map). Card wraps under the graph on narrow screens. */
+.net-explore {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.net-explore .net-canvas {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+/* Full-screen: the widget fills the viewport on a paper background; the graph grows to use the height,
+   the card sits beside it, and the controls/legend stay usable. */
+.net-graph:fullscreen {
+  background: var(--paper);
+  padding: 24px;
+  overflow: auto;
+}
+.net-graph:fullscreen .net-explore {
+  min-height: calc(100vh - 160px);
+}
+.net-graph:fullscreen .net-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.net-graph:fullscreen .network-svg {
+  max-height: calc(100vh - 180px);
+}
+.net-card {
+  flex: 0 0 240px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+.net-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.net-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.net-card-stats {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 10px;
+}
+.net-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.net-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.net-card-actions {
+  margin: 0;
+}
+.net-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
+}
+/* Hover-to-explore emphasis: dim everything but the focused node + its neighbours; lift the focus. */
+.network-svg.is-hovering .is-dim {
+  opacity: 0.18;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .network-svg .node,
+  .network-svg .edge,
+  .network-svg .node-label,
+  .network-svg .edge-label,
+  .network-svg g[class],
+  .network-svg a {
+    transition: opacity 0.12s ease;
+  }
+}
+.network-svg .is-focus .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
 .network-svg .edge {
   stroke: #d8d6cf;
 }
@@ -521,6 +652,14 @@
 /* Non-centre nodes are anchors to a profile page → show the click affordance and an accent ring. */
 .network-svg a {
   cursor: pointer;
+}
+/* With JS (issue #142) nodes are also draggable; show the grab affordance. Sighted-only — the
+   connections table stays the keyboard/AT path, so this is purely a pointer cue. */
+.network-svg a[data-draggable='1'] {
+  cursor: grab;
+}
+.network-svg a[data-draggable='1']:active {
+  cursor: grabbing;
 }
 .network-svg a:hover .node,
 .network-svg a:focus-visible .node {
@@ -593,7 +732,7 @@
 }
 .net-error {
   font: 12px var(--font-mono, monospace);
-  color: var(--danger, #b3261e);
+  color: var(--accent);
 }
 .net-legend {
   display: flex;
