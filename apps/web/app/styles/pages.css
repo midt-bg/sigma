@@ -760,6 +760,11 @@
 .net-legend .key.authority {
   border-radius: 50%;
 }
+.net-caption {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
+}
 .net-legend .key.center {
   background: var(--accent);
 }

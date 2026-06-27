@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, money, signedPct } from '@sigma/shared';
-import type { NetworkData, TrendYear } from '@sigma/api-contract';
+import type { NetworkCounterpartyPage, NetworkData, TrendYear } from '@sigma/api-contract';
 import { type Column } from '../components/DataTable';
 
 export interface LinkRow {
@@ -68,4 +68,17 @@ export function networkRows(data: NetworkData): LinkRow[] {
       contracts: e.contracts,
     };
   });
+}
+
+// The exhaustive (paginated) counterparty list reuses the same columns as the in-graph links table,
+// but is already normalised to (authority → company) by the query, so no node lookup is needed.
+export function counterpartyRows(page: NetworkCounterpartyPage): LinkRow[] {
+  return page.rows.map((r) => ({
+    from: r.authorityLabel,
+    fromHref: `/authorities/${r.authoritySlug}`,
+    to: r.companyLabel,
+    toHref: `/companies/${r.companySlug}`,
+    valueEur: r.valueEur,
+    contracts: r.contracts,
+  }));
 }
