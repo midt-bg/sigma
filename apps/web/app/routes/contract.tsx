@@ -184,6 +184,52 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           )}
         </Section>
 
+        {c.amendments.length > 0 && (
+          <Section
+            id="amendments"
+            title="История на измененията"
+            hint="Публикуваните анекси към договора, в хронологичен ред — как се е променяла стойността и на какво основание. Всички суми в евро."
+          >
+            <div className="table-wrap">
+              <table className="lot-table">
+                <caption className="sr-only">Анекси към договора в хронологичен ред</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Дата</th>
+                    <th scope="col" className="num">
+                      Стойност след (€)
+                    </th>
+                    <th scope="col" className="num">
+                      Промяна (€)
+                    </th>
+                    <th scope="col">Основание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.amendments.map((a, i) => (
+                    <tr key={a.documentNumber ?? i}>
+                      <td>{a.date ? longDate(a.date) : '—'}</td>
+                      <td className="money">
+                        {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
+                      </td>
+                      <td className="money">
+                        {a.deltaEur != null
+                          ? `${a.deltaEur > 0 ? '+' : ''}${moneyBare(a.deltaEur)}`
+                          : '—'}
+                      </td>
+                      <td>{a.description ?? <span className="muted">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="small muted mt-8">
+              {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} · източник:
+              ЦАИС ЕОП.
+            </p>
+          </Section>
+        )}
+
         <Section id="who" title="Възложител и изпълнител">
           <div className="two-col">
             <div>
