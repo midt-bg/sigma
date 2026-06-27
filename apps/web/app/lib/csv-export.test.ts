@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CONTRACT_FILTER_KEYS } from '@sigma/db';
 import { DATA_SOURCE } from './dataSource';
 import { isUnfilteredCsvExport, servedCsvExport } from './csv-export';
 
@@ -305,11 +306,32 @@ describe('isUnfilteredCsvExport', () => {
     ['authority', { authority: '123456789' }],
     ['bidder', { bidder: 'acme' }],
     ['q', { q: 'rail' }],
+    ['bids', { bids: 'one' }],
     ['companies.kinds', { kinds: ['company'] }],
     ['companies.countBucket', { countBucket: '2-5' }],
     ['authorities.types', { types: ['municipality'] }],
   ])('treats %s as narrowing', (_name, params) => {
     expect(isUnfilteredCsvExport({ sort: 'value-desc', ...params })).toBe(false);
+  });
+
+  // Completeness guard (issue #138): every filter the contracts query consumes must also be seen by
+  // the cache classifier, or a filtered export gets served from / written to the unfiltered cache
+  // object. If someone adds a key to CONTRACT_FILTER_KEYS without teaching isUnfilteredCsvExport about
+  // it, this fails — closing the whole bug class, not just `bids`.
+  it.each(CONTRACT_FILTER_KEYS)('classifier recognises the %s contract filter', (key) => {
+    const active: Record<string, unknown> = {
+      years: ['2025'],
+      sectors: ['45'],
+      procedureGroups: ['open'],
+      valueBucket: 'gt100m',
+      eu: 'eu',
+      authority: '123456789',
+      bidder: 'acme',
+      q: 'rail',
+      bids: 'one',
+    };
+    expect(active[key]).toBeDefined(); // a new filter key without a representative value here is a bug
+    expect(isUnfilteredCsvExport({ sort: 'value-desc', [key]: active[key] })).toBe(false);
   });
 });
 

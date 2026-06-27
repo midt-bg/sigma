@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
-import { companyListParams, getMulti, leaderboardRankOffset, MAX_MULTI_VALUES } from './filters';
+import {
+  companyListParams,
+  contractListFilters,
+  getMulti,
+  leaderboardRankOffset,
+  MAX_MULTI_VALUES,
+} from './filters';
+
+describe('contractListFilters', () => {
+  it('parses the bids filter the HTML list and CSV export must share (issue #138)', () => {
+    const sp = new URLSearchParams('bids=1&year=2025&authority=123');
+    const f = contractListFilters(sp);
+    expect(f.bids).toBe('one');
+    expect(f.years).toEqual(['2025']);
+    expect(f.authority).toBe('123');
+  });
+
+  it('leaves bids null when the param is absent or not "1"', () => {
+    expect(contractListFilters(new URLSearchParams('')).bids).toBeNull();
+    expect(contractListFilters(new URLSearchParams('bids=two')).bids).toBeNull();
+  });
+
+  it('normalises an unknown sort to the default rather than passing it through', () => {
+    expect(contractListFilters(new URLSearchParams('sort=bogus')).sort).toBe('value-desc');
+  });
+});
 
 describe('getMulti', () => {
   it('caps repeated and CSV multi-value params', () => {

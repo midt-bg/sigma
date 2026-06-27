@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import { normalizeCompanySort } from '@sigma/db';
+import { normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -28,6 +28,29 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
   return Array.from(new Set(all))
     .filter((v) => allowedMulti(key, v))
     .slice(0, MAX_MULTI_VALUES);
+}
+
+/**
+ * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
+ * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL
+ * independently and drifted: the CSV bag silently dropped `bids`, so a „само една оферта" list
+ * exported every contract (issue #138). Both routes must spread this so they can never diverge again;
+ * the only route-specific extras are pagination (`cursor`, `pageSize`), which the CSV does not use.
+ * Keep the keys aligned with @sigma/db CONTRACT_FILTER_KEYS (the csv-export cache classifier guards it).
+ */
+export function contractListFilters(sp: URLSearchParams) {
+  return {
+    sort: normalizeContractSort(sp.get('sort')),
+    years: getMulti(sp, 'year'),
+    sectors: getMulti(sp, 'sector'),
+    procedureGroups: getMulti(sp, 'procedure'),
+    valueBucket: sp.get('value'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    authority: sp.get('authority'),
+    bidder: sp.get('bidder'),
+    q: sp.get('q'),
+    bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+  };
 }
 
 export function companyListParams(sp: URLSearchParams) {
