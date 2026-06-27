@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
-import { companyListParams, getMulti, leaderboardRankOffset, MAX_MULTI_VALUES } from './filters';
+import {
+  companyListParams,
+  contractListParams,
+  getMulti,
+  leaderboardRankOffset,
+  MAX_MULTI_VALUES,
+} from './filters';
 
 describe('getMulti', () => {
   it('caps repeated and CSV multi-value params', () => {
@@ -46,6 +52,40 @@ describe('getMulti', () => {
       sectors: [knownSector],
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
+    });
+  });
+});
+
+describe('contractListParams', () => {
+  it('parses the bids single-offer flag so the page and CSV filter identically (#138)', () => {
+    expect(contractListParams(new URLSearchParams('bids=1')).bids).toBe('one');
+    expect(contractListParams(new URLSearchParams('')).bids).toBeNull();
+    expect(contractListParams(new URLSearchParams('bids=2')).bids).toBeNull();
+  });
+
+  it('carries the full contract filter set shared by /contracts and /contracts.csv', () => {
+    const knownSector = CPV_SECTORS[0]!.code;
+    const sp = new URLSearchParams();
+    sp.set('sector', `${knownSector},99`);
+    sp.set('year', '2024');
+    sp.set('procedure', 'open');
+    sp.set('value', 'gt100m');
+    sp.set('eu', 'eu');
+    sp.set('authority', '123456789');
+    sp.set('bidder', 'acme');
+    sp.set('q', 'rail');
+    sp.set('bids', '1');
+
+    expect(contractListParams(sp)).toMatchObject({
+      sectors: [knownSector],
+      years: ['2024'],
+      procedureGroups: ['open'],
+      valueBucket: 'gt100m',
+      eu: 'eu',
+      authority: '123456789',
+      bidder: 'acme',
+      q: 'rail',
+      bids: 'one',
     });
   });
 });

@@ -5,7 +5,10 @@ const CSV_CACHE_CONTROL = 'public, max-age=3600';
 const CSV_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
 const ARRAY_FILTERS = ['years', 'sectors', 'procedureGroups', 'kinds', 'types'] as const;
-const SCALAR_FILTERS = ['valueBucket', 'eu', 'authority', 'bidder', 'countBucket'] as const;
+// `bids` ('one' = single-offer) narrows the contracts export. Without it here, `/contracts.csv?bids=1`
+// would be treated as unfiltered and served the cached full-corpus object instead of streaming the
+// filtered rows (#138). Only the contracts params carry a `bids` key, so this is inert elsewhere.
+const SCALAR_FILTERS = ['valueBucket', 'eu', 'authority', 'bidder', 'countBucket', 'bids'] as const;
 const FILENAMES = {
   contracts: 'sigma-contracts.csv',
   companies: 'sigma-companies.csv',

@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import { normalizeCompanySort } from '@sigma/db';
+import { normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -39,6 +39,25 @@ export function companyListParams(sp: URLSearchParams) {
     years: getMulti(sp, 'year'),
     eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
     q: sp.get('q'),
+  };
+}
+
+// Shared contract list/CSV filter params. Used by BOTH the /contracts page loader and the
+// /contracts.csv export so the two can never drift — the CSV previously parsed these inline and
+// omitted `bids`, downloading every contract for a `?bids=1` view (#138). The page loader adds its
+// own `cursor`/`pageSize` on top; the CSV uses these as-is.
+export function contractListParams(sp: URLSearchParams) {
+  return {
+    sort: normalizeContractSort(sp.get('sort')),
+    years: getMulti(sp, 'year'),
+    sectors: getMulti(sp, 'sector'),
+    procedureGroups: getMulti(sp, 'procedure'),
+    valueBucket: sp.get('value'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    authority: sp.get('authority'),
+    bidder: sp.get('bidder'),
+    q: sp.get('q'),
+    bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
   };
 }
 

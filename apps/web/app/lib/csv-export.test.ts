@@ -284,6 +284,7 @@ describe('isUnfilteredCsvExport', () => {
         authority: '',
         bidder: '',
         countBucket: '',
+        bids: null,
         q: '   ',
       }),
     ).toBe(true);
@@ -301,6 +302,7 @@ describe('isUnfilteredCsvExport', () => {
     ['eu', { eu: 'eu' }],
     ['authority', { authority: '123456789' }],
     ['bidder', { bidder: 'acme' }],
+    ['contracts.bids', { bids: 'one' }],
     ['q', { q: 'rail' }],
     ['companies.kinds', { kinds: ['company'] }],
     ['companies.countBucket', { countBucket: '2-5' }],
