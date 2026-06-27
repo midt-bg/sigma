@@ -61,6 +61,17 @@ describe('getRegionalSpending', () => {
     expect(macroRegions.find((m) => m.nuts2 === 'BG34')).toMatchObject({ valueEur: 3000 });
   });
 
+  it('keeps the share denominator identical across modes (sum regions == sum macros == total)', async () => {
+    // The choropleth card labels „Дял от всички области/райони" against `totalValueEur` in both modes;
+    // that is only truthful if every oblast rolls into exactly one район, i.e. the two sums are equal.
+    // If macroRegions ever stops being a pure roll-up of regions, this guard fails before it ships.
+    const { regions, macroRegions, totalValueEur } = await getRegionalSpending(fakeDb(), {});
+    const sumRegions = regions.reduce((s, r) => s + r.valueEur, 0);
+    const sumMacros = macroRegions.reduce((s, m) => s + m.valueEur, 0);
+    expect(sumRegions).toBe(sumMacros);
+    expect(sumRegions).toBe(totalValueEur);
+  });
+
   it('reads authority_totals unfiltered, but aggregates from base tables when filtered', async () => {
     const unfiltered: string[] = [];
     await getRegionalSpending(fakeDb(unfiltered), {});
