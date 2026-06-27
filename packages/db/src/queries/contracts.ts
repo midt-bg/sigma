@@ -39,6 +39,18 @@ export const CONTRACT_FILTER_KEYS = [
   'bids',
 ] as const satisfies readonly (keyof ContractListParams)[];
 
+// Compile-time completeness guard (issue #138 bug class). The `satisfies` above proves every listed
+// key is a real param; this proves the converse — every ContractListParams field EXCEPT sort/pagination
+// is listed. So a new filter cannot be added to the query (you must add the field to read `p.x` in
+// buildFilters) without also entering CONTRACT_FILTER_KEYS, which in turn forces it into the cache
+// signature (contractFilterSignature `satisfies`) and the csv-export classifier (its guard test). If
+// this line errors, add the new filter key to CONTRACT_FILTER_KEYS.
+type ContractFilterField = Exclude<keyof ContractListParams, 'sort' | 'cursor' | 'pageSize'>;
+const _filterKeysAreComplete: ContractFilterField extends (typeof CONTRACT_FILTER_KEYS)[number]
+  ? true
+  : never = true;
+void _filterKeysAreComplete;
+
 const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = lookup({
   'value-desc': { expr: 'COALESCE(c.amount_eur, -1)', dir: 'desc' },
   'value-asc': { expr: 'COALESCE(c.amount_eur, 1e18)', dir: 'asc' },
