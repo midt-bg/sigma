@@ -146,6 +146,12 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
   const hoveredDegree = hoveredNode
     ? edges.filter((e) => e.from === hoveredNode.id || e.to === hoveredNode.id).length
     : 0;
+  // The centre's true number of direct counterparties is the full count (counterpartyTotal), NOT its
+  // in-graph degree — the graph only draws the top HOP1. Showing the drawn degree (6) next to a list
+  // of 310 was the bug. Hop-1/hop-2 nodes only appear in this bounded ego view, so their real degree
+  // is unknown here; for them the in-graph degree is the honest figure.
+  const hoveredIsCenter = hoveredNode?.hop === 0;
+  const hoveredRelations = hoveredIsCenter ? counterpartyTotal : hoveredDegree;
   const nodeClass = (id: string) =>
     hovering && !adjacent.has(id) ? 'is-dim' : id === hoveredId ? 'is-focus' : undefined;
   const edgeDimmed = (e: { from: string; to: string }) =>
@@ -400,8 +406,8 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                   <dd>{money(hoveredNode.valueEur)}</dd>
                 </div>
                 <div>
-                  <dt>Връзки в графа</dt>
-                  <dd>{count(hoveredDegree)}</dd>
+                  <dt>{hoveredIsCenter ? 'Преки контрагенти' : 'Връзки в графа'}</dt>
+                  <dd>{count(hoveredRelations)}</dd>
                 </div>
               </dl>
               {hoveredNode.hop !== 0 && (
