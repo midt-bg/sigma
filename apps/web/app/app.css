@@ -2075,8 +2075,14 @@ details.row .body .signal .why {
 .table-search {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--s-3);
   margin: 0 0 var(--s-3);
+}
+/* The „no searchable terms" hint sits on its own row under the field (full-width flex item). */
+.table-search-hint {
+  flex-basis: 100%;
+  margin: 0;
 }
 .table-search input[type='search'] {
   flex: 1 1 auto;
