@@ -279,8 +279,7 @@ export interface AmendmentEntry {
   date: string | null; // published_at of the annex
   documentNumber: string | null;
   description: string | null; // recorded reason/notes, when the source carries them
-  valueBeforeEur: number | null;
-  valueAfterEur: number | null;
+  valueAfterEur: number | null; // the contract value after this annex
   deltaEur: number | null; // value_after − value_before
 }
 

@@ -226,7 +226,6 @@ describe('getContract', () => {
     expect(detail?.amendments[0]).toMatchObject({
       date: '2024-03-01',
       documentNumber: 'A1',
-      valueBeforeEur: 1000,
       valueAfterEur: 1200,
       deltaEur: 200, // 1200 − 1000, NOT the source's 999
       description: 'Удължаване на срока', // trimmed
@@ -256,7 +255,6 @@ describe('getContract', () => {
     );
 
     expect(detail?.amendments[0]).toMatchObject({
-      valueBeforeEur: null,
       valueAfterEur: null, // renders „—"
       deltaEur: null,
       description: 'Удължаване на срока',
@@ -281,7 +279,6 @@ describe('getContract', () => {
     );
 
     expect(detail?.amendments[0]).toMatchObject({
-      valueBeforeEur: 900,
       valueAfterEur: 1800,
       deltaEur: 900,
     });
@@ -305,9 +302,8 @@ describe('getContract', () => {
     );
 
     const a0 = detail?.amendments[0];
-    expect(a0?.valueBeforeEur ?? 0).toBeCloseTo(1000, 6); // 1955.83 / 1.95583
-    expect(a0?.valueAfterEur ?? 0).toBeCloseTo(2000, 6);
-    expect(a0?.deltaEur ?? 0).toBeCloseTo(1000, 6);
+    expect(a0?.valueAfterEur ?? 0).toBeCloseTo(2000, 6); // 3911.66 / 1.95583
+    expect(a0?.deltaEur ?? 0).toBeCloseTo(1000, 6); // (3911.66 − 1955.83) / 1.95583
   });
 
   it('has no amendment history when the contract has no annexes', async () => {
