@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
+import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
@@ -182,6 +182,54 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </p>
           )}
         </Section>
+
+        {c.amendments.length > 0 && (
+          <Section
+            id="amendments"
+            title="История на измененията"
+            hint="Публикуваните анекси към договора, в хронологичен ред — как се е променяла стойността и на какво основание. Всички суми в евро."
+          >
+            <div className="table-wrap">
+              <table className="lot-table">
+                <caption className="sr-only">Анекси към договора в хронологичен ред</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Дата</th>
+                    <th scope="col" className="num">
+                      Стойност след (€)
+                    </th>
+                    <th scope="col" className="num">
+                      Промяна (€)
+                    </th>
+                    <th scope="col">Основание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.amendments.map((a, i) => (
+                    <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
+                      <td>{a.date ? longDate(a.date) : '—'}</td>
+                      <td className="money">
+                        {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
+                      </td>
+                      <td className="money">{a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}</td>
+                      <td>{a.description ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="small muted mt-8">
+              {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} · източник:
+              ЦАИС ЕОП.
+            </p>
+            {v.suspect && (
+              <p className="small muted">
+                За този договор стойностите по анексите се показват както са в източника — СИГМА не ги
+                потвърждава за тоталите (виж <Link to="/methodology">методология</Link>).
+              </p>
+            )}
+          </Section>
+        )}
 
         <Section id="who" title="Възложител и изпълнител">
           <div className="two-col">
