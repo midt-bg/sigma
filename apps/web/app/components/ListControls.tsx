@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Form, Link, useNavigation, useSubmit } from 'react-router';
-import { hasSearchableTerms } from '@sigma/shared';
+import { hasSearchableTerms, MAX_QUERY_CHARS } from '@sigma/shared';
 import { searchHref, sortHref } from '../lib/filters';
+import { isComposingAfter, shouldAdoptUrlQ, shouldSubmitLive } from '../lib/tableSearch';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 export interface SortOption {
@@ -33,11 +34,11 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
   // Adopt the URL's q on EXTERNAL navigation only (back/forward, links, filter changes). Never touch
   // the field while it's focused — the user is mid-edit, and a stale loader landing late would
   // otherwise revert keystrokes typed since (React Router aborts superseded GETs, so our own live
-  // submits can't land out of order; this guard only covers interleaved external navigation).
+  // submits can't land out of order; this guard only covers interleaved external navigation). The
+  // onBlur handler is the partner for the case where external nav lands while the field is focused.
   useEffect(() => {
-    if (urlQ === value) return;
-    if (inputRef.current && inputRef.current === document.activeElement) return;
-    setValue(urlQ);
+    const focused = inputRef.current === document.activeElement;
+    if (shouldAdoptUrlQ({ urlQ, value, focused, settled: value === debounced })) setValue(urlQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync keys off the URL's q only
   }, [urlQ]);
 
@@ -45,9 +46,7 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
   // navigation, and submitting mid-IME-composition (so a Cyrillic word commits whole, not „мо" for
   // „мост"). Depends on `debounced` only — `base` gets a new identity every navigation.
   useEffect(() => {
-    if (composingRef.current) return;
-    if (debounced.trim() === urlQ.trim()) return;
-    go(debounced, true);
+    if (shouldSubmitLive({ composing: composingRef.current, debounced, urlQ })) go(debounced, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only when the settled value changes
   }, [debounced]);
 
@@ -71,17 +70,33 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
         type="search"
         name="q"
         value={value}
+        maxLength={MAX_QUERY_CHARS}
         autoComplete="off"
         placeholder="Търси в таблицата…"
         onChange={(e) => setValue(e.target.value)}
         onCompositionStart={() => {
-          composingRef.current = true;
+          composingRef.current = isComposingAfter('start');
         }}
         onCompositionEnd={(e) => {
-          // Re-arm the debounce with the committed word; setting value here (rather than relying on a
-          // trailing input event) makes us robust to compositionend/input ordering across browsers.
-          composingRef.current = false;
-          setValue(e.currentTarget.value);
+          // Submit the committed word now. Just re-arming the debounce (setValue alone) is a no-op when
+          // the IME already fired the final input before compositionend — and if the debounce burned out
+          // mid-composition, the word would never live-submit. setValue still keeps the controlled input
+          // in sync for the opposite (compositionend-before-input) ordering; the later debounce settle
+          // sees value === urlQ via shouldSubmitLive, so there's no double submit.
+          composingRef.current = isComposingAfter('end');
+          const committed = e.currentTarget.value;
+          setValue(committed);
+          go(committed, true);
+        }}
+        onBlur={() => {
+          // Un-stick a composition that never fired compositionend (compositioncancel, or focus loss
+          // mid-IME) so it can't mute every later live submit. And adopt the URL's q if external nav
+          // landed while the field was focused (the resync effect bails in that window) — but only once
+          // typing has settled, so we don't wipe a value the user typed then blurred mid-debounce.
+          composingRef.current = isComposingAfter('blur');
+          if (shouldAdoptUrlQ({ urlQ, value, focused: false, settled: value === debounced })) {
+            setValue(urlQ);
+          }
         }}
       />
       {/* No-JS preservation: carry every active param except q/cursor/page. Omitting cursor/page
