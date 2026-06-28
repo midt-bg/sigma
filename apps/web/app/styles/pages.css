@@ -58,51 +58,6 @@
   color: var(--text);
 }
 
-/* ── Contract page ───────────────────────────────────────────────────────── */
-
-/* Risk Indicators */
-.risk-indicators {
-  margin: var(--s-6) 0;
-  padding: var(--s-5);
-  background: var(--warning-bg);
-  border-left: 3px solid var(--warning);
-}
-.risk-title {
-  margin: 0 0 var(--s-3);
-  font: 500 13px/1.2 var(--font-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--warning-strong);
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-.risk-title svg {
-  flex: none;
-}
-.risk-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font: 400 14px/1.5 var(--font-sans);
-  color: var(--ink);
-}
-.risk-list li {
-  margin: 0 0 var(--s-2);
-  padding-left: 20px;
-  position: relative;
-}
-.risk-list li::before {
-  content: '•';
-  position: absolute;
-  left: 0;
-  color: var(--warning);
-  font-weight: bold;
-}
-.risk-list li:last-child {
-  margin-bottom: 0;
-}
-
 /* Value-history strip + current lot row */
 .value-history {
   display: grid;
@@ -496,6 +451,162 @@
   height: auto;
   display: block;
 }
+
+/* Hydrated force view: the canvas is a pan/zoom surface; nodes are draggable. */
+.net-canvas {
+  position: relative;
+}
+
+.network-svg.is-interactive {
+  cursor: grab;
+  touch-action: none; /* let d3-zoom own touch gestures instead of the page scrolling */
+}
+
+.network-svg.is-interactive:active {
+  cursor: grabbing;
+}
+
+.network-svg.is-interactive a[data-draggable='1'] {
+  cursor: grab;
+}
+
+/* Zoom controls — overlaid top-right of the canvas, client-only (rendered after hydration). */
+.net-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.net-zoom button {
+  width: 30px;
+  height: 30px;
+  font: 600 16px var(--font-mono, monospace);
+  line-height: 1;
+  color: var(--ink, #222);
+  background: var(--paper, #fff);
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.net-zoom button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Graph + side Information Card layout (mirrors /map). Card wraps under the graph on narrow screens. */
+.net-explore {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.net-explore .net-canvas {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+
+/* Full-screen: the widget fills the viewport on a paper background; the graph grows to use the height,
+   the card sits beside it, and the controls/legend stay usable. */
+.net-graph:fullscreen {
+  background: var(--paper);
+  padding: 24px;
+  overflow: auto;
+}
+
+.net-graph:fullscreen .net-explore {
+  min-height: calc(100vh - 160px);
+}
+
+.net-graph:fullscreen .net-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.net-graph:fullscreen .network-svg {
+  max-height: calc(100vh - 180px);
+}
+
+.net-card {
+  flex: 0 0 240px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+
+.net-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.net-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+
+.net-card-stats {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.net-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+
+.net-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+
+.net-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-card-actions {
+  margin: 0;
+}
+
+.net-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* Hover-to-explore emphasis: dim everything but the focused node + its neighbours; lift the focus. */
+.network-svg.is-hovering .is-dim {
+  opacity: 0.18;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .network-svg .node,
+  .network-svg .edge,
+  .network-svg .node-label,
+  .network-svg .edge-label,
+  .network-svg g[class],
+  .network-svg a {
+    transition: opacity 0.12s ease;
+  }
+}
+
+.network-svg .is-focus .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
 .network-svg .edge {
   stroke: #d8d6cf;
 }
@@ -506,6 +617,119 @@
 .network-svg .node-label {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
+}
+
+/* Per-edge value label, rotated in the component to lie along the edge. A thick white halo
+   (paint-order: stroke) keeps the number readable where it crosses edges/nodes. Toggle hides it. */
+.network-svg .edge-label {
+  fill: var(--ink, #222);
+  font: 600 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3.25px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Non-centre nodes are anchors to a profile page → show the click affordance and an accent ring. */
+.network-svg a {
+  cursor: pointer;
+}
+
+/* With JS (issue #142) nodes are also draggable; show the grab affordance. Sighted-only — the
+   connections table stays the keyboard/AT path, so this is purely a pointer cue. */
+.network-svg a[data-draggable='1'] {
+  cursor: grab;
+}
+
+.network-svg a[data-draggable='1']:active {
+  cursor: grabbing;
+}
+
+.network-svg a:hover .node,
+.network-svg a:focus-visible .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.network-svg a:focus-visible {
+  outline: none;
+}
+
+/* Edge-label toggle (pure CSS, no JS): unchecked hides every .edge-label. */
+/* Controls row above the graph: the edge-value toggle plus, once you've browsed to another node,
+   the Open / Reset actions. Wraps on narrow screens. */
+.net-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+
+.net-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+  user-select: none;
+}
+
+.net-toggle input {
+  accent-color: var(--accent);
+}
+
+.net-graph:has(.net-toggle input:not(:checked)) .edge-label {
+  display: none;
+}
+
+/* Browse actions — appear only after a client-side re-centre (no JS = no recentre = hidden). */
+.net-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.net-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font: 600 12px var(--font-mono, monospace);
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.net-btn:hover {
+  filter: brightness(0.94);
+}
+
+.net-btn-ghost {
+  color: var(--ink, #222);
+  background: transparent;
+  border-color: var(--rule, #d8d6cf);
+}
+
+.net-loading {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+
+.net-hint {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #888);
+}
+
+.net-error {
+  font: 12px var(--font-mono, monospace);
+  color: var(--accent);
 }
 .net-legend {
   display: flex;
@@ -532,6 +756,12 @@
 .net-legend .key.center,
 .net-legend .key.authority {
   border-radius: 50%;
+}
+
+.net-caption {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
 }
 .net-legend .key.center {
   background: var(--accent);
@@ -588,6 +818,20 @@
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+/* Map + Information Card side by side; the card wraps under the map on narrow screens. */
+.map-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.map-layout .map-wrap {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+
+/* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
 .map-wrap svg {
   width: 100%;
   height: auto;
@@ -598,6 +842,96 @@
 .map-wrap path {
   stroke: #f7f7f4;
   stroke-width: 1;
+}
+
+/* Hover highlight for the focused region (mouse-driven; the table is the keyboard/AT path). */
+.map-wrap path.region {
+  transition: fill 0.1s ease;
+}
+
+.map-wrap path.is-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+/* The Information Card beside the map. */
+.map-card {
+  flex: 0 0 250px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+
+/* Grouping toggle, kept inside the card so all map controls sit together. */
+.map-toggle {
+  display: flex;
+  gap: 0;
+  margin: 0 0 14px;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.map-toggle button {
+  flex: 1;
+  padding: 6px 8px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  background: var(--paper, #fff);
+  border: 0;
+  cursor: pointer;
+}
+
+.map-toggle button + button {
+  border-left: 1px solid var(--rule, #d8d6cf);
+}
+
+.map-toggle button.is-on {
+  color: #fff;
+  background: var(--accent);
+}
+
+.map-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.map-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+
+.map-card-stats {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.map-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+
+.map-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+
+.map-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
 }
 .map-legend {
   display: flex;
@@ -612,4 +946,1242 @@
   width: 22px;
   height: 12px;
   border-radius: 2px;
+}
+
+/* ===== analyze-landing =====
+   The /analytics hub: an editorial masthead + five EQUAL full-width hero cards (one per analysis),
+   each pairing two real KPI figures with a decorative, aria-hidden thumbnail. Cards are real anchors
+   (keyboard-focusable, visible focus ring); the 380px thumbnail pane collapses under ~720px. */
+.analyze-landing {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.az-masthead {
+  margin: 0 0 var(--s-7);
+}
+
+.az-kicker {
+  margin: 0 0 var(--s-4);
+  font: 10px/1.3 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.az-title {
+  margin: 0 0 var(--s-4);
+  max-width: 18ch;
+  font: 600 40px/1.1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.az-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.az-lede {
+  margin: 0;
+  max-width: 600px;
+  font: 14px/1.55 var(--font-sans);
+  color: var(--ink-mid);
+}
+
+.az-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* One hero card — left editorial pane + right thumbnail pane. */
+.az-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 208px;
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px oklch(18% 0.012 70 / 0.04);
+  color: inherit;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.az-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px oklch(18% 0.012 70 / 0.1);
+  border-color: var(--ink-soft);
+}
+
+/* stretched link: the whole card is clickable, but the stat ⓘ buttons sit above it (z-index) so they
+   stay independently operable. The focus ring renders on the card via the link's stretched ::after. */
+.az-card-stretch {
+  text-decoration: none;
+  color: inherit;
+}
+
+.az-card-stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 6px;
+}
+
+.az-card-stretch:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.az-card .metric-info {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .az-card {
+    transition: none;
+  }
+
+  .az-card:hover {
+    transform: none;
+  }
+}
+
+.az-card-main {
+  display: flex;
+  flex-direction: column;
+  padding: 26px 30px;
+  min-width: 0;
+}
+
+.az-card-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-3);
+  margin: 0 0 var(--s-3);
+}
+
+.az-card-index {
+  font: 600 10px/1.3 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.az-card-cat {
+  font: 500 9px/1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.az-card-title {
+  margin: 0 0 var(--s-2);
+  font: 600 25px/1.2 var(--font-serif);
+  color: var(--ink);
+}
+
+.az-card-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.az-card-title em.az-em-slate {
+  color: var(--slate);
+}
+
+.az-card-desc {
+  margin: 0;
+  max-width: 420px;
+  font: 13px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.az-card-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-top: auto;
+  padding-top: var(--s-5);
+}
+
+.az-card-stats {
+  display: flex;
+  gap: var(--s-6);
+  margin: 0;
+}
+
+.az-card-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.az-stat-num {
+  margin: 0;
+  font: 600 19px/1.1 var(--font-mono);
+  color: var(--ink);
+}
+
+.az-stat-num--accent {
+  color: var(--accent);
+}
+
+.az-stat-label {
+  display: inline-flex;
+  align-items: center;
+  font: 500 8px/1.3 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.az-stat-hint {
+  max-width: 22ch;
+  margin: 1px 0 0;
+  font: 400 9px/1.3 var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+}
+
+.az-card-cta {
+  flex: none;
+  font: 600 11px/1.3 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Right pane — a touch deeper than the card, with a decorative thumbnail. */
+.az-card-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--paper-deep);
+  border-left: 1px solid var(--rule);
+  /* the card no longer clips overflow (so the ⓘ popover can escape), so round the thumb's own corners */
+  border-radius: 0 6px 6px 0;
+}
+
+.az-thumb {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+}
+
+.az-fill-ink {
+  fill: var(--ink);
+}
+
+.az-fill-accent {
+  fill: var(--accent);
+}
+
+.az-fill-slate {
+  fill: var(--slate);
+}
+
+.az-fill-tan {
+  fill: var(--tan);
+}
+
+.az-fill-rule {
+  fill: var(--rule);
+}
+
+.az-thumb-soft {
+  opacity: 0.55;
+}
+
+.az-thumb-faint {
+  opacity: 0.14;
+}
+
+.az-stroke-ink,
+.az-stroke-accent {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.az-stroke-ink {
+  stroke: var(--ink);
+}
+
+.az-stroke-accent {
+  stroke: var(--accent);
+}
+
+.az-thumb-dash {
+  stroke-dasharray: 5 5;
+}
+
+@media (max-width: 720px) {
+  .az-title {
+    font-size: 32px;
+  }
+
+  .az-card {
+    grid-template-columns: 1fr;
+  }
+
+  .az-card-thumb {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    padding: 16px 20px;
+  }
+
+  .az-thumb {
+    max-width: 240px;
+  }
+}
+
+@media (max-width: 460px) {
+  .az-card-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-3);
+  }
+}
+
+/* ===== end trends-dashboard ===== */
+
+/* ===== overruns-dashboard ===== */
+/* Static layout/typography for /overruns + the /analytics „Раздуване" hero. Ported from the route
+   files (no new inline style=, per docs/review-accessibility.md). Only data-driven values (bar/
+   scatter geometry, active accent) remain inline. All colours via app tokens. */
+
+/* shared primitives */
+.ov-panel {
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ov-mono-label {
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+.ov-accent {
+  color: var(--accent);
+}
+
+/* page column: keep the dashboard within the 1200px editorial measure of the design mock */
+.ov-page {
+  max-width: 1200px;
+}
+
+/* masthead — kicker + title + lede on the left, the three headline KPIs inline on the right (design,
+   same composition as .trend-header). */
+.ov-mast {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 0 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ink);
+}
+
+.ov-mast-main {
+  min-width: 0;
+}
+
+.ov-mast-kicker {
+  margin: 0;
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ov-mast-title {
+  margin: 10px 0 0;
+  font-family: var(--font-serif);
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.02;
+  color: var(--ink);
+}
+
+.ov-mast-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.ov-mast-lede {
+  margin: 9px 0 0;
+  max-width: 540px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-mid);
+}
+
+.ov-mast-kpis {
+  display: flex;
+  flex: none;
+  margin: 0;
+}
+
+.ov-hk {
+  padding: 0 22px;
+  border-left: 1px solid var(--rule);
+}
+
+.ov-hk:last-child {
+  padding-right: 0;
+}
+
+.ov-hk-v {
+  margin: 0;
+  font: 600 25px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.ov-hk-v.accent {
+  color: var(--accent);
+}
+
+.ov-hk-l {
+  margin-top: 5px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 760px) {
+  .ov-mast {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .ov-mast-kpis {
+    flex-wrap: wrap;
+  }
+
+  .ov-hk:first-child {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+/* sticky filter bar — „ПОДРЕДИ ПО" + segmented toggle (drives ?by=) + before→now legend */
+.ov-filterbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 14px;
+  margin-bottom: var(--s-4);
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.ov-filterbar-label {
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+.ov-seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ov-seg a {
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  color: var(--ink-mid);
+  background: var(--paper);
+  text-decoration: none;
+}
+
+.ov-seg a + a {
+  border-left: 1px solid var(--rule);
+}
+
+.ov-seg a[aria-current='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.ov-legend {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ov-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.ov-swatch.ink {
+  background: var(--ink);
+}
+
+.ov-swatch.accent {
+  background: var(--accent);
+}
+
+/* dashboard frame */
+/* single-line and two-line ellipsis truncation (ported from the design's .clamp1/.clamp2 — they were
+   referenced across overruns/trends but never defined, so long subjects wrapped and overflowed). */
+.clamp1 {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* section rhythm: each of the four design sections is a serif heading + mono note, then its panel(s) */
+.ov-section {
+  margin-top: var(--s-6);
+}
+
+.ov-sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ov-sec-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.ov-sec-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.ov-sec-note {
+  font: 400 10px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* two-up figure grid: a wide visual (scatter / treemap) beside a narrower data panel (inspector /
+   ranked list), per the design's minmax(0,1.3fr) minmax(360px,1fr). */
+.ov-figure-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .ov-figure-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* leaderboard board */
+.ov-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 13px 16px 8px;
+}
+
+.ov-board-title {
+  font: 600 16px/1.2 var(--font-serif);
+  color: var(--ink);
+}
+
+.ov-board-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.ov-board-scale {
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+.ov-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 560px;
+}
+
+.ov-row {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 9px 8px;
+  border: none;
+  border-bottom: 1px solid var(--rule-soft);
+  border-left: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.ov-row[aria-pressed='true'] {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.ov-row-rank {
+  font: 600 22px/1 var(--font-serif);
+  color: var(--ink-mid);
+  text-align: center;
+}
+
+.ov-row[aria-pressed='true'] .ov-row-rank {
+  color: var(--accent);
+}
+
+/* per-row growth: neutral by default so the accent isn't diluted; reserved for the largest grower
+   and the selected row (see Fix: accent-red overload). */
+.ov-row-pct {
+  color: var(--ink-mid);
+}
+
+.ov-row-pct.is-top {
+  color: var(--accent);
+}
+
+.ov-row[aria-pressed='true'] .ov-row-pct {
+  color: var(--accent);
+}
+
+.ov-arrow {
+  color: var(--ink-mid);
+}
+
+.ov-row-body {
+  min-width: 0;
+}
+
+.ov-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ov-row-subject {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.ov-row-value {
+  white-space: nowrap;
+  font: 600 10.5px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+.ov-row-meta {
+  display: block;
+  margin-top: 4px;
+  font: 400 9px/1.2 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* before→now stacked bar */
+.ov-bar {
+  position: relative;
+  height: 13px;
+  margin-top: 5px;
+}
+
+.ov-bar-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 62px,
+    var(--rule-soft) 62px,
+    var(--rule-soft) 63px
+  );
+}
+
+.ov-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  height: 13px;
+  min-width: 3px;
+  border-radius: 0 2px 2px 0;
+  overflow: hidden;
+}
+
+.ov-bar-sign {
+  height: 100%;
+  background: var(--ink);
+}
+
+.ov-bar-inc {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* scatter panel */
+.ov-scatter-panel {
+  padding: 13px 16px 8px;
+  min-height: 230px;
+}
+
+.ov-scatter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ov-panel-title {
+  font: 600 16px/1.2 var(--font-serif);
+  color: var(--ink);
+}
+
+.ov-panel-note {
+  font: 400 9.5px/1 var(--font-mono);
+  color: var(--ink-soft);
+  /* the note caption holds a label + the fullscreen button, laid out inline */
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ov-scatter-body {
+  flex: 1;
+  min-height: 340px;
+  margin-top: 6px;
+}
+
+.ov-scatter-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* progressive-enhancement hover cue so the clickable bubbles feel interactive (mouse only — the
+   keyboard path is the leaderboard buttons). */
+.ov-scatter-dot {
+  transition:
+    r 0.12s ease,
+    fill-opacity 0.12s ease,
+    stroke-width 0.12s ease;
+}
+
+.ov-scatter-dot:hover {
+  fill-opacity: 0.95 !important;
+  stroke-width: 1.75;
+}
+
+/* inspector */
+.ov-insp-head {
+  padding: 13px 16px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ov-insp-title {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--ink);
+}
+
+.ov-insp-parties {
+  margin-top: 6px;
+  font: 400 9.5px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+.ov-insp-figures {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.ov-insp-fig-label {
+  font: 400 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ov-insp-fig-val {
+  margin-top: 3px;
+  font: 400 15px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-insp-fig-val.now {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ov-insp-arrow {
+  color: var(--accent);
+  font-size: 14px;
+  padding-bottom: 1px;
+}
+
+.ov-insp-delta-wrap {
+  margin-left: auto;
+  text-align: right;
+}
+
+.ov-insp-delta {
+  font: 600 16px/1 var(--font-mono);
+  color: var(--accent);
+}
+
+.ov-insp-delta-meta {
+  margin-top: 2px;
+  font: 400 9px/1 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+.ov-insp-grid-wrap {
+  padding: 12px 16px 14px;
+}
+
+.ov-insp-grid-heading {
+  margin-bottom: 6px;
+}
+
+.ov-insp-grid {
+  margin: 0;
+}
+
+.ov-insp-grid-row {
+  display: grid;
+  grid-template-columns: 118px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.ov-insp-grid-key {
+  font: 500 9px/1.35 var(--font-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+
+.ov-insp-grid-val {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+/* inspector head: kicker + status badge on one row */
+.ov-insp-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ov-status-badge {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font: 500 8.5px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ov-status-badge.active {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--rule));
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+}
+
+.ov-status-badge.closed {
+  color: var(--ink-soft);
+  background: var(--paper-warm);
+}
+
+/* annex history — REAL amendment rows for the selected contract */
+.ov-annex-wrap {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.ov-annex-heading {
+  margin-bottom: 8px;
+}
+
+.ov-annex-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ov-annex-row {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.ov-annex-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ov-annex-seq {
+  flex: none;
+  font: 500 9px/1.3 var(--font-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-mid);
+}
+
+.ov-annex-date {
+  flex: none;
+  font: 400 9px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+.ov-annex-delta {
+  margin-left: auto;
+  flex: none;
+  font: 600 11px/1.3 var(--font-mono);
+  color: var(--accent);
+}
+
+.ov-annex-reason {
+  margin-top: 3px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-mid);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ov-annex-empty {
+  margin: 0;
+  font: 400 10px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+.ov-insp-source {
+  margin-top: 12px;
+  font: 400 9.5px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* leaderboard-as-table disclosure + methodology note */
+.ov-table-details {
+  margin-top: var(--s-4);
+}
+
+.ov-table-summary {
+  cursor: pointer;
+  font: 500 12px/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-table-body {
+  margin-top: var(--s-3);
+}
+
+.ov-methodology {
+  margin-top: var(--s-3);
+}
+
+/* ── SECTION 3 — overrun-by-sector table (CPV division, aggregate growth, € at risk) ── */
+.ov-sector-list-panel {
+  padding: 12px 16px 14px;
+}
+
+/* bucket markers — works→accent, goods→slate, services→ochre, other→ink-soft. Each is paired with a
+   text label / legend so colour is never the sole carrier of the category (WCAG 1.4.1). */
+.ov-bucket-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font: 400 9.5px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-bucket-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ov-sector-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+  flex: none;
+  background: var(--ink-soft);
+}
+
+.ov-sector-dot.works {
+  background: var(--accent);
+}
+
+.ov-sector-dot.goods {
+  background: var(--slate);
+}
+
+.ov-sector-dot.services {
+  background: var(--ochre);
+}
+
+.ov-sector-dot.other {
+  background: var(--ink-soft);
+}
+
+/* horizontal scroll wrapper for the wide (6-column) tables so they don't crush on narrow screens */
+.ov-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ov-sector-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ov-sector-table thead tr {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ov-sector-table thead th {
+  padding: 6px 8px 7px;
+  text-align: right;
+  border-bottom: 1px solid var(--ink);
+}
+
+.ov-sector-table thead th:nth-child(1),
+.ov-sector-table thead th:nth-child(2) {
+  text-align: left;
+}
+
+.ov-sector-table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.ov-sector-table td {
+  padding: 7px 8px;
+}
+
+.ov-sector-code {
+  font: 600 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-sector-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.ov-sector-growth {
+  text-align: right;
+  font: 600 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+.ov-sector-growth.is-top {
+  color: var(--accent);
+}
+
+.ov-sector-risk {
+  text-align: right;
+  font: 500 11px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+/* ── SECTION 4 — institutions table ── */
+.ov-auth-panel {
+  padding: 12px 16px 14px;
+}
+
+.ov-auth-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ov-auth-table thead tr {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ov-auth-table thead th {
+  padding: 6px 8px 7px;
+  text-align: right;
+  border-bottom: 1px solid var(--ink);
+}
+
+.ov-auth-table thead th.c-rank,
+.ov-auth-table thead th.c-name,
+.ov-auth-table thead th.c-share {
+  text-align: left;
+}
+
+.ov-auth-table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.ov-auth-table td {
+  padding: 8px;
+  font-size: 11.5px;
+  vertical-align: middle;
+}
+
+.ov-auth-table td.c-rank {
+  font: 600 12px/1 var(--font-mono);
+  color: var(--ink-soft);
+  width: 28px;
+}
+
+.ov-auth-table td.c-name {
+  color: var(--ink);
+}
+
+.ov-auth-table td.c-num {
+  text-align: right;
+  font: 500 11px/1 var(--font-mono);
+  white-space: nowrap;
+}
+
+.ov-auth-total {
+  color: var(--ink);
+  font-weight: 600 !important;
+}
+
+.ov-auth-growth {
+  color: var(--ink-mid) !important;
+}
+
+.ov-auth-growth.is-top {
+  color: var(--accent) !important;
+}
+
+.ov-auth-table td.c-share {
+  width: 150px;
+}
+
+.ov-auth-foot {
+  margin: 12px 0 0;
+  text-align: center;
+  font: 400 9.5px/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+/* the scale caption holds a label + the button (the matching .ov-panel-note layout lives with its
+   base rule above) */
+.ov-board-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* native fullscreen — fill the viewport, let the chart grow to fill it */
+.trend-chart-panel:fullscreen,
+.ov-board:fullscreen,
+.ov-scatter-panel:fullscreen {
+  background: var(--paper);
+  padding: 20px 24px;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+}
+
+.trend-chart-panel:fullscreen .trend-chart-body,
+.ov-scatter-panel:fullscreen .ov-scatter-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.ov-board:fullscreen .ov-board-list {
+  max-height: none;
+  flex: 1;
 }
