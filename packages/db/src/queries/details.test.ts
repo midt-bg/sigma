@@ -262,6 +262,29 @@ describe('getContract', () => {
     });
   });
 
+  it('normalises BGN amendment values via the fixed peg', async () => {
+    const detail = await getContract(
+      fakeDb({ ...baseContractRow, contract_number: 'C-3' }, [], [
+        {
+          value_before: 1955.83,
+          value_after: 3911.66,
+          value_delta: 1955.83,
+          currency: 'BGN',
+          published_at: '2024-03-01',
+          document_number: 'A1',
+          description: null,
+          fx_rate: null,
+        },
+      ]),
+      'c:1',
+    );
+
+    const a0 = detail?.amendments[0];
+    expect(a0?.valueBeforeEur ?? 0).toBeCloseTo(1000, 6); // 1955.83 / 1.95583
+    expect(a0?.valueAfterEur ?? 0).toBeCloseTo(2000, 6);
+    expect(a0?.deltaEur ?? 0).toBeCloseTo(1000, 6);
+  });
+
   it('has no amendment history when the contract has no annexes', async () => {
     const detail = await getContract(fakeDb(baseContractRow, []), 'c:1');
     expect(detail?.amendments).toEqual([]);
