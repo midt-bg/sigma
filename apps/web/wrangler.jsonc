@@ -78,7 +78,10 @@
         // not yet read — only this per-IP limiter is active today.
         "name": "ASSISTANT_RATE_LIMITER",
         "type": "ratelimit",
-        "namespace_id": "1004",
+        // namespace_id must be unique per limiter — a duplicate silently disables one (no deploy error).
+        // 1001–1003 are the csv/search/aggregation limiters; 1004 is claimed by the /health limiter (#118),
+        // so the assistant takes 1005.
+        "namespace_id": "1005",
         "simple": { "limit": 10, "period": 60 },
       },
     ],
