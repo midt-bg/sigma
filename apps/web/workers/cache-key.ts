@@ -4,6 +4,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'authority',
   'b', // /compare — entity B slug
   'bidder',
+  'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals (CWE-349, #56)
   'by', // /overruns — sort dimension (absolute | percent)
   'center',
   'count',
@@ -14,6 +15,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'kind',
   'metric', // /compare leaderboard dimension
   'p',
+  'page', // pagination offset — distinct pages must not share a cache entry
   'procedure',
   'q',
   'sector',
