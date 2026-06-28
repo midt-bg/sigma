@@ -274,11 +274,12 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         >
           <p style={{ margin: 0 }}>
             Дял договори с <strong>една оферта</strong>: {pct(data.totals.singleOfferShare)} —{' '}
-            {RATING_LABEL[singleBidderRating]} (целево ≤ {pct(EU_SCOREBOARD.singleBidder.good)}, високо
-            &gt; {pct(EU_SCOREBOARD.singleBidder.bad)}). Дял <strong>пряко възлагане</strong> (без
-            обявление): {pct(data.procedure.nonCompetitiveShare)} — {RATING_LABEL[directAwardRating]}{' '}
-            (целево ≤ {pct(EU_SCOREBOARD.directAward.good)}, високо ≥ {pct(EU_SCOREBOARD.directAward.bad)}).
-            Праговете са външен ориентир на Европейската комисия, не оценка на конкретна процедура. Виж{' '}
+            {RATING_LABEL[singleBidderRating]} (целево ≤ {pct(EU_SCOREBOARD.singleBidder.good)},
+            високо ≥ {pct(EU_SCOREBOARD.singleBidder.bad)}). Дял <strong>пряко възлагане</strong>{' '}
+            (без обявление): {pct(data.procedure.nonCompetitiveShare)} —{' '}
+            {RATING_LABEL[directAwardRating]} (целево ≤ {pct(EU_SCOREBOARD.directAward.good)},
+            високо ≥ {pct(EU_SCOREBOARD.directAward.bad)}). Праговете са външен ориентир на
+            Европейската комисия, не оценка на конкретна процедура. Виж{' '}
             <Link to="/methodology#glossary">методологията</Link>.
           </p>
         </Callout>
