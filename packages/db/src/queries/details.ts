@@ -496,12 +496,23 @@ export async function getContract(
       }>(),
     db
       .prepare(
+        // Order by (published_at, natural_key) ASC — the SAME keys derive-amendments.sql picks
+        // current_value by (it takes the latest via DESC … LIMIT 1), so the timeline's LAST row
+        // reconciles with the headline „Текуща стойност", incl. the same-day tie-break. NULL dates sort
+        // FIRST in SQLite ASC, which matches the ETL treating a NULL-dated annex as never-latest (DESC
+        // puts NULL last), so an undated annex never displaces the current value at the end. FX uses the
+        // same ≤10-day lookback as normalize-raw.sql's current_value_eur (exact-date would null out
+        // weekend/holiday annexes while the headline converts fine).
         `SELECT am.value_before, am.value_after, am.value_delta, am.currency, am.published_at,
                 am.document_number, am.description,
-                (SELECT f.eur_per_unit FROM fx_rates f WHERE f.base_currency = am.currency AND f.rate_date = am.published_at) AS fx_rate
+                (SELECT f.eur_per_unit FROM fx_rates f
+                   WHERE f.base_currency = am.currency
+                     AND f.rate_date <= am.published_at
+                     AND f.rate_date >= date(am.published_at, '-10 days')
+                   ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate
          FROM amendments am
          WHERE am.unp = ? AND am.contract_number = ?
-         ORDER BY (am.published_at IS NULL), am.published_at, am.document_number`,
+         ORDER BY am.published_at, am.natural_key`,
       )
       .bind(r.unp, r.contract_number)
       .all<AmendmentRow>(),
@@ -640,11 +651,14 @@ export async function getContract(
       description: am.description?.trim() || null,
       valueBeforeEur: beforeEur,
       valueAfterEur: afterEur,
+      // Compute delta from the SAME before/after we display, so the row is self-consistent (after −
+      // before == delta) even when the source's recorded value_delta disagrees with them. Fall back
+      // to the recorded delta only when before/after can't yield one.
       deltaEur:
-        am.value_delta != null
-          ? eurFromNative(am.value_delta, am.currency, am.fx_rate)
-          : beforeEur != null && afterEur != null
-            ? afterEur - beforeEur
+        beforeEur != null && afterEur != null
+          ? afterEur - beforeEur
+          : am.value_delta != null
+            ? eurFromNative(am.value_delta, am.currency, am.fx_rate)
             : null,
     };
   });

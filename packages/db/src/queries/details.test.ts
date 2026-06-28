@@ -195,13 +195,13 @@ describe('getContract', () => {
     }
   });
 
-  it('returns the amendment history oldest-first, trimming and deriving missing deltas', async () => {
+  it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {
     const detail = await getContract(
       fakeDb({ ...baseContractRow, contract_number: 'C-1' }, [], [
         {
           value_before: 1000,
           value_after: 1200,
-          value_delta: 200,
+          value_delta: 999, // dirty source: disagrees with after − before; the computed value wins
           currency: 'EUR',
           published_at: '2024-03-01',
           document_number: 'A1',
@@ -228,13 +228,38 @@ describe('getContract', () => {
       documentNumber: 'A1',
       valueBeforeEur: 1000,
       valueAfterEur: 1200,
-      deltaEur: 200,
+      deltaEur: 200, // 1200 − 1000, NOT the source's 999
       description: 'Удължаване на срока', // trimmed
     });
     expect(detail?.amendments[1]).toMatchObject({
       valueAfterEur: 1500,
       deltaEur: 300, // derived 1500 − 1200
       description: null,
+    });
+  });
+
+  it('shows „—" for a value-less annex (null value_after) and a null delta', async () => {
+    const detail = await getContract(
+      fakeDb({ ...baseContractRow, contract_number: 'C-4' }, [], [
+        {
+          value_before: null,
+          value_after: null, // a description-only annex, e.g. a deadline extension
+          value_delta: null,
+          currency: 'EUR',
+          published_at: '2024-03-01',
+          document_number: 'A1',
+          description: 'Удължаване на срока',
+          fx_rate: null,
+        },
+      ]),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueBeforeEur: null,
+      valueAfterEur: null, // renders „—"
+      deltaEur: null,
+      description: 'Удължаване на срока',
     });
   });
 
