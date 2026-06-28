@@ -5,50 +5,55 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { AMENDMENTS_SQL } from './queries/details';
 
-// Integration test for the /contracts/:id amendment-timeline SQL (getContract). The query-layer unit
-// tests (queries/details.test.ts) use a fake D1 and so never exercise the actual ORDER BY or the FX
-// subquery; this runs the same SQL shape against a real SQLite built from the production migration.
-// It locks the two things the reviewer flagged: (1) the timeline's last row reconciles with the ETL's
-// current_value pick (same ordering keys, incl. the same-day tie-break and NULL-date handling), and
-// (2) foreign-currency annexes resolve FX via the same ≤10-day lookback the headline uses.
-// Mirrors the sqlite3-CLI harness of competition-sql.test.ts (no better-sqlite3 dependency).
+// Integration test for the REAL amendment-timeline query (AMENDMENTS_SQL, imported from details.ts —
+// not a hand-copied mirror) against a SQLite built from the production migration. It exercises the
+// actual ORDER BY and the FX subquery (the two things the review was about), and locks: the timeline's
+// ordering reconciles with the served current_value derivation (refresh-slice.sql ≈L1059-1065), incl.
+// the trailing description-only-annex edge, and foreign FX resolves via the same ≤10-day lookback as
+// the headline. Mirrors the sqlite3-CLI harness of competition-sql.test.ts.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 
 function sqlite(dbPath: string, sql: string): string {
-  return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();
+  return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
 }
-
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
 }
 
-function amd(natural_key: string, published_at: string | null, value_after: number | null, currency = 'BGN') {
+// The production query with its two bound params filled in (unp='U', contract_number='C').
+const TIMELINE = AMENDMENTS_SQL.replace(/\?/, "'U'").replace(/\?/, "'C'");
+// Mirrors refresh-slice.sql ≈L1059-1065 — how the served current_value (the headline value) is derived.
+const ETL_CURRENT = `SELECT a.value_after FROM amendments a
+  WHERE a.unp = 'U' AND a.contract_number = 'C' AND a.value_after IS NOT NULL
+  ORDER BY a.published_at DESC, a.id DESC LIMIT 1;`;
+const VALUE_AFTER = 1; // column index in AMENDMENTS_SQL's SELECT
+const DOC_NUMBER = 5;
+const FX_RATE = 7;
+
+// One amendment row; id = natural_key (as refresh-slice.sql's promote step writes it) and
+// document_number = id (so the FX test can address rows by name).
+function amd(id: string, published_at: string | null, value_after: number | null, currency = 'BGN') {
   const pub = published_at === null ? 'NULL' : `'${published_at}'`;
   const val = value_after === null ? 'NULL' : String(value_after);
-  return `('${natural_key}', '${natural_key}', 'C', 'U', ${val}, '${currency}', ${pub}, '${natural_key}', 'eop')`;
+  return `('${id}', '${id}', 'C', 'U', ${val}, '${currency}', ${pub}, '${id}', 'eop')`;
+}
+function insert(dbPath: string, rows: string[]): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO amendments (id, natural_key, contract_number, unp, value_after, currency, published_at, document_number, source) VALUES ${rows.join(',')};`,
+  );
 }
 
-// The timeline ordering the page uses (getContract): published_at, natural_key — NULLs first in ASC.
-const TIMELINE_VALUES = `
-SELECT am.value_after FROM amendments am
-WHERE am.unp = 'U' AND am.contract_number = 'C'
-ORDER BY am.published_at, am.natural_key;`;
-
-// What derive-amendments.sql sets current_value to: the latest non-null value_after.
-const ETL_CURRENT = `
-SELECT a.value_after FROM amendments a
-WHERE a.unp = 'U' AND a.contract_number = 'C' AND a.value_after IS NOT NULL
-ORDER BY a.published_at DESC, a.natural_key DESC LIMIT 1;`;
-
-const FX_RATE = (currency: string, date: string) => `
-SELECT COALESCE((SELECT f.eur_per_unit FROM fx_rates f
-   WHERE f.base_currency = '${currency}'
-     AND f.rate_date <= '${date}'
-     AND f.rate_date >= date('${date}', '-10 days')
-   ORDER BY f.rate_date DESC LIMIT 1), 'NONE');`;
+// All timeline rows in the query's real order, as column arrays. NO filtering — a NULL-value_after row
+// is kept at its real position, so a trailing description-only annex is visible (renders „—").
+function timelineRows(dbPath: string): string[][] {
+  const out = sqlite(dbPath, TIMELINE).replace(/\r/g, '').replace(/\n+$/, '');
+  return out === '' ? [] : out.split('\n').map((line) => line.split('|'));
+}
 
 function withDb<T>(fn: (dbPath: string) => T): T {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-amendments-'));
@@ -61,54 +66,45 @@ function withDb<T>(fn: (dbPath: string) => T): T {
   }
 }
 
-// REAL columns print as `200.0`, so compare as numbers, not strings.
-const lastValue = (dbPath: string) =>
-  Number(sqlite(dbPath, TIMELINE_VALUES).split('\n').filter(Boolean).at(-1));
-const etlCurrent = (dbPath: string) => Number(sqlite(dbPath, ETL_CURRENT));
-
-describe('amendment timeline SQL (real SQLite)', () => {
-  it('reconciles the last timeline row with the ETL current_value, incl. the same-day tie-break', () => {
+describe('amendment timeline SQL (real SQLite, AMENDMENTS_SQL)', () => {
+  it('reconciles the last value-bearing row with the ETL current_value (same-day id tie-break)', () => {
     withDb((dbPath) => {
-      // Two annexes on the SAME day: natural_key k2 > k1 → the ETL takes k2 (200) as current_value.
-      // Ordering by document_number instead of natural_key would have put 100 last (the bug).
-      sqlite(
-        dbPath,
-        `INSERT INTO amendments (id, natural_key, contract_number, unp, value_after, currency, published_at, document_number, source) VALUES
-          ${amd('k0', '2024-01-01', 50)},
-          ${amd('k1', '2024-06-03', 100)},
-          ${amd('k2', '2024-06-03', 200)};`,
-      );
-      expect(lastValue(dbPath)).toBe(200);
-      expect(etlCurrent(dbPath)).toBe(200); // the page's last row == the headline value
+      // Same day: id k2 > k1 → the ETL takes k2 (200). Ordering by document_number would pick 100.
+      insert(dbPath, [
+        amd('k0', '2024-01-01', 50),
+        amd('k1', '2024-06-03', 100),
+        amd('k2', '2024-06-03', 200),
+      ]);
+      const rows = timelineRows(dbPath);
+      expect(Number(rows.at(-1)?.[VALUE_AFTER])).toBe(200); // last row == headline value
+      expect(Number(sqlite(dbPath, ETL_CURRENT).trim())).toBe(200);
     });
   });
 
-  it('sorts a NULL-dated annex first, so it never displaces the latest value', () => {
+  it('keeps a trailing NULL-value annex last (shown „—") without breaking reconciliation', () => {
     withDb((dbPath) => {
-      sqlite(
-        dbPath,
-        `INSERT INTO amendments (id, natural_key, contract_number, unp, value_after, currency, published_at, document_number, source) VALUES
-          ${amd('k1', '2024-06-03', 200)},
-          ${amd('kNULL', null, 999)};`,
-      );
-      // NULL date is rendered first (oldest/undated), so the last row stays the dated 200 — matching
-      // the ETL, which (ORDER BY published_at DESC) also never treats a NULL-dated annex as latest.
-      expect(lastValue(dbPath)).toBe(200);
-      expect(etlCurrent(dbPath)).toBe(200);
+      // The latest-dated annex is description-only (NULL value_after) — e.g. a deadline extension.
+      insert(dbPath, [amd('k1', '2024-06-03', 200), amd('k2', '2024-09-01', null)]);
+      const rows = timelineRows(dbPath);
+      expect(rows.at(-1)?.[VALUE_AFTER]).toBe(''); // the real last row is the NULL one → renders „—"
+      // …yet the last VALUE-bearing row still equals the headline (the ETL skips the NULL one too).
+      const lastValueBearing = rows.filter((r) => r[VALUE_AFTER] !== '').at(-1);
+      expect(Number(lastValueBearing?.[VALUE_AFTER])).toBe(200);
+      expect(Number(sqlite(dbPath, ETL_CURRENT).trim())).toBe(200);
     });
   });
 
-  it('resolves foreign FX via a ≤10-day lookback (weekend), and yields none when outside the window', () => {
+  it('resolves foreign FX via the ≤10-day lookback (weekend), and none when outside the window', () => {
     withDb((dbPath) => {
       sqlite(
         dbPath,
         `INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at)
          VALUES ('USD', '2024-06-06', 0.92, 'ecb', '2024-06-07');`,
       );
-      // Saturday 2024-06-08 has no exact rate; the ≤10-day lookback finds Thursday's 0.92.
-      expect(sqlite(dbPath, FX_RATE('USD', '2024-06-08'))).toBe('0.92');
-      // 11 days later → outside the window → no rate (the row would render „—", honestly).
-      expect(sqlite(dbPath, FX_RATE('USD', '2024-06-17'))).toBe('NONE');
+      insert(dbPath, [amd('kSat', '2024-06-08', 1000, 'USD'), amd('kFar', '2024-06-17', 1000, 'USD')]);
+      const byId = new Map(timelineRows(dbPath).map((r) => [r[DOC_NUMBER], r]));
+      expect(byId.get('kSat')?.[FX_RATE]).toBe('0.92'); // Saturday → Thursday's rate via the lookback
+      expect(byId.get('kFar')?.[FX_RATE]).toBe(''); // 11 days later → outside the window → null → „—"
     });
   });
 });

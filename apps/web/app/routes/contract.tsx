@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
+import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
@@ -211,11 +211,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                       <td className="money">
                         {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
                       </td>
-                      <td className="money">
-                        {a.deltaEur != null
-                          ? `${a.deltaEur > 0 ? '+' : ''}${moneyBare(a.deltaEur)}`
-                          : '—'}
-                      </td>
+                      <td className="money">{a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}</td>
                       <td>{a.description ?? '—'}</td>
                     </tr>
                   ))}
