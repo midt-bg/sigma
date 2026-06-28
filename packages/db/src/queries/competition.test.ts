@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getCompetition } from './competition';
+import { getCompetition, getOpaqueShareByYear } from './competition';
 
 // The query layer is pure SQL-building over D1; tests use a fake D1 that returns canned rows keyed by
 // SQL markers (same approach as companies.test.ts). They verify the JS-side math (shares, HHI mapping,
@@ -231,5 +231,47 @@ describe('getCompetition', () => {
     expect(calls.some((c) => c.sql.includes('FROM flow_pairs'))).toBe(false);
     expect(calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
     expect(calls.filter((c) => c.args.includes('auth:111'))).toHaveLength(4);
+  });
+});
+
+describe('getOpaqueShareByYear', () => {
+  function fakeDb(
+    rows: { year: string; value_eur: number; single_value_eur: number }[],
+    capture?: string[],
+  ): D1Database {
+    return {
+      prepare(sql: string) {
+        capture?.push(sql);
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: rows as T[] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+  }
+
+  it('maps the per-year single-offer value rows to the API shape', async () => {
+    const rows = await getOpaqueShareByYear(
+      fakeDb([
+        { year: '2020', value_eur: 1000, single_value_eur: 200 },
+        { year: '2025', value_eur: 2000, single_value_eur: 900 },
+      ]),
+    );
+    expect(rows).toEqual([
+      { year: '2020', valueEur: 1000, singleOfferValueEur: 200 },
+      { year: '2025', valueEur: 2000, singleOfferValueEur: 900 },
+    ]);
+  });
+
+  it('excludes the in-progress current calendar year (headline reads the latest complete year)', async () => {
+    const sql: string[] = [];
+    await getOpaqueShareByYear(fakeDb([], sql));
+    // Capped below the current year rather than the partial-period `<= date('now')`.
+    expect(sql[0]).toContain("substr(c.signed_at, 1, 4) < strftime('%Y', 'now')");
+    expect(sql[0]).not.toContain("c.signed_at <= date('now')");
   });
 });
