@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision, procedureGroup } from './index';
+import {
+  CPV_CATEGORIES,
+  CPV_SECTORS,
+  categoryForDivision,
+  cpvBucket,
+  procedureGroup,
+} from './index';
 
 describe('CPV_CATEGORIES', () => {
   it('partitions exactly the configured CPV sector divisions', () => {
@@ -30,6 +36,38 @@ describe('CPV_CATEGORIES', () => {
     expect(categoryForDivision('15800000')?.key).toBe('food-agri');
     expect(categoryForDivision(null)).toBeNull();
     expect(categoryForDivision('99000000')).toBeNull();
+  });
+});
+
+describe('cpvBucket', () => {
+  it('classifies the construction-works division as works', () => {
+    expect(cpvBucket('45')).toBe('works');
+    expect(cpvBucket('45233120-6')).toBe('works'); // full code → division 45
+  });
+
+  it('classifies the service divisions as services', () => {
+    for (const code of ['50', '71', '72', '85', '90', '98']) {
+      expect(cpvBucket(code)).toBe('services');
+    }
+  });
+
+  it('classifies the remaining catalogued divisions as goods', () => {
+    for (const code of ['15', '30', '33', '34', '43', '44', '48']) {
+      expect(cpvBucket(code)).toBe('goods'); // 44 (building materials) is a supply, not works
+    }
+    expect(cpvBucket('44210000')).toBe('goods'); // full code → division 44
+  });
+
+  it('falls back to other for missing or out-of-taxonomy codes', () => {
+    expect(cpvBucket(null)).toBe('other');
+    expect(cpvBucket('')).toBe('other');
+    expect(cpvBucket('99')).toBe('other');
+  });
+
+  it('assigns every catalogued division to exactly one real bucket (a partition)', () => {
+    for (const sector of CPV_SECTORS) {
+      expect(['works', 'goods', 'services']).toContain(cpvBucket(sector.code));
+    }
   });
 });
 
