@@ -227,6 +227,12 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} · източник:
               ЦАИС ЕОП.
             </p>
+            {v.suspect && (
+              <p className="small muted">
+                За този договор стойностите по анексите се показват както са в източника — СИГМА не ги
+                потвърждава за тоталите (виж <Link to="/methodology">методология</Link>).
+              </p>
+            )}
           </Section>
         )}
 

@@ -501,7 +501,7 @@ export async function getContract(
                 (SELECT f.eur_per_unit FROM fx_rates f WHERE f.base_currency = am.currency AND f.rate_date = am.published_at) AS fx_rate
          FROM amendments am
          WHERE am.unp = ? AND am.contract_number = ?
-         ORDER BY am.published_at, am.document_number`,
+         ORDER BY (am.published_at IS NULL), am.published_at, am.document_number`,
       )
       .bind(r.unp, r.contract_number)
       .all<AmendmentRow>(),
