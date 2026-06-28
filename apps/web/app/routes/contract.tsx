@@ -206,7 +206,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 </thead>
                 <tbody>
                   {c.amendments.map((a, i) => (
-                    <tr key={a.documentNumber ?? i}>
+                    <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
                       <td>{a.date ? longDate(a.date) : '—'}</td>
                       <td className="money">
                         {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
@@ -216,7 +216,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                           ? `${a.deltaEur > 0 ? '+' : ''}${moneyBare(a.deltaEur)}`
                           : '—'}
                       </td>
-                      <td>{a.description ?? <span className="muted">—</span>}</td>
+                      <td>{a.description ?? '—'}</td>
                     </tr>
                   ))}
                 </tbody>
