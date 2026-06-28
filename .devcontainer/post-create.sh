@@ -21,4 +21,4 @@ if [ ! -f .dev.vars ] && [ -f .dev.vars.example ]; then
   echo "==> Copied .dev.vars.example → .dev.vars (fill in real keys before pnpm dev)"
 fi
 
-echo "==> Done. Next: pnpm setup, then pnpm dev"
+echo "==> Done. Next: pnpm run setup, then pnpm dev"
