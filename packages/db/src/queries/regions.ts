@@ -4,9 +4,13 @@
 // comes from authorities.region (OCDS NUTS, ~half of authorities), so we always split out an
 // "unattributed" bucket and report coverage; the 28 regions are zero-filled so the map colours all of them.
 
-import type { MacroRegionSpend, RegionSpend, RegionalSpending } from '@sigma/api-contract';
-import { BG_REGIONS, regionByName } from '@sigma/config';
-import { sectorOptions } from './sectors';
+import type {
+  MacroRegionSpend,
+  RegionSpend,
+  RegionalSpending,
+  SectorRef,
+} from '@sigma/api-contract';
+import { BG_REGIONS, CPV_SECTORS, regionByName } from '@sigma/config';
 
 export interface RegionalParams {
   sector?: string | null;
@@ -57,6 +61,57 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
     .bind(...params)
     .all<RegionRow>();
   return results;
+}
+
+const SECTOR_OPTION_LIMIT = 12;
+
+// Sector select options: present sectors by value (curated label), capped. Same source as getFlows.
+async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
+  const { results } = await db
+    .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
+    .bind(SECTOR_OPTION_LIMIT)
+    .all<{ division: string }>();
+  const byCode = new Map(CPV_SECTORS.map((s) => [s.code, s]));
+  return results
+    .map((r) => byCode.get(r.division))
+    .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
+    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
+}
+
+// Lean headline for the /analytics landing card — the region count (always the 28 NUTS3 regions)
+// and София-столица's share of national procurement value. ONE rollup query (authority_totals
+// grouped by region, the same cheap source as the unfiltered choropleth), folded in JS to the
+// BG411 row over the ATTRIBUTED total. The denominator counts only rows that resolve to a real BG
+// region (the region-NULL / unattributed bucket is excluded), matching getRegionalSpending's 28-region
+// denominator so the landing „В СОФИЯ" share equals the /map share. No 190k contract scan.
+export interface RegionHeadline {
+  regionCount: number;
+  sofiaShare: number;
+  sofiaEur: number;
+  totalEur: number;
+}
+
+export async function getRegionHeadline(db: D1Database): Promise<RegionHeadline> {
+  const { results } = await db
+    .prepare(
+      `SELECT region, COALESCE(SUM(spent_eur), 0) AS value_eur
+       FROM authority_totals GROUP BY region`,
+    )
+    .all<{ region: string | null; value_eur: number }>();
+  let totalEur = 0;
+  let sofiaEur = 0;
+  for (const r of results) {
+    const region = regionByName(r.region);
+    if (!region) continue; // unattributed (region-NULL or unknown) — excluded from the denominator
+    totalEur += r.value_eur;
+    if (region.nuts3 === 'BG411') sofiaEur += r.value_eur;
+  }
+  return {
+    regionCount: BG_REGIONS.length,
+    sofiaShare: totalEur > 0 ? sofiaEur / totalEur : 0,
+    sofiaEur,
+    totalEur,
+  };
 }
 
 export async function getRegionalSpending(

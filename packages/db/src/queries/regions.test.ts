@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRegionalSpending } from './regions';
+import { getRegionalSpending, getRegionHeadline } from './regions';
 
 // Fake D1 keyed by SQL markers (same approach as competition.test.ts). Verifies the JS-side
 // aggregation: region name -> NUTS3 mapping, the always-28 zero-fill, the unattributed bucket,
@@ -61,6 +61,17 @@ describe('getRegionalSpending', () => {
     expect(macroRegions.find((m) => m.nuts2 === 'BG34')).toMatchObject({ valueEur: 3000 });
   });
 
+  it('keeps the share denominator identical across modes (sum regions == sum macros == total)', async () => {
+    // The choropleth card labels „Дял от всички области/райони" against `totalValueEur` in both modes;
+    // that is only truthful if every oblast rolls into exactly one район, i.e. the two sums are equal.
+    // If macroRegions ever stops being a pure roll-up of regions, this guard fails before it ships.
+    const { regions, macroRegions, totalValueEur } = await getRegionalSpending(fakeDb(), {});
+    const sumRegions = regions.reduce((s, r) => s + r.valueEur, 0);
+    const sumMacros = macroRegions.reduce((s, m) => s + m.valueEur, 0);
+    expect(sumRegions).toBe(sumMacros);
+    expect(sumRegions).toBe(totalValueEur);
+  });
+
   it('reads authority_totals unfiltered, but aggregates from base tables when filtered', async () => {
     const unfiltered: string[] = [];
     await getRegionalSpending(fakeDb(unfiltered), {});
@@ -70,5 +81,45 @@ describe('getRegionalSpending', () => {
     await getRegionalSpending(fakeDb(filtered), { sector: '45' });
     expect(filtered.some((s) => s.includes('FROM authority_totals'))).toBe(false);
     expect(filtered.some((s) => s.includes('JOIN tenders t'))).toBe(true);
+  });
+});
+
+describe('getRegionHeadline', () => {
+  function fakeDb(rows: { region: string | null; value_eur: number }[]): D1Database {
+    return {
+      prepare() {
+        return {
+          async all<T>() {
+            return { results: rows as T[] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+  }
+
+  it('reports the 28-region count and София-столица share of the attributed total', async () => {
+    const h = await getRegionHeadline(
+      fakeDb([
+        { region: 'София (столица)', value_eur: 6000 }, // BG411
+        { region: 'Пловдив', value_eur: 3000 },
+        { region: null, value_eur: 1000 }, // unattributed — EXCLUDED from the denominator
+        { region: 'Несъществуваща област', value_eur: 5000 }, // unknown — also excluded
+      ]),
+    );
+    expect(h.regionCount).toBe(28);
+    expect(h.sofiaEur).toBe(6000);
+    expect(h.totalEur).toBe(9000); // 6000 + 3000 only — attributed regions, matching getRegionalSpending
+    expect(h.sofiaShare).toBeCloseTo(6000 / 9000);
+  });
+
+  it('does not count the surrounding София oblast (BG412) as the capital', async () => {
+    const h = await getRegionHeadline(
+      fakeDb([
+        { region: 'София', value_eur: 5000 }, // BG412 — not the capital
+        { region: 'София (столица)', value_eur: 5000 }, // BG411
+      ]),
+    );
+    expect(h.sofiaEur).toBe(5000);
+    expect(h.sofiaShare).toBeCloseTo(0.5);
   });
 });
