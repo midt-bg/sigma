@@ -1,5 +1,6 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Form, Link, useNavigation, useSubmit } from 'react-router';
+import { hasSearchableTerms } from '@sigma/shared';
 import { searchHref, sortHref } from '../lib/filters';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
@@ -20,6 +21,8 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
   const [value, setValue] = useState(urlQ);
   const debounced = useDebouncedValue(value, SEARCH_DEBOUNCE_MS);
   const labelId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
 
   // Navigate to the search href. `replace` for live typing (don't trace every keystroke in history),
   // push for deliberate actions (Enter, clear). Building params from searchHref — not submitting the
@@ -27,18 +30,22 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
   const go = (q: string, replace: boolean) =>
     submit(new URLSearchParams(searchHref(base, q)), { method: 'get', replace });
 
-  // Adopt the URL's q on EXTERNAL navigation only (back/forward, links, filter changes); never clobber
-  // what the user is typing. Skip when already in sync or when this is the echo of our own submit.
+  // Adopt the URL's q on EXTERNAL navigation only (back/forward, links, filter changes). Never touch
+  // the field while it's focused — the user is mid-edit, and a stale loader landing late would
+  // otherwise revert keystrokes typed since (React Router aborts superseded GETs, so our own live
+  // submits can't land out of order; this guard only covers interleaved external navigation).
   useEffect(() => {
-    if (urlQ === value || urlQ === debounced.trim()) return;
+    if (urlQ === value) return;
+    if (inputRef.current && inputRef.current === document.activeElement) return;
     setValue(urlQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync keys off the URL's q only
   }, [urlQ]);
 
-  // Live submit once typing settles. The guard suppresses the mount fire and the echo of our own
-  // navigation, breaking the type→submit→type loop. Depends on `debounced` only — `base` gets a new
-  // identity every navigation and would otherwise re-fire this.
+  // Live submit once typing settles. The guards suppress the mount fire, the echo of our own
+  // navigation, and submitting mid-IME-composition (so a Cyrillic word commits whole, not „мо" for
+  // „мост"). Depends on `debounced` only — `base` gets a new identity every navigation.
   useEffect(() => {
+    if (composingRef.current) return;
     if (debounced.trim() === urlQ.trim()) return;
     go(debounced, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only when the settled value changes
@@ -59,6 +66,7 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
         Търси в таблицата
       </label>
       <input
+        ref={inputRef}
         id={labelId}
         type="search"
         name="q"
@@ -66,6 +74,15 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
         autoComplete="off"
         placeholder="Търси в таблицата…"
         onChange={(e) => setValue(e.target.value)}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onCompositionEnd={(e) => {
+          // Re-arm the debounce with the committed word; setting value here (rather than relying on a
+          // trailing input event) makes us robust to compositionend/input ordering across browsers.
+          composingRef.current = false;
+          setValue(e.currentTarget.value);
+        }}
       />
       {/* No-JS preservation: carry every active param except q/cursor/page. Omitting cursor/page
           means a native GET drops them, so a search resets to page 1 without JS too. */}
@@ -79,6 +96,13 @@ function TableSearch({ base, searchLabel }: { base: URLSearchParams; searchLabel
       <noscript>
         <button type="submit">Търси</button>
       </noscript>
+      {/* A query that's only punctuation or a single char yields no FTS terms — the backend ignores
+          it and shows the full list. Tell the user so the box/URL don't look like an active search. */}
+      {value.trim() !== '' && !hasSearchableTerms(value) && (
+        <p role="status" className="muted small table-search-hint">
+          Въведете поне 2 знака; пунктуацията се пренебрегва
+        </p>
+      )}
     </Form>
   );
 }
