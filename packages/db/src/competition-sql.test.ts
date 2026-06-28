@@ -62,12 +62,12 @@ HAVING COUNT(*) >= 4
 ORDER BY share DESC, a.name;
 `;
 
-// Supplier concentration (mirrors authoritiesByConcentration; suppliers >= 2 floor).
+// Supplier concentration (mirrors authoritiesByConcentration; positive-value basis + suppliers >= 2).
 const HHI_SQL = `
 WITH pair AS (
   SELECT t.authority_id AS aid, c.bidder_id AS bid, SUM(c.amount_eur) AS spent
   FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE c.amount_eur IS NOT NULL
+  WHERE c.amount_eur > 0
   GROUP BY t.authority_id, c.bidder_id
 ),
 tot AS (SELECT aid, SUM(spent) AS total, COUNT(*) AS suppliers FROM pair GROUP BY aid)
@@ -147,6 +147,34 @@ describe('competition SQL (real SQLite)', () => {
   it('computes HHI and keeps only authorities with at least two suppliers', () => {
     withDb((dbPath) => {
       // Б has a single supplier (excluded); А splits 6:4 → 0.36 + 0.16 = 0.52 over 2 suppliers.
+      expect(sqlite(dbPath, HHI_SQL)).toBe('Институция А|0.52|2');
+    });
+  });
+
+  it('excludes negative- and zero-value authorities from HHI — no hhi > 1, no NULL (#153)', () => {
+    withDb((dbPath) => {
+      // Reproduces lyubomir's adversarial seed verbatim. Two pathological authorities:
+      //   Г: supplier X +1900, supplier Z −100 (an upstream value_low row). On the old
+      //      `amount_eur IS NOT NULL` basis Г nets to 1800 with shares 1.056 / −0.056 → hhi 1.117 (> 1),
+      //      ranking #1 above А. On the `> 0` basis Z drops, Г has one positive supplier → excluded.
+      //   Д: two suppliers, both 0 EUR (value_low). On the old basis tot.total = 0 → (0/0)² → hhi NULL,
+      //      yet it still passed `suppliers >= 2`. On the `> 0` basis it has no positive rows → excluded.
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type_group) VALUES
+           ('auth:G', 'Институция Г', '100000004', 'община'),
+           ('auth:D', 'Институция Д', '100000005', 'община');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:Z', 'Фирма Z', '200000003', '200000003', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+           ('t:G', 'UNP-G', 'Поръчка Г', 'auth:G', '45', 'открита процедура', 'awarded'),
+           ('t:D', 'UNP-D', 'Поръчка Д', 'auth:D', '45', 'открита процедура', 'awarded');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur) VALUES
+           ('c:G1', 't:G', 'eik:X', 1900, 'EUR', '2024-03-01', 1, 'ok', 1900),
+           ('c:G2', 't:G', 'eik:Z', -100, 'EUR', '2024-03-02', 1, 'value_low', -100),
+           ('c:D1', 't:D', 'eik:X', 0, 'EUR', '2024-03-03', 1, 'value_low', 0),
+           ('c:D2', 't:D', 'eik:Z', 0, 'EUR', '2024-03-04', 1, 'value_low', 0);`,
+      );
+      // Only А (0.52) remains; Г and Д are gone — no hhi > 1, no NULL row at the top.
       expect(sqlite(dbPath, HHI_SQL)).toBe('Институция А|0.52|2');
     });
   });
