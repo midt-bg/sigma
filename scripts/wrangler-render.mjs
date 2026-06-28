@@ -16,12 +16,20 @@ import { basename, dirname, extname, join } from 'node:path';
 // Sentinel <- env var. The sentinels appear verbatim in the committed wrangler.* files;
 // the values come from the environment at deploy time. Add a row to extend (e.g. a future KV).
 const SENTINELS = {
-  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID',          // D1 database_id (UUID v4 shape)
+  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID', // D1 database_id (UUID v4 shape)
 };
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
 // rate-limit namespace_ids to be account-unique — a duplicate silently merges two buckets.
-const REQUIRED_RATE_LIMITERS = ['CSV_RATE_LIMITER', 'AGG_RATE_LIMITER', 'SEARCH_RATE_LIMITER'];
+// ASSISTANT_RATE_LIMITER is the most important to assert: unlike the others (which fail OPEN), it fails
+// CLOSED in prod, so a dropped/typo'd binding silently 503s every assistant request rather than merely
+// disabling a throttle (review #80, follow-up).
+const REQUIRED_RATE_LIMITERS = [
+  'CSV_RATE_LIMITER',
+  'AGG_RATE_LIMITER',
+  'SEARCH_RATE_LIMITER',
+  'ASSISTANT_RATE_LIMITER',
+];
 
 const input = process.argv[2];
 if (!input) {
@@ -44,7 +52,9 @@ for (const [sentinel, envVar] of Object.entries(SENTINELS)) {
 
 if (missing.length) {
   console.error(`✘ wrangler-render: ${input} needs ${missing.join(', ')}`);
-  console.error('  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.');
+  console.error(
+    '  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.',
+  );
   process.exit(1);
 }
 
@@ -58,9 +68,10 @@ if (ext === '.json' || ext === '.jsonc') {
   if (names.webName || names.d1Name || names.csvCacheName) {
     out = renderJson(out, names);
   }
-  // Rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
-  // namespace_id collision would silently disable a limiter rather than erroring. Catch both here so
-  // the deploy fails loudly instead.
+  // Most rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
+  // namespace_id collision would silently disable a limiter rather than erroring; ASSISTANT_RATE_LIMITER
+  // fails CLOSED, where the same misconfig instead 503s the whole endpoint. Catch both here so the deploy
+  // fails loudly instead of shipping a silently-broken limiter either way.
   assertRateLimiters(out, input);
 } else if (ext === '.toml') {
   const names = {

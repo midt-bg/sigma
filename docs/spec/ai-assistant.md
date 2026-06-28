@@ -116,12 +116,16 @@
 
 ### Инструменти за данни и заявки
 
-- **`run_sql`** — read-only `SELECT` върху D1; способността „каква да е select заявка". Достига
-  както нормализираните domain таблици, така и raw огледалата на източниците (`raw_contracts`,
-  `raw_tenders`, `raw_amendments`, `raw_ocds_*`, `raw_tr_companies`). Безопасността е проектирана
-  пълно в #7; формата: единичен statement, задължително `SELECT`/`WITH…SELECT`, blocklist от
-  ключови думи (`INSERT/UPDATE/DELETE/DROP/ATTACH/PRAGMA/…`), без допълнителни точка-запетаи, твърд
-  `LIMIT`, лимит на редове/байтове за това, което се връща към модела, и timeout на заявката.
+- **`run_sql`** — read-only `SELECT` върху D1; способността „каква да е select заявка". Достъпът е
+  ограничен до **курирания речник на данните** (allowlist-ът в `describe-schema.ts`: нормализираните
+  domain таблици, готовите rollup-и и `search_index`). **raw огледалата на източниците**
+  (`raw_contracts`, `raw_tenders`, `raw_amendments`, `raw_ocds_*`, `raw_tr_companies`) **нарочно НЕ
+  са изложени** — едри са, неиндексирани, и пълно сканиране върху тях е Denial-of-Wallet вектор (D1
+  таксува по прочетени, не върнати редове; виж #122). Безопасността е проектирана пълно в #7;
+  формата: единичен statement, задължително `SELECT`/`WITH…SELECT`, AST table-allowlist, blocklist
+  от ключови думи (`INSERT/UPDATE/DELETE/DROP/ATTACH/PRAGMA/…`), без допълнителни точка-запетаи,
+  твърд `LIMIT`, лимит на редове/байтове за връщаното към модела, **per-ход бюджет за прочетени
+  редове** и timeout на заявката.
 - **`describe_schema`** — курираният речник на данните, който моделът чете преди да пише SQL:
   таблици, колони, ключови enum стойности (`status`, `procedure_type`, CPV сектори…), плюс
   `source` тага за произход на всеки ред и view-то `data_freshness`. Заземен от
@@ -180,9 +184,9 @@
 | `totals` | [TotalsStrip](../../apps/web/app/components/TotalsStrip.tsx) | `[{label, value, format}]` |
 | `facts` | [FactsList](../../apps/web/app/components/FactsList.tsx) | `[{term, value, sub?}]` |
 | `table` | [DataTable](../../apps/web/app/components/DataTable.tsx) | декларативни `columns` (key, header, align, format, link?) + plain `rows` |
-| `bar` | [StackedBar](../../apps/web/app/components/StackedBar.tsx) | `[{label, value, key?}]` — renderer-ът изчислява дяловете **и** цветовете на палитрата |
+| `bar` | [StackedBar](../../apps/web/app/components/StackedBar.tsx) | `[{label, value}]` — renderer-ът изчислява дяловете **и** цветовете на палитрата (`key` за наслагване/групиране е post-v1, виж бележката) |
 | `flows` | [SankeyDiagram](../../apps/web/app/components/SankeyDiagram.tsx) | `[{from, to, valueEur}]` ребра — renderer-ът изчислява SVG layout-а |
-| `timeseries` | **НОВ** — ръчно изработен CSS/SVG, без chart библиотека | `[{period, value}]` (+ опционални multi-series) |
+| `timeseries` | **НОВ** — ръчно изработен CSS/SVG, без chart библиотека | `[{period, value}]` (single серия; multi-series е post-v1, виж бележката) |
 | `callout` | `Callout` | заглавие + тяло (уговорки, свежест, бележка за източник) |
 
 - **`timeseries` е единственият нов компонент.** Въпросите за обществените поръчки са силно
@@ -194,6 +198,11 @@
 - **Server-computed представяне** за `bar` (цветове) и `flows` (геометрия): агентът подава смисъл,
   сървърът подава пиксели, преизползвайки layout изчислението на flows loader-а (извлечено, ако
   в момента е inline).
+- **v1 wire-контрактът е single-series.** Достоверният тип е в `report-schema.ts` (и
+  [assistant-contracts.md §1](assistant-contracts.md)): emit-схемата (`EmitBar`/`EmitTimeseries`)
+  подава плоски `{label, value}` / `{period, value}` точки и `bindReport` връща точно тях. `key` за
+  наслагване/групиране на `bar` и multi-series за `timeseries` са замислени, но **отложени за след
+  v1** — изискват серийно измерение в emit-схемата, което Фаза 1 не въвежда.
 
 ### Редакторска форма
 
@@ -283,9 +292,17 @@ Auth е уреден (публично, без акаунти — виж #5). О
 - **Инжектиран `LIMIT`** — добавя се, ако липсва; ограничава се, ако е твърде висок.
 - **Лимит на байтовете на резултата** — отрязва се това, което се връща към модела (с бележка
   „резултатите са отрязани"), така че голям резултат да не може да взриви контекста или цената.
+- **Table allowlist** — `run_sql` чете само таблиците от курирания речник (`describe-schema.ts`);
+  `sqlite_master`/`pragma_*`, вътрешните таблици и **raw огледалата** (`raw_*`) са недостъпни (§3).
+- **Per-ход бюджет за прочетени редове (rows read).** `LIMIT` ограничава *върнатите*, не
+  *сканираните* редове, а D1 таксува по прочетени — затова сканиране на едра таблица струва еднакво
+  при всеки `LIMIT`. След всяка заявка се натрупва `meta.rows_read` за хода; при надхвърляне на
+  бюджета (`D1_ROWS_READ_BUDGET`) следващите `run_sql` извиквания се отказват. Реактивно: ограничава
+  кумулативния/повторния разход, не единична заявка (D1 няма отменяем per-query timeout). (#122)
 - **Timeout** — ограничава времето на заявката; патологични cross-join-и умират, вместо да висят.
-- Данните са публични, така че SQL е **write / DoS** риск, не риск за поверителност — guard-овете
-  се целят в side-effects и изгаряне на ресурси.
+- Данните са публични, така че SQL е **write / DoS / Denial-of-Wallet** риск, не риск за
+  поверителност — guard-овете се целят в side-effects и изгаряне на ресурси (CPU и **прочетени
+  редове в D1**).
 
 ### Prompt injection — least privilege е основната защита
 

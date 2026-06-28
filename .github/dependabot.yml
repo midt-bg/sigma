@@ -6,14 +6,14 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: "/"
+    directory: '/'
     schedule:
       interval: weekly
     # One batched PR per week instead of one per action, so routine pin bumps stay low-noise.
     groups:
       github-actions:
         patterns:
-          - "*"
+          - '*'
     commit-message:
       prefix: ci
       include: scope

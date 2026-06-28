@@ -11,12 +11,11 @@ import type {
   CompetitionData,
   CompetitionPair,
   CompetitionTotals,
-  SectorRef,
 } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { typeLabel } from './rows';
+import { sectorOptions } from './sectors';
 
 export interface CompetitionParams {
   sector?: string | null;
@@ -24,12 +23,12 @@ export interface CompetitionParams {
   funding?: 'all' | 'eu' | 'national';
   top?: number;
   minContracts?: number;
+  authorityId?: string | null;
 }
 
 const DEFAULT_TOP = 20;
 const MAX_TOP = 50;
 const DEFAULT_MIN_CONTRACTS = 20;
-const SECTOR_OPTION_LIMIT = 12;
 
 // Shared contract-scope filter, identical across panels: sector via the parent tender's CPV division,
 // year via signed_at, EU funding via eu_funded. Every contract has a parent tender (synthetic when the
@@ -44,6 +43,10 @@ function scope(p: CompetitionParams): { join: string; where: string[]; params: u
   if (p.year) {
     where.push('substr(c.signed_at, 1, 4) = ?');
     params.push(p.year);
+  }
+  if (p.authorityId) {
+    where.push('t.authority_id = ?');
+    params.push(p.authorityId);
   }
   if (p.funding === 'eu') where.push('c.eu_funded = 1');
   else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
@@ -86,6 +89,13 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
     singleOfferValueEur: singleValueEur,
     singleOfferValueShare: valueEur > 0 ? singleValueEur / valueEur : 0,
   };
+}
+
+export async function getAuthoritySingleOffer(
+  db: D1Database,
+  authorityId: string,
+): Promise<CompetitionTotals> {
+  return competitionTotals(db, { authorityId });
 }
 
 interface AuthorityShareRow {
@@ -211,7 +221,9 @@ async function topRecurringPairs(
   p: CompetitionParams,
   top: number,
 ): Promise<CompetitionPair[]> {
-  const filtered = Boolean(p.sector || p.year || (p.funding && p.funding !== 'all'));
+  const filtered = Boolean(
+    p.sector || p.year || p.authorityId || (p.funding && p.funding !== 'all'),
+  );
   let rows: PairRow[];
   if (!filtered) {
     const { results } = await db
@@ -257,19 +269,6 @@ async function topRecurringPairs(
   });
 }
 
-// Sector select options: the present sectors by value (curated label), capped. Same source as getFlows.
-async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
-  const { results } = await db
-    .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
-    .bind(SECTOR_OPTION_LIMIT)
-    .all<{ division: string }>();
-  const byCode = new Map(CPV_SECTORS.map((s) => [s.code, s]));
-  return results
-    .map((r) => byCode.get(r.division))
-    .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
-}
-
 export async function getCompetition(
   db: D1Database,
   p: CompetitionParams,
@@ -298,4 +297,21 @@ export async function getCompetition(
       minContracts,
     },
   };
+}
+
+export async function getCompetitionSummary(
+  db: D1Database,
+  p: CompetitionParams = {},
+): Promise<{
+  totals: CompetitionTotals;
+  topConcentration: CompetitionConcentration | null;
+}> {
+  const top = 1;
+  const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
+  const scoped = { ...p, minContracts };
+  const [totals, byConcentration] = await Promise.all([
+    competitionTotals(db, p),
+    authoritiesByConcentration(db, scoped, top),
+  ]);
+  return { totals, topConcentration: byConcentration[0] ?? null };
 }

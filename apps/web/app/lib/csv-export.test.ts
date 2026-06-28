@@ -225,7 +225,10 @@ class InMemoryR2 {
   }
 }
 
-function envWith(r2: InMemoryR2, refreshedAt: string | null | undefined = REFRESHED_AT): ServedCsvEnv {
+function envWith(
+  r2: InMemoryR2,
+  refreshedAt: string | null | undefined = REFRESHED_AT,
+): ServedCsvEnv {
   return { DB: fakeDb(refreshedAt), CSV_CACHE: r2 as unknown as R2Bucket };
 }
 
@@ -377,11 +380,15 @@ describe('servedCsvExport', () => {
     const etag = primed.headers.get('ETag');
     await primed.text();
 
-    const response = await serve(r2, vi.fn(() => csvResponse('from db\n')), {
-      request: new Request('http://local/contracts.csv', {
-        headers: { 'If-None-Match': etag ?? '' },
-      }),
-    });
+    const response = await serve(
+      r2,
+      vi.fn(() => csvResponse('from db\n')),
+      {
+        request: new Request('http://local/contracts.csv', {
+          headers: { 'If-None-Match': etag ?? '' },
+        }),
+      },
+    );
 
     expect(response.status).toBe(304);
     expect(response.headers.get('ETag')).toBe(etag);
@@ -392,16 +399,27 @@ describe('servedCsvExport', () => {
 
   it('serves byte ranges from R2', async () => {
     const r2 = new InMemoryR2();
-    await (await serve(r2, vi.fn(() => csvResponse()))).text();
+    await (
+      await serve(
+        r2,
+        vi.fn(() => csvResponse()),
+      )
+    ).text();
 
-    const response = await serve(r2, vi.fn(() => csvResponse('from db\n')), {
-      request: new Request('http://local/contracts.csv', {
-        headers: { Range: 'bytes=0-9' },
-      }),
-    });
+    const response = await serve(
+      r2,
+      vi.fn(() => csvResponse('from db\n')),
+      {
+        request: new Request('http://local/contracts.csv', {
+          headers: { Range: 'bytes=0-9' },
+        }),
+      },
+    );
 
     expect(response.status).toBe(206);
-    expect(response.headers.get('Content-Range')).toBe(`bytes 0-9/${encoder.encode(CSV_BODY).length}`);
+    expect(response.headers.get('Content-Range')).toBe(
+      `bytes 0-9/${encoder.encode(CSV_BODY).length}`,
+    );
     expect(response.headers.get('Content-Length')).toBe('10');
     expect(response.headers.get('X-Csv-Cache')).toBe('HIT');
     expect(await response.text()).toBe('0123456789');

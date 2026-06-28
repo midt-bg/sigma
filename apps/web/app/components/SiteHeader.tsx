@@ -1,25 +1,34 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, NavLink, useSearchParams } from 'react-router';
+import { Link, NavLink, useLocation, useSearchParams } from 'react-router';
 import { SmartSearch } from './SmartSearch';
+import { ANALYTICS_NAV_PATHS } from '../lib/analytics-lenses';
 
-const NAV = [
+type NavItem = {
+  to: string;
+  label: string;
+  end?: boolean;
+  activePaths?: string[];
+};
+
+const NAV: NavItem[] = [
   { to: '/', label: 'Начало', end: true },
   { to: '/authorities', label: 'Институции' },
   { to: '/companies', label: 'Компании' },
   { to: '/contracts', label: 'Договори' },
-  { to: '/flows', label: 'Потоци' },
-  { to: '/network', label: 'Мрежа' },
-  { to: '/trends', label: 'Тренд' },
-  { to: '/map', label: 'Карта' },
-  { to: '/competition', label: 'Конкуренция' },
+  { to: '/analytics', label: 'Анализи', activePaths: [...ANALYTICS_NAV_PATHS] },
   { to: '/methodology', label: 'Методология' },
 ];
+
+function pathMatches(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
 
 // Masthead: serif brand + mono nav. The search icon opens a drawer below the mast; on mobile the
 // nav collapses into a slide-in drawer with a dimmed backdrop. All interaction is React state — no
 // external script — so the strict CSP needs no script allowance beyond the framework nonce. SSR
 // renders everything closed; the handlers wire up on hydration.
 export function SiteHeader() {
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   // Prefill from the active query so reopening search on a results page shows it.
   const activeQuery = searchParams.get('q') ?? '';
@@ -127,11 +136,38 @@ export function SiteHeader() {
                 ×
               </button>
             </div>
-            {NAV.map((item) => (
-              <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setNavOpen(false)}>
-                {item.label}
-              </NavLink>
-            ))}
+            {NAV.map((item) => {
+              // „Анализи" must highlight for the whole analytics family (its lens routes), not just
+              // /analytics. NavLink derives aria-current from its own `to` match and overrides a
+              // passed prop, so for the grouped entry we use a plain Link and drive aria-current
+              // (which the existing `a[aria-current='page']` styles) from a prefix match ourselves.
+              if (item.activePaths) {
+                const active = item.activePaths.some((path) =>
+                  pathMatches(location.pathname, path),
+                );
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    aria-current={active ? 'page' : undefined}
+                    className={active ? 'active' : undefined}
+                    onClick={() => setNavOpen(false)}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              }
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  onClick={() => setNavOpen(false)}
+                >
+                  {item.label}
+                </NavLink>
+              );
+            })}
           </nav>
           <div className="site-actions" inert={navOpen}>
             <button

@@ -109,14 +109,19 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                     <title>{label}</title>
                   </circle>
                 )}
-                <text
-                  className="node-label"
-                  x={right ? pt.x + r + 4 : pt.x - r - 4}
-                  y={pt.y + 3}
-                  textAnchor={right ? 'start' : 'end'}
-                >
-                  {truncate(n.label)}
-                </text>
+                {/* No label on the centre node: it is already named in the page title, the centre
+                    dropdown and the legend (it is the only accent-red node). A label here would either
+                    collide with a neighbour or sit on an edge. Ring nodes label outward. */}
+                {n.hop !== 0 && (
+                  <text
+                    className="node-label"
+                    x={right ? pt.x + r + 4 : pt.x - r - 4}
+                    y={pt.y + 3}
+                    textAnchor={right ? 'start' : 'end'}
+                  >
+                    {truncate(n.label)}
+                  </text>
+                )}
               </g>
             );
           })}

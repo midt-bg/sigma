@@ -11,6 +11,7 @@ import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
+import { assertIntegrity } from './integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -145,7 +146,9 @@ function assertFxPopulatedSqlite(dbPath) {
   );
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
-    console.error(`!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`);
+    console.error(
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+    );
     process.exit(1);
   }
 }
@@ -214,6 +217,7 @@ function runFullDerive() {
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
+  assertIntegrity(d1, { label: 'full derive (D1)' });
 }
 
 function runSliceDerive() {
@@ -222,6 +226,7 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
+  assertIntegrity(d1, { label: 'slice derive (D1)' });
 }
 
 function runRefreshSliceBatches() {
@@ -243,7 +248,10 @@ function runRefreshSliceBatches() {
 
 function runWorkBackfill() {
   const rawWorkDb = arg('work-db');
-  const workDb = rawWorkDb === true ? resolve(root, 'data/work/backfill.sqlite') : resolve(root, String(rawWorkDb));
+  const workDb =
+    rawWorkDb === true
+      ? resolve(root, 'data/work/backfill.sqlite')
+      : resolve(root, String(rawWorkDb));
   const workDir = dirname(workDb);
   mkdirSync(workDir, { recursive: true });
   if (existsSync(workDb)) rmSync(workDb, { force: true });
@@ -256,21 +264,38 @@ function runWorkBackfill() {
   if (catchup) {
     const plan = resolveCatchupPlan();
     loadFlags = rangeFlags(plan.from, plan.to);
-    console.log(`==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`);
+    console.log(
+      `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`,
+    );
   }
 
   // Derive intermediate-SQL filenames from the work-DB basename so two backfills sharing a work
   // directory (e.g. a convergence harness running full + windowed loads side by side) never clobber
   // each other's load SQL.
   const stem = basename(workDb, '.sqlite');
-  run('node', ['scripts/load-eop.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, `${stem}.eop-load.sql`)}`, ...loadFlags]);
+  run('node', [
+    'scripts/load-eop.mjs',
+    '--apply',
+    `--work-db=${workDb}`,
+    `--out=${resolve(workDir, `${stem}.eop-load.sql`)}`,
+    ...loadFlags,
+  ]);
   sqliteFile(workDb, resolve(root, 'scripts/derive-amendments.sql'));
-  run('node', ['scripts/load-fx.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, `${stem}.fx-load.sql`)}`]);
+  run('node', [
+    'scripts/load-fx.mjs',
+    '--apply',
+    `--work-db=${workDb}`,
+    `--out=${resolve(workDir, `${stem}.fx-load.sql`)}`,
+  ]);
   sqliteFile(workDb, resolve(root, 'scripts/load-nuts.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/seed-state-owned.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/normalize-raw.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulatedSqlite(workDb);
+  // Rollup checks self-skip here: the work DB's rollups are built later by precompute on the served
+  // D1 (ship-domain.mjs), which runs its own assertIntegrity. This validates the work DB's
+  // contract-level invariants and the staging→domain reconciliation before shipping.
+  assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
 
   const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
   if (remote) shipArgs.push('--remote', '--yes');

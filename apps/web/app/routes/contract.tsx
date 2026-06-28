@@ -7,6 +7,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
+import { RiskIndicators } from '../components/RiskIndicators';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -269,6 +270,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
         </Section>
+
+        <RiskIndicators contract={c} />
 
         <Section id="facts" title="Подробности">
           <FactsList

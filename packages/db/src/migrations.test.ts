@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
+const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -18,32 +19,53 @@ function readScript(dbPath: string, path: string): void {
 }
 
 describe('served migrations', () => {
-  // Sigma rebuilds every environment from scratch, so the schema is a single consolidated migration
-  // (0000_init) rather than an incremental chain. This guards that the one file yields the complete
-  // served schema — amendments history, the OCDS parties projection, the EOP tenderId column — and
-  // carries no raw_* staging (that lives only in work-staging-schema.sql, applied to the work DB).
-  it('builds the complete served schema from the single 0000_init migration', () => {
+  // 0000_init remains the complete base served schema. Later migrations must be additive over that
+  // base so initial setup (`wrangler d1 migrations apply`) and ETL ships keep the same table shape.
+  it('builds the served schema from the migration chain', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, migration0);
+      readScript(dbPath, migration1);
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='amendments';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='amendments';",
+        ).trim(),
       ).toBe('1');
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name='natural_key' AND \"notnull\"=1;").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name='natural_key' AND \"notnull\"=1;",
+        ).trim(),
       ).toBe('1');
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='parties';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='parties';",
+        ).trim(),
       ).toBe('1');
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('parties') WHERE name='party_key' AND pk=1;").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('parties') WHERE name='party_key' AND pk=1;",
+        ).trim(),
       ).toBe('1');
 
       expect(
-        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name='eop_tender_id';").trim(),
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name='eop_tender_id';",
+        ).trim(),
+      ).toBe('1');
+
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_flow_pairs_bidder' AND tbl_name='flow_pairs';",
+        ).trim(),
       ).toBe('1');
 
       // The served schema must never carry raw_* staging tables.

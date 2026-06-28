@@ -9,11 +9,10 @@ import type {
   SankeyLayout,
   SankeyNode,
   SankeyRibbon,
-  SectorRef,
 } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
 import { cleanName, entityName, money } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
+import { sectorOptions } from './sectors';
 
 export interface FlowsParams {
   sector?: string | null;
@@ -179,10 +178,11 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
   return { viewBox: '-150 -6 990 614', width: 990, height: 614, nodes, ribbons };
 }
 
-const SECTOR_OPTION_LIMIT = 12;
-
+const DEFAULT_TOP = 20;
+const MAX_TOP = 50;
 export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsData> {
-  const top = p.top === 50 ? 50 : 20;
+  const requestedTop = Number.isInteger(p.top) ? p.top! : DEFAULT_TOP;
+  const top = requestedTop >= 1 && requestedTop <= MAX_TOP ? requestedTop : DEFAULT_TOP;
   const rows = await topPairs(db, p, top);
   const pairs: FlowPair[] = rows.map((r, i) => {
     const authorityName = cleanName(r.authority_name);
@@ -200,16 +200,7 @@ export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsDat
     };
   });
 
-  // Sector select options: present sectors by value (curated first), capped.
-  const sectorRows = await db
-    .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
-    .bind(SECTOR_OPTION_LIMIT)
-    .all<{ division: string }>();
-  const byCode = new Map(CPV_SECTORS.map((s) => [s.code, s]));
-  const sectors: SectorRef[] = sectorRows.results
-    .map((r) => byCode.get(r.division))
-    .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
+  const sectors = await sectorOptions(db);
 
   return {
     pairs,

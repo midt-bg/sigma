@@ -102,57 +102,57 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
 
   const [bidderMeta, extra, topAuth, procRows, bidsRow, suspectRow, top, recent] =
     await Promise.all([
-    db
-      .prepare(
-        `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
+      db
+        .prepare(
+          `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
          LEFT JOIN nuts_regions n ON n.nuts3 = b.nuts WHERE b.id = ?`,
-      )
-      .bind(bidderId)
-      .first<{ legal_form: string | null; region: string | null }>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
+        )
+        .bind(bidderId)
+        .first<{ legal_form: string | null; region: string | null }>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
                 AVG(c.bids_received) AS avg_bids
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL`,
-      )
-      .bind(row.primary_sector ?? '', bidderId)
-      .first<{ primary_eur: number | null; avg_bids: number | null }>(),
-    db
-      .prepare(
-        `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
+        )
+        .bind(row.primary_sector ?? '', bidderId)
+        .first<{ primary_eur: number | null; avg_bids: number | null }>(),
+      db
+        .prepare(
+          `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL
          GROUP BY t.authority_id ORDER BY paid DESC LIMIT 6`,
-      )
-      .bind(bidderId)
-      .all<{ authority_id: string; name: string; paid: number; n: number }>(),
-    db
-      .prepare(
-        `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
+        )
+        .bind(bidderId)
+        .all<{ authority_id: string; name: string; paid: number; n: number }>(),
+      db
+        .prepare(
+          `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL GROUP BY t.procedure_type`,
-      )
-      .bind(bidderId)
-      .all<ProcRow>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
+        )
+        .bind(bidderId)
+        .all<ProcRow>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
                 SUM(CASE WHEN bids_received = 2 THEN 1 ELSE 0 END) AS two,
                 SUM(CASE WHEN bids_received = 3 THEN 1 ELSE 0 END) AS three,
                 SUM(CASE WHEN bids_received >= 4 THEN 1 ELSE 0 END) AS four_plus,
                 SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown
          FROM contracts WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
-      )
-      .bind(bidderId)
-      .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
-      .bind(bidderId)
-      .first<{ n: number }>(),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
-  ]);
+        )
+        .bind(bidderId)
+        .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
+        .bind(bidderId)
+        .first<{ n: number }>(),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
+    ]);
 
   const topAuthorities: AuthorityShare[] = topAuth.results.map((a) => ({
     slug: authoritySlug(a.authority_id),
@@ -605,8 +605,7 @@ export async function getContract(
   // more awarded contracts than lots, the extra awards are call-offs against one framework / DSP
   // procedure rather than one-contract-per-lot — so the procedure-level estimate is the whole
   // framework ceiling, not this single award. `frameworkAwards` carries the award count when so, else null.
-  const frameworkAwards =
-    r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
+  const frameworkAwards = r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
 
   const detail: ContractDetail = {
     id: contractSlug(r.id),
