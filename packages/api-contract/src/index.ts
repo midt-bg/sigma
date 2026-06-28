@@ -496,7 +496,7 @@ export interface CompetitionTotals {
   contracts: number; // contracts with a known offer count (the denominator)
   singleOffer: number; // of those, awarded on a single offer (bids_received = 1)
   singleOfferShare: number; // 0 to 1, by contract count
-  valueEur: number; // value over known-offer contracts (amount_eur IS NOT NULL, the site-wide basis)
+  valueEur: number; // value over known-offer contracts (positive amount_eur only, the value-share basis)
   singleOfferValueEur: number; // value of the single-offer subset (same basis)
   singleOfferValueShare: number; // 0 to 1, by value
 }
@@ -532,7 +532,7 @@ export interface ProcedureCompetition {
   classifiedContracts: number; // competitive + non-competitive (the share denominator)
   nonCompetitiveContracts: number; // awarded without a call for bids
   nonCompetitiveShare: number; // 0 to 1, by contract count
-  classifiedValueEur: number; // value over classified contracts (amount_eur IS NOT NULL basis)
+  classifiedValueEur: number; // value over classified contracts (positive amount_eur only)
   nonCompetitiveValueEur: number;
   nonCompetitiveValueShare: number; // 0 to 1, by value
   competitiveContracts: number;
