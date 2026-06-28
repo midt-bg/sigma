@@ -1,6 +1,7 @@
-import { count, money, signedPct } from '@sigma/shared';
+import { count, money, signedPct, type Locale } from '@sigma/shared';
 import type { NetworkData, TrendYear } from '@sigma/api-contract';
 import { type Column } from '../components/DataTable';
+import type { TFunction } from '../i18n/t';
 
 export interface LinkRow {
   from: string;
@@ -9,40 +10,59 @@ export interface LinkRow {
   contracts: number;
 }
 
-export const trendYearColumns: Column<TrendYear>[] = [
-  {
-    key: 'year',
-    header: 'Година',
-    isTitle: true,
-    cell: (r) => (
-      <>
-        {r.year}
-        {r.partial && <span className="muted"> (частично)</span>}
-      </>
-    ),
-  },
-  { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
-  { key: 'contracts', header: 'Договори', align: 'num', cell: (r) => count(r.contracts) },
-  {
-    key: 'yoy',
-    header: 'Спрямо предходната',
-    align: 'num',
-    cell: (r) => (r.yoyPct == null ? '' : signedPct(r.yoyPct)),
-  },
-];
+export function trendYearColumns(t: TFunction, locale: Locale): Column<TrendYear>[] {
+  return [
+    {
+      key: 'year',
+      header: t('entityTables.year'),
+      isTitle: true,
+      cell: (r) => (
+        <>
+          {r.year}
+          {r.partial && <span className="muted"> ({t('entityTables.yearPartial')})</span>}
+        </>
+      ),
+    },
+    {
+      key: 'value',
+      header: t('entityTables.value'),
+      align: 'money',
+      cell: (r) => money(r.valueEur, locale),
+    },
+    {
+      key: 'contracts',
+      header: t('entityTables.contracts'),
+      align: 'num',
+      cell: (r) => count(r.contracts, locale),
+    },
+    {
+      key: 'yoy',
+      header: t('entityTables.yoy'),
+      align: 'num',
+      cell: (r) => (r.yoyPct == null ? '' : signedPct(r.yoyPct, 1, locale)),
+    },
+  ];
+}
 
-export const networkColumns: Column<LinkRow>[] = [
-  { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-  { key: 'to', header: 'Към', cell: (r) => r.to },
-  { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
-  {
-    key: 'contracts',
-    header: 'Договори',
-    align: 'num',
-    secondary: true,
-    cell: (r) => count(r.contracts),
-  },
-];
+export function networkColumns(t: TFunction, locale: Locale): Column<LinkRow>[] {
+  return [
+    { key: 'from', header: t('entityTables.from'), isTitle: true, cell: (r) => r.from },
+    { key: 'to', header: t('entityTables.to'), cell: (r) => r.to },
+    {
+      key: 'value',
+      header: t('entityTables.value'),
+      align: 'money',
+      cell: (r) => money(r.valueEur, locale),
+    },
+    {
+      key: 'contracts',
+      header: t('entityTables.contracts'),
+      align: 'num',
+      secondary: true,
+      cell: (r) => count(r.contracts, locale),
+    },
+  ];
+}
 
 export function networkRows(data: NetworkData): LinkRow[] {
   const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));

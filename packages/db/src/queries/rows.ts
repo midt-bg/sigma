@@ -8,7 +8,7 @@ import type {
   OwnershipKind,
 } from '@sigma/api-contract';
 import { ENTITY_TYPES } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import { cleanName, entityName, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { sectorRef } from './sectors';
 
@@ -24,9 +24,20 @@ const TYPE_LABELS: Record<string, string> = {
   друго: 'друго',
 };
 
-export function typeLabel(typeGroup: string | null): string | null {
+const TYPE_LABELS_EN: Record<string, string> = {
+  министерство: 'Ministry',
+  община: 'Municipality',
+  агенция: 'Agency',
+  болница: 'Hospital',
+  образование: 'Education',
+  'държавна компания': 'State company',
+  друго: 'Other',
+};
+
+export function typeLabel(typeGroup: string | null, locale: Locale): string | null {
   if (!typeGroup) return null;
-  return TYPE_LABELS[typeGroup] ?? typeGroup;
+  const map = locale === 'en' ? TYPE_LABELS_EN : TYPE_LABELS;
+  return map[typeGroup] ?? typeGroup;
 }
 
 export interface CompanyTotalsRow {
@@ -46,12 +57,12 @@ export interface CompanyTotalsRow {
   last_date: string | null;
 }
 
-export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {
+export function toCompanyListItem(r: CompanyTotalsRow, locale: Locale): CompanyListItem {
   const hasEik = r.eik_valid === 1 && Boolean(r.eik);
   return {
     slug: companySlug(r.bidder_id),
     name: cleanName(r.name),
-    displayName: entityName(cleanName(r.name), r.kind),
+    displayName: entityName(cleanName(r.name), r.kind, locale),
     kind: r.kind,
     isConsortium: r.kind === 'consortium',
     eik: r.eik,
@@ -59,7 +70,7 @@ export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {
     hasEik,
     ownershipKind: r.ownership_kind,
     settlement: r.settlement,
-    sector: sectorRef(r.primary_sector),
+    sector: sectorRef(r.primary_sector, locale),
     wonEur: r.won_eur,
     contracts: r.contracts,
     authorities: r.authorities,
@@ -82,12 +93,12 @@ export interface AuthorityTotalsRow {
   last_date: string | null;
 }
 
-export function toAuthorityListItem(r: AuthorityTotalsRow): AuthorityListItem {
+export function toAuthorityListItem(r: AuthorityTotalsRow, locale: Locale): AuthorityListItem {
   return {
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.name),
     typeGroup: r.type_group,
-    typeLabel: typeLabel(r.type_group),
+    typeLabel: typeLabel(r.type_group, locale),
     settlement: r.settlement,
     spentEur: r.spent_eur,
     contracts: r.contracts,

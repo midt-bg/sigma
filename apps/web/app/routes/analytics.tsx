@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import { getCompetitionSummary, getFlows, getRegionalSpending, getSpendingTrend } from '@sigma/db';
 import { count, money, pct } from '@sigma/shared';
 import type { ReactNode } from 'react';
@@ -9,17 +9,20 @@ import { Choropleth } from '../components/Choropleth';
 import { TrendChart } from '../components/TrendChart';
 import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { Section, ShareBar } from '../components/ui';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 import { publicCache } from '../lib/cache';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
 import { seoMeta } from '../lib/meta';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/analytics',
-    title: 'Анализи — СИГМА',
-    description:
-      'Четири аналитични изгледа към обществените поръчки: потоци, карта, тренд и конкуренция.',
+    title: t('analytics.metaTitle'),
+    description: t('analytics.metaDescription'),
   });
 }
 
@@ -27,13 +30,19 @@ export function headers() {
   return { 'Cache-Control': publicCache(1800) };
 }
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const db = context.cloudflare.env.DB;
+  const locale = getLocale(request);
   const [flows, regional, trend, competition] = await Promise.all([
-    getFlows(db, { top: 3 }),
-    getRegionalSpending(db, { funding: 'all' }),
-    getSpendingTrend(db, { funding: 'all', granularity: 'year' }, { includeSectors: false }),
-    getCompetitionSummary(db),
+    getFlows(db, { top: 3 }, locale),
+    getRegionalSpending(db, { funding: 'all' }, locale),
+    getSpendingTrend(
+      db,
+      { funding: 'all', granularity: 'year' },
+      { includeSectors: false },
+      locale,
+    ),
+    getCompetitionSummary(db, {}, locale),
   ]);
 
   return {
@@ -66,33 +75,36 @@ function LensLink({ to, children }: { to: string; children: ReactNode }) {
 
 export default function Analytics({ loaderData }: Route.ComponentProps) {
   const { flows, regions, allRegions, regionTotal, trend, competition } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Анализи' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('analytics.breadcrumbHome'), to: '/' },
+          { label: t('analytics.breadcrumbAnalytics') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker="Анализи"
-          title="Анализи"
-          lede="Четири начина да проследиш едни и същи обществени поръчки: като движение на пари, карта, времева линия и сигнал за слаба конкуренция."
+          kicker={t('analytics.kicker')}
+          title={t('analytics.title')}
+          lede={t('analytics.lede')}
         />
 
-        <Section
-          id="lenses"
-          title="Изгледи"
-          hint="Всеки изглед отговаря на различен въпрос, но всички водят обратно към конкретните договори."
-        >
+        <Section id="lenses" title={t('analytics.lensesTitle')} hint={t('analytics.lensesHint')}>
           <div className="tiles analytics-lenses">
             {ANALYTICS_LENSES.map((lens) => (
               <article className="tile lens-card" key={lens.href}>
-                <p className="kicker info">Изглед</p>
+                <p className="kicker info">{t('analytics.lensKicker')}</p>
                 <h3>
-                  <Link to={lens.href}>{lens.title}</Link>
+                  <Link to={lens.href}>{t(`analytics.lens.${lens.key}.title`)}</Link>
                 </h3>
-                <p className="desc">{lens.desc}</p>
+                <p className="desc">{t(`analytics.lens.${lens.key}.desc`)}</p>
                 {lens.href === '/flows' && (
                   <div className="lens-preview">
-                    <p className="lens-preview-title">Най-големи национални потоци</p>
+                    <p className="lens-preview-title">{t('analytics.flowsPreviewTitle')}</p>
                     {flows.length ? (
                       <ul className="lens-list">
                         {flows.map((flow) => (
@@ -100,13 +112,15 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                             <span className="lens-name">
                               {flow.authorityName} → {flow.bidderDisplayName}
                             </span>
-                            <span className="lens-value">{money(flow.wonEur)}</span>
-                            <span className="lens-meta">{count(flow.contracts)} договора</span>
+                            <span className="lens-value">{money(flow.wonEur, locale)}</span>
+                            <span className="lens-meta">
+                              {t('analytics.contracts', { count: count(flow.contracts, locale) })}
+                            </span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="muted">Няма достатъчно данни за потоци.</p>
+                      <p className="muted">{t('analytics.flowsEmpty')}</p>
                     )}
                   </div>
                 )}
@@ -115,13 +129,13 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                     <div className="lens-map">
                       <Choropleth regions={allRegions} />
                     </div>
-                    <p className="lens-preview-title">Водещи области по стойност</p>
+                    <p className="lens-preview-title">{t('analytics.mapPreviewTitle')}</p>
                     {regions.length ? (
                       <ul className="lens-list">
                         {regions.map((region) => (
                           <li key={region.nuts3}>
                             <span className="lens-name">{region.name}</span>
-                            <span className="lens-value">{money(region.valueEur)}</span>
+                            <span className="lens-value">{money(region.valueEur, locale)}</span>
                             <span className="lens-share">
                               <ShareBar
                                 ratio={regionTotal > 0 ? region.valueEur / regionTotal : 0}
@@ -131,13 +145,13 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         ))}
                       </ul>
                     ) : (
-                      <p className="muted">Няма достатъчно данни по области.</p>
+                      <p className="muted">{t('analytics.mapEmpty')}</p>
                     )}
                   </div>
                 )}
                 {lens.href === '/trends' && (
                   <div className="lens-preview">
-                    <p className="lens-preview-title">Годишен национален тренд</p>
+                    <p className="lens-preview-title">{t('analytics.trendsPreviewTitle')}</p>
                     {trend.points.length >= 2 ? (
                       <>
                         <div className="lens-chart">
@@ -146,31 +160,37 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         <dl className="lens-metrics">
                           {trend.latest && (
                             <div>
-                              <dt>{trend.latest.partial ? 'Текуща година' : 'Последна година'}</dt>
+                              <dt>
+                                {trend.latest.partial
+                                  ? t('analytics.trendsCurrentYear')
+                                  : t('analytics.trendsLatestYear')}
+                              </dt>
                               <dd>
-                                {trend.latest.year} · {money(trend.latest.valueEur)}
-                                {trend.latest.partial && <span className="muted"> · частично</span>}
+                                {trend.latest.year} · {money(trend.latest.valueEur, locale)}
+                                {trend.latest.partial && (
+                                  <span className="muted"> · {t('analytics.trendsPartial')}</span>
+                                )}
                               </dd>
                             </div>
                           )}
                           {trend.peak && (
                             <div>
-                              <dt>Пик</dt>
+                              <dt>{t('analytics.trendsPeak')}</dt>
                               <dd>
-                                {trend.peak.year} · {money(trend.peak.valueEur)}
+                                {trend.peak.year} · {money(trend.peak.valueEur, locale)}
                               </dd>
                             </div>
                           )}
                         </dl>
                       </>
                     ) : (
-                      <p className="muted">Няма достатъчно данни за тренд.</p>
+                      <p className="muted">{t('analytics.trendsEmpty')}</p>
                     )}
                   </div>
                 )}
                 {lens.href === '/competition' && (
                   <div className="lens-preview">
-                    <p className="lens-preview-title">Национален дял с една оферта</p>
+                    <p className="lens-preview-title">{t('analytics.competitionPreviewTitle')}</p>
                     <SingleOfferPortion
                       valueEur={competition.totals.singleOfferValueEur}
                       totalEur={competition.totals.valueEur}
@@ -179,16 +199,22 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                     />
                     {competition.topConcentration && (
                       <p className="small muted">
-                        Най-концентриран възложител:{' '}
+                        {t('analytics.competitionTopConcentrationPre')}
                         <Link to={`/authorities/${competition.topConcentration.slug}`}>
                           {competition.topConcentration.name}
                         </Link>{' '}
-                        (индекс {pct(competition.topConcentration.hhi)})
+                        {t('analytics.competitionTopConcentrationIndex', {
+                          index: pct(competition.topConcentration.hhi, undefined, locale),
+                        })}
                       </p>
                     )}
                   </div>
                 )}
-                <LensLink to={lens.href}>Виж {lens.title.toLowerCase()} →</LensLink>
+                <LensLink to={lens.href}>
+                  {t('analytics.viewLink', {
+                    lens: t(`analytics.lens.${lens.key}.title`).toLowerCase(),
+                  })}
+                </LensLink>
               </article>
             ))}
           </div>

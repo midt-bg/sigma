@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { OwnershipKind } from '@sigma/api-contract';
 import { pct } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
 
 // Small editorial primitives shared across pages. Class definitions live in app.css (ported verbatim
 // from the mock); these just emit the markup.
@@ -12,14 +13,15 @@ export function Chip({ children }: { children: ReactNode }) {
 const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult';
 
 export function ExternalEikLink({ eik, className }: { eik: string; className?: string }) {
+  const t = useTranslation();
   return (
     <a
       href={`${REGISTRY_URL}?uic=${encodeURIComponent(eik)}`}
       target="_blank"
       rel="noopener noreferrer"
       className={`external-eik-link${className ? ` ${className}` : ''}`}
-      aria-label={`Отвори ЕИК ${eik} в Търговския регистър (в нов раздел)`}
-      title="Отвори в Търговския регистър (в нов раздел)"
+      aria-label={t('ui.externalEikAria', { eik })}
+      title={t('ui.externalEikTitle')}
     >
       <svg
         width="14"
@@ -40,15 +42,19 @@ export function ExternalEikLink({ eik, className }: { eik: string; className?: s
   );
 }
 
-const OWNERSHIP_LABELS: Record<OwnershipKind, string> = {
-  state: 'държавно',
-  municipal: 'общинско',
-  mixed: 'държавно-общинско',
+const OWNERSHIP_KEYS: Record<
+  OwnershipKind,
+  'ownershipState' | 'ownershipMunicipal' | 'ownershipMixed'
+> = {
+  state: 'ownershipState',
+  municipal: 'ownershipMunicipal',
+  mixed: 'ownershipMixed',
 };
 
 export function OwnershipChip({ kind }: { kind: OwnershipKind | null | undefined }) {
+  const t = useTranslation();
   if (!kind) return null;
-  return <Chip>{OWNERSHIP_LABELS[kind]}</Chip>;
+  return <Chip>{t(`ui.${OWNERSHIP_KEYS[kind]}`)}</Chip>;
 }
 
 export function Flag({
@@ -63,6 +69,8 @@ export function Flag({
 
 // Inline percentage bar. `warn` paints the fill in the accent red (e.g. a dominant share).
 export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
   return (
     <span className="share">
@@ -70,8 +78,8 @@ export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
         <i style={{ width }} />
       </span>
       <span className="share-num">
-        {pct(ratio)}
-        {warn && <span className="sr-only"> — висок дял</span>}
+        {pct(ratio, undefined, locale)}
+        {warn && <span className="sr-only"> {t('ui.highShare')}</span>}
       </span>
     </span>
   );

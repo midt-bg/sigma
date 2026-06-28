@@ -1,17 +1,21 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import type { Route } from './+types/privacy';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
 import { seoMeta } from '../lib/meta';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
+import { useTranslation } from '../i18n/context';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/privacy',
-    title: 'Политика за поверителност — СИГМА',
-    description: 'Как СИГМА обработва публични данни и какви права имат субектите на данни.',
+    title: t('privacy.metaTitle'),
+    description: t('privacy.metaDescription'),
   });
 }
 
@@ -24,29 +28,30 @@ export function loader({ context }: Route.LoaderArgs) {
 }
 
 export default function Privacy({ loaderData }: Route.ComponentProps) {
+  const t = useTranslation();
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Поверителност' }]} />
+      <Breadcrumbs items={[{ label: t('nav.home'), to: '/' }, { label: t('privacy.crumb') }]} />
       <main id="main">
         <PageHeader
-          kicker="Правна информация"
-          title="Политика за поверителност"
-          lede="Тази страница описва как СИГМА използва публични данни за обществените поръчки и как можете да упражните правата си."
+          kicker={t('privacy.kicker')}
+          title={t('privacy.title')}
+          lede={t('privacy.lede')}
         />
 
         <section className="section" aria-labelledby="controller">
-          <h2 id="controller">Администратор</h2>
+          <h2 id="controller">{t('privacy.sections.controller.heading')}</h2>
           <dl className="facts">
             <div className="row">
-              <dt>Администратор</dt>
-              <dd>Министерство на иновациите и дигиталната трансформация (МИДТ)</dd>
+              <dt>{t('privacy.sections.controller.controllerLabel')}</dt>
+              <dd>{t('privacy.sections.controller.controllerValue')}</dd>
             </div>
             <div className="row">
-              <dt>Адрес</dt>
-              <dd>ул. „Княз Александър I&quot; № 12, София 1000</dd>
+              <dt>{t('privacy.sections.controller.addressLabel')}</dt>
+              <dd>{t('privacy.sections.controller.addressValue')}</dd>
             </div>
             <div className="row">
-              <dt>Контакт</dt>
+              <dt>{t('privacy.sections.controller.contactLabel')}</dt>
               <dd>
                 <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
               </dd>
@@ -55,85 +60,42 @@ export default function Privacy({ loaderData }: Route.ComponentProps) {
         </section>
 
         <section className="section" aria-labelledby="data">
-          <h2 id="data">Данни и източници</h2>
-          <p>
-            СИГМА показва публично достъпни данни за обществени поръчки, възложители, изпълнители,
-            договори, стойности, дати, CPV кодове, УНП и свързани идентификатори.
-          </p>
-          <p>
-            Източниците са Агенцията по обществени поръчки (АОП) и ЦАИС ЕОП чрез отворените данни от
-            storage.eop.bg. Когато данните съдържат лични данни, уведомяването се извършва по реда
-            на чл. 14 от Общия регламент относно защитата на данните (GDPR), защото данните не са
-            получени пряко от субектите.
-          </p>
+          <h2 id="data">{t('privacy.sections.data.heading')}</h2>
+          <p>{t('privacy.sections.data.body1')}</p>
+          <p>{t('privacy.sections.data.body2')}</p>
         </section>
 
         <section className="section" aria-labelledby="basis">
-          <h2 id="basis">Правно основание</h2>
-          <p>
-            Обработването се извършва за изпълнение на задача от обществен интерес по чл. 6, пар. 1,
-            буква (e) от GDPR: публична прозрачност и граждански достъп до данни за разходването на
-            публични средства.
-          </p>
-          <p>
-            Когато е приложимо, обработването се основава и на легитимен интерес по чл. 6, пар. 1,
-            буква (f) от GDPR за поддържане на обществено достъпна аналитична услуга върху вече
-            публикувани данни.
-          </p>
+          <h2 id="basis">{t('privacy.sections.basis.heading')}</h2>
+          <p>{t('privacy.sections.basis.body1')}</p>
+          <p>{t('privacy.sections.basis.body2')}</p>
         </section>
 
         <section className="section" aria-labelledby="rights">
-          <h2 id="rights">Права на субектите на данни</h2>
+          <h2 id="rights">{t('privacy.sections.rights.heading')}</h2>
+          <p>{t('privacy.sections.rights.body1')}</p>
           <p>
-            Можете да поискате информация, достъп, корекция, ограничаване на обработването и преглед
-            на конкретен запис. Имате право на възражение по чл. 21 от GDPR и право на изтриване по
-            чл. 17 от GDPR, когато са налице законовите основания.
-          </p>
-          <p>
-            Заявленията се изпращат на{' '}
-            <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>. Посочете конкретния
-            запис, URL или идентификатор (например ЕИК, УНП или номер на договор), за да бъде
-            заявлението разгледано точно.
+            {t('privacy.sections.rights.body2Prefix')}{' '}
+            <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
+            {t('privacy.sections.rights.body2Suffix')}
           </p>
         </section>
 
         <section className="section" aria-labelledby="logs">
-          <h2 id="logs">Технически записи</h2>
-          <p>
-            За сигурност, предотвратяване на злоупотреби и нормална работа на услугата СИГМА води
-            кратки технически записи (логове) на заявките. Всеки запис включва дата и час, заявения
-            път (без съдържанието на заявката за търсене), HTTP статус, времетраене на обработката и
-            псевдонимен идентификатор на клиента.
-          </p>
-          <p>
-            IP адресът не се съхранява в явен вид. Идентификаторът на клиента се извежда от IP
-            адреса чрез необратима функция с таен ключ (HMAC-SHA-256), което позволява разпознаване
-            на повтарящи се заявки от един клиент за целите на сигурността, без адресът да може да
-            бъде възстановен от записа.
-          </p>
-          <p>
-            Съдържанието на търсенията не се записва — отбелязваме единствено, че е извършено
-            търсене, и дължината на въведения текст, но не и самия текст. Не създаваме потребителски
-            профили.
-          </p>
-          <p>
-            Обработката на заявките на инфраструктурно ниво се извършва от Cloudflare в ролята на
-            обработващ лични данни. Дневниците се съхраняват за кратък срок съгласно настройките на
-            платформата и след това се изтриват автоматично. Правното основание е легитимният
-            интерес по чл. 6, пар. 1, буква (f) от GDPR за сигурност и поддръжка на обществено
-            достъпната услуга.
-          </p>
+          <h2 id="logs">{t('privacy.sections.logs.heading')}</h2>
+          <p>{t('privacy.sections.logs.body1')}</p>
+          <p>{t('privacy.sections.logs.body2')}</p>
+          <p>{t('privacy.sections.logs.body3')}</p>
+          <p>{t('privacy.sections.logs.body4')}</p>
         </section>
 
         <section className="section" aria-labelledby="retention">
-          <h2 id="retention">Срокове и ограничения</h2>
+          <h2 id="retention">{t('privacy.sections.retention.heading')}</h2>
+          <p>{t('privacy.sections.retention.body1')}</p>
           <p>
-            СИГМА не изисква регистрация и не съхранява потребителски профили. Публичните данни за
-            обществени поръчки се показват докато са необходими за прозрачност, анализ и
-            проследимост на публичните разходи или докато законово основание налага промяна.
-          </p>
-          <p>
-            За информация за оператора вижте <Link to="/impressum">Импресум</Link>.
+            {t('privacy.sections.retention.operatorPrefix')}
+            <Link to="/impressum">{t('privacy.sections.retention.operatorLink')}</Link>
+            {t('privacy.sections.retention.operatorSuffix')}
           </p>
         </section>
       </main>

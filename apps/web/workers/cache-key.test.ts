@@ -101,6 +101,19 @@ describe('cacheKey', () => {
     expect(first.toString()).not.toBe(second.toString());
   });
 
+  // Locale separation contract: the `/en` prefix is part of the cache key by construction (the key is
+  // built from the full pathname), so the two locales never collapse into one entry. Guards against a
+  // future cacheKey refactor silently normalising the prefix away and serving one body for both langs.
+  it('keeps locale variants of the same page distinct', () => {
+    expect(cacheUrl('http://local/contracts').toString()).not.toBe(
+      cacheUrl('http://local/en/contracts').toString(),
+    );
+    // …including for a filtered variant
+    expect(cacheUrl('http://local/contracts?year=2024&sort=value-desc').toString()).not.toBe(
+      cacheUrl('http://local/en/contracts?year=2024&sort=value-desc').toString(),
+    );
+  });
+
   it('falls back to the raw pathname for malformed percent-encoding', () => {
     expect(() => cacheUrl('http://local/contracts/%')).not.toThrow();
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');

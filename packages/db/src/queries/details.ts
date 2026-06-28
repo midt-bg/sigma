@@ -18,8 +18,8 @@ import type {
   ProcedureSlice,
   SectorSpend,
 } from '@sigma/api-contract';
-import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { CPV_SECTORS, PROCEDURE_GROUPS, pickLabel, procedureGroup } from '@sigma/config';
+import { cleanName, entityName, parseConsortiumMembers, type Locale } from '@sigma/shared';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -47,7 +47,7 @@ interface ProcRow {
 }
 
 /** Fold scoped per-procedure_type counts into the 7 config groups → StackedBar slices. */
-function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
+function toProcedureMix(rows: ProcRow[], locale: Locale): ProcedureSlice[] {
   const total = rows.reduce((s, r) => s + (r.eur ?? 0), 0);
   const byGroup = new Map<string, { contracts: number; valueEur: number }>();
   for (const r of rows) {
@@ -63,7 +63,7 @@ function toProcedureMix(rows: ProcRow[]): ProcedureSlice[] {
     if (!agg || agg.valueEur <= 0) continue;
     out.push({
       key: g.key,
-      label: g.label,
+      label: pickLabel(g, locale),
       color: g.color,
       competitive: g.competitive,
       contracts: agg.contracts,
@@ -93,7 +93,11 @@ interface CompanyTotalsFull {
   last_date: string | null;
 }
 
-export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
+export async function getCompany(
+  db: D1Database,
+  bidderId: string,
+  locale: Locale,
+): Promise<CompanyDetail | null> {
   const row = await db
     .prepare(`SELECT * FROM company_totals WHERE bidder_id = ?`)
     .bind(bidderId)
@@ -150,8 +154,8 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
         .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
         .bind(bidderId)
         .first<{ n: number }>(),
-      listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
-      listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }, locale),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }, locale),
     ]);
 
   const topAuthorities: AuthorityShare[] = topAuth.results.map((a) => ({
@@ -183,7 +187,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
   return {
     slug: companySlug(bidderId),
     name: cleanName(row.name),
-    displayName: entityName(cleanName(row.name), row.kind),
+    displayName: entityName(cleanName(row.name), row.kind, locale),
     kind: row.kind,
     isConsortium: row.kind === 'consortium',
     eik: row.eik,
@@ -196,7 +200,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     wonEur: row.won_eur,
     contracts: row.contracts,
     authorities: row.authorities,
-    sector: sectorRef(row.primary_sector),
+    sector: sectorRef(row.primary_sector, locale),
     sectorSharePct:
       row.won_eur > 0 && extra?.primary_eur != null ? extra.primary_eur / row.won_eur : null,
     euSharePct: row.won_eur > 0 ? row.eu_eur / row.won_eur : 0,
@@ -206,7 +210,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     suspect: suspectRow?.n ?? 0,
     topAuthorities,
     moreAuthorities: Math.max(0, row.authorities - topAuthorities.length),
-    procedureMix: toProcedureMix(procRows.results),
+    procedureMix: toProcedureMix(procRows.results, locale),
     bids,
     topContracts: top.items,
     recentContracts: recent.items,
@@ -236,6 +240,7 @@ interface AuthorityTotalsFull {
 export async function getAuthority(
   db: D1Database,
   authorityId: string,
+  locale: Locale,
 ): Promise<AuthorityDetail | null> {
   const row = await db
     .prepare(`SELECT * FROM authority_totals WHERE authority_id = ?`)
@@ -290,14 +295,22 @@ export async function getAuthority(
       )
       .bind(authorityId)
       .first<{ n: number }>(),
-    listContracts(db, { authority: authoritySlug(authorityId), sort: 'date-desc', pageSize: 6 }),
-    listContracts(db, { authority: authoritySlug(authorityId), sort: 'value-desc', pageSize: 6 }),
+    listContracts(
+      db,
+      { authority: authoritySlug(authorityId), sort: 'date-desc', pageSize: 6 },
+      locale,
+    ),
+    listContracts(
+      db,
+      { authority: authoritySlug(authorityId), sort: 'value-desc', pageSize: 6 },
+      locale,
+    ),
   ]);
 
   const topContractors: CompanyShare[] = topComp.results.map((c) => ({
     slug: companySlug(c.bidder_id),
     name: cleanName(c.name),
-    displayName: entityName(cleanName(c.name), c.kind),
+    displayName: entityName(cleanName(c.name), c.kind, locale),
     kind: c.kind,
     wonEur: c.won,
     contracts: c.n,
@@ -307,7 +320,7 @@ export async function getAuthority(
   // Sectors: top 6 + a rolled-up „… още CPV категории" tail.
   const allSectors = sectorRows.results
     .map((s) => {
-      const ref = sectorRef(s.division);
+      const ref = sectorRef(s.division, locale);
       return ref ? { ...ref, valueEur: s.eur } : null;
     })
     .filter(
@@ -322,12 +335,13 @@ export async function getAuthority(
     valueEur: s.valueEur,
     sharePct: row.spent_eur > 0 ? s.valueEur / row.spent_eur : 0,
   }));
+  const otherSectorsLabel = locale === 'en' ? '… more CPV categories' : '… още CPV категории';
   const sectorsOther: SectorSpend | null =
     tailEur > 0
       ? {
           code: '',
-          label: '… още CPV категории',
-          short: '… още CPV категории',
+          label: otherSectorsLabel,
+          short: otherSectorsLabel,
           valueEur: tailEur,
           sharePct: row.spent_eur > 0 ? tailEur / row.spent_eur : 0,
         }
@@ -338,7 +352,7 @@ export async function getAuthority(
     name: cleanName(row.name),
     eik: authoritySlug(authorityId),
     typeGroup: row.type_group,
-    typeLabel: typeLabel(row.type_group),
+    typeLabel: typeLabel(row.type_group, locale),
     settlement: row.settlement,
     region: row.region,
     spentEur: row.spent_eur,
@@ -354,7 +368,7 @@ export async function getAuthority(
     moreContractors: Math.max(0, row.suppliers - topContractors.length),
     sectors,
     sectorsOther,
-    procedureMix: toProcedureMix(procRows.results),
+    procedureMix: toProcedureMix(procRows.results, locale),
     recentContracts: recent.items,
     topContracts: top.items,
   };
@@ -421,6 +435,7 @@ interface ContractDetailRow {
 export async function getContract(
   db: D1Database,
   contractId: string,
+  locale: Locale,
 ): Promise<ContractRecord | null> {
   const r = await db
     .prepare(
@@ -528,7 +543,7 @@ export async function getContract(
         contractId: l.contract_id ? contractSlug(l.contract_id) : null,
         contractorSlug: l.bidder_id ? companySlug(l.bidder_id) : null,
         contractorName: l.bidder_name
-          ? entityName(cleanName(l.bidder_name), l.bidder_kind ?? 'company')
+          ? entityName(cleanName(l.bidder_name), l.bidder_kind ?? 'company', locale)
           : null,
         estimatedEur: est,
         signingEur: l.signing_value_eur,
@@ -565,7 +580,7 @@ export async function getContract(
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.authority_name),
     displayName: cleanName(r.authority_name),
-    typeLabel: typeLabel(r.authority_type_group),
+    typeLabel: typeLabel(r.authority_type_group, locale),
     settlement: r.authority_settlement,
     eik: authoritySlug(r.authority_id),
     sector: null,
@@ -575,12 +590,12 @@ export async function getContract(
   const bidder: ContractParty = {
     slug: companySlug(r.bidder_id),
     name: cleanName(r.bidder_name),
-    displayName: entityName(cleanName(r.bidder_name), r.bidder_kind),
+    displayName: entityName(cleanName(r.bidder_name), r.bidder_kind, locale),
     kind: r.bidder_kind,
     typeLabel: null,
     settlement: r.bidder_settlement,
     eik: r.bidder_eik,
-    sector: sectorRef(compTotals?.primary_sector ?? null),
+    sector: sectorRef(compTotals?.primary_sector ?? null, locale),
     totalContracts: compTotals?.contracts ?? 0,
     totalEur: compTotals?.won_eur ?? 0,
   };
@@ -623,8 +638,11 @@ export async function getContract(
     contractKind: r.contract_kind,
     cpvCode: r.cpv_code,
     cpvDescription: r.cpv_description,
-    sector: sectorRef(r.cpv_code ? r.cpv_code.slice(0, 2) : null),
-    procedureLabel: r.procedure_type === 'неизвестна' ? 'Неизвестна' : r.procedure_type,
+    sector: sectorRef(r.cpv_code ? r.cpv_code.slice(0, 2) : null, locale),
+    procedureLabel:
+      r.procedure_type === 'неизвестна'
+        ? pickLabel(procedureGroup('неизвестна'), locale)
+        : r.procedure_type,
     bidsReceived: r.bids_received,
     bidsRejected: r.bids_rejected,
     bidsSme: r.bids_sme,

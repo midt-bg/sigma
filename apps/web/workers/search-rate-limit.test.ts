@@ -35,6 +35,18 @@ describe('rateLimitSearchRoute', () => {
     expect(response?.status).toBe(429);
   });
 
+  it('limits the localized /en search mirror and its suggest sub-path', async () => {
+    for (const path of ['/en/search?q=a', '/en/search/suggest?q=a']) {
+      const { limiter } = rateLimiter(false);
+      const response = await rateLimitSearchRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.42' } }),
+        { SEARCH_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(response?.status).toBe(429);
+    }
+  });
+
   it('limits search sub-paths such as /search/suggest', async () => {
     const { limiter } = rateLimiter(false);
 

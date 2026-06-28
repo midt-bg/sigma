@@ -77,7 +77,7 @@ function spyDb(): { db: D1Database; sql: string[] } {
 
 describe('listAuthorities', () => {
   it('returns a page with items and total for an unfiltered request', async () => {
-    const page = await listAuthorities(fakeDb(), { pageSize: 10 });
+    const page = await listAuthorities(fakeDb(), { pageSize: 10 }, 'bg');
 
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(1);
@@ -87,14 +87,14 @@ describe('listAuthorities', () => {
 
   it('falls back to the default sort instead of throwing for an invalid sort key', async () => {
     await expect(
-      listAuthorities(fakeDb(), { sort: 'invalid' as never, pageSize: 10 }),
+      listAuthorities(fakeDb(), { sort: 'invalid' as never, pageSize: 10 }, 'bg'),
     ).resolves.toBeDefined();
   });
 
   it('uses the base aggregation source when sector filters are present', async () => {
     const { db, sql } = spyDb();
 
-    await listAuthorities(db, { sectors: ['45'], pageSize: 10 });
+    await listAuthorities(db, { sectors: ['45'], pageSize: 10 }, 'bg');
 
     expect(sql.some(usesBaseAggregation)).toBe(true);
   });
@@ -102,7 +102,7 @@ describe('listAuthorities', () => {
   it('uses the authority_totals rollup when no cross-cut filters are set', async () => {
     const { db, sql } = spyDb();
 
-    await listAuthorities(db, { pageSize: 10 });
+    await listAuthorities(db, { pageSize: 10 }, 'bg');
 
     expect(sql.some(usesRollup)).toBe(true);
     expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
@@ -111,7 +111,7 @@ describe('listAuthorities', () => {
 
 describe('getAuthorityFacets', () => {
   it('returns type and sector facets', async () => {
-    const facets = await getAuthorityFacets(fakeDb());
+    const facets = await getAuthorityFacets(fakeDb(), 'bg');
 
     expect(facets.types).toHaveLength(1);
     expect(facets.types[0]!.value).toBe('министерство');
@@ -119,14 +119,14 @@ describe('getAuthorityFacets', () => {
   });
 
   it('only returns sectors that have a non-zero value from sector_totals', async () => {
-    const facets = await getAuthorityFacets(fakeDb());
+    const facets = await getAuthorityFacets(fakeDb(), 'bg');
 
     expect(facets.sectors.length).toBeGreaterThanOrEqual(1);
     expect(facets.sectors.every((s) => s.count > 0)).toBe(true);
   });
 
   it('includes a valid CPV sector code and label in the sectors facet', async () => {
-    const facets = await getAuthorityFacets(fakeDb());
+    const facets = await getAuthorityFacets(fakeDb(), 'bg');
     const sector45 = facets.sectors.find((s) => s.value === '45');
 
     expect(sector45).toBeDefined();

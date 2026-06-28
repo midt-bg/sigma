@@ -1,4 +1,5 @@
 import type { TrendPoint } from '@sigma/api-contract';
+import { useTranslation } from '../i18n/context';
 
 // Server-rendered area + line of spend over time (no chart JS, like SankeyDiagram). The accessible
 // data is the per-year table beside it; this SVG is a visual summary (role="img" + aria-label) with
@@ -15,6 +16,7 @@ export function TrendChart({
   points: TrendPoint[];
   granularity: 'month' | 'year';
 }) {
+  const t = useTranslation();
   if (points.length < 2) return null;
   const max = Math.max(1, ...points.map((p) => p.valueEur));
   const n = points.length;
@@ -44,7 +46,7 @@ export function TrendChart({
       className="trend-svg"
       viewBox={`-14 0 ${W + 28} ${H}`}
       role="img"
-      aria-label="Разходи за обществени поръчки във времето"
+      aria-label={t('trends.chartAria')}
     >
       {ticks.map((t) => (
         <line key={`g${t.i}`} x1={x(t.i)} y1={PAD_T} x2={x(t.i)} y2={H - PAD_B} className="grid" />
@@ -66,7 +68,7 @@ export function TrendChart({
             y={y(points[partialIdx]!.valueEur) - 7}
             textAnchor="end"
           >
-            частично
+            {t('trends.chartPartial')}
           </text>
         </>
       )}

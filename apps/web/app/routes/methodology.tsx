@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import { count, date, money, pct } from '@sigma/shared';
 import { getMethodologyStats } from '@sigma/db';
 import type { Route } from './+types/methodology';
@@ -8,13 +8,17 @@ import { Callout, Flag } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { useLocale, useTranslation } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
-    path: '/methodology',
-    title: 'Методология и речник — СИГМА',
-    description: 'Откъде идват числата, как се сглобяват и какво съзнателно не показваме.',
+    path: location.pathname,
+    title: t('methodology.metaTitle'),
+    description: t('methodology.metaDescription'),
   });
 }
 
@@ -27,95 +31,179 @@ export async function loader({ context }: Route.LoaderArgs) {
   return getMethodologyStats(context.cloudflare.env.DB);
 }
 
-const TOC = [
-  ['what', 'Какво показва СИГМА'],
-  ['source', 'Източник и обхват на данните'],
-  ['unit', 'Основната единица: договорът'],
-  ['principles', 'Принципи'],
-  ['glossary', 'Речник на понятията'],
-  ['money', 'Валута, закръгляване, периоди'],
-  ['identity', 'Имена, ЕИК, УНП'],
-  ['gaps', 'Известни празнини в полетата'],
-  ['export', 'Сваляне и достъп до данните'],
-  ['contact', 'Поправки и обратна връзка'],
-];
+const TOC_IDS = [
+  'what',
+  'source',
+  'unit',
+  'principles',
+  'glossary',
+  'money',
+  'identity',
+  'gaps',
+  'export',
+  'contact',
+] as const;
 
 type GapRow = [string, string, 'has' | 'gap', string, 'info' | 'soft' | 'none'];
 
 export default function Methodology({ loaderData }: Route.ComponentProps) {
-  const t = loaderData.totals;
-  const endYear = coverageEndYear(t.asOf);
+  const t = useTranslation();
+  const locale = useLocale();
+  const totals = loaderData.totals;
+  const endYear = coverageEndYear(totals.asOf);
   const period =
-    loaderData.firstDate && t.asOf
-      ? `${loaderData.firstDate.slice(0, 4)} г. — ${endYear} г. (${endYear} г. частично)`
-      : `${START_YEAR} г. — ${endYear} г. (${endYear} г. частично)`;
+    loaderData.firstDate && totals.asOf
+      ? t('methodology.period', { first: loaderData.firstDate.slice(0, 4), end: endYear })
+      : t('methodology.period', { first: START_YEAR, end: endYear });
   const gaps: GapRow[] = [
-    ['Институция, име и ID', 'Обявление / OCDS parties', 'has', 'да', 'info'],
-    ['Компания, име и ЕИК', 'Решение за избор + договор', 'has', 'да', 'info'],
-    ['Стойност (в евро)', 'Договор', 'has', 'да', 'info'],
-    ['УНП · дата · CPV код', 'Преписка / обявление', 'has', 'да', 'info'],
-    ['Сектор (раздел на CPV)', 'Раздел на CPV (еднозначен)', 'has', 'да', 'info'],
-    ['Обект (доставки/услуги/строителство)', 'Обявление', 'has', 'да', 'info'],
-    ['Финансиране от ЕС (да/не)', 'Обявление', 'has', 'да', 'info'],
     [
-      'Вид на институцията',
-      'Вид на възложителя (ЗОП); групирането е приблизително',
+      t('methodology.gaps.instField'),
+      t('methodology.gaps.instSrc'),
       'has',
-      'да',
+      t('methodology.gaps.badgeYes'),
       'info',
     ],
     [
-      'Брой оферти',
-      'Решение за избор, протокол',
-      'gap',
-      `≈${pct(loaderData.coverage.bids, 0)}`,
-      'soft',
+      t('methodology.gaps.companyField'),
+      t('methodology.gaps.companySrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
     ],
-    ['Програма на ЕС (име)', 'Обявление', 'gap', `≈${pct(loaderData.coverage.eu, 0)}`, 'soft'],
     [
-      'Срок и дати на изпълнение',
-      'Обявление',
-      'gap',
-      `≈${pct(loaderData.coverage.duration, 0)}`,
-      'soft',
+      t('methodology.gaps.valueField'),
+      t('methodology.gaps.valueSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
     ],
-    ['Текуща стойност (с анекси)', 'Допълнителни споразумения', 'gap', 'при анекс', 'soft'],
     [
-      'Връзка договор ↔ обособена позиция',
-      'Обявление / OCDS',
+      t('methodology.gaps.unpField'),
+      t('methodology.gaps.unpSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
+    ],
+    [
+      t('methodology.gaps.sectorField'),
+      t('methodology.gaps.sectorSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
+    ],
+    [
+      t('methodology.gaps.objectField'),
+      t('methodology.gaps.objectSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
+    ],
+    [
+      t('methodology.gaps.euFundField'),
+      t('methodology.gaps.euFundSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
+    ],
+    [
+      t('methodology.gaps.instTypeField'),
+      t('methodology.gaps.instTypeSrc'),
+      'has',
+      t('methodology.gaps.badgeYes'),
+      'info',
+    ],
+    [
+      t('methodology.gaps.bidsField'),
+      t('methodology.gaps.bidsSrc'),
       'gap',
-      `≈${pct(loaderData.coverage.lot, 0)}`,
+      `≈${pct(loaderData.coverage.bids, 0, locale)}`,
       'soft',
     ],
-    ['Седалище (град/област)', 'OCDS parties / адрес', 'gap', 'при наличие', 'soft'],
-    ['Вторичен (допълнителен) CPV', '—', 'gap', 'не', 'none'],
-    ['Стойности на отделните оферти', '—', 'gap', 'не', 'none'],
+    [
+      t('methodology.gaps.euProgField'),
+      t('methodology.gaps.euProgSrc'),
+      'gap',
+      `≈${pct(loaderData.coverage.eu, 0, locale)}`,
+      'soft',
+    ],
+    [
+      t('methodology.gaps.durationField'),
+      t('methodology.gaps.durationSrc'),
+      'gap',
+      `≈${pct(loaderData.coverage.duration, 0, locale)}`,
+      'soft',
+    ],
+    [
+      t('methodology.gaps.currentValField'),
+      t('methodology.gaps.currentValSrc'),
+      'gap',
+      t('methodology.gaps.badgeOnAnnex'),
+      'soft',
+    ],
+    [
+      t('methodology.gaps.lotLinkField'),
+      t('methodology.gaps.lotLinkSrc'),
+      'gap',
+      `≈${pct(loaderData.coverage.lot, 0, locale)}`,
+      'soft',
+    ],
+    [
+      t('methodology.gaps.seatField'),
+      t('methodology.gaps.seatSrc'),
+      'gap',
+      t('methodology.gaps.badgeWhenAvailable'),
+      'soft',
+    ],
+    [
+      t('methodology.gaps.secondaryCpvField'),
+      t('methodology.gaps.dash'),
+      'gap',
+      t('methodology.gaps.badgeNo'),
+      'none',
+    ],
+    [
+      t('methodology.gaps.bidValuesField'),
+      t('methodology.gaps.dash'),
+      'gap',
+      t('methodology.gaps.badgeNo'),
+      'none',
+    ],
   ];
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Методология' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('methodology.breadcrumbHome'), to: '/' },
+          { label: t('methodology.breadcrumbCurrent') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker="Как четем данните"
-          title="Методология и речник"
-          lede="СИГМА обединява публични данни от Регистъра на обществените поръчки (АОП / ЦАИС ЕОП). На тази страница описваме откъде идват числата, как се сглобяват, какво показваме като неутрален факт и какво — нарочно — не показваме в първата версия."
+          kicker={t('methodology.kicker')}
+          title={t('methodology.title')}
+          lede={t('methodology.lede')}
         />
-        {(t.asOf || t.refreshedAt) && (
+        {(totals.asOf || totals.refreshedAt) && (
           <p className="doc-version">
-            Издание 1{t.asOf ? ` · последен договор ${date(t.asOf)}` : ''}
-            {t.refreshedAt ? ` · данни обновени ${date(t.refreshedAt)}` : ''}
+            {t('methodology.edition')}
+            {totals.asOf
+              ? t('methodology.editionLastContract', { date: date(totals.asOf, locale) })
+              : ''}
+            {totals.refreshedAt
+              ? t('methodology.editionRefreshed', { date: date(totals.refreshedAt, locale) })
+              : ''}
           </p>
         )}
 
         <div className="split">
-          <aside className="toc" aria-label="Съдържание на страницата">
-            <p className="toc-title">Съдържание</p>
+          <aside className="toc" aria-label={t('methodology.tocAria')}>
+            <p className="toc-title">{t('methodology.tocTitle')}</p>
             <ol>
-              {TOC.map(([id, label], i) => (
+              {TOC_IDS.map((id, i) => (
                 <li key={id}>
                   <span className="n">{i + 1}</span>
-                  <a href={`#${id}`}>{label}</a>
+                  <a href={`#${id}`}>{t(`methodology.toc.${id}` as 'methodology.toc.what')}</a>
                 </li>
               ))}
             </ol>
@@ -123,323 +211,269 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
 
           <div>
             <section className="section" aria-labelledby="what">
-              <h2 id="what">1. Какво показва СИГМА</h2>
+              <h2 id="what">{t('methodology.what.heading')}</h2>
               <p>
-                СИГМА — <em>Система за Интегриран Граждански Мониторинг и Анализ</em> — е публичен
-                инструмент за разглеждане на обществените поръчки в България. Показва{' '}
-                <strong>три неща</strong> и връзките между тях:
+                {t('methodology.what.intro1')}
+                <em>{t('methodology.what.introEm')}</em>
+                {t('methodology.what.intro2')}
+                <strong>{t('methodology.what.introStrong')}</strong>
+                {t('methodology.what.intro3')}
               </p>
               <ul>
                 <li>
-                  <strong>Институции</strong> — възложителите. Кой колко харчи, на какво.
+                  <strong>{t('methodology.what.instStrong')}</strong>
+                  {t('methodology.what.instText')}
                 </li>
                 <li>
-                  <strong>Компании</strong> — изпълнителите, ключът е ЕИК. Колко е спечелила всяка,
-                  от кого, в какъв сектор.
+                  <strong>{t('methodology.what.companyStrong')}</strong>
+                  {t('methodology.what.companyText')}
                 </li>
                 <li>
-                  <strong>Договори</strong> — основната единица. Всяко обобщение се свежда до
-                  конкретните договори, които го формират.
+                  <strong>{t('methodology.what.contractStrong')}</strong>
+                  {t('methodology.what.contractText')}
                 </li>
               </ul>
-              <p>
-                СИГМА е изцяло само за четене: не въвежда нови данни, не оценява процедурите и не
-                маркира фирми като рискови.
-              </p>
-              <Callout title="За какво е подходяща тази версия">
-                <p className="m-0">
-                  Журналисти, изследователи, общински съветници, НПО и граждани, които искат да
-                  тръгнат от името на институция или фирма и да стигнат до конкретните договори. Не
-                  замества правен или одиторски анализ.
-                </p>
+              <p>{t('methodology.what.readOnly')}</p>
+              <Callout title={t('methodology.what.calloutTitle')}>
+                <p className="m-0">{t('methodology.what.calloutBody')}</p>
               </Callout>
             </section>
 
             <section className="section" aria-labelledby="source">
-              <h2 id="source">2. Източник и обхват на данните</h2>
+              <h2 id="source">{t('methodology.source.heading')}</h2>
               <dl className="facts">
                 <div className="row">
-                  <dt>Първичен източник</dt>
+                  <dt>{t('methodology.source.primaryDt')}</dt>
+                  <dd>{t('methodology.source.primaryDd')}</dd>
+                </div>
+                <div className="row">
+                  <dt>{t('methodology.source.namesDt')}</dt>
+                  <dd>{t('methodology.source.namesDd')}</dd>
+                </div>
+                <div className="row">
+                  <dt>{t('methodology.source.periodDt')}</dt>
+                  <dd>{t('methodology.source.periodDd', { period })}</dd>
+                </div>
+                <div className="row">
+                  <dt>{t('methodology.source.sectorsDt')}</dt>
                   <dd>
-                    Регистър на обществените поръчки (АОП / ЦАИС ЕОП) — отворени данни от
-                    storage.eop.bg.
+                    <strong>{t('methodology.source.sectorsDdStrong')}</strong>
+                    {t('methodology.source.sectorsDd', { sectors: loaderData.sectors })}
                   </dd>
                 </div>
                 <div className="row">
-                  <dt>Имена на институции</dt>
-                  <dd>Имената на институциите са канонизирани и нормализирани.</dd>
-                </div>
-                <div className="row">
-                  <dt>Покрит период</dt>
+                  <dt>{t('methodology.source.recordsDt')}</dt>
                   <dd>
-                    {period}. Договори от текущата година влизат с няколко седмици закъснение.
-                  </dd>
-                </div>
-                <div className="row">
-                  <dt>Покрити сектори</dt>
-                  <dd>
-                    <strong>Всички сектори.</strong> Секторът се определя еднозначно от CPV кода
-                    (раздел = първите две цифри); налични са всичките {loaderData.sectors} раздела
-                    на CPV.
-                  </dd>
-                </div>
-                <div className="row">
-                  <dt>Брой записи</dt>
-                  <dd>
-                    {count(t.contracts)} договора и обособени позиции, {count(t.authorities)}{' '}
-                    институции, {count(t.bidders)} компании, общо{' '}
-                    <strong>{money(t.valueEur)}</strong>
-                    {t.asOf ? ` до ${date(t.asOf)}` : ''}.
-                    {t.refreshedAt ? ` Данните са обновени на ${date(t.refreshedAt)}.` : ''}
+                    {t('methodology.source.recordsDd', {
+                      contracts: count(totals.contracts, locale),
+                      authorities: count(totals.authorities, locale),
+                      bidders: count(totals.bidders, locale),
+                    })}
+                    <strong>{money(totals.valueEur, locale)}</strong>
+                    {totals.asOf
+                      ? t('methodology.source.recordsAsOf', { date: date(totals.asOf, locale) })
+                      : ''}
+                    {totals.refreshedAt
+                      ? t('methodology.source.recordsRefreshed', {
+                          date: date(totals.refreshedAt, locale),
+                        })
+                      : ''}
                   </dd>
                 </div>
                 <div className="row">
                   <dt>
-                    Какво <em>не</em> е включено
+                    {t('methodology.source.excludedDtBefore')}
+                    <em>{t('methodology.source.excludedDtEm')}</em>
+                    {t('methodology.source.excludedDtAfter')}
                   </dt>
-                  <dd>
-                    Поръчки под прага за обявяване попадат тук само ако възложителят е публикувал
-                    договор. Поръчките в отбраната и сигурността по специален ред — не.
-                  </dd>
+                  <dd>{t('methodology.source.excludedDd')}</dd>
                 </div>
                 <div className="row">
-                  <dt>Непотвърдени стойности</dt>
+                  <dt>{t('methodology.source.suspectDt')}</dt>
                   <dd>
-                    {count(t.suspect)} договора с явно недостоверна стойност (напр. анекс ≥100× или
-                    грешка) остават в броя записи, но стойността им се изключва от сумите и се
-                    отбелязва като „стойност с непотвърдена достоверност".
+                    {t('methodology.source.suspectDd', { suspect: count(totals.suspect, locale) })}
                   </dd>
                 </div>
               </dl>
             </section>
 
             <section className="section" aria-labelledby="unit">
-              <h2 id="unit">3. Основната единица: договорът</h2>
+              <h2 id="unit">{t('methodology.unit.heading')}</h2>
               <p>
-                Един <strong>сключен договор</strong> (или една обособена позиция от процедура с
-                няколко лота) е най-малката единица, която СИГМА показва. Всичко друго — обща сума
-                за институция, обем за компания, поток между двете — е сбор или брой над списък от
-                такива договори.
+                {t('methodology.unit.body1')}
+                <strong>{t('methodology.unit.bodyStrong')}</strong>
+                {t('methodology.unit.body2')}
               </p>
-              <Callout title="Защо не показваме офертите на отделните участници">
+              <Callout title={t('methodology.unit.calloutTitle')}>
                 <p className="m-0">
-                  В регистъра е публикуван <strong>броят</strong> получени оферти, но{' '}
-                  <strong>стойностите на отделните оферти</strong> (без тази на победителя) не са в
-                  машиночетимия запис. Това поле не съществува в нито един отворен източник и не
-                  присъства в платформата.
+                  {t('methodology.unit.calloutBody1')}
+                  <strong>{t('methodology.unit.calloutBodyStrong1')}</strong>
+                  {t('methodology.unit.calloutBody2')}
+                  <strong>{t('methodology.unit.calloutBodyStrong2')}</strong>
+                  {t('methodology.unit.calloutBody3')}
                 </p>
               </Callout>
             </section>
 
             <section className="section" aria-labelledby="principles">
-              <h2 id="principles">4. Принципи</h2>
+              <h2 id="principles">{t('methodology.principles.heading')}</h2>
               <ol className="principles">
                 <li>
-                  <strong>Зад всяко число стоят неговите договори.</strong> Всеки общ обем има
-                  връзка „виж договорите". Ако не можем да ги покажем, не показваме и числото.
+                  <strong>{t('methodology.principles.p1Strong')}</strong>
+                  {t('methodology.principles.p1Text')}
                 </li>
                 <li>
-                  <strong>Стандартизирани имена, оригинални идентификатори.</strong> Имената се
-                  привеждат в каноничен вид; ЕИК и УНП се запазват буквално.
+                  <strong>{t('methodology.principles.p2Strong')}</strong>
+                  {t('methodology.principles.p2Text')}
                 </li>
                 <li>
-                  <strong>СИГМА не тълкува, а показва.</strong> Класирания, дялове и съотношения са
-                  неутрални числа; читателят сам си прави извод.
+                  <strong>{t('methodology.principles.p3Strong')}</strong>
+                  {t('methodology.principles.p3Text')}
                 </li>
                 <li>
-                  <strong>Споделим адрес за всяка гледна точка.</strong> Филтрите се записват в
-                  адреса (URL) — всяка комбинация има постоянен линк.
+                  <strong>{t('methodology.principles.p4Strong')}</strong>
+                  {t('methodology.principles.p4Text')}
                 </li>
                 <li>
-                  <strong>Не пазим действията на потребителя.</strong> Няма регистрация, няма
-                  проследяване.
+                  <strong>{t('methodology.principles.p5Strong')}</strong>
+                  {t('methodology.principles.p5Text')}
                 </li>
                 <li>
-                  <strong>Празно поле е по-добро от измислена стойност.</strong> Когато източникът
-                  не дава стойност, показваме „—".
+                  <strong>{t('methodology.principles.p6Strong')}</strong>
+                  {t('methodology.principles.p6Text')}
                 </li>
               </ol>
             </section>
 
             <section className="section" aria-labelledby="glossary">
-              <h2 id="glossary">5. Речник на понятията</h2>
+              <h2 id="glossary">{t('methodology.glossary.heading')}</h2>
               <dl className="glossary">
-                <dt>Институция (възложител)</dt>
+                <dt>{t('methodology.glossary.authorityTerm')}</dt>
                 <dd>
-                  <p>
-                    Публична организация, която провежда поръчката. Различните изписвания на името ѝ
-                    в АОП се обединяват в един каноничен запис.
-                  </p>
-                  <span className="src">→ authorities.name</span>
+                  <p>{t('methodology.glossary.authorityDef')}</p>
+                  <span className="src">{t('methodology.glossary.authoritySrc')}</span>
                 </dd>
-                <dt>Компания (изпълнител)</dt>
+                <dt>{t('methodology.glossary.companyTerm')}</dt>
                 <dd>
-                  <p>
-                    Юридическо лице или обединение, спечелило възлагане. Уникалният ключ е ЕИК;
-                    имена без валиден ЕИК остават отделни до ръчно сливане.
-                  </p>
-                  <span className="src">→ bidders.bulstat / bidders.name</span>
+                  <p>{t('methodology.glossary.companyDef')}</p>
+                  <span className="src">{t('methodology.glossary.companySrc')}</span>
                 </dd>
-                <dt>Обособена позиция (лот)</dt>
+                <dt>{t('methodology.glossary.lotTerm')}</dt>
                 <dd>
-                  <p>
-                    Една преписка може да бъде разделена на няколко лота, всеки с отделен
-                    изпълнител. В СИГМА всеки лот е самостоятелен запис, показан под общата
-                    преписка.
-                  </p>
-                  <span className="src">→ lots</span>
+                  <p>{t('methodology.glossary.lotDef')}</p>
+                  <span className="src">{t('methodology.glossary.lotSrc')}</span>
                 </dd>
-                <dt>УНП</dt>
+                <dt>{t('methodology.glossary.unpTerm')}</dt>
                 <dd>
                   <p>
-                    Уникален номер на преписката в АОП — напр.{' '}
-                    <span className="mono">00044-2023-0018</span>. Запазваме го точно както е
-                    публикуван; може да се търси директно.
+                    {t('methodology.glossary.unpDef1')}
+                    <span className="mono">{t('methodology.glossary.unpExample')}</span>
+                    {t('methodology.glossary.unpDef2')}
                   </p>
-                  <span className="src">→ tenders.source_id</span>
+                  <span className="src">{t('methodology.glossary.unpSrc')}</span>
                 </dd>
-                <dt>Сектор</dt>
+                <dt>{t('methodology.glossary.sectorTerm')}</dt>
                 <dd>
-                  <p>
-                    Еднозначна група, изведена от CPV кода: разделът (първите две цифри) — напр. 45
-                    → строителство, 33 → медицина и лекарства. Не е догадка, а етикет от каталога
-                    CPV 2008.
-                  </p>
-                  <span className="src">→ substr(cpv_code, 1, 2)</span>
+                  <p>{t('methodology.glossary.sectorDef')}</p>
+                  <span className="src">{t('methodology.glossary.sectorSrc')}</span>
                 </dd>
-                <dt>Обединение / ДЗЗД</dt>
+                <dt>{t('methodology.glossary.consortiumTerm')}</dt>
                 <dd>
-                  <p>
-                    Няколко фирми с обща оферта се регистрират като едно ново лице. СИГМА показва
-                    обединението като отделен изпълнител с неутрален етикет, а сумата се приписва на
-                    него — членското разпределение не е част от тази версия.
-                  </p>
-                  <span className="src">→ bidders.kind</span>
+                  <p>{t('methodology.glossary.consortiumDef')}</p>
+                  <span className="src">{t('methodology.glossary.consortiumSrc')}</span>
                 </dd>
-                <dt>Поток</dt>
+                <dt>{t('methodology.glossary.flowTerm')}</dt>
                 <dd>
-                  <p>
-                    Сборът от всички договори между една институция и една компания за избрания
-                    период — изчислена величина, зад която винаги стоят договорите ѝ.
-                  </p>
-                  <span className="src">→ GROUP BY authority, bidder</span>
+                  <p>{t('methodology.glossary.flowDef')}</p>
+                  <span className="src">{t('methodology.glossary.flowSrc')}</span>
                 </dd>
-                <dt>Мрежа на връзките</dt>
+                <dt>{t('methodology.glossary.networkTerm')}</dt>
                 <dd>
-                  <p>
-                    Графът показва само преките връзки около избрана институция или фирма и техните
-                    следващи връзки (фокусирана околност), а не целия граф. Една линия е сборът от
-                    договорите между две същности.
-                  </p>
-                  <span className="src">→ flow_pairs</span>
+                  <p>{t('methodology.glossary.networkDef')}</p>
+                  <span className="src">{t('methodology.glossary.networkSrc')}</span>
                 </dd>
-                <dt>Дата на сключване</dt>
+                <dt>{t('methodology.glossary.signedTerm')}</dt>
                 <dd>
-                  <p>
-                    Денят, в който договорът е сключен. Графиката на тренда групира разходите по
-                    тази дата; договорите без валидна дата на сключване не влизат в нея, а се
-                    отчитат отделно като покритие.
-                  </p>
-                  <span className="src">→ contracts.signed_at</span>
+                  <p>{t('methodology.glossary.signedDef')}</p>
+                  <span className="src">{t('methodology.glossary.signedSrc')}</span>
                 </dd>
-                <dt>Област (NUTS3)</dt>
+                <dt>{t('methodology.glossary.regionTerm')}</dt>
                 <dd>
-                  <p>
-                    Областта на институцията се извежда от адреса ѝ (NUTS код от регистъра), затова
-                    е известна само за част от институциите. На картата на разходите институциите
-                    без посочена област се показват отделно и не се причисляват към никоя област.
-                  </p>
-                  <span className="src">→ authorities.region</span>
+                  <p>{t('methodology.glossary.regionDef')}</p>
+                  <span className="src">{t('methodology.glossary.regionSrc')}</span>
                 </dd>
-                <dt>Дял договори с една оферта</dt>
+                <dt>{t('methodology.glossary.singleBidTerm')}</dt>
                 <dd>
                   <p>
-                    Делът на договорите на един възложител, при които е получена{' '}
-                    <strong>само една оферта</strong> (от тези с известен брой оферти). Неутрален
-                    индикатор за слаба конкуренция, а не оценка на процедурата, и не маркира
-                    възложителя или изпълнителя като нарушители.
+                    {t('methodology.glossary.singleBidDef1')}
+                    <strong>{t('methodology.glossary.singleBidStrong')}</strong>
+                    {t('methodology.glossary.singleBidDef2')}
                   </p>
-                  <span className="src">→ bids_received = 1</span>
+                  <span className="src">{t('methodology.glossary.singleBidSrc')}</span>
                 </dd>
-                <dt>Концентрация на доставчици (HHI)</dt>
+                <dt>{t('methodology.glossary.hhiTerm')}</dt>
                 <dd>
-                  <p>
-                    Индекс на Херфиндал-Хиршман върху разпределението на парите на един възложител
-                    между неговите изпълнители: близо до 0 значи разпръснато между много фирми, а 1
-                    значи всичко отива към една. Стойностите над 0.25 се маркират като висока
-                    концентрация (ориентир по DOJ/FTC). Изчислена величина, зад която стоят
-                    конкретните договори.
-                  </p>
-                  <span className="src">→ сума от квадратите на дяловете на доставчиците</span>
+                  <p>{t('methodology.glossary.hhiDef')}</p>
+                  <span className="src">{t('methodology.glossary.hhiSrc')}</span>
                 </dd>
               </dl>
             </section>
 
             <section className="section" aria-labelledby="money">
-              <h2 id="money">6. Валута, закръгляване, периоди</h2>
+              <h2 id="money">{t('methodology.money.heading')}</h2>
               <p>
-                Един договор минава през три стойности, които често се бъркат:{' '}
-                <strong>прогнозна</strong> (обявена в обявлението), <strong>при сключване</strong>{' '}
-                (цената на спечелилата оферта) и <strong>текуща</strong> (след всички анекси).
-                Класиранията използват изчистена, съпоставима стойност: текущата, когато анекс
-                законно я е увеличил, иначе при сключване.
+                {t('methodology.money.p1a')}
+                <strong>{t('methodology.money.p1Strong1')}</strong>
+                {t('methodology.money.p1b')}
+                <strong>{t('methodology.money.p1Strong2')}</strong>
+                {t('methodology.money.p1c')}
+                <strong>{t('methodology.money.p1Strong3')}</strong>
+                {t('methodology.money.p1d')}
               </p>
               <p>
-                Всички суми се показват в <strong>евро</strong>. Историческите левове се
-                превалутират по фиксирания курс <strong>1 EUR = 1,95583 BGN</strong> (валутен борд
-                от 1997 г.; фиксиран курс към еврото от 1999 г.); чуждите валути — по курса към
-                датата на подписване. Закръгляме до цяло евро (под 1 000 €), хиляди, милиони или
-                милиарди.
+                {t('methodology.money.p2a')}
+                <strong>{t('methodology.money.p2Strong1')}</strong>
+                {t('methodology.money.p2b')}
+                <strong>{t('methodology.money.p2Strong2')}</strong>
+                {t('methodology.money.p2c')}
               </p>
-              <p>
-                Договори в чужда валута без намерен курс към датата на подписване се пазят като
-                записи, но се изключват от сумите в евро.
-              </p>
+              <p>{t('methodology.money.p3')}</p>
             </section>
 
             <section className="section" aria-labelledby="identity">
-              <h2 id="identity">7. Имена, ЕИК, УНП</h2>
-              <p>
-                Един и същ субект често се изписва различно в хиляди обявления. Това е
-                най-чувствителната част от данните:
-              </p>
+              <h2 id="identity">{t('methodology.identity.heading')}</h2>
+              <p>{t('methodology.identity.intro')}</p>
               <ul>
                 <li>
-                  <strong>Институции</strong> се обединяват по правен субект (ЕИК), не по име.
+                  <strong>{t('methodology.identity.instStrong')}</strong>
+                  {t('methodology.identity.instText')}
                 </li>
                 <li>
-                  <strong>Компании</strong> се ключират по нормализиран ЕИК; 9- и 13-цифрени кодове
-                  не се сливат автоматично. Изпълнители без валиден ЕИК носят бележка „непотвърден
-                  ЕИК" и могат да се фрагментират по варианти на името.
+                  <strong>{t('methodology.identity.companyStrong')}</strong>
+                  {t('methodology.identity.companyText')}
                 </li>
                 <li>
-                  <strong>Имената</strong> се показват както са в източника, със запазена оригинална
-                  пунктуация — такива, каквито са публикувани.
+                  <strong>{t('methodology.identity.namesStrong')}</strong>
+                  {t('methodology.identity.namesText')}
                 </li>
                 <li>
-                  <strong>УНП</strong> се запазва без редакция и може да се търси директно.
-                  Търсенето не различава главни/малки букви и ударения и обработва кирилица и
-                  латиница еднакво в рамките на писмеността.
+                  <strong>{t('methodology.identity.unpStrong')}</strong>
+                  {t('methodology.identity.unpText')}
                 </li>
               </ul>
             </section>
 
             <section className="section" aria-labelledby="gaps">
-              <h2 id="gaps">8. Известни празнини в полетата</h2>
-              <p className="section-hint">
-                Кои полета са налични, кои са частични и кои липсват. Частичните се показват само за
-                записите, за които има данни — никога като измислена стойност.
-              </p>
+              <h2 id="gaps">{t('methodology.gapsSection.heading')}</h2>
+              <p className="section-hint">{t('methodology.gapsSection.hint')}</p>
               <div className="table-wrap">
                 <table className="gap-table">
-                  <caption className="sr-only">
-                    Наличност на полетата спрямо източника в АОП
-                  </caption>
+                  <caption className="sr-only">{t('methodology.gapsSection.caption')}</caption>
                   <thead>
                     <tr>
-                      <th scope="col">Поле</th>
-                      <th scope="col">Източник в АОП</th>
-                      <th scope="col">Готово</th>
+                      <th scope="col">{t('methodology.gapsSection.colField')}</th>
+                      <th scope="col">{t('methodology.gapsSection.colSource')}</th>
+                      <th scope="col">{t('methodology.gapsSection.colReady')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -460,40 +494,39 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 </table>
               </div>
               <p className="small muted mt-s3">
-                <strong>Място на изпълнение</strong>, <strong>собственици и свързани лица</strong> и{' '}
-                <strong>рискови сигнали</strong> са в процес на разработка за следваща версия —
-                изискват пълно сливане с допълнителни източници и отделен аналитичен слой.
+                <strong>{t('methodology.gapsSection.footStrong1')}</strong>
+                {t('methodology.gapsSection.footMid1')}
+                <strong>{t('methodology.gapsSection.footStrong2')}</strong>
+                {t('methodology.gapsSection.footMid2')}
+                <strong>{t('methodology.gapsSection.footStrong3')}</strong>
+                {t('methodology.gapsSection.footText')}
               </p>
             </section>
 
             <section className="section" aria-labelledby="export">
-              <h2 id="export">9. Сваляне и достъп до данните</h2>
-              <p>
-                Всеки списък може да бъде свален като CSV — точно това, което виждаш, с приложените
-                филтри:
-              </p>
+              <h2 id="export">{t('methodology.exportSection.heading')}</h2>
+              <p>{t('methodology.exportSection.intro')}</p>
               <ul>
                 <li>
-                  <Link to="/authorities">Институции</Link> · <Link to="/companies">Компании</Link>{' '}
-                  · <Link to="/contracts">Договори</Link> → бутон „Изтегли CSV" във филтрите.
+                  <Link to="/authorities">{t('methodology.exportSection.listAuthorities')}</Link>
+                  {t('methodology.exportSection.listSep1')}
+                  <Link to="/companies">{t('methodology.exportSection.listCompanies')}</Link>
+                  {t('methodology.exportSection.listSep2')}
+                  <Link to="/contracts">{t('methodology.exportSection.listContracts')}</Link>
+                  {t('methodology.exportSection.listSuffix')}
                 </li>
-                <li>
-                  Един договор се сваля и като JSON от страницата му — пълният запис без редакция.
-                </li>
+                <li>{t('methodology.exportSection.jsonItem')}</li>
               </ul>
-              <p>Засега не предлагаме публично API в реално време.</p>
+              <p>{t('methodology.exportSection.noApi')}</p>
             </section>
 
             <section className="section" aria-labelledby="contact">
-              <h2 id="contact">10. Поправки и обратна връзка</h2>
+              <h2 id="contact">{t('methodology.contact.heading')}</h2>
+              <p>{t('methodology.contact.p1')}</p>
               <p>
-                Грешките поправяме ръчно при сигнал — двойни записи за институция/компания
-                (изпратете двата ЕИК/линка) или сума, която не отговаря на оригиналния документ
-                (изпратете УНП).
-              </p>
-              <p>
-                СИГМА <em>не</em> премахва записи по молба на изпълнители или възложители. Всички
-                данни идват от публични източници и остават публични.
+                {t('methodology.contact.p2a')}
+                <em>{t('methodology.contact.p2Em')}</em>
+                {t('methodology.contact.p2b')}
               </p>
             </section>
           </div>

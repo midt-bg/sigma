@@ -1,3 +1,5 @@
+import type { Locale } from '@sigma/shared';
+
 export const START_YEAR = 2020;
 export const FALLBACK_END_YEAR = 2026;
 
@@ -21,9 +23,13 @@ export function coverageRange(endYear: number | null | undefined): string {
   return `${START_YEAR}–${endYear ?? FALLBACK_END_YEAR}`;
 }
 
-export function coveragePartialNote(endYear: number | null | undefined): string {
+export function coveragePartialNote(
+  endYear: number | null | undefined,
+  locale: Locale = 'bg',
+): string {
   const year = endYear ?? FALLBACK_END_YEAR;
-  return `${coverageRange(year)} (${year} г. частично)`;
+  const note = locale === 'en' ? `${year} partial` : `${year} г. частично`;
+  return `${coverageRange(year)} (${note})`;
 }
 
 export function yearOptions(endYear: number | null | undefined): string[] {

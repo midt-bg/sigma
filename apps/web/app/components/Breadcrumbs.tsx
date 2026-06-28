@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
+import { useTranslation } from '../i18n/context';
 
 export interface Crumb {
   label: string;
@@ -8,8 +9,9 @@ export interface Crumb {
 
 // Mono-caps breadcrumb strip. The last crumb (no `to`) is the current page (plain text).
 export function Breadcrumbs({ items }: { items: Crumb[] }) {
+  const t = useTranslation();
   return (
-    <nav className="crumbs" aria-label="Навигация по нивата">
+    <nav className="crumbs" aria-label={t('breadcrumbs.aria')}>
       <div className="crumbs-inner">
         {items.map((c, i) => (
           <Fragment key={c.to ?? c.label}>

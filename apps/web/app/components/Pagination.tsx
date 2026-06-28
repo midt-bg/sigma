@@ -1,5 +1,6 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import { count as fmtCount } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
 import type { PageNav } from '../lib/filters';
 
 // Keyset Prev/Next with a current-page marker + total (no deep page-jumps — those would force OFFSET).
@@ -12,29 +13,33 @@ export function Pagination({
   pageSize: number;
   unit?: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
-    <nav className="paging" aria-label="Навигация по страници">
+    <nav className="paging" aria-label={t('pagination.nav')}>
       <div>
-        Страница <strong>{fmtCount(nav.page)}</strong> от <strong>{fmtCount(nav.pageCount)}</strong>{' '}
-        · по {pageSize} на страница{unit ? ` (${unit})` : ''}
+        {t('pagination.page')} <strong>{fmtCount(nav.page, locale)}</strong> {t('pagination.of')}{' '}
+        <strong>{fmtCount(nav.pageCount, locale)}</strong> ·{' '}
+        {t('pagination.perPage', { size: pageSize })}
+        {unit ? ` (${unit})` : ''}
       </div>
       <div className="ctrl">
         {nav.prevHref ? (
           <Link to={nav.prevHref} rel="prev">
-            ‹ Предишна
+            {t('pagination.prev')}
           </Link>
         ) : (
-          <span aria-disabled="true" className="disabled">
-            ‹ Предишна
+          <span aria-disabled="true" className="disabled" style={{ opacity: 0.4 }}>
+            {t('pagination.prev')}
           </span>
         )}
         {nav.nextHref ? (
           <Link to={nav.nextHref} rel="next">
-            Следваща ›
+            {t('pagination.next')}
           </Link>
         ) : (
-          <span aria-disabled="true" className="disabled">
-            Следваща ›
+          <span aria-disabled="true" className="disabled" style={{ opacity: 0.4 }}>
+            {t('pagination.next')}
           </span>
         )}
       </div>

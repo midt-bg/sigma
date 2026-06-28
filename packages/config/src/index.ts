@@ -1,3 +1,25 @@
+import type { Locale } from '@sigma/shared';
+
+// ── Localised labels ───────────────────────────────────────────────────────────────
+//
+// The data-classification labels below are Bulgarian (the source language). Each carries an OPTIONAL
+// `labelEn` so the interface can render English where a translation exists, falling back to Bulgarian
+// otherwise. CPV divisions/categories and procedure groups have official EU translations
+// (https://ted.europa.eu/en/simap/cpv) — those are filled in the bulk-translation phase; this
+// foundation only establishes the shape + selector. Raw data (institution/company names, contract
+// subjects, raw `procedure_type` values) is NEVER translated — it stays as published.
+
+/** Pick the locale label from an item with a Bulgarian `label` and optional English `labelEn`. */
+export function pickLabel(item: { label: string; labelEn?: string }, locale: Locale): string {
+  return locale === 'en' && item.labelEn ? item.labelEn : item.label;
+}
+
+/** Locale-aware short sector label, falling back through shortEn → labelEn → short → label. */
+export function pickShort(sector: CpvSector, locale: Locale): string {
+  if (locale === 'en') return sector.shortEn ?? sector.labelEn ?? sector.short ?? sector.label;
+  return sector.short ?? sector.label;
+}
+
 // ── Sector classification (CPV division → sector) ──────────────────────────────────
 //
 // A contract's sector is its CPV *division* — the first 2 digits of the 8-digit CPV code. CPV
@@ -15,8 +37,12 @@ export interface CpvSector {
   code: string;
   /** Official Bulgarian CPV division label. */
   label: string;
+  /** Official English CPV division label (EU catalog). Optional until the bulk-translation phase. */
+  labelEn?: string;
   /** Short display name for featured sectors (falls back to `label`). */
   short?: string;
+  /** English short display name for featured sectors (falls back to `labelEn` → `short` → `label`). */
+  shortEn?: string;
   /** Featured sector — also drives the price index. */
   curated?: boolean;
 }
@@ -29,98 +55,216 @@ export const CPV_SECTORS: readonly CpvSector[] = [
     code: '03',
     label:
       'Продукти на земеделието, животновъдството, рибарството, лесовъдството и свързани с тях продукти',
+    labelEn: 'Agricultural, farming, fishing, forestry and related products',
   },
-  { code: '09', label: 'Нефтопродукти, горива, електричество и други енергоизточници' },
-  { code: '14', label: 'Продукти на минното дело, основни метали и свързани с тях продукти' },
+  {
+    code: '09',
+    label: 'Нефтопродукти, горива, електричество и други енергоизточници',
+    labelEn: 'Petroleum products, fuel, electricity and other sources of energy',
+  },
+  {
+    code: '14',
+    label: 'Продукти на минното дело, основни метали и свързани с тях продукти',
+    labelEn: 'Mining, basic metals and related products',
+  },
   {
     code: '15',
     label: 'Хранителни продукти, напитки, тютюн и свързани с него продукти',
+    labelEn: 'Food, beverages, tobacco and related products',
     short: 'Храни',
+    shortEn: 'Food',
     curated: true,
   },
-  { code: '16', label: 'Селскостопански машини' },
-  { code: '18', label: 'Облекло, обувни изделия, пътни артикули и аксесоари' },
-  { code: '19', label: 'Кожени и текстилни изделия, пластмасови и каучукови материали' },
-  { code: '22', label: 'Печатни материали и свързани с тях продукти' },
-  { code: '24', label: 'Химически продукти' },
+  { code: '16', label: 'Селскостопански машини', labelEn: 'Agricultural machinery' },
+  {
+    code: '18',
+    label: 'Облекло, обувни изделия, пътни артикули и аксесоари',
+    labelEn: 'Clothing, footwear, luggage articles and accessories',
+  },
+  {
+    code: '19',
+    label: 'Кожени и текстилни изделия, пластмасови и каучукови материали',
+    labelEn: 'Leather and textile fabrics, plastic and rubber materials',
+  },
+  {
+    code: '22',
+    label: 'Печатни материали и свързани с тях продукти',
+    labelEn: 'Printed matter and related products',
+  },
+  { code: '24', label: 'Химически продукти', labelEn: 'Chemical products' },
   {
     code: '30',
     label:
       'Компютърни и офис машини, оборудване и принадлежности, с изключение на мебели и софтуерни пакети',
+    labelEn:
+      'Office and computing machinery, equipment and supplies except furniture and software packages',
   },
-  { code: '31', label: 'Електрически машини, уреди, оборудване и консумативи; осветление' },
+  {
+    code: '31',
+    label: 'Електрически машини, уреди, оборудване и консумативи; осветление',
+    labelEn: 'Electrical machinery, apparatus, equipment and consumables; lighting',
+  },
   {
     code: '32',
     label: 'Радио-, телевизионно, съобщително, далекосъобщително и сродни видове оборудване',
+    labelEn: 'Radio, television, communication, telecommunication and related equipment',
   },
-  { code: '33', label: 'Медицинско оборудване, фармацевтични продукти и продукти за лични грижи' },
-  { code: '34', label: 'Транспортно оборудване и помощни продукти за транспортиране' },
+  {
+    code: '33',
+    label: 'Медицинско оборудване, фармацевтични продукти и продукти за лични грижи',
+    labelEn: 'Medical equipments, pharmaceuticals and personal care products',
+  },
+  {
+    code: '34',
+    label: 'Транспортно оборудване и помощни продукти за транспортиране',
+    labelEn: 'Transport equipment and auxiliary products to transportation',
+  },
   {
     code: '35',
     label: 'Оборудване за безопасност, противопожарно, полицейско и отбранително оборудване',
+    labelEn: 'Security, fire-fighting, police and defence equipment',
   },
   {
     code: '37',
     label:
       'Музикални инструменти, спортни артикули, игри, играчки, занаятчийски изделия, предмети на изкуството и принадлежности',
+    labelEn:
+      'Musical instruments, sport goods, games, toys, handicraft, art materials and accessories',
   },
-  { code: '38', label: 'Лабораторно, оптично и прецизно оборудване (без стъклени изделия)' },
+  {
+    code: '38',
+    label: 'Лабораторно, оптично и прецизно оборудване (без стъклени изделия)',
+    labelEn: 'Laboratory, optical and precision equipments (excl. glasses)',
+  },
   {
     code: '39',
     label:
       'Обзавеждане (включително офис обзавеждане), мебелировка, електродомакински уреди (с изключение на осветителни тела) и продукти за почистване',
+    labelEn:
+      'Furniture (incl. office furniture), furnishings, domestic appliances (excl. lighting) and cleaning products',
   },
-  { code: '41', label: 'Събрана и пречистена вода' },
-  { code: '42', label: 'Машини за промишлена употреба' },
+  { code: '41', label: 'Събрана и пречистена вода', labelEn: 'Collected and purified water' },
+  { code: '42', label: 'Машини за промишлена употреба', labelEn: 'Industrial machinery' },
   {
     code: '43',
     label: 'Минни машини, оборудване за разработване на кариери и строително оборудване',
+    labelEn: 'Machinery for mining, quarrying, construction equipment',
   },
   {
     code: '44',
     label:
       'Строителни конструкции и материали; помощни строителни материали (без електрически апарати)',
+    labelEn:
+      'Construction structures and materials; auxiliary products to construction (except electric apparatus)',
   },
-  { code: '45', label: 'Строителни и монтажни работи', short: 'Строителство', curated: true },
-  { code: '48', label: 'Софтуерни пакети и информационни системи' },
-  { code: '50', label: 'Услуги по ремонт и поддръжка' },
-  { code: '51', label: 'Услуги по инсталиране (с изключение на софтуер)' },
+  {
+    code: '45',
+    label: 'Строителни и монтажни работи',
+    labelEn: 'Construction work',
+    short: 'Строителство',
+    shortEn: 'Construction',
+    curated: true,
+  },
+  {
+    code: '48',
+    label: 'Софтуерни пакети и информационни системи',
+    labelEn: 'Software package and information systems',
+  },
+  { code: '50', label: 'Услуги по ремонт и поддръжка', labelEn: 'Repair and maintenance services' },
+  {
+    code: '51',
+    label: 'Услуги по инсталиране (с изключение на софтуер)',
+    labelEn: 'Installation services (except software)',
+  },
   {
     code: '55',
     label: 'Хотелиерски и ресторантьорски услуги и услуги в областта на търговията на дребно',
+    labelEn: 'Hotel, restaurant and retail trade services',
   },
-  { code: '60', label: 'Транспортни услуги (с изключение на извозването на отпадъци)' },
-  { code: '63', label: 'Спомагателни услуги в транспорта; услуги на туристически агенции' },
-  { code: '64', label: 'Услуги на пощата и далекосъобщенията' },
-  { code: '65', label: 'Обществени услуги' },
-  { code: '66', label: 'Финансови и застрахователни услуги' },
-  { code: '70', label: 'Услуги, свързани с недвижими имоти' },
-  { code: '71', label: 'Архитектурни, строителни, инженерни и инспекционни услуги' },
-  { code: '72', label: 'ИТ услуги: консултации, разработване на софтуер, Интернет и поддръжка' },
+  {
+    code: '60',
+    label: 'Транспортни услуги (с изключение на извозването на отпадъци)',
+    labelEn: 'Transport services (excl. Waste transport)',
+  },
+  {
+    code: '63',
+    label: 'Спомагателни услуги в транспорта; услуги на туристически агенции',
+    labelEn: 'Supporting and auxiliary transport services; travel agencies services',
+  },
+  {
+    code: '64',
+    label: 'Услуги на пощата и далекосъобщенията',
+    labelEn: 'Postal and telecommunications services',
+  },
+  { code: '65', label: 'Обществени услуги', labelEn: 'Public utilities' },
+  {
+    code: '66',
+    label: 'Финансови и застрахователни услуги',
+    labelEn: 'Financial and insurance services',
+  },
+  { code: '70', label: 'Услуги, свързани с недвижими имоти', labelEn: 'Real estate services' },
+  {
+    code: '71',
+    label: 'Архитектурни, строителни, инженерни и инспекционни услуги',
+    labelEn: 'Architectural, construction, engineering and inspection services',
+  },
+  {
+    code: '72',
+    label: 'ИТ услуги: консултации, разработване на софтуер, Интернет и поддръжка',
+    labelEn: 'IT services: consulting, software development, Internet and support',
+  },
   {
     code: '73',
     label:
       'Научни изследвания и експериментални разработки и свързаните с тях консултантски услуги',
+    labelEn: 'Research and development services and related consultancy services',
   },
-  { code: '75', label: 'Услуги на държавното управление за обществото като цяло' },
-  { code: '76', label: 'Услуги, свързани с добива на нефт и газ' },
+  {
+    code: '75',
+    label: 'Услуги на държавното управление за обществото като цяло',
+    labelEn: 'Administration, defence and social security services',
+  },
+  {
+    code: '76',
+    label: 'Услуги, свързани с добива на нефт и газ',
+    labelEn: 'Services related to the oil and gas industry',
+  },
   {
     code: '77',
     label:
       'Услуги, свързани със селското и горското стопанство, овощарството, аквакултурите и пчеларството',
+    labelEn: 'Agricultural, forestry, horticultural, aquacultural and apicultural services',
   },
   {
     code: '79',
     label: 'Бизнес услуги: право, маркетинг, консултиране, набиране на персонал, печат и охрана',
+    labelEn: 'Business services: law, marketing, consulting, recruitment, printing and security',
   },
-  { code: '80', label: 'Образователни и учебно-тренировъчни услуги' },
-  { code: '85', label: 'Услуги на здравеопазването и социалните дейности' },
+  {
+    code: '80',
+    label: 'Образователни и учебно-тренировъчни услуги',
+    labelEn: 'Education and training services',
+  },
+  {
+    code: '85',
+    label: 'Услуги на здравеопазването и социалните дейности',
+    labelEn: 'Health and social work services',
+  },
   {
     code: '90',
     label: 'Услуги, свързани с отпадъчните води, битовите отпадъци, чистотата и околната среда',
+    labelEn: 'Sewage, refuse, cleaning and environmental services',
   },
-  { code: '92', label: 'Услуги в областта на културата, спорта и развлеченията' },
-  { code: '98', label: 'Други обществени, социални и персонални услуги' },
+  {
+    code: '92',
+    label: 'Услуги в областта на културата, спорта и развлеченията',
+    labelEn: 'Recreational, cultural and sporting services',
+  },
+  {
+    code: '98',
+    label: 'Други обществени, социални и персонални услуги',
+    labelEn: 'Other community, social and personal services',
+  },
 ];
 
 // ── CPV category groups (curated partition over CPV divisions) ─────────────────────────────────
@@ -135,6 +279,8 @@ export interface CpvCategory {
   key: string;
   /** Bulgarian display name. */
   label: string;
+  /** English display name. Optional until the bulk-translation phase. */
+  labelEn?: string;
   /** 2-digit CPV division codes in this category. */
   divisions: readonly string[];
 }
@@ -143,61 +289,73 @@ export const CPV_CATEGORIES: readonly CpvCategory[] = [
   {
     key: 'construction',
     label: 'Строителство и инфраструктура',
+    labelEn: 'Construction & infrastructure',
     divisions: ['45', '44', '43', '71'],
   },
   {
     key: 'health',
     label: 'Здравеопазване и социални дейности',
+    labelEn: 'Healthcare & social services',
     divisions: ['33', '85'],
   },
   {
     key: 'food-agri',
     label: 'Храни и земеделие',
+    labelEn: 'Food & agriculture',
     divisions: ['15', '03', '16', '77'],
   },
   {
     key: 'energy',
     label: 'Енергетика, горива и суровини',
+    labelEn: 'Energy, fuels & raw materials',
     divisions: ['09', '76', '14'],
   },
   {
     key: 'it-telecom',
     label: 'ИТ, телекомуникации и електроника',
+    labelEn: 'IT, telecom & electronics',
     divisions: ['48', '72', '30', '32', '64'],
   },
   {
     key: 'transport',
     label: 'Транспорт и логистика',
+    labelEn: 'Transport & logistics',
     divisions: ['34', '60', '63'],
   },
   {
     key: 'industry',
     label: 'Индустрия, машини и поддръжка',
+    labelEn: 'Industry, machinery & maintenance',
     divisions: ['42', '31', '38', '50', '51', '24', '19'],
   },
   {
     key: 'environment',
     label: 'Околна среда и комунални услуги',
+    labelEn: 'Environment & utilities',
     divisions: ['90', '65', '41'],
   },
   {
     key: 'business',
     label: 'Бизнес, финанси и администрация',
+    labelEn: 'Business, finance & administration',
     divisions: ['79', '66', '70', '73', '75', '22'],
   },
   {
     key: 'security',
     label: 'Сигурност и отбрана',
+    labelEn: 'Security & defence',
     divisions: ['35'],
   },
   {
     key: 'goods',
     label: 'Стоки, обзавеждане и потребление',
+    labelEn: 'Goods, furnishings & consumables',
     divisions: ['39', '18', '37'],
   },
   {
     key: 'education',
     label: 'Образование, култура и услуги',
+    labelEn: 'Education, culture & services',
     divisions: ['80', '92', '55', '98'],
   },
 ];
@@ -237,6 +395,8 @@ export interface ProcedureGroup {
   key: ProcedureGroupKey;
   /** Short Bulgarian label for the legend / filter. */
   label: string;
+  /** Short English label. Optional until the bulk-translation phase. */
+  labelEn?: string;
   /** true = competitive, false = non-competitive, null = neutral / not asserted. */
   competitive: boolean | null;
   /** CSS colour (design token var) for the StackedBar segment + legend swatch. */
@@ -250,6 +410,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'open',
     label: 'Открита',
+    labelEn: 'Open',
     competitive: true,
     color: 'oklch(0.50 0.16 255)',
     types: [
@@ -262,6 +423,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'competition',
     label: 'Състезание',
+    labelEn: 'Competition',
     competitive: true,
     color: 'oklch(0.64 0.13 195)',
     types: [
@@ -272,6 +434,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'collection',
     label: 'Събиране на оферти',
+    labelEn: 'Request for quotes',
     competitive: true,
     color: 'oklch(0.57 0.16 150)',
     types: [
@@ -281,6 +444,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'negotiated_invited',
     label: 'Договаряне с покана',
+    labelEn: 'Negotiated (invited)',
     competitive: null,
     color: 'oklch(0.72 0.15 80)',
     types: [
@@ -293,6 +457,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'direct',
     label: 'Пряко / без обявление',
+    labelEn: 'Direct / no notice',
     competitive: false,
     color: 'var(--color-accent)',
     types: [
@@ -305,6 +470,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'other',
     label: 'Друго',
+    labelEn: 'Other',
     competitive: null,
     color: 'oklch(0.52 0.19 320)',
     types: [
@@ -318,6 +484,7 @@ export const PROCEDURE_GROUPS: readonly ProcedureGroup[] = [
   {
     key: 'unknown',
     label: 'Неизвестна',
+    labelEn: 'Unknown',
     competitive: null,
     color: 'oklch(0.70 0.02 250)',
     types: [
@@ -350,6 +517,16 @@ export const ENTITY_TYPES: Record<EntityType, string> = {
   company: 'Дружество',
   consortium: 'Обединение',
 };
+
+export const ENTITY_TYPES_EN: Record<EntityType, string> = {
+  company: 'Company',
+  consortium: 'Consortium',
+};
+
+/** Locale-aware entity-type label, falling back to Bulgarian. */
+export function pickEntityType(kind: EntityType, locale: Locale): string {
+  return locale === 'en' ? ENTITY_TYPES_EN[kind] : ENTITY_TYPES[kind];
+}
 
 // ── Bulgarian regions (NUTS3) ────────────────────────────────────────────────────────────────────
 //

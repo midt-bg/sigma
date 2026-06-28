@@ -3,7 +3,8 @@
 // aggregation (the documented rare path). The detail page (getCompany) is added in phase 2.
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
-import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
+import { CPV_SECTORS, pickEntityType, pickShort } from '@sigma/config';
+import type { Locale } from '@sigma/shared';
 import { csvCell } from './csv';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -136,6 +137,7 @@ function companyFilterSignature(p: CompanyListParams): string {
 export async function listCompanies(
   db: D1Database,
   p: CompanyListParams,
+  locale: Locale,
 ): Promise<Page<CompanyListItem>> {
   const sort = SORTS[p.sort as keyof typeof SORTS] ?? SORTS['won'];
   const pageSize = p.pageSize ?? 25;
@@ -173,7 +175,7 @@ export async function listCompanies(
     cursor: ks.cursor,
     sortToken: ks.cursorToken,
   });
-  return { items: rows.map(toCompanyListItem), total, ...cursors };
+  return { items: rows.map((r) => toCompanyListItem(r, locale)), total, ...cursors };
 }
 
 async function countCompanies(
@@ -193,7 +195,7 @@ export interface CompanyFacets {
   sectors: FacetCount[];
 }
 
-export async function getCompanyFacets(db: D1Database): Promise<CompanyFacets> {
+export async function getCompanyFacets(db: D1Database, locale: Locale): Promise<CompanyFacets> {
   const kindRows = await db
     .prepare(`SELECT kind, COUNT(*) AS n FROM company_totals GROUP BY kind`)
     .all<{ kind: EntityKind; n: number }>();
@@ -204,14 +206,14 @@ export async function getCompanyFacets(db: D1Database): Promise<CompanyFacets> {
   const byKind = new Map(kindRows.results.map((r) => [r.kind, r.n]));
   const kinds: FacetCount[] = (['company', 'consortium'] as EntityKind[]).map((k) => ({
     value: k,
-    label: ENTITY_TYPES[k],
+    label: pickEntityType(k, locale),
     count: byKind.get(k) ?? 0,
   }));
 
   const byCode = new Map(sectorRows.results.map((r) => [r.division, r.value_eur]));
   const sectors: FacetCount[] = CPV_SECTORS.map((s) => ({
     value: s.code,
-    label: s.short ?? s.label,
+    label: pickShort(s, locale),
     count: byCode.get(s.code) ?? 0,
   }))
     .filter((f) => f.count > 0)

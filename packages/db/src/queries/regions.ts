@@ -7,6 +7,7 @@
 import type { MacroRegionSpend, RegionSpend, RegionalSpending } from '@sigma/api-contract';
 import { BG_REGIONS, regionByName } from '@sigma/config';
 import { sectorOptions } from './sectors';
+import type { Locale } from '@sigma/shared';
 
 export interface RegionalParams {
   sector?: string | null;
@@ -62,8 +63,9 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
 export async function getRegionalSpending(
   db: D1Database,
   p: RegionalParams,
+  locale: Locale,
 ): Promise<RegionalSpending> {
-  const [rows, sectors] = await Promise.all([regionRows(db, p), sectorOptions(db)]);
+  const [rows, sectors] = await Promise.all([regionRows(db, p), sectorOptions(db, locale)]);
 
   const byNuts3 = new Map<string, RegionRow>();
   const unattributed = { valueEur: 0, contracts: 0, authorities: 0 };

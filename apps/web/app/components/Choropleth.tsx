@@ -1,5 +1,6 @@
 import type { RegionSpend } from '@sigma/api-contract';
 import { money } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
 import { BG_MAP } from '../lib/bg-region-geometry';
 
 // Static SVG choropleth of the 28 regions, coloured by spend. Same spirit as SankeyDiagram: geometry
@@ -26,32 +27,34 @@ function tierer(values: number[]): (v: number) => number {
 }
 
 export function Choropleth({ regions }: { regions: RegionSpend[] }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const byNuts3 = new Map(regions.map((r) => [r.nuts3, r]));
   const tierOf = tierer(regions.map((r) => r.valueEur));
 
   return (
     <div className="map-wrap">
-      <svg
-        viewBox={BG_MAP.viewBox}
-        role="img"
-        aria-label="Карта на България: разходи за обществени поръчки по области"
-      >
+      <svg viewBox={BG_MAP.viewBox} role="img" aria-label={t('choropleth.mapAria')}>
         {BG_MAP.regions.map((shape) => {
           const r = byNuts3.get(shape.nuts3);
           const tier = r ? tierOf(r.valueEur) : 0;
           return (
             <path key={shape.nuts3} d={shape.d} style={{ fill: TIER_FILL[tier] }}>
-              <title>{r ? `${r.name}: ${money(r.valueEur)}` : shape.nuts3}</title>
+              <title>
+                {r
+                  ? t('choropleth.regionTitle', { name: r.name, value: money(r.valueEur, locale) })
+                  : shape.nuts3}
+              </title>
             </path>
           );
         })}
       </svg>
       <div className="map-legend" aria-hidden="true">
-        <span>по-малко</span>
+        <span>{t('choropleth.legendLess')}</span>
         {TIER_FILL.slice(1).map((fill, i) => (
           <span key={i} className="swatch" style={{ background: fill }} />
         ))}
-        <span>повече</span>
+        <span>{t('choropleth.legendMore')}</span>
       </div>
     </div>
   );

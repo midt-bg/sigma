@@ -12,7 +12,7 @@ import type {
   CompetitionPair,
   CompetitionTotals,
 } from '@sigma/api-contract';
-import { cleanName, entityName } from '@sigma/shared';
+import { cleanName, entityName, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { typeLabel } from './rows';
 import { sectorOptions } from './sectors';
@@ -111,6 +111,7 @@ async function authoritiesBySingleOffer(
   db: D1Database,
   p: CompetitionParams,
   top: number,
+  locale: Locale,
 ): Promise<CompetitionAuthority[]> {
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
@@ -134,7 +135,7 @@ async function authoritiesBySingleOffer(
   return results.map((r) => ({
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.name),
-    typeLabel: typeLabel(r.type_group),
+    typeLabel: typeLabel(r.type_group, locale),
     contracts: r.contracts,
     singleOffer: r.single_offer,
     singleOfferShare: r.contracts > 0 ? r.single_offer / r.contracts : 0,
@@ -160,6 +161,7 @@ async function authoritiesByConcentration(
   db: D1Database,
   p: CompetitionParams,
   top: number,
+  locale: Locale,
 ): Promise<CompetitionConcentration[]> {
   const s = scope(p);
   // Site-wide value basis (amount_eur IS NOT NULL), matching the rollups and the other panels.
@@ -194,7 +196,7 @@ async function authoritiesByConcentration(
   return results.map((r) => ({
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.name),
-    typeLabel: typeLabel(r.type_group),
+    typeLabel: typeLabel(r.type_group, locale),
     suppliers: r.suppliers,
     contracts: r.contracts,
     valueEur: r.value_eur,
@@ -220,6 +222,7 @@ async function topRecurringPairs(
   db: D1Database,
   p: CompetitionParams,
   top: number,
+  locale: Locale,
 ): Promise<CompetitionPair[]> {
   const filtered = Boolean(
     p.sector || p.year || p.authorityId || (p.funding && p.funding !== 'all'),
@@ -261,7 +264,7 @@ async function topRecurringPairs(
       authorityName: cleanName(r.authority_name),
       bidderSlug: companySlug(r.bidder_id),
       bidderName,
-      bidderDisplayName: entityName(bidderName, r.bidder_kind),
+      bidderDisplayName: entityName(bidderName, r.bidder_kind, locale),
       bidderKind: r.bidder_kind,
       contracts: r.contracts,
       wonEur: r.won_eur,
@@ -272,16 +275,17 @@ async function topRecurringPairs(
 export async function getCompetition(
   db: D1Database,
   p: CompetitionParams,
+  locale: Locale,
 ): Promise<CompetitionData> {
   const top = p.top === MAX_TOP ? MAX_TOP : DEFAULT_TOP;
   const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
   const scoped = { ...p, minContracts };
   const [totals, bySingleOffer, byConcentration, topPairs, sectors] = await Promise.all([
     competitionTotals(db, p),
-    authoritiesBySingleOffer(db, scoped, top),
-    authoritiesByConcentration(db, scoped, top),
-    topRecurringPairs(db, p, top),
-    sectorOptions(db),
+    authoritiesBySingleOffer(db, scoped, top, locale),
+    authoritiesByConcentration(db, scoped, top, locale),
+    topRecurringPairs(db, p, top, locale),
+    sectorOptions(db, locale),
   ]);
   return {
     totals,
@@ -302,6 +306,7 @@ export async function getCompetition(
 export async function getCompetitionSummary(
   db: D1Database,
   p: CompetitionParams = {},
+  locale: Locale = 'bg',
 ): Promise<{
   totals: CompetitionTotals;
   topConcentration: CompetitionConcentration | null;
@@ -311,7 +316,7 @@ export async function getCompetitionSummary(
   const scoped = { ...p, minContracts };
   const [totals, byConcentration] = await Promise.all([
     competitionTotals(db, p),
-    authoritiesByConcentration(db, scoped, top),
+    authoritiesByConcentration(db, scoped, top, locale),
   ]);
   return { totals, topConcentration: byConcentration[0] ?? null };
 }

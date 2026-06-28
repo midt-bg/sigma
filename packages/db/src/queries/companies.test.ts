@@ -84,7 +84,7 @@ describe('streamCompaniesCsv', () => {
     };
     const db = fakeDb();
 
-    const list = await listCompanies(db, params);
+    const list = await listCompanies(db, params, 'bg');
     const csv = await streamCompaniesCsv(db, params).text();
     const csvEiks = csv
       .trim()
@@ -120,7 +120,9 @@ describe('prototype-key params (untrusted query values)', () => {
   }
 
   it('falls back to the default sort instead of throwing (sort=toString)', async () => {
-    await expect(listCompanies(fakeDb(), { sort: 'toString' as never })).resolves.toBeDefined();
+    await expect(
+      listCompanies(fakeDb(), { sort: 'toString' as never }, 'bg'),
+    ).resolves.toBeDefined();
   });
 
   it('does not inject a reserved count-bucket key into the WHERE (count=__proto__)', async () => {

@@ -1,5 +1,9 @@
-import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, moneyBare } from '@sigma/shared';
+import { useNavigation, useSearchParams } from 'react-router';
+import { Link } from '../i18n/Link';
+import { count, moneyBare, plural } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 import { getAuthorityFacets, listAuthorities, normalizeAuthoritySort } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
@@ -22,12 +26,13 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ location, matches }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/authorities',
-    title: 'Институции — СИГМА',
-    description: 'Всяка институция, възложила поне един договор по обществена поръчка.',
+    title: t('authorities.metaTitle'),
+    description: t('authorities.metaDescription'),
   });
 }
 
@@ -47,10 +52,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.authorities,
   };
+  const locale = getLocale(request);
   const db = context.cloudflare.env.DB;
   const [page, facets, coverage] = await Promise.all([
-    listAuthorities(db, params),
-    getAuthorityFacets(db),
+    listAuthorities(db, params, locale),
+    getAuthorityFacets(db, locale),
     getCoverageMeta(db),
   ]);
   return { page, facets, coverage };
@@ -58,6 +64,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function Authorities({ loaderData }: Route.ComponentProps) {
   const { page, facets, coverage } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const sort = sp.get('sort') ?? 'spent';
@@ -75,18 +83,19 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
   const groups: FilterGroup[] = [
     {
       key: 'type',
-      label: 'Вид институция',
+      label: t('authorities.filterType'),
       type: 'checkbox',
       selected: getMulti(sp, 'type'),
-      options: facets.types.map((t) => ({ value: t.value, label: t.label, count: t.count })),
+      options: facets.types.map((ty) => ({ value: ty.value, label: ty.label, count: ty.count })),
     },
     buildSectorGroup(
       facets.sectors.map((s) => ({ value: s.value, label: s.label })),
       getMulti(sp, 'sector'),
+      locale,
     ),
     {
       key: 'year',
-      label: 'Година',
+      label: t('authorities.filterYear'),
       type: 'checkbox',
       selected: getMulti(sp, 'year'),
       options: yearOptions(coverage.coverageEndYear).map((y) => ({
@@ -96,12 +105,12 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
     },
     {
       key: 'eu',
-      label: 'Финансиране от ЕС',
+      label: t('authorities.filterEu'),
       type: 'radio',
       selected: sp.get('eu') ? [sp.get('eu')!] : [],
       options: [
-        { value: 'eu', label: 'Само с финансиране от ЕС' },
-        { value: 'national', label: 'Само без финансиране от ЕС' },
+        { value: 'eu', label: t('authorities.filterEuOnly') },
+        { value: 'national', label: t('authorities.filterEuNone') },
       ],
     },
   ];
@@ -110,7 +119,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
     { key: 'rank', header: '#', isRank: true, cell: (_r, i) => startRank + i + 1 },
     {
       key: 'name',
-      header: 'Институция',
+      header: t('authorities.colName'),
       isTitle: true,
       cell: (a) => (
         <>
@@ -126,23 +135,43 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
     },
     {
       key: 'type',
-      header: 'Вид',
+      header: t('authorities.colType'),
       secondary: true,
       cell: (a) => (a.typeLabel ? <Chip>{a.typeLabel}</Chip> : null),
     },
-    { key: 'spent', header: 'Похарчено (€)', align: 'money', cell: (a) => moneyBare(a.spentEur) },
-    { key: 'contracts', header: 'Договори', align: 'money', cell: (a) => count(a.contracts) },
-    { key: 'avg', header: 'Средна стойност (€)', align: 'money', cell: (a) => moneyBare(a.avgEur) },
+    {
+      key: 'spent',
+      header: t('authorities.colSpent'),
+      align: 'money',
+      cell: (a) => moneyBare(a.spentEur, locale),
+    },
+    {
+      key: 'contracts',
+      header: t('authorities.colContracts'),
+      align: 'money',
+      cell: (a) => count(a.contracts, locale),
+    },
+    {
+      key: 'avg',
+      header: t('authorities.colAvg'),
+      align: 'money',
+      cell: (a) => moneyBare(a.avgEur, locale),
+    },
   ];
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Институции' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('authorities.breadcrumbHome'), to: '/' },
+          { label: t('authorities.breadcrumbAuthorities') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker={`${count(page.total)} възложители`}
-          title="Институции"
-          lede="Всяка институция, възложила поне един договор. Подреди ги по общо похарчено, по брой договори или по средна стойност. Филтрите остават в адреса."
+          kicker={t('authorities.kicker', { count: count(page.total, locale) })}
+          title={t('authorities.title')}
+          lede={t('authorities.lede')}
         />
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/authorities" csvHref={csvHref} />
@@ -151,21 +180,28 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
               base={sp}
               activeSort={sort}
               sorts={[
-                { value: 'spent', label: 'похарчено' },
-                { value: 'count', label: 'договори' },
-                { value: 'avg', label: 'средна' },
-                { value: 'name', label: 'име' },
+                { value: 'spent', label: t('authorities.sortSpent') },
+                { value: 'count', label: t('authorities.sortCount') },
+                { value: 'avg', label: t('authorities.sortAvg') },
+                { value: 'name', label: t('authorities.sortName') },
               ]}
               count={
                 <>
-                  Показани са <strong>{page.items.length}</strong> от{' '}
-                  <strong>{count(page.total)}</strong> институции
+                  {t('authorities.shownPrefix')} <strong>{page.items.length}</strong>{' '}
+                  {t('authorities.shownMiddle')} <strong>{count(page.total, locale)}</strong>{' '}
+                  {plural(
+                    page.total,
+                    t('authorities.shownUnit_one'),
+                    t('authorities.shownUnit_many'),
+                    locale,
+                  )}
                 </>
               }
             />
             {page.items.length === 0 ? (
               <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/authorities">Изчисти филтрите</Link>
+                {t('authorities.emptyState')}{' '}
+                <Link to="/authorities">{t('authorities.clearFilters')}</Link>
               </p>
             ) : (
               <div aria-busy={busy || undefined}>
@@ -173,17 +209,17 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
                   columns={columns}
                   rows={page.items}
                   getKey={(a) => a.slug}
-                  caption="Институции по похарчено"
+                  caption={t('authorities.tableCaption')}
                 />
               </div>
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.authorities} />}
             <Callout>
-              <h2>Какво означава „похарчено“?</h2>
+              <h2>{t('authorities.calloutTitle')}</h2>
               <p className="m-0">
-                Сумата от стойностите (в евро) на всички договори на дадена институция за периода{' '}
-                {range}. Видът на институцията (министерство, община, болница…) се определя по името
-                ѝ и е приблизителен. Виж <Link to="/methodology">методология</Link>.
+                {t('authorities.calloutBodyPre', { range })}{' '}
+                <Link to="/methodology">{t('authorities.methodologyLink')}</Link>
+                {t('authorities.calloutBodyPost')}
               </p>
             </Callout>
           </section>

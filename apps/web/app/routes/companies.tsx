@@ -1,5 +1,9 @@
-import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, moneyBare, parseConsortiumMembers } from '@sigma/shared';
+import { useNavigation, useSearchParams } from 'react-router';
+import { Link } from '../i18n/Link';
+import { count, money, moneyBare, parseConsortiumMembers, plural } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT, type TFunction } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 import { getCompanyFacets, listCompanies } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
@@ -23,20 +27,13 @@ import { publicCache } from '../lib/cache';
 import { getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 
-const COUNT_BUCKETS = [
-  { value: '1', label: '1 договор' },
-  { value: '2-5', label: '2–5' },
-  { value: '6-20', label: '6–20' },
-  { value: '21-100', label: '21–100' },
-  { value: '100+', label: '100+' },
-];
-
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ location, matches }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/companies',
-    title: 'Компании — СИГМА',
-    description: 'Всяка компания, спечелила поне един договор по обществена поръчка.',
+    title: t('companies.metaTitle'),
+    description: t('companies.metaDescription'),
   });
 }
 
@@ -52,28 +49,42 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.companies,
   };
+  const locale = getLocale(request);
   const db = context.cloudflare.env.DB;
   const [page, facets, coverage] = await Promise.all([
-    listCompanies(db, params),
-    getCompanyFacets(db),
+    listCompanies(db, params, locale),
+    getCompanyFacets(db, locale),
     getCoverageMeta(db),
   ]);
   return { page, facets, coverage };
 }
 
-function subtitle(c: CompanyListItem) {
+function subtitle(c: CompanyListItem, t: TFunction) {
   const place = c.settlement ? ` · ${c.settlement}` : '';
   if (c.isConsortium) {
     const parsed = parseConsortiumMembers(c.name);
     const members = parsed?.kind === 'list' ? parsed.members.length : null;
-    return members ? `${members} участника${place}` : `обединение${place}`;
+    return members
+      ? t('companies.members', { count: members, place })
+      : t('companies.union', { place });
   }
-  return `${c.hasEik && c.eik ? `ЕИК ${c.eik}` : 'без ЕИК'}${place}`;
+  return c.hasEik && c.eik
+    ? t('companies.eik', { eik: c.eik, place })
+    : `${t('companies.noEik')}${place}`;
 }
 
 export default function Companies({ loaderData }: Route.ComponentProps) {
   const { page, facets, coverage } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
   const [sp] = useSearchParams();
+  const COUNT_BUCKETS = [
+    { value: '1', label: t('companies.bucket1') },
+    { value: '2-5', label: '2–5' },
+    { value: '6-20', label: '6–20' },
+    { value: '21-100', label: '21–100' },
+    { value: '100+', label: '100+' },
+  ];
   const sort = sp.get('sort') ?? 'won';
   const nav = pageNav({
     base: sp,
@@ -90,24 +101,25 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
     buildSectorGroup(
       facets.sectors.map((s) => ({ value: s.value, label: s.label })),
       getMulti(sp, 'sector'),
+      locale,
     ),
     {
       key: 'kind',
-      label: 'Вид субект',
+      label: t('companies.filterKind'),
       type: 'checkbox',
       selected: getMulti(sp, 'kind'),
       options: facets.kinds.map((k) => ({ value: k.value, label: k.label, count: k.count })),
     },
     {
       key: 'count',
-      label: 'Брой договори',
+      label: t('companies.filterCount'),
       type: 'radio',
       selected: sp.get('count') ? [sp.get('count')!] : [],
       options: COUNT_BUCKETS,
     },
     {
       key: 'year',
-      label: 'Година',
+      label: t('companies.filterYear'),
       type: 'checkbox',
       selected: getMulti(sp, 'year'),
       options: yearOptions(coverage.coverageEndYear).map((y) => ({
@@ -117,12 +129,12 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
     },
     {
       key: 'eu',
-      label: 'Финансиране от ЕС',
+      label: t('companies.filterEu'),
       type: 'radio',
       selected: sp.get('eu') ? [sp.get('eu')!] : [],
       options: [
-        { value: 'eu', label: 'Само договори с финансиране от ЕС' },
-        { value: 'national', label: 'Само без финансиране от ЕС' },
+        { value: 'eu', label: t('companies.filterEuOnly') },
+        { value: 'national', label: t('companies.filterEuNone') },
       ],
     },
   ];
@@ -131,27 +143,27 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
     { key: 'rank', header: '#', isRank: true, cell: (_r, i) => startRank + i + 1 },
     {
       key: 'name',
-      header: 'Компания',
+      header: t('companies.colName'),
       isTitle: true,
       cell: (c) => (
         <>
           <Link to={`/companies/${c.slug}`}>{c.displayName}</Link>
           <br />
-          <span className="small muted">{subtitle(c)}</span>
+          <span className="small muted">{subtitle(c, t)}</span>
         </>
       ),
     },
     {
       key: 'type',
-      header: 'Вид',
+      header: t('companies.colType'),
       secondary: true,
       cell: (c) => (
         <>
-          <Chip>{c.isConsortium ? 'Обединение (ДЗЗД)' : 'дружество'}</Chip>
+          <Chip>{c.isConsortium ? t('companies.consortium') : t('companies.company')}</Chip>
           {!c.isConsortium && !c.hasEik && (
             <>
               {' '}
-              <Chip>без ЕИК</Chip>
+              <Chip>{t('companies.noEik')}</Chip>
             </>
           )}
           {c.ownershipKind && (
@@ -163,19 +175,39 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
         </>
       ),
     },
-    { key: 'won', header: 'Спечелено (€)', align: 'money', cell: (c) => moneyBare(c.wonEur) },
-    { key: 'contracts', header: 'Договори', align: 'money', cell: (c) => count(c.contracts) },
-    { key: 'authorities', header: 'Институции', align: 'money', cell: (c) => count(c.authorities) },
+    {
+      key: 'won',
+      header: t('companies.colWon'),
+      align: 'money',
+      cell: (c) => moneyBare(c.wonEur, locale),
+    },
+    {
+      key: 'contracts',
+      header: t('companies.colContracts'),
+      align: 'money',
+      cell: (c) => count(c.contracts, locale),
+    },
+    {
+      key: 'authorities',
+      header: t('companies.colAuthorities'),
+      align: 'money',
+      cell: (c) => count(c.authorities, locale),
+    },
   ];
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Компании' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('companies.breadcrumbHome'), to: '/' },
+          { label: t('companies.breadcrumbCompanies') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker={`${count(page.total)} изпълнители`}
-          title="Компании"
-          lede="Всяка компания, която е спечелила поне един договор по обществена поръчка. По подразбиране е подреден по общата стойност на спечелените договори."
+          kicker={t('companies.kicker', { count: count(page.total, locale) })}
+          title={t('companies.title')}
+          lede={t('companies.lede')}
         />
         <div className="split">
           <FilterRail groups={groups} sort={sort} clearHref="/companies" csvHref={csvHref} />
@@ -184,21 +216,28 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
               base={sp}
               activeSort={sort}
               sorts={[
-                { value: 'won', label: 'спечелено' },
-                { value: 'count', label: 'договори' },
-                { value: 'authorities', label: 'институции' },
-                { value: 'name', label: 'име' },
+                { value: 'won', label: t('companies.sortWon') },
+                { value: 'count', label: t('companies.sortCount') },
+                { value: 'authorities', label: t('companies.sortAuthorities') },
+                { value: 'name', label: t('companies.sortName') },
               ]}
               count={
                 <>
-                  Показани са <strong>{page.items.length}</strong> от{' '}
-                  <strong>{count(page.total)}</strong> компании
+                  {t('companies.shownPrefix')} <strong>{page.items.length}</strong>{' '}
+                  {t('companies.shownMiddle')} <strong>{count(page.total, locale)}</strong>{' '}
+                  {plural(
+                    page.total,
+                    t('companies.shownUnit_one'),
+                    t('companies.shownUnit_many'),
+                    locale,
+                  )}
                 </>
               }
             />
             {page.items.length === 0 ? (
               <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/companies">Изчисти филтрите</Link>
+                {t('companies.emptyState')}{' '}
+                <Link to="/companies">{t('companies.clearFilters')}</Link>
               </p>
             ) : (
               <div aria-busy={busy || undefined}>
@@ -206,19 +245,14 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
                   columns={columns}
                   rows={page.items}
                   getKey={(c) => c.slug}
-                  caption="Компании по спечелено"
+                  caption={t('companies.tableCaption')}
                 />
               </div>
             )}
             {page.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.companies} />}
             <Callout>
-              <h2>Какво означава „спечелено“?</h2>
-              <p className="m-0">
-                Сборът от стойностите (в евро) на договорите, по които компанията е изпълнител.
-                Когато договорът е възложен на обединение (ДЗЗД/консорциум), цялата сума се води на
-                обединението като един изпълнител; разбивка по членове ще добавим след свързване с
-                Търговския регистър.
-              </p>
+              <h2>{t('companies.calloutTitle')}</h2>
+              <p className="m-0">{t('companies.calloutBody')}</p>
             </Callout>
           </section>
         </div>

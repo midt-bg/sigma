@@ -1,5 +1,6 @@
 import type { SankeyLayout, SankeyNode } from '@sigma/api-contract';
 import { money } from '@sigma/shared';
+import { useLocale, useTranslation } from '../i18n/context';
 
 // A node may carry a drill-down target (`/authorities/:slug` or `/companies/:slug`) so the bar +
 // label become a real link. Optional so the component still renders if the loader omits it.
@@ -9,6 +10,8 @@ type LinkedNode = SankeyNode & { href?: string };
 // bars (right), ribbon thickness ∝ flow value. Scrolls horizontally on narrow screens (.flow-scroll)
 // rather than shrinking labels into illegibility. Paired with the top-N table for the actual links.
 export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
+  const t = useTranslation();
+  const locale = useLocale();
   // The loader lays the geometry out in a fixed user-space height (sized for the Top-20 view), so
   // the „Топ 50" view (≈35 bars/side) crams its bars and collides labels. Stretch the geometry
   // vertically by the column count — bars + gaps grow, labels keep their font size — and grow the
@@ -28,19 +31,20 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
 
   return (
     <>
-      <p className="flow-scroll-hint">Плъзни настрани, за да видиш цялата схема →</p>
+      <p className="flow-scroll-hint">{t('sankey.scrollHint')}</p>
       <div className="flow-scroll">
-        <svg
-          className="flow-svg"
-          viewBox={viewBox}
-          role="img"
-          aria-label="Поток на средства от институции към компании"
-        >
-          <text x="135" y="12" textAnchor="end" className="cap">
-            Институции
+        <svg className="flow-svg" viewBox={viewBox} role="img" aria-label={t('sankey.diagramAria')}>
+          <text
+            x="135"
+            y="12"
+            textAnchor="end"
+            className="cap"
+            style={{ fontSize: 11, fontWeight: 700 }}
+          >
+            {t('sankey.authorities')}
           </text>
-          <text x="565" y="12" className="cap">
-            Компании
+          <text x="565" y="12" className="cap" style={{ fontSize: 11, fontWeight: 700 }}>
+            {t('sankey.companies')}
           </text>
 
           <g fillRule="evenodd" transform={vScale === 1 ? undefined : `scale(1 ${vScale})`}>
@@ -61,11 +65,13 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
             // Two-line label needs ~26 user units of bar height to clear its neighbour; below that
             // we drop the label (the hover tooltip still carries the name + value).
             const showLabel = height >= 26;
-            const kind = isAuth ? 'институция' : 'компания';
+            const kind = isAuth ? t('sankey.authority') : t('sankey.company');
             const body = (
               <>
                 <rect className={`node ${n.side}`} x={n.x} y={y} width={n.width} height={height}>
-                  <title>{`${n.label}: ${money(n.valueEur)}`}</title>
+                  <title>
+                    {t('sankey.nodeTitle', { label: n.label, value: money(n.valueEur, locale) })}
+                  </title>
                 </rect>
                 {showLabel && (
                   <>
@@ -83,7 +89,7 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
                       textAnchor={isAuth ? 'end' : 'start'}
                       className="node-label small"
                     >
-                      {money(n.valueEur)}
+                      {money(n.valueEur, locale)}
                     </text>
                   </>
                 )}
@@ -94,7 +100,12 @@ export function SankeyDiagram({ layout }: { layout: SankeyLayout }) {
                 key={`${n.side}-${n.label}-${n.x}-${n.y}`}
                 href={n.href}
                 className="node-link"
-                aria-label={`${n.label} (${kind}): ${money(n.valueEur)}`}
+                aria-label={t('sankey.nodeAria', {
+                  label: n.label,
+                  kind,
+                  value: money(n.valueEur, locale),
+                })}
+                style={{ cursor: 'pointer' }}
               >
                 {body}
               </a>

@@ -1,8 +1,11 @@
 import type { ContractDetail } from '@sigma/api-contract';
 import { pct } from '@sigma/shared';
 import { evaluateRiskIndicators } from '../lib/riskLogic';
+import { useTranslation, useLocale } from '../i18n/context';
 
 export function RiskIndicators({ contract }: { contract: ContractDetail }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const flags = evaluateRiskIndicators(contract);
 
   if (flags.length === 0) {
@@ -27,36 +30,37 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
         </svg>
-        Индикатори за риск
+        {t('riskIndicators.title')}
       </h2>
       <ul className="risk-list">
         {flags.map((flag, i) => {
           if (flag.type === 'eu_no_competition') {
             return (
               <li key={i}>
-                <strong>Риск при Еврофондове:</strong> Проектът е финансиран с европейски средства, но е възложен без реална конкуренция (повишен риск според стандартите на ОЛАФ).
+                <strong>{t('riskIndicators.euLabel')}</strong> {t('riskIndicators.euBody')}
               </li>
             );
           }
           if (flag.type === 'no_competition') {
             return (
               <li key={i}>
-                <strong>Липса на конкуренция:</strong> Този договор е сключен след допускане на само една оферта.
+                <strong>{t('riskIndicators.noCompLabel')}</strong> {t('riskIndicators.noCompBody')}
               </li>
             );
           }
           if (flag.type === 'high_markup') {
             return (
               <li key={i}>
-                <strong>Значително оскъпяване:</strong> Стойността на договора е нараснала с{' '}
-                {pct(flag.deltaPct!)} спрямо първоначално обявената — чрез допълнителни анекси.
+                <strong>{t('riskIndicators.markupLabel')}</strong>{' '}
+                {t('riskIndicators.markupBody', { pct: pct(flag.deltaPct!, 1, locale) })}
               </li>
             );
           }
           if (flag.type === 'anomalies') {
             return (
               <li key={i}>
-                <strong>Аномалии в данните:</strong> Стойността на договора (или някои от датите) е извън обичайния диапазон и подлежи на допълнителна проверка.
+                <strong>{t('riskIndicators.anomaliesLabel')}</strong>{' '}
+                {t('riskIndicators.anomaliesBody')}
               </li>
             );
           }

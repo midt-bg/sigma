@@ -4,7 +4,7 @@
 // because the tokenizer splits them the same way on both sides.
 
 import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma/api-contract';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { cleanName, entityName, parseConsortiumMembers, type Locale } from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
 export type SearchKind = 'authority' | 'company' | 'contract';
@@ -108,7 +108,11 @@ interface HitRow {
   eik_valid: number | null;
 }
 
-export async function search(db: D1Database, rawQuery: string): Promise<SearchResults> {
+export async function search(
+  db: D1Database,
+  rawQuery: string,
+  locale: Locale = 'bg',
+): Promise<SearchResults> {
   const query = (rawQuery ?? '').trim();
   const match = searchMatchQuery(query);
   // No searchable content (empty, or punctuation-only like a lone „"") → empty-query shape, with the
@@ -154,7 +158,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           kind: g.kind,
           slug: href.split('/').pop()!,
           href,
-          title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
+          title: isCompany ? entityName(cleanName(r.title), companyKind, locale) : r.title,
           ident: r.ident || null,
           ...(isCompany
             ? { isConsortium, hasEik, ownershipKind: r.ownership_kind, memberCount }

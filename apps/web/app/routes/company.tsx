@@ -1,6 +1,7 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import {
   count,
+  decimal,
   isNaturalPersonProfileName,
   money,
   moneyBare,
@@ -10,6 +11,9 @@ import {
 } from '@sigma/shared';
 import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend } from '@sigma/db';
 import type { Route } from './+types/company';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
+import { useTranslation, useLocale } from '../i18n/context';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
@@ -37,14 +41,15 @@ function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): b
   );
 }
 
-export function meta({ data, params, matches }: Route.MetaArgs) {
-  const name = data?.company.displayName ?? 'Компания';
+export function meta({ data, params, location, matches }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
+  const name = data?.company.displayName ?? t('company.fallbackName');
   const range = coverageRange(data?.coverage.coverageEndYear);
   const metaTags = seoMeta({
     matches,
     path: `/companies/${params.eik}`,
-    title: `${name} — СИГМА`,
-    description: `Профил на ${name} в обществените поръчки ${range}.`,
+    title: t('company.metaTitle', { name }),
+    description: t('company.metaDescription', { name, range }),
   });
   if (
     data?.company &&
@@ -61,17 +66,23 @@ export function headers() {
   return { 'Cache-Control': publicCache(3600) };
 }
 
-export async function loader({ params, context }: Route.LoaderArgs) {
+export async function loader({ params, request, context }: Route.LoaderArgs) {
   if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
   const id = bidderIdFromSlug(params.eik);
   if (!id) throw new Response('Not Found', { status: 404 });
+  const locale = getLocale(request);
   const db = context.cloudflare.env.DB;
   return withDbRetry(async () => {
     const [company, coverage, trend, network] = await Promise.all([
-      getCompany(db, id),
+      getCompany(db, id, locale),
       getCoverageMeta(db),
-      getSpendingTrend(db, { bidderId: id, granularity: 'month' }, { includeSectors: false }),
-      getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }),
+      getSpendingTrend(
+        db,
+        { bidderId: id, granularity: 'month' },
+        { includeSectors: false },
+        locale,
+      ),
+      getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }, locale),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
     return { company, coverage, trend, network };
@@ -79,18 +90,18 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
+  const t = useTranslation();
+  const locale = useLocale();
   const c = loaderData.company;
   const { trend, network } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const noEikCompany = !c.isConsortium && !c.hasEik;
-  const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
-  const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
   return (
     <>
       <Breadcrumbs
         items={[
-          { label: 'Начало', to: '/' },
-          { label: 'Компании', to: '/companies' },
+          { label: t('company.breadcrumbHome'), to: '/' },
+          { label: t('company.breadcrumbCompanies'), to: '/companies' },
           { label: c.displayName },
         ]}
       />
@@ -98,11 +109,11 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              {c.isConsortium ? 'Обединение' : 'Компания'}
+              {c.isConsortium ? t('company.kindConsortium') : t('company.kindCompany')}
               {noEikCompany && (
                 <>
                   {' '}
-                  · <Chip>без ЕИК</Chip>
+                  · <Chip>{t('company.noEik')}</Chip>
                 </>
               )}
               {c.ownershipKind && (
@@ -119,80 +130,95 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               )}
               {c.hasEik && c.eik && (
                 <>
-                  {' · '}ЕИК&nbsp;{c.eik}
+                  {' '}
+                  · {t('company.eik')}&nbsp;{c.eik}
                   <ExternalEikLink eik={c.eik} />
                 </>
               )}
             </>
           }
           title={c.displayName}
-          lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
+          lede={
+            c.isConsortium
+              ? t('company.ledeConsortium', { range })
+              : t('company.ledeCompany', { range })
+          }
         />
 
         <FactsList
-          label="Ключови показатели"
+          label={t('company.factsLabel')}
           rows={[
-            { term: 'Общо спечелено', value: money(c.wonEur) },
+            { term: t('company.factTotalWon'), value: money(c.wonEur, locale) },
             c.sector && {
-              term: 'Основен сектор',
+              term: t('company.factMainSector'),
               value: `${c.sector.label} (CPV ${c.sector.code})`,
-              sub: c.sectorSharePct != null ? `${pct(c.sectorSharePct)} от стойността` : undefined,
-            },
-            { term: 'Брой договори', value: count(c.contracts) },
-            { term: 'Институции платци', value: count(c.authorities) },
-            { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
-            { term: 'Дял с финансиране от ЕС', value: pct(c.euSharePct) },
-            c.avgBids != null && {
-              term: 'Средно оферти на търг',
-              value: c.avgBids.toString().replace('.', ','),
-            },
-            {
-              term: 'Вид субект',
-              value: c.isConsortium ? 'обединение' : 'дружество',
-              sub: c.isConsortium
-                ? '(ДЗЗД / консорциум)'
-                : noEikCompany
-                  ? 'без ЕИК в източника'
+              sub:
+                c.sectorSharePct != null
+                  ? t('company.factSectorShare', { pct: pct(c.sectorSharePct, 1, locale) })
                   : undefined,
             },
-            c.settlement && { term: 'Седалище', value: c.settlement, sub: c.region ?? undefined },
+            { term: t('company.factContracts'), value: count(c.contracts, locale) },
+            { term: t('company.factPayingAuthorities'), value: count(c.authorities, locale) },
+            {
+              term: t('company.factPeriod'),
+              value: periodRange(c.periodFirst, c.periodLast, locale),
+            },
+            { term: t('company.factEuShare'), value: pct(c.euSharePct, 1, locale) },
+            c.avgBids != null && {
+              term: t('company.factAvgBids'),
+              value: decimal(c.avgBids, locale),
+            },
+            {
+              term: t('company.factEntityType'),
+              value: c.isConsortium ? t('company.entityConsortium') : t('company.entityCompany'),
+              sub: c.isConsortium
+                ? t('company.entitySubConsortium')
+                : noEikCompany
+                  ? t('company.entitySubNoEik')
+                  : undefined,
+            },
+            c.settlement && {
+              term: t('company.factSeat'),
+              value: c.settlement,
+              sub: c.region ?? undefined,
+            },
             c.suspect > 0 && {
-              term: 'Непотвърдена стойност',
-              value: `${count(c.suspect)} ${plural(c.suspect, 'договор', 'договора')}`,
-              sub: 'изключени от сумите — данните се проверяват',
+              term: t('company.factUnverifiedValue'),
+              value: `${count(c.suspect, locale)} ${plural(c.suspect, t('company.contracts_one'), t('company.contracts_many'), locale)}`,
+              sub: t('company.unverifiedValueSub'),
             },
           ]}
         />
 
         <Section
           id="trend"
-          title="Тренд"
-          hint={`Спечеленото от ${c.displayName} във времето. Договорите без валидна дата не влизат в графиката.`}
+          title={t('company.trendTitle')}
+          hint={t('company.trendHint', { name: c.displayName })}
         >
           {trend.points.length >= 2 ? (
             <>
               <TrendChart points={trend.points} granularity={trend.granularity} />
               <div className="mt-8">
                 <DataTable
-                  columns={trendYearColumns}
+                  columns={trendYearColumns(t, locale)}
                   rows={trend.years}
                   getKey={(r) => r.year}
-                  caption="Разходи по години"
+                  caption={t('company.trendCaption')}
                 />
               </div>
             </>
           ) : (
-            <p className="muted">Няма достатъчно данни за времева графика.</p>
+            <p className="muted">{t('company.trendEmpty')}</p>
           )}
         </Section>
 
         <Section
           id="network"
-          title="Мрежа"
+          title={t('company.networkTitle')}
           hint={
             <span>
-              Най-силните преки връзки около {subjectPhrase} и по една следваща връзка за всеки
-              възложител. <Link to={`/network?center=c:${c.slug}`}>Виж пълната мрежа →</Link>
+              {t('company.networkHint', { name: c.displayName })}{' '}
+              <Link to={`/network?center=c:${c.slug}`}>{t('company.networkFullLink')}</Link>
             </span>
           }
         >
@@ -201,15 +227,15 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               <NetworkGraph data={network} />
               <div className="sr-only">
                 <DataTable
-                  columns={networkColumns}
+                  columns={networkColumns(t, locale)}
                   rows={networkRows(network)}
                   getKey={(r) => `${r.from}-${r.to}`}
-                  caption="Връзки в графа"
+                  caption={t('company.networkCaption')}
                 />
               </div>
             </>
           ) : (
-            <p className="muted">Няма достатъчно връзки за граф.</p>
+            <p className="muted">{t('company.networkEmpty')}</p>
           )}
         </Section>
 
@@ -226,13 +252,13 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             id="participants"
             title={
               c.participants.length > 0
-                ? `Участници в обединението (${count(c.participants.length)})`
-                : 'Описание на обединението'
+                ? t('company.participantsTitle', { count: count(c.participants.length, locale) })
+                : t('company.participantsDescriptionTitle')
             }
             hint={
               c.participants.length > 0
-                ? 'Имената са от описанието на договора в АОП. Сумите се водят на ниво обединение; отделни профили на участниците ще се появят след свързване с Търговския регистър.'
-                : 'Източникът дава свободен текст вместо подреден списък с участници. Запазваме описанието както е в обявата.'
+                ? t('company.participantsHint')
+                : t('company.participantsDescriptionHint')
             }
           >
             {c.participants.length > 0 ? (
@@ -256,43 +282,41 @@ export default function Company({ loaderData }: Route.ComponentProps) {
 
         <Section
           id="from"
-          title="Откъде печели"
-          hint={`Институции, подредени по сумата, платена на ${c.displayName.replace(/\.$/, '')}.`}
+          title={t('company.fromTitle')}
+          hint={t('company.fromHint', { name: c.displayName.replace(/\.$/, '') })}
         >
           <div className="table-wrap tbl-cards">
             <table>
-              <caption className="sr-only">
-                Институции платци, подредени по сумата, платена на компанията
-              </caption>
+              <caption className="sr-only">{t('company.fromCaption')}</caption>
               <thead>
                 <tr>
-                  <th scope="col">#</th>
-                  <th scope="col">Институция</th>
+                  <th scope="col">{t('company.colRank')}</th>
+                  <th scope="col">{t('company.colAuthority')}</th>
                   <th scope="col" className="num">
-                    Платено на компанията (€)
+                    {t('company.colPaidToCompany')}
                   </th>
                   <th scope="col" className="num">
-                    Договори
+                    {t('company.colContracts')}
                   </th>
-                  <th scope="col">Дял от спечеленото</th>
+                  <th scope="col">{t('company.colShareOfWon')}</th>
                 </tr>
               </thead>
               <tbody>
                 {c.topAuthorities.map((a, i) => (
                   <tr key={a.slug}>
-                    <td className="rank cell-rank" data-label="#">
+                    <td className="rank cell-rank" data-label={t('company.colRank')}>
                       {i + 1}
                     </td>
-                    <td className="cell-title" data-label="Институция">
+                    <td className="cell-title" data-label={t('company.colAuthority')}>
                       <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
                     </td>
-                    <td className="money" data-label="Платено (€)">
-                      {moneyBare(a.paidEur)}
+                    <td className="money" data-label={t('company.labelPaid')}>
+                      {money(a.paidEur, locale)}
                     </td>
-                    <td className="money" data-label="Договори">
-                      {count(a.contracts)}
+                    <td className="money" data-label={t('company.colContracts')}>
+                      {count(a.contracts, locale)}
                     </td>
-                    <td data-label="Дял">
+                    <td data-label={t('company.labelShare')}>
                       <ShareBar ratio={a.sharePct} />
                     </td>
                   </tr>
@@ -303,55 +327,57 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           {c.moreAuthorities > 0 && (
             <p className="small muted mt-s3">
               <Link to={`/contracts?bidder=${c.slug}`}>
-                … още {count(c.moreAuthorities)} институции — виж всички договори →
+                {t('company.moreAuthorities', { count: count(c.moreAuthorities, locale) })}
               </Link>
             </p>
           )}
         </Section>
 
         <div className="two-col">
-          <Section
-            id="how-win"
-            title="Как печели"
-            hint="Видът процедури, по които компанията е печелила договорите."
-          >
+          <Section id="how-win" title={t('company.howWinTitle')} hint={t('company.howWinHint')}>
             <StackedBar slices={c.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
           </Section>
 
-          <Section
-            id="bids"
-            title="Брой оферти на спечелените търгове"
-            hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
-          >
+          <Section id="bids" title={t('company.bidsTitle')} hint={t('company.bidsHint')}>
             <table>
-              <caption className="sr-only">Брой оферти на спечелените търгове</caption>
+              <caption className="sr-only">{t('company.bidsCaption')}</caption>
               <thead className="sr-only">
                 <tr>
-                  <th scope="col">Брой оферти</th>
-                  <th scope="col">Брой търгове</th>
+                  <th scope="col">{t('company.bidsColBids')}</th>
+                  <th scope="col">{t('company.bidsColTenders')}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>1 оферта</td>
-                  <td className="money">{count(c.bids.one)} търга</td>
+                  <td>{t('company.bidsOne')}</td>
+                  <td className="money">
+                    {count(c.bids.one, locale)} {t('company.tenders')}
+                  </td>
                 </tr>
                 <tr>
-                  <td>2 оферти</td>
-                  <td className="money">{count(c.bids.two)} търга</td>
+                  <td>{t('company.bidsTwo')}</td>
+                  <td className="money">
+                    {count(c.bids.two, locale)} {t('company.tenders')}
+                  </td>
                 </tr>
                 <tr>
-                  <td>3 оферти</td>
-                  <td className="money">{count(c.bids.three)} търга</td>
+                  <td>{t('company.bidsThree')}</td>
+                  <td className="money">
+                    {count(c.bids.three, locale)} {t('company.tenders')}
+                  </td>
                 </tr>
                 <tr>
-                  <td>4 и повече оферти</td>
-                  <td className="money">{count(c.bids.fourPlus)} търга</td>
+                  <td>{t('company.bidsFourPlus')}</td>
+                  <td className="money">
+                    {count(c.bids.fourPlus, locale)} {t('company.tenders')}
+                  </td>
                 </tr>
                 {c.bids.unknown > 0 && (
                   <tr>
-                    <td className="muted">няма данни</td>
-                    <td className="money muted">{count(c.bids.unknown)} търга</td>
+                    <td className="muted">{t('company.bidsNoData')}</td>
+                    <td className="money muted">
+                      {count(c.bids.unknown, locale)} {t('company.tenders')}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -361,16 +387,23 @@ export default function Company({ loaderData }: Route.ComponentProps) {
 
         <Section
           id="latest"
-          title="Договори"
+          title={t('company.contractsTitle')}
           hint={
             <span>
-              {Math.min(Math.max(c.recentContracts.length, c.topContracts.length), 7)} от{' '}
-              {count(c.contracts)} {plural(c.contracts, 'договор', 'договора')} — превключи между
-              най-новите и най-големите по стойност.
+              {t('company.contractsHint', {
+                shown: Math.min(Math.max(c.recentContracts.length, c.topContracts.length), 7),
+                total: count(c.contracts, locale),
+                word: plural(
+                  c.contracts,
+                  t('company.contracts_one'),
+                  t('company.contracts_many'),
+                  locale,
+                ),
+              })}
             </span>
           }
         >
-          <div className="tabset" role="radiogroup" aria-label="Подреждане на договорите">
+          <div className="tabset" role="radiogroup" aria-label={t('company.contractsSortLabel')}>
             <input
               type="radio"
               name="company-contracts"
@@ -381,10 +414,10 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             <input type="radio" name="company-contracts" id="company-top" className="tab-input" />
             <div className="tab-labels">
               <label id="tab-company-recent" htmlFor="company-recent">
-                Най-нови
+                {t('company.tabNewest')}
               </label>
               <label id="tab-company-top" htmlFor="company-top">
-                Най-големи по стойност
+                {t('company.tabLargest')}
               </label>
             </div>
             <div
@@ -405,9 +438,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
           <p className="small muted mt-8">
-            <Link to={`/contracts?bidder=${c.slug}`}>
-              Виж всички / филтрирай / свали като CSV →
-            </Link>
+            <Link to={`/contracts?bidder=${c.slug}`}>{t('company.viewAllCsv')}</Link>
           </p>
         </Section>
       </main>

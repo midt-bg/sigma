@@ -92,7 +92,7 @@ function fakeDb(totals: typeof totalsRow | null): D1Database {
 
 describe('getHomeData', () => {
   it('returns zero-value fallback totals when home_totals has no row', async () => {
-    const data = await getHomeData(fakeDb(null));
+    const data = await getHomeData(fakeDb(null), 'bg');
 
     expect(data.totals.contracts).toBe(0);
     expect(data.totals.valueEur).toBe(0);
@@ -101,7 +101,7 @@ describe('getHomeData', () => {
   });
 
   it('maps home_totals row to HomeData.totals', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fakeDb(totalsRow), 'bg');
 
     expect(data.totals.contracts).toBe(500);
     expect(data.totals.valueEur).toBe(1000000);
@@ -110,7 +110,7 @@ describe('getHomeData', () => {
   });
 
   it('includes top companies, ministries, and municipalities', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fakeDb(totalsRow), 'bg');
 
     expect(data.topCompanies).toHaveLength(1);
     expect(data.topCompanies[0]!.slug).toBe('103267194');
@@ -122,16 +122,23 @@ describe('getHomeData', () => {
   });
 
   it('includes single-offer contract lists', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fakeDb(totalsRow), 'bg');
 
     expect(Array.isArray(data.recentSingleOffer)).toBe(true);
     expect(Array.isArray(data.topSingleOffer)).toBe(true);
   });
 
   it('includes single-offer aggregate stats', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fakeDb(totalsRow), 'bg');
 
     expect(data.singleOffer.contracts).toBe(1);
     expect(data.singleOffer.valueEur).toBe(50000);
+  });
+
+  it('localizes labels to English', async () => {
+    const data = await getHomeData(fakeDb(totalsRow), 'en');
+
+    expect(data.topMinistries[0]!.typeLabel).toBe('Ministry');
+    expect(data.topCompanies[0]!.sector?.short).toBe('Construction');
   });
 });

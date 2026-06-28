@@ -24,6 +24,21 @@ describe('rateLimitAggregationRoute', () => {
     expect(response?.headers.get('Retry-After')).toBe('60');
   });
 
+  it('limits the localized /en aggregation mirror (no bypass via the locale prefix)', async () => {
+    const { limiter, limit } = rateLimiter(false);
+
+    const response = await rateLimitAggregationRoute(
+      new Request('http://local/en/companies', {
+        headers: { 'CF-Connecting-IP': '203.0.113.32' },
+      }),
+      { AGG_RATE_LIMITER: limiter },
+      false,
+    );
+
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.32' });
+    expect(response?.status).toBe(429);
+  });
+
   it('limits aggregation listing requests with a trailing slash', async () => {
     const { limiter, limit } = rateLimiter(false);
 

@@ -4,11 +4,21 @@ import { money } from '@sigma/shared';
 import type { SearchHit } from '@sigma/api-contract';
 import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { useTranslation, useLocale } from '../i18n/context';
+import { localizePath } from '../i18n/locale';
+import type { MessageKey } from '../i18n/t';
 
-const KIND_LABEL: Record<SearchHit['kind'], string> = {
-  authority: 'институция',
-  company: 'компания',
-  contract: 'договор',
+const KIND_KEY: Record<SearchHit['kind'], MessageKey> = {
+  authority: 'smartSearch.kindAuthority',
+  company: 'smartSearch.kindCompany',
+  contract: 'smartSearch.kindContract',
+};
+
+// Group heading per entity kind — keyed on the stable `kind` token, never the DB's Bulgarian label.
+const GROUP_KEY: Record<SearchHit['kind'], MessageKey> = {
+  authority: 'searchPage.groupAuthority',
+  company: 'searchPage.groupCompany',
+  contract: 'searchPage.groupContract',
 };
 
 // Below this length we don't query — single letters match almost everything and just add noise.
@@ -33,12 +43,17 @@ interface SmartSearchProps {
 export function SmartSearch({
   variant,
   defaultValue = '',
-  placeholder = 'Институция, компания или договор',
-  inputLabel = 'Търсене',
-  submitLabel = 'Намери',
+  placeholder,
+  inputLabel,
+  submitLabel,
   onNavigate,
   inputRef: externalInputRef,
 }: SmartSearchProps) {
+  const t = useTranslation();
+  const locale = useLocale();
+  const placeholderText = placeholder ?? t('smartSearch.placeholder');
+  const inputLabelText = inputLabel ?? t('smartSearch.inputLabel');
+  const submitLabelText = submitLabel ?? t('smartSearch.submitLabel');
   const navigate = useNavigate();
   const fetcher = useFetcher<typeof suggestLoader>();
   const [query, setQuery] = useState(defaultValue);
@@ -62,10 +77,12 @@ export function SmartSearch({
   // Fetch suggestions when the settled query is long enough; clear out below the threshold.
   useEffect(() => {
     if (debounced.length < MIN_QUERY) return;
-    fetcher.load(`/search/suggest?q=${encodeURIComponent(debounced)}`);
+    // Pass the active locale so the suggest endpoint (a single-mount route without a /en prefix)
+    // localizes consortium names; refetch when the locale changes.
+    fetcher.load(`/search/suggest?q=${encodeURIComponent(debounced)}&locale=${locale}`);
     // fetcher identity is stable across renders; depending on it would re-fire needlessly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced]);
+  }, [debounced, locale]);
 
   const results = debounced.length >= MIN_QUERY ? fetcher.data : undefined;
   const groups = results?.groups.filter((g) => g.hits.length > 0) ?? [];
@@ -99,9 +116,9 @@ export function SmartSearch({
 
   function selectIndex(i: number) {
     if (i === seeAllIndex) {
-      goTo(`/search?q=${encodeURIComponent(query.trim())}`);
+      goTo(`${localizePath('/search', locale)}?q=${encodeURIComponent(query.trim())}`);
     } else if (i >= 0 && i < flatHits.length) {
-      goTo(flatHits[i].href);
+      goTo(localizePath(flatHits[i].href, locale));
     }
   }
 
@@ -152,7 +169,7 @@ export function SmartSearch({
       <form
         className="smart-search-form"
         role="search"
-        action="/search"
+        action={localizePath('/search', locale)}
         method="get"
         onSubmit={(e) => {
           if (!query.trim()) {
@@ -170,8 +187,8 @@ export function SmartSearch({
           name="q"
           className="smart-search-input"
           value={query}
-          placeholder={placeholder}
-          aria-label={inputLabel}
+          placeholder={placeholderText}
+          aria-label={inputLabelText}
           autoComplete="off"
           role="combobox"
           aria-expanded={showList}
@@ -186,7 +203,7 @@ export function SmartSearch({
           onKeyDown={onKeyDown}
         />
         <button type="submit" className="smart-search-submit">
-          {submitLabel}
+          {submitLabelText}
         </button>
       </form>
 
@@ -195,11 +212,21 @@ export function SmartSearch({
         // Hidden from AT until there's something to announce; inert when closed.
         hidden={!showList}
       >
-        <ul className="smart-search-list" id={listboxId} role="listbox" aria-label="Предложения">
+        <ul
+          className="smart-search-list"
+          id={listboxId}
+          role="listbox"
+          aria-label={t('smartSearch.suggestionsLabel')}
+        >
           {groups.map((g) => (
-            <li key={g.kind} role="group" aria-label={g.label} className="smart-search-group">
+            <li
+              key={g.kind}
+              role="group"
+              aria-label={t(GROUP_KEY[g.kind])}
+              className="smart-search-group"
+            >
               <p className="smart-search-group-label" aria-hidden="true">
-                {g.label}
+                {t(GROUP_KEY[g.kind])}
               </p>
               <ul className="smart-search-group-list" role="presentation">
                 {g.hits.map((hit) => {
@@ -218,13 +245,15 @@ export function SmartSearch({
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => selectIndex(i)}
                     >
-                      <span className="smart-search-option-kind">{KIND_LABEL[hit.kind]}</span>
+                      <span className="smart-search-option-kind">{t(KIND_KEY[hit.kind])}</span>
                       <span className="smart-search-option-body">
                         <span className="smart-search-option-title">{hit.title}</span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>
                       {hit.amountEur != null && (
-                        <span className="smart-search-option-amt">{money(hit.amountEur)}</span>
+                        <span className="smart-search-option-amt">
+                          {money(hit.amountEur, locale)}
+                        </span>
                       )}
                     </li>
                   );
@@ -243,18 +272,18 @@ export function SmartSearch({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => selectIndex(seeAllIndex)}
             >
-              Всички резултати за „{query.trim()}" →
+              {t('smartSearch.seeAll', { name: query.trim() })}
             </li>
           )}
 
           {!hasResults && !loading && (
             <li className="smart-search-empty" role="presentation">
-              Няма съвпадения. Пробвай с име, ЕИК или УНП.
+              {t('smartSearch.empty')}
             </li>
           )}
           {!hasResults && loading && (
             <li className="smart-search-empty" role="presentation" aria-live="polite">
-              Търсене…
+              {t('smartSearch.loading')}
             </li>
           )}
         </ul>

@@ -54,7 +54,7 @@ function fakeDb(): D1Database {
 
 describe('listContracts', () => {
   it('returns no rows for an undecodable bidder slug', async () => {
-    const page = await listContracts(fakeDb(), { bidder: 'n%', pageSize: 10 });
+    const page = await listContracts(fakeDb(), { bidder: 'n%', pageSize: 10 }, 'bg');
 
     expect(page.items).toEqual([]);
     expect(page.total).toBe(0);
@@ -62,14 +62,21 @@ describe('listContracts', () => {
 
   it('falls back to the default sort instead of throwing (sort=toString)', async () => {
     await expect(
-      listContracts(fakeDb(), { sort: 'toString' as never, pageSize: 10 }),
+      listContracts(fakeDb(), { sort: 'toString' as never, pageSize: 10 }, 'bg'),
     ).resolves.toBeDefined();
   });
 
   it('ignores a reserved value-bucket key instead of a destructure TypeError (value=toString)', async () => {
     await expect(
-      listContracts(fakeDb(), { valueBucket: 'toString', pageSize: 10 }),
+      listContracts(fakeDb(), { valueBucket: 'toString', pageSize: 10 }, 'bg'),
     ).resolves.toBeDefined();
+  });
+
+  it('resolves the procedure-group label per locale', async () => {
+    const bg = await listContracts(fakeDb(), { pageSize: 10 }, 'bg');
+    const en = await listContracts(fakeDb(), { pageSize: 10 }, 'en');
+    expect(bg.items[0]?.procedureLabel).toBe('Открита');
+    expect(en.items[0]?.procedureLabel).toBe('Open');
   });
 });
 
@@ -91,7 +98,7 @@ describe('getContractFacets', () => {
       },
     } as D1Database;
 
-    const facets = await getContractFacets(db);
+    const facets = await getContractFacets(db, 'bg');
 
     expect(seenSql.some((sql) => sql.includes('JOIN tenders t ON t.id = c.tender_id'))).toBe(true);
     expect(facets.sectors.find((sector) => sector.value === '45')?.count).toBe(7);
@@ -118,7 +125,7 @@ describe('getContractFacets', () => {
       },
     } as D1Database;
 
-    const facets = await getContractFacets(db);
+    const facets = await getContractFacets(db, 'bg');
 
     expect(facets.years.find((year) => year.value === String(currentYear))?.count).toBe(4);
     expect(facets.years.find((year) => year.value === futureYear)).toBeUndefined();

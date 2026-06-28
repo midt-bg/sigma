@@ -1,5 +1,6 @@
-import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, date, money, moneyBare } from '@sigma/shared';
+import { useNavigation, useSearchParams } from 'react-router';
+import { Link } from '../i18n/Link';
+import { count, date, money, moneyBare, plural } from '@sigma/shared';
 import {
   contractsSummary,
   getContractFacets,
@@ -24,22 +25,17 @@ import {
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 
-const VALUE_BUCKETS = [
-  { value: 'lt100k', label: 'Под 100 хил. €' },
-  { value: '100k-1m', label: '100 хил. – 1 млн. €' },
-  { value: '1m-10m', label: '1 – 10 млн. €' },
-  { value: '10m-100m', label: '10 – 100 млн. €' },
-  { value: 'gt100m', label: 'Над 100 млн. €' },
-];
-
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ location, matches }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/contracts',
-    title: 'Договори — СИГМА',
-    description:
-      'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
+    title: t('contracts.metaTitle'),
+    description: t('contracts.metaDescription'),
   });
 }
 
@@ -64,19 +60,29 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.contracts,
   };
   const { env } = context.cloudflare;
+  const locale = getLocale(request);
   // Page `Cache-Control` (publicCache(1800)) memoises full responses at the edge — no per-query cache.
   return withDbRetry(async () => {
     const [summary, facets] = await Promise.all([
       contractsSummary(env.DB, params),
-      getContractFacets(env.DB),
+      getContractFacets(env.DB, locale),
     ]);
-    const result = await listContracts(env.DB, params, summary);
+    const result = await listContracts(env.DB, params, locale, summary);
     return { result, facets };
   });
 }
 
 export default function Contracts({ loaderData }: Route.ComponentProps) {
   const { result, facets } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
+  const VALUE_BUCKETS = [
+    { value: 'lt100k', label: t('contracts.bucketLt100k') },
+    { value: '100k-1m', label: t('contracts.bucket100k1m') },
+    { value: '1m-10m', label: t('contracts.bucket1m10m') },
+    { value: '10m-100m', label: t('contracts.bucket10m100m') },
+    { value: 'gt100m', label: t('contracts.bucketGt100m') },
+  ];
   const [sp] = useSearchParams();
   const sort = sp.get('sort') ?? 'value-desc';
   const nav = pageNav({
@@ -100,36 +106,37 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
     buildSectorGroup(
       facets.sectors.map((s) => ({ value: s.value, label: s.label, count: s.count })),
       getMulti(sp, 'sector'),
+      locale,
     ),
     {
       key: 'procedure',
-      label: 'Процедура',
+      label: t('contracts.filterProcedure'),
       type: 'checkbox',
       selected: getMulti(sp, 'procedure'),
       options: facets.procedures.map((p) => ({ value: p.value, label: p.label, count: p.count })),
     },
     {
       key: 'year',
-      label: 'Година',
+      label: t('contracts.filterYear'),
       type: 'checkbox',
       selected: getMulti(sp, 'year'),
       options: facets.years.map((y) => ({ value: y.value, label: y.label, count: y.count })),
     },
     {
       key: 'value',
-      label: 'Стойност (в евро)',
+      label: t('contracts.filterValue'),
       type: 'radio',
       selected: sp.get('value') ? [sp.get('value')!] : [],
       options: VALUE_BUCKETS,
     },
     {
       key: 'eu',
-      label: 'Финансиране от ЕС',
+      label: t('contracts.filterEu'),
       type: 'radio',
       selected: sp.get('eu') ? [sp.get('eu')!] : [],
       options: [
-        { value: 'eu', label: 'Само с финансиране от ЕС' },
-        { value: 'national', label: 'Само без финансиране от ЕС' },
+        { value: 'eu', label: t('contracts.euOnly') },
+        { value: 'national', label: t('contracts.nationalOnly') },
       ],
     },
   ];
@@ -138,12 +145,22 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Договори' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('contracts.breadcrumbHome'), to: '/' },
+          { label: t('contracts.breadcrumbContracts') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker={`${count(result.total)} договора`}
-          title="Договори"
-          lede="Всеки сключен договор по обществена поръчка. Всяко обобщение другаде в платформата — обща сума за институция, за компания или поток между двете — се свежда точно до този списък. Филтрите остават в адреса."
+          kicker={plural(
+            result.total,
+            t('contracts.kicker_one', { count: count(result.total, locale) }),
+            t('contracts.kicker_many', { count: count(result.total, locale) }),
+            locale,
+          )}
+          title={t('contracts.title')}
+          lede={t('contracts.lede')}
         />
 
         <div className="split">
@@ -153,19 +170,29 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
               base={sp}
               activeSort={sort}
               sorts={[
-                { value: 'date-desc', label: 'нови' },
-                { value: 'date-asc', label: 'стари' },
-                { value: 'value-desc', label: 'стойност ↓' },
-                { value: 'value-asc', label: 'стойност ↑' },
+                { value: 'date-desc', label: t('contracts.sortNew') },
+                { value: 'date-asc', label: t('contracts.sortOld') },
+                { value: 'value-desc', label: t('contracts.sortValueDesc') },
+                { value: 'value-asc', label: t('contracts.sortValueAsc') },
               ]}
               count={
                 <>
-                  Намерени <strong>{count(result.total)}</strong> договора ·{' '}
-                  <strong>{money(result.valueEur)}</strong>
+                  {t('contracts.foundPre')}
+                  <strong>{count(result.total, locale)}</strong>{' '}
+                  {plural(
+                    result.total,
+                    t('contracts.foundContracts_one'),
+                    t('contracts.foundContracts_many'),
+                    locale,
+                  )}{' '}
+                  · <strong>{money(result.valueEur, locale)}</strong>
                   {result.suspect > 0 && (
                     <>
                       {' '}
-                      · <span className="suspect">{result.suspect} с непотвърдена стойност</span>
+                      ·{' '}
+                      <span className="suspect">
+                        {t('contracts.suspectCount', { count: count(result.suspect, locale) })}
+                      </span>
                     </>
                   )}
                 </>
@@ -174,10 +201,10 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
 
             {filtered && (
               <p className="active-filters">
-                Филтрирано по{' '}
+                {t('contracts.filteredBy')}
                 {fAuthority && (
                   <>
-                    институция
+                    {t('contracts.filterAuthority')}
                     {filterAuthorityName ? (
                       <>
                         {' '}
@@ -186,10 +213,10 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                     ) : null}
                   </>
                 )}
-                {fAuthority && fBidder ? ' и ' : ''}
+                {fAuthority && fBidder ? t('contracts.filterAnd') : ''}
                 {fBidder && (
                   <>
-                    компания
+                    {t('contracts.filterBidder')}
                     {filterBidderName ? (
                       <>
                         {' '}
@@ -202,70 +229,74 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                 <Link
                   to={withParams(sp, { authority: null, bidder: null, cursor: null, page: null })}
                 >
-                  изчисти
+                  {t('contracts.clear')}
                 </Link>
               </p>
             )}
 
             {result.items.length === 0 ? (
               <p className="muted">
-                Няма резултати за избраните филтри. <Link to="/contracts">Изчисти филтрите</Link>
+                {t('contracts.noResults')}
+                <Link to="/contracts">{t('contracts.clearFilters')}</Link>
               </p>
             ) : (
               <div className="table-wrap tbl-cards" aria-busy={busy || undefined}>
                 <table>
-                  <caption className="sr-only">Договори по обществени поръчки</caption>
+                  <caption className="sr-only">{t('contracts.tableCaption')}</caption>
                   <thead>
                     <tr>
                       <th scope="col" className="col-w-32">
-                        #
+                        {t('contracts.thRank')}
                       </th>
-                      <th scope="col">Договор</th>
-                      <th scope="col">Възложител · Изпълнител</th>
+                      <th scope="col">{t('contracts.thContract')}</th>
+                      <th scope="col">{t('contracts.thParties')}</th>
                       <th scope="col" className="col-secondary">
-                        Процедура · Дата
+                        {t('contracts.thProcedureDate')}
                       </th>
                       <th scope="col" className="num">
-                        Стойност (€)
+                        {t('contracts.thValue')}
                       </th>
                     </tr>
                   </thead>
                   <tbody>
                     {result.items.map((c, i) => (
                       <tr className="contract-row" key={c.id}>
-                        <td className="rank cell-rank" data-label="#">
+                        <td className="rank cell-rank" data-label={t('contracts.thRank')}>
                           {startRank + i + 1}
                         </td>
-                        <td className="subj cell-title" data-label="Договор">
+                        <td className="subj cell-title" data-label={t('contracts.thContract')}>
                           <Link className="title" to={`/contracts/${c.id}`}>
                             {c.subject}
                           </Link>
-                          {c.euFunded && <span className="eu">ЕС</span>}
+                          {c.euFunded && <span className="eu">{t('contracts.euFunded')}</span>}
                           <span className="unp">
-                            УНП {c.unp}
-                            {c.isConsortium ? ' · обединение' : ''}
+                            {t('contracts.unp', { unp: c.unp })}
+                            {c.isConsortium ? t('contracts.consortiumSuffix') : ''}
                           </span>
                         </td>
-                        <td className="parties" data-label="Възложител · Изпълнител">
+                        <td className="parties" data-label={t('contracts.thParties')}>
                           <span className="from">
                             <Link to={`/authorities/${c.authoritySlug}`}>{c.authorityName}</Link>{' '}
-                            <span className="who">възложител</span>
+                            <span className="who">{t('contracts.roleAuthority')}</span>
                           </span>
                           <span className="to">
                             <Link to={`/companies/${c.bidderSlug}`}>{c.bidderDisplayName}</Link>{' '}
-                            <span className="who">изпълнител</span>
+                            <span className="who">{t('contracts.roleBidder')}</span>
                           </span>
                         </td>
-                        <td className="meta col-secondary" data-label="Процедура · Дата">
+                        <td
+                          className="meta col-secondary"
+                          data-label={t('contracts.thProcedureDate')}
+                        >
                           <span className="pr">{c.procedureLabel}</span>
                           <br />
-                          {date(c.signedAt)}
+                          {date(c.signedAt, locale)}
                         </td>
-                        <td className="money" data-label="Стойност (€)">
+                        <td className="money" data-label={t('contracts.thValue')}>
                           {c.valueEur != null ? (
-                            moneyBare(c.valueEur)
+                            moneyBare(c.valueEur, locale)
                           ) : (
-                            <span className="suspect">данните се проверяват</span>
+                            <span className="suspect">{t('contracts.valueChecking')}</span>
                           )}
                         </td>
                       </tr>
@@ -278,11 +309,8 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
             {result.items.length > 0 && <Pagination nav={nav} pageSize={PAGE_SIZE.contracts} />}
 
             <Callout>
-              <h2>Какво е „договор“ в СИГМА</h2>
-              <p className="m-0">
-                Един възложен договор по обществена поръчка, на ниво обособена позиция (лот).
-                Стойностите са в евро — изчистена, съпоставима стойност на договора.
-              </p>
+              <h2>{t('contracts.calloutTitle')}</h2>
+              <p className="m-0">{t('contracts.calloutBody')}</p>
             </Callout>
           </section>
         </div>
