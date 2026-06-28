@@ -1000,7 +1000,7 @@ describe('refresh-slice integrity gate', () => {
   // includes the OLD entity on re-attribution — otherwise the old rollup row goes stale and the gate
   // would exit 1 on the daily refresh. refresh-slice captures the old bidder/authority BEFORE the
   // delete and the new one AFTER the insert; this regression test locks that in.
-  it('stays green after a bidder re-attribution (old + new rollups both rebuilt)', () => {
+  it('stays green after a bidder re-attribution (old + new rollups both rebuilt)', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-gate-'));
     const dbPath = resolve(dir, 'test.sqlite');
     const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
@@ -1026,7 +1026,7 @@ describe('refresh-slice integrity gate', () => {
       expect(wonEur('222222222')).toBeGreaterThan(0);
 
       // …so the gate reconciles on the slice-built DB (rollup check runs; staging self-skips here).
-      const results = assertIntegrity(run, { label: 'test-slice', exit: false });
+      const results = await assertIntegrity(run, { label: 'test-slice', exit: false });
       expect(results.every((r) => r.ok)).toBe(true);
       expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
     } finally {

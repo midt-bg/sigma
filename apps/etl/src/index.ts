@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import { NonRetryableError } from 'cloudflare:workflows';
 import {
   createTransientStaging,
   dropTransientStaging,
@@ -9,6 +10,7 @@ import {
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
 import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { runServedIntegrityGate } from './integrity';
 
 export interface Env {
   DB: D1Database;
@@ -127,6 +129,26 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       derived = await step.do('derive-slice:count', async () =>
         refreshDerivedContractCount(this.env.DB),
       );
+
+      // Reconciliation gate (#97) on the served D1 the refresh just wrote — the CLI paths gate every
+      // derive, but this steady-state path did not. POST-COMMIT alarm: the slice is already applied
+      // and served, so a violation fails the step + surfaces in observability, it does not un-serve
+      // the drift (ship-and-alert; see issue #154 and docs/integrity-gate.md).
+      await step.do('integrity-gate', async () => {
+        try {
+          await runServedIntegrityGate(this.env.DB, {
+            info: (e) => console.log(JSON.stringify({ level: 'info', ...e })),
+            warn: (e) => console.warn(JSON.stringify({ level: 'warn', ...e })),
+            error: (e) => console.error(JSON.stringify({ level: 'error', ...e })),
+          });
+        } catch (err) {
+          // The verdict is deterministic over the just-written rows — fail the step immediately
+          // rather than burning the default (~3) retries re-checking the same committed data. A
+          // transient infra error lands here too; for a verification gate, "couldn't verify → fail
+          // closed" is the safe default.
+          throw new NonRetryableError(err instanceof Error ? err.message : String(err));
+        }
+      });
 
       return { ...plan, days: results.length, staged, derived };
     } finally {
