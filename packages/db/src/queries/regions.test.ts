@@ -107,8 +107,8 @@ describe('getRegionHeadline', () => {
       ]),
     );
     expect(h.regionCount).toBe(28);
-    expect(h.sofiaEur).toBe(6000);
-    expect(h.totalEur).toBe(9000); // 6000 + 3000 only — attributed regions, matching getRegionalSpending
+    // sofiaShare = София value over the attributed total (6000 + 3000 only; the unattributed and
+    // unknown buckets are excluded from the denominator, matching getRegionalSpending).
     expect(h.sofiaShare).toBeCloseTo(6000 / 9000);
   });
 
@@ -119,7 +119,6 @@ describe('getRegionHeadline', () => {
         { region: 'София (столица)', value_eur: 5000 }, // BG411
       ]),
     );
-    expect(h.sofiaEur).toBe(5000);
     expect(h.sofiaShare).toBeCloseTo(0.5);
   });
 });

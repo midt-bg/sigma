@@ -11,12 +11,19 @@ import {
   type OpaqueShareYear,
   type PeakablePoint,
 } from './analytics-stats';
+import { formatGrowthFactor } from './overruns-chart';
 
 describe('growthMultiple', () => {
   it('turns a median overrun pct into 1 + pct as a ×-multiple', () => {
     expect(growthMultiple(2.1)).toBe('3,1× (+210%)');
     expect(growthMultiple(0.5)).toBe('1,5× (+50%)');
-    expect(growthMultiple(0)).toBe('1,0× (0%)');
+    // Delegates to formatGrowthFactor, which strips a trailing „,0" — so a whole multiple reads „1×".
+    expect(growthMultiple(0)).toBe('1× (0%)');
+  });
+  it('matches /overruns formatGrowthFactor exactly (single source of truth)', () => {
+    for (const pct of [2.1, 0.5, 0, 1, 3.04]) {
+      expect(growthMultiple(pct)).toBe(formatGrowthFactor(pct));
+    }
   });
   it('returns an em-dash for absent / non-finite input', () => {
     expect(growthMultiple(null)).toBe('—');
