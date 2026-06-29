@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import {
   count,
   isNaturalPersonProfileName,
@@ -25,7 +25,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { buildCompanyCitation } from '../lib/citation';
-import { seoMeta } from '../lib/meta';
+import { seoMeta, getRootOrigin } from '../lib/meta';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -81,6 +81,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches);
   const c = loaderData.company;
   const { trend, network } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
@@ -131,7 +133,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
         >
           <div className="header-actions">
-            <CopyCitationButton textToCopy={buildCompanyCitation(c)} />
+            <CopyCitationButton textToCopy={buildCompanyCitation(c, origin)} />
           </div>
         </PageHeader>
 

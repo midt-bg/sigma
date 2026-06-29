@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
@@ -12,7 +12,7 @@ import { RiskIndicators } from '../components/RiskIndicators';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { buildContractCitation } from '../lib/citation';
-import { seoMeta } from '../lib/meta';
+import { seoMeta, getRootOrigin } from '../lib/meta';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -71,6 +71,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена достоверност';
 
 export default function Contract({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches);
   const c = loaderData.contract;
   const v = c.value;
   const crumbId = c.unp || c.contractNumber || c.id;
@@ -112,7 +114,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           }
         >
           <div className="header-actions">
-            <CopyCitationButton textToCopy={buildContractCitation(c)} />
+            <CopyCitationButton textToCopy={buildContractCitation(c, origin)} />
             {c.eopTenderId && (
               // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
               // documents are published and downloadable. The portal keys this page on the numeric EOP

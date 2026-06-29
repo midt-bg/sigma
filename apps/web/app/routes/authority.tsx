@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import {
   authorityIdFromSlug,
@@ -24,7 +24,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { buildAuthorityCitation } from '../lib/citation';
-import { seoMeta } from '../lib/meta';
+import { seoMeta, getRootOrigin } from '../lib/meta';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
@@ -60,6 +60,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches);
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
   const ct = competition;
@@ -94,7 +96,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
         >
           <div className="header-actions">
-            <CopyCitationButton textToCopy={buildAuthorityCitation(a)} />
+            <CopyCitationButton textToCopy={buildAuthorityCitation(a, origin)} />
           </div>
         </PageHeader>
 
