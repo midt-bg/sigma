@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildContractCitation, buildCompanyCitation, buildAuthorityCitation } from './citation';
+import { money } from '@sigma/shared';
 
 describe('citation builders', () => {
   it('builds a contract citation', () => {
@@ -10,15 +11,17 @@ describe('citation builders', () => {
       value: { currentEur: 125000.5 },
       id: 'abc-123',
     };
-    
+
     const citation = buildContractCitation(c);
-    expect(citation).toBe([
-      'Договор: Доставка на компютри',
-      'Възложител: Община Пловдив',
-      'Изпълнител: Техно ООД',
-      'Стойност: 125 001 €',
-      'Връзка: https://sigma.midt.bg/contracts/abc-123',
-    ].join('\n'));
+    expect(citation).toBe(
+      [
+        'Договор: Доставка на компютри',
+        'Възложител: Община Пловдив',
+        'Изпълнител: Техно ООД',
+        `Стойност: ${money(125000.5)}`,
+        'Връзка: https://sigma.midt.bg/contracts/abc-123',
+      ].join('\n'),
+    );
   });
 
   it('handles contract with null value', () => {
@@ -29,15 +32,17 @@ describe('citation builders', () => {
       value: { currentEur: null },
       id: 'abc-123',
     };
-    
+
     const citation = buildContractCitation(c);
-    expect(citation).toBe([
-      'Договор: Одит',
-      'Възложител: Община Пловдив',
-      'Изпълнител: Техно ООД',
-      'Стойност: —',
-      'Връзка: https://sigma.midt.bg/contracts/abc-123',
-    ].join('\n'));
+    expect(citation).toBe(
+      [
+        'Договор: Одит',
+        'Възложител: Община Пловдив',
+        'Изпълнител: Техно ООД',
+        'Стойност: —',
+        'Връзка: https://sigma.midt.bg/contracts/abc-123',
+      ].join('\n'),
+    );
   });
 
   it('builds a company citation with EIK', () => {
@@ -48,17 +53,19 @@ describe('citation builders', () => {
       contracts: 42,
       slug: 'techno-ood',
     };
-    
+
     const citation = buildCompanyCitation(c);
-    expect(citation).toBe([
-      'Компания: Техно ООД',
-      'ЕИК: 123456789',
-      'Общо спечелено: 5 000 000 €',
-      'Брой договори: 42',
-      'Връзка: https://sigma.midt.bg/companies/techno-ood',
-    ].join('\n'));
+    expect(citation).toBe(
+      [
+        'Компания: Техно ООД',
+        'ЕИК: 123456789',
+        `Общо спечелено: ${money(5000000)}`,
+        'Брой договори: 42',
+        'Връзка: https://sigma.midt.bg/companies/techno-ood',
+      ].join('\n'),
+    );
   });
-  
+
   it('builds a company citation without EIK', () => {
     const c = {
       displayName: 'Чуждестранна фирма',
@@ -67,15 +74,17 @@ describe('citation builders', () => {
       contracts: 1,
       slug: 'foreign-corp',
     };
-    
+
     const citation = buildCompanyCitation(c);
-    expect(citation).toBe([
-      'Компания: Чуждестранна фирма',
-      'ЕИК: Няма',
-      'Общо спечелено: 0 €',
-      'Брой договори: 1',
-      'Връзка: https://sigma.midt.bg/companies/foreign-corp',
-    ].join('\n'));
+    expect(citation).toBe(
+      [
+        'Компания: Чуждестранна фирма',
+        'ЕИК: Няма',
+        `Общо спечелено: ${money(0)}`,
+        'Брой договори: 1',
+        'Връзка: https://sigma.midt.bg/companies/foreign-corp',
+      ].join('\n'),
+    );
   });
 
   it('builds an authority citation', () => {
@@ -85,13 +94,15 @@ describe('citation builders', () => {
       contracts: 5,
       slug: 'obshtina-varna',
     };
-    
+
     const citation = buildAuthorityCitation(a);
-    expect(citation).toBe([
-      'Институция: Община Варна',
-      'Общо похарчено: 1 000 000 €',
-      'Брой договори: 5',
-      'Връзка: https://sigma.midt.bg/authorities/obshtina-varna',
-    ].join('\n'));
+    expect(citation).toBe(
+      [
+        'Институция: Община Варна',
+        `Общо похарчено: ${money(1000000)}`,
+        'Брой договори: 5',
+        'Връзка: https://sigma.midt.bg/authorities/obshtina-varna',
+      ].join('\n'),
+    );
   });
 });
