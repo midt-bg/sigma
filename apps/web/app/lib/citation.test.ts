@@ -12,14 +12,14 @@ describe('citation builders', () => {
       id: 'abc-123',
     };
 
-    const citation = buildContractCitation(c);
+    const citation = buildContractCitation(c, 'https://sigma.test');
     expect(citation).toBe(
       [
         'Договор: Доставка на компютри',
         'Възложител: Община Пловдив',
         'Изпълнител: Техно ООД',
         `Стойност: ${money(125000.5)}`,
-        'Връзка: https://sigma.midt.bg/contracts/abc-123',
+        'Връзка: https://sigma.test/contracts/abc-123',
       ].join('\n'),
     );
   });
@@ -33,14 +33,14 @@ describe('citation builders', () => {
       id: 'abc-123',
     };
 
-    const citation = buildContractCitation(c);
+    const citation = buildContractCitation(c, 'https://sigma.test');
     expect(citation).toBe(
       [
         'Договор: Одит',
         'Възложител: Община Пловдив',
         'Изпълнител: Техно ООД',
         'Стойност: —',
-        'Връзка: https://sigma.midt.bg/contracts/abc-123',
+        'Връзка: https://sigma.test/contracts/abc-123',
       ].join('\n'),
     );
   });
@@ -52,16 +52,17 @@ describe('citation builders', () => {
       wonEur: 5000000,
       contracts: 42,
       slug: 'techno-ood',
+      hasEik: true,
     };
 
-    const citation = buildCompanyCitation(c);
+    const citation = buildCompanyCitation(c, 'https://sigma.test');
     expect(citation).toBe(
       [
         'Компания: Техно ООД',
         'ЕИК: 123456789',
         `Общо спечелено: ${money(5000000)}`,
         'Брой договори: 42',
-        'Връзка: https://sigma.midt.bg/companies/techno-ood',
+        'Връзка: https://sigma.test/companies/techno-ood',
       ].join('\n'),
     );
   });
@@ -73,16 +74,17 @@ describe('citation builders', () => {
       wonEur: 0,
       contracts: 1,
       slug: 'foreign-corp',
+      hasEik: false,
     };
 
-    const citation = buildCompanyCitation(c);
+    const citation = buildCompanyCitation(c, 'https://sigma.test');
     expect(citation).toBe(
       [
         'Компания: Чуждестранна фирма',
         'ЕИК: Няма',
         `Общо спечелено: ${money(0)}`,
         'Брой договори: 1',
-        'Връзка: https://sigma.midt.bg/companies/foreign-corp',
+        'Връзка: https://sigma.test/companies/foreign-corp',
       ].join('\n'),
     );
   });
@@ -95,13 +97,13 @@ describe('citation builders', () => {
       slug: 'obshtina-varna',
     };
 
-    const citation = buildAuthorityCitation(a);
+    const citation = buildAuthorityCitation(a, 'https://sigma.test');
     expect(citation).toBe(
       [
         'Институция: Община Варна',
         `Общо похарчено: ${money(1000000)}`,
         'Брой договори: 5',
-        'Връзка: https://sigma.midt.bg/authorities/obshtina-varna',
+        'Връзка: https://sigma.test/authorities/obshtina-varna',
       ].join('\n'),
     );
   });
