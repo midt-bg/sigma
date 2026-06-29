@@ -4,13 +4,9 @@
 // comes from authorities.region (OCDS NUTS, ~half of authorities), so we always split out an
 // "unattributed" bucket and report coverage; the 28 regions are zero-filled so the map colours all of them.
 
-import type {
-  MacroRegionSpend,
-  RegionSpend,
-  RegionalSpending,
-  SectorRef,
-} from '@sigma/api-contract';
-import { BG_REGIONS, CPV_SECTORS, regionByName } from '@sigma/config';
+import type { MacroRegionSpend, RegionSpend, RegionalSpending } from '@sigma/api-contract';
+import { BG_REGIONS, regionByName } from '@sigma/config';
+import { sectorOptions } from './sectors';
 
 export interface RegionalParams {
   sector?: string | null;
@@ -63,21 +59,6 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
   return results;
 }
 
-const SECTOR_OPTION_LIMIT = 12;
-
-// Sector select options: present sectors by value (curated label), capped. Same source as getFlows.
-async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
-  const { results } = await db
-    .prepare(`SELECT division FROM sector_totals ORDER BY value_eur DESC LIMIT ?`)
-    .bind(SECTOR_OPTION_LIMIT)
-    .all<{ division: string }>();
-  const byCode = new Map(CPV_SECTORS.map((s) => [s.code, s]));
-  return results
-    .map((r) => byCode.get(r.division))
-    .filter((s): s is (typeof CPV_SECTORS)[number] => Boolean(s))
-    .map((s) => ({ code: s.code, label: s.short ?? s.label, short: s.short ?? s.label }));
-}
-
 // Lean headline for the /analytics landing card — the region count (always the 28 NUTS3 regions)
 // and София-столица's share of national procurement value. ONE rollup query (authority_totals
 // grouped by region, the same cheap source as the unfiltered choropleth), folded in JS to the
@@ -87,8 +68,6 @@ async function sectorOptions(db: D1Database): Promise<SectorRef[]> {
 export interface RegionHeadline {
   regionCount: number;
   sofiaShare: number;
-  sofiaEur: number;
-  totalEur: number;
 }
 
 export async function getRegionHeadline(db: D1Database): Promise<RegionHeadline> {
@@ -109,8 +88,6 @@ export async function getRegionHeadline(db: D1Database): Promise<RegionHeadline>
   return {
     regionCount: BG_REGIONS.length,
     sofiaShare: totalEur > 0 ? sofiaEur / totalEur : 0,
-    sofiaEur,
-    totalEur,
   };
 }
 

@@ -8,6 +8,8 @@
 import type { TrendPoint } from '@sigma/api-contract';
 import { signedPct } from '@sigma/shared';
 
+import { formatGrowthFactor } from './overruns-chart';
+
 const EM_DASH = '—';
 
 // Abbreviated Bulgarian month names for the trend „ПИК" stat (e.g. '2025-12' → „дек 2025").
@@ -27,12 +29,11 @@ const MONTHS_SHORT_BG = [
 ];
 
 // Median post-annex growth as a multiple of the signing value: a median overrun of +210% (pct 2.1)
-// reads „3,1×". Decimal comma, one decimal place, matching the rest of the site's numerics.
+// reads „3,1×". Delegates to /overruns' formatGrowthFactor so /analytics and /overruns render the
+// identical string (single source of truth for the „×" formatting); null/non-finite → em-dash.
 export function growthMultiple(medianPct: number | null | undefined): string {
   if (medianPct == null || !Number.isFinite(medianPct)) return EM_DASH;
-  const multiple = 1 + medianPct;
-  // Spell out the percentage so „1,4×" can't be misread as „40% of": „1,4× (+40%)".
-  return `${multiple.toFixed(1).replace('.', ',')}× (${signedPct(medianPct)})`;
+  return formatGrowthFactor(medianPct);
 }
 
 // „+18%/год" — yearly growth as a signed integer percentage with the per-year suffix. The input ratio
