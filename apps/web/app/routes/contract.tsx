@@ -11,6 +11,7 @@ import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { RiskIndicators } from '../components/RiskIndicators';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
+import { buildContractCitation } from '../lib/citation';
 import { seoMeta } from '../lib/meta';
 
 /**
@@ -111,15 +112,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           }
         >
           <div className="header-actions">
-            <CopyCitationButton
-              textToCopy={[
-                `Договор: ${c.subject}`,
-                `Възложител: ${c.authority.name}`,
-                `Изпълнител: ${c.bidder.displayName}`,
-                `Стойност: ${money(c.value.current)} ${c.value.currency}`,
-                `Връзка: https://sigma.midt.bg/contracts/${c.id}`,
-              ].join('\n')}
-            />
+            <CopyCitationButton textToCopy={buildContractCitation(c)} />
             {c.eopTenderId && (
               // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
               // documents are published and downloadable. The portal keys this page on the numeric EOP

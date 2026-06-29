@@ -24,6 +24,7 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
+import { buildCompanyCitation } from '../lib/citation';
 import { seoMeta } from '../lib/meta';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
@@ -130,15 +131,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
         >
           <div className="header-actions">
-            <CopyCitationButton
-              textToCopy={[
-                `Компания: ${c.displayName}`,
-                `ЕИК: ${c.eik || 'Няма'}`,
-                `Общо спечелено: ${money(c.wonEur)} евро`,
-                `Брой договори: ${count(c.contracts)}`,
-                `Връзка: https://sigma.midt.bg/companies/${c.slug}`,
-              ].join('\n')}
-            />
+            <CopyCitationButton textToCopy={buildCompanyCitation(c)} />
           </div>
         </PageHeader>
 

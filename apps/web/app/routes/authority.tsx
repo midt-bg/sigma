@@ -23,6 +23,7 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
+import { buildAuthorityCitation } from '../lib/citation';
 import { seoMeta } from '../lib/meta';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
@@ -93,14 +94,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
         >
           <div className="header-actions">
-            <CopyCitationButton
-              textToCopy={[
-                `Институция: ${a.name}`,
-                `Общо похарчено: ${money(a.spentEur)} евро`,
-                `Брой договори: ${count(a.contracts)}`,
-                `Връзка: https://sigma.midt.bg/authorities/${a.slug}`,
-              ].join('\n')}
-            />
+            <CopyCitationButton textToCopy={buildAuthorityCitation(a)} />
           </div>
         </PageHeader>
 
