@@ -14,15 +14,18 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
 
   const handleCopy = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(textToCopy).then(() => {
-        setCopied(true);
-        if (timeoutRef.current !== null) {
-          window.clearTimeout(timeoutRef.current);
-        }
-        timeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
-      }).catch((err) => {
-        console.error('Failed to copy text:', err);
-      });
+      navigator.clipboard
+        .writeText(textToCopy)
+        .then(() => {
+          setCopied(true);
+          if (timeoutRef.current !== null) {
+            window.clearTimeout(timeoutRef.current);
+          }
+          timeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
+        })
+        .catch((err) => {
+          console.error('Failed to copy text:', err);
+        });
     }
   }, [textToCopy]);
 
@@ -64,7 +67,9 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
         </svg>
       )}
-      <span className="save-btn-text" aria-live="polite">{copied ? 'Копирано!' : 'Копирай'}</span>
+      <span className="save-btn-text" aria-live="polite">
+        {copied ? 'Копирано!' : 'Копирай'}
+      </span>
     </button>
   );
 }

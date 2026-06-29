@@ -3579,8 +3579,8 @@ tbody td,
   }
 
   /* Expose URLs in print */
-  a[href]:not([href^="#"])::after {
-    content: " (" attr(href) ")";
+  a[href]:not([href^='#'])::after {
+    content: ' (' attr(href) ')';
     word-break: break-all;
     font-size: 0.9em;
   }
