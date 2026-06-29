@@ -1,8 +1,11 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
-import { count, money, pct } from '@sigma/shared';
+import { count, money, pct, plural } from '@sigma/shared';
 import { getRegionalSpending } from '@sigma/db';
 import type { Route } from './+types/map';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
+import { useTranslation, useLocale } from '../i18n/context';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
@@ -13,13 +16,13 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { singleSelectFilters } from '../lib/filters';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return [
-    { title: 'Карта на разходите — СИГМА' },
+    { title: t('map.metaTitle') },
     {
       name: 'description',
-      content:
-        'Разходите за обществени поръчки по области на България. Къде по картата отиват парите, с класация по области и райони. Областта е известна за част от институциите.',
+      content: t('map.metaDescription'),
     },
   ];
 }
@@ -36,11 +39,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     new URL(request.url).searchParams,
     years,
   );
-  const data = await getRegionalSpending(db, { sector, year, funding });
+  const data = await getRegionalSpending(db, { sector, year, funding }, getLocale(request));
   return { data, coverage, years, unknownSector, unknownYear };
 }
 
 export default function MapRoute({ loaderData }: Route.ComponentProps) {
+  const t = useTranslation();
+  const locale = useLocale();
   const { data, coverage, years, unknownSector, unknownYear } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
@@ -50,76 +55,84 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
   const total = data.totalValueEur;
 
   const totals: Total[] = [
-    { num: money(total), label: 'разпределени по области' },
-    { num: pct(data.coverage.pct), label: 'дял институции с известна област' },
-    { num: money(data.unattributed.valueEur), label: 'без посочена област' },
+    { num: money(total, locale), label: t('map.totalAllocated') },
+    { num: pct(data.coverage.pct, 1, locale), label: t('map.totalKnownRegion') },
+    { num: money(data.unattributed.valueEur, locale), label: t('map.totalUnattributed') },
   ];
 
   const regionColumns: Column<RegionSpend>[] = [
-    { key: 'rank', header: '#', isRank: true, cell: (_r, i) => i + 1 },
-    { key: 'name', header: 'Област', isTitle: true, cell: (r) => r.name },
+    { key: 'rank', header: t('map.colRank'), isRank: true, cell: (_r, i) => i + 1 },
+    { key: 'name', header: t('map.colRegion'), isTitle: true, cell: (r) => r.name },
     {
       key: 'share',
-      header: 'Дял',
+      header: t('map.colShare'),
       align: 'num',
       cell: (r) => <ShareBar ratio={total > 0 ? r.valueEur / total : 0} />,
     },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+    {
+      key: 'value',
+      header: t('map.colValue'),
+      align: 'money',
+      cell: (r) => money(r.valueEur, locale),
+    },
     {
       key: 'contracts',
-      header: 'Договори',
+      header: t('map.colContracts'),
       align: 'num',
       secondary: true,
-      cell: (r) => count(r.contracts),
+      cell: (r) => count(r.contracts, locale),
     },
     {
       key: 'authorities',
-      header: 'Институции',
+      header: t('map.colAuthorities'),
       align: 'num',
       secondary: true,
-      cell: (r) => count(r.authorities),
+      cell: (r) => count(r.authorities, locale),
     },
   ];
 
   const macroColumns: Column<MacroRegionSpend>[] = [
-    { key: 'name', header: 'Район', isTitle: true, cell: (r) => r.name },
+    { key: 'name', header: t('map.colMacroRegion'), isTitle: true, cell: (r) => r.name },
     {
       key: 'share',
-      header: 'Дял',
+      header: t('map.colShare'),
       align: 'num',
       cell: (r) => <ShareBar ratio={total > 0 ? r.valueEur / total : 0} />,
     },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+    {
+      key: 'value',
+      header: t('map.colValue'),
+      align: 'money',
+      cell: (r) => money(r.valueEur, locale),
+    },
     {
       key: 'contracts',
-      header: 'Договори',
+      header: t('map.colContracts'),
       align: 'num',
       secondary: true,
-      cell: (r) => count(r.contracts),
+      cell: (r) => count(r.contracts, locale),
     },
   ];
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Карта на разходите' }]} />
+      <Breadcrumbs
+        items={[{ label: t('map.breadcrumbHome'), to: '/' }, { label: t('map.breadcrumbCurrent') }]}
+      />
       <main id="main">
-        <PageHeader
-          kicker="Анализ"
-          title="Карта на разходите"
-          lede="Къде по картата отиват парите за обществени поръчки. Областта се определя по адреса на институцията, така че е известна за част от тях. Институциите без посочена област се показват отделно и не влизат в картата."
-        />
+        <PageHeader kicker={t('map.kicker')} title={t('map.title')} lede={t('map.lede')} />
 
         <Form
           method="get"
           className="flow-controls"
           role="group"
-          aria-label="Филтри на картата"
+          aria-label={t('map.filtersAria')}
           onChange={(e) => submit(e.currentTarget)}
         >
           <label>
-            Сектор:
+            {t('map.sectorLabel')}
             <select name="sector" defaultValue={unknownSector ? '' : sel('sector')}>
-              <option value="">Всички сектори</option>
+              <option value="">{t('map.allSectors')}</option>
               {data.sectors.map((s) => (
                 <option key={s.code} value={s.code}>
                   {s.short}
@@ -128,7 +141,7 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
           <label>
-            Година:
+            {t('map.yearLabel')}
             <select name="year" defaultValue={unknownYear ? '' : sel('year')}>
               <option value="">{range}</option>
               {years.map((y) => (
@@ -139,66 +152,72 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
           <label>
-            Финансиране:
+            {t('map.fundingLabel')}
             <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всякакво</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само без финансиране от ЕС</option>
+              <option value="">{t('map.fundingAny')}</option>
+              <option value="eu">{t('map.fundingEu')}</option>
+              <option value="national">{t('map.fundingNational')}</option>
             </select>
           </label>
           <noscript>
-            <button type="submit">Покажи</button>
+            <button type="submit">{t('map.apply')}</button>
           </noscript>
         </Form>
 
         <p className="sr-only" role="status">
-          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+          {navigating ? t('map.statusUpdating') : t('map.statusUpdated')}
         </p>
 
         {(unknownSector || unknownYear) && (
-          <Callout variant="warning" title="Непознат филтър">
+          <Callout variant="warning" title={t('map.unknownFilterTitle')}>
             <p style={{ margin: 0 }}>
-              {unknownSector && 'Избраният сектор не съществува. '}
-              {unknownYear && 'Избраната година е извън обхвата. '}
-              Показваме резултатите без него.
+              {unknownSector && t('map.unknownSector')}
+              {unknownYear && t('map.unknownYear')}
+              {t('map.unknownFilterTail')}
             </p>
           </Callout>
         )}
 
-        <TotalsStrip totals={totals} label="Обобщение по области" />
+        <TotalsStrip totals={totals} label={t('map.totalsLabel')} />
 
-        <Section id="map" title="Разходи по области">
+        <Section id="map" title={t('map.mapSectionTitle')}>
           <Choropleth regions={data.regions} />
         </Section>
 
         <Section
           id="regions"
-          title="Класация по области"
-          hint="Подредени по обща стойност на договорите."
+          title={t('map.regionsSectionTitle')}
+          hint={t('map.regionsSectionHint')}
         >
           <DataTable
             columns={regionColumns}
             rows={data.regions}
             getKey={(r) => r.nuts3}
-            caption="Области, подредени по обща стойност на договорите"
+            caption={t('map.regionsCaption')}
           />
         </Section>
 
-        <Section id="macro" title="По райони за планиране (NUTS2)">
+        <Section id="macro" title={t('map.macroSectionTitle')}>
           <DataTable
             columns={macroColumns}
             rows={data.macroRegions}
             getKey={(r) => r.nuts2}
-            caption="Райони за планиране по обща стойност"
+            caption={t('map.macroCaption')}
           />
         </Section>
 
-        <Callout title="За покритието на данните">
+        <Callout title={t('map.coverageTitle')}>
           <p style={{ margin: 0 }}>
-            Областта се извежда от адреса на институцията (NUTS) и е известна за{' '}
-            {pct(data.coverage.pct)} от институциите. Останалите (
-            {money(data.unattributed.valueEur)} по {count(data.unattributed.contracts)} договора) са
-            с непосочена област и не са на картата. Виж методологията за подробности.
+            {t('map.coverageBody', {
+              pct: pct(data.coverage.pct, 1, locale),
+              value: money(data.unattributed.valueEur, locale),
+              contracts: plural(
+                data.unattributed.contracts,
+                t('map.contracts_one', { count: count(data.unattributed.contracts, locale) }),
+                t('map.contracts_many', { count: count(data.unattributed.contracts, locale) }),
+                locale,
+              ),
+            })}
           </p>
         </Callout>
       </main>

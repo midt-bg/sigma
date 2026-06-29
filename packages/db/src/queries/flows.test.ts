@@ -63,7 +63,7 @@ describe('getFlows', () => {
   it('uses the flow_pairs rollup for an unfiltered request', async () => {
     const { db, sql } = spyDb();
 
-    await getFlows(db, {});
+    await getFlows(db, {}, 'bg');
 
     expect(sql.some(usesFlowPairsRollup)).toBe(true);
     expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
@@ -72,7 +72,7 @@ describe('getFlows', () => {
   it('falls back to a base aggregation when a sector filter is applied', async () => {
     const { db, sql } = spyDb();
 
-    await getFlows(db, { sector: '45' });
+    await getFlows(db, { sector: '45' }, 'bg');
 
     expect(sql.some(usesBaseAggregation)).toBe(true);
   });
@@ -80,13 +80,13 @@ describe('getFlows', () => {
   it('falls back to a base aggregation when a year filter is applied', async () => {
     const { db, sql } = spyDb();
 
-    await getFlows(db, { year: '2024' });
+    await getFlows(db, { year: '2024' }, 'bg');
 
     expect(sql.some(filtersByYear)).toBe(true);
   });
 
   it('returns pairs with rank, slugs, names, and amounts', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fakeDb(), {}, 'bg');
 
     expect(data.pairs).toHaveLength(1);
     const pair = data.pairs[0]!;
@@ -98,7 +98,7 @@ describe('getFlows', () => {
   });
 
   it('returns a sankey layout with nodes and ribbons', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fakeDb(), {}, 'bg');
 
     expect(data.sankey.nodes.length).toBeGreaterThan(0);
     expect(data.sankey.ribbons).toHaveLength(1);
@@ -106,7 +106,7 @@ describe('getFlows', () => {
   });
 
   it('assigns each node a side ("authority" or "company") and a valid href', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fakeDb(), {}, 'bg');
 
     const authorityNode = data.sankey.nodes.find((n) => n.side === 'authority');
     const companyNode = data.sankey.nodes.find((n) => n.side === 'company');
@@ -118,7 +118,7 @@ describe('getFlows', () => {
   });
 
   it('returns an empty sankey for an empty pair set', async () => {
-    const data = await getFlows(fakeDb([]), {});
+    const data = await getFlows(fakeDb([]), {}, 'bg');
 
     expect(data.pairs).toHaveLength(0);
     expect(data.sankey.nodes).toHaveLength(0);
@@ -126,10 +126,10 @@ describe('getFlows', () => {
   });
 
   it('clamps the top parameter to 20 or 50', async () => {
-    const data20 = await getFlows(fakeDb(), { top: 20 });
-    const data50 = await getFlows(fakeDb(), { top: 50 });
-    const dataDefault = await getFlows(fakeDb(), {});
-    const dataOther = await getFlows(fakeDb(), { top: 100 });
+    const data20 = await getFlows(fakeDb(), { top: 20 }, 'bg');
+    const data50 = await getFlows(fakeDb(), { top: 50 }, 'bg');
+    const dataDefault = await getFlows(fakeDb(), {}, 'bg');
+    const dataOther = await getFlows(fakeDb(), { top: 100 }, 'bg');
 
     expect(data20.scope.top).toBe(20);
     expect(data50.scope.top).toBe(50);
@@ -138,7 +138,7 @@ describe('getFlows', () => {
   });
 
   it('includes available sectors in the response', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fakeDb(), {}, 'bg');
 
     expect(Array.isArray(data.sectors)).toBe(true);
   });

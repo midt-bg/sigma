@@ -31,7 +31,7 @@ function fakeDb(capture?: string[]): D1Database {
 
 describe('getRegionalSpending', () => {
   it('returns all 28 regions, sorted by value, with the top mapped to its NUTS3', async () => {
-    const { regions } = await getRegionalSpending(fakeDb(), {});
+    const { regions } = await getRegionalSpending(fakeDb(), {}, 'bg');
     expect(regions).toHaveLength(28);
     expect(regions[0]).toMatchObject({ name: 'Пловдив', nuts3: 'BG421', valueEur: 5000 });
     expect(regions[1]).toMatchObject({ name: 'Бургас', nuts3: 'BG341', valueEur: 3000 });
@@ -40,19 +40,19 @@ describe('getRegionalSpending', () => {
   });
 
   it('folds NULL and unknown regions into the unattributed bucket', async () => {
-    const { unattributed } = await getRegionalSpending(fakeDb(), {});
+    const { unattributed } = await getRegionalSpending(fakeDb(), {}, 'bg');
     expect(unattributed).toEqual({ valueEur: 2100, contracts: 21, authorities: 9 });
   });
 
   it('reports coverage as the share of authorities with a known region', async () => {
-    const { coverage } = await getRegionalSpending(fakeDb(), {});
+    const { coverage } = await getRegionalSpending(fakeDb(), {}, 'bg');
     expect(coverage.withRegion).toBe(16); // 10 + 6
     expect(coverage.total).toBe(25); // 16 + 9 unattributed
     expect(coverage.pct).toBeCloseTo(16 / 25);
   });
 
   it('rolls regions up into NUTS2 macro-regions', async () => {
-    const { macroRegions } = await getRegionalSpending(fakeDb(), {});
+    const { macroRegions } = await getRegionalSpending(fakeDb(), {}, 'bg');
     expect(macroRegions[0]).toMatchObject({
       nuts2: 'BG42',
       name: 'Южен централен',
@@ -63,11 +63,11 @@ describe('getRegionalSpending', () => {
 
   it('reads authority_totals unfiltered, but aggregates from base tables when filtered', async () => {
     const unfiltered: string[] = [];
-    await getRegionalSpending(fakeDb(unfiltered), {});
+    await getRegionalSpending(fakeDb(unfiltered), {}, 'bg');
     expect(unfiltered.some((s) => s.includes('FROM authority_totals'))).toBe(true);
 
     const filtered: string[] = [];
-    await getRegionalSpending(fakeDb(filtered), { sector: '45' });
+    await getRegionalSpending(fakeDb(filtered), { sector: '45' }, 'bg');
     expect(filtered.some((s) => s.includes('FROM authority_totals'))).toBe(false);
     expect(filtered.some((s) => s.includes('JOIN tenders t'))).toBe(true);
   });

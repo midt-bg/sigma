@@ -110,7 +110,7 @@ describe('search helpers', () => {
 
 describe('search', () => {
   it('sets moreHref only for truncated groups', async () => {
-    const results = await search(searchDb(), 'строителство');
+    const results = await search(searchDb(), 'строителство', 'bg');
     const company = results.groups.find((g) => g.kind === 'company');
     const contract = results.groups.find((g) => g.kind === 'contract');
     const authority = results.groups.find((g) => g.kind === 'authority');
@@ -123,7 +123,7 @@ describe('search', () => {
   });
 
   it('flags company search exceptions without exposing consortium member piles as titles', async () => {
-    const results = await search(searchDb(), 'а1');
+    const results = await search(searchDb(), 'а1', 'bg');
     const hits = results.groups.find((g) => g.kind === 'company')?.hits ?? [];
 
     expect(hits[0]).toMatchObject({
@@ -144,5 +144,11 @@ describe('search', () => {
       title: 'Company 0',
       ownershipKind: 'state',
     });
+  });
+
+  it('localizes the consortium suffix to English (powers /search/suggest on /en)', async () => {
+    const results = await search(searchDb(), 'а1', 'en');
+    const hits = results.groups.find((g) => g.kind === 'company')?.hits ?? [];
+    expect(hits[0]?.title).toBe('А1 БЪЛГАРИЯ ЕАД et al.');
   });
 });

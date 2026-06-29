@@ -2,8 +2,8 @@
 // page of 15); facet counts are grouped or read from facet_counts; CSV is streamed.
 
 import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
-import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import { CPV_SECTORS, PROCEDURE_GROUPS, pickLabel, pickShort, procedureGroup } from '@sigma/config';
+import { cleanName, entityName, type Locale } from '@sigma/shared';
 import { csvCell } from './csv';
 import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
@@ -185,7 +185,7 @@ function contractFilterSignature(p: ContractListParams): string {
   return filterSignature(filters);
 }
 
-function toItem(r: ContractRow): ContractListItem {
+function toItem(r: ContractRow, locale: Locale): ContractListItem {
   const authorityName = cleanName(r.authority_name);
   const bidderName = cleanName(r.bidder_name);
   return {
@@ -199,9 +199,9 @@ function toItem(r: ContractRow): ContractListItem {
     authorityName,
     bidderSlug: companySlug(r.bidder_id),
     bidderName,
-    bidderDisplayName: entityName(bidderName, r.bidder_kind),
+    bidderDisplayName: entityName(bidderName, r.bidder_kind, locale),
     bidderKind: r.bidder_kind,
-    procedureLabel: procedureGroup(r.procedure_type).label,
+    procedureLabel: pickLabel(procedureGroup(r.procedure_type), locale),
     signedAt: r.signed_at,
     bidsReceived: r.bids_received,
     valueEur: r.amount_eur,
@@ -215,6 +215,7 @@ function toItem(r: ContractRow): ContractListItem {
 export async function listSingleOfferContracts(
   db: D1Database,
   mode: 'recent' | 'value',
+  locale: Locale,
   limit = 10,
 ): Promise<ContractListItem[]> {
   const order =
@@ -227,7 +228,7 @@ export async function listSingleOfferContracts(
     )
     .bind(limit)
     .all<ContractRow>();
-  return rows.results.map(toItem);
+  return rows.results.map((r) => toItem(r, locale));
 }
 
 export interface ContractListResult extends Page<ContractListItem> {
@@ -238,6 +239,7 @@ export interface ContractListResult extends Page<ContractListItem> {
 export async function listContracts(
   db: D1Database,
   p: ContractListParams,
+  locale: Locale,
   // The caller may inject a (cached) summary to skip the COUNT/SUM scan — see apps/web KV caching.
   summaryOverride?: { total: number; valueEur: number; suspect: number },
 ): Promise<ContractListResult> {
@@ -277,7 +279,7 @@ export async function listContracts(
   });
 
   return {
-    items: rows.map(toItem),
+    items: rows.map((r) => toItem(r, locale)),
     total: summary.total,
     valueEur: summary.valueEur,
     suspect: summary.suspect,
@@ -320,7 +322,7 @@ export interface ContractFacets {
  * (2016/2019/2029) plus null/malformed dates, which silently hid ~36 rows. This grouped scan rides the
  * `signed_at` index and yields every real year, plus a "Неизвестна" bucket for null/unparseable dates.
  */
-export async function getContractFacets(db: D1Database): Promise<ContractFacets> {
+export async function getContractFacets(db: D1Database, locale: Locale): Promise<ContractFacets> {
   const facetRows = await db
     .prepare(`SELECT facet, key, contracts FROM facet_counts`)
     .all<{ facet: string; key: string; contracts: number }>();
@@ -366,14 +368,14 @@ export async function getContractFacets(db: D1Database): Promise<ContractFacets>
   }
   const procedures = PROCEDURE_GROUPS.map((g) => ({
     value: g.key,
-    label: g.label,
+    label: pickLabel(g, locale),
     count: procByGroup.get(g.key) ?? 0,
   })).filter((f) => f.count > 0);
 
   const sectorByCode = new Map(sectorRows.results.map((r) => [r.division, r.contracts]));
   const sectors = CPV_SECTORS.map((s) => ({
     value: s.code,
-    label: s.short ?? s.label,
+    label: pickShort(s, locale),
     count: sectorByCode.get(s.code) ?? 0,
   }))
     .filter((f) => f.count > 0)
@@ -446,11 +448,11 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
             r.subject,
             cleanName(r.authority_name),
             r.authority_eik,
-            entityName(cleanName(r.bidder_name), r.bidder_kind),
+            entityName(cleanName(r.bidder_name), r.bidder_kind, 'bg'),
             r.contractor_eik,
             r.bidder_kind,
             r.cpv_code ? r.cpv_code.slice(0, 2) : '',
-            procedureGroup(r.procedure_type).label,
+            pickLabel(procedureGroup(r.procedure_type), 'bg'),
             r.signed_at,
             r.amount_eur,
             r.eu_funded === 1 ? '1' : '0',

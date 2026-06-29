@@ -349,6 +349,28 @@ code,
   display: none;
 }
 
+/* Language switcher — mono BG/EN toggle in the masthead actions */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+.lang-switch .lang-link {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+.lang-switch .lang-link:hover,
+.lang-switch .lang-link:focus-visible {
+  color: var(--accent);
+}
+.lang-switch .lang-current {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* Menu toggle — hidden on desktop; revealed when the nav collapses */
 .nav-toggle {
   display: none;

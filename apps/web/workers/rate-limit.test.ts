@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { rateLimitKey, rateLimitRequest } from './rate-limit';
+import { normalizedPathname, rateLimitKey, rateLimitRequest } from './rate-limit';
 
 const req = (ip = '203.0.113.7') =>
   new Request('http://local/x', { method: 'POST', headers: { 'CF-Connecting-IP': ip } });
@@ -44,6 +44,28 @@ describe('rateLimitRequest', () => {
     await expect(
       rateLimitRequest(req(), undefined, false, 'body', 'L', { failClosed: true }),
     ).resolves.toBeNull();
+  });
+});
+
+describe('normalizedPathname', () => {
+  const norm = (p: string) => normalizedPathname(new Request(`http://local${p}`));
+
+  it('strips the /en locale prefix so the limiters cover the localized mirrors', () => {
+    expect(norm('/en/search')).toBe('/search');
+    expect(norm('/en/search/suggest')).toBe('/search/suggest');
+    expect(norm('/en/companies')).toBe('/companies');
+    expect(norm('/en/authorities')).toBe('/authorities');
+    expect(norm('/en/contracts.csv')).toBe('/contracts.csv');
+    expect(norm('/en')).toBe('/');
+  });
+
+  it('still lowercases, collapses slashes and strips the trailing slash', () => {
+    expect(norm('/EN/Companies/')).toBe('/companies');
+    expect(norm('//en//search')).toBe('/search');
+  });
+
+  it('does not strip a non-locale segment that merely starts with "en"', () => {
+    expect(norm('/energy')).toBe('/energy');
   });
 });
 

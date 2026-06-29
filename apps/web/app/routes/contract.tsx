@@ -1,8 +1,12 @@
-import { Link } from 'react-router';
-import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
+import { Link } from '../i18n/Link';
+import type { Locale } from '@sigma/shared';
+import { count, longDate, money, plural, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
+import { makeT, type TFunction } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
+import { useTranslation, useLocale } from '../i18n/context';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
@@ -30,27 +34,38 @@ import { seoMeta } from '../lib/meta';
  *   - received=8,  rejected=2,  sme=0,  non_eea=NULL → „6 допуснати · 2 отстранени"
  *   - received=N,  rejected=NULL, sme=NULL, non_eea=NULL → null (caller falls back to the source note)
  */
-function bidsBreakdown(c: ContractDetail): string | null {
+function bidsBreakdown(c: ContractDetail, t: TFunction, locale: Locale): string | null {
   if (c.bidsReceived == null) return null;
   const parts: string[] = [];
   if (c.bidsRejected != null) {
     const admitted = Math.max(0, c.bidsReceived - c.bidsRejected);
-    parts.push(`${count(admitted)} ${plural(admitted, 'допусната', 'допуснати')}`);
-    parts.push(`${count(c.bidsRejected)} ${plural(c.bidsRejected, 'отстранена', 'отстранени')}`);
+    parts.push(
+      `${count(admitted, locale)} ${plural(admitted, t('contract.bidsAdmitted_one'), t('contract.bidsAdmitted_many'), locale)}`,
+    );
+    parts.push(
+      `${count(c.bidsRejected, locale)} ${plural(c.bidsRejected, t('contract.bidsRejected_one'), t('contract.bidsRejected_many'), locale)}`,
+    );
   }
-  if (c.bidsSme != null && c.bidsSme > 0) parts.push(`${count(c.bidsSme)} от МСП`);
-  if (c.bidsNonEea != null && c.bidsNonEea > 0) parts.push(`${count(c.bidsNonEea)} извън ЕИП`);
+  if (c.bidsSme != null && c.bidsSme > 0)
+    parts.push(t('contract.bidsSme', { count: count(c.bidsSme, locale) }));
+  if (c.bidsNonEea != null && c.bidsNonEea > 0)
+    parts.push(t('contract.bidsNonEea', { count: count(c.bidsNonEea, locale) }));
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-export function meta({ data, params, matches }: Route.MetaArgs) {
+export function meta({ data, params, matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   const c = data?.contract;
   return seoMeta({
     matches,
     path: `/contracts/${params.id}`,
-    title: `${c?.subject ?? 'Договор'} — СИГМА`,
+    title: t('contract.metaTitle', { subject: c?.subject ?? t('contract.fallbackSubject') }),
     description: c
-      ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
+      ? t('contract.metaDescription', {
+          unp: c.unp,
+          authority: c.authority.name,
+          bidder: c.bidder.displayName,
+        })
       : '',
   });
 }
@@ -59,16 +74,22 @@ export function headers() {
   return { 'Cache-Control': publicCache(3600) };
 }
 
-export async function loader({ params, context }: Route.LoaderArgs) {
+export async function loader({ params, request, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
-  const contract = await getContract(context.cloudflare.env.DB, contractIdFromSlug(params.id));
+  const locale = getLocale(request);
+  const contract = await getContract(
+    context.cloudflare.env.DB,
+    contractIdFromSlug(params.id),
+    locale,
+  );
   if (!contract) throw new Response('Not Found', { status: 404 });
   return { contract };
 }
 
-const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена достоверност';
-
 export default function Contract({ loaderData }: Route.ComponentProps) {
+  const t = useTranslation();
+  const locale = useLocale();
+  const unverifiedValueLabel = t('contract.unverifiedValueLabel');
   const c = loaderData.contract;
   const v = c.value;
   const crumbId = c.unp || c.contractNumber || c.id;
@@ -85,8 +106,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
     <>
       <Breadcrumbs
         items={[
-          { label: 'Начало', to: '/' },
-          { label: 'Договори', to: '/contracts' },
+          { label: t('contract.breadcrumbHome'), to: '/' },
+          { label: t('contract.breadcrumbContracts'), to: '/contracts' },
           { label: crumbId },
         ]}
       />
@@ -94,17 +115,22 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              УНП {c.unp}
-              {c.contractNumber && <> · Договор № {c.contractNumber}</>}
-              {c.lotLabel && <> · обособена позиция {c.lotLabel}</>}
+              {t('contract.unp', { unp: c.unp })}
+              {c.contractNumber && (
+                <> · {t('contract.contractNumber', { number: c.contractNumber })}</>
+              )}
+              {c.lotLabel && <> · {t('contract.lot', { label: c.lotLabel })}</>}
             </>
           }
           title={c.subject}
           titleClassName={titleClass}
           lede={
             <>
-              {c.signedAt ? `Сключен на ${longDate(c.signedAt)} ` : ''}между{' '}
-              <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link> и{' '}
+              {c.signedAt
+                ? t('contract.ledeSignedBetween', { date: longDate(c.signedAt, locale) })
+                : t('contract.ledeBetween')}{' '}
+              <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>{' '}
+              {t('contract.ledeAnd')}{' '}
               <Link to={`/companies/${c.bidder.slug}`}>{c.bidder.displayName}</Link>.
             </>
           }
@@ -133,7 +159,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
                 <path d="M9 1.75V5.25h3.5" />
               </svg>
-              Виж документите в ЦАИС ЕОП
+              {t('contract.viewDocsEop')}
               <span className="cta-ext" aria-hidden="true">
                 ↗
               </span>
@@ -141,53 +167,60 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           )}
         </PageHeader>
 
-        <Section
-          id="values"
-          title="Стойности във времето"
-          hint='Договорът минава през няколко стойности: прогнозна (на възложителя), цена при подписване и текуща. Всички в евро. „Стойност" в списъците по подразбиране е текущата (изчистена) стойност.'
-        >
+        <Section id="values" title={t('contract.valuesTitle')} hint={t('contract.valuesHint')}>
           <div className="value-history">
             <div className="vh">
-              <div className="step">Прогнозна {c.lots ? '(позицията)' : ''}</div>
+              <div className="step">
+                {t('contract.valueEstimated')} {c.lots ? t('contract.valueEstimatedLot') : ''}
+              </div>
               <strong className="num">
-                {v.estimatedEur != null ? money(v.estimatedEur) : '—'}
+                {v.estimatedEur != null ? money(v.estimatedEur, locale) : '—'}
               </strong>
               {c.lots?.numLots && v.procedureEstimatedEur != null ? (
-                <div className="sub">цялата преписка: {money(v.procedureEstimatedEur)}</div>
+                <div className="sub">
+                  {t('contract.valueWholeProcedure', {
+                    value: money(v.procedureEstimatedEur, locale),
+                  })}
+                </div>
               ) : null}
             </div>
             <div className="vh">
-              <div className="step">При сключване</div>
-              <strong className="num">{v.signingEur != null ? money(v.signingEur) : '—'}</strong>
-              {v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>}
+              <div className="step">{t('contract.valueAtSigning')}</div>
+              <strong className="num">
+                {v.signingEur != null ? money(v.signingEur, locale) : '—'}
+              </strong>
+              {v.suspect && <div className="sub suspect">{unverifiedValueLabel}</div>}
             </div>
             <div className="vh now">
-              <div className="step">Текуща стойност</div>
-              <strong className="num">{v.currentEur != null ? money(v.currentEur) : '—'}</strong>
-              {v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>}
+              <div className="step">{t('contract.valueCurrent')}</div>
+              <strong className="num">
+                {v.currentEur != null ? money(v.currentEur, locale) : '—'}
+              </strong>
+              {v.suspect && <div className="sub suspect">{unverifiedValueLabel}</div>}
               {v.deltaPct != null && (
-                <div className="delta">{signedPct(v.deltaPct)} спрямо сключване</div>
+                <div className="delta">
+                  {t('contract.valueDelta', { pct: signedPct(v.deltaPct, 1, locale) })}
+                </div>
               )}
             </div>
           </div>
           {v.suspect && (
             <p className="small muted">
-              Показана е публикуваната стойност от източника, без СИГМА да я коригира. Виж{' '}
-              <Link to="/methodology">методология</Link>.
+              {t('contract.valueSuspectNote')}{' '}
+              <Link to="/methodology">{t('contract.methodologyLink')}</Link>.
             </p>
           )}
           {c.frameworkAwards != null && (
             <p className="small muted">
-              Рамково споразумение / ДСП — едно от {count(c.frameworkAwards)} възлагания по тази
-              процедура. Прогнозната стойност е за цялата процедура, а не за отделното възлагане.
+              {t('contract.frameworkNote', { count: count(c.frameworkAwards, locale) })}
             </p>
           )}
         </Section>
 
-        <Section id="who" title="Възложител и изпълнител">
+        <Section id="who" title={t('contract.whoTitle')}>
           <div className="two-col">
             <div>
-              <h3>Възложител</h3>
+              <h3>{t('contract.authorityHeading')}</h3>
               <p className="figure-amount">
                 <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>
               </p>
@@ -198,37 +231,42 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <ul className="linklist">
                 <li>
                   <Link to={`/contracts?authority=${c.authority.slug}`}>
-                    → Всички {count(c.authority.totalContracts)}{' '}
-                    {plural(c.authority.totalContracts, 'договор', 'договора')} на институцията (
-                    {money(c.authority.totalEur)})
+                    {t('contract.allAuthorityContracts', {
+                      count: count(c.authority.totalContracts, locale),
+                      word: plural(
+                        c.authority.totalContracts,
+                        t('contract.contracts_one'),
+                        t('contract.contracts_many'),
+                        locale,
+                      ),
+                      value: money(c.authority.totalEur, locale),
+                    })}
                   </Link>
                 </li>
                 <li>
-                  <Link to={betweenParties}>
-                    → Договори между тази институция и този изпълнител
-                  </Link>
+                  <Link to={betweenParties}>{t('contract.betweenPartiesFromAuthority')}</Link>
                 </li>
               </ul>
             </div>
             <div>
-              <h3>Изпълнител</h3>
+              <h3>{t('contract.bidderHeading')}</h3>
               <p className="figure-amount">
                 <Link to={`/companies/${c.bidder.slug}`}>{c.bidder.displayName}</Link>
               </p>
               <p className="small muted figure-sub">
                 {c.bidder.eik ? (
                   <>
-                    ЕИК <span className="mono">{c.bidder.eik}</span>
+                    {t('contract.eik')} <span className="mono">{c.bidder.eik}</span>
                     <ExternalEikLink eik={c.bidder.eik} />
                   </>
                 ) : (
-                  'непотвърден ЕИК'
+                  t('contract.unverifiedEik')
                 )}
                 {c.bidder.settlement && <> · {c.bidder.settlement}</>}
                 {c.bidder.kind === 'consortium' && (
                   <>
                     {' '}
-                    · <Chip>обединение</Chip>
+                    · <Chip>{t('contract.chipConsortium')}</Chip>
                   </>
                 )}
                 {c.bidder.sector && (
@@ -241,30 +279,37 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <ul className="linklist">
                 <li>
                   <Link to={`/contracts?bidder=${c.bidder.slug}`}>
-                    → Всички {count(c.bidder.totalContracts)}{' '}
-                    {plural(c.bidder.totalContracts, 'договор', 'договора')} на изпълнителя (
-                    {money(c.bidder.totalEur)})
+                    {t('contract.allBidderContracts', {
+                      count: count(c.bidder.totalContracts, locale),
+                      word: plural(
+                        c.bidder.totalContracts,
+                        t('contract.contracts_one'),
+                        t('contract.contracts_many'),
+                        locale,
+                      ),
+                      value: money(c.bidder.totalEur, locale),
+                    })}
                   </Link>
                 </li>
                 <li>
-                  <Link to={betweenParties}>
-                    → Договори между този изпълнител и тази институция
-                  </Link>
+                  <Link to={betweenParties}>{t('contract.betweenPartiesFromBidder')}</Link>
                 </li>
               </ul>
               {c.subcontractor && (
                 <p className="small muted figure-note">
-                  Подизпълнител: <strong>{c.subcontractor.name}</strong>
+                  {t('contract.subcontractor')} <strong>{c.subcontractor.name}</strong>
                   {c.subcontractor.eik && (
                     <>
                       {' '}
-                      · ЕИК <span className="mono">{c.subcontractor.eik}</span>
+                      · {t('contract.eik')} <span className="mono">{c.subcontractor.eik}</span>
                       {/^\d{9}(\d{4})?$/.test(c.subcontractor.eik) && (
                         <ExternalEikLink eik={c.subcontractor.eik} />
                       )}
                     </>
                   )}
-                  {c.subcontractor.valueEur != null && <> · {money(c.subcontractor.valueEur)}</>}
+                  {c.subcontractor.valueEur != null && (
+                    <> · {money(c.subcontractor.valueEur, locale)}</>
+                  )}
                 </p>
               )}
             </div>
@@ -273,54 +318,56 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
 
         <RiskIndicators contract={c} />
 
-        <Section id="facts" title="Подробности">
+        <Section id="facts" title={t('contract.factsTitle')}>
           <FactsList
             rows={[
               c.contractNumber && {
-                term: 'Номер на договор',
+                term: t('contract.factContractNumber'),
                 value: c.contractNumber,
-                sub: c.documentNumber ? `· документ № ${c.documentNumber}` : undefined,
+                sub: c.documentNumber
+                  ? t('contract.factDocumentNumber', { number: c.documentNumber })
+                  : undefined,
               },
-              { term: 'УНП на преписката', value: <span className="mono">{c.unp}</span> },
-              c.lotLabel && { term: 'Обособена позиция', value: c.lotLabel },
-              { term: 'Предмет', value: c.subject },
-              c.contractKind && { term: 'Обект', value: c.contractKind },
+              { term: t('contract.factUnp'), value: <span className="mono">{c.unp}</span> },
+              c.lotLabel && { term: t('contract.factLot'), value: c.lotLabel },
+              { term: t('contract.factSubject'), value: c.subject },
+              c.contractKind && { term: t('contract.factObject'), value: c.contractKind },
               c.cpvCode && {
-                term: 'CPV',
+                term: t('contract.factCpv'),
                 value: (
                   <>
                     <span className="mono">{c.cpvCode}</span>
                     {c.cpvDescription ? ` ${c.cpvDescription}` : ''}
                   </>
                 ),
-                sub: 'вторичният CPV код не се публикува в източника',
+                sub: t('contract.factCpvSub'),
               },
-              c.sector && { term: 'Сектор', value: c.sector.short },
-              { term: 'Процедура', value: c.procedureLabel },
+              c.sector && { term: t('contract.factSector'), value: c.sector.short },
+              { term: t('contract.factProcedure'), value: c.procedureLabel },
               {
-                term: 'Брой оферти',
+                term: t('contract.factBids'),
                 value:
                   c.bidsReceived != null ? (
-                    count(c.bidsReceived)
+                    count(c.bidsReceived, locale)
                   ) : (
-                    <span className="muted">не е посочен в данните</span>
+                    <span className="muted">{t('contract.factBidsNotProvided')}</span>
                   ),
                 // Break the gross count down by status/category — surfaces what „Брой оферти" actually
                 // means (it's the gross submitted count, including rejections — see docs/etl-pipeline.md
                 // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
                 // only appears when the source published a non-zero value, so contracts without any
                 // rejection/SME data fall back to the original „самите оферти…" footnote.
-                sub: bidsBreakdown(c) ?? 'самите оферти и стойностите им ги няма в АОП',
+                sub: bidsBreakdown(c, t, locale) ?? t('contract.factBidsFallback'),
               },
               {
-                term: 'Финансиране от ЕС',
+                term: t('contract.factEuFunding'),
                 value:
                   c.euFunded == null ? (
-                    <span className="muted">няма данни</span>
+                    <span className="muted">{t('contract.factNoData')}</span>
                   ) : c.euFunded ? (
-                    <Flag variant="soft">да</Flag>
+                    <Flag variant="soft">{t('contract.euYes')}</Flag>
                   ) : (
-                    <Flag variant="soft">не</Flag>
+                    <Flag variant="soft">{t('contract.euNo')}</Flag>
                   ),
                 sub: c.euProgramme ?? undefined,
               },
@@ -328,49 +375,52 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           />
         </Section>
 
-        <Section id="dates" title="Дати и срокове">
+        <Section id="dates" title={t('contract.datesTitle')}>
           <FactsList
             rows={[
               {
-                term: 'Подписан на',
+                term: t('contract.factSignedAt'),
                 value: c.signedAt ? (
                   <>
-                    {longDate(c.signedAt)}{' '}
-                    {c.dateSuspect && (
-                      <span className="suspect">
-                        Възможна грешка в датата — договорът е подписан след публикуване на
-                        обявлението
-                      </span>
-                    )}
+                    {longDate(c.signedAt, locale)}{' '}
+                    {c.dateSuspect && <span className="suspect">{t('contract.dateSuspect')}</span>}
                   </>
                 ) : (
-                  <span className="muted">липсва</span>
+                  <span className="muted">{t('contract.factMissing')}</span>
                 ),
               },
               {
-                term: 'Публикуван в регистъра',
+                term: t('contract.factPublishedAt'),
                 value: c.publishedAt ? (
-                  longDate(c.publishedAt)
+                  longDate(c.publishedAt, locale)
                 ) : (
-                  <span className="muted">липсва</span>
+                  <span className="muted">{t('contract.factMissing')}</span>
                 ),
               },
               {
-                term: 'Срок за изпълнение',
+                term: t('contract.factDuration'),
                 value:
                   c.durationDays != null ? (
-                    `${count(c.durationDays)} дни`
+                    t('contract.durationDays', { count: count(c.durationDays, locale) })
                   ) : (
-                    <span className="muted">липсва за този запис</span>
+                    <span className="muted">{t('contract.factDurationMissing')}</span>
                   ),
               },
               {
-                term: 'Начална дата',
-                value: c.startDate ? longDate(c.startDate) : <span className="muted">липсва</span>,
+                term: t('contract.factStartDate'),
+                value: c.startDate ? (
+                  longDate(c.startDate, locale)
+                ) : (
+                  <span className="muted">{t('contract.factMissing')}</span>
+                ),
               },
               {
-                term: 'Очакван край',
-                value: c.endDate ? longDate(c.endDate) : <span className="muted">липсва</span>,
+                term: t('contract.factEndDate'),
+                value: c.endDate ? (
+                  longDate(c.endDate, locale)
+                ) : (
+                  <span className="muted">{t('contract.factMissing')}</span>
+                ),
               },
             ]}
           />
@@ -379,30 +429,30 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
         {c.lots && c.lots.rows.length > 0 && (
           <Section
             id="lots"
-            title="Обособени позиции по преписката"
+            title={t('contract.lotsTitle')}
             hint={
               <>
-                Преписка <span className="mono">{c.lots.unp}</span> е разделена на обособени
-                позиции. Връзката договор↔лот е приблизителна — съпоставяме я по идентификатора на
-                позицията (вж. <Link to="/methodology">методология</Link>).
+                {t('contract.lotsHintPre')} <span className="mono">{c.lots.unp}</span>{' '}
+                {t('contract.lotsHintPost')}{' '}
+                <Link to="/methodology">{t('contract.lotsHintMethodology')}</Link>).
               </>
             }
           >
             <div className="table-wrap">
               <table className="lot-table">
-                <caption className="sr-only">Обособени позиции по преписката</caption>
+                <caption className="sr-only">{t('contract.lotsTableCaption')}</caption>
                 <thead>
                   <tr>
                     <th scope="col" className="col-w-60">
-                      Лот
+                      {t('contract.colLot')}
                     </th>
-                    <th scope="col">Участък</th>
-                    <th scope="col">Изпълнител</th>
+                    <th scope="col">{t('contract.colSection')}</th>
+                    <th scope="col">{t('contract.colContractor')}</th>
                     <th scope="col" className="num">
-                      Прогнозна (€)
+                      {t('contract.colEstimated')}
                     </th>
                     <th scope="col" className="num">
-                      При сключване (€)
+                      {t('contract.colAtSigning')}
                     </th>
                   </tr>
                 </thead>
@@ -427,14 +477,14 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                             <Link to={`/companies/${l.contractorSlug}`}>{l.contractorName}</Link>
                           )
                         ) : (
-                          <span className="muted">няма сключен договор</span>
+                          <span className="muted">{t('contract.noSignedContract')}</span>
                         )}
                       </td>
                       <td className="money">
-                        {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
+                        {l.estimatedEur != null ? money(l.estimatedEur, locale) : '—'}
                       </td>
                       <td className="money">
-                        {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
+                        {l.signingEur != null ? money(l.signingEur, locale) : '—'}
                       </td>
                     </tr>
                   ))}
@@ -445,14 +495,15 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="small muted mt-8">
                 {c.lots.estimatedTotalEur && (
                   <>
-                    Прогнозна стойност на всички лотове:{' '}
-                    <strong>{money(c.lots.estimatedTotalEur)}</strong>.{' '}
+                    {t('contract.lotsEstimatedTotalPre')}{' '}
+                    <strong>{money(c.lots.estimatedTotalEur, locale)}</strong>.{' '}
                   </>
                 )}
                 {c.lots.signedTotalEur && (
                   <>
-                    Сключени договори: <strong>{money(c.lots.signedTotalEur)}</strong> при
-                    подписване.
+                    {t('contract.lotsSignedTotalPre')}{' '}
+                    <strong>{money(c.lots.signedTotalEur, locale)}</strong>{' '}
+                    {t('contract.lotsSignedTotalPost')}
                   </>
                 )}
               </p>
@@ -460,12 +511,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           </Section>
         )}
 
-        <Section id="provenance" title="Произход на данните">
-          <p>
-            Този запис е сглобен от публикуваните в АОП / ЦАИС ЕОП данни за преписката и
-            нормализиран от СИГМА. Имената на институцията и компанията са в стандартизиран вид; ЕИК
-            и УНП се запазват буквално.
-          </p>
+        <Section id="provenance" title={t('contract.provenanceTitle')}>
+          <p>{t('contract.provenanceLede')}</p>
           <ul className="linklist">
             <li>
               {/* Plain <a>, not React Router <Link>. The .json endpoint is a resource route
@@ -473,19 +520,16 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   React Router would treat the JSON as a route module and crash. target=_blank
                   opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
-                JSON запис в СИГМА
+                {t('contract.jsonRecord')}
               </a>
-              <span className="sub">машиночетим, всички полета — /contracts/{c.id}.json</span>
+              <span className="sub">{t('contract.jsonRecordSub', { id: c.id })}</span>
             </li>
           </ul>
 
           {sourceFiles.length > 0 && (
             <>
               <p className="small muted figure-sub">
-                Първични данни от ЦАИС ЕОП (отворени данни) за деня на публикуване —{' '}
-                {longDate(c.publishedAt!)}. Свалят се директно от storage.eop.bg, без копие в СИГМА;
-                всеки файл съдържа пълните данни за деня. Записът за този договор е във файла
-                „Договори".
+                {t('contract.sourceFilesNote', { date: longDate(c.publishedAt!, locale) })}
               </p>
               <ul className="linklist">
                 {sourceFiles.map((f) => (
@@ -493,9 +537,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     {/* Plain <a> to the public MinIO object — external host, opens in a new tab.
                         download is a hint only (ignored cross-origin), so large files open in-tab. */}
                     <a href={f.url} target="_blank" rel="noopener" download>
-                      {f.label} — storage.eop.bg
+                      {f.label} {t('contract.sourceFileSuffix')}
                     </a>
-                    <span className="sub">пълни данни за деня (JSON)</span>
+                    <span className="sub">{t('contract.sourceFileSub')}</span>
                   </li>
                 ))}
               </ul>

@@ -111,6 +111,7 @@ describe('getContract', () => {
         },
       ]),
       'c:1',
+      'bg',
     );
 
     expect(detail?.value.estimatedEur).toBe(5000);
@@ -156,6 +157,7 @@ describe('getContract', () => {
         },
       ]),
       'c:1',
+      'bg',
     );
 
     expect(detail?.value.estimatedEur).toBe(4500);
@@ -179,6 +181,7 @@ describe('getContract', () => {
           [],
         ),
         'c:1',
+        'bg',
       );
 
       expect(detail?.value.suspect).toBe(true);

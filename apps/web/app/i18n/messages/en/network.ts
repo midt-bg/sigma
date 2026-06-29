@@ -1,0 +1,37 @@
+export const network = {
+  metaTitle: 'Network of links — СИГМА',
+  metaDescription:
+    'The network of links around an institution or company: the direct counterparties and their onward links, which reveal clusters. Entirely based on the available data.',
+  breadcrumbHome: 'Home',
+  breadcrumbNetwork: 'Network of links',
+  kicker: 'Analysis',
+  title: 'Network of links',
+  lede: 'The links around an institution or company: its direct counterparties and their onward links. It highlights clusters that the overall flow diagram does not show. This is a focused neighbourhood, not the whole graph.',
+  colFrom: 'From',
+  colTo: 'To',
+  colValue: 'Value',
+  colContracts: 'Contracts',
+  controlsAria: 'Choose a centre',
+  centerLabel: 'Centre:',
+  groupAuthorities: 'Institutions',
+  groupCompanies: 'Companies',
+  statusUpdating: 'Updating the visualization…',
+  statusUpdated: 'The visualization has been updated.',
+  graphTitlePre: 'Links around',
+  graphHint:
+    'The colours distinguish centre, institutions and companies. The link thickness is the value.',
+  graphAria: 'Graph of the links around {name}',
+  legendCenter: 'Centre',
+  legendAuthority: 'Institution',
+  legendCompany: 'Company',
+  linksTitle: 'Links in the graph',
+  linksCaption: 'Links in the graph',
+  emptyTitle: 'Not enough links',
+  emptyBody:
+    'There are not enough links for a graph for the selected entity. Choose another from the menu.',
+  aboutTitle: 'What it shows',
+  aboutPre:
+    'The direct counterparties of the selected entity and their largest other links. The full graph is not shown; for the overall picture see',
+  aboutLink: 'the flows',
+  aboutPost: '.',
+};

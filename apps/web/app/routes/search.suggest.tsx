@@ -17,8 +17,13 @@ export function trimGroup(group: SearchGroup): SearchGroup {
 // FTS query as the full results page, so suggestions and the eventual page agree. JSON only — the
 // listbox is rendered client-side from this payload; with JS off the form still posts to /search.
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const q = new URL(request.url).searchParams.get('q') ?? '';
-  const results = await search(context.cloudflare.env.DB, q);
+  const url = new URL(request.url);
+  const q = url.searchParams.get('q') ?? '';
+  // Single-mount machine route (no `/en` path prefix), so the active locale arrives as an explicit
+  // `?locale=` param from the client — otherwise consortium names default to the Bulgarian „… и др."
+  // suffix even on /en.
+  const locale = url.searchParams.get('locale') === 'en' ? 'en' : 'bg';
+  const results = await search(context.cloudflare.env.DB, q, locale);
   const payload: SearchResults = { ...results, groups: results.groups.map(trimGroup) };
   return data(payload, {
     headers: {

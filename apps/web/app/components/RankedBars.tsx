@@ -1,5 +1,6 @@
-import { Link } from 'react-router';
+import { Link } from '../i18n/Link';
 import { money } from '@sigma/shared';
+import { useLocale } from '../i18n/context';
 
 // Horizontal ranked bar chart — CSS only, no chart lib (same spirit as StackedBar). Each row is a
 // link to the authority; a soft fill bar behind the label is proportional to spend (scaled to the
@@ -9,6 +10,7 @@ export function RankedBars({
 }: {
   items: { slug: string; name: string; spentEur: number }[];
 }) {
+  const locale = useLocale();
   const max = Math.max(1, ...items.map((i) => i.spentEur));
   return (
     <ul className="ranked-bars">
@@ -21,7 +23,7 @@ export function RankedBars({
               aria-hidden="true"
             />
             <span className="rb-name">{a.name}</span>
-            <span className="rb-val num">{money(a.spentEur)}</span>
+            <span className="rb-val num">{money(a.spentEur, locale)}</span>
           </Link>
         </li>
       ))}

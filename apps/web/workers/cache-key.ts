@@ -16,6 +16,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'funding',
   'g',
   'kind',
+  'locale', // /search/suggest: bg/en localization of consortium names in the typeahead JSON
   'p',
   'page', // pageNav: rank offset + "page N of M" in the HTML, but only when cursor is set. Keyed
   // unconditionally — without cursor it's a harmless over-key (never a wrong body); simpler than

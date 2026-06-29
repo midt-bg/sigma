@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { Link, useNavigation } from 'react-router';
+import { useNavigation } from 'react-router';
+import { Link } from '../i18n/Link';
+import { useTranslation } from '../i18n/context';
 import { sortHref } from '../lib/filters';
 
 export interface SortOption {
@@ -20,16 +22,17 @@ export function ListControls({
   sorts: SortOption[];
   activeSort: string;
 }) {
+  const t = useTranslation();
   // Reflect in-flight navigation/revalidation so slow networks get quiet feedback.
   const busy = useNavigation().state !== 'idle';
   return (
     <div className="list-controls" aria-busy={busy || undefined}>
       <p className="muted small" aria-live="polite">
         {count}
-        {busy ? <span className="muted small"> · Зарежда…</span> : null}
+        {busy ? <span className="muted small"> · {t('listControls.loading')}</span> : null}
       </p>
       <p className="muted small">
-        Подреди:{' '}
+        {t('listControls.sortBy')}{' '}
         {sorts.map((s, i) => (
           <span key={s.value}>
             {i > 0 ? ' · ' : ''}

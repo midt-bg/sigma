@@ -1,4 +1,5 @@
 import type { HomeData, HomeTotals } from '@sigma/api-contract';
+import type { Locale } from '@sigma/shared';
 import {
   toAuthorityListItem,
   toCompanyListItem,
@@ -22,7 +23,7 @@ interface HomeTotalsRow {
 const STATE_TYPES = ['министерство', 'агенция', 'държавна компания', 'друго'];
 
 /** Home page: the KPI strip (from home_totals), top-10 companies, and the ministries/общини slices. */
-export async function getHomeData(db: D1Database): Promise<HomeData> {
+export async function getHomeData(db: D1Database, locale: Locale): Promise<HomeData> {
   const totalsRow = await db
     .prepare(
       `SELECT contracts, value_eur, authorities, bidders, suspect, as_of, refreshed_at FROM home_totals WHERE id = 1`,
@@ -66,8 +67,8 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
           `SELECT * FROM authority_totals WHERE type_group = 'община' ORDER BY spent_eur DESC, authority_id LIMIT 6`,
         )
         .all<AuthorityTotalsRow>(),
-      listSingleOfferContracts(db, 'recent', 10),
-      listSingleOfferContracts(db, 'value', 10),
+      listSingleOfferContracts(db, 'recent', locale, 10),
+      listSingleOfferContracts(db, 'value', locale, 10),
       // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
       // denominator). Same clean-row basis as the single-offer list above: bids = 1, non-suspect,
       // positive amount. Edge-cached for an hour, so the full scan runs rarely.
@@ -81,9 +82,9 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
 
   return {
     totals,
-    topCompanies: companies.results.map(toCompanyListItem),
-    topMinistries: ministries.results.map(toAuthorityListItem),
-    topMunicipalities: municipalities.results.map(toAuthorityListItem),
+    topCompanies: companies.results.map((r) => toCompanyListItem(r, locale)),
+    topMinistries: ministries.results.map((r) => toAuthorityListItem(r, locale)),
+    topMunicipalities: municipalities.results.map((r) => toAuthorityListItem(r, locale)),
     recentSingleOffer,
     topSingleOffer,
     singleOffer: {

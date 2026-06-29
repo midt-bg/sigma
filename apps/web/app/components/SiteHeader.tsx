@@ -1,22 +1,28 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, NavLink, useLocation, useSearchParams } from 'react-router';
+import { Link as RRLink, useLocation, useSearchParams } from 'react-router';
+import { Link, NavLink } from '../i18n/Link';
 import { SmartSearch } from './SmartSearch';
+import { useLocale, useTranslation } from '../i18n/context';
+import { swapLocalePath, stripLocale, LOCALES } from '../i18n/locale';
+import type { MessageKey } from '../i18n/t';
 import { ANALYTICS_NAV_PATHS } from '../lib/analytics-lenses';
 
 type NavItem = {
   to: string;
-  label: string;
+  label: MessageKey;
   end?: boolean;
   activePaths?: string[];
 };
 
+// Restructured nav: the analytics family (flows / network / trends / map / competition / analytics)
+// collapses behind one „Анализи" entry that highlights for any of its lens routes (ANALYTICS_NAV_PATHS).
 const NAV: NavItem[] = [
-  { to: '/', label: 'Начало', end: true },
-  { to: '/authorities', label: 'Институции' },
-  { to: '/companies', label: 'Компании' },
-  { to: '/contracts', label: 'Договори' },
-  { to: '/analytics', label: 'Анализи', activePaths: [...ANALYTICS_NAV_PATHS] },
-  { to: '/methodology', label: 'Методология' },
+  { to: '/', label: 'nav.home', end: true },
+  { to: '/authorities', label: 'nav.authorities' },
+  { to: '/companies', label: 'nav.companies' },
+  { to: '/contracts', label: 'nav.contracts' },
+  { to: '/analytics', label: 'nav.analytics', activePaths: [...ANALYTICS_NAV_PATHS] },
+  { to: '/methodology', label: 'nav.methodology' },
 ];
 
 function pathMatches(pathname: string, base: string): boolean {
@@ -28,6 +34,8 @@ function pathMatches(pathname: string, base: string): boolean {
 // external script — so the strict CSP needs no script allowance beyond the framework nonce. SSR
 // renders everything closed; the handlers wire up on hydration.
 export function SiteHeader() {
+  const t = useTranslation();
+  const locale = useLocale();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   // Prefill from the active query so reopening search on a results page shows it.
@@ -84,8 +92,8 @@ export function SiteHeader() {
   useEffect(() => {
     if (!searchOpen) return;
     const onClick = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (drawerRef.current?.contains(t) || searchToggleRef.current?.contains(t)) return;
+      const target = e.target as Node;
+      if (drawerRef.current?.contains(target) || searchToggleRef.current?.contains(target)) return;
       setSearchOpen(false);
     };
     document.addEventListener('click', onClick);
@@ -112,25 +120,25 @@ export function SiteHeader() {
           <Link
             className="brand"
             to="/"
-            aria-label="СИГМА — начална страница"
-            title="Система за интегриран граждански мониторинг и анализ на обществените поръчки"
+            aria-label={t('brand.aria')}
+            title={t('brand.title')}
             inert={navOpen}
           >
             <img className="brand-logo" src="/logo.svg" width={523} height={115} alt="СИГМА" />
-            <span className="brand-sub">Платформа за прозрачност на обществените поръчки</span>
+            <span className="brand-sub">{t('brand.sub')}</span>
           </Link>
           <nav
             className={`site-nav${navOpen ? ' is-open' : ''}`}
             id={navId}
-            aria-label="Главна навигация"
+            aria-label={t('nav.aria')}
           >
             <div className="site-nav-head">
-              <span className="site-nav-head-label">Навигация</span>
+              <span className="site-nav-head-label">{t('nav.drawerLabel')}</span>
               <button
                 ref={navCloseRef}
                 type="button"
                 className="site-nav-close"
-                aria-label="Затвори менюто"
+                aria-label={t('nav.close')}
                 onClick={closeNav}
               >
                 ×
@@ -141,9 +149,10 @@ export function SiteHeader() {
               // /analytics. NavLink derives aria-current from its own `to` match and overrides a
               // passed prop, so for the grouped entry we use a plain Link and drive aria-current
               // (which the existing `a[aria-current='page']` styles) from a prefix match ourselves.
+              // Strip the locale prefix first so the match works on /en too (paths are bg-rooted).
               if (item.activePaths) {
                 const active = item.activePaths.some((path) =>
-                  pathMatches(location.pathname, path),
+                  pathMatches(stripLocale(location.pathname), path),
                 );
                 return (
                   <Link
@@ -153,7 +162,7 @@ export function SiteHeader() {
                     className={active ? 'active' : undefined}
                     onClick={() => setNavOpen(false)}
                   >
-                    {item.label}
+                    {t(item.label)}
                   </Link>
                 );
               }
@@ -164,17 +173,38 @@ export function SiteHeader() {
                   end={item.end}
                   onClick={() => setNavOpen(false)}
                 >
-                  {item.label}
+                  {t(item.label)}
                 </NavLink>
               );
             })}
           </nav>
           <div className="site-actions" inert={navOpen}>
+            {/* Language switcher — plain (non-localizing) links pointing at the same page in the other
+                locale, preserving the current query. Crawlable; no inline handler, so CSP-clean. */}
+            <div className="lang-switch" role="group" aria-label={t('lang.group')}>
+              {LOCALES.map((loc) =>
+                loc === locale ? (
+                  <span key={loc} className="lang-current" aria-current="true">
+                    {loc.toUpperCase()}
+                  </span>
+                ) : (
+                  <RRLink
+                    key={loc}
+                    className="lang-link"
+                    to={`${swapLocalePath(location.pathname, loc)}${location.search}`}
+                    hrefLang={loc}
+                    aria-label={t('lang.switchTo', { lang: t(`lang.${loc}`) })}
+                  >
+                    {loc.toUpperCase()}
+                  </RRLink>
+                ),
+              )}
+            </div>
             <button
               ref={searchToggleRef}
               className="nav-search"
               type="button"
-              aria-label="Търсене"
+              aria-label={t('search.toggle')}
               aria-expanded={searchOpen}
               aria-controls={drawerId}
               onClick={() => setSearchOpen((v) => !v)}
@@ -198,13 +228,13 @@ export function SiteHeader() {
                   strokeLinecap="round"
                 />
               </svg>
-              <span className="nav-search-text">Търсене</span>
+              <span className="nav-search-text">{t('search.toggle')}</span>
             </button>
             <button
               ref={navToggleRef}
               className="nav-toggle"
               type="button"
-              aria-label="Меню"
+              aria-label={t('search.menu')}
               aria-expanded={navOpen}
               aria-controls={navId}
               onClick={() => setNavOpen((v) => !v)}
@@ -213,7 +243,7 @@ export function SiteHeader() {
                 <span />
                 <span />
               </span>
-              <span className="nav-toggle-text">Меню</span>
+              <span className="nav-toggle-text">{t('search.menu')}</span>
             </button>
           </div>
         </div>
@@ -242,7 +272,7 @@ export function SiteHeader() {
           <button
             type="button"
             className="search-drawer-close"
-            aria-label="Затвори търсенето"
+            aria-label={t('search.close')}
             onClick={() => {
               setSearchOpen(false);
               searchToggleRef.current?.focus();

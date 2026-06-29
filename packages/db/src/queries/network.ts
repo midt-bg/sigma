@@ -9,7 +9,7 @@ import type {
   NetworkEdge,
   NetworkNode,
 } from '@sigma/api-contract';
-import { cleanName, entityName } from '@sigma/shared';
+import { cleanName, entityName, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 
 export type NetworkCenterKind = 'authority' | 'company';
@@ -49,12 +49,12 @@ function authorityNodeOf(r: PairRow, hop: number): NetworkNode {
   };
 }
 
-function companyNodeOf(r: PairRow, hop: number): NetworkNode {
+function companyNodeOf(r: PairRow, hop: number, locale: Locale): NetworkNode {
   const name = cleanName(r.bidder_name);
   return {
     id: r.bidder_id,
     kind: 'company',
-    label: entityName(name, r.bidder_kind),
+    label: entityName(name, r.bidder_kind, locale),
     slug: companySlug(r.bidder_id),
     valueEur: 0, // node size is the incident-edge sum, set in getEntityNetwork below
     hop,
@@ -63,6 +63,7 @@ function companyNodeOf(r: PairRow, hop: number): NetworkNode {
 
 async function loadCenterOptions(
   db: D1Database,
+  locale: Locale,
 ): Promise<{ authorities: NetworkCenterOption[]; companies: NetworkCenterOption[] }> {
   const [a, c] = await Promise.all([
     db
@@ -90,7 +91,7 @@ async function loadCenterOptions(
     })),
     companies: c.results.map((r) => ({
       kind: 'company',
-      label: entityName(cleanName(r.name), r.kind),
+      label: entityName(cleanName(r.name), r.kind, locale),
       value: `c:${companySlug(r.bidder_id)}`,
     })),
   };
@@ -106,6 +107,7 @@ function emptyCenterOptions(): {
 async function loadCenter(
   db: D1Database,
   p: NetworkParams,
+  locale: Locale,
   sample?: PairRow,
 ): Promise<Center | null> {
   if (p.kind === 'authority') {
@@ -132,7 +134,7 @@ async function loadCenter(
   return {
     id: p.id,
     kind: 'company',
-    label: entityName(cleanName(name), row?.kind ?? sample?.bidder_kind ?? 'company'),
+    label: entityName(cleanName(name), row?.kind ?? sample?.bidder_kind ?? 'company', locale),
     slug: companySlug(p.id),
     valueEur: row?.won_eur ?? 0,
   };
@@ -142,6 +144,7 @@ export async function getEntityNetwork(
   db: D1Database,
   p: NetworkParams | null,
   options: NetworkQueryOptions = {},
+  locale: Locale = 'bg',
 ): Promise<NetworkData> {
   const includeCenterOptions = options.includeCenterOptions ?? true;
   if (!p) {
@@ -158,7 +161,9 @@ export async function getEntityNetwork(
         center: null,
         nodes: [],
         edges: [],
-        centerOptions: includeCenterOptions ? await loadCenterOptions(db) : emptyCenterOptions(),
+        centerOptions: includeCenterOptions
+          ? await loadCenterOptions(db, locale)
+          : emptyCenterOptions(),
       };
     }
     p = { kind: 'authority', id: top.authority_id };
@@ -168,7 +173,7 @@ export async function getEntityNetwork(
   const neighborCol = isAuth ? 'bidder_id' : 'authority_id';
 
   const [centerOptions, hop1res] = await Promise.all([
-    includeCenterOptions ? loadCenterOptions(db) : Promise.resolve(emptyCenterOptions()),
+    includeCenterOptions ? loadCenterOptions(db, locale) : Promise.resolve(emptyCenterOptions()),
     db
       .prepare(
         `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts
@@ -179,14 +184,14 @@ export async function getEntityNetwork(
   ]);
   const hop1 = hop1res.results;
 
-  const center = await loadCenter(db, p, hop1[0]);
+  const center = await loadCenter(db, p, locale, hop1[0]);
   if (!center) return { center: null, nodes: [], edges: [], centerOptions };
 
   const nodes = new Map<string, NetworkNode>([[center.id, { ...center, hop: 0 }]]);
   const edges: NetworkEdge[] = [];
   const neighborIds: string[] = [];
   for (const r of hop1) {
-    const node = isAuth ? companyNodeOf(r, 1) : authorityNodeOf(r, 1);
+    const node = isAuth ? companyNodeOf(r, 1, locale) : authorityNodeOf(r, 1);
     if (node.id === center.id) continue;
     if (!nodes.has(node.id)) nodes.set(node.id, node);
     edges.push({ from: center.id, to: node.id, valueEur: r.won_eur, contracts: r.contracts });
@@ -213,7 +218,7 @@ export async function getEntityNetwork(
       const neighborId = isAuth ? r.bidder_id : r.authority_id;
       if (seenNeighbor.has(neighborId)) continue; // top-1 per neighbour
       seenNeighbor.add(neighborId);
-      const node = isAuth ? authorityNodeOf(r, 2) : companyNodeOf(r, 2);
+      const node = isAuth ? authorityNodeOf(r, 2) : companyNodeOf(r, 2, locale);
       if (node.id === center.id) continue;
       // hop 1 and hop 2 are always opposite kinds, so a hop-2 row never lands on a hop-1 node. When two
       // neighbours share the same hop-2 counterparty the node is kept once and both edges are added on

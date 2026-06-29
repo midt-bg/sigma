@@ -1,5 +1,9 @@
-import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
-import { count, moneyBare } from '@sigma/shared';
+import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { Link } from '../i18n/Link';
+import { count, money } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 import { getFlows } from '@sigma/db';
 import type { Route } from './+types/flows';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -11,13 +15,13 @@ import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 import { singleSelectFilters } from '../lib/filters';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
-    path: '/flows',
-    title: 'Потоци на пари — СИГМА',
-    description:
-      'От институциите възложители към компаниите изпълнители. Дебелината на всеки поток отговаря на стойността на договорите.',
+    path: location.pathname,
+    title: t('flows.metaTitle'),
+    description: t('flows.metaDescription'),
   });
 }
 
@@ -33,12 +37,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     new URL(request.url).searchParams,
     years,
   );
-  const data = await getFlows(db, { sector, year, funding, top });
+  const data = await getFlows(db, { sector, year, funding, top }, getLocale(request));
   return { data, coverage, years, unknownSector, unknownYear };
 }
 
 export default function Flows({ loaderData }: Route.ComponentProps) {
   const { data, coverage, years, unknownSector, unknownYear } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
@@ -47,25 +53,26 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Потоци на пари' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('flows.breadcrumbHome'), to: '/' },
+          { label: t('flows.breadcrumbFlows') },
+        ]}
+      />
       <main id="main">
-        <PageHeader
-          kicker="Визуализация"
-          title="Потоци на пари: откъде към кого"
-          lede="От институциите възложители (вляво) към компаниите изпълнители (вдясно). Колкото по-дебел е потокът, толкова по-голяма е общата стойност (в евро) на договорите между двете страни."
-        />
+        <PageHeader kicker={t('flows.kicker')} title={t('flows.title')} lede={t('flows.lede')} />
 
         <Form
           method="get"
           className="flow-controls"
           role="group"
-          aria-label="Настройки на визуализацията"
+          aria-label={t('flows.controlsAria')}
           onChange={(e) => submit(e.currentTarget)}
         >
           <label>
-            Сектор:
+            {t('flows.sectorLabel')}
             <select name="sector" defaultValue={unknownSector ? '' : sel('sector')}>
-              <option value="">Всички сектори</option>
+              <option value="">{t('flows.allSectors')}</option>
               {data.sectors.map((s) => (
                 <option key={s.code} value={s.code}>
                   {s.short}
@@ -74,7 +81,7 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
           <label>
-            Година:
+            {t('flows.yearLabel')}
             <select name="year" defaultValue={unknownYear ? '' : sel('year')}>
               <option value="">{range}</option>
               {years.map((y) => (
@@ -85,88 +92,78 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
           <label>
-            Финансиране:
+            {t('flows.fundingLabel')}
             <select name="funding" defaultValue={sel('funding')}>
-              <option value="">Всички</option>
-              <option value="eu">Само с финансиране от ЕС</option>
-              <option value="national">Само с национално финансиране</option>
+              <option value="">{t('flows.fundingAll')}</option>
+              <option value="eu">{t('flows.fundingEu')}</option>
+              <option value="national">{t('flows.fundingNational')}</option>
             </select>
           </label>
           <label>
-            Топ:
+            {t('flows.topLabel')}
             <select name="top" defaultValue={sel('top') || '20'}>
-              <option value="20">Топ 20 потока</option>
-              <option value="50">Топ 50 потока</option>
+              <option value="20">{t('flows.top20')}</option>
+              <option value="50">{t('flows.top50')}</option>
             </select>
           </label>
         </Form>
 
         {/* Filters auto-submit on change; announce the swap for screen-reader users (WCAG 4.1.3). */}
         <p className="sr-only" role="status">
-          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+          {navigating ? t('flows.statusUpdating') : t('flows.statusUpdated')}
         </p>
 
         {unknownSector || unknownYear ? (
-          <Callout variant="warning" title="Няма данни за избрания обхват">
-            {unknownSector
-              ? 'Избраният сектор не съответства на нито една категория от номенклатурата CPV.'
-              : `Избраната година е извън периода ${range}.`}{' '}
-            Виж <Link to="/flows">всички данни</Link> или избери стойност от списъка по-горе.
+          <Callout variant="warning" title={t('flows.emptyTitle')}>
+            {unknownSector ? t('flows.emptySector') : t('flows.emptyYear', { range })}{' '}
+            {t('flows.emptySuffixPre')} <Link to="/flows">{t('flows.emptyLink')}</Link>{' '}
+            {t('flows.emptySuffixPost')}
           </Callout>
         ) : (
           <>
             <Callout>
-              <strong>Как се чете:</strong> всеки поток е сборът от договорите между една институция
-              и една компания за избрания обхват. Схемата е илюстративна — точните стойности са в
-              таблицата по-долу.
+              <strong>{t('flows.howToReadStrong')}</strong> {t('flows.howToRead')}
             </Callout>
 
             <SankeyDiagram layout={data.sankey} />
 
             <div className="flow-tooltip">
-              <strong>Какво показва тази картина</strong>
-              Най-дебелите потоци показват доминиращи получатели (една компания, поглъщаща голяма
-              част от един възложител) и устойчиви зависимости (институция, чиито пари отиват почти
-              изцяло към 2–3 компании). Дебелината показва само сумата — не и дали концентрацията е
-              оправдана. Затова всеки поток се свежда до конкретните си договори в таблицата.
+              <strong>{t('flows.tooltipTitle')}</strong>
+              {t('flows.tooltipBody')}
             </div>
           </>
         )}
 
-        <Section
-          id="scenarios"
-          title="Готови изгледи"
-          hint="Готови филтри върху същата визуализация."
-        >
+        <Section id="scenarios" title={t('flows.scenariosTitle')} hint={t('flows.scenariosHint')}>
           <div className="tiles">
             {[
               {
                 href: '/flows?sector=45',
-                title: 'Строителство — топ потоци',
-                desc: 'Кои възложители плащат на кои строителни компании.',
+                title: t('flows.scenarioConstructionTitle'),
+                desc: t('flows.scenarioConstructionDesc'),
               },
               {
                 href: '/flows?sector=33',
-                title: 'Медицина и лекарства',
-                desc: 'Кои болници и министерства купуват от кои доставчици.',
+                title: t('flows.scenarioMedicineTitle'),
+                desc: t('flows.scenarioMedicineDesc'),
               },
               {
                 href: '/flows?sector=09',
-                title: 'Горива и енергия',
-                desc: 'Енергийните доставки и техните получатели.',
+                title: t('flows.scenarioEnergyTitle'),
+                desc: t('flows.scenarioEnergyDesc'),
               },
               {
                 href: '/flows?funding=eu',
-                title: 'Само с финансиране от ЕС',
-                desc: 'Потоците, финансирани по европейски програми.',
+                title: t('flows.scenarioEuTitle'),
+                desc: t('flows.scenarioEuDesc'),
               },
-            ].map((t) => (
-              <article className="tile" key={t.href}>
-                <p className="kicker info">Сценарий</p>
+            ].map((tile) => (
+              <article className="tile" key={tile.href}>
+                <p className="kicker info">{t('flows.scenario')}</p>
                 <h3>
-                  <Link to={t.href}>{t.title}</Link>
+                  <Link to={tile.href}>{tile.title}</Link>
                 </h3>
-                <p className="desc">{t.desc}</p>
+                <p className="desc">{tile.desc}</p>
               </article>
             ))}
           </div>
@@ -175,21 +172,21 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
         {!unknownSector && !unknownYear && (
           <Section
             id="top-flows"
-            title={`Топ ${data.scope.top} потока — табличен изглед`}
-            hint="Най-големите потоци за избрания обхват."
+            title={t('flows.tableTitle', { top: data.scope.top })}
+            hint={t('flows.tableHint')}
           >
             <div className="table-wrap tbl-cards">
               <table>
                 <thead>
                   <tr>
                     <th scope="col">#</th>
-                    <th scope="col">Институция</th>
-                    <th scope="col">Компания</th>
+                    <th scope="col">{t('flows.colAuthority')}</th>
+                    <th scope="col">{t('flows.colCompany')}</th>
                     <th scope="col" className="num">
-                      Сума (€)
+                      {t('flows.colSum')}
                     </th>
                     <th scope="col" className="num">
-                      Договори
+                      {t('flows.colContracts')}
                     </th>
                   </tr>
                 </thead>
@@ -199,17 +196,17 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
                       <td className="rank cell-rank" data-label="#">
                         {p.rank}
                       </td>
-                      <td className="cell-title" data-label="Институция">
+                      <td className="cell-title" data-label={t('flows.colAuthority')}>
                         <Link to={`/authorities/${p.authoritySlug}`}>{p.authorityName}</Link>
                       </td>
-                      <td data-label="Компания">
+                      <td data-label={t('flows.colCompany')}>
                         <Link to={`/companies/${p.bidderSlug}`}>{p.bidderDisplayName}</Link>
                       </td>
-                      <td className="money" data-label="Сума (€)">
-                        {moneyBare(p.wonEur)}
+                      <td className="money" data-label={t('flows.colSum')}>
+                        {money(p.wonEur, locale)}
                       </td>
-                      <td className="money" data-label="Договори">
-                        {count(p.contracts)}
+                      <td className="money" data-label={t('flows.colContracts')}>
+                        {count(p.contracts, locale)}
                       </td>
                     </tr>
                   ))}
@@ -217,8 +214,8 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
               </table>
             </div>
             <p className="small muted mt-s3">
-              Зад всеки ред стоят неговите договори:{' '}
-              <Link to="/contracts?sort=value-desc">виж договорите →</Link>
+              {t('flows.tableFootPre')}{' '}
+              <Link to="/contracts?sort=value-desc">{t('flows.tableFootLink')}</Link>
             </p>
           </Section>
         )}

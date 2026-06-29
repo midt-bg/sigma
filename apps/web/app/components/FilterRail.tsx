@@ -1,6 +1,8 @@
 import type { ChangeEvent, FormEvent } from 'react';
-import { Form, Link, useNavigate, useSearchParams } from 'react-router';
+import { Form, useNavigate, useSearchParams } from 'react-router';
+import { Link } from '../i18n/Link';
 import { count as fmtCount } from '@sigma/shared';
+import { useLocale, useTranslation } from '../i18n/context';
 import { withParams } from '../lib/filters';
 
 export interface FilterOption {
@@ -46,6 +48,8 @@ export function FilterRail({
   clearHref: string;
   csvHref?: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const preservedScope = ['authority', 'bidder'].flatMap((key) =>
@@ -82,7 +86,7 @@ export function FilterRail({
     if (form) submitForm(form);
   };
   return (
-    <aside className="filter-rail" aria-label="Филтри">
+    <aside className="filter-rail" aria-label={t('filterRail.aria')}>
       {/* The rail is always visible on desktop. When the layout stacks to one column it collapses
           behind the „Филтри" label, toggled by an off-screen checkbox — a CSS-only disclosure
           (see app.css), so it needs no JS and renders identically on the server and the client. */}
@@ -90,10 +94,10 @@ export function FilterRail({
         type="checkbox"
         id="filter-rail-toggle"
         className="filter-rail-toggle"
-        aria-label="Покажи или скрий филтрите"
+        aria-label={t('filterRail.toggle')}
       />
       <label htmlFor="filter-rail-toggle" className="filter-rail-summary">
-        Филтри
+        {t('filterRail.summary')}
       </label>
       <Form method="get" onChange={onChange}>
         <input type="hidden" name="sort" value={sort} />
@@ -106,7 +110,7 @@ export function FilterRail({
               <summary>
                 {g.label}
                 {g.selected.length > 0 && (
-                  <span className="filter-count">{fmtCount(g.selected.length)}</span>
+                  <span className="filter-count">{fmtCount(g.selected.length, locale)}</span>
                 )}
               </summary>
               {g.type === 'radio' && (
@@ -118,7 +122,7 @@ export function FilterRail({
                     checked={g.selected.length === 0}
                     onChange={() => {}}
                   />{' '}
-                  {g.allLabel ?? 'Всички'}
+                  {g.allLabel ?? t('filterRail.all')}
                 </label>
               )}
               {g.categories
@@ -144,7 +148,7 @@ export function FilterRail({
                                   ? 'true'
                                   : 'false'
                             }
-                            aria-label={`Избери всички в ${category.label}`}
+                            aria-label={t('filterRail.selectAllIn', { category: category.label })}
                             ref={(element) => {
                               if (element) element.indeterminate = someSelected && !allSelected;
                             }}
@@ -153,7 +157,7 @@ export function FilterRail({
                           />
                           <span className="filter-subgroup-label">{category.label}</span>
                           {category.count != null && (
-                            <span className="muted small">{fmtCount(category.count)}</span>
+                            <span className="muted small">{fmtCount(category.count, locale)}</span>
                           )}
                         </summary>
                         {category.options.map((o) => (
@@ -167,7 +171,7 @@ export function FilterRail({
                             />{' '}
                             {o.label}
                             {o.count != null && (
-                              <span className="muted small">{fmtCount(o.count)}</span>
+                              <span className="muted small">{fmtCount(o.count, locale)}</span>
                             )}
                           </label>
                         ))}
@@ -184,7 +188,9 @@ export function FilterRail({
                         onChange={() => {}}
                       />{' '}
                       {o.label}
-                      {o.count != null && <span className="muted small">{fmtCount(o.count)}</span>}
+                      {o.count != null && (
+                        <span className="muted small">{fmtCount(o.count, locale)}</span>
+                      )}
                     </label>
                   ))}
               {g.more && (
@@ -197,15 +203,15 @@ export function FilterRail({
         })}
         <noscript>
           <button type="submit" className="filter-apply">
-            Покажи резултатите
+            {t('filterRail.showResults')}
           </button>
         </noscript>
-        <p className="small muted mt-s4">
-          <Link to={clearHref}>Изчисти филтрите</Link>
+        <p className="small muted" style={{ marginTop: 'var(--s-4)' }}>
+          <Link to={clearHref}>{t('filterRail.clear')}</Link>
           {csvHref && (
             <>
               {' · '}
-              <a href={csvHref}>Изтегли CSV</a>
+              <a href={csvHref}>{t('filterRail.downloadCsv')}</a>
             </>
           )}
         </p>

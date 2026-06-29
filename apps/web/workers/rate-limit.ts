@@ -1,28 +1,31 @@
 import { baseSecurityHeaders } from '../app/lib/security';
+import { stripLocale } from '../app/i18n/locale';
 
 export const RATE_LIMIT_PERIOD_SECONDS = 60;
 export const RATE_LIMIT_FALLBACK_KEY = 'unknown-client';
 
+// Collapse a request path to the canonical form every limiter matches against:
+//   - lowercase + collapse duplicate slashes (`//assistant/chat` must not slip the equality match and
+//     bypass the only limiter on the paid endpoint — review #80, ydimitrof),
+//   - strip the trailing slash,
+//   - strip the `/en` locale prefix: the localized mirrors (`/en/search`, `/en/companies`,
+//     `/en/authorities`, `/en/*.csv`) hit the SAME heavy loaders, so they must share one limiter
+//     with their Bulgarian twin rather than run unthrottled.
+function canonicalize(pathname: string): string {
+  const norm =
+    pathname
+      .toLowerCase()
+      .replace(/\/{2,}/g, '/')
+      .replace(/\/+$/, '') || '/';
+  return stripLocale(norm);
+}
+
 export function normalizedPathname(request: Request): string {
   const pathname = new URL(request.url).pathname;
-
-  // Collapse duplicate slashes BEFORE the equality check: `//assistant/chat` would otherwise slip the
-  // path match and bypass the only limiter on the paid endpoint if the router still routes it (review
-  // #80, ydimitrof). `/\/{2,}/` → single slash; the trailing-slash strip stays.
   try {
-    return (
-      decodeURIComponent(pathname)
-        .toLowerCase()
-        .replace(/\/{2,}/g, '/')
-        .replace(/\/+$/, '') || '/'
-    );
+    return canonicalize(decodeURIComponent(pathname));
   } catch {
-    return (
-      pathname
-        .toLowerCase()
-        .replace(/\/{2,}/g, '/')
-        .replace(/\/+$/, '') || '/'
-    );
+    return canonicalize(pathname);
   }
 }
 

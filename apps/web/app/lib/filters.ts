@@ -2,10 +2,12 @@
 // view has a shareable, reproducible address (a methodology principle). Formatting helpers live in
 // @sigma/shared; this module is only about reading/writing the URL.
 
-import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
+import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision, pickLabel } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
 import { normalizeCompanySort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
+import type { Locale } from '@sigma/shared';
+import { makeT } from '../i18n/t';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
@@ -86,6 +88,7 @@ interface SectorFacet {
 export function buildSectorGroup(
   facetSectors: readonly SectorFacet[],
   selected: string[],
+  locale: Locale,
 ): FilterGroup {
   const optionsByCategory = new Map<string, FilterOption[]>();
 
@@ -114,7 +117,7 @@ export function buildSectorGroup(
     return [
       {
         key: category.key,
-        label: category.label,
+        label: pickLabel(category, locale),
         ...(count != null ? { count } : {}),
         options,
       },
@@ -123,7 +126,7 @@ export function buildSectorGroup(
 
   return {
     key: 'sector',
-    label: 'Сектор (CPV)',
+    label: makeT(locale)('filterRail.sectorGroup'),
     type: 'checkbox',
     selected,
     categories,

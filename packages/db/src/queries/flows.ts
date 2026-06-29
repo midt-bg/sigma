@@ -10,9 +10,16 @@ import type {
   SankeyNode,
   SankeyRibbon,
 } from '@sigma/api-contract';
-import { cleanName, entityName, money } from '@sigma/shared';
+import { cleanName, entityName, money, plural, type Locale } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { sectorOptions } from './sectors';
+
+// Sankey-ribbon tooltips are built in the data layer (no web i18n catalog here), so the „contract"
+// noun pair is kept per-locale and `plural()` picks the correct form for the count.
+const CONTRACT_WORD: Record<Locale, readonly [string, string]> = {
+  bg: ['договор', 'договора'],
+  en: ['contract', 'contracts'],
+};
 
 export interface FlowsParams {
   sector?: string | null;
@@ -82,7 +89,7 @@ function truncate(s: string, n = 30): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-function buildSankey(pairs: PairRow[]): SankeyLayout {
+function buildSankey(pairs: PairRow[], locale: Locale): SankeyLayout {
   // Column node totals (each pair contributes to one authority + one company; both columns sum equal).
   const authAgg = new Map<string, { name: string; value: number }>();
   const compAgg = new Map<
@@ -133,7 +140,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
     const h = Math.max(1, agg.value * scaleC);
     cPos.set(id, { y: cy, h, off: cy, index: i });
     nodes.push({
-      label: truncate(entityName(agg.name, agg.kind)),
+      label: truncate(entityName(agg.name, agg.kind, locale)),
       valueEur: agg.value,
       side: 'company',
       x: C_X,
@@ -155,7 +162,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
   );
   const ribbons: SankeyRibbon[] = ordered.map((p) => {
     const authorityName = cleanName(p.authority_name);
-    const bidderDisplayName = entityName(cleanName(p.bidder_name), p.bidder_kind);
+    const bidderDisplayName = entityName(cleanName(p.bidder_name), p.bidder_kind, locale);
     const a = aPos.get(p.authority_id)!;
     const c = cPos.get(p.bidder_id)!;
     const a0 = a.off;
@@ -167,7 +174,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
     const ax = A_X + BAR_W;
     return {
       d: `M${ax},${a0.toFixed(1)} C${MID_X},${a0.toFixed(1)} ${MID_X},${c0.toFixed(1)} ${C_X},${c0.toFixed(1)} L${C_X},${c1.toFixed(1)} C${MID_X},${c1.toFixed(1)} ${MID_X},${a1.toFixed(1)} ${ax},${a1.toFixed(1)} Z`,
-      title: `${authorityName} → ${bidderDisplayName}: ${money(p.won_eur)} · ${p.contracts} договора`,
+      title: `${authorityName} → ${bidderDisplayName}: ${money(p.won_eur, locale)} · ${p.contracts} ${plural(p.contracts, CONTRACT_WORD[locale][0], CONTRACT_WORD[locale][1], locale)}`,
       fromName: authorityName,
       toName: bidderDisplayName,
       valueEur: p.won_eur,
@@ -180,7 +187,7 @@ function buildSankey(pairs: PairRow[]): SankeyLayout {
 
 const DEFAULT_TOP = 20;
 const MAX_TOP = 50;
-export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsData> {
+export async function getFlows(db: D1Database, p: FlowsParams, locale: Locale): Promise<FlowsData> {
   const requestedTop = Number.isInteger(p.top) ? p.top! : DEFAULT_TOP;
   const top = requestedTop >= 1 && requestedTop <= MAX_TOP ? requestedTop : DEFAULT_TOP;
   const rows = await topPairs(db, p, top);
@@ -193,18 +200,18 @@ export async function getFlows(db: D1Database, p: FlowsParams): Promise<FlowsDat
       authorityName,
       bidderSlug: companySlug(r.bidder_id),
       bidderName,
-      bidderDisplayName: entityName(bidderName, r.bidder_kind),
+      bidderDisplayName: entityName(bidderName, r.bidder_kind, locale),
       bidderKind: r.bidder_kind,
       wonEur: r.won_eur,
       contracts: r.contracts,
     };
   });
 
-  const sectors = await sectorOptions(db);
+  const sectors = await sectorOptions(db, locale);
 
   return {
     pairs,
-    sankey: buildSankey(rows),
+    sankey: buildSankey(rows, locale),
     sectors,
     scope: {
       sector: p.sector ?? null,

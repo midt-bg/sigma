@@ -1,5 +1,6 @@
 import type { Route } from './+types/sitemap-pages';
 import { withDataSource } from '../lib/dataSource';
+import { localizePath, LOCALES, type Locale } from '../i18n/locale';
 
 type Page = { loc: string; changefreq?: string; priority?: string };
 
@@ -31,8 +32,18 @@ function xmlEscape(s: string): string {
   );
 }
 
-function entry(origin: string, p: Page): string {
-  const parts = [`<loc>${xmlEscape(`${origin}${p.loc}`)}</loc>`];
+// One <url> for a (page, locale), carrying the page's changefreq/priority plus reciprocal hreflang
+// alternates (one per locale + x-default = bg) so crawlers pair the bg/en versions.
+function entry(origin: string, p: Page, locale: Locale): string {
+  const parts = [`<loc>${xmlEscape(`${origin}${localizePath(p.loc, locale)}`)}</loc>`];
+  for (const alt of LOCALES) {
+    parts.push(
+      `<xhtml:link rel="alternate" hreflang="${alt}" href="${xmlEscape(`${origin}${localizePath(p.loc, alt)}`)}"/>`,
+    );
+  }
+  parts.push(
+    `<xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(`${origin}${localizePath(p.loc, 'bg')}`)}"/>`,
+  );
   if (p.changefreq) parts.push(`<changefreq>${xmlEscape(p.changefreq)}</changefreq>`);
   if (p.priority) parts.push(`<priority>${xmlEscape(p.priority)}</priority>`);
   return `<url>${parts.join('')}</url>\n`;
@@ -40,9 +51,11 @@ function entry(origin: string, p: Page): string {
 
 export function loader({ request }: Route.LoaderArgs) {
   const origin = new URL(request.url).origin;
+  // Emit one <url> per (page, locale) with reciprocal hreflang alternates + x-default (Bulgarian).
+  const entries = PAGES.flatMap((page) => LOCALES.map((locale) => entry(origin, page, locale)));
   const body =
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-    PAGES.map((p) => entry(origin, p)).join('') +
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n` +
+    entries.join('') +
     `</urlset>\n`;
   return withDataSource(
     new Response(body, {

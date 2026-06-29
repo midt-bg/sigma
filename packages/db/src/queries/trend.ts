@@ -6,6 +6,7 @@
 
 import type { TrendData, TrendPoint, TrendYear } from '@sigma/api-contract';
 import { sectorOptions } from './sectors';
+import type { Locale } from '@sigma/shared';
 
 export interface TrendParams {
   sector?: string | null;
@@ -79,6 +80,7 @@ export async function getSpendingTrend(
   db: D1Database,
   p: TrendParams,
   options: TrendQueryOptions = {},
+  locale: Locale = 'bg',
 ): Promise<TrendData> {
   const includeSectors = options.includeSectors ?? true;
   const granularity = p.granularity === 'year' ? 'year' : 'month';
@@ -106,7 +108,7 @@ export async function getSpendingTrend(
       )
       .bind(...s.params)
       .first<CoverageRow>(),
-    includeSectors ? sectorOptions(db) : Promise.resolve([]),
+    includeSectors ? sectorOptions(db, locale) : Promise.resolve([]),
     db.prepare('SELECT as_of FROM home_totals WHERE id = 1').first<{ as_of: string | null }>(),
   ]);
   // The final period (the as_of period) is still being filled; mark it so the chart and table do not

@@ -1,5 +1,6 @@
 import type { NetworkData, NetworkNode } from '@sigma/api-contract';
 import { money } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
 
 // Static server-rendered radial ego graph (no chart JS, like SankeyDiagram). Centre in the middle,
 // direct counterparties on an inner ring, their top other counterparty on an outer ring. Node size is
@@ -22,6 +23,8 @@ function truncate(s: string, n = 22): string {
 }
 
 export function NetworkGraph({ data }: { data: NetworkData }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const { nodes, edges, center } = data;
   // Defensive guard so the component is safe on its own; network.tsx also gates on the same condition.
   if (!center || nodes.length < 2) return null;
@@ -65,7 +68,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
         <svg
           viewBox={`-100 -10 ${W + 200} ${H + 20}`}
           role="img"
-          aria-label={`Граф на връзките около ${center.label}`}
+          aria-label={t('network.graphAria', { name: center.label })}
           className="network-svg"
         >
           {edges.map((e, i) => {
@@ -89,7 +92,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
             if (!pt) return null;
             const r = radius(n);
             const right = pt.x >= CX;
-            const label = `${n.label}: ${money(n.valueEur)}`;
+            const label = `${n.label}: ${money(n.valueEur, locale)}`;
             return (
               <g key={n.id}>
                 {n.kind === 'company' ? (
@@ -129,13 +132,13 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
       </div>
       <ul className="net-legend" aria-hidden="true">
         <li>
-          <span className="key center" /> Център
+          <span className="key center" /> {t('network.legendCenter')}
         </li>
         <li>
-          <span className="key authority" /> Институция
+          <span className="key authority" /> {t('network.legendAuthority')}
         </li>
         <li>
-          <span className="key company" /> Фирма
+          <span className="key company" /> {t('network.legendCompany')}
         </li>
       </ul>
     </>

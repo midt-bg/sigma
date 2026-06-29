@@ -4,14 +4,17 @@ import { PageHeader } from '../components/PageHeader';
 import { publicCache } from '../lib/cache';
 import { contactEmail } from '../lib/contact';
 import { seoMeta } from '../lib/meta';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
+import { useTranslation } from '../i18n/context';
 
-export function meta({ matches }: Route.MetaArgs) {
+export function meta({ matches, location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return seoMeta({
     matches,
     path: '/impressum',
-    title: 'Импресум — СИГМА',
-    description:
-      'Информация за оператора на СИГМА и контакт по чл. 4 от Закона за електронната търговия.',
+    title: t('impressum.metaTitle'),
+    description: t('impressum.metaDescription'),
   });
 }
 
@@ -24,29 +27,30 @@ export function loader({ context }: Route.LoaderArgs) {
 }
 
 export default function Impressum({ loaderData }: Route.ComponentProps) {
+  const t = useTranslation();
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Импресум' }]} />
+      <Breadcrumbs items={[{ label: t('nav.home'), to: '/' }, { label: t('impressum.crumb') }]} />
       <main id="main">
         <PageHeader
-          kicker="Правна информация"
-          title="Импресум"
-          lede="Информация за доставчика на услугата по чл. 4 от Закона за електронната търговия."
+          kicker={t('impressum.kicker')}
+          title={t('impressum.title')}
+          lede={t('impressum.lede')}
         />
 
         <section className="section" aria-labelledby="operator">
-          <h2 id="operator">Оператор</h2>
+          <h2 id="operator">{t('impressum.sections.operator.heading')}</h2>
           <dl className="facts">
             <div className="row">
-              <dt>Доставчик</dt>
-              <dd>Министерство на иновациите и дигиталната трансформация (МИДТ)</dd>
+              <dt>{t('impressum.sections.operator.providerLabel')}</dt>
+              <dd>{t('impressum.sections.operator.providerValue')}</dd>
             </div>
             <div className="row">
-              <dt>Адрес</dt>
-              <dd>ул. „Княз Александър I&quot; № 12, София 1000</dd>
+              <dt>{t('impressum.sections.operator.addressLabel')}</dt>
+              <dd>{t('impressum.sections.operator.addressValue')}</dd>
             </div>
             <div className="row">
-              <dt>Електронна поща</dt>
+              <dt>{t('impressum.sections.operator.emailLabel')}</dt>
               <dd>
                 <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
               </dd>
@@ -55,11 +59,8 @@ export default function Impressum({ loaderData }: Route.ComponentProps) {
         </section>
 
         <section className="section" aria-labelledby="service">
-          <h2 id="service">Услуга</h2>
-          <p>
-            СИГМА е публична информационна услуга за преглед и анализ на отворени данни за
-            обществени поръчки. Данните се показват без регистрация и без потребителско профилиране.
-          </p>
+          <h2 id="service">{t('impressum.sections.service.heading')}</h2>
+          <p>{t('impressum.sections.service.body')}</p>
         </section>
       </main>
     </>

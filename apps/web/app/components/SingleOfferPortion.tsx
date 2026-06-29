@@ -1,4 +1,5 @@
 import { count, money, pct } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
 
 export function SingleOfferPortion({
   valueEur,
@@ -12,18 +13,25 @@ export function SingleOfferPortion({
   totalEur: number;
   singleOffer?: number;
   contracts?: number;
+  // Already-translated strings supplied by callers (e.g. `t('authority.soScope')`).
   scopeLabel?: string;
   captionSuffix?: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const ratio = Math.min(1, Math.max(0, totalEur > 0 ? valueEur / totalEur : 0));
-  const headline = scopeLabel ? `от стойността ${scopeLabel} са` : 'от стойността е';
+  const scope = scopeLabel ?? t('singleOffer.defaultScope');
   const hasCounts = singleOffer != null && contracts != null;
 
   return (
     <div className="so-portion">
       <p className="so-portion-head">
-        <span className="so-portion-pct">{pct(ratio)}</span> {headline} по договори с{' '}
-        <em>една оферта</em>.
+        <span className="so-portion-pct">{pct(ratio, undefined, locale)}</span>
+        {t('singleOffer.headPre')}
+        {scope}
+        {t('singleOffer.headPost')}
+        <em>{t('singleOffer.headEm')}</em>
+        {t('singleOffer.headEnd')}
       </p>
       <div className="hbar" aria-hidden="true">
         <span style={{ width: `${(ratio * 100).toFixed(1)}%`, background: 'var(--accent)' }} />
@@ -32,12 +40,15 @@ export function SingleOfferPortion({
         />
       </div>
       <p className="small muted so-portion-cap">
-        {hasCounts && (
-          <>
-            {count(singleOffer)} от {count(contracts)} договора ·{' '}
-          </>
-        )}
-        {money(valueEur)} от {money(totalEur)}
+        {hasCounts &&
+          t('singleOffer.capCounts', {
+            singleOffer: count(singleOffer, locale),
+            contracts: count(contracts, locale),
+          })}
+        {t('singleOffer.capValue', {
+          value: money(valueEur, locale),
+          total: money(totalEur, locale),
+        })}
         {captionSuffix ? ` ${captionSuffix}` : ''}
       </p>
     </div>

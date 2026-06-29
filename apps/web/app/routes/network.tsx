@@ -1,5 +1,9 @@
-import { Form, Link, useNavigation, useSubmit } from 'react-router';
+import { Form, useNavigation, useSubmit } from 'react-router';
+import { Link } from '../i18n/Link';
 import { count, money } from '@sigma/shared';
+import { useTranslation, useLocale } from '../i18n/context';
+import { makeT } from '../i18n/t';
+import { getLocale } from '../i18n/locale';
 import {
   authorityIdFromSlug,
   bidderIdFromSlug,
@@ -14,13 +18,13 @@ import { NetworkGraph } from '../components/NetworkGraph';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 
-export function meta(_: Route.MetaArgs) {
+export function meta({ location }: Route.MetaArgs) {
+  const t = makeT(getLocale(location.pathname));
   return [
-    { title: 'Мрежа на връзките — СИГМА' },
+    { title: t('network.metaTitle') },
     {
       name: 'description',
-      content:
-        'Мрежата от връзки около една институция или фирма: преките контрагенти и техните следващи връзки, които разкриват клъстери. Изцяло върху наличните данни.',
+      content: t('network.metaDescription'),
     },
   ];
 }
@@ -46,7 +50,7 @@ function parseCenter(token: string | null): NetworkParams | null {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const center = parseCenter(new URL(request.url).searchParams.get('center'));
-  const data = await getEntityNetwork(context.cloudflare.env.DB, center);
+  const data = await getEntityNetwork(context.cloudflare.env.DB, center, {}, getLocale(request));
   // A well-formed but non-existent ?center should 404 like the other entity pages, not render an
   // empty 200 that then gets edge-cached. A missing or malformed ?center keeps the default centre.
   if (center && !data.center) {
@@ -64,6 +68,8 @@ interface LinkRow {
 
 export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
+  const t = useTranslation();
+  const locale = useLocale();
   const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const centerValue = data.center
@@ -87,46 +93,56 @@ export default function Network({ loaderData }: Route.ComponentProps) {
     };
   });
   const columns: Column<LinkRow>[] = [
-    { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-    { key: 'to', header: 'Към', cell: (r) => r.to },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+    { key: 'from', header: t('network.colFrom'), isTitle: true, cell: (r) => r.from },
+    { key: 'to', header: t('network.colTo'), cell: (r) => r.to },
+    {
+      key: 'value',
+      header: t('network.colValue'),
+      align: 'money',
+      cell: (r) => money(r.valueEur, locale),
+    },
     {
       key: 'contracts',
-      header: 'Договори',
+      header: t('network.colContracts'),
       align: 'num',
       secondary: true,
-      cell: (r) => count(r.contracts),
+      cell: (r) => count(r.contracts, locale),
     },
   ];
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Мрежа на връзките' }]} />
+      <Breadcrumbs
+        items={[
+          { label: t('network.breadcrumbHome'), to: '/' },
+          { label: t('network.breadcrumbNetwork') },
+        ]}
+      />
       <main id="main">
         <PageHeader
-          kicker="Анализ"
-          title="Мрежа на връзките"
-          lede="Връзките около една институция или фирма: преките ѝ контрагенти и техните следващи връзки. Откроява клъстери, които общата схема на потоците не показва. Това е фокусирана околност, не целият граф."
+          kicker={t('network.kicker')}
+          title={t('network.title')}
+          lede={t('network.lede')}
         />
 
         <Form
           method="get"
           className="flow-controls"
           role="group"
-          aria-label="Избор на център"
+          aria-label={t('network.controlsAria')}
           onChange={(e) => submit(e.currentTarget)}
         >
           <label>
-            Център:
+            {t('network.centerLabel')}
             <select name="center" defaultValue={centerValue}>
-              <optgroup label="Институции">
+              <optgroup label={t('network.groupAuthorities')}>
                 {data.centerOptions.authorities.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
               </optgroup>
-              <optgroup label="Компании">
+              <optgroup label={t('network.groupCompanies')}>
                 {data.centerOptions.companies.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -138,7 +154,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
         </Form>
 
         <p className="sr-only" role="status">
-          {navigating ? 'Обновяване на визуализацията…' : 'Визуализацията е обновена.'}
+          {navigating ? t('network.statusUpdating') : t('network.statusUpdated')}
         </p>
 
         {data.center && data.nodes.length >= 2 ? (
@@ -147,35 +163,33 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               id="graph"
               title={
                 <>
-                  Връзки около <em>{data.center.label}</em>
+                  {t('network.graphTitlePre')} <em>{data.center.label}</em>
                 </>
               }
-              hint="Цветовете различават център, институции и фирми. Дебелината на връзката е стойността."
+              hint={t('network.graphHint')}
             >
               <NetworkGraph data={data} />
             </Section>
 
-            <Section id="links" title="Връзки в графа">
+            <Section id="links" title={t('network.linksTitle')}>
               <DataTable
                 columns={columns}
                 rows={rows}
                 getKey={(r) => `${r.from}-${r.to}`}
-                caption="Връзки в графа"
+                caption={t('network.linksCaption')}
               />
             </Section>
           </>
         ) : (
-          <Callout variant="warning" title="Няма достатъчно връзки">
-            <p style={{ margin: 0 }}>
-              За избраната същност няма достатъчно връзки за граф. Изберете друга от менюто.
-            </p>
+          <Callout variant="warning" title={t('network.emptyTitle')}>
+            <p style={{ margin: 0 }}>{t('network.emptyBody')}</p>
           </Callout>
         )}
 
-        <Callout title="Какво показва">
+        <Callout title={t('network.aboutTitle')}>
           <p style={{ margin: 0 }}>
-            Преките контрагенти на избраната същност и техните най-големи други връзки. Пълният граф
-            не се показва; за общата картина виж <Link to="/flows">потоците</Link>.
+            {t('network.aboutPre')} <Link to="/flows">{t('network.aboutLink')}</Link>
+            {t('network.aboutPost')}
           </p>
         </Callout>
       </main>

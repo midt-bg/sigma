@@ -3,7 +3,8 @@
 // page (getAuthority) is added in phase 2.
 
 import type { AuthorityListItem, FacetCount, Page } from '@sigma/api-contract';
-import { CPV_SECTORS } from '@sigma/config';
+import { CPV_SECTORS, pickShort } from '@sigma/config';
+import type { Locale } from '@sigma/shared';
 import { csvCell } from './csv';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -119,6 +120,7 @@ function authorityFilterSignature(p: AuthorityListParams): string {
 export async function listAuthorities(
   db: D1Database,
   p: AuthorityListParams,
+  locale: Locale,
 ): Promise<Page<AuthorityListItem>> {
   const sort = SORTS[p.sort as keyof typeof SORTS] ?? SORTS['spent'];
   const pageSize = p.pageSize ?? 25;
@@ -159,7 +161,11 @@ export async function listAuthorities(
     cursor: ks.cursor,
     sortToken: ks.cursorToken,
   });
-  return { items: rows.map(toAuthorityListItem), total: totalRow?.n ?? 0, ...cursors };
+  return {
+    items: rows.map((r) => toAuthorityListItem(r, locale)),
+    total: totalRow?.n ?? 0,
+    ...cursors,
+  };
 }
 
 export interface AuthorityFacets {
@@ -167,7 +173,7 @@ export interface AuthorityFacets {
   sectors: FacetCount[];
 }
 
-export async function getAuthorityFacets(db: D1Database): Promise<AuthorityFacets> {
+export async function getAuthorityFacets(db: D1Database, locale: Locale): Promise<AuthorityFacets> {
   const typeRows = await db
     .prepare(
       `SELECT COALESCE(type_group, 'друго') AS type_group, COUNT(*) AS n FROM authority_totals GROUP BY COALESCE(type_group, 'друго') ORDER BY n DESC`,
@@ -179,13 +185,13 @@ export async function getAuthorityFacets(db: D1Database): Promise<AuthorityFacet
 
   const types: FacetCount[] = typeRows.results.map((r) => ({
     value: r.type_group,
-    label: typeLabel(r.type_group) ?? 'друго',
+    label: typeLabel(r.type_group, locale) ?? (locale === 'en' ? 'Other' : 'друго'),
     count: r.n,
   }));
   const byCode = new Map(sectorRows.results.map((r) => [r.division, r.value_eur]));
   const sectors: FacetCount[] = CPV_SECTORS.map((s) => ({
     value: s.code,
-    label: s.short ?? s.label,
+    label: pickShort(s, locale),
     count: byCode.get(s.code) ?? 0,
   }))
     .filter((f) => f.count > 0)
