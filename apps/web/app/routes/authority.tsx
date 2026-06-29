@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import {
   authorityIdFromSlug,
@@ -10,6 +10,7 @@ import {
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -22,7 +23,8 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
-import { seoMeta } from '../lib/meta';
+import { buildAuthorityCitation } from '../lib/citation';
+import { seoMeta, getRootOrigin } from '../lib/meta';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
@@ -58,6 +60,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
   const ct = competition;
@@ -90,7 +94,11 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           }
           title={a.name}
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
-        />
+        >
+          <div className="header-actions">
+            <CopyCitationButton textToCopy={buildAuthorityCitation(a, origin)} />
+          </div>
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"
