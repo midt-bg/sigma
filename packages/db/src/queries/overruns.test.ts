@@ -122,6 +122,17 @@ describe('getTopOverruns', () => {
     expect(r.durationDays).toBe(540);
   });
 
+  it('normalises a dirty CPV (non-digit in the prefix) to its real division label', async () => {
+    // A stray separator in the prefix used to slice to „4-" → SECTOR_LABELS miss → „Сектор 4-".
+    // Now both label and code path strip non-digits first (cpvDivision), so it lands on division 45.
+    const { db } = fakeDb([rawRow({ cpv_code: '4-5233110' })]);
+
+    const { rows } = await getTopOverruns(db, { by: 'absolute' });
+
+    expect(rows[0]!.sectorLabel).toBe('Строителство'); // curated short for division 45
+    expect(rows[0]!.cpvCode).toBe('4-5233110'); // raw code still passes through untouched
+  });
+
   it('keeps inspector metadata honest when columns are NULL', async () => {
     const { db } = fakeDb([
       rawRow({
@@ -459,6 +470,19 @@ describe('getOverrunAnnexes', () => {
     expect(sql[0]).toContain('JOIN amendments am');
     expect(sql[0]).toContain('IN (?, ?, ?)'); // placeholder per id, bounded by the leaderboard
     expect(bound[0]).toEqual(['c:1', 'c:2', 'c:3']);
+  });
+
+  it('orders undated amendments LAST so the „Анекс N" sequence stays chronological', async () => {
+    const { db, sql } = fakeAnnexDb([]);
+
+    await getOverrunAnnexes(db, ['c:1']);
+
+    // SQLite sorts NULL first by default; without the `IS NULL` key an undated annex would be numbered
+    // „Анекс 1" by groupAnnexes ahead of earlier dated ones. The key must precede the published_at /
+    // natural_key tie-breakers in the ORDER BY so undated rows fall to the end of each contract's run.
+    const order = sql[0]!;
+    expect(order).toContain('am.published_at IS NULL');
+    expect(order.indexOf('am.published_at IS NULL')).toBeLessThan(order.indexOf('am.natural_key'));
   });
 
   it('normalises BGN amendment values to EUR (peg) and keeps the reason', async () => {
