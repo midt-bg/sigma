@@ -1,8 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import { cacheKey } from './cache-key';
+import { cacheKey, CACHE_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './cache-key';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
+}
+
+// The edge cache stores rendered SSR HTML, so anything read off the URL during the server render can
+// change the response: route loaders, the shared URL-filter helper (companyListParams /
+// singleSelectFilters / pageNav), AND server-rendered components (e.g. SiteHeader reads `q`). So we
+// scan the whole app/ tree, not just loaders. Loaded as raw text through Vite's glob (workers/* is
+// typed for the Cloudflare runtime, so no Node fs here).
+const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,tsx}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+// Statically collect every query param those sources read off the URL. Anchored on the
+// URLSearchParams access patterns actually used so it ignores FormData.get() / Headers.has():
+//   - a var named sp/searchParams/base, the inline `.searchParams` chain, an inline
+//     `new URLSearchParams(...).get(...)` (e.g. root.tsx), and the getMulti() helper.
+// Known, accepted blind spots (guard-completeness, not live leaks today):
+//   - Dynamic keys: `sp.get(someVar)` can't be resolved statically. All current dynamic reads use
+//     a fixed key set already covered here; a future one would slip past — keep keys literal.
+//   - Scope: only app/** is scanned. workers/** is excluded because its param reads are
+//     infrastructure that does NOT shape the cached body — e.g. request-log.ts reads `q` purely for
+//     telemetry (q_present/q_len), and cacheKey itself does the keying. Widening to workers/** would
+//     wrongly force log-/rate-limit-only reads into the key. If a worker ever reads a param to shape
+//     a cached response, key it explicitly here (better: move that read into a loader under app/).
+//   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
+function consumedQueryParams(): Set<string> {
+  const patterns = [
+    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
+  ];
+
+  const found = new Set<string>();
+  for (const [path, src] of Object.entries(APP_SOURCES)) {
+    if (path.includes('.test.')) continue;
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src))) found.add(m[1]);
+    }
+  }
+  return found;
 }
 
 describe('cacheKey', () => {
@@ -62,5 +104,24 @@ describe('cacheKey', () => {
   it('falls back to the raw pathname for malformed percent-encoding', () => {
     expect(() => cacheUrl('http://local/contracts/%')).not.toThrow();
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
+  });
+});
+
+describe('CACHE_QUERY_PARAMS drift guard', () => {
+  it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
+    const consumed = consumedQueryParams();
+    // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
+    expect(consumed.size).toBeGreaterThan(10);
+    expect(consumed.has('bids')).toBe(true);
+    expect(consumed.has('page')).toBe(true);
+
+    // Security direction: every param a route loader / SSR render consumes must be keyed (in the
+    // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
+    // cache entry and the wrong data gets served. The reverse direction (allow-list entries nothing
+    // reads yet) is intentionally NOT asserted: params for stacked-later routes legitimately sit in
+    // the allow-list ahead of their route.
+    const allowed = new Set([...CACHE_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
+    const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
+    expect(undeclared).toEqual([]);
   });
 });

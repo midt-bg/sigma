@@ -7,7 +7,9 @@ export const CACHE_QUERY_PARAMS = new Set([
   'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals (CWE-349, #56)
   'by', // /overruns — sort dimension (absolute | percent)
   'center',
+  'cohort', // /price-anomaly — selected CPV cohorts (repeatable); faceting changes the result set
   'count',
+  'cpv', // /contracts — exact 5-digit CPV filter; changes the result set + headline totals
   'cursor',
   'eu',
   'funding',
@@ -25,6 +27,13 @@ export const CACHE_QUERY_PARAMS = new Set([
   'value',
   'year',
 ]);
+
+// Params a loader reads but that intentionally do NOT change the response (so they're safe to omit
+// from the cache key). None exist today — every consumed param affects output. This constant is not
+// dead: the drift guard in cache-key.test.ts treats `consumed ⊆ CACHE_QUERY_PARAMS ∪
+// INTENTIONALLY_UNKEYED` as the invariant, so any future read-but-ignored param must be listed here
+// with a justification rather than silently absent (CWE-349, #56).
+export const INTENTIONALLY_UNKEYED = new Set<string>([]);
 
 export function cacheKey(request: Request, deployTag: string): Request {
   const url = new URL(request.url);
