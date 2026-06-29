@@ -76,11 +76,11 @@ export default function SavedItems() {
             </div>
           </Section>
         ) : (
-          <div className="two-col">
+          <>
             {renderSection('Договори', contracts)}
             {renderSection('Компании', companies)}
             {renderSection('Институции', authorities)}
-          </div>
+          </>
         )}
       </main>
     </>

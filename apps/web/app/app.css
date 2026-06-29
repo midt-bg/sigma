@@ -2144,31 +2144,11 @@ details.row .body .signal .why {
   border-color: var(--ink);
 }
 
-/* Save Button (Watchlist) */
-.save-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-top: var(--s-3);
-  padding: 6px 12px;
-  background: none;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  color: var(--ink);
-  font: 500 13px/1.2 var(--font-sans);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.save-btn:hover {
-  background: var(--surface);
-  border-color: var(--ink);
-}
 /* Save Button (Watchlist) — shares geometry with source-cta */
 .save-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--s-3);
-  margin-top: var(--s-6);
   padding: 11px var(--s-5);
   border: 1px solid var(--ink);
   background: var(--paper);
@@ -2193,6 +2173,27 @@ details.row .body .signal .why {
 }
 .save-btn svg {
   flex: none;
+}
+.save-btn-text {
+  /* wrapper for screen reader live regions if needed, or normal text */
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+  flex-wrap: wrap;
+}
+
+.blank-slate {
+  text-align: center;
+  padding: var(--s-8) var(--s-4);
+  color: var(--ink-soft);
+  background: var(--surface);
+  border-radius: 8px;
+  border: 1px dashed var(--border-subtle);
+  margin-top: var(--s-4);
 }
 
 /* Saved Items List */
@@ -2237,7 +2238,6 @@ details.row .body .signal .why {
   color: var(--accent);
 }
 
-/* Button */
 /* Hero search — quiet editorial prompt on landing/list pages.
    Grid: chevron (::before) · input · button */
 /* Home hero — title panel on the left, the brand mark as a quiet grey watermark on the right.
