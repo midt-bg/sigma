@@ -82,7 +82,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const matches = useMatches();
-  const origin = getRootOrigin(matches);
+  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
   const c = loaderData.company;
   const { trend, network } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);

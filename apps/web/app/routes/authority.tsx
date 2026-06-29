@@ -61,7 +61,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const matches = useMatches();
-  const origin = getRootOrigin(matches);
+  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
   const ct = competition;
