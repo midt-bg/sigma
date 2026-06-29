@@ -39,6 +39,13 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
+UPDATE tenders SET
+  estimated_value_eur = CASE
+    WHEN currency = 'EUR' THEN estimated_value
+    WHEN COALESCE(currency, 'BGN') = 'BGN' THEN estimated_value / 1.95583
+    ELSE NULL END
+WHERE estimated_value IS NOT NULL;
+
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
   id INTEGER PRIMARY KEY CHECK (id = 1), contracts INTEGER NOT NULL, value_eur REAL NOT NULL,
@@ -133,11 +140,13 @@ FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 CREATE TABLE IF NOT EXISTS flow_pairs (
   authority_id TEXT NOT NULL REFERENCES authorities(id), bidder_id TEXT NOT NULL REFERENCES bidders(id),
   authority_name TEXT NOT NULL, bidder_name TEXT NOT NULL, bidder_kind TEXT NOT NULL,
-  won_eur REAL NOT NULL, contracts INTEGER NOT NULL, PRIMARY KEY (authority_id, bidder_id)
+  won_eur REAL NOT NULL, contracts INTEGER NOT NULL, first_date TEXT, last_date TEXT,
+  PRIMARY KEY (authority_id, bidder_id)
 );
 DELETE FROM flow_pairs;
-INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
+INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts, first_date, last_date)
+SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*),
+  MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE c.amount_eur IS NOT NULL

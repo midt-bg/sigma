@@ -68,6 +68,8 @@ CREATE TABLE tenders (
   eauction        INTEGER,                 -- Електронен търг
   cancelled       INTEGER,                 -- Отменена
   eop_tender_id   TEXT,                    -- raw EOP numeric tenderId; documents deep-link https://app.eop.bg/today/<id> (NOT the УНП / noticeId)
+  corrections_count INTEGER,              -- Брой поправки на обявлението (corrigenda)
+  estimated_value_eur REAL,               -- estimated_value materialized in EUR (BGN÷1.95583; EUR as-is; foreign→NULL)
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -148,6 +150,9 @@ CREATE TABLE contracts (
   framework        INTEGER,                -- Договор по рамково споразумение
   accelerated      INTEGER,                -- Ускорена процедура
   strategic        INTEGER,                -- Стратегическа поръчка
+  exemption_legal_basis TEXT,             -- Правно основание за изключение (outside ZOP)
+  outside_zop      INTEGER,               -- Договорът е извън приложното поле на ЗОП
+  dps_contract     INTEGER,               -- Договор по ДСП (динамична система за покупки)
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -165,6 +170,8 @@ CREATE TABLE amendments (
   published_at    TEXT,
   document_number TEXT,
   description     TEXT,
+  reason          TEXT,                    -- Причини за изменение (ЗОП основание)
+  circumstances   TEXT,                    -- Обстоятелства
   source          TEXT NOT NULL
 );
 CREATE INDEX idx_amendments_contract ON amendments(unp, contract_number);
@@ -272,6 +279,8 @@ CREATE TABLE flow_pairs (
   bidder_kind    TEXT NOT NULL,
   won_eur        REAL NOT NULL,
   contracts      INTEGER NOT NULL,
+  first_date     TEXT,                     -- MIN(signed_at) over the pair's contracts
+  last_date      TEXT,                     -- MAX(signed_at) over the pair's contracts
   PRIMARY KEY (authority_id, bidder_id)
 );
 
