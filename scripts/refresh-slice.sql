@@ -142,7 +142,8 @@ INSERT INTO tenders
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
-   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id)
+   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id,
+   corrections_count)
 SELECT
   't:' || t.unp,
   t.unp,
@@ -173,7 +174,8 @@ SELECT
   t.innovation,
   t.eauction,
   t.cancelled,
-  NULLIF(t.tender_id, '')                 -- raw EOP numeric tenderId from the header row
+  NULLIF(t.tender_id, ''),                -- raw EOP numeric tenderId from the header row
+  t.corrections_count
 FROM raw_tenders t
 WHERE t.lot_id IS NULL
   AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || t.authority_eik)
@@ -211,7 +213,8 @@ ON CONFLICT(id) DO UPDATE SET
   -- real, keep its id but backfill from the header if it was somehow missing.
   eop_tender_id = CASE WHEN tenders.procedure_type = 'неизвестна'
     THEN COALESCE(excluded.eop_tender_id, tenders.eop_tender_id)
-    ELSE COALESCE(tenders.eop_tender_id, excluded.eop_tender_id) END;
+    ELSE COALESCE(tenders.eop_tender_id, excluded.eop_tender_id) END,
+  corrections_count = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.corrections_count, tenders.corrections_count) ELSE tenders.corrections_count END;
 
 -- @refresh-batch lots
 INSERT OR IGNORE INTO lots (id, tender_id, title, cpv_code, estimated_value)
@@ -522,7 +525,8 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic,
+   exemption_legal_basis, outside_zop, dps_contract)
 SELECT
   'c:o:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
     COALESCE(NULLIF(x.lot_id, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
@@ -563,7 +567,10 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  x.exemption_legal_basis,
+  x.outside_zop,
+  x.dps_contract
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
@@ -766,7 +773,8 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic,
+   exemption_legal_basis, outside_zop, dps_contract)
 SELECT
   'c:e:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
     COALESCE(NULLIF(x.lot_norm, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
@@ -807,7 +815,10 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  x.exemption_legal_basis,
+  x.outside_zop,
+  x.dps_contract
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
@@ -1007,7 +1018,7 @@ WHERE status <> 'awarded'
 -- @refresh-batch amendments
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source
+  published_at, document_number, description, reason, circumstances, source
 )
 WITH keyed AS (
   SELECT
@@ -1045,6 +1056,8 @@ SELECT
   published_at,
   document_number,
   description,
+  reason,
+  circumstances,
   source
 FROM dedup
 WHERE rn = 1;
@@ -1293,8 +1306,9 @@ WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
 
 -- @refresh-batch flow-pairs
 DELETE FROM flow_pairs;
-INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
+INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts, first_date, last_date)
+SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*),
+  MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
 WHERE c.amount_eur IS NOT NULL
 GROUP BY t.authority_id, c.bidder_id;
