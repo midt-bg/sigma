@@ -1476,3 +1476,61 @@ tbody td,
 }
 
 /* ===== end metric-info popover ===== */
+
+/* ===== list-search (in-page search for /authorities, /companies, /contracts) ===== */
+.list-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.list-search-field {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.list-search-field:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in oklch, var(--accent) 28%, transparent);
+}
+
+.list-search-icon {
+  color: var(--ink-soft);
+  font-size: 15px;
+}
+
+.list-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 10px 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.list-search-btn {
+  flex: none;
+  padding: 0 16px;
+  font: 500 12px/1 var(--font-mono, monospace);
+  letter-spacing: 0.04em;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.list-search-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ===== end metric-info popover ===== */
