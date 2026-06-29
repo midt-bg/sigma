@@ -64,7 +64,8 @@ export function useWatchlist() {
   // React 18+ useSyncExternalStore handles this gracefully, but we must be careful.
   const items = useSyncExternalStore(subscribe, getWatchlist, () => EMPTY);
 
-  const isSaved = (kind: WatchlistItemKind, id: string) => items.some((i) => i.kind === kind && i.id === id);
+  const isSaved = (kind: WatchlistItemKind, id: string) =>
+    items.some((i) => i.kind === kind && i.id === id);
 
   const toggleItem = (item: Omit<WatchlistItem, 'addedAt'>) => {
     const list = getWatchlist();

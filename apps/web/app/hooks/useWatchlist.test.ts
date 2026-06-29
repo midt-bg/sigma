@@ -19,20 +19,20 @@ const localStorageMock = (() => {
     },
     removeItem: (key: string) => {
       delete store[key];
-    }
+    },
   };
 })();
 Object.defineProperty(globalThis, 'localStorage', {
   value: localStorageMock,
-  writable: true
+  writable: true,
 });
 Object.defineProperty(globalThis, 'window', {
   value: {
     addEventListener: () => {},
     removeEventListener: () => {},
-    dispatchEvent: () => {}
+    dispatchEvent: () => {},
   },
-  writable: true
+  writable: true,
 });
 
 describe('useWatchlist', () => {
@@ -56,14 +56,20 @@ describe('useWatchlist', () => {
 
   it('toggles items correctly (idempotency)', () => {
     const { toggleItem, isSaved } = useWatchlist();
-    const item = { kind: 'contract' as const, id: '123', title: 'Test', subtitle: 'Sub', href: '/' };
+    const item = {
+      kind: 'contract' as const,
+      id: '123',
+      title: 'Test',
+      subtitle: 'Sub',
+      href: '/',
+    };
 
     // Initially not saved
     expect(isSaved('contract', '123')).toBe(false);
 
     // Toggle on
     toggleItem(item);
-    
+
     // We need to get a fresh reference because `items` from the first call is a stale closure in our mock
     expect(useWatchlist().isSaved('contract', '123')).toBe(true);
     expect(useWatchlist().items).toHaveLength(1);
