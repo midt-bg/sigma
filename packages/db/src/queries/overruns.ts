@@ -16,8 +16,9 @@
 // "ballooned" identical. The route adds one more bounded query for the shown contracts' annex history.
 
 import { cleanName, entityName } from '@sigma/shared';
-import { CPV_SECTORS, cpvBucket, type CpvBucket } from '@sigma/config';
+import { cpvBucket, cpvDivision, type CpvBucket } from '@sigma/config';
 import { authoritySlug, companySlug, contractSlug } from './identity';
+import { sectorRef } from './sectors';
 
 export interface OverrunRow {
   contractId: string;
@@ -162,6 +163,29 @@ const DELTA = '(c.current_value_eur - c.signing_value_eur)';
 const PCT = '(c.current_value_eur - c.signing_value_eur) / c.signing_value_eur';
 const SIGNING = 'c.signing_value_eur';
 
+// Median overrun pct via a window-function pass over the overrun subset: returns the one (odd n) or
+// two (even n) middle rows by pct and averages them. One row out — bounded. Defined once and reused by
+// both the lean /analytics headline (as a scalar subquery) and the full /overruns analytics query, so
+// the two views can never disagree on how the median is computed.
+const MEDIAN_PCT_SQL = `SELECT COALESCE(AVG(pct), 0) AS median_pct
+       FROM (
+         SELECT pct,
+                ROW_NUMBER() OVER (ORDER BY pct) AS rn,
+                COUNT(*) OVER () AS n
+         FROM (
+           SELECT ${PCT} AS pct FROM contracts c WHERE ${OVERRUN_WHERE}
+         )
+       )
+       WHERE rn IN ((n + 1) / 2, (n + 2) / 2)`;
+
+// One CPV-division label rule, shared by the leaderboard row mapping and the sector breakdown so they
+// never disagree. `division` must already be the canonical 2-digit key (run it through cpvDivision):
+// the curated short/official label when catalogued, else a „Сектор NN" stand-in, else „Без код" for a
+// missing code. Mirrors sectors.ts (`s.short ?? s.label`) — the single source of division labels.
+function sectorLabel(division: string): string {
+  return sectorRef(division)?.short ?? (division ? `Сектор ${division}` : 'Без код');
+}
+
 interface RawRow {
   contract_id: string;
   subject: string;
@@ -242,7 +266,7 @@ function mapOverrunRows(raw: RawRow[]): OverrunRow[] {
     .map((r) => {
       const deltaEur = r.current_eur - r.signing_eur;
       const bidderName = cleanName(r.bidder_name);
-      const division = (r.cpv_code ?? '').slice(0, 2);
+      const division = cpvDivision(r.cpv_code);
       return {
         contractId: r.contract_id,
         contractSlug: contractSlug(r.contract_id),
@@ -258,7 +282,7 @@ function mapOverrunRows(raw: RawRow[]): OverrunRow[] {
         deltaEur,
         pct: deltaEur / r.signing_eur,
         annexCount: r.annex_count,
-        sectorLabel: SECTOR_LABELS.get(division) ?? (division ? `Сектор ${division}` : 'Без код'),
+        sectorLabel: sectorLabel(division),
         cpvCode: r.cpv_code ?? null,
         cpvDescription: r.cpv_description ?? null,
         procedureType: r.procedure_type ?? null,
@@ -305,10 +329,13 @@ export async function getOverrunAnnexes(
        JOIN tenders t ON t.id = c.tender_id
        JOIN amendments am ON am.unp = t.source_id AND am.contract_number = c.contract_number
        WHERE c.id IN (${placeholders})
-       ORDER BY c.id, am.published_at, am.natural_key`,
+       ORDER BY c.id, am.published_at IS NULL, am.published_at, am.natural_key`,
     )
     .bind(...contractIds)
     .all<AnnexRaw>();
+  // NB: the ORDER BY pushes undated amendments LAST (`am.published_at IS NULL` sorts 0 before 1)
+  // before tie-breaking on natural_key. SQLite would otherwise sort NULL first, so groupAnnexes
+  // (overruns-inspector.ts) would number an undated annex „Анекс 1" ahead of earlier dated ones.
 
   return res.results.map((r) => {
     const valueBeforeEur = annexEur(r.value_before, r.currency);
@@ -328,8 +355,6 @@ export async function getOverrunAnnexes(
   });
 }
 
-const SECTOR_LABELS = new Map(CPV_SECTORS.map((s) => [s.code, s.short ?? s.label]));
-
 // Lean corpus headline for the /analytics landing card — just the two figures the card shows
 // (total ballooning € + median growth ratio), in ONE statement. Mirrors the definitions in
 // getOverrunsAnalytics (same OVERRUN_WHERE, same DELTA / median window) so the landing never
@@ -344,14 +369,7 @@ export async function getOverrunsHeadline(db: D1Database): Promise<OverrunsHeadl
     .prepare(
       `SELECT
          (SELECT COALESCE(SUM(${DELTA}), 0) FROM contracts c WHERE ${OVERRUN_WHERE}) AS total_overrun_eur,
-         (SELECT COALESCE(AVG(pct), 0) FROM (
-            SELECT pct,
-                   ROW_NUMBER() OVER (ORDER BY pct) AS rn,
-                   COUNT(*) OVER () AS n
-            FROM (
-              SELECT ${PCT} AS pct FROM contracts c WHERE ${OVERRUN_WHERE}
-            )
-          ) WHERE rn IN ((n + 1) / 2, (n + 2) / 2)) AS median_pct`,
+         (${MEDIAN_PCT_SQL}) AS median_pct`,
     )
     .first<{ total_overrun_eur: number; median_pct: number }>();
   return {
@@ -436,24 +454,8 @@ export async function getOverrunsAnalytics(
          FROM contracts c`,
       )
       .first<CorpusRaw>(),
-    // Median overrun pct via a window-function pass over the overrun subset; returns the one (odd n)
-    // or two (even n) middle rows and averages them. One row out — bounded.
-    db
-      .prepare(
-        `SELECT COALESCE(AVG(pct), 0) AS median_pct
-         FROM (
-           SELECT pct,
-                  ROW_NUMBER() OVER (ORDER BY pct) AS rn,
-                  COUNT(*) OVER () AS n
-           FROM (
-             SELECT ${PCT} AS pct
-             FROM contracts c
-             WHERE ${OVERRUN_WHERE}
-           )
-         )
-         WHERE rn IN ((n + 1) / 2, (n + 2) / 2)`,
-      )
-      .first<{ median_pct: number }>(),
+    // Median overrun pct — the shared window-function pass (see MEDIAN_PCT_SQL). One row out, bounded.
+    db.prepare(MEDIAN_PCT_SQL).first<{ median_pct: number }>(),
     // By-authority: total overrun €, the SUM of signing values (the РАСТЕЖ denominator → real
     // €-weighted growth, not avg-of-pcts), and the contract count. ONE bounded GROUP BY, LIMIT-ed.
     db
@@ -474,7 +476,8 @@ export async function getOverrunsAnalytics(
       .all<AuthorityRaw>(),
     // By-sector (CPV division): € at risk (SUM delta), the SUM of signing (growth denominator) and the
     // contract count. ONE bounded GROUP BY over OVERRUN_WHERE rows, ordered by risk desc, LIMIT-ed. The
-    // works/goods/services bucket is resolved in JS from @sigma/config (no per-row CASE in SQL).
+    // raw 2-char prefix is re-keyed to the canonical division and the label + works/goods/services
+    // bucket are resolved in JS from @sigma/config (cpvDivision/cpvBucket — no per-row CASE in SQL).
     db
       .prepare(
         `SELECT substr(t.cpv_code, 1, 2) AS division,
@@ -511,17 +514,31 @@ export async function getOverrunsAnalytics(
     growth: r.signing_eur > 0 ? r.total_overrun_eur / r.signing_eur : 0,
   }));
 
-  const bySector: OverrunSectorRow[] = sectorRes.results.map((r) => {
-    const code = (r.division ?? '').trim();
-    return {
+  // Re-key the SQL groups by the CANONICAL division (cpvDivision) — the same normalization the label
+  // and bucket lookups use — and fold any raw prefixes that collapse onto the same division together.
+  // This keeps SQL and JS in lock-step: the division a row groups under is exactly the one its label
+  // and works/goods/services bucket resolve from, so a dirty CPV prefix can't split a real division
+  // between „Без код"/„other" and its proper sector. Re-sort + slice keeps the secLimit honest post-merge.
+  const sectorAgg = new Map<string, { riskEur: number; signingEur: number; contracts: number }>();
+  for (const r of sectorRes.results) {
+    const code = cpvDivision(r.division);
+    const acc = sectorAgg.get(code) ?? { riskEur: 0, signingEur: 0, contracts: 0 };
+    acc.riskEur += r.risk_eur;
+    acc.signingEur += r.signing_eur;
+    acc.contracts += r.count;
+    sectorAgg.set(code, acc);
+  }
+  const bySector: OverrunSectorRow[] = [...sectorAgg.entries()]
+    .map(([code, a]) => ({
       code,
-      label: SECTOR_LABELS.get(code) ?? (code ? `Сектор ${code}` : 'Без код'),
+      label: sectorLabel(code),
       bucket: cpvBucket(code),
-      riskEur: r.risk_eur,
-      growth: r.signing_eur > 0 ? r.risk_eur / r.signing_eur : 0,
-      contracts: r.count,
-    };
-  });
+      riskEur: a.riskEur,
+      growth: a.signingEur > 0 ? a.riskEur / a.signingEur : 0,
+      contracts: a.contracts,
+    }))
+    .sort((x, y) => y.riskEur - x.riskEur)
+    .slice(0, secLimit);
 
   return { corpus, rows: mapOverrunRows(rowsRes.results), byAuthority, bySector };
 }

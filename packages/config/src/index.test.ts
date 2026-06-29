@@ -4,6 +4,7 @@ import {
   CPV_SECTORS,
   categoryForDivision,
   cpvBucket,
+  cpvDivision,
   procedureGroup,
 } from './index';
 
@@ -68,6 +69,36 @@ describe('cpvBucket', () => {
     for (const sector of CPV_SECTORS) {
       expect(['works', 'goods', 'services']).toContain(cpvBucket(sector.code));
     }
+  });
+
+  it('never leaves a catalogued division on the default „other" bucket', () => {
+    // Guard: a future service division added to CPV_SECTORS but not to CPV_BUCKET_SERVICES would
+    // silently fall through to „goods" — but one added entirely outside the bucket sets (none today)
+    // would land on „other". Every catalogued code MUST resolve to a real bucket, never the fallback.
+    for (const sector of CPV_SECTORS) {
+      expect(cpvBucket(sector.code)).not.toBe('other');
+    }
+  });
+});
+
+describe('cpvDivision', () => {
+  it('normalises a full code, a 2-digit division and a check-digit suffix to the division', () => {
+    expect(cpvDivision('45233120-6')).toBe('45');
+    expect(cpvDivision('45')).toBe('45');
+    expect(cpvDivision('15800000')).toBe('15');
+  });
+
+  it('strips non-digits before taking the prefix so dirty codes still resolve', () => {
+    expect(cpvDivision('4-5233110')).toBe('45'); // stray separator inside the prefix
+    expect(cpvDivision(' 45')).toBe('45'); // leading whitespace
+    expect(cpvDivision('45.23')).toBe('45');
+  });
+
+  it('returns an empty string for a missing or digit-less code', () => {
+    expect(cpvDivision(null)).toBe('');
+    expect(cpvDivision(undefined)).toBe('');
+    expect(cpvDivision('')).toBe('');
+    expect(cpvDivision('—')).toBe('');
   });
 });
 

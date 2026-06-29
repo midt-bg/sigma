@@ -29,6 +29,7 @@ import {
   STATUS_LABEL,
   type AnnexEntry,
 } from '../lib/overruns-inspector';
+import { withParams } from '../lib/filters';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -220,7 +221,7 @@ function OverrunScatter({
       viewBox={`0 0 ${geo.width} ${geo.height}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label="Облак на раздуването: всеки договор по процентно нарастване (хоризонтално, логаритмично) спрямо абсолютно раздуване в евро (вертикално); размерът на кръга расте с броя анекси. Конкретните стойности са в класацията вляво."
+      aria-label="Облак на раздуването: всеки договор по процентно нарастване (хоризонтално) спрямо раздуване в евро (вертикално); размерът на кръга расте с броя анекси. Конкретните стойности са в класацията вляво."
       className="ov-scatter-svg"
     >
       <line
@@ -285,7 +286,7 @@ function OverrunScatter({
         fontSize={8.5}
         fill={INK_SOFT}
       >
-        % нарастване (лог) →
+        % нарастване →
       </text>
       {geo.points.map((p) => {
         const isSel = p.id === selectedId;
@@ -453,7 +454,7 @@ function OverrunsDashboard({
               Облак на <em>раздуването</em>
             </>
           }
-          note="хоризонтално % растеж (лог) · вертикално € раздуване · размер = брой анекси · кликни точка за детайли"
+          note="хоризонтално % растеж · вертикално € раздуване · размер = брой анекси · кликни точка за детайли"
         />
         <div className="ov-figure-grid">
           <div className="ov-panel ov-scatter-panel" ref={scatterFs.ref}>
@@ -550,7 +551,7 @@ function SectorSection({ rows }: { rows: OverrunSectorRow[] }) {
             Раздуване по <em>сектори</em>
           </>
         }
-        note="агрегиран растеж и сума под риск по CPV-раздел"
+        note="общ растеж и сума под риск по сектор (CPV)"
       />
       <div className="ov-panel ov-sector-list-panel">
         <ul className="ov-bucket-legend" aria-label="Легенда на секторите">
@@ -563,7 +564,7 @@ function SectorSection({ rows }: { rows: OverrunSectorRow[] }) {
         </ul>
         <table className="ov-sector-table">
           <caption className="sr-only">
-            Раздуване по CPV-сектори: код, сектор, агрегиран растеж (сума раздуване / сума при
+            Раздуване по сектори (CPV): код, сектор, общ растеж (сума раздуване / сума при
             сключване) и обща сума под риск.
           </caption>
           <thead>
@@ -624,7 +625,7 @@ function AuthoritySection({ rows }: { rows: OverrunAuthorityRow[] }) {
           <table className="ov-auth-table">
             <caption className="sr-only">
               Възложители, подредени по обща сума на раздуването: брой договори, дял от най-големия
-              възложител и агрегиран растеж (сума раздуване / сума при сключване).
+              възложител и общ растеж (сума раздуване / сума при сключване).
             </caption>
             <thead>
               <tr>
@@ -671,13 +672,8 @@ export default function Overruns({ loaderData }: Route.ComponentProps) {
   const [sp] = useSearchParams();
   const navigating = useNavigation().state !== 'idle';
 
-  const sortHref = (next: 'absolute' | 'percent') => {
-    const params = new URLSearchParams(sp);
-    if (next === 'absolute') params.delete('by');
-    else params.set('by', 'percent');
-    const qs = params.toString();
-    return qs ? `/overruns?${qs}` : '/overruns';
-  };
+  const sortHref = (next: 'absolute' | 'percent') =>
+    `/overruns${withParams(sp, { by: next === 'percent' ? 'percent' : null })}`;
 
   return (
     <>
@@ -691,7 +687,8 @@ export default function Overruns({ loaderData }: Route.ComponentProps) {
               Раздуване на <em>договорите</em>
             </h1>
             <p className="ov-mast-lede">
-              Договори, чиято стойност след анекси надхвърля стойността при сключване. Списъкът
+              Договори, чиято стойност след анекси (допълнителни споразумения след подписването)
+              надхвърля стойността при сключване. Списъкът
               подрежда по мащаб, облакът показва къде стои всеки договор, а таблицата — кои
               институции раздуват най-много.
             </p>
@@ -727,11 +724,11 @@ export default function Overruns({ loaderData }: Route.ComponentProps) {
                 {corpus.count ? formatGrowthFactor(corpus.medianPct) : '—'}
               </dd>
               <dt className="ov-hk-l">
-                МЕДИАНА РАСТЕЖ
+                ТИПИЧЕН РАСТЕЖ
                 <MetricInfo
                   align="end"
-                  title="Медиана растеж"
-                  summary="Типичното нарастване: половината договори растат повече, половината по-малко — устойчиво на единични екстремни случаи."
+                  title="Типичен растеж"
+                  summary="Типичното нарастване: половината договори растат повече, половината по-малко — една шепа екстремни случаи не може да го изкриви."
                   readout={
                     corpus.count
                       ? `Средното е ${signedPct(corpus.avgPct)} — изкривено нагоре от малкото огромни раздувания.`
@@ -842,8 +839,8 @@ export default function Overruns({ loaderData }: Route.ComponentProps) {
 
         <p className="small muted ov-methodology">
           Раздуването е разликата между сегашната стойност и стойността при сключване, само за
-          договори с поне един анекс и потвърдени стойности. Растежът на сектор/институция е
-          €-претеглен (сума раздуване / сума при сключване), не средно на процентите. Нарастването
+          договори с поне един анекс и потвърдени стойности. Растежът на сектор/институция е спрямо
+          общата сума (сума раздуване / сума при сключване), а не средно на процентите. Нарастването
           не означава непременно нередност — увеличения по анекси може да са напълно законни
           (индексация на цени, разширен обхват, непредвидени дейности). Виж{' '}
           <Link to="/methodology#glossary">методологията</Link> за дефинициите.
