@@ -215,9 +215,15 @@ Production деплой **изисква човешко одобрение**. Е
 
 ```bash
 REVIEWER_TEAMS="midt-bg/maintainers" ./scripts/provision-environments.sh   # required reviewers + v* tag policy
-# или с конкретни хора:
+# или с конкретни хора (≥2 за реален four-eyes):
 REVIEWER_USERS="alice,bob" ./scripts/provision-environments.sh
 ```
+
+> **Provision-вайте с екип, не с личен акаунт.** Прод деплоят минава през **група**
+> (`REVIEWER_TEAMS="midt-bg/maintainers"`), а не през конкретен личен reviewer. Единичен потребител
+> концентрира одобрението на прод деплоя в едно лице и може да **заключи** деплоя, ако този човек е и
+> инициаторът (`prevent_self_review` пази само инициатора — виж four-eyes уговорката по-долу).
+> Примерът с единичен `REVIEWER_USERS` е само илюстрация на синтаксиса — не provision-вайте прод с него.
 
 Скриптът ([scripts/provision-environments.sh](../scripts/provision-environments.sh)) задава на
 `production`:

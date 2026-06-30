@@ -33,11 +33,11 @@
 #   configure at least two individual reviewers (or a team with ≥2 members), so no single person
 #   can both initiate and approve a production deploy.
 #
-# Usage:
-#   REVIEWER_USERS="alice,bob" ./scripts/provision-environments.sh
-#   REVIEWER_TEAMS="midt-bg/maintainers" ./scripts/provision-environments.sh
-#   WAIT_TIMER=10 REVIEWER_USERS="alice,bob" ./scripts/provision-environments.sh
-#   REPO=other-org/other-repo REVIEWER_USERS="alice" ./scripts/provision-environments.sh
+# Usage (prefer a TEAM over individuals so prod approval isn't concentrated in one person):
+#   REVIEWER_TEAMS="midt-bg/maintainers" ./scripts/provision-environments.sh   # recommended
+#   REVIEWER_USERS="alice,bob" ./scripts/provision-environments.sh             # ≥2 for real four-eyes
+#   WAIT_TIMER=10 REVIEWER_TEAMS="midt-bg/maintainers" ./scripts/provision-environments.sh
+#   REPO=other-org/other-repo REVIEWER_TEAMS="other-org/maintainers" ./scripts/provision-environments.sh
 #
 set -euo pipefail
 
