@@ -50,10 +50,14 @@ describe('evaluateRiskIndicators', () => {
     });
 
     it('does not trigger HIGH_MARKUP when deltaPct is exactly 20% or less', () => {
-      const contract1 = buildContract({ value: { deltaPct: 0.20, suspect: false } });
+      const contract1 = buildContract({ value: { deltaPct: 0.2, suspect: false } });
       const contract2 = buildContract({ value: { deltaPct: 0.19, suspect: false } });
-      expect(evaluateRiskIndicators(contract1)).not.toContainEqual(expect.objectContaining({ type: 'high_markup' }));
-      expect(evaluateRiskIndicators(contract2)).not.toContainEqual(expect.objectContaining({ type: 'high_markup' }));
+      expect(evaluateRiskIndicators(contract1)).not.toContainEqual(
+        expect.objectContaining({ type: 'high_markup' }),
+      );
+      expect(evaluateRiskIndicators(contract2)).not.toContainEqual(
+        expect.objectContaining({ type: 'high_markup' }),
+      );
     });
   });
 
