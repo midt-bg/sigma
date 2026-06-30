@@ -78,3 +78,105 @@
 - [`deploy.md`](deploy.md) — деплой към Cloudflare и оперативна сигурност.
 - [`spec/ai-assistant.md`](spec/ai-assistant.md) — спецификация на планирания AI асистент.
 - [`README.md`](../README.md) на репозиторието и [`../AGENTS.md`](../AGENTS.md) — общ преглед и работни конвенции.
+
+# ADR-0002 — Политика за поверителност на машинно-четим изход (Issue #173)
+
+- **Статус:** Прието
+- **Обхват:** Повърхностите на СИГМА, които връщат машинно-четимо тяло — JSON записите на договорите (`/contracts/:id.json`) и CSV експортите (`/contracts.csv`, `/companies.csv`, `/authorities.csv`). Не засяга HTML рендирането на профилите, което вече имаше собствен `noindex` път.
+- **Препратки:** [Issue #173](https://github.com/midt-bg/sigma/issues/173) · [`apps/web/app/routes/privacy.tsx`](../apps/web/app/routes/privacy.tsx) (`# natural-person-data`) · ADR-0001 §3 (модел на сигурност)
+
+> Решението за маскиране на идентификаторите на едноличните търговци и физическите лица в машинно-четимия изход е продуктово-политическо и инженерно, не правно. GDPR и ЗЗЛД се третират като контекст за вземане на решение, не като юридическо тълкуване — окончателната оценка е задължение на поддържащите проекта.
+
+## Контекст
+
+Итерация 1 на СИГМА публикува идентификатори на изпълнителите на обществени поръчки в три форми: (1) HTML профили на фирми (по ЕИК), (2) JSON запис на договора (`/contracts/:id.json`) за връзка от HTML-а, и (3) CSV експорти (`/contracts.csv`, `/companies.csv`, `/authorities.csv`) за журналисти и изследователи.
+
+HTML профилът на фирма вече прилагаше `noindex` мета таг за записи, които се разпознават като едноличен търговец или физическо лице (`isSingleNaturalPersonProfile` в [`apps/web/app/routes/company.tsx`](../apps/web/app/routes/company.tsx) — *inline*, преди ADR-0002). Логиката имаше две слабости:
+
+1. **Дупка между HTML и машинно-четим изход.** Търсачките и бот-индексаторите, които не изпълняват HTML мета таговете, можеха да достигнат до JSON и CSV записите и да индексират същите естествено-личностни идентификатори (ЕИК, пълно име на ЕТ). Това противоречи на политиката `noindex` от страна на HTML.
+2. **Дублирана логика на откриване.** Разпознаването „ЕТ …" беше вградено в route-а като `isSingleNaturalPersonProfile` (inline), а друга негова разновидност (`isNaturalPersonProfileName`) живееше в [`packages/shared/src/format.ts`](../packages/shared/src/format.ts). Без единен предикат всяка нова машинно-четима повърхност щеше да копира правилата, а при разминаване на копията — да изтече идентификатор.
+
+Допълнителен фактор: edge кешът на CSV отговорите (`Cache-Control: public, max-age=3600`) съдържа пълните байтове на стрийма. Ако едно и също тяло се сервираше и за юридически лица, и за ЕТ без маскиране, кешът щеше да замрази изтичането — което означава, че маскирането трябва да се случи **преди** записа в R2.
+
+## Решение
+
+Приета е политика **`noindex` плюс маскиране**, с общ предикат от [`packages/shared/src/format.ts`](../packages/shared/src/format.ts):
+
+1. **Единен предикат.** Премахваме inline `isSingleNaturalPersonProfile` от `apps/web/app/routes/company.tsx` и заменяме с `isNaturalPersonBidder(name, legalForm)` от `packages/shared/src/format.ts`. Предикатът комбинира два сигнала — `legal_form LIKE 'ЕТ%'` (включително латинското `ET`, разширените форми `ЕДНОЛИЧЕН ТЪРГОВЕЦ`, `SOLE TRADER`, `INDIVIDUAL`) и водещия `ЕТ ` / `ET ` суфикс в името (който вече беше в `isNaturalPersonProfileName`). HTML `noindex` мета тагът, CSV маскирането и JSON маскирането споделят **единствено** този предикат — няма дублирани хардкоднати правила в route-овете.
+2. **`X-Robots-Tag: noindex` на всяка машинно-четима повърхност.** Маркерът се задава на четирите клона на [`apps/web/app/lib/csv-export.ts`](../apps/web/app/lib/csv-export.ts) (`markCsvCache`, динамичният `Response`, 200/206 `Response`, 304 `Response`) и на loader-а на [`apps/web/app/routes/contract.json.tsx`](../apps/web/app/routes/contract.json.tsx) само когато записът е маскиран. Маркерът е допълнение към `robots.txt` (който вече забраняваше `/*.csv`) — покрива crawler-и и инструменти, които четат HTTP-хедъри, но не и `robots.txt`.
+3. **Маскиране на ЕИК и оригиналното име.** За разпознати естествено лица / еднолични търговци:
+   - **CSV:** `contractor_eik`/`eik` се замества с празен низ, `contractor`/`name` се замества със символа `MASKED_NATURAL_PERSON_LABEL` от [`packages/shared/src/format.ts:197`](../packages/shared/src/format.ts) (стойност `„Частно лице"` — без запетая/кавичка, за да не се нуждае от CSV-escape).
+   - **JSON:** `bidder.eik` → `null`, `bidder.name` → `MASKED_NATURAL_PERSON_LABEL`, `bidder.displayName` → `MASKED_NATURAL_PERSON_LABEL`, `sourceNames.bidder` → `MASKED_NATURAL_PERSON_LABEL`. Останалите полета (`bidder.slug`, агрегатите `totalContracts`/`totalEur`, `kind`, `settlement`) остават непроменени — `slug`-ът не е PII, а е URL фрагмент.
+4. **Символът `MASKED_NATURAL_PERSON_LABEL` е единичен източник на истината.** Експортиран от `@sigma/shared` (баррелът [`packages/shared/src/index.ts`](../packages/shared/src/index.ts)). Тестовете го импортират по символ, не по литерален текст — преименуване на етикета (напр. на „Физическо лице") няма да счупи нито един тест.
+5. **Юридическите лица не се пипат.** `legal_form` `АД`/`ООД`/`ЕАД`/`ЕООД` остават видими както в CSV, така и в JSON. Само когато предикатът върне `true` се прилага маската.
+
+## Последствия
+
+- **Кеш политиката остава.** `Cache-Control: public, max-age=3600` за CSV и `public, s-maxage=3600, stale-while-revalidate=86400` за JSON остават непроменени — маскираните байтове са безопасни за кеширане, защото не съдържат естествено-личностни идентификатори. Edge кешът е приоритет за DDoS устойчивостта (ADR-0001 §3) и отпадането му би влошило публичната достъпност на експортите.
+- **R2 CSV кешът се регенерира при първото презареждане след тази промяна.** Ключът на обекта е `csv/<route>/<freshnessVersion>` ([`apps/web/app/lib/csv-export.ts`](../apps/web/app/lib/csv-export.ts)). Следващото bulk презареждане (през `scripts/import.mjs`) инкрементира `freshnessVersion` и новите обекти се записват вече маскирани; старите се презаписват естествено (без миграция).
+- **Брой маскирани редове е равен на броя флагнати от предиката.** Всеки ред в CSV стрийма се оценява независимо от `isNaturalPersonBidder(name, legalForm)`; маскирането е per-row, не per-batch. Контролната проверка за това е в `packages/db/src/queries/contracts.test.ts` (тестът „masks the contractor and clears contractor_eik when legal_form is a sole-trader form (ЕТ)") и в `packages/db/src/queries/companies.test.ts` (тестът „writes MASKED_NATURAL_PERSON_LABEL + empty EIK for an ЕТ row in the rollup branch").
+- **HTML профилът не е засегнат.** `noindex` мета тагът за естествени лица остава непроменен — предикатът е същият, но маркерът вече е в общата логика, не в inline код.
+- **Подаване на документацията надолу по веригата.** В [`apps/web/app/routes/privacy.tsx`](../apps/web/app/routes/privacy.tsx) е добавена секция `# natural-person-data`, която описва подхода за потребители и журналисти: кои идентификатори се маскират, кои остават, и причината (`noindex` плюс етикет вместо истинското име).
+- **`authorities.csv` получава само `X-Robots-Tag: noindex`.** Възложителите в корпуса винаги имат попълнен ЕИК (публични органи) — не се прилага маскиране на тялото. Маркерът е политическа последователност (еднаква политика за всички CSV), не техническо маскиране.
+- **Стримовете не се рефакторират.** Контрактите `streamContractsCsv`/`streamCompaniesCsv`/`streamAuthoritiesCsv` остават същите; маскирането е вътрешен branch в per-row цикъла, който разчита на новата `b.legal_form` колона в SELECT-а.
+
+## Засегнати повърхности
+
+### Споделена логика
+
+- [`packages/shared/src/format.ts`](../packages/shared/src/format.ts) — нови `isNaturalPersonBidder(name, legalForm)` и `MASKED_NATURAL_PERSON_LABEL`; запазен `isNaturalPersonProfileName` за backwards compatibility (все още се използва от `streamCompanySitemap`).
+- [`packages/shared/src/format.test.ts`](../packages/shared/src/format.test.ts) — нови тестове за предиката, етикета и „shared predicate surface" (truth-table блок).
+
+### DB заявки (CSV стрийм + JSON getContract)
+
+- [`packages/db/src/queries/contracts.ts`](../packages/db/src/queries/contracts.ts) — `streamContractsCsv` проектира `b.legal_form AS bidder_legal_form` и прилага маскиращия branch в per-row цикъла (редове ~436, ~450-453).
+- [`packages/db/src/queries/companies.ts`](../packages/db/src/queries/companies.ts) — `streamCompaniesCsv` и двата клона на `source()` (`company_totals` rollup и base-aggregation CTE) проектират `b.legal_form`; per-row цикълът маскира `eik`/`name`.
+- [`packages/db/src/queries/details.ts`](../packages/db/src/queries/details.ts) — `getContract` проектира `b.legal_form AS bidder_legal_form` (съществуващият `JOIN bidders b` се преизползва); `ContractDetailRow` и типът на return-а се разширяват с `bidder_legal_form: string | null`.
+- [`packages/db/src/queries/contracts.test.ts`](../packages/db/src/queries/contracts.test.ts) — нов `describe('streamContractsCsv masking', ...)` блок (4 теста).
+- [`packages/db/src/queries/companies.test.ts`](../packages/db/src/queries/companies.test.ts) — нов `describe('streamCompaniesCsv masking', ...)` блок (4 теста).
+
+### Web route-ове
+
+- [`apps/web/app/routes/contract.json.tsx`](../apps/web/app/routes/contract.json.tsx) — добавя чистия хелпер `maskContractForPrivacy(record, bidderLegalForm): ContractRecord` (модулен export, за тестваемост) и извиква `X-Robots-Tag: noindex` само когато маскирането е приложило (reference-equality гейт). 404 клонът и `Cache-Control` остават непроменени.
+- [`apps/web/app/routes/contract.json.test.ts`](../apps/web/app/routes/contract.json.test.ts) — нов тестов файл (3 теста за хелпера + 4 за loader-а, общо 7).
+- [`apps/web/app/routes/company.tsx`](../apps/web/app/routes/company.tsx) — премахва inline `isSingleNaturalPersonProfile`; HTML `noindex` сега идва от `isNaturalPersonBidder`.
+- [`apps/web/app/routes/contracts.csv.tsx`](../apps/web/app/routes/contracts.csv.tsx), [`apps/web/app/routes/companies.csv.tsx`](../apps/web/app/routes/companies.csv.tsx), [`apps/web/app/routes/authorities.csv.tsx`](../apps/web/app/routes/authorities.csv.tsx) — без промяна на кода; маркерът идва от `servedCsvExport`.
+
+### Web помощен код
+
+- [`apps/web/app/lib/csv-export.ts`](../apps/web/app/lib/csv-export.ts) — `X-Robots-Tag: noindex` се задава в `markCsvCache` (споделения път) и в двата директни `new Response(...)` сайта (304 и 200/206). Съществуващите `Cache-Control` и `Content-Disposition` остават.
+- [`apps/web/app/lib/csv-export.test.ts`](../apps/web/app/lib/csv-export.test.ts) — нов `describe('servedCsvExport privacy', ...)` блок (5 теста: MISS/HIT/dynamic за трите CSV повърхности + body+Cache-Control проверка).
+
+### Потребителска документация
+
+- [`apps/web/app/routes/privacy.tsx`](../apps/web/app/routes/privacy.tsx) — нова секция `# natural-person-data` след съществуващия `# data` блок. Обяснява маскирането на естествено-личностни идентификатори и `noindex` политиката в машинно-четимия изход.
+
+## Доказателство
+
+### Тестове — маскиране и noindex (тези файлове са цитирани в success criteria на Issue #173)
+
+| Файл | Тестове | Покритие |
+| --- | --- | --- |
+| [`packages/shared/src/format.test.ts`](../packages/shared/src/format.test.ts) | `isNaturalPersonBidder`, `MASKED_NATURAL_PERSON_LABEL`, `shared predicate surface — single source of truth for the noindex / masking decision` | Предикатът и етикетът — единственият източник на истината. |
+| [`packages/db/src/queries/contracts.test.ts`](../packages/db/src/queries/contracts.test.ts) | `streamContractsCsv masking` (4 теста) | Per-row CSV маскиране: ЕТ маскира, ООД запазва, leading-ЕТ хевристика, консорциум ДЗЗД запазва `kind`. |
+| [`packages/db/src/queries/companies.test.ts`](../packages/db/src/queries/companies.test.ts) | `streamCompaniesCsv masking` (4 теста) | Двата клона на `source()` (rollup + base-aggregation) маскират ЕТ и запазват ООД. |
+| [`apps/web/app/lib/csv-export.test.ts`](../apps/web/app/lib/csv-export.test.ts) | `servedCsvExport privacy` (5 теста) | `X-Robots-Tag: noindex` на MISS/HIT/dynamic за трите CSV повърхности; тялото съдържа етикета и изключва оригиналното име; `Cache-Control` остава `public, max-age=3600`. |
+| [`apps/web/app/routes/contract.json.test.ts`](../apps/web/app/routes/contract.json.test.ts) | `maskContractForPrivacy` (3 теста) + `contract.json loader` (4 теста) | Чист хелпер + интеграция през loader-а: ЕТ маскира и получава `noindex`, АД преминава без `noindex`, 404 не е засегнат, `Cache-Control` е `public, s-maxage=3600, stale-while-revalidate=86400`. |
+
+### Финални exit code-ове от `ralph/verification-baseline.md`
+
+Източник: [`ralph/verification-baseline.md`](../ralph/verification-baseline.md) (секция „Post-edit", записана СЛЕД приключване на T-001 … T-012).
+
+| Команда | Exit code | Резюме |
+| --- | --- | --- |
+| `pnpm typecheck` | 0 | 7 turbo tasks успешни; widened return type на `getContract` и `maskContractForPrivacy` хелперът са ковариантни с предишните форми. |
+| `pnpm --filter @sigma/shared test` | 0 | 2 файла, 42 теста минават (включително новите за `isNaturalPersonBidder`, `MASKED_NATURAL_PERSON_LABEL` и shared-predicate surface). |
+| `pnpm --filter @sigma/web test` | 0 | 31 файла, 296 теста минават (включително новите 5 в `csv-export.test.ts` и новите 7 в `contract.json.test.ts`). |
+| `pnpm --filter @sigma/db test` | 1 | 25 файла, 174 теста, 171 минават, 3 **предварително съществуващи** failure-а (не са въведени от тази промяна): `integrity-checks.test.ts` (rollup-reconciliation) и два timeout-а в `refresh-slice.test.ts`. Маскиращите файлове (`contracts.test.ts`, `companies.test.ts`) минават изцяло. |
+| `pnpm lint` | 1 | 5 **предварително съществуващи** prettier warning-а във файлове извън обхвата (`RiskIndicators.tsx`, `riskLogic.test.ts`, `companies.test.ts`, `companies.ts`, `contract.json.test.ts`). `docs/architecture.md` е в `.prettierignore`. |
+
+Нетният delta спрямо чистия baseline (преди прилагане на T-001 … T-012): **+11 нови теста, 0 нови failure-а** (преди: 160 passed / 3 failed; след: 171 passed / 3 failed). Промяната не влошава нито един предварително съществуващ failure, както изисква success criteria.
+
+### Оперативна бележка
+
+При първото bulk презареждане след deploy-а на тази промяна R2 обектите под `csv/<route>/<freshnessVersion>` ще бъдат презаписани с вече маскирани байтове. До този момент — ако някой направи `wrangler r2 object get` — може да види оригиналните CSV файлове в кеша. Това е приемливо защото (1) файловете са в `robots.txt` + `X-Robots-Tag: noindex` и не се индексират, и (2) следващото презареждане ще ги подмени естествено.

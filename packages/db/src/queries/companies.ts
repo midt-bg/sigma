@@ -4,6 +4,11 @@
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
+import {
+  cleanName,
+  isNaturalPersonBidder,
+  MASKED_NATURAL_PERSON_LABEL,
+} from '@sigma/shared';
 import { csvCell } from './csv';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -56,7 +61,7 @@ const COUNT_BUCKETS: Record<string, string> = lookup({
 
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 
-const COLS = `bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, primary_sector, eu_eur, first_date, last_date`;
+const COLS = `bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, primary_sector, eu_eur, first_date, last_date, legal_form`;
 
 function normalizeEu(eu: unknown): 'eu' | 'national' | null {
   return eu === 'eu' || eu === 'national' ? eu : null;
@@ -71,7 +76,11 @@ function needsBase(p: CompanyListParams): boolean {
  * Keep consumed filter keys in sync with COMPANY_FILTER_KEYS and companyFilterSignature().
  */
 function source(p: CompanyListParams): { from: string; params: unknown[] } {
-  if (!needsBase(p)) return { from: 'company_totals', params: [] };
+  if (!needsBase(p))
+    return {
+      from: `(SELECT ct.*, b.legal_form AS legal_form FROM company_totals AS ct LEFT JOIN bidders AS b ON b.id = ct.bidder_id)`,
+      params: [],
+    };
   const where: string[] = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   if (p.sectors?.length) {
@@ -88,6 +97,7 @@ function source(p: CompanyListParams): { from: string; params: unknown[] } {
   const single = p.sectors?.length === 1 ? p.sectors[0]! : null;
   const from = `(
     SELECT b.id AS bidder_id, b.name, b.kind, b.ownership_kind, b.eik_normalized AS eik, b.eik_valid, b.settlement,
+           b.legal_form AS legal_form,
            SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts, COUNT(DISTINCT t.authority_id) AS authorities,
            ${single ? '?' : 'NULL'} AS primary_sector,
            SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END) AS eu_eur,
@@ -256,10 +266,13 @@ export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Respon
       }
       let block = '';
       for (const r of results) {
+        const isNatural = isNaturalPersonBidder(cleanName(r.name), r.legal_form);
+        const name = isNatural ? MASKED_NATURAL_PERSON_LABEL : r.name;
+        const eik = isNatural ? '' : r.eik;
         block +=
           [
-            r.eik,
-            r.name,
+            eik,
+            name,
             r.kind,
             r.settlement,
             r.won_eur,

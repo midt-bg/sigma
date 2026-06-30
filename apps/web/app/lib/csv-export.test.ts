@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MASKED_NATURAL_PERSON_LABEL } from '@sigma/shared';
 import { DATA_SOURCE } from './dataSource';
 import { isUnfilteredCsvExport, servedCsvExport } from './csv-export';
 
@@ -252,6 +253,8 @@ function csvBytesResponse(body: Uint8Array): Response {
   });
 }
 
+type CsvRoute = Parameters<typeof servedCsvExport>[0]['route'];
+
 function serve(
   r2: InMemoryR2,
   stream: () => Response,
@@ -260,12 +263,14 @@ function serve(
     params?: object;
     sort?: string;
     refreshedAt?: string | null | undefined;
+    route?: CsvRoute;
   } = {},
 ): Promise<Response> {
+  const route = opts.route ?? 'contracts';
   return servedCsvExport({
     env: envWith(r2, opts.refreshedAt),
-    request: opts.request ?? new Request('http://local/contracts.csv'),
-    route: 'contracts',
+    request: opts.request ?? new Request(`http://local/${route}.csv`),
+    route,
     params: opts.params ?? { sort: opts.sort ?? 'value-desc' },
     stream,
   });
@@ -470,5 +475,74 @@ describe('servedCsvExport', () => {
     expect(r2.createMultipartUpload).toHaveBeenCalledTimes(1);
     expect(r2.lastUploadPartCallCount()).toBeGreaterThanOrEqual(2);
     expect((await response.arrayBuffer()).byteLength).toBe(largeBody.byteLength);
+  });
+});
+
+describe('servedCsvExport privacy', () => {
+  it('sets X-Robots-Tag: noindex on a MISS response (contracts)', async () => {
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse());
+
+    const response = await serve(r2, stream, { route: 'contracts' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Csv-Cache')).toBe('MISS');
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+  });
+
+  it('sets X-Robots-Tag: noindex on a HIT response (companies)', async () => {
+    const r2 = new InMemoryR2();
+    const primeStream = vi.fn(() => csvResponse());
+    await (await serve(r2, primeStream, { route: 'companies' })).text();
+
+    const hitStream = vi.fn(() => csvResponse('from db\n'));
+    const response = await serve(r2, hitStream, { route: 'companies' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Csv-Cache')).toBe('HIT');
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(await response.text()).toBe(CSV_BODY);
+    expect(hitStream).not.toHaveBeenCalled();
+  });
+
+  it('sets X-Robots-Tag: noindex on a dynamic (filtered) response (authorities)', async () => {
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse('filtered\n'));
+
+    const response = await serve(r2, stream, {
+      route: 'authorities',
+      params: { sort: 'value-desc', q: 'foo' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Csv-Cache')).toBe('dynamic');
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(await response.text()).toBe('filtered\n');
+    expect(r2.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('preserves the masking label and excludes the verbatim source name when the streamer emits masked bytes (contracts)', async () => {
+    const VERBATIM_NAME = 'ЕТ ДРИФТ - НИКОЛАЙ КИРОВ';
+    const maskedBody = `id,name,eik\nrow-1,${MASKED_NATURAL_PERSON_LABEL},\n`;
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse(maskedBody));
+
+    const response = await serve(r2, stream, { route: 'contracts' });
+
+    const text = await response.text();
+    expect(text).toContain(MASKED_NATURAL_PERSON_LABEL);
+    expect(text).not.toContain(VERBATIM_NAME);
+    expect(text).toBe(maskedBody);
+  });
+
+  it('preserves Cache-Control: public, max-age=3600 when the streamer emits a row with masked sole-trader identifiers (contracts)', async () => {
+    const maskedBody = `eik,name\n,${MASKED_NATURAL_PERSON_LABEL}\n`;
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse(maskedBody));
+
+    const response = await serve(r2, stream, { route: 'contracts' });
+
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=3600');
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
   });
 });

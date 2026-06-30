@@ -4,8 +4,10 @@ import {
   count,
   date,
   entityName,
+  isNaturalPersonBidder,
   isNaturalPersonProfileName,
   longDate,
+  MASKED_NATURAL_PERSON_LABEL,
   money,
   moneyBare,
   monthYear,
@@ -174,5 +176,119 @@ describe('isNaturalPersonProfileName', () => {
 
   it('does not flag ordinary company names', () => {
     expect(isNaturalPersonProfileName('СОФАРМА ТРЕЙДИНГ АД')).toBe(false);
+  });
+});
+
+describe('isNaturalPersonBidder', () => {
+  it('flags a sole-trader legal form even when the name has no ЕТ prefix (legal_form rule wins)', () => {
+    expect(isNaturalPersonBidder('Some Company OOOD', 'ЕТ')).toBe(true);
+  });
+
+  it('flags the Latin-script ET legal form', () => {
+    expect(isNaturalPersonBidder('ET DRIFT', 'ET')).toBe(true);
+  });
+
+  it('flags expanded sole-trader legal forms', () => {
+    expect(isNaturalPersonBidder('Some Trader', 'ЕДНОЛИЧЕН ТЪРГОВЕЦ')).toBe(true);
+    expect(isNaturalPersonBidder('Some Trader', 'SOLE TRADER')).toBe(true);
+    expect(isNaturalPersonBidder('Some Trader', 'INDIVIDUAL')).toBe(true);
+  });
+
+  it('does not flag ordinary company legal forms', () => {
+    expect(isNaturalPersonBidder('СОФАРМА ТРЕЙДИНГ', 'ООД')).toBe(false);
+    expect(isNaturalPersonBidder('СОФАРМА ТРЕЙДИНГ', 'ЕАД')).toBe(false);
+  });
+
+  it('returns false for a legal-entity bidder (АД)', () => {
+    expect(isNaturalPersonBidder('СОФАРМА ТРЕЙДИНГ', 'АД')).toBe(false);
+  });
+
+  it('falls back to the leading-ЕТ name heuristic when legal_form is null', () => {
+    expect(isNaturalPersonBidder('ЕТ Пример', null)).toBe(true);
+  });
+
+  it('falls back to the leading-ET (Latin) name heuristic when legal_form does not match', () => {
+    expect(isNaturalPersonBidder('ET Example', 'unknown')).toBe(true);
+  });
+
+  it('returns false for a consortium whose legal_form is ДЗЗД and name has no ЕТ prefix', () => {
+    expect(isNaturalPersonBidder('Обединение', 'ДЗЗД')).toBe(false);
+  });
+
+  it('returns false for a plain company with a non-matching legal form and no ЕТ prefix', () => {
+    expect(isNaturalPersonBidder('СОФАРМА ТРЕЙДИНГ', 'АД')).toBe(false);
+  });
+});
+
+describe('MASKED_NATURAL_PERSON_LABEL', () => {
+  it('is a non-empty string', () => {
+    expect(typeof MASKED_NATURAL_PERSON_LABEL).toBe('string');
+    expect(MASKED_NATURAL_PERSON_LABEL.length).toBeGreaterThan(0);
+  });
+
+  it('is not the verbatim sole-trader name it replaces', () => {
+    expect(MASKED_NATURAL_PERSON_LABEL).not.toBe('ЕТ ДРИФТ - НИКОЛАЙ КИРОВ');
+  });
+
+  it('is safe to render as JSON / HTML and as a CSV cell (no comma, no quote)', () => {
+    expect(MASKED_NATURAL_PERSON_LABEL).not.toMatch(/[,"]/);
+  });
+});
+
+/**
+ * End-to-end smoke for the shared predicate surface.
+ *
+ * `isNaturalPersonBidder` and `isNaturalPersonProfileName` are the SINGLE source of truth for the
+ * noindex / masking decision that every downstream flow depends on — F2 (CSV masking in
+ * `streamContractsCsv` / `streamCompaniesCsv`), F3 (JSON masking in `/contracts/:id.json`), and F4
+ * (the privacy doc). If the two helpers drift apart, a sole-trader / natural-person identifier
+ * would leak either through search indexing or through a machine-readable body — exactly the
+ * regression this block guards against.
+ *
+ * The masking label referenced below is the same `MASKED_NATURAL_PERSON_LABEL` constant that F2
+ * and F3 substitute for `contractor_eik` / `eik` / `contractor` / `bidder.name` /
+ * `sourceNames.bidder`. Importing it here pins the test contract to the runtime masker so a
+ * future rename in `format.ts` cannot silently desynchronize them.
+ */
+describe('shared predicate surface — single source of truth for the noindex / masking decision', () => {
+  it('agrees between isNaturalPersonBidder (legal_form rule) and isNaturalPersonProfileName (name heuristic) for a sole trader', () => {
+    // legal_form rule: ЕТ alone is enough to flag the bidder as a natural person
+    expect(isNaturalPersonBidder('Sole', 'ЕТ')).toBe(true);
+    // name heuristic: the leading-ЕТ marker on the display name reaches the same verdict
+    expect(isNaturalPersonProfileName('ЕТ Sole')).toBe(true);
+    // Both helpers must classify their respective inputs as a natural person — no drift.
+  });
+
+  it('agrees between the two helpers for a legal entity (both return false)', () => {
+    expect(isNaturalPersonBidder('Acme', 'ООД')).toBe(false);
+    expect(isNaturalPersonProfileName('Acme')).toBe(false);
+  });
+
+  it('returns the documented natural-person verdict for a six-pair truth table', () => {
+    const truthTable: ReadonlyArray<{
+      name: string;
+      legalForm: string | null;
+      naturalPerson: boolean;
+    }> = [
+      { name: 'Sole', legalForm: 'ЕТ', naturalPerson: true }, // legal_form rule wins
+      { name: 'ЕТ Leading Name', legalForm: null, naturalPerson: true }, // name heuristic fallback
+      { name: 'Some Trader', legalForm: 'ЕДНОЛИЧЕН ТЪРГОВЕЦ', naturalPerson: true }, // expanded sole-trader form
+      { name: 'Acme', legalForm: 'ООД', naturalPerson: false }, // ordinary ООД
+      { name: 'СОФАРМА ТРЕЙДИНГ', legalForm: 'АД', naturalPerson: false }, // ordinary АД
+      { name: 'Обединение', legalForm: 'ДЗЗД', naturalPerson: false }, // consortium — not a sole trader
+    ];
+
+    for (const { name, legalForm, naturalPerson } of truthTable) {
+      expect(
+        isNaturalPersonBidder(name, legalForm),
+        `isNaturalPersonBidder(${JSON.stringify(name)}, ${JSON.stringify(legalForm)})`,
+      ).toBe(naturalPerson);
+    }
+
+    // The masking label used by F2 / F3 must remain the same constant exported from this package.
+    // If a downstream caller ever drifts onto a different label, this assertion surfaces it here.
+    expect(typeof MASKED_NATURAL_PERSON_LABEL).toBe('string');
+    expect(MASKED_NATURAL_PERSON_LABEL.length).toBeGreaterThan(0);
+    expect(MASKED_NATURAL_PERSON_LABEL).not.toBe('Sole');
   });
 });

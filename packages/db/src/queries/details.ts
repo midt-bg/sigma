@@ -416,12 +416,13 @@ interface ContractDetailRow {
   bidder_kind: 'company' | 'consortium';
   bidder_eik: string | null;
   bidder_settlement: string | null;
+  bidder_legal_form: string | null;
 }
 
 export async function getContract(
   db: D1Database,
   contractId: string,
-): Promise<ContractRecord | null> {
+): Promise<(ContractRecord & { bidder_legal_form: string | null }) | null> {
   const r = await db
     .prepare(
       `SELECT c.id, c.tender_id, c.contract_subject, c.contract_number, c.document_number, c.lot_id,
@@ -437,7 +438,7 @@ export async function getContract(
               t.authority_id, a.name AS authority_name, a.type_group AS authority_type_group,
               a.settlement AS authority_settlement,
               c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, b.eik_normalized AS bidder_eik,
-              b.settlement AS bidder_settlement,
+              b.settlement AS bidder_settlement, b.legal_form AS bidder_legal_form,
               (SELECT COUNT(*) FROM contracts c2 WHERE c2.tender_id = c.tender_id) AS tender_awards
        FROM contracts c
        JOIN tenders t ON t.id = c.tender_id
@@ -640,5 +641,9 @@ export async function getContract(
     subcontractor,
   };
 
-  return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };
+  return {
+    ...detail,
+    sourceNames: { authority: r.authority_name, bidder: r.bidder_name },
+    bidder_legal_form: r.bidder_legal_form,
+  };
 }
