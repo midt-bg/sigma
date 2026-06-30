@@ -13,14 +13,18 @@
 
 ## Решение
 
-Всеки договор носи `value_flag` (`ok` | `review` | `annex_suspect` | `value_suspect`) и `date_flag`
-(`ok` | `signed_after_publication`). Каноничната сумирана колона е **`amount_eur`**, която е
-**`NULL` точно когато `value_flag = 'value_suspect'`**. Оттук — едно правило за всички суми:
+Всеки договор носи `value_flag` (`ok` | `review` | `value_low` | `value_suspect` | `annex_suspect`)
+и `date_flag` (`ok` | `signed_after_publication`). Каноничната сумирана колона е **`amount_eur`** —
+попълнена за **всичките пет** флага (`value_suspect` се repair-ва до процедурната оценка,
+`annex_suspect` пада към `signing`/`current`). Оттук — едно правило за всички суми:
 
-> Сумирай само `amount_eur`; предикатът `amount_eur IS NOT NULL` е единната стойностна база за
-> rollup-ите и за страниците. Подозрителните се **изнасят** (брояч), никога не се сумират.
+> Сумирай само `amount_eur` с предиката `amount_eur IS NOT NULL` — единната стойностна база за
+> rollup-ите и за страниците. `amount_eur` е `NULL` (и така изключен) само когато няма надеждна EUR
+> стойност: чуждовалутен ред без покрит ECB курс, `value_suspect` без процедурна оценка, или ред без
+> `signing`/`current` стойност.
 
-Пълната семантика на флаговете и EUR полетата е в [`core-scope.md`](../core-scope.md).
+`home_totals.suspect` е отделен KPI — брой на `value_suspect` редовете, които сами се сумират — а не
+множеството, изключено от сумите. Пълната семантика е в [`core-scope.md`](../core-scope.md).
 
 ## Последствия
 

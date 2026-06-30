@@ -123,9 +123,9 @@ CREATE TABLE contracts (
   bids_received    INTEGER,
   contract_kind    TEXT,                   -- Доставки / Услуги / Строителство
   awarded_to_group INTEGER,                -- this AWARD went to an обединение (per-contract, distinct from bidders.is_consortium)
-  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | annex_suspect | value_suspect (data-quality verdict)
+  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | value_low | value_suspect | annex_suspect (data-quality verdict; assigned in scripts/normalize-raw.sql)
   date_flag        TEXT NOT NULL DEFAULT 'ok',  -- ok | signed_after_publication (non-destructive date-quality verdict)
-  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL = excluded (value_suspect)
+  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; populated for all flags (value_suspect repaired to the procedure estimate); NULL only when no trustworthy EUR figure (FX-rateless foreign / value_suspect w/o estimate / no signing+current)
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
@@ -202,7 +202,7 @@ CREATE TABLE home_totals (
   value_eur    REAL NOT NULL,             -- SUM(amount_eur) over those same rows (count/sum cover one set)
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
-  suspect      INTEGER NOT NULL,          -- value_suspect rows (NULL amount_eur): surfaced, never summed
+  suspect      INTEGER NOT NULL,          -- COUNT of value_suspect rows (data-quality KPI); these ARE summed (repaired) — NOT the NULL-amount_eur rows that are excluded from sums
   first_date   TEXT,
   last_date    TEXT,
   as_of        TEXT,                       -- data_freshness 'admin' as_of (latest real contract date)
