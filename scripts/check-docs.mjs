@@ -20,7 +20,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Where source-level doc references can live. Excludes node_modules,
 // build output and the lockfile by construction (we never descend into them).
-const SCAN_ROOTS = ['README.md', 'AGENTS.md', 'CONTRIBUTING.md', 'docs', 'packages', 'apps', 'scripts'];
+const SCAN_ROOTS = [
+  'README.md',
+  'AGENTS.md',
+  'CONTRIBUTING.md',
+  'docs',
+  'packages',
+  'apps',
+  'scripts',
+];
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.turbo', '.wrangler']);
 const TEXT_EXT = /\.(md|ts|tsx|js|mjs|cjs|jsx|sql|json|yml|yaml)$/;
 const DOCS_REF = /\bdocs\/[A-Za-z0-9_./-]+\.md\b/g;
@@ -88,10 +96,13 @@ function main() {
   const orphans = findOrphanDocs();
 
   for (const d of dangling) console.error(`dangling docs ref: ${d.ref} (in ${d.file})`);
-  for (const o of orphans) console.error(`orphan doc (not linked from docs/README.md or docs/adr/README.md): ${o}`);
+  for (const o of orphans)
+    console.error(`orphan doc (not linked from docs/README.md or docs/adr/README.md): ${o}`);
 
   if (dangling.length || orphans.length) {
-    console.error(`\ncheck-docs: ${dangling.length} dangling ref(s), ${orphans.length} orphan doc(s).`);
+    console.error(
+      `\ncheck-docs: ${dangling.length} dangling ref(s), ${orphans.length} orphan doc(s).`,
+    );
     process.exit(1);
   }
   console.log('check-docs: ok — all docs refs resolve and every doc is indexed.');
