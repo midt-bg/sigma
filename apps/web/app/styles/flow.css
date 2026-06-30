@@ -1,0 +1,168 @@
+/* Flow / Sankey diagram — scroll frame, SVG tokens, controls, tooltip. */
+
+/* Scroll frame — keeps the Sankey legible on narrow screens by letting it
+   keep a minimum width and scroll horizontally instead of shrinking the
+   labels into illegibility. On wide screens the SVG just fills the column. */
+.flow-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  /* faint edge fades hint that there is more to scroll */
+  scrollbar-width: thin;
+}
+.flow-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  font: 13px var(--font-sans);
+}
+
+/* Mobile scroll affordance — hidden on wide viewports */
+.flow-scroll-hint {
+  display: none;
+  margin: 0 0 var(--s-3);
+  font: 500 10.5px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+@media (max-width: 760px) {
+  .flow-scroll .flow-svg {
+    min-width: 760px;
+  }
+  .flow-scroll-hint {
+    display: block;
+  }
+}
+@media (max-width: 600px) {
+  /* The Sankey is unusable at phone widths even with horizontal scroll — hide
+     it and lean on the top-flows table below, which already reflows to cards. */
+  .flow-scroll,
+  .flow-scroll-hint {
+    display: none;
+  }
+  /* Stack the filter controls into a clean vertical list on phones */
+  .flow-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-3);
+  }
+  .flow-controls label {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .flow-controls select {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 60%;
+  }
+}
+.flow-svg .node {
+  fill: var(--ink);
+}
+.flow-svg .node.authority {
+  fill: var(--ink);
+}
+.flow-svg .node.company {
+  fill: var(--ink-mid);
+}
+.flow-svg .node.person {
+  fill: var(--accent);
+}
+.flow-svg .node-label {
+  fill: var(--ink);
+  font-size: 12px;
+}
+.flow-svg .node-label.small {
+  fill: var(--ink-soft);
+  font-size: 11px;
+}
+.flow-svg .node-label.is-name {
+  font-weight: 700;
+}
+.flow-svg .cap {
+  font-size: 11px;
+  font-weight: 700;
+}
+.flow-svg .node-link {
+  cursor: pointer;
+}
+.flow-svg .link {
+  fill: var(--ink-mid);
+  fill-opacity: 0.2;
+}
+.flow-svg .link.flagged {
+  fill: var(--accent);
+  fill-opacity: 0.3;
+}
+.flow-svg .link:hover,
+.flow-svg .link.flagged:hover {
+  fill-opacity: 0.55;
+  cursor: pointer;
+}
+
+.flow-controls {
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  align-items: center;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  padding: var(--s-3) 0;
+  margin-bottom: var(--s-5);
+  font: 12px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-mid);
+  text-transform: uppercase;
+  background: transparent;
+}
+.flow-controls label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.flow-controls select {
+  padding: 4px var(--s-2);
+  font: 12px var(--font-mono);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.flow-controls .toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  cursor: pointer;
+  color: var(--ink-mid);
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.flow-controls .toggle.on {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.flow-tooltip {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  padding: var(--s-3) 0;
+  margin-top: var(--s-3);
+  font: 14px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.flow-tooltip strong {
+  display: block;
+  margin-bottom: 4px;
+  font: 500 11px/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
