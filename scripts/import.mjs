@@ -146,7 +146,9 @@ function assertFxPopulatedSqlite(dbPath) {
   );
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
-    console.error(`!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`);
+    console.error(
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+    );
     process.exit(1);
   }
 }
@@ -246,7 +248,10 @@ function runRefreshSliceBatches() {
 
 function runWorkBackfill() {
   const rawWorkDb = arg('work-db');
-  const workDb = rawWorkDb === true ? resolve(root, 'data/work/backfill.sqlite') : resolve(root, String(rawWorkDb));
+  const workDb =
+    rawWorkDb === true
+      ? resolve(root, 'data/work/backfill.sqlite')
+      : resolve(root, String(rawWorkDb));
   const workDir = dirname(workDb);
   mkdirSync(workDir, { recursive: true });
   if (existsSync(workDb)) rmSync(workDb, { force: true });
@@ -259,16 +264,29 @@ function runWorkBackfill() {
   if (catchup) {
     const plan = resolveCatchupPlan();
     loadFlags = rangeFlags(plan.from, plan.to);
-    console.log(`==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`);
+    console.log(
+      `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`,
+    );
   }
 
   // Derive intermediate-SQL filenames from the work-DB basename so two backfills sharing a work
   // directory (e.g. a convergence harness running full + windowed loads side by side) never clobber
   // each other's load SQL.
   const stem = basename(workDb, '.sqlite');
-  run('node', ['scripts/load-eop.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, `${stem}.eop-load.sql`)}`, ...loadFlags]);
+  run('node', [
+    'scripts/load-eop.mjs',
+    '--apply',
+    `--work-db=${workDb}`,
+    `--out=${resolve(workDir, `${stem}.eop-load.sql`)}`,
+    ...loadFlags,
+  ]);
   sqliteFile(workDb, resolve(root, 'scripts/derive-amendments.sql'));
-  run('node', ['scripts/load-fx.mjs', '--apply', `--work-db=${workDb}`, `--out=${resolve(workDir, `${stem}.fx-load.sql`)}`]);
+  run('node', [
+    'scripts/load-fx.mjs',
+    '--apply',
+    `--work-db=${workDb}`,
+    `--out=${resolve(workDir, `${stem}.fx-load.sql`)}`,
+  ]);
   sqliteFile(workDb, resolve(root, 'scripts/load-nuts.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/seed-state-owned.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/normalize-raw.sql'));

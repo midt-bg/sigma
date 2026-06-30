@@ -1,8 +1,20 @@
 ---
-version: "1.0"
-description: "Collaborative design spec workflow — discuss ideas, then capture agreed decisions in a markdown file"
-argument-hint: "<specify goal.md location and/or brief goal definition>"
-allowed-tools: ["Bash(*)", "Read(*)", "Write(*.md)", "Edit(*.md)", "Glob(*)", "Grep(*)", "Task(*)", "WebFetch(*)", "WebSearch(*)", "mcp__*"]
+version: '1.0'
+description: 'Collaborative design spec workflow — discuss ideas, then capture agreed decisions in a markdown file'
+argument-hint: '<specify goal.md location and/or brief goal definition>'
+allowed-tools:
+  [
+    'Bash(*)',
+    'Read(*)',
+    'Write(*.md)',
+    'Edit(*.md)',
+    'Glob(*)',
+    'Grep(*)',
+    'Task(*)',
+    'WebFetch(*)',
+    'WebSearch(*)',
+    'mcp__*',
+  ]
 ---
 
 # Define — Collaborative Design Spec Workflow
@@ -53,21 +65,27 @@ When the target spec is in the refactoring docs folder, use this format:
 ## Agent Implementation Prompt — [Short Title]
 
 ### Context
+
 [1-3 paragraphs: what is being replaced/added and. Include prerequisites.]
 
 ### Problem
+
 [P1, P2, ... — numbered problems with code snippets showing the current issue.
- Skip this section if there is no existing problem to fix.]
+Skip this section if there is no existing problem to fix.]
 
 ### Design — [Design Name]
+
 [Core design with formulas, code blocks, and rationale.
- Use #### subsections for distinct components.]
+Use #### subsections for distinct components.]
 
 ### Phases / Timing / other design tables
+
 [Tables for phase transitions, parameter changes, etc. as needed.]
 
 ### Changes
+
 [Numbered list. Each item:]
+
 1. **[Verb] [Component]**
    (file: `relative/path.py`, optional line hint)
    - Bullet points describing what to do
@@ -75,6 +93,7 @@ When the target spec is in the refactoring docs folder, use this format:
    - Parameters and their types/defaults
 
 ### Key files
+
 - NEW: file.py — one-line description
 - MODIFY: file.py — one-line description
 - DELETE: file.py — one-line description
@@ -82,10 +101,12 @@ When the target spec is in the refactoring docs folder, use this format:
 - REFERENCE: paper.tex line N
 
 ### Verification
+
 [Numbered list: unit tests, backtest commands, diagnostic logging checks.]
 ```
 
 Key conventions:
+
 - File numbering: `N_short_name.md` (e.g. `10_unified_quoter.md`)
 - Sub-items use `N_M` (e.g. `3_1_net_hedging.md`, `3_2_gross_hedging.md`)
 - The doc is an **agent implementation prompt** — written so an agent can

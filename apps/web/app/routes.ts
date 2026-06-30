@@ -4,6 +4,7 @@ export default [
   index('routes/home.tsx'),
   route('search', 'routes/search.tsx'),
   route('search/suggest', 'routes/search.suggest.tsx'),
+  route('assistant/chat', 'routes/assistant.chat.tsx'),
   route('flows', 'routes/flows.tsx'),
   route('network', 'routes/network.tsx'),
   route('trends', 'routes/trends.tsx'),

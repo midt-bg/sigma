@@ -78,7 +78,9 @@ export function refreshSliceStatementGroups(refreshSliceSql: string): RefreshSli
   }
   flush();
 
-  return groups.length > 0 ? groups : [{ name: currentName, statements: splitSqlStatements(refreshSliceSql) }];
+  return groups.length > 0
+    ? groups
+    : [{ name: currentName, statements: splitSqlStatements(refreshSliceSql) }];
 }
 
 const TRANSIENT_STAGING_TABLES = [
@@ -101,7 +103,9 @@ function touchesTransientStaging(statement: string): boolean {
 }
 
 export function transientStagingStatements(workStagingSchemaSql: string): string[] {
-  return splitSqlStatements(workStagingSchemaSql).filter((statement) => touchesTransientStaging(statement));
+  return splitSqlStatements(workStagingSchemaSql).filter((statement) =>
+    touchesTransientStaging(statement),
+  );
 }
 
 export function dropTransientStagingStatements(): string[] {

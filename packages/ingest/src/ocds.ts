@@ -356,33 +356,35 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
     if (!c.id) return [];
     const sup = supplierOf(rel, ctx, c);
     const amd = (c.amendments ?? []).slice(-1)[0] ?? null;
-    return [{
-      ...metaBase(meta),
-      dataset_year: boundedYear(meta.year),
-      dataset_variant: 'OCDS',
-      seq_no: null,
-      document_number: rel.id ?? null,
-      contract_number: c.id ?? null,
-      contract_date: dateOnly(c.dateSigned),
-      published_at: ctx.published_at,
-      unp: rel.ocid ?? null,
-      authority_eik: ctx.authority_eik,
-      authority_name: ctx.authority_name,
-      procurement_subject: ctx.tender.title ?? null,
-      contract_kind: ctx.contract_kind,
-      eu_funded: null,
-      contract_subject: c.title || sup.awardTitle || null,
-      contractor_eik: sup.eik,
-      contractor_name: sup.name,
-      value_before: null,
-      value_after: finiteNum(c.value?.amount),
-      value_delta: null,
-      currency: isoCurrency(c.value?.currency),
-      description: amd?.description || null,
-      reason: amd?.rationale || null,
-      circumstances: null,
-      sme: null,
-    }];
+    return [
+      {
+        ...metaBase(meta),
+        dataset_year: boundedYear(meta.year),
+        dataset_variant: 'OCDS',
+        seq_no: null,
+        document_number: rel.id ?? null,
+        contract_number: c.id ?? null,
+        contract_date: dateOnly(c.dateSigned),
+        published_at: ctx.published_at,
+        unp: rel.ocid ?? null,
+        authority_eik: ctx.authority_eik,
+        authority_name: ctx.authority_name,
+        procurement_subject: ctx.tender.title ?? null,
+        contract_kind: ctx.contract_kind,
+        eu_funded: null,
+        contract_subject: c.title || sup.awardTitle || null,
+        contractor_eik: sup.eik,
+        contractor_name: sup.name,
+        value_before: null,
+        value_after: finiteNum(c.value?.amount),
+        value_delta: null,
+        currency: isoCurrency(c.value?.currency),
+        description: amd?.description || null,
+        reason: amd?.rationale || null,
+        circumstances: null,
+        sme: null,
+      },
+    ];
   });
 }
 

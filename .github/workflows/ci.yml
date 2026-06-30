@@ -21,9 +21,9 @@ jobs:
       # works on the personal main repo and the org mirror alike, with no license.
       - name: Secret scan (gitleaks)
         env:
-          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_VERSION: '8.30.1'
           # sha256 of gitleaks_8.30.1_linux_x64.tar.gz from the upstream release checksums.txt
-          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -40,9 +40,14 @@ jobs:
       - name: Dependency audit
         run: pnpm audit --audit-level=high
       - name: Lint
-        continue-on-error: true
-        # TODO: flip to blocking after a dedicated repo-wide `pnpm format` clears the
-        # pre-existing prettier debt (mocks/, legacy scripts, root docs).
+        # Blocking: the repo-wide `pnpm format` pass cleared the pre-existing prettier debt, so
+        # `pnpm lint` (prettier --check .) now gates merges and keeps the tree formatted (#88).
         run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+      # Run regardless of a Lint failure so a formatting nit doesn't mask the type/test signal — all
+      # three checks report in one run. `!cancelled()` still skips them if the run is cancelled.
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm typecheck
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: pnpm test

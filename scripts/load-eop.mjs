@@ -721,7 +721,10 @@ function applyChunkFiles(chunkFiles, remote, workDb, persistTo) {
     for (const file of chunkFiles) {
       process.stderr.write(`==> applying ${file} to ${workDb}
 `);
-      execFileSync('sqlite3', ['-bail', workDb], { input: readFileSync(file), stdio: ['pipe', 'inherit', 'inherit'] });
+      execFileSync('sqlite3', ['-bail', workDb], {
+        input: readFileSync(file),
+        stdio: ['pipe', 'inherit', 'inherit'],
+      });
     }
     return;
   }
@@ -821,9 +824,21 @@ async function main() {
 
   if (apply) {
     for (const c of cats) {
-      if (loadedObjectsByCat[c] > 0) applyChunkFiles(chunkFilesByCat[c], remote, workDb && String(workDb), persistTo && String(persistTo));
+      if (loadedObjectsByCat[c] > 0)
+        applyChunkFiles(
+          chunkFilesByCat[c],
+          remote,
+          workDb && String(workDb),
+          persistTo && String(persistTo),
+        );
     }
-    if (!noOcds && loadedObjectsByCat.ocds > 0) applyChunkFiles(chunkFilesByCat.ocds, remote, workDb && String(workDb), persistTo && String(persistTo));
+    if (!noOcds && loadedObjectsByCat.ocds > 0)
+      applyChunkFiles(
+        chunkFilesByCat.ocds,
+        remote,
+        workDb && String(workDb),
+        persistTo && String(persistTo),
+      );
   }
   process.stderr.write(
     `\n==> done: ${JSON.stringify(totals)} objects=${JSON.stringify(loadedObjectsByCat)} skips=${skips.length} failures=${failures.length}\n`,

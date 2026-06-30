@@ -53,15 +53,19 @@ export interface SingleSelectFilters {
 
 /**
  * Single-select explorer filters (sector / year / funding / top) shared by the visual pages
- * (/flows, /competition). A bogus ?sector or ?year is flagged and dropped from the params, so the
- * page can show an explicit empty state instead of silently filtering everything out. `years` is the
- * valid set for the current coverage window.
+ * (/flows, /competition, /map, /trends). A bogus ?sector or ?year is flagged and dropped from the
+ * params, so the page can show an explicit empty state instead of silently filtering everything out.
+ * `years` is the valid set for the current coverage window; omit it on pages with no year filter
+ * (e.g. /trends), where `unknownYear` is then always false.
  */
-export function singleSelectFilters(sp: URLSearchParams, years: string[]): SingleSelectFilters {
+export function singleSelectFilters(
+  sp: URLSearchParams,
+  years: string[] = [],
+): SingleSelectFilters {
   const sector = sp.get('sector');
   const year = sp.get('year');
   const unknownSector = Boolean(sector) && !KNOWN_SECTORS.has(sector!);
-  const unknownYear = Boolean(year) && !years.includes(year!);
+  const unknownYear = years.length > 0 && Boolean(year) && !years.includes(year!);
   const funding = sp.get('funding');
   return {
     sector: unknownSector ? null : sector,
