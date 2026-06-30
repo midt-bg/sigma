@@ -1,0 +1,45 @@
+{
+  "id": "07-flows-authority-bidder",
+  "prompt": "Най-големи потоци възложител → изпълнител",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT authority_name AS authority_name, bidder_name AS bidder_name, won_eur AS won_eur FROM flow_pairs ORDER BY won_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "authority_name": "Община София",
+            "bidder_name": "Строй ЕООД",
+            "won_eur": 800000
+          },
+          {
+            "authority_name": "МРРБ",
+            "bidder_name": "Пътища АД",
+            "won_eur": 600000
+          },
+          {
+            "authority_name": "АПИ",
+            "bidder_name": "Пътища АД",
+            "won_eur": 400000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Потоци възложител → изпълнител",
+    "question": "Най-големи потоци възложител → изпълнител",
+    "blocks": [
+      {
+        "type": "flows",
+        "resultId": "R1",
+        "fromCol": "authority_name",
+        "toCol": "bidder_name",
+        "valueCol": "won_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

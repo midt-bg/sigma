@@ -1,0 +1,64 @@
+{
+  "id": "08-single-authority-totals",
+  "prompt": "Колко договори и на каква стойност има възложител №1?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT COUNT(*) AS contracts, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND t.authority_id = 1",
+      "result": {
+        "rows": [
+          {
+            "contracts": 42,
+            "total_eur": 1234567.5
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Профил на възложител",
+    "question": "Колко договори и на каква стойност има възложител №1?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Брой договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            },
+            "format": "number"
+          },
+          {
+            "label": "Обща стойност (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true,
+    "rollup": {
+      "target": "authority_totals",
+      "grain": {
+        "authority_id": "1"
+      },
+      "aggregate": {
+        "count": 42,
+        "sumEur": 1234567.5
+      },
+      "rollupRow": {
+        "count": 42,
+        "sumEur": 1234567.5
+      }
+    }
+  }
+}

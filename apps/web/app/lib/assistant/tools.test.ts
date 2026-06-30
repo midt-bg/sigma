@@ -8,17 +8,46 @@ import {
   type ToolContext,
 } from './tools';
 
+// A base-`contracts` query that carries BOTH default filters, so it clears the E3 default-filter gate
+// (assert-default-filters.ts). Reused wherever a test needs a valid base-contracts run.
+const CONTRACTS_WITH_DEFAULTS =
+  'SELECT SUM(amount_eur) AS total_eur FROM contracts ' +
+  "WHERE amount_eur IS NOT NULL AND procedure_type != 'неизвестна'";
+
+// A rollup-only query — it never reads base `contracts`, so it BYPASSES the default-filter gate.
+const ROLLUP_QUERY = 'SELECT total_eur AS n FROM sector_totals';
+
 function ctx(
   rows: Record<string, string | number | null>[] = [],
-  opts: { rowsRead?: number; rowsReadBudget?: number; totalAttempts?: number } = {},
+  opts: {
+    rowsRead?: number;
+    rowsReadBudget?: number;
+    totalAttempts?: number;
+    // EXPLAIN-plan rows the mock returns for the opcode guard's `EXPLAIN <sql>` probe. Defaults to a
+    // benign all-allowlisted READ plan so every non-write query passes; override with a write opcode to
+    // exercise the guard's reject path (Unit 8).
+    explainPlan?: { opcode: string }[];
+  } = {},
 ): ToolContext {
+  const explainPlan = opts.explainPlan ?? [
+    { opcode: 'Init' },
+    { opcode: 'ResultRow' },
+    { opcode: 'Halt' },
+  ];
   const db = {
-    prepare(_sql: string) {
+    prepare(sql: string) {
+      // The opcode guard issues a SECOND prepared statement, `EXPLAIN <sql>`, before the real query
+      // (sql-opcode-guard.ts). Branch on it: the EXPLAIN probe returns the (benign or write) plan; the
+      // real query returns the test rows + rows_read meta exactly as before.
+      const isExplain = sql.startsWith('EXPLAIN ');
       return {
         bind() {
           return this;
         },
         async all<T>() {
+          if (isExplain) {
+            return { results: explainPlan as T[], meta: { rows_read: 0, total_attempts: 1 } };
+          }
           return {
             results: rows as T[],
             meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
@@ -38,6 +67,7 @@ describe('the tool registry', () => {
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual([
       'describe_schema',
       'eop_fetch',
+      'reconcile_rollup',
       'run_sql',
       'semantic_search',
       'source_link',
@@ -56,11 +86,7 @@ describe('the tool registry', () => {
 describe('run_sql', () => {
   it('runs a SELECT, retains the result under a handle, and returns a compact view', async () => {
     const c = ctx([{ total_eur: 2124567 }]);
-    const out = await runTool(
-      'run_sql',
-      { sql: 'SELECT SUM(amount_eur) AS total_eur FROM contracts' },
-      c,
-    );
+    const out = await runTool('run_sql', { sql: CONTRACTS_WITH_DEFAULTS }, c);
     expect(out).toContain('R1');
     expect(c.results).toHaveLength(1);
     expect(c.results[0]).toMatchObject({ handle: 'R1', columns: ['total_eur'], rows: [[2124567]] });
@@ -75,8 +101,8 @@ describe('run_sql', () => {
 
   it('accumulates D1 rows_read across the turn (issue #122)', async () => {
     const c = ctx([{ n: 1 }], { rowsRead: 250 });
-    await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
-    await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
+    await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
     expect(c.rowsRead).toBe(500);
   });
 
@@ -84,7 +110,7 @@ describe('run_sql', () => {
     // meta.rows_read is the LAST attempt only; a query D1 auto-retried scanned the table on each attempt.
     // Without the ×total_attempts factor a retried full scan under-bills the Denial-of-Wallet budget.
     const c = ctx([{ n: 1 }], { rowsRead: 100, totalAttempts: 3 });
-    await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
     expect(c.rowsRead).toBe(300); // 100 × 3, not 100
   });
 
@@ -92,9 +118,57 @@ describe('run_sql', () => {
     // Budget 500, each query reports 1000 rows read. The first runs (accumulated 0 < 500) and pushes
     // the turn total to 1000, so the second is refused before it reaches the DB.
     const c = ctx([{ n: 1 }], { rowsRead: 1000, rowsReadBudget: 500 });
-    expect(await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c)).toContain('R1');
-    const refused = await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    expect(await runTool('run_sql', { sql: ROLLUP_QUERY }, c)).toContain('R1');
+    const refused = await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
     expect(refused).toMatch(/прочетени редове/);
+    expect(c.results).toHaveLength(1);
+  });
+});
+
+describe('run_sql default-filter gate (E3, Unit 3)', () => {
+  it('rejects a base-contracts query missing the default filters and retains nothing', async () => {
+    const c = ctx([{ total_eur: 1 }]);
+    const out = await runTool(
+      'run_sql',
+      { sql: 'SELECT SUM(amount_eur) AS total_eur FROM contracts' },
+      c,
+    );
+    expect(out).toMatch(/^Заявката е отхвърлена/);
+    expect(c.results).toHaveLength(0);
+    expect(c.appliedFilterCallout ?? []).toHaveLength(0);
+  });
+
+  it('executes a base-contracts query carrying both defaults and records the applied-filter callout', async () => {
+    const c = ctx([{ total_eur: 2124567 }]);
+    const out = await runTool('run_sql', { sql: CONTRACTS_WITH_DEFAULTS }, c);
+    expect(out).toContain('R1');
+    expect(c.results).toHaveLength(1);
+    expect(c.appliedFilterCallout).toBeDefined();
+    expect(c.appliedFilterCallout!.length).toBeGreaterThan(0);
+  });
+
+  it('leaves a rollup-only query unaffected by the gate (no callout)', async () => {
+    const c = ctx([{ n: 5 }]);
+    const out = await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
+    expect(out).toContain('R1');
+    expect(c.appliedFilterCallout ?? []).toHaveLength(0);
+  });
+});
+
+describe('run_sql opcode guard (Unit 8)', () => {
+  it('rejects when the compiled plan carries a write opcode and does not execute', async () => {
+    const c = ctx([{ n: 1 }], {
+      explainPlan: [{ opcode: 'Init' }, { opcode: 'OpenWrite' }, { opcode: 'Halt' }],
+    });
+    const out = await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
+    expect(out).toMatch(/^Заявката е отхвърлена/);
+    expect(c.results).toHaveLength(0);
+  });
+
+  it('executes when the compiled plan is read-only', async () => {
+    const c = ctx([{ n: 1 }]); // default benign read plan
+    const out = await runTool('run_sql', { sql: ROLLUP_QUERY }, c);
+    expect(out).toContain('R1');
     expect(c.results).toHaveLength(1);
   });
 });
@@ -118,6 +192,52 @@ describe('semantic_search', () => {
       query: async () => ({ matches: [] }),
     } as unknown as NonNullable<ToolContext['vectorize']>;
     expect(await runTool('semantic_search', { query: 'x' }, c)).toMatch(/не е налично/);
+  });
+});
+
+describe('reconcile_rollup (Unit 5)', () => {
+  // R1 = the live aggregate the model computed; R2 = the precomputed rollup figure it must match.
+  function withResults(
+    live: [number, number] = [10, 1000],
+    rollup: [number, number] = [10, 1000],
+  ): ToolContext {
+    const c = ctx();
+    c.results.push({ handle: 'R1', columns: ['cnt', 'sum_eur'], rows: [live] });
+    c.results.push({ handle: 'R2', columns: ['cnt', 'sum_eur'], rows: [rollup] });
+    return c;
+  }
+  const refs = {
+    grain: { division: '45', year: '2024' },
+    aggregate: { resultId: 'R1', row: 0, countCol: 'cnt', sumCol: 'sum_eur' },
+    rollup: { resultId: 'R2', row: 0, countCol: 'cnt', sumCol: 'sum_eur' },
+  };
+
+  it('confirms a matching aggregate against the rollup', async () => {
+    const out = await runTool(
+      'reconcile_rollup',
+      { target: 'sector_totals', ...refs },
+      withResults(),
+    );
+    expect(out).toBe('Съгласувано.');
+  });
+
+  it('surfaces the reconcile error message on a count mismatch', async () => {
+    const out = await runTool(
+      'reconcile_rollup',
+      { target: 'company_totals', ...refs },
+      withResults([11, 1000], [10, 1000]),
+    );
+    expect(out).toMatch(/count mismatch/);
+  });
+
+  it('refuses to reconcile against a home_totals target', async () => {
+    const out = await runTool(
+      'reconcile_rollup',
+      { target: 'home_totals', ...refs },
+      withResults(),
+    );
+    expect(out).toMatch(/^Заявката е отхвърлена/);
+    expect(out).toContain('home_totals');
   });
 });
 
@@ -175,6 +295,39 @@ describe('finalizeReport', () => {
       ctx(),
     );
     expect(out.ok).toBe(false);
+  });
+
+  it('prepends a default-filters callout block when filters were applied this turn (Unit 4)', () => {
+    const c = ctx();
+    c.appliedFilterCallout = ['ред А', 'ред Б'];
+    c.results.push({ handle: 'R1', columns: ['total_eur'], rows: [[1]] });
+    const out = finalizeReport(
+      { title: 't', question: 'q', blocks: [{ type: 'text', md: 'ок' }] },
+      c,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.report.blocks[0]).toEqual({
+        type: 'callout',
+        title: 'Приложени филтри по подразбиране',
+        md: 'ред А ред Б',
+      });
+      expect(out.report.blocks).toHaveLength(2); // callout prepended in front of the text block
+    }
+  });
+
+  it('leaves the report unchanged when no default filters were applied (Unit 4)', () => {
+    const c = ctx();
+    c.results.push({ handle: 'R1', columns: ['total_eur'], rows: [[1]] });
+    const out = finalizeReport(
+      { title: 't', question: 'q', blocks: [{ type: 'text', md: 'ок' }] },
+      c,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.report.blocks).toHaveLength(1);
+      expect(out.report.blocks[0]).toEqual({ type: 'text', md: 'ок' });
+    }
   });
 });
 

@@ -1,0 +1,59 @@
+{
+  "id": "01-top-authorities-spend",
+  "prompt": "Кои са най-големите възложители по похарчени средства?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT a.name AS name, a.id AS authority_id, t.spent_eur AS spent_eur FROM authority_totals t JOIN authorities a ON a.id = t.authority_id ORDER BY t.spent_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "name": "Община София",
+            "authority_id": 1,
+            "spent_eur": 1234567
+          },
+          {
+            "name": "МРРБ",
+            "authority_id": 2,
+            "spent_eur": 987654
+          },
+          {
+            "name": "АПИ",
+            "authority_id": 3,
+            "spent_eur": 456789
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Най-големи възложители по похарчено",
+    "question": "Кои са най-големите възложители по похарчени средства?",
+    "blocks": [
+      {
+        "type": "table",
+        "resultId": "R1",
+        "columns": [
+          {
+            "key": "name",
+            "header": "Възложител",
+            "format": "text",
+            "link": {
+              "kind": "authority",
+              "idCol": "authority_id"
+            }
+          },
+          {
+            "key": "spent_eur",
+            "header": "Похарчено (EUR)",
+            "align": "right",
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

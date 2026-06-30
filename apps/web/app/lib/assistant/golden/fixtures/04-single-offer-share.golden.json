@@ -1,0 +1,50 @@
+{
+  "id": "04-single-offer-share",
+  "prompt": "Какъв е делът на договорите с една оферта?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT SUM(CASE WHEN c.bids_received = 1 THEN c.amount_eur ELSE 0 END) AS single_offer_eur, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна'",
+      "result": {
+        "rows": [
+          {
+            "single_offer_eur": 500000,
+            "total_eur": 2000000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Договори с една оферта",
+    "question": "Какъв е делът на договорите с една оферта?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "С една оферта (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "single_offer_eur"
+            },
+            "format": "money"
+          },
+          {
+            "label": "Общо (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "id": "06-spend-by-region",
+  "prompt": "Разпределение на разходите по област",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT region AS region, SUM(spent_eur) AS value_eur, SUM(contracts) AS contracts FROM authority_totals GROUP BY region ORDER BY value_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "region": "BG411",
+            "value_eur": 5000000,
+            "contracts": 120
+          },
+          {
+            "region": "BG331",
+            "value_eur": 2000000,
+            "contracts": 60
+          },
+          {
+            "region": null,
+            "value_eur": 1000000,
+            "contracts": 30
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по област (NUTS3)",
+    "question": "Разпределение на разходите по област",
+    "blocks": [
+      {
+        "type": "table",
+        "resultId": "R1",
+        "columns": [
+          {
+            "key": "region",
+            "header": "Област",
+            "format": "text"
+          },
+          {
+            "key": "value_eur",
+            "header": "Стойност (EUR)",
+            "align": "right",
+            "format": "money"
+          },
+          {
+            "key": "contracts",
+            "header": "Договори",
+            "align": "right",
+            "format": "number"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

@@ -9,6 +9,7 @@
     "preview": "react-router build && vite preview",
     "deploy": "react-router build && node ../../scripts/wrangler-render.mjs build/server/wrangler.json && wrangler deploy --config build/server/wrangler.deploy.json",
     "test": "vitest run --config vitest.config.ts",
+    "test:golden": "vitest run --config vitest.golden.config.ts",
     "typecheck": "wrangler types && react-router typegen && tsc -b",
     "cf-typegen": "wrangler types"
   },

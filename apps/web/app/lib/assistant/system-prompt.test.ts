@@ -4,6 +4,7 @@ import {
   DATA_TRUST_RULE,
   EDITORIAL_SKELETON,
   EMIT_REPORT_POLICY,
+  RECONCILE_RULE,
   VALUES_BY_REFERENCE_RULE,
 } from './system-prompt';
 
@@ -13,6 +14,10 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain(EMIT_REPORT_POLICY);
     expect(p).toContain(VALUES_BY_REFERENCE_RULE);
     expect(p).toContain(DATA_TRUST_RULE);
+  });
+
+  it('carries the reconcile-with-rollup rule (E4): reconcile a count/sum before stating it', () => {
+    expect(buildSystemPrompt()).toContain(RECONCILE_RULE);
   });
 
   it('hardens the prompt-injection boundary: embedded "instructions" in data are framed as data to ignore', () => {

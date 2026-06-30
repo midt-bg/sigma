@@ -288,4 +288,47 @@ describe('guardSelect', () => {
     expect(ok.ok).toBe(true);
     if (ok.ok) expect(ok.sql).toMatch(/LIMIT 500/);
   });
+
+  // AST-level dangerous-function blocklist. The L1 text blocklist (sql-guard.ts) is word-boundary
+  // based, so DOUBLE-QUOTING the name (`"randomblob"(…)`) slips it — yet SQLite resolves the quoted
+  // identifier as the function and runs it (DoW via memory amplification, exfil, or load_extension RCE).
+  // node-sql-parser normalises `fn(…)` and `"fn"(…)` to the same name, so the name check at the AST
+  // level closes both the quoting bypass and the long-known group_concat/quote/hex read-exfil gap.
+  it('rejects dangerous scalar/aggregate functions regardless of quoting', () => {
+    const blocked = [
+      'SELECT randomblob(1000000000) AS x',
+      'SELECT "randomblob"(1000000000) AS x',
+      "SELECT load_extension('evil') AS x",
+      'SELECT "load_extension"(\'evil\') AS x',
+      'SELECT zeroblob(1000000000) AS x',
+      "SELECT printf('%1000000d', 1) AS x",
+      "SELECT format('%1000000d', 1) AS x",
+      'SELECT group_concat(name) AS x FROM authorities',
+      'SELECT "group_concat"(name) AS x FROM authorities',
+      'SELECT quote(name) AS x FROM authorities',
+      'SELECT hex(name) AS x FROM authorities',
+      // hidden in WHERE / nested, not just the SELECT list
+      "SELECT id FROM authorities WHERE name = quote('x')",
+      'SELECT id FROM authorities WHERE id IN (SELECT hex(name) FROM authorities)',
+    ];
+    for (const sql of blocked) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason, sql).toMatch(/function not allowed/i);
+    }
+  });
+
+  it('still accepts safe scalar/aggregate functions', () => {
+    const allowed = [
+      'SELECT upper(name) AS x FROM authorities',
+      'SELECT substr(name, 1, 3) AS x FROM authorities',
+      'SELECT count(*) AS n FROM authorities',
+      'SELECT sum(amount_eur) AS s FROM contracts WHERE amount_eur IS NOT NULL',
+      'SELECT coalesce(amount_eur, 0) AS a FROM contracts',
+    ];
+    for (const sql of allowed) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(true);
+    }
+  });
 });

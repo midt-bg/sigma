@@ -1,0 +1,44 @@
+{
+  "id": "11-spend-by-month",
+  "prompt": "Разход по месеци",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT substr(c.signed_at, 1, 7) AS period, SUM(c.amount_eur) AS total_eur, COUNT(*) AS contracts FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' GROUP BY period ORDER BY period LIMIT 4",
+      "result": {
+        "rows": [
+          {
+            "period": "2023-01",
+            "total_eur": 400000,
+            "contracts": 10
+          },
+          {
+            "period": "2023-02",
+            "total_eur": 350000,
+            "contracts": 8
+          },
+          {
+            "period": "2023-03",
+            "total_eur": 420000,
+            "contracts": 11
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по месеци",
+    "question": "Разход по месеци",
+    "blocks": [
+      {
+        "type": "timeseries",
+        "resultId": "R1",
+        "periodCol": "period",
+        "valueCol": "total_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}
