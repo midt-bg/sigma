@@ -8,6 +8,20 @@
 # Web worker privacy-preserving request log IP HMAC key.
 LOG_IP_KEY=dev-only-log-ip-key-change-me
 
-# AI assistant transcript signing key (HMAC-SHA-256 over server-emitted messages).
+# ── AI assistant (docs/spec/ai-assistant.md) ───────────────────────────────────────────────────────
+# BgGPT model key — SECRET. Without it /assistant/chat returns a controlled 503 (endpoint unprovisioned).
+# In the cloud this is set via `wrangler secret put BGGPT_API_KEY --name <worker>`, never committed.
+# BGGPT_API_KEY=
+#
+# NOTE: Workers AI (`AI`) and Vectorize (`VECTORIZE`) have NO local miniflare emulation, and
+# vite.config.ts configures no remote bindings — so under a plain `pnpm dev` the assistant route
+# degrades (RAG grounding/semantic_search no-op, then 503 without a key). To exercise the assistant
+# locally, run with remote bindings (`wrangler dev --remote`) against the dev account's resources.
+#
+# Optional: enables the one-shot schema-corpus seed route POST /assistant/reindex (off when unset).
+# High-entropy value; sent as `Authorization: Bearer <token>`. See app/lib/assistant/README.md.
+# ASSISTANT_SEED_TOKEN=
+#
+# Transcript signing key (HMAC-SHA-256 over server-emitted messages).
 # Prod: `wrangler secret put ASSISTANT_HMAC_KEY`. Never commit the real value.
 ASSISTANT_HMAC_KEY=dev-only-assistant-hmac-key-change-me

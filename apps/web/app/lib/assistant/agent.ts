@@ -100,12 +100,30 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     messages,
     tools: buildToolSet(opts.ctx),
     stopWhen: stepCountIs(maxSteps),
+    // Force a real tool call on the FIRST step (then let the loop run free). bggpt-gemma-3-27b under the
+    // streamed loop otherwise narrates the call as prose (writes ```sql / `[run_sql(...)]` instead of
+    // invoking it) — `tool_choice: 'required'` makes that structurally impossible. Step 0 only: later
+    // steps need `auto` so the model can finalize with `emit_report` and stop. Measured against the real
+    // streamText path this took the failing cases from 0/4 to 4/4 (run_sql→emit_report). The matching
+    // „run_sql FIRST, emit_report after" ordering rule lives in system-prompt.ts. Trade-off: a pure
+    // meta/clarifying turn is also forced to call one tool first (usually describe_schema) — acceptable
+    // for a data-analysis assistant where nearly every turn is a data question.
+    prepareStep: ({ stepNumber }) => ({ toolChoice: stepNumber === 0 ? 'required' : 'auto' }),
     // Bound worst-case resource use (review #80): cancel on client disconnect; one explicit retry
     // (the SDK default of 2 silently multiplies the per-step call count beyond the visible step cap);
     // a per-step output backstop (the model emits block structure + refs, not the bound data values).
     abortSignal: opts.abortSignal,
     maxRetries: 1,
-    maxOutputTokens: 4096,
+    // Low temperature materially improves tool-calling reliability with bggpt-gemma-3-27b: under the
+    // streamed tool loop the model otherwise drifts into NARRATING the call (writing `run_sql(...)` /
+    // ```sql as prose) instead of emitting a real function call. Local probes: ~75% tool-call rate at
+    // the model default vs ~88% at 0.1 (streamed). Determinism here is desirable — we want the SQL, not
+    // creative variation.
+    temperature: 0.1,
+    // Per-step output backstop. The model emits block structure + refs (not the bound data values),
+    // but a longer multi-block справка plus reasoning can exceed 4k and get truncated mid-report; 8k
+    // leaves headroom while still capping worst-case tokens per step.
+    maxOutputTokens: 8192,
   });
   return result.toUIMessageStreamResponse({
     // Graceful degradation (§7): a BgGPT outage / rate-limit / timeout surfaces mid-stream as a

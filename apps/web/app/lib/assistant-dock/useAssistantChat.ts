@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import { classifyHttpError, networkError } from './errors';
-import { loadTranscript, saveTranscript, trimMessages } from './storage';
+import { clearTranscript, loadTranscript, saveTranscript, trimMessages } from './storage';
 
 const ENDPOINT = '/assistant/chat';
 
@@ -52,11 +52,15 @@ const transport = new DefaultChatTransport<UIMessage>({
 });
 
 /** useChat wired to /assistant/chat, with the transcript restored from / persisted to localStorage. */
-export const useAssistantChat = () => {
+export const useAssistantChat = (): ReturnType<typeof useChat> & { reset: () => void } => {
   // Throttle streamed token updates so the dock re-renders ~20×/s instead of once per token (the SDK's
   // intended knob for this); the final message still renders in full once the stream settles.
   const chat = useChat({ transport, experimental_throttle: 50 });
   const { messages, status, setMessages } = chat;
+
+  // stop() is fire-and-forget, so a late settle can re-trigger persist/re-render after reset(); this flag
+  // re-clears storage + transcript until the next send lifts it — sendMessage is the ONLY path that lifts it.
+  const suppressPersist = useRef(false);
 
   // Restore the saved transcript once, after mount (localStorage is client-only → SSR-safe).
   useEffect(() => {
@@ -67,8 +71,31 @@ export const useAssistantChat = () => {
   // Persist after each settled turn (status 'ready'). The length guard is load-bearing: it stops the
   // empty initial state from clobbering stored history before the restore effect's setMessages commits.
   useEffect(() => {
-    if (status === 'ready' && messages.length > 0) saveTranscript(messages);
-  }, [messages, status]);
+    if (status !== 'ready' || messages.length === 0) return;
+    if (suppressPersist.current) {
+      // A superseded turn settled after reset() — a late flush can repopulate chat.messages, so re-clear
+      // storage AND the transcript (else the old conversation visibly reappears). Next run early-returns.
+      clearTranscript();
+      setMessages([]);
+      return;
+    }
+    saveTranscript(messages);
+  }, [messages, status, setMessages]);
 
-  return chat;
+  // Start a fresh chat: abort any in-flight turn, drop the transcript (memory + storage), clear the error.
+  const reset = () => {
+    suppressPersist.current = true;
+    chat.stop();
+    chat.setMessages([]);
+    chat.clearError();
+    clearTranscript();
+  };
+
+  // Wrap sendMessage so a new turn lifts the post-reset suppression — only then may persistence resume.
+  const sendMessage: typeof chat.sendMessage = (...args) => {
+    suppressPersist.current = false;
+    return chat.sendMessage(...args);
+  };
+
+  return { ...chat, sendMessage, reset };
 };

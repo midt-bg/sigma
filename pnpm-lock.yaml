@@ -40,9 +40,15 @@ importers:
 
   apps/etl:
     dependencies:
+      '@sigma/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sigma/ingest':
         specifier: workspace:*
         version: link:../../packages/ingest
+      '@sigma/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
 
   apps/web:
     dependencies:

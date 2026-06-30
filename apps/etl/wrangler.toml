@@ -34,7 +34,7 @@ name = "sigma-refresh"
 class_name = "RefreshWorkflow"
 
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 */6 * * *", "0 6 * * 1"]
 
 [observability]
 enabled = true

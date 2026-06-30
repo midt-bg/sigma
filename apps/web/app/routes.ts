@@ -5,6 +5,9 @@ export default [
   route('search', 'routes/search.tsx'),
   route('search/suggest', 'routes/search.suggest.tsx'),
   route('assistant/chat', 'routes/assistant.chat.tsx'),
+  // One-shot RAG schema-corpus seed; token-gated + off by default (see routes/assistant.reindex.tsx).
+  route('assistant/reindex', 'routes/assistant.reindex.tsx'),
+  route('assistant/prompts', 'routes/assistant.prompts.tsx'),
   route('flows', 'routes/flows.tsx'),
   route('network', 'routes/network.tsx'),
   route('trends', 'routes/trends.tsx'),

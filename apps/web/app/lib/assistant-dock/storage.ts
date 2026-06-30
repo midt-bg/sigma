@@ -47,8 +47,6 @@ export const trimMessages = (
   maxBytes = MAX_BYTES,
 ): UIMessage[] => {
   let kept = messages.slice(-maxMessages);
-  // Always keep at least one message: a single over-budget turn is sent anyway, the server 413s it, and
-  // the dock surfaces that error (errors.ts) — so the turn isn't dropped silently.
   while (kept.length > 1 && byteLength(JSON.stringify(kept)) > maxBytes) {
     kept = kept.slice(1);
   }
@@ -92,6 +90,16 @@ export const saveTranscript = (messages: UIMessage[], storage = defaultStorage()
   } catch (error) {
     // Non-fatal: quota exceeded / storage blocked. The chat keeps working in memory.
     devWarn('[assistant] transcript not persisted (storage unavailable)', error);
+  }
+};
+
+// Clear the transcript key only (collapsed flag survives). Writes '[]' — StorageLike has no removeItem.
+export const clearTranscript = (storage = defaultStorage()): void => {
+  if (!storage) return;
+  try {
+    storage.setItem(TRANSCRIPT_KEY, '[]');
+  } catch (error) {
+    devWarn('[assistant] transcript not cleared (storage unavailable)', error);
   }
 };
 

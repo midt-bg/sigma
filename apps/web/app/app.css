@@ -3666,16 +3666,42 @@ html.assistant-ready .assistant-dock--panel {
   font-size: 1rem;
 }
 .assistant-panel__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--ink-mid);
-  font-size: 1.5rem;
-  line-height: 1;
   padding: var(--s-1) var(--s-2);
   cursor: pointer;
 }
+.assistant-panel__collapse svg {
+  display: block;
+}
 .assistant-panel__collapse:hover {
   color: var(--accent);
+}
+.assistant-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.assistant-panel__new-chat {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid currentColor;
+  background: none;
+  color: var(--ink-mid);
+  padding: var(--s-1) var(--s-2);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.assistant-panel__new-chat:hover {
+  background: var(--paper-warm);
+  /* box-shadow isn't force-overridden by the a11y dark theme, so the hover stays visible there too. */
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 .assistant-panel__body {
   flex: 1 1 auto;

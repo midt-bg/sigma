@@ -25,6 +25,7 @@ export const AssistantDock = () => {
   const launcherRef = useRef<HTMLButtonElement>(null);
   const wrapperRef = useRef<HTMLElement | null>(null);
   const pendingFocus = useRef<'launcher' | 'panel' | null>(null);
+  const pendingNewChatFocus = useRef(false);
   const setWrapper = useCallback((el: HTMLElement | null) => {
     wrapperRef.current = el;
   }, []);
@@ -44,6 +45,10 @@ export const AssistantDock = () => {
   const retry = () => {
     chat.clearError();
     void chat.regenerate();
+  };
+  const newChat = () => {
+    pendingNewChatFocus.current = true;
+    chat.reset();
   };
 
   // Client-only: mount, then restore the collapse state. With no stored preference the dock opens on
@@ -91,6 +96,15 @@ export const AssistantDock = () => {
     return () => document.removeEventListener('keydown', onKey);
   }, [collapsed, isMobile]);
 
+  // Focus the composer after a new chat — deferred, since the textarea is disabled until the aborted
+  // turn settles; the ref one-shots it so later turns don't steal focus.
+  useEffect(() => {
+    if (!pendingNewChatFocus.current) return;
+    if (chat.status === 'submitted' || chat.status === 'streaming') return;
+    wrapperRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+    pendingNewChatFocus.current = false;
+  }, [chat.status, chat.messages.length]);
+
   // The desktop panel pushes the page aside in CSS so it never obscures focused page content
   // (WCAG 2.2 §2.4.11 Focus Not Obscured). This effect only arms that push's transition one frame after
   // the panel mounts, so the default-open push is instant on load and only user toggles animate.
@@ -119,6 +133,7 @@ export const AssistantDock = () => {
       onStop={chat.stop}
       onPick={(prompt) => chat.sendMessage({ text: prompt })}
       onCollapse={collapse}
+      onNewChat={newChat}
       onRetry={retry}
       error={chat.error?.message}
     />

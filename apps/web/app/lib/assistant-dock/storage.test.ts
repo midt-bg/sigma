@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UIMessage } from 'ai';
 import {
+  clearTranscript,
   COLLAPSED_KEY,
   loadCollapsed,
   loadTranscript,
@@ -135,6 +136,23 @@ describe('transcript persistence', () => {
 
   it('does not throw when setItem fails (quota/disabled)', () => {
     expect(() => saveTranscript([msg('1', 'x')], throwingStorage)).not.toThrow();
+  });
+});
+
+describe('clearTranscript', () => {
+  it('empties the transcript but leaves the collapsed flag intact', () => {
+    const store = fakeStorage();
+    saveTranscript([msg('1', 'здравей')], store);
+    saveCollapsed(true, store);
+
+    clearTranscript(store);
+
+    expect(loadTranscript(store)).toEqual([]);
+    expect(loadCollapsed(store)).toBe(true);
+  });
+
+  it('does not throw when storage is unavailable', () => {
+    expect(() => clearTranscript(throwingStorage)).not.toThrow();
   });
 });
 

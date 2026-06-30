@@ -131,8 +131,32 @@ export function validateEmitShape(input: unknown): ShapeResult {
   return { ok: true, value: input as unknown as EmitReportInput };
 }
 
-// Model-facing contract for the emit_report tool. Kept pragmatic: it requires `type` and the common
-// shape; validateEmitShape enforces the strict per-type rules server-side.
+// Model-facing contract for the emit_report tool. The per-block-type shapes are spelled out as a
+// discriminated `oneOf` (keyed on the `type` const) so the model fills the RIGHT fields. A shallow
+// {type}-only schema made a weak 27B emit bare blocks ({type:'table'} with no resultId/columns;
+// totals with no items; even an invalid format 'eur') that fail validateEmitShape on every retry →
+// the dock shows "Справката не можа да бъде съставена". validateEmitShape stays the server-side source
+// of truth; this just steers the model to a valid shape on the FIRST try. Local probe (forced
+// emit_report against the real model): shallow schema 0/5 valid → this oneOf schema 5/5.
+const REF_SCHEMA = {
+  type: 'object',
+  required: ['resultId', 'row', 'col'],
+  properties: {
+    resultId: { type: 'string', description: 'хендъл от run_sql, напр. "R1"' },
+    row: { type: 'integer', minimum: 0, description: '0-базиран индекс на реда' },
+    col: { type: 'string', description: 'име на колона от резултата' },
+  },
+};
+const FORMAT_SCHEMA = { type: 'string', enum: ['money', 'number', 'percent', 'date', 'text'] };
+const LINK_SCHEMA = {
+  type: 'object',
+  required: ['kind', 'idCol'],
+  properties: {
+    kind: { type: 'string', enum: ['company', 'authority', 'contract'] },
+    idCol: { type: 'string', description: 'колоната с id-то на субекта' },
+  },
+};
+
 export const EMIT_REPORT_JSON_SCHEMA = {
   type: 'object',
   required: ['title', 'question', 'blocks'],
@@ -147,15 +171,113 @@ export const EMIT_REPORT_JSON_SCHEMA = {
       type: 'array',
       minItems: 1,
       description:
-        'Блокове на справката. Числата НЕ се пишат тук — препращат към резултатни хендъли (ref:{resultId,row,col}) или resultId+колони; сървърът свързва стойностите.',
+        'Блокове на справката. Числата НЕ се пишат тук — реферират резултатни хендъли от run_sql; ' +
+        'сървърът свързва стойностите. Всеки блок следва формата за своя `type`.',
       items: {
-        type: 'object',
-        required: ['type'],
-        properties: {
-          type: {
-            enum: ['text', 'callout', 'totals', 'facts', 'table', 'bar', 'flows', 'timeseries'],
+        oneOf: [
+          {
+            type: 'object',
+            required: ['type', 'md'],
+            properties: {
+              type: { const: 'text' },
+              md: { type: 'string', description: 'markdown проза' },
+            },
           },
-        },
+          {
+            type: 'object',
+            required: ['type', 'title', 'md'],
+            properties: {
+              type: { const: 'callout' },
+              title: { type: 'string' },
+              md: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'items'],
+            properties: {
+              type: { const: 'totals' },
+              items: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  type: 'object',
+                  required: ['label', 'ref', 'format'],
+                  properties: { label: { type: 'string' }, ref: REF_SCHEMA, format: FORMAT_SCHEMA },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'items'],
+            properties: {
+              type: { const: 'facts' },
+              items: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  type: 'object',
+                  required: ['term', 'ref'],
+                  properties: { term: { type: 'string' }, ref: REF_SCHEMA },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'resultId', 'columns'],
+            properties: {
+              type: { const: 'table' },
+              resultId: { type: 'string', description: 'хендъл от run_sql, напр. "R1"' },
+              columns: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  type: 'object',
+                  required: ['key', 'header', 'format'],
+                  properties: {
+                    key: { type: 'string', description: 'име на колона от резултата' },
+                    header: { type: 'string' },
+                    format: FORMAT_SCHEMA,
+                    link: LINK_SCHEMA,
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'resultId', 'labelCol', 'valueCol'],
+            properties: {
+              type: { const: 'bar' },
+              resultId: { type: 'string' },
+              labelCol: { type: 'string', description: 'колона за етикетите' },
+              valueCol: { type: 'string', description: 'колона за стойностите' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'resultId', 'fromCol', 'toCol', 'valueCol'],
+            properties: {
+              type: { const: 'flows' },
+              resultId: { type: 'string' },
+              fromCol: { type: 'string' },
+              toCol: { type: 'string' },
+              valueCol: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['type', 'resultId', 'periodCol', 'valueCol'],
+            properties: {
+              type: { const: 'timeseries' },
+              resultId: { type: 'string' },
+              periodCol: { type: 'string', description: 'колона за периода' },
+              valueCol: { type: 'string' },
+            },
+          },
+        ],
       },
     },
   },
