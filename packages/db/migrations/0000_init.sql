@@ -8,7 +8,7 @@
 -- then ship-domain copies the served tables into the served D1 and runs precompute on it).
 --
 -- Modelling rationale (cleaning policy, value_flag, consortium model, canonical EUR + FX, the
--- synthetic-tender rule) lives in docs/etl-pipeline.md and docs/core-scope.md.
+-- synthetic-tender rule) lives in docs/etl.md and docs/core-scope.md.
 --
 -- Layout: (1) domain tables the explorer reads (+ amendments history + the OCDS parties projection),
 -- (1b) rollups + FTS search, (3) fx_rates / nuts_regions / data_freshness reference, (4) indexes.
