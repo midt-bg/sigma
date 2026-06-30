@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
-  isNaturalPersonProfileName,
+  isNaturalPersonBidder,
   money,
   moneyBare,
   pct,
@@ -25,18 +25,6 @@ import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tab
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
-function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
-  if (kind === 'consortium' || !legalForm) return false;
-  const normalized = legalForm.trim().toUpperCase();
-  return (
-    normalized === 'ЕТ' ||
-    normalized === 'ET' ||
-    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
-    normalized.includes('SOLE TRADER') ||
-    normalized.includes('INDIVIDUAL')
-  );
-}
-
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
@@ -48,8 +36,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
   if (
     data?.company &&
-    (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||
-      isNaturalPersonProfileName(data.company.displayName) ||
+    (isNaturalPersonBidder(data.company.displayName, data.company.legalForm) ||
       (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });

@@ -190,6 +190,36 @@ export function isNaturalPersonProfileName(name: string): boolean {
 }
 
 /**
+ * Bulgarian label substituted for a natural-person or sole-trader identifier in machine-readable
+ * exports (CSV cells, JSON `name` / `sourceNames` fields). Safe to render as HTML or JSON, and
+ * contains no comma/quote so the CSV encoder leaves it unquoted. See `isNaturalPersonBidder`.
+ */
+export const MASKED_NATURAL_PERSON_LABEL = 'Частно лице';
+
+/**
+ * Canonical natural-person / sole-trader predicate for machine-readable masking. Combines the
+ * `legal_form` rules (carried inline in `apps/web/app/routes/company.tsx` until the route migrates)
+ * with the leading-`ЕТ` name heuristic — so callers only need one check to decide whether to mask
+ * ЕИК and the raw source name. Caller is responsible for filtering consortium rows; the function
+ * itself only inspects `legalForm` and `name`.
+ */
+export function isNaturalPersonBidder(name: string, legalForm: string | null): boolean {
+  if (legalForm) {
+    const normalized = legalForm.trim().toUpperCase();
+    if (
+      normalized === 'ЕТ' ||
+      normalized === 'ET' ||
+      normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
+      normalized.includes('SOLE TRADER') ||
+      normalized.includes('INDIVIDUAL')
+    ) {
+      return true;
+    }
+  }
+  return isNaturalPersonProfileName(name);
+}
+
+/**
  * Display name for a winning entity. A consortium row holds a `;`-joined member list → show the
  * first member + „и др." (the **Обединение** badge is rendered separately by the caller). Companies
  * pass through unchanged — source names keep their quoting/casing, because that is the source truth.
