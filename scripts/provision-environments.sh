@@ -57,6 +57,16 @@ else
   fi
 fi
 
+# Symmetric path-traversal guard (same intent as the reviewer-ref guards below): REPO is
+# interpolated into the gh api paths, so reject anything that isn't a clean owner/name. Owner is
+# letters/digits/hyphens; repo name additionally allows '.' and '_'. A value with an extra '/' or
+# other characters could otherwise traverse to a different endpoint. Low risk (an admin supplies
+# it), but the check keeps every interpolated segment validated the same way.
+if ! [[ "$REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
+  echo "❌ REPO must be in owner/name form (got '$REPO')." >&2
+  exit 1
+fi
+
 ENVIRONMENT="production"
 REVIEWER_USERS="${REVIEWER_USERS:-}"
 REVIEWER_TEAMS="${REVIEWER_TEAMS:-}"
