@@ -69,6 +69,14 @@ describe('normalizedPathname', () => {
     expect(path('/search.database')).toBe('/search.database');
   });
 
+  // Mirror RR's single strip: `/\.data$/` removes exactly one trailing suffix, and a trailing slash
+  // defeats `.data` detection (RRv7 getNormalizedPath strips `.data$` before the slash, so `.data/`
+  // is not a data request and 404s — the limiter classifying it as a miss matches RR, not a bypass).
+  it('strips only one trailing .data and does not treat .data/ as a data request', () => {
+    expect(path('/search.data.data')).toBe('/search.data');
+    expect(path('/search.data/')).toBe('/search.data');
+  });
+
   it('maps /_root.data to /_root (harmless — no limiter targets the root loader)', () => {
     expect(path('/_root.data')).toBe('/_root');
   });
