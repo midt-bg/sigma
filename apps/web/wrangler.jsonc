@@ -37,15 +37,17 @@
   // Public config for the assistant. All model traffic is routed through the Cloudflare AI Gateway
   // (spec §9.5) — MANDATORY, fail closed: with AI_GATEWAY_BASE_URL empty the assistant returns 503
   // rather than calling the provider directly. Set it per-environment to the gateway's OpenAI-compatible
-  // upstream endpoint, e.g. (account f6308e22233e69cba80ed57bdb6d5f44):
+  // upstream endpoint, e.g. (account <account-id>):
   //   https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openrouter/v1
   // AI_GATEWAY_ID is the gateway slug (<gateway> above); it routes the Workers AI RAG embeddings
   // through the same gateway. ASSISTANT_MODEL selects the model (provider-scoped id) — swap models by
   // editing it alone. ASSISTANT_API_KEY is a SECRET (not here). Left empty in source so a deploy must
   // opt in explicitly.
   "vars": {
-    "AI_GATEWAY_BASE_URL": "https://gateway.ai.cloudflare.com/v1/f6308e22233e69cba80ed57bdb6d5f44/sigma-assistant/openrouter/v1",
-    "AI_GATEWAY_ID": "sigma-assistant",
+    // Empty in source (opt-in per deploy, fail-closed). The fork's preview environment sets the
+    // concrete gateway URL + slug on -contracts; upstream deploys configure their own per environment.
+    "AI_GATEWAY_BASE_URL": "",
+    "AI_GATEWAY_ID": "",
     "ASSISTANT_MODEL": "google/gemma-4-31b-it",
     "MAX_STEPS": "6",
     // Reserved for the launch-gate global circuit-breaker — declared but NOT yet read by any code.

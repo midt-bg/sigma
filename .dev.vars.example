@@ -16,9 +16,9 @@ LOG_IP_KEY=dev-only-log-ip-key-change-me
 #
 # All model traffic MUST transit the Cloudflare AI Gateway (fail closed): without AI_GATEWAY_BASE_URL the
 # assistant returns 503 rather than calling the provider directly. Set both to your gateway (account
-# f6308e22233e69cba80ed57bdb6d5f44); AI_GATEWAY_ID is the gateway slug used to route Workers AI embeddings.
+# <account-id>); AI_GATEWAY_ID is the gateway slug used to route Workers AI embeddings.
 # ASSISTANT_MODEL is the provider-scoped model id — swap models by editing it alone.
-# AI_GATEWAY_BASE_URL=https://gateway.ai.cloudflare.com/v1/f6308e22233e69cba80ed57bdb6d5f44/<gateway>/openrouter/v1
+# AI_GATEWAY_BASE_URL=https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway>/openrouter/v1
 # AI_GATEWAY_ID=<gateway>
 # ASSISTANT_MODEL=google/gemma-4-31b-it   # append ':free' for the rate-limited free tier
 #
