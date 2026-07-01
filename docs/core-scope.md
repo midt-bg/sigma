@@ -33,7 +33,7 @@
 | tenders    | `t:` + УНП                      | УНП (ЦАИС ЕОП)        |
 | lots       | `lot:` + УНП + `:` + lot_id     | (УНП, lot_id)         |
 | bidders    | `eik:` + ЕИК, иначе `name:` + нормализирано име | ЕИК, иначе името |
-| contracts  | `c:` + staging row id           | (УНП, contract_number) при dedup |
+| contracts  | `c:e:`/`c:o:` + композит (УНП, contract_number, lot, bidder) | (УНП, contract_number) при dedup |
 
 `bidders` се ключира по ЕИК, когато е валиден; иначе по нормализирано име — затова различни
 фирми, споделящи едно име без ЕИК, се сливат, а това е известен компромис (виж `is_consortium`).
@@ -50,7 +50,7 @@
 ### `contracts.value_flag` — verdict за качеството на стойността
 
 `TEXT NOT NULL DEFAULT 'ok'`. **Пет стойности**; присвояват се в [`normalize-raw.sql`](../scripts/normalize-raw.sql).
-Всичките пет се сумират — `amount_eur` им е попълнена:
+И петте се сумират (`amount_eur` е попълнена) — освен в NULL-случаите, изброени под таблицата:
 
 | Стойност        | Значение                                                                                       | `amount_eur`               |
 | --------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
@@ -104,8 +104,9 @@
 
 D1 таксува **прочетени** редове, затова класациите/началото/потоците четат предварително
 сметнати таблици вместо да агрегират 190 хил. договора при всяка заявка (виж
-[`v1-implementation-plan.md`](v1-implementation-plan.md) „Precompute layer"). Всички суми тук са
-вече филтрирани по `amount_eur IS NOT NULL`.
+[`v1-implementation-plan.md`](v1-implementation-plan.md) „Precompute layer"). Сумите
+(`won_eur`/`spent_eur`/`value_eur`) минават през `amount_eur IS NOT NULL`; но `home_totals.contracts`
+и `facet_counts.contracts` са `COUNT(*)` върху целия корпус (record count, не броячът зад сумата).
 
 | Rollup            | Грен                  | Захранва                                  |
 | ----------------- | --------------------- | ----------------------------------------- |
@@ -117,8 +118,10 @@ D1 таксува **прочетени** редове, затова класац
 | `flow_pairs`      | (институция, фирма)   | Sankey на потоците + таблицата.           |
 | `search_index`    | FTS5 ред              | Глобално търсене (Кирилица+Латиница, accent/case-folded). |
 
-`home_totals.contracts` и `home_totals.value_eur` покриват **едно и също множество** (чисти
-редове) — броячът и сумата никога не идват от различни предикати.
+`home_totals.contracts` е `COUNT(*)` върху целия корпус (всички договори), а `home_totals.value_eur`
+е `SUM(amount_eur)` само върху чистите редове — двете **не** покриват едно и също множество
+(`contracts` е headline record count). За `company_totals`/`authority_totals` броят и сумата **да**
+покриват едно множество — и двете под `amount_eur IS NOT NULL`.
 
 ## Сектори (CPV дивизия)
 
