@@ -144,13 +144,14 @@ describe('contract.json loader', () => {
     vi.mocked(getContract).mockReset();
   });
 
-  it('masks a sole trader and sets X-Robots-Tag: noindex (behavior 1)', async () => {
+  it('masks a sole trader and sets X-Privacy-Mask: applied (behavior 1)', async () => {
     vi.mocked(getContract).mockResolvedValueOnce(makeRecord());
 
     const response = await loader(loaderArgs('c-1'));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
     const body = (await response.json()) as { bidder: { eik: string | null; name: string; displayName: string }; sourceNames: { bidder: string } };
     expect(body.bidder.eik).toBeNull();
     expect(body.bidder.name).toBe(MASKED_NATURAL_PERSON_LABEL);
@@ -160,7 +161,7 @@ describe('contract.json loader', () => {
     expect(body.sourceNames.bidder).not.toBe('ЕТ ДРИФТ - НИКОЛАЙ КИРОВ');
   });
 
-  it('passes a legal entity through verbatim and omits X-Robots-Tag: noindex (behavior 2)', async () => {
+  it('passes a legal entity through verbatim and omits the privacy mask marker (behavior 2)', async () => {
     const record = makeRecord({
       bidder: {
         slug: 'bidder-2',
@@ -185,7 +186,8 @@ describe('contract.json loader', () => {
     const response = await loader(loaderArgs('c-2'));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('X-Robots-Tag')).not.toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBeNull();
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
     const body = (await response.json()) as { bidder: { eik: string | null; name: string }; sourceNames: { bidder: string } };
     expect(body.bidder.eik).toBe('123456789');
     expect(body.bidder.name).toBe('СОФАРМА ТРЕЙДИНГ АД');
@@ -198,6 +200,8 @@ describe('contract.json loader', () => {
     const response = await loader(loaderArgs('c-999'));
 
     expect(response.status).toBe(404);
+    expect(response.headers.get('X-Privacy-Mask')).toBeNull();
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
     const body = (await response.json()) as { error: string };
     expect(body).toEqual({ error: 'not_found' });
   });

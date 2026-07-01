@@ -4,6 +4,7 @@ import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { Route } from './+types/contract.json';
 import { publicCache } from '../lib/cache';
 import { withDataSource } from '../lib/dataSource';
+import { markPrivacyMaskApplied } from '../lib/security';
 
 function safeJson(value: unknown): string {
   return JSON.stringify(value)
@@ -49,6 +50,6 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': publicCache(3600),
   });
-  if (masked !== record) headers.set('X-Robots-Tag', 'noindex');
+  if (masked !== record) markPrivacyMaskApplied(headers);
   return withDataSource(new Response(safeJson(masked), { headers }));
 }

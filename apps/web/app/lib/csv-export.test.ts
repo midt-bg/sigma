@@ -511,7 +511,7 @@ describe('servedCsvExport', () => {
 });
 
 describe('servedCsvExport privacy', () => {
-  it('sets X-Robots-Tag: noindex on a MISS response (contracts)', async () => {
+  it('stamps the privacy mask marker on a MISS response (contracts) and never writes X-Robots-Tag at the route layer', async () => {
     const r2 = new InMemoryR2();
     const stream = vi.fn(() => csvResponse());
 
@@ -519,10 +519,11 @@ describe('servedCsvExport privacy', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('X-Csv-Cache')).toBe('MISS');
-    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
   });
 
-  it('sets X-Robots-Tag: noindex on a HIT response (companies)', async () => {
+  it('stamps the privacy mask marker on a HIT response (companies) and never writes X-Robots-Tag at the route layer', async () => {
     const r2 = new InMemoryR2();
     const primeStream = vi.fn(() => csvResponse());
     await (await serve(r2, primeStream, { route: 'companies' })).text();
@@ -532,12 +533,13 @@ describe('servedCsvExport privacy', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('X-Csv-Cache')).toBe('HIT');
-    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
     expect(await response.text()).toBe(CSV_BODY);
     expect(hitStream).not.toHaveBeenCalled();
   });
 
-  it('sets X-Robots-Tag: noindex on a dynamic (filtered) response (authorities)', async () => {
+  it('stamps the privacy mask marker on a dynamic (filtered) response (authorities) and never writes X-Robots-Tag at the route layer', async () => {
     const r2 = new InMemoryR2();
     const stream = vi.fn(() => csvResponse('filtered\n'));
 
@@ -548,7 +550,8 @@ describe('servedCsvExport privacy', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('X-Csv-Cache')).toBe('dynamic');
-    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
     expect(await response.text()).toBe('filtered\n');
     expect(r2.createMultipartUpload).not.toHaveBeenCalled();
   });
@@ -567,7 +570,7 @@ describe('servedCsvExport privacy', () => {
     expect(text).toBe(maskedBody);
   });
 
-  it('preserves Cache-Control: public, max-age=3600 when the streamer emits a row with masked sole-trader identifiers (contracts)', async () => {
+  it('preserves Cache-Control: public, max-age=3600 when the streamer emits a row with masked sole-trader identifiers (contracts) and stamps the privacy mask marker', async () => {
     const maskedBody = `eik,name\n,${MASKED_NATURAL_PERSON_LABEL}\n`;
     const r2 = new InMemoryR2();
     const stream = vi.fn(() => csvResponse(maskedBody));
@@ -575,6 +578,7 @@ describe('servedCsvExport privacy', () => {
     const response = await serve(r2, stream, { route: 'contracts' });
 
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=3600');
-    expect(response.headers.get('X-Robots-Tag')).toBe('noindex');
+    expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
   });
 });
