@@ -40,6 +40,21 @@ describe('rateLimitAssistantRoute', () => {
     expect(response?.status).toBe(429);
   });
 
+  it('still limits the single-fetch /assistant/chat.data twin (#184)', async () => {
+    // The paid, failClosed limiter must fire on the `.data` form too, else it is trivially bypassed.
+    const { limiter, limit } = rateLimiter(false);
+    const response = await rateLimitAssistantRoute(
+      new Request('http://local/assistant/chat.data', {
+        method: 'POST',
+        headers: { 'CF-Connecting-IP': '203.0.113.44' },
+      }),
+      { ASSISTANT_RATE_LIMITER: limiter },
+      false,
+    );
+    expect(limit).toHaveBeenCalled();
+    expect(response?.status).toBe(429);
+  });
+
   it('lets a request through while under the limit', async () => {
     const { limiter } = rateLimiter(true);
     await expect(

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { rateLimitKey, rateLimitRequest } from './rate-limit';
+import { normalizedPathname, rateLimitKey, rateLimitRequest } from './rate-limit';
 
 const req = (ip = '203.0.113.7') =>
   new Request('http://local/x', { method: 'POST', headers: { 'CF-Connecting-IP': ip } });
@@ -44,6 +44,39 @@ describe('rateLimitRequest', () => {
     await expect(
       rateLimitRequest(req(), undefined, false, 'body', 'L', { failClosed: true }),
     ).resolves.toBeNull();
+  });
+});
+
+describe('normalizedPathname', () => {
+  const path = (p: string) => normalizedPathname(new Request(`http://local${p}`));
+
+  // RRv7 single-fetch serves loaders at `<path>.data`; the limiters must classify by the canonical
+  // route path RR resolves, else every limiter is bypassable via the suffix (#184).
+  it('strips a trailing .data suffix', () => {
+    expect(path('/search.data')).toBe('/search');
+    expect(path('/companies.data')).toBe('/companies');
+    expect(path('/contracts.csv.data')).toBe('/contracts.csv');
+    expect(path('/assistant/chat.data')).toBe('/assistant/chat');
+  });
+
+  it('strips .data before the trailing-slash strip and preserves other normalization', () => {
+    expect(path('/SEARCH.data')).toBe('/search');
+    expect(path('//companies.data')).toBe('/companies');
+  });
+
+  it('only strips a trailing .data, not a mid-path .data segment', () => {
+    expect(path('/foo.data/bar')).toBe('/foo.data/bar');
+    expect(path('/search.database')).toBe('/search.database');
+  });
+
+  it('maps /_root.data to /_root (harmless — no limiter targets the root loader)', () => {
+    expect(path('/_root.data')).toBe('/_root');
+  });
+
+  it('also strips .data in the decode-failure (catch) branch', () => {
+    // `%zz` is invalid percent-encoding, so decodeURIComponent throws and the catch branch runs;
+    // it must still strip the trailing .data off the raw (lowercased) pathname.
+    expect(path('/search%zz.data')).toBe('/search%zz');
   });
 });
 
