@@ -40,10 +40,13 @@ const ctx = {
   passThroughOnException: () => {},
 } as unknown as ExecutionContext;
 
-let handler: { fetch: (r: Request, e: Env, c: ExecutionContext) => Promise<Response> };
+// app.ts's default `fetch` uses the strict ExportedHandler signature (Request<…IncomingRequestCf…>);
+// this test drives it with plain `new Request()`s, so bind a loosened callable via the module default.
+type WorkerFetch = (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
+let workerFetch: WorkerFetch;
 
 beforeAll(async () => {
-  handler = (await import('./app')).default;
+  workerFetch = (await import('./app')).default.fetch as unknown as WorkerFetch;
 });
 
 afterEach(() => {
@@ -65,7 +68,7 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
   for (const { name, method, url } of twins) {
     it(`429s the over-limit ${name} .data twin and never invokes the RR loader`, async () => {
       const req = new Request(url, { method, headers: { 'CF-Connecting-IP': '203.0.113.99' } });
-      const res = await handler.fetch(req, env(overLimit), ctx);
+      const res = await workerFetch(req, env(overLimit), ctx);
 
       expect(res.status, `${url} should be throttled`).toBe(429);
       expect(res.headers.get('Retry-After')).toBe('60');
@@ -78,7 +81,7 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
     const req = new Request('http://local/search.data?q=eon', {
       headers: { 'CF-Connecting-IP': '203.0.113.98' },
     });
-    const res = await handler.fetch(req, env(underLimit), ctx);
+    const res = await workerFetch(req, env(underLimit), ctx);
 
     expect(res.status).toBe(200);
     expect(rrLoader).toHaveBeenCalledTimes(1);
@@ -90,7 +93,7 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
     const req = new Request('http://local/companies.data', {
       headers: { 'CF-Connecting-IP': '203.0.113.97' },
     });
-    const res = await handler.fetch(req, env(overLimit), ctx);
+    const res = await workerFetch(req, env(overLimit), ctx);
 
     expect(cacheStore.match).toHaveBeenCalledTimes(1); // cache was consulted
     expect(res.status).toBe(429); // and the limiter still fired on the miss
