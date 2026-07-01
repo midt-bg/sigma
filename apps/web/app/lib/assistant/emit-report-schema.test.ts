@@ -24,6 +24,39 @@ describe('validateEmitShape', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('canonicalizes near-miss block-type synonyms before validation (ported from #9)', () => {
+    const r = validateEmitShape({
+      title: 't',
+      question: 'q',
+      blocks: [
+        {
+          type: 'total',
+          items: [
+            { label: 'Общо', ref: { resultId: 'R1', row: 0, col: 'total_eur' }, format: 'money' },
+          ],
+        },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.blocks[0].type).toBe('totals');
+  });
+
+  it('accepts content/text as aliases for md on text/callout (ported from #9)', () => {
+    const r = validateEmitShape({
+      title: 't',
+      question: 'q',
+      blocks: [
+        { type: 'text', content: 'от content' },
+        { type: 'callout', title: 'Бележка', text: 'от text' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect((r.value.blocks[0] as { md: string }).md).toBe('от content');
+      expect((r.value.blocks[1] as { md: string }).md).toBe('от text');
+    }
+  });
+
   it('rejects a missing title and a non-array blocks', () => {
     expect(validateEmitShape({ question: '', blocks: [] }).ok).toBe(false);
     expect(validateEmitShape({ title: 'x', question: '', blocks: 'nope' }).ok).toBe(false);

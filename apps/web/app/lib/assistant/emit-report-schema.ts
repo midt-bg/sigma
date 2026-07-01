@@ -43,8 +43,35 @@ function isCellRef(v: unknown): v is CellRef {
 
 export type ShapeResult = { ok: true; value: EmitReportInput } | { ok: false; errors: string[] };
 
+// Tolerant normalization (defense-in-depth): weak models emit near-miss field names. Canonicalize the
+// common misses BEFORE strict validation so a structurally-correct report isn't rejected on a synonym.
+// Pairs with EMIT_REPORT_BLOCKS_GUIDE in system-prompt.ts. (ported from #9: emit_report schema adherence)
+const BLOCK_TYPE_ALIASES: Record<string, string> = {
+  fact: 'facts',
+  total: 'totals',
+  flow: 'flows',
+  timeserie: 'timeseries',
+};
+
+function normalizeEmitInput(input: unknown): unknown {
+  if (!isObj(input) || !Array.isArray(input.blocks)) return input;
+  const blocks = input.blocks.map((b) => {
+    if (!isObj(b)) return b;
+    const nb: Record<string, unknown> = { ...b };
+    if (isStr(nb.type)) nb.type = BLOCK_TYPE_ALIASES[nb.type] ?? nb.type;
+    // text/callout body: accept `content`/`text` as aliases for `md`
+    if ((nb.type === 'text' || nb.type === 'callout') && !isStr(nb.md)) {
+      if (isStr(nb.content)) nb.md = nb.content;
+      else if (isStr(nb.text)) nb.md = nb.text;
+    }
+    return nb;
+  });
+  return { ...input, blocks };
+}
+
 /** Structurally validate a model-emitted report. On success the value is a typed EmitReportInput. */
-export function validateEmitShape(input: unknown): ShapeResult {
+export function validateEmitShape(rawInput: unknown): ShapeResult {
+  const input = normalizeEmitInput(rawInput);
   const errors: string[] = [];
   if (!isObj(input)) return { ok: false, errors: ['report must be an object'] };
   if (!isNonEmptyStr(input.title)) errors.push('title must be a non-empty string');
