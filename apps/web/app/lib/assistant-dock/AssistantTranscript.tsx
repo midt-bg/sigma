@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { UIMessage } from 'ai';
 import { isReportPending, projectChip, reportOutputFromMessage } from './report-projection';
+import { addToReportIndex } from './storage';
 import { AssistantMessage } from './AssistantMessage';
 import { ReportChip } from './ReportChip';
 
@@ -22,6 +23,23 @@ const STICK_THRESHOLD_PX = 40;
 export const AssistantTranscript = ({ messages }: AssistantTranscriptProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+
+  // Index each settled report so /reports can read from localStorage (spec §5: per-browser, no
+  // global enumeration). Runs whenever messages change; deduplication is in addToReportIndex.
+  useEffect(() => {
+    for (const message of messages) {
+      const output = reportOutputFromMessage(message);
+      if (output?.ok && output.storedId) {
+        addToReportIndex({
+          id: output.storedId,
+          title: output.report.title,
+          question: output.report.question,
+          createdAt:
+            (message as { createdAt?: Date }).createdAt?.toISOString() ?? new Date().toISOString(),
+        });
+      }
+    }
+  }, [messages]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -52,7 +70,12 @@ export const AssistantTranscript = ({ messages }: AssistantTranscriptProps) => {
         return (
           <div key={message.id} className="assistant-turn">
             <AssistantMessage message={message} />
-            {report?.ok ? <ReportChip {...projectChip(report.report)} /> : null}
+            {report?.ok ? (
+              <ReportChip
+                {...projectChip(report.report)}
+                href={report.storedId ? `/reports/${report.storedId}` : undefined}
+              />
+            ) : null}
             {report && !report.ok ? (
               <p className="assistant-transcript__error">Справката не можа да бъде съставена.</p>
             ) : null}

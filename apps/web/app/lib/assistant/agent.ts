@@ -72,7 +72,72 @@ function buildModel(env: AgentEnv) {
   return provider.chat(env.ASSISTANT_MODEL || DEFAULT_MODEL);
 }
 
-function buildToolSet(ctx: ToolContext): ToolSet {
+// System-prompt version string used in StoredReport provenance for regression tracing.
+// Bump this whenever system-prompt.ts changes semantically.
+const PROMPT_VERSION = '2026-06-28';
+
+/** Generate a URL-safe random report ID (e.g. `r_a3f8c2d1e9b4`). */
+function randomReportId(): string {
+  return `r_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+}
+
+// Whitelist of source values the UI knows how to label (ReportMethodologyCallout SOURCE_LABELS).
+// Rows with any other source value (e.g. 'other', future additions) are silently dropped rather
+// than leaking an internal bucket name to the public methodology callout.
+const KNOWN_FRESHNESS_SOURCES = new Set(['admin', 'ocds', 'eop'] as const);
+
+async function fetchFreshness(db: D1Database): Promise<{ source: string; asOf: string }[]> {
+  try {
+    const { results } = await db
+      .prepare('SELECT source, as_of FROM data_freshness WHERE as_of IS NOT NULL')
+      .all<{ source: string; as_of: string }>();
+    return (results ?? [])
+      .filter((r) => KNOWN_FRESHNESS_SOURCES.has(r.source as 'admin' | 'ocds' | 'eop'))
+      .map((r) => ({ source: r.source, asOf: r.as_of }));
+  } catch {
+    return [];
+  }
+}
+
+/** Persist a resolved report to R2 and return its ID. Returns null on any write failure. */
+async function persistReport(
+  ctx: ToolContext,
+  report: ReturnType<typeof finalizeReport> & { ok: true },
+  modelId: string,
+): Promise<string | null> {
+  if (!ctx.reports) return null;
+  const id = randomReportId();
+  const stored = {
+    schemaVersion: 1,
+    id,
+    createdAt: new Date().toISOString(),
+    report: report.report,
+    provenance: {
+      question: ctx.userQuestion ?? '',
+      sources: ctx.sources,
+      snapshot: ctx.results,
+      freshness: await fetchFreshness(ctx.db),
+      model: modelId,
+      promptVersion: PROMPT_VERSION,
+    },
+  };
+  try {
+    await ctx.reports.put(`report/${id}.json`, JSON.stringify(stored), {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: {
+        title: report.report.title,
+        question: ctx.userQuestion ?? '',
+        createdAt: stored.createdAt,
+      },
+    });
+    return id;
+  } catch (err) {
+    console.error('[assistant] failed to persist report to R2', err);
+    return null;
+  }
+}
+
+function buildToolSet(ctx: ToolContext, modelId: string): ToolSet {
   const set: ToolSet = {};
   for (const t of ASSISTANT_TOOLS) {
     set[t.name] = tool({
@@ -90,9 +155,9 @@ function buildToolSet(ctx: ToolContext): ToolSet {
     inputSchema: jsonSchema(EMIT_REPORT_JSON_SCHEMA as unknown as Parameters<typeof jsonSchema>[0]),
     execute: async (input: unknown) => {
       const r = finalizeReport(input, ctx);
-      return r.ok
-        ? { ok: true as const, report: r.report }
-        : { ok: false as const, errors: r.errors };
+      if (!r.ok) return { ok: false as const, errors: r.errors };
+      const storedId = await persistReport(ctx, r, modelId);
+      return { ok: true as const, report: r.report, ...(storedId ? { storedId } : {}) };
     },
   });
   return set;
@@ -115,11 +180,12 @@ export interface RunAssistantOptions {
 export async function runAssistant(opts: RunAssistantOptions): Promise<Response> {
   const maxSteps = resolveMaxSteps(opts.env.MAX_STEPS);
   const messages = await convertToModelMessages(opts.messages);
+  const modelId = opts.env.ASSISTANT_MODEL || DEFAULT_MODEL;
   const result = streamText({
     model: buildModel(opts.env),
     system: buildSystemPrompt({ schemaContext: opts.schemaContext, freshness: opts.freshness }),
     messages,
-    tools: buildToolSet(opts.ctx),
+    tools: buildToolSet(opts.ctx, modelId),
     stopWhen: stepCountIs(maxSteps),
     // Force a real tool call on the FIRST step (then let the loop run free). Weaker chat models under the
     // streamed loop otherwise narrate the call as prose (writes ```sql / `[run_sql(...)]` instead of
@@ -129,7 +195,18 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     // „run_sql FIRST, emit_report after" ordering rule lives in system-prompt.ts. Trade-off: a pure
     // meta/clarifying turn is also forced to call one tool first (usually describe_schema) — acceptable
     // for a data-analysis assistant where nearly every turn is a data question.
-    prepareStep: ({ stepNumber }) => ({ toolChoice: stepNumber === 0 ? 'required' : 'auto' }),
+    //
+    // Additionally: if the last step contained a failed emit_report (ok:false — shape validation errors
+    // returned to the model), force `required` again so the model retries the tool call rather than
+    // falling back to prose. Without this the model answers in text then emits `ok:false` and stops.
+    prepareStep: ({ stepNumber, steps }) => {
+      if (stepNumber === 0) return { toolChoice: 'required' };
+      const lastStep = steps[steps.length - 1];
+      const hadFailedReport = lastStep?.toolResults.some(
+        (tr) => tr.toolName === 'emit_report' && (tr.output as { ok: boolean }).ok === false,
+      );
+      return { toolChoice: hadFailedReport ? 'required' : 'auto' };
+    },
     // Bound worst-case resource use (review #80): cancel on client disconnect; one explicit retry
     // (the SDK default of 2 silently multiplies the per-step call count beyond the visible step cap);
     // a per-step output backstop (the model emits block structure + refs, not the bound data values).

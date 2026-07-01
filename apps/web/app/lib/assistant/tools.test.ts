@@ -59,7 +59,7 @@ function ctx(
       };
     },
   } as unknown as D1Database;
-  return { db, results: [], rowsRead: 0, rowsReadBudget: opts.rowsReadBudget };
+  return { db, results: [], sources: [], rowsRead: 0, rowsReadBudget: opts.rowsReadBudget };
 }
 
 describe('the tool registry', () => {

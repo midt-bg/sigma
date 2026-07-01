@@ -1,4 +1,8 @@
 import { configDefaults, defineConfig } from 'vitest/config';
+import { fileURLToPath, URL } from 'node:url';
+
+// Mirror the tsconfig `~/*` → `./app/*` path mapping so `~/` imports resolve in tests.
+const tildaAlias = { '~': fileURLToPath(new URL('./app', import.meta.url)) };
 
 // Two projects so the environment is chosen by file type:
 //   *.test.ts  → node (pure logic + workers)
@@ -11,6 +15,7 @@ export default defineConfig({
   test: {
     projects: [
       {
+        resolve: { alias: tildaAlias },
         test: {
           name: 'node',
           environment: 'node',
@@ -19,6 +24,7 @@ export default defineConfig({
         },
       },
       {
+        resolve: { alias: tildaAlias },
         test: {
           name: 'dom',
           environment: 'jsdom',

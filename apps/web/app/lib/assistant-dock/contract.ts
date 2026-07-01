@@ -53,6 +53,8 @@ export interface ResolvedReport {
 }
 
 // The `emit_report` tool part `output` shape (contract §3): a finished report or validation errors.
+// `storedId` is present when Lane C4 successfully persisted the report to R2 — the dock uses it
+// to construct the `/reports/:id` link on the ReportChip ("Отвори" button).
 export type EmitReportOutput =
-  | { ok: true; report: ResolvedReport }
+  | { ok: true; report: ResolvedReport; storedId?: string }
   | { ok: false; errors: string[] };

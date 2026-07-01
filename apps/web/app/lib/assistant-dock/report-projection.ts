@@ -37,18 +37,28 @@ const isEmitReportOutput = (value: unknown): value is EmitReportOutput => {
  * The emit_report tool output from a settled part of this message, or null if the turn has no report yet
  * (prose-only, the tool is still running, or the output is malformed). Returns the `{ ok: false }` form
  * too, so the caller can surface a failure affordance.
+ *
+ * When the model retries emit_report after a validation failure, the message has multiple settled parts.
+ * We return the LAST ok:true output so a successful retry is surfaced instead of the earlier failure.
+ * Falls back to the last output of any kind so a persistent failure is still shown.
  */
 export const reportOutputFromMessage = (message: MessageLike): EmitReportOutput | null => {
+  let lastOk: EmitReportOutput | null = null;
+  let lastAny: EmitReportOutput | null = null;
   for (const part of message.parts ?? []) {
     if (
       part.type === EMIT_REPORT_PART &&
       part.state === 'output-available' &&
       part.output != null
     ) {
-      return isEmitReportOutput(part.output) ? part.output : null;
+      const output = isEmitReportOutput(part.output) ? part.output : null;
+      if (output) {
+        lastAny = output;
+        if (output.ok) lastOk = output;
+      }
     }
   }
-  return null;
+  return lastOk ?? lastAny;
 };
 
 const PENDING_REPORT_STATES = new Set(['input-streaming', 'input-available']);

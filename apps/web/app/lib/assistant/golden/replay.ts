@@ -94,6 +94,7 @@ export async function replayFixture(fixture: GoldenFixture): Promise<ReplayOutco
   const ctx: ToolContext = {
     db: fakeDb(dbSteps),
     results: [],
+    sources: [],
     userQuestion: fixture.prompt,
     rowsRead: 0,
     rowsReadBudget: DEFAULT_ROWS_READ_BUDGET,

@@ -8,8 +8,7 @@
 //     (spec §5) and every figure stays auditable.
 //
 // Dependency direction: this module MAY import from `../assistant`; `../assistant` must NEVER import
-// from here. Authored on top of #80 (`feat/ai-assistant-impl`) so the re-export resolves; rebase
-// onto `main` once #80 lands. (Design rationale: spec §4/§5/§7 + the §9 hardening review in PR #79.)
+// from here. (Design rationale: spec §4/§5/§7 + the §9 hardening review in PR #79.)
 // See ./README.md.
 
 export type {
@@ -62,7 +61,7 @@ export const STORED_REPORT_SCHEMA_VERSION = 1 as const;
 
 export interface StoredReport {
   schemaVersion: typeof STORED_REPORT_SCHEMA_VERSION;
-  id: string; // random, unguessable — the soft privacy boundary (spec §5)
+  id: string; // random, unguessable — do not treat as a privacy boundary; /reports enumerates all IDs
   createdAt: string; // ISO-8601 UTC
   report: ResolvedReport; // contract #1 — renderable content (render md with raw-HTML disabled)
   provenance: ReportProvenance; // contract #2 — provenance the renderer also surfaces

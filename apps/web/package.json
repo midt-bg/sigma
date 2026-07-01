@@ -21,6 +21,7 @@
     "@sigma/db": "workspace:*",
     "@sigma/shared": "workspace:*",
     "ai": "^6.0.208",
+    "docx": "^9.7.1",
     "isbot": "^5.1.36",
     "node-sql-parser": "^5.4.0",
     "react": "^19.2.6",

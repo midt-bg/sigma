@@ -107,11 +107,14 @@ export async function action({ request, context }: Route.ActionArgs) {
     ai,
     vectorize,
     results: [],
+    sources: [],
     userQuestion: question,
     // Per-turn Denial-of-Wallet guard (issue #122): bound the D1 rows-read cost of this turn's run_sql
     // calls. `LIMIT` caps only returned rows; D1 bills on rows scanned.
     rowsRead: 0,
     rowsReadBudget: resolveRowsReadBudget(env.D1_ROWS_READ_BUDGET),
+    // R2 bucket for report persistence (Lane C4). Optional — absent until the REPORTS binding is deployed.
+    reports: env.REPORTS,
   };
 
   // RAG grounding (best-effort): the most relevant schema chunks for the latest question; on any

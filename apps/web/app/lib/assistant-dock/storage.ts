@@ -11,6 +11,7 @@ import { devWarn } from './dev-warn';
 
 export const TRANSCRIPT_KEY = 'sigma.assistant.transcript';
 export const COLLAPSED_KEY = 'sigma.assistant.collapsed';
+export const REPORTS_INDEX_KEY = 'sigma.reports.index';
 
 // The server keeps only the last 24 messages (assistant.chat.tsx → MAX_MESSAGES); mirror it so we never
 // persist or POST more than it will use.
@@ -122,5 +123,52 @@ export const saveCollapsed = (collapsed: boolean, storage = defaultStorage()): v
     storage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
   } catch (error) {
     devWarn('[assistant] dock state not persisted (storage unavailable)', error);
+  }
+};
+
+// Per-browser report index — populated when a report is persisted to R2 and its storedId arrives in the
+// dock. The index is the authoritative source for /reports; the server never enumerates the bucket so
+// each visitor sees only their own reports (spec §5: "без глобално изброяване").
+const MAX_REPORTS_INDEX = 50;
+
+export interface ReportIndexEntry {
+  id: string;
+  title: string;
+  question: string;
+  createdAt: string;
+}
+
+const isReportIndexEntry = (v: unknown): v is ReportIndexEntry => {
+  if (typeof v !== 'object' || v === null) return false;
+  const e = v as Record<string, unknown>;
+  return (
+    typeof e.id === 'string' &&
+    typeof e.title === 'string' &&
+    typeof e.question === 'string' &&
+    typeof e.createdAt === 'string'
+  );
+};
+
+export const loadReportIndex = (storage = defaultStorage()): ReportIndexEntry[] => {
+  try {
+    const raw = storage?.getItem(REPORTS_INDEX_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isReportIndexEntry);
+  } catch {
+    return [];
+  }
+};
+
+export const addToReportIndex = (entry: ReportIndexEntry, storage = defaultStorage()): void => {
+  if (!storage) return;
+  try {
+    const existing = loadReportIndex(storage);
+    if (existing.some((e) => e.id === entry.id)) return; // deduplicate
+    const updated = [entry, ...existing].slice(0, MAX_REPORTS_INDEX);
+    storage.setItem(REPORTS_INDEX_KEY, JSON.stringify(updated));
+  } catch {
+    // Non-fatal: quota exceeded / storage blocked
   }
 };
