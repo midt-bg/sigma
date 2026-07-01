@@ -8,9 +8,7 @@
     "build": "react-router build",
     "preview": "react-router build && vite preview",
     "deploy": "react-router build && node ../../scripts/wrangler-render.mjs build/server/wrangler.json && wrangler deploy --config build/server/wrangler.deploy.json",
-    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.workers.config.ts",
-    "test:node": "vitest run --config vitest.config.ts",
-    "test:workers": "vitest run --config vitest.workers.config.ts",
+    "test": "vitest run --config vitest.config.ts",
     "typecheck": "wrangler types && react-router typegen && tsc -b",
     "cf-typegen": "wrangler types"
   },
@@ -29,7 +27,6 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.29.1",
-    "@cloudflare/vitest-pool-workers": "0.17.0",
     "@react-router/dev": "7.15.1",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22",
