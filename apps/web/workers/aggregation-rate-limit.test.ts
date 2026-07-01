@@ -45,6 +45,18 @@ describe('rateLimitAggregationRoute', () => {
     expect(normalizedPathname(new Request('http://local/companies///'))).toBe('/companies');
   });
 
+  it('limits the single-fetch .data twins the same as the bare paths (#184)', async () => {
+    for (const path of ['/companies.data', '/authorities.data']) {
+      const { limiter } = rateLimiter(false);
+      const response = await rateLimitAggregationRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.32' } }),
+        { AGG_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(response?.status, path).toBe(429);
+    }
+  });
+
   it('does not limit unrelated paths', async () => {
     const { limiter, limit } = rateLimiter(false);
 

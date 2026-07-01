@@ -6,23 +6,32 @@ export const RATE_LIMIT_FALLBACK_KEY = 'unknown-client';
 export function normalizedPathname(request: Request): string {
   const pathname = new URL(request.url).pathname;
 
-  // Collapse duplicate slashes BEFORE the equality check: `//assistant/chat` would otherwise slip the
-  // path match and bypass the only limiter on the paid endpoint if the router still routes it (review
-  // #80, ydimitrof). `/\/{2,}/` → single slash; the trailing-slash strip stays.
+  // Build the transform once and apply it to whichever pathname survives decoding, so the strips
+  // below can never be half-applied across the try/catch branches.
+  //
+  // - Collapse duplicate slashes BEFORE the equality check: `//assistant/chat` would otherwise slip
+  //   the path match and bypass the only limiter on the paid endpoint if the router still routes it
+  //   (review #80, ydimitrof). `/\/{2,}/` → single slash.
+  // - Strip a trailing `.data` BEFORE the trailing-slash strip, mirroring RRv7's own
+  //   `getNormalizedPath` (`pathname.replace(/\.data$/, "")`). With `ssr: true`, single-fetch serves
+  //   every UI route's loader at BOTH `/<path>` and `/<path>.data` (the form in-app navigation uses),
+  //   so the limiter must classify by the canonical route path RR resolves — otherwise every limiter
+  //   is trivially bypassable via the `.data` suffix (`/search.data`, `/companies.data`, …). See #184.
+  //   `/_root.data` → `/_root`, which is fine: no limiter targets the root loader, so no need to map
+  //   it back to `/`. `react-router.config.ts` does NOT set `unstable_trailingSlashAwareDataRequests`,
+  //   so only the default `<path>.data` form exists; if that flag is ever enabled, the `/_.data` /
+  //   `/<path>/_.data` forms would also need stripping here.
+  const normalize = (path: string): string =>
+    path
+      .toLowerCase()
+      .replace(/\/{2,}/g, '/')
+      .replace(/\.data$/, '')
+      .replace(/\/+$/, '') || '/';
+
   try {
-    return (
-      decodeURIComponent(pathname)
-        .toLowerCase()
-        .replace(/\/{2,}/g, '/')
-        .replace(/\/+$/, '') || '/'
-    );
+    return normalize(decodeURIComponent(pathname));
   } catch {
-    return (
-      pathname
-        .toLowerCase()
-        .replace(/\/{2,}/g, '/')
-        .replace(/\/+$/, '') || '/'
-    );
+    return normalize(pathname);
   }
 }
 
