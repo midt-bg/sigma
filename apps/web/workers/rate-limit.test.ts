@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { normalizedPathname, rateLimitKey, rateLimitRequest } from './rate-limit';
+import {
+  normalizedPathname,
+  rateLimitExceededResponse,
+  rateLimitKey,
+  rateLimitRequest,
+  rateLimitUnavailableResponse,
+} from './rate-limit';
 
 const req = (ip = '203.0.113.7') =>
   new Request('http://local/x', { method: 'POST', headers: { 'CF-Connecting-IP': ip } });
@@ -85,6 +91,50 @@ describe('normalizedPathname', () => {
     // `%zz` is invalid percent-encoding, so decodeURIComponent throws and the catch branch runs;
     // it must still strip the trailing .data off the raw (lowercased) pathname.
     expect(path('/search%zz.data')).toBe('/search%zz');
+  });
+});
+
+// The two response builders special-case HEAD (a HEAD response must carry no body and no
+// Content-Type, per HTTP semantics) and both stamp Retry-After + the shared security headers.
+// Cover both the GET/POST body path AND the HEAD no-body path so the method branch is exercised.
+describe('rateLimitExceededResponse', () => {
+  it('returns a 429 with the body and hardened headers for a non-HEAD request', async () => {
+    const res = rateLimitExceededResponse(req(), true, 'Too many requests');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.headers.get('Content-Type')).toContain('text/plain');
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(await res.text()).toBe('Too many requests');
+  });
+
+  it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {
+    const head = new Request('http://local/x', { method: 'HEAD' });
+    const res = rateLimitExceededResponse(head, true, 'Too many requests');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.headers.get('Content-Type')).toBeNull();
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(await res.text()).toBe('');
+  });
+});
+
+describe('rateLimitUnavailableResponse', () => {
+  it('returns a 503 with a body and hardened headers for a non-HEAD request', async () => {
+    const res = rateLimitUnavailableResponse(req(), true);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.headers.get('Content-Type')).toContain('text/plain');
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(await res.text()).toBe('Rate limiting unavailable');
+  });
+
+  it('omits the body and Content-Type for a HEAD request but keeps status + headers', async () => {
+    const head = new Request('http://local/x', { method: 'HEAD' });
+    const res = rateLimitUnavailableResponse(head, true);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(res.headers.get('Content-Type')).toBeNull();
+    expect(await res.text()).toBe('');
   });
 });
 
