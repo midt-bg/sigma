@@ -1,25 +1,26 @@
 // Docs integrity gate (#102). Two asserts, mirroring the philosophy of
 // scripts/integrity-checks.mjs: don't just print — fail CI on drift.
 //
-//   1. No dangling refs. Every `docs/<path>.md` mentioned in source (code
-//      comments, README, the docs themselves) must resolve to a real file.
-//      This is the bug class #102 fixed: the schema header and several modules
-//      pointed at ETL/scope docs (by paths under docs/) that did not exist.
-//   2. No orphan docs. Every docs/**/*.md must be reachable from the docs index
+//   1. No dangling refs. Every repo-root-relative `docs/<path>.md` mentioned in
+//      source (code comments, README, the docs themselves) must resolve to a
+//      real file. Refs inside a URL/longer path are ignored, and test files
+//      (*.test.*) are skipped — their doc-shaped strings are fixtures, not refs.
+//   2. No orphan docs. Every `docs/**/*.md` must be reachable from the docs index
 //      (docs/README.md), or — for ADRs — from docs/adr/README.md. Keeps the
 //      index honest so a new doc can't land unlinked.
 //
-// Pure checks over an injected file tree so the logic is testable; main() wires
-// it to the real repo and exits non-zero on the first violation kind found.
+// The scanning/matching logic is pure (strings + path lists) and is exercised
+// adversarially by scripts/check-docs.test.mjs; main() wires it to the real repo
+// and exits non-zero on the first violation kind found.
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Where source-level doc references can live. Excludes node_modules,
-// build output and the lockfile by construction (we never descend into them).
+// Where source-level doc references can live. Excludes node_modules, build
+// output and the lockfile by construction (we never descend into them).
 const SCAN_ROOTS = [
   'README.md',
   'AGENTS.md',
@@ -33,6 +34,54 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.turbo', '.
 const TEXT_EXT = /\.(md|ts|tsx|js|mjs|cjs|jsx|sql|json|yml|yaml)$/;
 const DOCS_REF = /\bdocs\/[A-Za-z0-9_./-]+\.md\b/g;
 const MD_LINK = /\]\(([^)]+\.md)(?:#[^)]*)?\)/g;
+
+// ── pure helpers (unit-tested in check-docs.test.mjs) ──────────────────────────
+
+/** `true` for a markdown doc path. Non-.md files under docs/ (schemas, fixtures) are not docs. */
+export function isMarkdown(path) {
+  return path.endsWith('.md');
+}
+
+/** `true` for a test/spec file — excluded from the ref scan (its doc paths are fixtures). */
+export function isTestFile(path) {
+  return /\.(test|spec)\.[mc]?[jt]sx?$/.test(path);
+}
+
+/** `true` iff this module is the entry point — URL-safe (percent-encoded paths, spaces, non-ASCII). */
+export function isMain(importMetaUrl, argvPath) {
+  return Boolean(argvPath) && importMetaUrl === pathToFileURL(argvPath).href;
+}
+
+/**
+ * Root-relative `docs/<path>.md` refs in a blob of text. Excludes any occurrence
+ * that is a segment inside a URL or a longer path (immediately preceded by `/`):
+ * a ref we validate is repo-root-relative, so it is never preceded by `/`.
+ */
+export function extractDocsRefs(text) {
+  const refs = [];
+  for (const m of text.matchAll(DOCS_REF)) {
+    if (m.index > 0 && text[m.index - 1] === '/') continue; // URL / non-root path segment
+    refs.push(m[0]);
+  }
+  return refs;
+}
+
+/** Repo-internal markdown link targets in an index file's text; external URLs skipped. */
+export function linkTargets(text) {
+  const targets = [];
+  for (const m of text.matchAll(MD_LINK)) {
+    if (/^(https?:)?\/\//.test(m[1])) continue; // external
+    targets.push(m[1]);
+  }
+  return targets;
+}
+
+/** Docs not reachable from an index and not explicitly exempt. */
+export function computeOrphans(mdDocs, indexed, exempt) {
+  return mdDocs.filter((p) => !exempt.has(p) && !indexed.has(p));
+}
+
+// ── fs wiring ──────────────────────────────────────────────────────────────────
 
 function walk(abs, out = []) {
   if (!existsSync(abs)) return out;
@@ -48,15 +97,11 @@ function walk(abs, out = []) {
   return out;
 }
 
-// Resolve the targets of every markdown link in a given index file, relative to
-// that file's directory, into repo-relative doc paths.
+// Markdown link targets of an index file, resolved to repo-relative doc paths.
 function linkedFrom(indexAbs) {
   const dir = dirname(indexAbs);
-  const text = readFileSync(indexAbs, 'utf8');
   const linked = new Set();
-  for (const m of text.matchAll(MD_LINK)) {
-    const target = m[1];
-    if (/^(https?:)?\/\//.test(target)) continue; // external
+  for (const target of linkTargets(readFileSync(indexAbs, 'utf8'))) {
     linked.add(relative(ROOT, resolve(dir, target)));
   }
   return linked;
@@ -65,9 +110,7 @@ function linkedFrom(indexAbs) {
 export function findDanglingRefs(files) {
   const dangling = [];
   for (const abs of files) {
-    const text = readFileSync(abs, 'utf8');
-    for (const m of text.matchAll(DOCS_REF)) {
-      const ref = m[0];
+    for (const ref of extractDocsRefs(readFileSync(abs, 'utf8'))) {
       if (!existsSync(join(ROOT, ref))) {
         dangling.push({ file: relative(ROOT, abs), ref });
       }
@@ -78,7 +121,9 @@ export function findDanglingRefs(files) {
 
 export function findOrphanDocs() {
   const docsRoot = join(ROOT, 'docs');
-  const allDocs = walk(docsRoot).map((abs) => relative(ROOT, abs));
+  const allDocs = walk(docsRoot)
+    .map((abs) => relative(ROOT, abs))
+    .filter(isMarkdown); // only markdown is a "doc" that must be indexed
   const indexed = new Set();
   const topIndex = join(docsRoot, 'README.md');
   const adrIndex = join(docsRoot, 'adr', 'README.md');
@@ -87,11 +132,11 @@ export function findOrphanDocs() {
 
   // The index files themselves and the ADR template are reachable by definition.
   const exempt = new Set(['docs/README.md', 'docs/adr/README.md', 'docs/adr/_template.md']);
-  return allDocs.filter((p) => !exempt.has(p) && !indexed.has(p));
+  return computeOrphans(allDocs, indexed, exempt);
 }
 
 function main() {
-  const files = SCAN_ROOTS.flatMap((r) => walk(join(ROOT, r)));
+  const files = SCAN_ROOTS.flatMap((r) => walk(join(ROOT, r))).filter((abs) => !isTestFile(abs));
   const dangling = findDanglingRefs(files);
   const orphans = findOrphanDocs();
 
@@ -108,4 +153,4 @@ function main() {
   console.log('check-docs: ok — all docs refs resolve and every doc is indexed.');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (isMain(import.meta.url, process.argv[1])) main();
