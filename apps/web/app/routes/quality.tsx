@@ -199,7 +199,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
   if (!data) {
     return (
       <main>
-        <Breadcrumbs items={[{ label: 'Анализи', href: '/analytics' }, { label: 'Индекс на качеството' }]} />
+        <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Индекс на качеството' }]} />
         <PageHeader
           kicker="Анализи"
           title="Индекс на качеството"
