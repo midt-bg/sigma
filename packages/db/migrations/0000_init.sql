@@ -408,7 +408,7 @@ CREATE TABLE health_percentiles (         -- corpus distribution snapshot (calib
 -- 1d) CONTRACT QUALITY / HEALTH INDEX — Phase 5 per-contract feature store
 --     (scripts/derive-contract-features.sql). See docs/contract-quality-spec.local.md §7.3.
 --     score_a..score_e / score_overall are REALs in [0,1]; populated by the scoring UPDATEs
---     (group 338 PRD), NULL until then.
+--     in scripts/derive-contract-features.sql (NULL = unknown/withheld, never zero).
 -- ===================================================================================
 
 CREATE TABLE contract_features (
@@ -435,7 +435,7 @@ CREATE TABLE contract_features (
   -- sub-scores [0,1], NULL when unknown
   score_a REAL, score_b REAL, score_c REAL, score_d REAL, score_e REAL,
   score_overall REAL, computed_at TEXT,
-  -- A1 leaf, auditable (§5.5/§5.6 PERCENT_RANK floor) — populated by the scoring UPDATEs (group 338)
+  -- A1 leaf, auditable (§5.5/§5.6 PERCENT_RANK floor)
   score_a_bids REAL, peer_has_multi INTEGER
 );
 CREATE INDEX idx_contract_features_overall ON contract_features(score_overall);

@@ -67,7 +67,9 @@ check('value_suspect contracts excluded from every numerator', () => {
      JOIN tenders t ON t.id = c.tender_id
      WHERE cf.value_flag = 'value_suspect'`,
   );
-  if (suspects.length !== 3) throw new Error(`expected 3 value_suspect rows, found ${suspects.length}`);
+  // Not pinned to the current corpus count (3) — future refreshes may add/remove suspect rows;
+  // the invariant is that every one of them is excluded, however many there are.
+  if (suspects.length < 1) throw new Error(`expected at least 1 value_suspect row, found 0`);
   const leaked = suspects.filter((s) => {
     const cf = one(`SELECT score_overall FROM contract_features WHERE contract_id = ?`, s.contract_id);
     return cf.score_overall !== null;
@@ -82,13 +84,25 @@ check('value_suspect contracts excluded from every numerator', () => {
   });
   if (authorityLeaks.length > 0)
     throw new Error(`${authorityLeaks.length} value_suspect authorities have scored_contracts >= total_contracts`);
-  return `3 value_suspect rows, all score_overall NULL, all authorities scored<total`;
+  return `${suspects.length} value_suspect rows, all score_overall NULL, all authorities scored<total`;
 });
 
 // 3) year_quality_totals has rows for 2020-2026
-check('year_quality_totals covers 2020-2026', () => {
+check('year_quality_totals covers every corpus year', () => {
+  // Dynamic range: covers 2020..the latest signing year in the corpus, so the check
+  // does not go stale in 2027 or on a partial re-import.
   const years = all(`SELECT year FROM year_quality_totals`).map((r) => r.year);
-  const missing = ['2020', '2021', '2022', '2023', '2024', '2025', '2026'].filter((y) => !years.includes(y));
+  // Ignore straggler mis-dated rows (a handful of 2027+/pre-2020 contracts exist in the feed):
+  // a year only counts as "covered corpus" with a non-trivial contract population.
+  const maxYear = one(
+    `SELECT MAX(y) AS y FROM (
+       SELECT CAST(substr(signed_at, 1, 4) AS INT) AS y, COUNT(*) AS n FROM contracts
+       WHERE substr(signed_at, 1, 4) BETWEEN '2020' AND '2099'
+       GROUP BY y HAVING n >= 50)`,
+  ).y;
+  const expected = [];
+  for (let y = 2020; y <= maxYear; y++) expected.push(String(y));
+  const missing = expected.filter((y) => !years.includes(y));
   if (missing.length > 0) throw new Error(`missing years: ${missing.join(', ')}`);
   return `years present: ${years.sort().join(', ')}`;
 });

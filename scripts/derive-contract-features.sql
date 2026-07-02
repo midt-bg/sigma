@@ -8,8 +8,14 @@
 -- follows §12.2 (21-value procedure map), §12.3 (framework/DPS regime, contracts.framework is
 -- 100% NULL), §12.5 (year-band 'NA' for the 37 NULL/out-of-range signing years).
 --
--- SCOPE (this PRD): leaves + effective_peer_key/peer_n + score_coverage only. score_a..score_e and
--- score_overall are left NULL — the scoring UPDATEs are the NEXT PRD (group 338).
+-- SCOPE: leaves + effective_peer_key/peer_n + score_coverage, then the pillar scoring UPDATEs
+-- (score_a..score_e, score_overall in [0,1]) and the six *_quality_totals rollups — all in this
+-- file, executed as one batch after scripts/derive-health.sql.
+--
+-- KNOWN LIMITATION (spec §5.6, same in its own sample SQL): rows that fall back to a mid/coarse
+-- peer key are PERCENT_RANKed only against the other fallback rows assigned that key, not against
+-- every row matching it — so the effective ranking cohort can be smaller than the stored peer_n.
+-- Recorded as an open §11 question; fixing it requires ranking against the full key population.
 --
 -- IDEMPOTENT: CREATE TABLE IF NOT EXISTS + DELETE + INSERT, same idiom as scripts/derive-health.sql.
 -- Temp staging tables are dropped up front so a re-run in the same connection is safe.
@@ -65,6 +71,14 @@ DROP TABLE IF EXISTS contract_regime;
 DROP TABLE IF EXISTS peer_fine_counts;
 DROP TABLE IF EXISTS peer_mid_counts;
 DROP TABLE IF EXISTS peer_coarse_counts;
+-- Scoring temp tables too: a run that dies mid-file (e.g. transient D1 lock, retried by
+-- import.mjs execWranglerD1File) must be able to re-execute the whole file cleanly.
+DROP TABLE IF EXISTS tmp_score_ctx;
+DROP TABLE IF EXISTS tmp_a1;
+DROP TABLE IF EXISTS tmp_peer_multi;
+DROP TABLE IF EXISTS tmp_b1;
+DROP TABLE IF EXISTS tmp_c;
+DROP TABLE IF EXISTS tmp_d;
 
 DELETE FROM contract_features;
 
@@ -209,7 +223,7 @@ SELECT
   -- is denominated in amendments.currency, independent of the contract's.
   CASE WHEN fa.first_delta IS NULL THEN NULL
        WHEN c.signing_value IS NULL OR c.signing_value <= 0 THEN NULL
-       WHEN fa.first_currency IS NOT NULL AND fa.first_currency <> c.currency THEN NULL
+       WHEN fa.first_currency IS NOT NULL AND (c.currency IS NULL OR fa.first_currency <> c.currency) THEN NULL
        WHEN fa.first_delta > 0 AND fa.first_delta > 0.30 * c.signing_value
             AND (JULIANDAY(fa.first_published_at) - JULIANDAY(c.signed_at)) < 90 THEN 1
        ELSE 0 END,
@@ -409,7 +423,9 @@ SET score_b = CASE
            ELSE 0 END
     + CASE WHEN w.cpv_division IN ('71', '72', '73', '79', '80', '85') AND contract_features.is_meat = 0 THEN -0.05 ELSE 0 END
     + CASE WHEN contract_features.is_accelerated = 1 THEN -0.15 ELSE 0 END
-    + CASE WHEN contract_features.bid_window_days < 15 AND contract_features.is_open_procedure = 1
+    -- >= 0 floor: negative windows are date errors (deadline before publication), not short windows
+    + CASE WHEN contract_features.bid_window_days >= 0 AND contract_features.bid_window_days < 15
+             AND contract_features.is_open_procedure = 1
              AND contract_features.is_accelerated = 0 THEN -0.10 ELSE 0 END
   )), 3)
 END
@@ -437,6 +453,9 @@ SELECT cf.contract_id,
     WHEN cf.annex_count = 4 THEN 0.30
     ELSE 0.0
   END AS c1,
+  -- C2 uses the spec's "compact" linear variant (1.2x -> 0.80, 1.5x -> 0.50), not the §4.C
+  -- piecewise band (1.2x -> 0.60) — the two are inconsistent in the spec and §12 doesn't
+  -- resolve it; linear is chosen as the smoother, easier-to-explain mapping.
   CASE
     WHEN cf.cost_overrun_ratio IS NULL THEN NULL
     WHEN cf.cost_overrun_ratio <= 1.0 THEN 1.0
