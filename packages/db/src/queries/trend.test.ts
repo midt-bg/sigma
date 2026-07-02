@@ -102,6 +102,39 @@ describe('getSpendingTrend', () => {
     ]);
   });
 
+  it('never computes YoY against a non-adjacent year when a whole year is missing', async () => {
+    // Data for 2020 and 2022 only — 2021 is a gap year. 2022's YoY must NOT be computed against
+    // 2020: the gap is zero-filled and the YoY lookup is strictly year-1, so 2022 yields null.
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return {
+              results: [
+                { period: '2020', value_eur: 4000, contracts: 40 },
+                { period: '2022', value_eur: 5000, contracts: 50 },
+              ] as T[],
+            };
+          },
+          async first<T>() {
+            if (sql.includes('as_of')) return { as_of: null } as T;
+            return COVERAGE as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const { years } = await getSpendingTrend(db, { granularity: 'year' });
+    expect(years).toEqual([
+      { year: '2020', valueEur: 4000, contracts: 40, yoyPct: null, partial: false },
+      { year: '2021', valueEur: 0, contracts: 0, yoyPct: -1, partial: false }, // real -100% vs 2020
+      { year: '2022', valueEur: 5000, contracts: 50, yoyPct: null, partial: false }, // NOT (5000-4000)/4000
+    ]);
+  });
+
   it('marks the as_of period and year partial and suppresses the partial year YoY', async () => {
     const { points, years } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {});
     expect(points.at(-1)).toMatchObject({ period: '2023-01', partial: true });

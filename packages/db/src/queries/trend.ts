@@ -205,9 +205,11 @@ export async function getSpendingTrend(
     yearMap.set(y, acc);
   }
   const sortedYears = [...yearMap.keys()].sort();
-  const years: TrendYear[] = sortedYears.map((year, i) => {
+  const years: TrendYear[] = sortedYears.map((year) => {
     const cur = yearMap.get(year)!;
-    const prev = i > 0 ? yearMap.get(sortedYears[i - 1]!)! : null;
+    // Strictly the adjacent prior year: if it is absent (a gap in the series), YoY stays null
+    // rather than silently comparing against a non-adjacent year.
+    const prev = yearMap.get(String(Number(year) - 1)) ?? null;
     const partial = year === partialYear;
     return {
       year,
