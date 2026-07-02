@@ -403,3 +403,38 @@ CREATE INDEX idx_sector_concentration_bidder ON sector_concentration(bidder_id);
 CREATE TABLE health_percentiles (         -- corpus distribution snapshot (calibration + validation)
   signal TEXT PRIMARY KEY, p05 REAL, p25 REAL, p50 REAL, p75 REAL, p95 REAL
 );
+
+-- ===================================================================================
+-- 1d) CONTRACT QUALITY / HEALTH INDEX — Phase 5 per-contract feature store
+--     (scripts/derive-contract-features.sql). See docs/contract-quality-spec.local.md §7.3.
+--     score_a..score_e / score_overall are REALs in [0,1]; populated by the scoring UPDATEs
+--     (group 338 PRD), NULL until then.
+-- ===================================================================================
+
+CREATE TABLE contract_features (
+  contract_id TEXT PRIMARY KEY REFERENCES contracts(id),
+  -- peer + coverage
+  effective_peer_key TEXT, peer_n INTEGER,
+  coverage_bids INTEGER, coverage_sme INTEGER, coverage_estimate INTEGER,
+  coverage_overrun INTEGER, coverage_ocds INTEGER, score_coverage REAL,
+  -- A
+  bids_received INTEGER, single_offer INTEGER, sme_rate REAL, disq_rate REAL,
+  -- B
+  is_open_procedure INTEGER, is_direct_award INTEGER, has_exemption INTEGER,
+  is_outside_zop INTEGER, is_dps INTEGER, is_meat INTEGER, is_accelerated INTEGER,
+  is_framework INTEGER, is_eauction INTEGER, bid_window_days REAL, scoring_regime TEXT,
+  -- C
+  annex_count INTEGER, cost_overrun_ratio REAL, estimate_dev_ratio REAL,
+  value_flag TEXT, has_reason_text INTEGER, first_amend_shock INTEGER,
+  -- D
+  authority_hhi REAL, bidder_buyer_hhi REAL, repeat_win_intensity REAL,
+  sector_win_share REAL, pair_first_date TEXT, edge_age_years REAL, authority_suppliers INTEGER,
+  -- E
+  date_flag TEXT, eu_funded INTEGER, subcontract_passthrough REAL, corrections_count INTEGER,
+  duration_days INTEGER, winner_size TEXT, bidder_nuts TEXT, awarded_to_group INTEGER,
+  -- sub-scores [0,1], NULL when unknown
+  score_a REAL, score_b REAL, score_c REAL, score_d REAL, score_e REAL,
+  score_overall REAL, computed_at TEXT
+);
+CREATE INDEX idx_contract_features_overall ON contract_features(score_overall);
+CREATE INDEX idx_contract_features_peer ON contract_features(effective_peer_key);

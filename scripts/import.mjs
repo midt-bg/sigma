@@ -226,6 +226,7 @@ function runFullDerive() {
 // §8) — runs against the already-populated served D1 without the ~25-minute full re-import.
 function runHealthDerive() {
   execSql(resolve(root, 'scripts/derive-health.sql'));
+  execSql(resolve(root, 'scripts/derive-contract-features.sql'));
 }
 
 function runSliceDerive() {
