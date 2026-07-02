@@ -19,6 +19,11 @@ export const ANALYTICS_LENSES = [
     title: 'Конкуренция',
     desc: 'Къде има висок дял „една оферта“ и концентрация на доставчици.',
   },
+  {
+    href: '/quality',
+    title: 'Индекс на качеството',
+    desc: 'Колко здрав е процесът по всеки договор: пет измерения, една оценка 0–100.',
+  },
 ] as const;
 
 export const ANALYTICS_NAV_PATHS = [

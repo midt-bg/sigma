@@ -10,11 +10,14 @@ export const CACHE_QUERY_PARAMS = new Set([
   'bidder',
   'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals
   'center',
+  'contract', // /quality: scorecard subject
   'count',
+  'csort', // /quality: contract list ordering
   'cursor',
   'eu',
   'funding',
   'g',
+  'grain', // /quality: rollup grain (authority|supplier|sector|region|year|funding)
   'kind',
   'p',
   'page', // pageNav: rank offset + "page N of M" in the HTML, but only when cursor is set. Keyed
@@ -23,6 +26,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'procedure',
   'q',
   'sector',
+  'sel', // /quality: selected ranking row scoping the contract list
   'sort',
   'top', // singleSelectFilters: top-20 vs top-50 on /flows and /competition
   'type',
