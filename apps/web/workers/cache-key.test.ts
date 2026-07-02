@@ -105,6 +105,17 @@ describe('cacheKey', () => {
     expect(() => cacheUrl('http://local/contracts/%')).not.toThrow();
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
   });
+
+  it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {
+    // ?bids=1 narrows /contracts to single-bid contracts — different rows and totals.
+    expect(cacheUrl('http://local/contracts?bids=1').search).not.toBe(
+      cacheUrl('http://local/contracts').search,
+    );
+    // Same cursor, different page marker => different rank numbers in the rendered HTML.
+    expect(cacheUrl('http://local/contracts?cursor=c5&page=2').search).not.toBe(
+      cacheUrl('http://local/contracts?cursor=c5&page=5').search,
+    );
+  });
 });
 
 describe('CACHE_QUERY_PARAMS drift guard', () => {
