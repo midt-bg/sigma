@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
 import {
   authorityListFilters,
-  companyListParams,
+  companyListFilters,
   contractListFilters,
   getMulti,
   leaderboardRankOffset,
@@ -40,6 +40,26 @@ describe('authorityListFilters', () => {
       eu: 'eu',
       q: 'път',
     });
+  });
+});
+
+describe('companyListFilters', () => {
+  it('parses the same filter set the HTML list and CSV export must share (#138)', () => {
+    const f = companyListFilters(
+      new URLSearchParams('kind=company&count=2-5&sector=45&year=2025&eu=national&q=строителство'),
+    );
+    expect(f).toMatchObject({
+      kinds: ['company'],
+      countBucket: '2-5',
+      sectors: ['45'],
+      years: ['2025'],
+      eu: 'national',
+      q: 'строителство',
+    });
+  });
+
+  it('normalises an unknown sort to the default rather than passing it through', () => {
+    expect(companyListFilters(new URLSearchParams('sort=bogus')).sort).toBe('won');
   });
 });
 
@@ -83,7 +103,7 @@ describe('getMulti', () => {
     params.set('year', '2024,2016,unknown');
     params.set('eu', 'eu');
 
-    expect(companyListParams(params)).toMatchObject({
+    expect(companyListFilters(params)).toMatchObject({
       sectors: [knownSector],
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',

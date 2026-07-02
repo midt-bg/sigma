@@ -69,7 +69,12 @@ export function authorityListFilters(sp: URLSearchParams) {
   };
 }
 
-export function companyListParams(sp: URLSearchParams) {
+/**
+ * The companies list filter set — the single source of truth shared by /companies and
+ * /companies.csv (same #138 drift-prevention rationale as contractListFilters). Only pagination is
+ * route-specific. Keep aligned with @sigma/db COMPANY_FILTER_KEYS.
+ */
+export function companyListFilters(sp: URLSearchParams) {
   return {
     sort: normalizeCompanySort(sp.get('sort')),
     kinds: getMulti(sp, 'kind') as EntityKind[],
