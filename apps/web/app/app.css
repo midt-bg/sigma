@@ -28,6 +28,16 @@
   --color-accent: oklch(48% 0.18 28); /* red — links/warnings */
   --color-accent-bg: oklch(94% 0.04 28);
   --color-pos: oklch(45% 0.1 165); /* teal — positive deltas */
+  /* Decorative editorial accents (already the trend-dashboard chart palette: slate #5E7C8B count
+     series, tan #C4B79C € line). Promoted to shared tokens so the /analytics landing thumbnails and
+     the „парите" highlight read from the palette, not raw hexes. Never the sole carrier of meaning —
+     the slate word is also italic; the thumbnails are aria-hidden decoration. */
+  --color-slate: oklch(55% 0.035 233);
+  --color-tan: oklch(77% 0.03 90);
+  /* Warm ochre — the „услуги" (services) bucket marker on the /overruns sector treemap + ranked list.
+     Pairs with --accent (works) and --slate (goods); each bucket also carries a text label + legend,
+     so colour is never the sole differentiator (WCAG 1.4.1). */
+  --color-ochre: oklch(64% 0.12 70);
 
   --font-sans:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -39,6 +49,9 @@
   /* Short aliases → @theme tokens, so the ported component CSS keeps using var(--paper) etc. */
   --paper: var(--color-paper);
   --paper-warm: var(--color-paper-warm);
+  /* Pure-white raised surface — form chips/toggles that must read as "above" the warm panels
+     (the design renders the trend filter chips and the step toggle in #fff on the #FBF8F1 bar). */
+  --paper-raised: #ffffff;
   --paper-deep: var(--color-paper-deep);
   --ink: var(--color-ink);
   --ink-mid: var(--color-ink-mid);
@@ -48,6 +61,9 @@
   --accent: var(--color-accent);
   --accent-bg: var(--color-accent-bg);
   --pos: var(--color-pos);
+  --slate: var(--color-slate);
+  --tan: var(--color-tan);
+  --ochre: var(--color-ochre);
 
   /* Legacy token aliases — keep page-local inline styles working */
   --bg: var(--paper);
@@ -810,7 +826,7 @@ main.narrow {
   color: var(--ink);
 }
 
-/* Risk Indicators */
+/* Risk Indicators — used by RiskIndicators.tsx on the contract page */
 .risk-indicators {
   margin: var(--s-6) 0;
   padding: var(--s-5);
@@ -1695,127 +1711,911 @@ details.row .body .signal .why {
   color: var(--ink-mid);
 }
 
-/* Richer analytics hub lens cards: keep the editorial tile chrome, but give each lens room for a
-   live data teaser. */
-.tiles.analytics-lenses {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* ===== analyze-landing =====
+   The /analytics hub: an editorial masthead + five EQUAL full-width hero cards (one per analysis),
+   each pairing two real KPI figures with a decorative, aria-hidden thumbnail. Cards are real anchors
+   (keyboard-focusable, visible focus ring); the 380px thumbnail pane collapses under ~720px. */
+.analyze-landing {
+  max-width: 1120px;
+  margin: 0 auto;
 }
-.tiles.analytics-lenses .tile:nth-child(2n + 1) {
-  padding-left: 0;
+.az-masthead {
+  margin: 0 0 var(--s-7);
 }
-.tiles.analytics-lenses .tile:nth-child(2n) {
-  border-right: 0;
+.az-kicker {
+  margin: 0 0 var(--s-4);
+  font: 10px/1.3 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
-.lens-card {
+.az-title {
+  margin: 0 0 var(--s-4);
+  max-width: 18ch;
+  font: 600 40px/1.1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.az-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.az-lede {
+  margin: 0;
+  max-width: 600px;
+  font: 14px/1.55 var(--font-sans);
+  color: var(--ink-mid);
+}
+
+.az-cards {
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  gap: 18px;
 }
-.lens-preview {
-  margin-top: var(--s-4);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--rule-soft);
+
+/* One hero card — left editorial pane + right thumbnail pane. */
+.az-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 208px;
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px oklch(18% 0.012 70 / 0.04);
+  color: inherit;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
 }
-.lens-preview-title {
-  margin-bottom: var(--s-2);
-  font: 500 10.5px/1.35 var(--font-mono);
-  letter-spacing: 0.14em;
+.az-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px oklch(18% 0.012 70 / 0.1);
+  border-color: var(--ink-soft);
+}
+/* stretched link: the whole card is clickable, but the stat ⓘ buttons sit above it (z-index) so they
+   stay independently operable. The focus ring renders on the card via the link's stretched ::after. */
+.az-card-stretch {
+  text-decoration: none;
+  color: inherit;
+}
+.az-card-stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 6px;
+}
+.az-card-stretch:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.az-card .metric-info {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .az-card {
+    transition: none;
+  }
+  .az-card:hover {
+    transform: none;
+  }
+}
+
+.az-card-main {
+  display: flex;
+  flex-direction: column;
+  padding: 26px 30px;
+  min-width: 0;
+}
+.az-card-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-3);
+  margin: 0 0 var(--s-3);
+}
+.az-card-index {
+  font: 600 10px/1.3 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.az-card-cat {
+  font: 500 9px/1.3 var(--font-mono);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
-.lens-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--rule);
-}
-.lens-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px var(--s-3);
-  padding: var(--s-2) 0;
-  border-bottom: 1px solid var(--rule-soft);
-  align-items: baseline;
-}
-.lens-name {
-  min-width: 0;
-  font: 14px/1.35 var(--font-sans);
+.az-card-title {
+  margin: 0 0 var(--s-2);
+  font: 600 25px/1.2 var(--font-serif);
   color: var(--ink);
 }
-.lens-value {
-  font: 12px/1.2 var(--font-mono);
+.az-card-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.az-card-title em.az-em-slate {
+  color: var(--slate);
+}
+.az-card-desc {
+  margin: 0;
+  max-width: 420px;
+  font: 13px/1.5 var(--font-sans);
   color: var(--ink-mid);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.lens-meta,
-.lens-share {
-  grid-column: 1 / -1;
-  font: 12px/1.35 var(--font-mono);
-  color: var(--ink-soft);
-}
-.lens-share .share {
-  width: 100%;
+.az-card-foot {
+  display: flex;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: var(--s-4);
+  margin-top: auto;
+  padding-top: var(--s-5);
 }
-.lens-share .share-bar {
-  flex: 1;
-  width: auto;
-}
-.lens-chart {
-  margin: var(--s-2) 0 var(--s-3);
-  border-bottom: 1px solid var(--rule-soft);
-}
-.lens-chart .trend-svg {
-  max-height: 150px;
-}
-.lens-map {
-  margin: var(--s-2) auto var(--s-3);
-  max-width: 320px;
-}
-.lens-map .map-wrap svg {
-  max-width: 100%;
-}
-.lens-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--s-3);
+.az-card-stats {
+  display: flex;
+  gap: var(--s-6);
   margin: 0;
 }
-.lens-metrics dt {
-  margin-bottom: 4px;
-  font: 500 10.5px/1.25 var(--font-mono);
+.az-card-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.az-stat-num {
+  margin: 0;
+  font: 600 19px/1.1 var(--font-mono);
+  color: var(--ink);
+}
+.az-stat-num--accent {
+  color: var(--accent);
+}
+.az-stat-label {
+  display: inline-flex;
+  align-items: center;
+  font: 500 8px/1.3 var(--font-mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
-.lens-metrics dd {
-  margin: 0;
-  font: 14px/1.35 var(--font-sans);
-  color: var(--ink);
+.az-stat-hint {
+  max-width: 22ch;
+  margin: 1px 0 0;
+  font: 400 9px/1.3 var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
 }
-.lens-link {
-  margin-top: auto;
-  padding-top: var(--s-4);
-  font: 500 14px/1.3 var(--font-sans);
+.az-card-cta {
+  flex: none;
+  font: 600 11px/1.3 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  white-space: nowrap;
 }
-.lens-link a {
+
+/* Right pane — a touch deeper than the card, with a decorative thumbnail. */
+.az-card-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--paper-deep);
+  border-left: 1px solid var(--rule);
+  /* the card no longer clips overflow (so the ⓘ popover can escape), so round the thumb's own corners */
+  border-radius: 0 6px 6px 0;
+}
+.az-thumb {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+}
+.az-fill-ink {
+  fill: var(--ink);
+}
+.az-fill-accent {
+  fill: var(--accent);
+}
+.az-fill-slate {
+  fill: var(--slate);
+}
+.az-fill-tan {
+  fill: var(--tan);
+}
+.az-fill-rule {
+  fill: var(--rule);
+}
+.az-thumb-soft {
+  opacity: 0.55;
+}
+.az-thumb-faint {
+  opacity: 0.14;
+}
+.az-stroke-ink,
+.az-stroke-accent {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.az-stroke-ink {
+  stroke: var(--ink);
+}
+.az-stroke-accent {
+  stroke: var(--accent);
+}
+.az-thumb-dash {
+  stroke-dasharray: 5 5;
+}
+
+@media (max-width: 720px) {
+  .az-title {
+    font-size: 32px;
+  }
+  .az-card {
+    grid-template-columns: 1fr;
+  }
+  .az-card-thumb {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    padding: 16px 20px;
+  }
+  .az-thumb {
+    max-width: 240px;
+  }
+}
+@media (max-width: 460px) {
+  .az-card-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-3);
+  }
+}
+/* ===== end analyze-landing ===== */
+
+/* ===== price-anomaly („Раздути спрямо сходни") =====
+   The CPV-cohort outlier dashboard: a masthead with 3 method KPIs, a 2-col top row (V2 cohort browse
+   + V3 distribution strips, both selecting a cohort via a real ?cohort= link) and a full-width grid of
+   flagged-contract scorecards faceted by the selection. Colours/typography mirror the Claude-Design
+   mock; every figure is real and the accent-red caveat never asserts wrongdoing. */
+.pa-page {
+  max-width: 1340px;
+  margin: 0 auto;
+}
+.pa-mast {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-7);
+  flex-wrap: wrap;
+  margin: 0 0 var(--s-6);
+}
+.pa-mast-main {
+  min-width: 0;
+  flex: 1 1 460px;
+}
+.pa-mast-kicker {
+  margin: 0 0 var(--s-3);
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
   color: var(--accent);
 }
-@media (max-width: 720px) {
-  .tiles.analytics-lenses {
+.pa-mast-title {
+  margin: 0;
+  font: 600 36px/1.02 var(--font-serif);
+  letter-spacing: -0.018em;
+  color: var(--ink);
+}
+.pa-mast-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.pa-mast-lede {
+  margin: var(--s-3) 0 0;
+  max-width: 560px;
+  font: 13px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.pa-mast-kpis {
+  display: flex;
+  flex: none;
+  margin: 0;
+}
+.pa-hk {
+  padding: 0 22px;
+  border-left: 1px solid var(--rule);
+}
+.pa-hk:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.pa-hk-v {
+  margin: 0;
+  font: 600 24px/1 var(--font-mono);
+  color: var(--ink);
+}
+.pa-hk-v.accent {
+  color: var(--accent);
+}
+.pa-hk-l {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--s-2);
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+}
+
+/* shared panel chrome */
+.pa-panel {
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  min-width: 0;
+}
+.pa-panel-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 15px 20px 13px;
+  border-bottom: 1px solid var(--rule);
+}
+.pa-panel-head--col {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+.pa-panel-head--wrap {
+  flex-wrap: wrap;
+}
+.pa-kicker {
+  font: 600 9px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.pa-panel-title {
+  margin: var(--s-2) 0 0;
+  font: 600 18px/1 var(--font-serif);
+  color: var(--ink);
+}
+.pa-panel-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+/* segmented sort tabs */
+.pa-seg {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pa-seg a {
+  padding: 7px 9px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.03em;
+  text-decoration: none;
+  color: var(--ink-mid);
+  background: var(--paper-raised);
+  border-left: 1px solid var(--rule);
+}
+.pa-seg a:first-child {
+  border-left: 0;
+}
+.pa-seg a[aria-current='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* cohort browse — ONE full-width table: stats + the inline distribution strip per row */
+.pa-browse {
+  margin-bottom: 14px;
+}
+.pa-browse-headrow,
+.pa-browse-row {
+  display: grid;
+  grid-template-columns: 52px minmax(110px, 1.3fr) 96px 60px 52px 124px minmax(190px, 1.7fr);
+  gap: 9px;
+  align-items: center;
+}
+.pa-browse-headrow {
+  padding: 9px 20px 7px;
+  border-bottom: 1px solid var(--ink);
+  font: 500 7.5px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+/* a header cell that carries an inline ⓘ — keep the glyph on the label's baseline, never wrap */
+.pa-th {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+}
+.pa-th-r {
+  justify-content: flex-end;
+}
+.pa-r {
+  text-align: right;
+}
+.pa-browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pa-browse-row {
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--rule-soft);
+  border-left: 2px solid transparent;
+  text-decoration: none;
+  color: var(--ink);
+}
+.pa-browse-row:hover {
+  background: var(--accent-bg);
+}
+.pa-browse-row.is-on {
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
+}
+.pa-browse-code {
+  font: 600 10px/1 var(--font-mono);
+  color: var(--ink-soft);
+}
+.pa-browse-row.is-on .pa-browse-code {
+  color: var(--accent);
+}
+.pa-browse-name {
+  font: 400 11.5px/1.3 var(--font-sans);
+}
+.pa-browse-row.is-on .pa-browse-name {
+  font-weight: 600;
+}
+.pa-browse-med {
+  font: 600 10.5px/1 var(--font-mono);
+  white-space: nowrap;
+}
+.pa-browse-n {
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.pa-browse-out {
+  font: 600 10px/1 var(--font-mono);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.pa-browse-share {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pa-share-track {
+  flex: 1;
+  height: 6px;
+  background: var(--rule-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pa-share-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pa-share-pct {
+  width: 26px;
+  text-align: right;
+  font: 600 9px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+/* the inline distribution strip, rightmost cell of each browse row */
+.pa-browse-strip {
+  min-width: 0;
+}
+.pa-strip {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.pa-strip-axis {
+  stroke: var(--rule-soft);
+  stroke-width: 1;
+}
+.pa-strip-ticktext {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  fill: var(--ink-soft);
+}
+.pa-strip-med {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+.pa-strip-med.is-dashed {
+  stroke-width: 1.4;
+  stroke-dasharray: 3 2;
+}
+.pa-dot {
+  fill: var(--ink);
+  fill-opacity: 0.4;
+}
+.pa-dot.is-big {
+  fill: var(--accent);
+  fill-opacity: 0.95;
+}
+.pa-browse-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--rule-soft);
+  font: 400 9.5px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.pa-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pa-legend-med {
+  width: 14px;
+  height: 2px;
+  background: var(--accent);
+}
+.pa-legend-big {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.pa-browse-selcount {
+  margin-left: auto;
+}
+
+/* V4 — flagged-contract scorecards */
+.pa-scorecards {
+  overflow: hidden;
+}
+.pa-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pa-filter-label {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+}
+.pa-filter-all {
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.pa-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 5px 8px;
+  font: 500 9.5px/1.2 var(--font-mono);
+  text-decoration: none;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.pa-clear {
+  padding: 6px 10px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper-raised);
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.pa-clear:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+/* ── selected-CPV summary header (top of the scorecards, one block per selected cohort) ── */
+.pa-cohort-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 16px 20px 4px;
+}
+.pa-sumcard {
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-bg);
+  padding: 13px 16px;
+}
+.pa-sumcard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pa-sumcard-head .pa-card-cpv {
+  background: var(--paper);
+}
+.pa-sumcard-name {
+  font: 600 13px/1.3 var(--font-sans);
+  color: var(--ink);
+}
+.pa-sumcard-stats {
+  margin: 9px 0 0;
+  font: 400 12px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.pa-sumcard-stats strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.pa-sumcard-link {
+  display: inline-block;
+  margin-top: 9px;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-decoration: none;
+}
+.pa-sumcard-link:hover,
+.pa-sumcard-link:focus-visible {
+  text-decoration: underline;
+}
+.pa-cards-grid {
+  list-style: none;
+  margin: 0;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(384px, 1fr));
+  gap: 16px;
+}
+.pa-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 15px 16px 14px;
+}
+.pa-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.pa-card-id {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.pa-card-rank {
+  font: 600 18px/1 var(--font-serif);
+  color: var(--accent);
+}
+.pa-card-cpv {
+  font: 600 9px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 3px 5px;
+}
+/* The card's CPV chip is a real link that toggles the ?cohort= facet (sibling of the title link). */
+a.pa-card-cpv {
+  text-decoration: none;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+a.pa-card-cpv:hover,
+a.pa-card-cpv:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.pa-card-mult {
+  margin-left: auto;
+  text-align: right;
+  flex: none;
+}
+.pa-card-mult-v {
+  font: 600 20px/1 var(--font-mono);
+  color: var(--accent);
+}
+.pa-card-mult-l {
+  margin-top: 3px;
+  font: 500 8px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+.pa-card-title {
+  margin-top: 11px;
+  font: 600 12.5px/1.32 var(--font-sans);
+  color: var(--ink);
+  min-height: 33px;
+}
+.pa-card-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.pa-card-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.pa-card-buyer {
+  margin-top: 6px;
+  font: 400 9.5px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+.pa-card-buyer a {
+  color: var(--ink-mid);
+  text-decoration: none;
+}
+.pa-card-buyer a:hover {
+  color: var(--accent);
+}
+.pa-card-strip {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  margin-top: 12px;
+}
+.pa-card-hi {
+  fill: var(--accent);
+  stroke: var(--paper-raised);
+  stroke-width: 1.5;
+}
+.pa-card-figs {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--rule-soft);
+}
+.pa-card-figs dt {
+  font: 500 7.5px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+.pa-card-figs dd {
+  margin: 4px 0 0;
+  font: 600 12px/1 var(--font-mono);
+}
+.pa-fig-val {
+  color: var(--ink);
+}
+.pa-fig-med {
+  color: var(--ink-mid);
+}
+.pa-fig-pct {
+  color: var(--accent);
+}
+.pa-cards-empty {
+  padding: 26px 20px;
+  text-align: center;
+  font: 400 11px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+.pa-caveat {
+  margin: 0;
+  padding: 11px 20px 14px;
+  background: var(--accent-bg);
+  border-top: 1px solid var(--accent);
+  font: 400 9.5px/1.45 var(--font-sans);
+  color: var(--ink-mid);
+}
+.pa-caveat-strong {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* methodology block — the complete „как се смята" section */
+.pa-method {
+  margin-top: 22px;
+}
+.pa-method-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 26px;
+  padding: 16px 20px 20px;
+}
+.pa-method-block {
+  min-width: 0;
+}
+.pa-method-block h3 {
+  margin: 0 0 6px;
+  font: 600 12px/1.3 var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.pa-method-block p {
+  margin: 0 0 8px;
+  font: 400 12.5px/1.55 var(--font-sans);
+  color: var(--ink-mid);
+}
+.pa-method-block p:last-child {
+  margin-bottom: 0;
+}
+.pa-method-block strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.pa-method-block code {
+  font: 500 11.5px/1.4 var(--font-mono);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.pa-method-block ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+.pa-method-block li {
+  margin: 0 0 6px;
+  font: 400 12.5px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.pa-method-block li:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .pa-method-body {
     grid-template-columns: 1fr;
   }
-  .tiles.analytics-lenses .tile {
-    padding-left: 0;
-    border-right: 0;
-  }
-  .lens-card {
-    min-height: 0;
-  }
-  .lens-metrics {
-    grid-template-columns: 1fr;
+  .pa-mast-title {
+    font-size: 30px;
   }
 }
+/* The inline strip needs width — drop it (header + cell) and fall back to a 6-column stats table. */
+@media (max-width: 820px) {
+  .pa-browse-headrow,
+  .pa-browse-row {
+    grid-template-columns: 48px minmax(90px, 1.3fr) 88px 54px 48px 100px;
+  }
+  .pa-th-strip,
+  .pa-browse-strip {
+    display: none;
+  }
+}
+@media (max-width: 560px) {
+  .pa-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  /* Drop the РАЗДУТ ДЯЛ column too — 5 stat columns left, gap tightened. */
+  .pa-browse-headrow,
+  .pa-browse-row {
+    grid-template-columns: 44px 1fr 70px 42px 40px;
+    gap: 6px;
+  }
+  .pa-th-share,
+  .pa-browse-share {
+    display: none;
+  }
+}
+/* ===== end price-anomaly ===== */
 
 /* Helper text */
 .muted {
@@ -2529,6 +3329,137 @@ details.row .body .signal .why {
   height: auto;
   display: block;
 }
+/* Hydrated force view: the canvas is a pan/zoom surface; nodes are draggable. */
+.net-canvas {
+  position: relative;
+}
+.network-svg.is-interactive {
+  cursor: grab;
+  touch-action: none; /* let d3-zoom own touch gestures instead of the page scrolling */
+}
+.network-svg.is-interactive:active {
+  cursor: grabbing;
+}
+.network-svg.is-interactive a[data-draggable='1'] {
+  cursor: grab;
+}
+/* Zoom controls — overlaid top-right of the canvas, client-only (rendered after hydration). */
+.net-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.net-zoom button {
+  width: 30px;
+  height: 30px;
+  font: 600 16px var(--font-mono, monospace);
+  line-height: 1;
+  color: var(--ink, #222);
+  background: var(--paper, #fff);
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.net-zoom button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Graph + side Information Card layout (mirrors /map). Card wraps under the graph on narrow screens. */
+.net-explore {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.net-explore .net-canvas {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+/* Full-screen: the widget fills the viewport on a paper background; the graph grows to use the height,
+   the card sits beside it, and the controls/legend stay usable. */
+.net-graph:fullscreen {
+  background: var(--paper);
+  padding: 24px;
+  overflow: auto;
+}
+.net-graph:fullscreen .net-explore {
+  min-height: calc(100vh - 160px);
+}
+.net-graph:fullscreen .net-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.net-graph:fullscreen .network-svg {
+  max-height: calc(100vh - 180px);
+}
+.net-card {
+  flex: 0 0 240px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+.net-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.net-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.net-card-stats {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 10px;
+}
+.net-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.net-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.net-card-actions {
+  margin: 0;
+}
+.net-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
+}
+/* Hover-to-explore emphasis: dim everything but the focused node + its neighbours; lift the focus. */
+.network-svg.is-hovering .is-dim {
+  opacity: 0.18;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .network-svg .node,
+  .network-svg .edge,
+  .network-svg .node-label,
+  .network-svg .edge-label,
+  .network-svg g[class],
+  .network-svg a {
+    transition: opacity 0.12s ease;
+  }
+}
+.network-svg .is-focus .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
 .network-svg .edge {
   stroke: #d8d6cf;
 }
@@ -2539,6 +3470,102 @@ details.row .body .signal .why {
 .network-svg .node-label {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
+}
+/* Per-edge value label, rotated in the component to lie along the edge. A thick white halo
+   (paint-order: stroke) keeps the number readable where it crosses edges/nodes. Toggle hides it. */
+.network-svg .edge-label {
+  fill: var(--ink, #222);
+  font: 600 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3.25px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* Non-centre nodes are anchors to a profile page → show the click affordance and an accent ring. */
+.network-svg a {
+  cursor: pointer;
+}
+/* With JS (issue #142) nodes are also draggable; show the grab affordance. Sighted-only — the
+   connections table stays the keyboard/AT path, so this is purely a pointer cue. */
+.network-svg a[data-draggable='1'] {
+  cursor: grab;
+}
+.network-svg a[data-draggable='1']:active {
+  cursor: grabbing;
+}
+.network-svg a:hover .node,
+.network-svg a:focus-visible .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.network-svg a:focus-visible {
+  outline: none;
+}
+/* Edge-label toggle (pure CSS, no JS): unchecked hides every .edge-label. */
+/* Controls row above the graph: the edge-value toggle plus, once you've browsed to another node,
+   the Open / Reset actions. Wraps on narrow screens. */
+.net-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+.net-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+  user-select: none;
+}
+.net-toggle input {
+  accent-color: var(--accent);
+}
+.net-graph:has(.net-toggle input:not(:checked)) .edge-label {
+  display: none;
+}
+/* Browse actions — appear only after a client-side re-centre (no JS = no recentre = hidden). */
+.net-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.net-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font: 600 12px var(--font-mono, monospace);
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.net-btn:hover {
+  filter: brightness(0.94);
+}
+.net-btn-ghost {
+  color: var(--ink, #222);
+  background: transparent;
+  border-color: var(--rule, #d8d6cf);
+}
+.net-loading {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-hint {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #888);
+}
+.net-error {
+  font: 12px var(--font-mono, monospace);
+  color: var(--accent);
 }
 .net-legend {
   display: flex;
@@ -2565,6 +3592,11 @@ details.row .body .signal .why {
 .net-legend .key.center,
 .net-legend .key.authority {
   border-radius: 50%;
+}
+.net-caption {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
 }
 .net-legend .key.center {
   background: var(--accent);
@@ -2622,6 +3654,17 @@ details.row .body .signal .why {
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+/* Map + Information Card side by side; the card wraps under the map on narrow screens. */
+.map-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.map-layout .map-wrap {
+  flex: 1 1 460px;
+  min-width: 0;
+}
 .map-wrap svg {
   width: 100%;
   height: auto;
@@ -2632,6 +3675,82 @@ details.row .body .signal .why {
 .map-wrap path {
   stroke: #f7f7f4;
   stroke-width: 1;
+}
+/* Hover highlight for the focused region (mouse-driven; the table is the keyboard/AT path). */
+.map-wrap path.region {
+  transition: fill 0.1s ease;
+}
+.map-wrap path.is-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+/* The Information Card beside the map. */
+.map-card {
+  flex: 0 0 250px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+/* Grouping toggle, kept inside the card so all map controls sit together. */
+.map-toggle {
+  display: flex;
+  gap: 0;
+  margin: 0 0 14px;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.map-toggle button {
+  flex: 1;
+  padding: 6px 8px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  background: var(--paper, #fff);
+  border: 0;
+  cursor: pointer;
+}
+.map-toggle button + button {
+  border-left: 1px solid var(--rule, #d8d6cf);
+}
+.map-toggle button.is-on {
+  color: #fff;
+  background: var(--accent);
+}
+.map-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.map-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.map-card-stats {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.map-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.map-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.map-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.map-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
 }
 .map-legend {
   display: flex;
@@ -3548,3 +4667,1660 @@ tbody td,
 .external-eik-link svg {
   opacity: 0.7;
 }
+
+/* ===== trends-dashboard =====
+   Static layout/typography chrome for /trends (routes/trends.tsx + components/TrendComboChart.tsx),
+   moved out of inline `style=` to keep the route CSP-clean (style-src; see docs/review-accessibility).
+   Only genuinely JS-computed values (bar widths, active-state colours, SVG fill/stroke var()s) stay
+   inline. The mono face mirrors the design mock's IBM Plex Mono, falling back to the app token. */
+/* vertical layout (design): a single column — full-width chart → year table → contracts grid */
+.trend-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.trend-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.trend-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.trend-chart-panel {
+  padding: 14px 16px 10px;
+}
+.trend-years-panel {
+  padding: 12px 16px;
+}
+.trend-rail {
+  padding: 12px 0 0;
+}
+
+/* KPI strip */
+/* combined header: title + lede on the left, KPIs inline on the right, one bordered row (design) */
+.trend-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 0 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.trend-header-main {
+  min-width: 0;
+}
+.trend-header-kicker {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.trend-header-title {
+  margin: 8px 0 0;
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1;
+  color: var(--ink);
+}
+.trend-header-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.trend-header-lede {
+  margin: 7px 0 0;
+  max-width: 460px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-mid);
+}
+.trend-header-kpis {
+  display: flex;
+  flex: none;
+}
+.trend-hk {
+  padding: 0 22px;
+  border-left: 1px solid var(--rule);
+}
+.trend-hk:last-child {
+  padding-right: 0;
+}
+.trend-hk-v {
+  font: 600 25px/1 var(--font-mono);
+  color: var(--ink);
+}
+.trend-hk-v--accent {
+  color: var(--accent);
+}
+.trend-hk-l {
+  margin-top: 4px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+}
+@media (max-width: 760px) {
+  .trend-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .trend-header-kpis {
+    flex-wrap: wrap;
+  }
+  .trend-hk:first-child {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+/* filter bar */
+.trend-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  margin-bottom: 14px;
+}
+.trend-steps {
+  display: flex;
+}
+.trend-step {
+  font:
+    500 10px/1 'IBM Plex Mono',
+    var(--font-mono);
+  letter-spacing: 0.08em;
+  padding: 7px 11px;
+  cursor: pointer;
+}
+.trend-filter-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* both filters are identical bordered chips: uppercase mono caption + borderless select,
+   so they read as one consistent control row with the step toggle (matches the design mock). */
+.trend-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+.trend-filter-label > span {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.trend-filter-label select {
+  font: 500 11px/1 var(--font-mono);
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  max-width: 16ch;
+}
+.trend-filter-label select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.trend-year-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font:
+    500 10px/1 'IBM Plex Mono',
+    var(--font-mono);
+  padding: 7px 10px;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.trend-total {
+  margin-left: auto;
+  font:
+    400 11px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-mid);
+}
+.trend-total b {
+  color: var(--ink);
+}
+
+/* panel headers + chart legend */
+.trend-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.trend-panel-title {
+  margin: 0;
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: 18px;
+  font-weight: 600;
+}
+.trend-panel-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.trend-hint {
+  font:
+    400 10px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+}
+.trend-legend {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font:
+    400 9.5px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+}
+.trend-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.trend-legend-meta {
+  color: var(--ink-mid);
+}
+.trend-sw-box {
+  width: 9px;
+  height: 9px;
+  background: rgb(94 124 139 / 0.55); /* slate — matches the count bars */
+  display: inline-block;
+  border-radius: 1px;
+}
+.trend-sw-dashed {
+  width: 14px;
+  border-top: 1.6px dashed var(--accent);
+  display: inline-block;
+}
+.trend-sw-line {
+  width: 14px;
+  height: 2.4px;
+  background: var(--ink);
+  display: inline-block;
+  border-radius: 2px;
+}
+.trend-chart-body {
+  margin-top: 10px;
+  /* full-width chart in the vertical layout — give it real height (design ≈ 380px) */
+  min-height: 380px;
+}
+.trend-chart-panel--full .trend-chart-body {
+  min-height: 0;
+}
+.trend-chart-empty {
+  padding: 24px 0;
+}
+.trend-callout-p {
+  margin: 0;
+}
+
+/* year table */
+.trend-years {
+  width: 100%;
+  border-collapse: collapse;
+}
+.trend-years thead tr {
+  font:
+    500 8.5px/1 'IBM Plex Mono',
+    var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+}
+.trend-years thead th {
+  padding: 7px 8px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--ink);
+}
+.trend-years thead th:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+.trend-years thead th:last-child {
+  padding-right: 0;
+}
+.trend-years tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.trend-years td.c-year {
+  padding: 6px 8px 6px 0;
+}
+.trend-year-btn {
+  font:
+    600 12px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.trend-years td.c-value {
+  text-align: right;
+  padding: 6px 8px;
+  font:
+    600 12px/1 'IBM Plex Mono',
+    var(--font-mono);
+}
+.trend-years td.c-num {
+  text-align: right;
+  padding: 6px 8px;
+  font:
+    400 11px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-mid);
+}
+.trend-years td.c-share {
+  text-align: right;
+  padding: 6px 8px;
+  font:
+    400 11px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+}
+.trend-years td.c-yoy {
+  padding: 6px 0 6px 8px;
+}
+.trend-yoy-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.trend-yoy-bar {
+  height: 5px;
+  border-radius: 3px;
+}
+.trend-yoy-pct {
+  font:
+    500 10.5px/1 'IBM Plex Mono',
+    var(--font-mono);
+  min-width: 52px;
+  text-align: right;
+}
+.trend-years-empty {
+  margin-top: 10px;
+}
+
+/* right rail: newest contracts */
+.trend-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+.trend-rail-rss {
+  font:
+    500 9px/1 'IBM Plex Mono',
+    var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.trend-rail-submeta {
+  padding: 6px 16px 8px;
+  font:
+    400 10px/1.4 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+}
+/* contracts as a full-width responsive card grid (design), not a narrow side list */
+.trend-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 16px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 12px;
+}
+.trend-rail-item {
+  padding: 11px 13px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 4px;
+}
+.trend-rail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.trend-rail-date {
+  font:
+    500 9.5px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+}
+.trend-rail-val {
+  font:
+    600 11px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.trend-rail-buyer {
+  margin-top: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.trend-rail-seller {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-mid);
+}
+.trend-rail-seller-arrow {
+  color: var(--accent);
+}
+/* compact metric tags replacing the verbose subject paragraph — fits more rows */
+.trend-rail-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 5px;
+}
+.trend-rail-sector {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.trend-rail-eu {
+  font: 600 8px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+.trend-rail-more {
+  margin-left: auto;
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-mid);
+}
+.trend-rail-empty {
+  padding: 16px;
+}
+.trend-rail-end {
+  grid-column: 1 / -1;
+  padding: 12px 16px 16px;
+  font:
+    400 10px/1 'IBM Plex Mono',
+    var(--font-mono);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* combo chart wrapper + hover tooltip (TrendComboChart.tsx) */
+.trend-chart-wrap {
+  position: relative;
+  width: 100%;
+  /* the design's chart palette — the count series is slate, the € line is tan, the trend is ink, and
+     the forecast/peak/hover are accent. Kept as scoped custom props so the SVG (whose fill/stroke can't
+     take a class) inherits them. Slate is decorative here: every series is also shape- and legend-coded. */
+  --trend-count: 94 124 139; /* slate (rgb channels) — count bars + band */
+  --trend-count-ink: #5e7c8b; /* darker slate — count axis text + ПРОГНОЗА */
+  --trend-line: #c4b79c; /* tan — actual/forecast € line */
+  --trend-grid: #e7dfcd; /* warm gridlines */
+  --trend-xtick-fc: #9aa7ae; /* forecast x-tick label */
+}
+.trend-svg {
+  display: block;
+  overflow: visible;
+}
+.trend-tip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -112%);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 7px 10px;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 5;
+  font-family: 'IBM Plex Mono', var(--font-mono);
+}
+.trend-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+.trend-tip-badge {
+  border: 1px solid color-mix(in oklch, var(--accent) 50%, transparent);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+}
+.trend-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+}
+.trend-tip-row.is-first {
+  margin-top: 5px;
+}
+.trend-tip-sw-line {
+  width: 8px;
+  height: 2.4px;
+  background: var(--accent);
+  display: inline-block;
+  border-radius: 2px;
+}
+.trend-tip-sw-box {
+  width: 8px;
+  height: 8px;
+  background: rgb(var(--trend-count) / 0.85);
+  display: inline-block;
+  border-radius: 1px;
+}
+.trend-tip-sw-hollow {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+}
+.trend-tip-label {
+  font-size: 9px;
+  opacity: 0.8;
+}
+.trend-tip-val {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+/* ===== end trends-dashboard ===== */
+
+/* ===== overruns-dashboard ===== */
+/* Static layout/typography for /overruns + the /analytics „Раздуване" hero. Ported from the route
+   files (no new inline style=, per docs/review-accessibility.md). Only data-driven values (bar/
+   scatter geometry, active accent) remain inline. All colours via app tokens. */
+
+/* shared primitives */
+.ov-panel {
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ov-mono-label {
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.ov-accent {
+  color: var(--accent);
+}
+
+/* page column: keep the dashboard within the 1200px editorial measure of the design mock */
+.ov-page {
+  max-width: 1200px;
+}
+
+/* masthead — kicker + title + lede on the left, the three headline KPIs inline on the right (design,
+   same composition as .trend-header). */
+.ov-mast {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 0 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ink);
+}
+.ov-mast-main {
+  min-width: 0;
+}
+.ov-mast-kicker {
+  margin: 0;
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.ov-mast-title {
+  margin: 10px 0 0;
+  font-family: var(--font-serif);
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.02;
+  color: var(--ink);
+}
+.ov-mast-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.ov-mast-lede {
+  margin: 9px 0 0;
+  max-width: 540px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-mid);
+}
+.ov-mast-kpis {
+  display: flex;
+  flex: none;
+  margin: 0;
+}
+.ov-hk {
+  padding: 0 22px;
+  border-left: 1px solid var(--rule);
+}
+.ov-hk:last-child {
+  padding-right: 0;
+}
+.ov-hk-v {
+  margin: 0;
+  font: 600 25px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.ov-hk-v.accent {
+  color: var(--accent);
+}
+.ov-hk-l {
+  margin-top: 5px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+@media (max-width: 760px) {
+  .ov-mast {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .ov-mast-kpis {
+    flex-wrap: wrap;
+  }
+  .ov-hk:first-child {
+    padding-left: 0;
+    border-left: none;
+  }
+}
+
+/* sticky filter bar — „ПОДРЕДИ ПО" + segmented toggle (drives ?by=) + before→now legend */
+.ov-filterbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 14px;
+  margin-bottom: var(--s-4);
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.ov-filterbar-label {
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.ov-seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ov-seg a {
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  color: var(--ink-mid);
+  background: var(--paper);
+  text-decoration: none;
+}
+.ov-seg a + a {
+  border-left: 1px solid var(--rule);
+}
+.ov-seg a[aria-current='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+.ov-legend {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ov-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+}
+.ov-swatch.ink {
+  background: var(--ink);
+}
+.ov-swatch.accent {
+  background: var(--accent);
+}
+
+/* dashboard frame */
+/* single-line and two-line ellipsis truncation (ported from the design's .clamp1/.clamp2 — they were
+   referenced across overruns/trends but never defined, so long subjects wrapped and overflowed). */
+.clamp1 {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* section rhythm: each of the four design sections is a serif heading + mono note, then its panel(s) */
+.ov-section {
+  margin-top: var(--s-6);
+}
+.ov-sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.ov-sec-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.ov-sec-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.ov-sec-note {
+  font: 400 10px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* two-up figure grid: a wide visual (scatter / treemap) beside a narrower data panel (inspector /
+   ranked list), per the design's minmax(0,1.3fr) minmax(360px,1fr). */
+.ov-figure-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .ov-figure-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* leaderboard board */
+.ov-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 13px 16px 8px;
+}
+.ov-board-title {
+  font: 600 16px/1.2 var(--font-serif);
+  color: var(--ink);
+}
+.ov-board-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.ov-board-scale {
+  font: 400 10px/1 var(--font-mono);
+  color: var(--ink-soft);
+}
+.ov-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 560px;
+}
+.ov-row {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 9px 8px;
+  border: none;
+  border-bottom: 1px solid var(--rule-soft);
+  border-left: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.ov-row[aria-pressed='true'] {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.ov-row-rank {
+  font: 600 22px/1 var(--font-serif);
+  color: var(--ink-mid);
+  text-align: center;
+}
+.ov-row[aria-pressed='true'] .ov-row-rank {
+  color: var(--accent);
+}
+/* per-row growth: neutral by default so the accent isn't diluted; reserved for the largest grower
+   and the selected row (see Fix: accent-red overload). */
+.ov-row-pct {
+  color: var(--ink-mid);
+}
+.ov-row-pct.is-top {
+  color: var(--accent);
+}
+.ov-row[aria-pressed='true'] .ov-row-pct {
+  color: var(--accent);
+}
+.ov-arrow {
+  color: var(--ink-mid);
+}
+.ov-row-body {
+  min-width: 0;
+}
+.ov-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ov-row-subject {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.ov-row-value {
+  white-space: nowrap;
+  font: 600 10.5px/1 var(--font-mono);
+  color: var(--ink);
+}
+.ov-row-meta {
+  display: block;
+  margin-top: 4px;
+  font: 400 9px/1.2 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* before→now stacked bar */
+.ov-bar {
+  position: relative;
+  height: 13px;
+  margin-top: 5px;
+}
+.ov-bar-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 62px,
+    var(--rule-soft) 62px,
+    var(--rule-soft) 63px
+  );
+}
+.ov-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  height: 13px;
+  min-width: 3px;
+  border-radius: 0 2px 2px 0;
+  overflow: hidden;
+}
+.ov-bar-sign {
+  height: 100%;
+  background: var(--ink);
+}
+.ov-bar-inc {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* scatter panel */
+.ov-scatter-panel {
+  padding: 13px 16px 8px;
+  min-height: 230px;
+}
+.ov-scatter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ov-panel-title {
+  font: 600 16px/1.2 var(--font-serif);
+  color: var(--ink);
+}
+.ov-panel-note {
+  font: 400 9.5px/1 var(--font-mono);
+  color: var(--ink-soft);
+  /* the note caption holds a label + the fullscreen button, laid out inline */
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.ov-scatter-body {
+  flex: 1;
+  min-height: 340px;
+  margin-top: 6px;
+}
+.ov-scatter-svg {
+  display: block;
+  overflow: visible;
+}
+/* progressive-enhancement hover cue so the clickable bubbles feel interactive (mouse only — the
+   keyboard path is the leaderboard buttons). */
+.ov-scatter-dot {
+  transition:
+    r 0.12s ease,
+    fill-opacity 0.12s ease,
+    stroke-width 0.12s ease;
+}
+.ov-scatter-dot:hover {
+  fill-opacity: 0.95 !important;
+  stroke-width: 1.75;
+}
+
+/* inspector */
+.ov-insp-head {
+  padding: 13px 16px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.ov-insp-title {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--ink);
+}
+.ov-insp-parties {
+  margin-top: 6px;
+  font: 400 9.5px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+.ov-insp-figures {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.ov-insp-fig-label {
+  font: 400 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.ov-insp-fig-val {
+  margin-top: 3px;
+  font: 400 15px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-insp-fig-val.now {
+  font-weight: 600;
+  color: var(--ink);
+}
+.ov-insp-arrow {
+  color: var(--accent);
+  font-size: 14px;
+  padding-bottom: 1px;
+}
+.ov-insp-delta-wrap {
+  margin-left: auto;
+  text-align: right;
+}
+.ov-insp-delta {
+  font: 600 16px/1 var(--font-mono);
+  color: var(--accent);
+}
+.ov-insp-delta-meta {
+  margin-top: 2px;
+  font: 400 9px/1 var(--font-mono);
+  color: var(--ink-soft);
+}
+.ov-insp-grid-wrap {
+  padding: 12px 16px 14px;
+}
+.ov-insp-grid-heading {
+  margin-bottom: 6px;
+}
+.ov-insp-grid {
+  margin: 0;
+}
+.ov-insp-grid-row {
+  display: grid;
+  grid-template-columns: 118px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ov-insp-grid-key {
+  font: 500 9px/1.35 var(--font-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+.ov-insp-grid-val {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+/* inspector head: kicker + status badge on one row */
+.ov-insp-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ov-status-badge {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font: 500 8.5px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ov-status-badge.active {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--rule));
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+}
+.ov-status-badge.closed {
+  color: var(--ink-soft);
+  background: var(--paper-warm);
+}
+
+/* annex history — REAL amendment rows for the selected contract */
+.ov-annex-wrap {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+.ov-annex-heading {
+  margin-bottom: 8px;
+}
+.ov-annex-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ov-annex-row {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ov-annex-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ov-annex-seq {
+  flex: none;
+  font: 500 9px/1.3 var(--font-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-mid);
+}
+.ov-annex-date {
+  flex: none;
+  font: 400 9px/1.3 var(--font-mono);
+  color: var(--ink-soft);
+}
+.ov-annex-delta {
+  margin-left: auto;
+  flex: none;
+  font: 600 11px/1.3 var(--font-mono);
+  color: var(--accent);
+}
+.ov-annex-reason {
+  margin-top: 3px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-mid);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ov-annex-empty {
+  margin: 0;
+  font: 400 10px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+.ov-insp-source {
+  margin-top: 12px;
+  font: 400 9.5px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+
+/* leaderboard-as-table disclosure + methodology note */
+.ov-table-details {
+  margin-top: var(--s-4);
+}
+.ov-table-summary {
+  cursor: pointer;
+  font: 500 12px/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-table-body {
+  margin-top: var(--s-3);
+}
+.ov-methodology {
+  margin-top: var(--s-3);
+}
+
+/* ── SECTION 3 — overrun-by-sector table (CPV division, aggregate growth, € at risk) ── */
+.ov-sector-list-panel {
+  padding: 12px 16px 14px;
+}
+/* bucket markers — works→accent, goods→slate, services→ochre, other→ink-soft. Each is paired with a
+   text label / legend so colour is never the sole carrier of the category (WCAG 1.4.1). */
+.ov-bucket-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font: 400 9.5px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-bucket-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ov-sector-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+  flex: none;
+  background: var(--ink-soft);
+}
+.ov-sector-dot.works {
+  background: var(--accent);
+}
+.ov-sector-dot.goods {
+  background: var(--slate);
+}
+.ov-sector-dot.services {
+  background: var(--ochre);
+}
+.ov-sector-dot.other {
+  background: var(--ink-soft);
+}
+/* horizontal scroll wrapper for the wide (6-column) tables so they don't crush on narrow screens */
+.ov-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ov-sector-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ov-sector-table thead tr {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.ov-sector-table thead th {
+  padding: 6px 8px 7px;
+  text-align: right;
+  border-bottom: 1px solid var(--ink);
+}
+.ov-sector-table thead th:nth-child(1),
+.ov-sector-table thead th:nth-child(2) {
+  text-align: left;
+}
+.ov-sector-table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ov-sector-table td {
+  padding: 7px 8px;
+}
+.ov-sector-code {
+  font: 600 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-sector-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+.ov-sector-growth {
+  text-align: right;
+  font: 600 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.ov-sector-growth.is-top {
+  color: var(--accent);
+}
+.ov-sector-risk {
+  text-align: right;
+  font: 500 11px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+/* ── SECTION 4 — institutions table ── */
+.ov-auth-panel {
+  padding: 12px 16px 14px;
+}
+.ov-auth-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ov-auth-table thead tr {
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.ov-auth-table thead th {
+  padding: 6px 8px 7px;
+  text-align: right;
+  border-bottom: 1px solid var(--ink);
+}
+.ov-auth-table thead th.c-rank,
+.ov-auth-table thead th.c-name,
+.ov-auth-table thead th.c-share {
+  text-align: left;
+}
+.ov-auth-table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ov-auth-table td {
+  padding: 8px;
+  font-size: 11.5px;
+  vertical-align: middle;
+}
+.ov-auth-table td.c-rank {
+  font: 600 12px/1 var(--font-mono);
+  color: var(--ink-soft);
+  width: 28px;
+}
+.ov-auth-table td.c-name {
+  color: var(--ink);
+}
+.ov-auth-table td.c-num {
+  text-align: right;
+  font: 500 11px/1 var(--font-mono);
+  white-space: nowrap;
+}
+.ov-auth-total {
+  color: var(--ink);
+  font-weight: 600 !important;
+}
+.ov-auth-growth {
+  color: var(--ink-mid) !important;
+}
+.ov-auth-growth.is-top {
+  color: var(--accent) !important;
+}
+.ov-auth-table td.c-share {
+  width: 150px;
+}
+.ov-auth-foot {
+  margin: 12px 0 0;
+  text-align: center;
+  font: 400 9.5px/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+/* ===== end overruns-dashboard ===== */
+
+/* ===== chart-fullscreen ===== */
+.fs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  cursor: pointer;
+  flex: none;
+}
+.fs-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.fs-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* the scale caption holds a label + the button (the matching .ov-panel-note layout lives with its
+   base rule above) */
+.ov-board-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+/* native fullscreen — fill the viewport, let the chart grow to fill it */
+.trend-chart-panel:fullscreen,
+.ov-board:fullscreen,
+.ov-scatter-panel:fullscreen {
+  background: var(--paper);
+  padding: 20px 24px;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+}
+.trend-chart-panel:fullscreen .trend-chart-body,
+.ov-scatter-panel:fullscreen .ov-scatter-body {
+  flex: 1;
+  min-height: 0;
+}
+.ov-board:fullscreen .ov-board-list {
+  max-height: none;
+  flex: 1;
+}
+/* ===== end chart-fullscreen ===== */
+
+/* ===== trends chart fullscreen modal ===== */
+.trend-fs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  padding: 5px 9px;
+  font: 500 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--ink-mid);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.trend-fs-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.trend-fs-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in oklch, var(--ink) 50%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 55;
+}
+.trend-chart-panel--full {
+  position: fixed;
+  inset: 28px;
+  z-index: 60;
+  background: var(--paper-warm);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 26px 30px 18px;
+  box-shadow: 0 40px 100px color-mix(in oklch, var(--ink) 40%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+.trend-chart-panel--full .trend-chart-body {
+  flex: 1;
+  min-height: 0;
+}
+.trend-fs-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 18px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+.trend-fs-kicker {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+.trend-fs-title {
+  margin-top: 9px;
+  margin-bottom: 0;
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1;
+}
+.trend-fs-title em {
+  font-style: italic;
+  color: var(--accent);
+}
+.trend-fs-meta {
+  margin-top: 8px;
+  font: 400 11px/1 var(--font-mono);
+  color: var(--ink-mid);
+}
+.trend-fs-head-aside {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex: none;
+}
+.trend-fs-kpi {
+  text-align: right;
+}
+.trend-fs-kpi-v {
+  font: 600 26px/1 var(--font-mono);
+  color: var(--ink);
+}
+.trend-fs-kpi-v--accent {
+  color: var(--accent);
+}
+.trend-fs-kpi-l {
+  margin-top: 5px;
+  font: 500 8.5px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+}
+.trend-fs-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+@media (max-width: 720px) {
+  .trend-chart-panel--full {
+    inset: 10px;
+    padding: 16px;
+  }
+  .trend-fs-head-aside {
+    gap: 14px;
+  }
+  .trend-fs-title {
+    font-size: 22px;
+  }
+}
+/* ===== end trends chart fullscreen modal ===== */
+
+/* ===== metric-info popover ===== */
+.metric-info {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+/* ≥24px hit area via padding, pulled back with negative margin so the inline layout doesn't shift. */
+.metric-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -6px -5px -6px 1px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: help;
+  flex: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.metric-info-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
+.metric-info-btn:hover .metric-info-glyph,
+.metric-info:focus-within .metric-info-btn .metric-info-glyph,
+.metric-info.is-open .metric-info-btn .metric-info-glyph {
+  color: var(--accent);
+}
+.metric-info-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: 50%;
+}
+.metric-info-pop {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 244px;
+  padding: 12px 14px;
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 5px;
+  box-shadow: 0 14px 34px color-mix(in oklch, var(--ink) 38%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease,
+    visibility 0.14s;
+  pointer-events: none;
+}
+.metric-info-pop.is-end {
+  left: auto;
+  right: 0;
+}
+.metric-info:hover .metric-info-pop,
+.metric-info:focus-within .metric-info-pop,
+.metric-info.is-open .metric-info-pop {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.metric-info-title {
+  font:
+    600 9.5px/1 'IBM Plex Mono',
+    var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--paper) 70%, var(--ink));
+}
+.metric-info-summary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--paper);
+}
+.metric-info-readout {
+  margin-top: 1px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in oklch, var(--paper) 22%, var(--ink));
+  font:
+    500 11px/1.45 'IBM Plex Mono',
+    var(--font-mono);
+  color: color-mix(in oklch, var(--accent) 70%, var(--paper));
+}
+@media (max-width: 600px) {
+  .metric-info-pop {
+    width: 200px;
+  }
+}
+/* ===== end metric-info popover ===== */
+
+/* ===== list-search (in-page search for /authorities, /companies, /contracts) ===== */
+.list-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.list-search-field {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.list-search-field:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in oklch, var(--accent) 28%, transparent);
+}
+.list-search-icon {
+  color: var(--ink-soft);
+  font-size: 15px;
+}
+.list-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 10px 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+.list-search-btn {
+  flex: none;
+  padding: 0 16px;
+  font: 500 12px/1 var(--font-mono, monospace);
+  letter-spacing: 0.04em;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.list-search-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+/* ===== end list-search ===== */

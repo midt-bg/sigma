@@ -119,21 +119,20 @@ describe('cacheKey', () => {
 });
 
 describe('CACHE_QUERY_PARAMS drift guard', () => {
-  it('covers every query param the app reads off the URL', () => {
+  it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
     // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
     expect(consumed.size).toBeGreaterThan(10);
     expect(consumed.has('bids')).toBe(true);
     expect(consumed.has('page')).toBe(true);
 
+    // Security direction: every param a route loader / SSR render consumes must be keyed (in the
+    // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
+    // cache entry and the wrong data gets served. The reverse direction (allow-list entries nothing
+    // reads yet) is intentionally NOT asserted: params for stacked-later routes legitimately sit in
+    // the allow-list ahead of their route.
     const allowed = new Set([...CACHE_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
-  });
-
-  it('does not retain allow-list entries that nothing reads', () => {
-    const consumed = consumedQueryParams();
-    const stale = [...CACHE_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
-    expect(stale).toEqual([]);
   });
 });

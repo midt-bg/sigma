@@ -1,30 +1,28 @@
-// Response-affecting query params: every param a route loader (or the SSR render it feeds) reads off
-// the URL must be in this set, or two URLs that yield different responses collapse to one cache entry
-// (CWE-349, see issue #56). Keep it in sync with what apps/web/app/{routes,lib/filters.ts} consume.
-// The drift guard in cache-key.test.ts statically scans those sources and fails CI if a consumed
-// param is missing here (or from INTENTIONALLY_UNKEYED below), so the common case — a literal-key
-// read — can't drift unnoticed. It is not absolute: cache-key.test.ts documents the blind spots it
-// can't see (dynamic keys like sel(k), and workers/** is out of scope).
+// Keep this allow-list in sync with query params consumed by apps/web/app/routes loaders.
 export const CACHE_QUERY_PARAMS = new Set([
+  'a', // /compare — entity A slug
   'authority',
+  'b', // /compare — entity B slug
   'bidder',
-  'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals
+  'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals (CWE-349, #56)
+  'by', // /overruns — sort dimension (absolute | percent)
   'center',
+  'cohort', // /price-anomaly — selected CPV cohorts (repeatable); faceting changes the result set
   'count',
+  'cpv', // /contracts — exact 5-digit CPV filter; changes the result set + headline totals
   'cursor',
   'eu',
   'funding',
   'g',
   'kind',
+  'metric', // /compare leaderboard dimension
   'p',
-  'page', // pageNav: rank offset + "page N of M" in the HTML, but only when cursor is set. Keyed
-  // unconditionally — without cursor it's a harmless over-key (never a wrong body); simpler than
-  // coupling the key to cursor presence, and q/cursor already make key cardinality client-unbounded.
+  'page', // pagination offset — distinct pages must not share a cache entry
   'procedure',
   'q',
   'sector',
   'sort',
-  'top', // singleSelectFilters: top-20 vs top-50 on /flows and /competition
+  'top',
   'type',
   'value',
   'year',
@@ -32,9 +30,9 @@ export const CACHE_QUERY_PARAMS = new Set([
 
 // Params a loader reads but that intentionally do NOT change the response (so they're safe to omit
 // from the cache key). None exist today — every consumed param affects output. This constant is not
-// dead: the drift guard treats `consumed ⊆ CACHE_QUERY_PARAMS ∪ INTENTIONALLY_UNKEYED` as the
-// invariant, so any future read-but-ignored param must be listed here with a justification rather
-// than silently absent.
+// dead: the drift guard in cache-key.test.ts treats `consumed ⊆ CACHE_QUERY_PARAMS ∪
+// INTENTIONALLY_UNKEYED` as the invariant, so any future read-but-ignored param must be listed here
+// with a justification rather than silently absent (CWE-349, #56).
 export const INTENTIONALLY_UNKEYED = new Set<string>([]);
 
 export function cacheKey(request: Request, deployTag: string): Request {
