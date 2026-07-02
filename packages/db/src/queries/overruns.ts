@@ -419,7 +419,7 @@ interface AuthorityRaw {
 }
 
 interface SectorRaw {
-  division: string | null;
+  cpv_code: string | null;
   risk_eur: number;
   signing_eur: number;
   count: number;
@@ -475,23 +475,24 @@ export async function getOverrunsAnalytics(
       .bind(authLimit)
       .all<AuthorityRaw>(),
     // By-sector (CPV division): € at risk (SUM delta), the SUM of signing (growth denominator) and the
-    // contract count. ONE bounded GROUP BY over OVERRUN_WHERE rows, ordered by risk desc, LIMIT-ed. The
-    // raw 2-char prefix is re-keyed to the canonical division and the label + works/goods/services
-    // bucket are resolved in JS from @sigma/config (cpvDivision/cpvBucket — no per-row CASE in SQL).
+    // contract count. ONE GROUP BY over OVERRUN_WHERE rows keyed by the FULL cpv_code — NOT a SQL
+    // substr, which would truncate before normalization and disagree with the leaderboard on dirty
+    // codes (' 45000000' → substr '4 ' vs cpvDivision '45'). The canonical division, label and
+    // works/goods/services bucket are all resolved in JS via cpvDivision(full code), exactly like the
+    // leaderboard mapping, so the same contract lands in the same sector on both surfaces. Output is
+    // bounded by the CPV catalogue (distinct codes), and the JS merge re-applies secLimit.
     db
       .prepare(
-        `SELECT substr(t.cpv_code, 1, 2) AS division,
+        `SELECT t.cpv_code AS cpv_code,
                 SUM(${DELTA}) AS risk_eur,
                 SUM(${SIGNING}) AS signing_eur,
                 COUNT(*) AS count
          FROM contracts c
          JOIN tenders t ON t.id = c.tender_id
          WHERE ${OVERRUN_WHERE}
-         GROUP BY division
-         ORDER BY risk_eur DESC, division
-         LIMIT ?`,
+         GROUP BY t.cpv_code
+         ORDER BY risk_eur DESC, t.cpv_code`,
       )
-      .bind(secLimit)
       .all<SectorRaw>(),
   ]);
 
@@ -514,14 +515,15 @@ export async function getOverrunsAnalytics(
     growth: r.signing_eur > 0 ? r.total_overrun_eur / r.signing_eur : 0,
   }));
 
-  // Re-key the SQL groups by the CANONICAL division (cpvDivision) — the same normalization the label
-  // and bucket lookups use — and fold any raw prefixes that collapse onto the same division together.
-  // This keeps SQL and JS in lock-step: the division a row groups under is exactly the one its label
-  // and works/goods/services bucket resolve from, so a dirty CPV prefix can't split a real division
-  // between „Без код"/„other" and its proper sector. Re-sort + slice keeps the secLimit honest post-merge.
+  // Re-key the SQL groups by the CANONICAL division — cpvDivision over the FULL cpv_code, the exact
+  // same call the leaderboard row mapping makes — and fold all codes that collapse onto the same
+  // division together. This keeps the two surfaces in lock-step: the division a row groups under is
+  // exactly the one its label and works/goods/services bucket resolve from, so a dirty CPV code
+  // (stray leading char, separators) can't land a contract in „Без код"/„other" here while the
+  // leaderboard shows its real sector. Re-sort + slice applies the secLimit post-merge.
   const sectorAgg = new Map<string, { riskEur: number; signingEur: number; contracts: number }>();
   for (const r of sectorRes.results) {
-    const code = cpvDivision(r.division);
+    const code = cpvDivision(r.cpv_code);
     const acc = sectorAgg.get(code) ?? { riskEur: 0, signingEur: 0, contracts: 0 };
     acc.riskEur += r.risk_eur;
     acc.signingEur += r.signing_eur;

@@ -203,7 +203,7 @@ const MARKERS = {
   corpus: 'corpus_signing_eur', // single conditional-aggregate pass
   median: 'median_pct', // window-function median
   authority: 'GROUP BY t.authority_id',
-  sector: 'GROUP BY division',
+  sector: 'GROUP BY t.cpv_code',
 } as const;
 
 type AnalyticsFakes = {
@@ -361,11 +361,11 @@ describe('getOverrunsAnalytics', () => {
   it('labels CPV divisions, assigns the works/goods/services bucket and €-weighted growth', async () => {
     const { db } = fakeAnalyticsDb({
       sector: [
-        { division: '45', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 }, // works
-        { division: '72', risk_eur: 4_000_000, signing_eur: 10_000_000, count: 6 }, // services
-        { division: '33', risk_eur: 3_000_000, signing_eur: 6_000_000, count: 5 }, // goods
-        { division: '99', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // not in taxonomy
-        { division: null, risk_eur: 1_000_000, signing_eur: 2_000_000, count: 1 }, // NULL cpv_code
+        { cpv_code: '45233110', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 }, // works
+        { cpv_code: '72000000', risk_eur: 4_000_000, signing_eur: 10_000_000, count: 6 }, // services
+        { cpv_code: '33600000', risk_eur: 3_000_000, signing_eur: 6_000_000, count: 5 }, // goods
+        { cpv_code: '99000000', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // not in taxonomy
+        { cpv_code: null, risk_eur: 1_000_000, signing_eur: 2_000_000, count: 1 }, // NULL cpv_code
       ],
     });
 
@@ -383,6 +383,31 @@ describe('getOverrunsAnalytics', () => {
     expect(bySector[3]!.bucket).toBe('other');
     expect(bySector[4]!.label).toBe('Без код'); // NULL cpv_code
     expect(bySector[4]!.bucket).toBe('other');
+  });
+
+  it('lands a dirty leading-char CPV in the same division on both surfaces', async () => {
+    // ' 45000000': the old SQL substr(cpv_code, 1, 2) truncated to ' 4' BEFORE normalization, so the
+    // by-sector table filed the contract under division '4' (→ „Сектор 4"/other) while the leaderboard
+    // — cpvDivision over the full code — showed it as 45/Строителство. Now both run cpvDivision on the
+    // full code, so the dirty group merges into division 45 alongside the clean one.
+    const { db } = fakeAnalyticsDb({
+      leaderboard: [rawRow({ cpv_code: ' 45000000' })],
+      sector: [
+        { cpv_code: '45233110', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 },
+        { cpv_code: ' 45000000', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // dirty
+      ],
+    });
+
+    const { rows, bySector } = await getOverrunsAnalytics(db, { by: 'absolute' });
+
+    expect(bySector).toHaveLength(1); // dirty group folded into 45, not split off as '4'
+    expect(bySector[0]!.code).toBe('45');
+    expect(bySector[0]!.label).toBe('Строителство');
+    expect(bySector[0]!.bucket).toBe('works');
+    expect(bySector[0]!.riskEur).toBe(10_000_000); // 8M + 2M merged
+    expect(bySector[0]!.contracts).toBe(15);
+    // Same contract, same division on the leaderboard surface.
+    expect(rows[0]!.sectorLabel).toBe(bySector[0]!.label);
   });
 
   it('returns honest empty breakdowns when there are no overruns', async () => {
