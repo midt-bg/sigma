@@ -119,9 +119,11 @@ amendment_agg AS (
 first_amend AS (
   -- Earliest amendment per (unp, contract_number) — the join key used across the amendments table
   -- (idx_amendments_contract), matched to tenders.source_id / contracts.contract_number (§4.C NEW-C6).
-  SELECT unp, contract_number, value_delta AS first_delta, published_at AS first_published_at
+  -- `currency` is carried through so the shock ratio below only compares like-denominated amounts —
+  -- amendments.currency is independent of contracts.currency (0000_init.sql:169 vs :118).
+  SELECT unp, contract_number, value_delta AS first_delta, published_at AS first_published_at, currency AS first_currency
   FROM (
-    SELECT unp, contract_number, value_delta, published_at,
+    SELECT unp, contract_number, value_delta, published_at, currency,
            ROW_NUMBER() OVER (PARTITION BY unp, contract_number ORDER BY published_at ASC, id ASC) AS rn
     FROM amendments
     WHERE unp IS NOT NULL AND contract_number IS NOT NULL
@@ -194,8 +196,14 @@ SELECT
        ELSE ABS(c.signing_value_eur - t.estimated_value_eur) / NULLIF(t.estimated_value_eur, 0) END,
   c.value_flag,
   CASE WHEN aa.n IS NULL OR aa.max_circ_len IS NULL THEN NULL WHEN aa.max_circ_len >= 50 THEN 1 ELSE 0 END,
+  -- NULL (not 0) whenever the ratio isn't computable — an unscorable row must stay unknown, not
+  -- silently read as "no shock" (mirrors the has_reason_text NULL-propagation above). Requires the
+  -- amendment's currency to match the contract's booking currency (`c.currency`) since value_delta
+  -- is denominated in amendments.currency, independent of the contract's.
   CASE WHEN fa.first_delta IS NULL THEN NULL
-       WHEN fa.first_delta > 0 AND c.signing_value > 0 AND fa.first_delta > 0.30 * c.signing_value
+       WHEN c.signing_value IS NULL OR c.signing_value <= 0 THEN NULL
+       WHEN fa.first_currency IS NOT NULL AND fa.first_currency <> c.currency THEN NULL
+       WHEN fa.first_delta > 0 AND fa.first_delta > 0.30 * c.signing_value
             AND (JULIANDAY(fa.first_published_at) - JULIANDAY(c.signed_at)) < 90 THEN 1
        ELSE 0 END,
   -- D
@@ -278,8 +286,12 @@ DROP TABLE peer_mid_counts;
 DROP TABLE peer_coarse_counts;
 
 -- Summary (last result set printed by `wrangler d1 execute`). unmapped_family_rows must be 0 — the
--- §12.2 completeness guard for the 21-value procedure_type vocabulary.
+-- §12.2 completeness guard for the 21-value procedure_type vocabulary. contract_features_rows must
+-- equal contracts_rows — the leaf INSERT inner-joins tenders/bidders/contract_regime, so a future
+-- orphaned contracts.bidder_id/tender_id (SQLite doesn't enforce FKs unless PRAGMA foreign_keys=ON)
+-- would silently drop that contract from the feature store without this check.
 SELECT
+  (SELECT COUNT(*) FROM contracts) AS contracts_rows,
   (SELECT COUNT(*) FROM contract_features) AS contract_features_rows,
   (SELECT COUNT(*) FROM contract_features WHERE score_coverage IS NULL) AS null_coverage_rows,
   (SELECT COUNT(*) FROM contract_features WHERE effective_peer_key IS NULL) AS null_peer_key_rows,
