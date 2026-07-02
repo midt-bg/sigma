@@ -125,13 +125,20 @@ const COV_TIERS: { tier: QualityCoverageTier; range: string; label: string }[] =
 export async function loader({ request, context }: Route.LoaderArgs) {
   const db = context.cloudflare.env.DB;
   const sp = new URL(request.url).searchParams;
-  const data = await getQuality(db, {
-    grain: (sp.get('grain') as QualityGrain | null) ?? undefined,
-    sort: sp.get('sort') === 'contracts' ? 'contracts' : 'score',
-    contractSort: sp.get('csort') === 'value' ? 'value' : 'score',
-    sel: sp.get('sel'),
-    contractId: sp.get('contract'),
-  });
+  let data = null;
+  try {
+    data = await getQuality(db, {
+      grain: (sp.get('grain') as QualityGrain | null) ?? undefined,
+      sort: sp.get('sort') === 'contracts' ? 'contracts' : 'score',
+      contractSort: sp.get('csort') === 'value' ? 'value' : 'score',
+      sel: sp.get('sel'),
+      contractId: sp.get('contract'),
+    });
+  } catch (err) {
+    // The health tables are built by the daily ETL (ship-domain rebuilds contract_features
+    // DROP+CREATE); before the first derive — or mid-rebuild — they may not exist yet.
+    if (!/no such table/i.test(err instanceof Error ? err.message : String(err))) throw err;
+  }
   return { data };
 }
 
@@ -189,6 +196,18 @@ function CovChip({ tier }: { tier: QualityCoverageTier }) {
 
 export default function Quality({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
+  if (!data) {
+    return (
+      <main>
+        <Breadcrumbs items={[{ label: 'Анализи', href: '/analytics' }, { label: 'Индекс на качеството' }]} />
+        <PageHeader
+          kicker="Анализи"
+          title="Индекс на качеството"
+          lede="Оценките се изчисляват — индексът се попълва от дневната обработка на данните. Опитайте отново по-късно."
+        />
+      </main>
+    );
+  }
   const { overview, ranking, contracts, scorecard, scope } = data;
 
   // Preserve the page state in every internal link (grain/sort/selection/scorecard subject).

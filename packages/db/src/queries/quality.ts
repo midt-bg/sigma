@@ -470,7 +470,7 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
   const sort: QualityRankSort = p.sort === 'contracts' ? 'contracts' : 'score';
   const contractSort: QualityContractSort = p.contractSort === 'value' ? 'value' : 'score';
   const sel = p.sel ?? null;
-  const top = p.top === MAX_TOP ? MAX_TOP : DEFAULT_TOP;
+  const top = p.top && p.top > 0 ? Math.min(Math.floor(p.top), MAX_TOP) : DEFAULT_TOP;
   const minScored = grain === 'authority' || grain === 'supplier' ? MIN_SCORED : 1;
   const [overview, ranking, contracts] = await Promise.all([
     qualityOverview(db),

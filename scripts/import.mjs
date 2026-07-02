@@ -100,7 +100,8 @@ function execWranglerD1File(file, attempt = 1) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
     return execWranglerD1File(file, attempt + 1);
   }
-  throw new Error(`Command failed: wrangler d1 execute ${d1Name} ${loc} --file ${file}`);
+  const cause = result.error ? ` (${result.error.message})` : '';
+  throw new Error(`Command failed: wrangler d1 execute ${d1Name} ${loc} --file ${file}${cause}`);
 }
 function execSql(file, label = basename(file)) {
   const startedAt = process.hrtime.bigint();
@@ -392,6 +393,12 @@ if (arg('work-db') !== undefined) {
 
 let deriveMode = String(arg('derive') || 'full');
 
+if (catchup && deriveMode === 'health') {
+  // The catchup planner picks full|slice itself; silently downgrading an explicit
+  // --derive=health would hide that no data load or normalize would run.
+  throw new Error('--catchup ignores --derive=health; run `--derive=health` separately');
+}
+
 if (!catchup && deriveMode === 'health') {
   console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'}, derive=health only)`);
   run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
@@ -416,7 +423,6 @@ validateDeriveMode(deriveMode);
 
 run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
 if (deriveMode === 'slice') runSliceDerive();
-else if (deriveMode === 'health') runHealthDerive();
 else runFullDerive();
 execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
 
