@@ -2,7 +2,7 @@
 // Sigma ETL orchestrator for storage.eop.bg open-data buckets. Initial backfill and daily catch-up
 // both route through scripts/load-eop.mjs; only the date window and derive mode differ.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,9 +67,31 @@ function run(cmd, args, cwd = root, options = {}) {
 }
 
 const d1PersistArgs = !remote && persistTo ? ['--persist-to', String(persistTo)] : [];
+// Local D1 (workerd) needs a moment to fully release its SQLite file lock after a preceding
+// `wrangler d1 execute --file` invocation exits — back-to-back execSql calls can otherwise hit a
+// transient "database table is locked" / SQLITE_LOCKED on the very first statement. Retry a
+// handful of times with a short backoff; only for this specific transient signature, so a real
+// SQL error in the file still fails fast.
+const LOCK_ERROR_PATTERN = /database (table )?is locked|SQLITE_(BUSY|LOCKED)/i;
+function execWranglerD1File(file, attempt = 1) {
+  const args = ['wrangler', ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--file', file]];
+  console.log(`\n==> ${args[0]} ${args[1].join(' ')}`);
+  const result = spawnSync(args[0], args[1], { cwd: apiDir, encoding: 'utf8' });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status === 0) return;
+  const combined = `${result.stdout || ''}${result.stderr || ''}`;
+  if (attempt < 5 && LOCK_ERROR_PATTERN.test(combined)) {
+    const delayMs = 1500 * attempt;
+    console.log(`==> transient D1 lock on ${basename(file)} (attempt ${attempt}); retrying in ${delayMs}ms`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    return execWranglerD1File(file, attempt + 1);
+  }
+  throw new Error(`Command failed: wrangler d1 execute ${d1Name} ${loc} --file ${file}`);
+}
 function execSql(file, label = basename(file)) {
   const startedAt = process.hrtime.bigint();
-  run('wrangler', ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--file', file], apiDir);
+  execWranglerD1File(file);
   const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   console.log(`==> batch timing ${label}: ${elapsedMs.toFixed(1)}ms`);
 }
@@ -235,6 +257,10 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
+  // Full Phase 4/5 recompute, not a scoped refresh of just the touched authority/bidder/contract
+  // ids — correct-over-incremental for now; a scoped refresh (docs/contract-quality-spec.local.md
+  // §8) is a documented future optimization once the full recompute cost is measured on prod D1.
+  runHealthDerive();
   assertIntegrity(d1, { label: 'slice derive (D1)' });
 }
 

@@ -421,6 +421,15 @@ web app-ът го чете без повторен import. Work базата (`d
 - Remote D1 deploy (схема + domain ship към remote) — нужно е явно одобрение за всеки deploy.
 - Извеждане от употреба на наследения CLI slice път.
 
+## Индекс на качеството (health derive)
+
+След `precompute.sql` пълният derive пуска още две фази: `scripts/derive-health.sql`
+(HHI/концентрационни rollups + `health_percentiles`) и `scripts/derive-contract-features.sql`
+(`contract_features` с оценка `score_overall` в [0,1] на договор + шестте `*_quality_totals`).
+Самостоятелно пускане: `node scripts/import.mjs --derive=health`; проверка:
+`node scripts/validate-health.mjs` (изход 0 = всички проверки минават). Дневният slice път и
+`ship-domain.mjs` пускат същите фази след precompute — пълно преизчисление, не инкрементално.
+
 ## Свързани документи
 
 - [`architecture.md`](architecture.md) — архитектурата на платформата.

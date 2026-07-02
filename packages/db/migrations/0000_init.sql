@@ -434,7 +434,46 @@ CREATE TABLE contract_features (
   duration_days INTEGER, winner_size TEXT, bidder_nuts TEXT, awarded_to_group INTEGER,
   -- sub-scores [0,1], NULL when unknown
   score_a REAL, score_b REAL, score_c REAL, score_d REAL, score_e REAL,
-  score_overall REAL, computed_at TEXT
+  score_overall REAL, computed_at TEXT,
+  -- A1 leaf, auditable (§5.5/§5.6 PERCENT_RANK floor) — populated by the scoring UPDATEs (group 338)
+  score_a_bids REAL, peer_has_multi INTEGER
 );
 CREATE INDEX idx_contract_features_overall ON contract_features(score_overall);
 CREATE INDEX idx_contract_features_peer ON contract_features(effective_peer_key);
+
+-- ===================================================================================
+-- 1e) CONTRACT QUALITY / HEALTH INDEX — Phase 5e aggregate UI rollups (six *_quality_totals
+--     grains, built last by scripts/derive-contract-features.sql). See spec §7.4/§9/§12.7.
+-- ===================================================================================
+
+CREATE TABLE authority_quality_totals (
+  authority_id TEXT PRIMARY KEY REFERENCES authorities(id), name TEXT NOT NULL, type_group TEXT,
+  avg_overall REAL, avg_a REAL, avg_b REAL, avg_c REAL, avg_d REAL, avg_e REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER NOT NULL, unknown_contracts INTEGER,
+  single_offer_count INTEGER, direct_award_count INTEGER, amended_count INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE bidder_quality_totals (
+  bidder_id TEXT PRIMARY KEY REFERENCES bidders(id), name TEXT NOT NULL,
+  avg_overall REAL, avg_c REAL, avg_d REAL, buyer_hhi REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER NOT NULL, amended_count INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE sector_quality_totals (        -- CPV division
+  division TEXT PRIMARY KEY, avg_overall REAL, avg_a REAL, avg_c REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, single_offer_pct REAL,
+  direct_award_pct REAL, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE region_quality_totals (        -- NUTS of performance (tenders.place_of_performance)
+  nuts TEXT PRIMARY KEY, nuts_label TEXT, avg_overall REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE year_quality_totals (          -- count-weighted (trend comparability)
+  year TEXT PRIMARY KEY, avg_overall REAL, avg_a REAL, avg_b REAL, avg_c REAL, avg_d REAL, avg_e REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE funding_quality_totals (       -- eu_funded 0/1
+  funding_key TEXT PRIMARY KEY,             -- 'eu' | 'national'
+  avg_overall REAL, total_contracts INTEGER NOT NULL, scored_contracts INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
