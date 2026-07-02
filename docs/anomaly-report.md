@@ -17,7 +17,7 @@ corpus can only omit a line, never block a ship. It runs right after
 | Finding | Heuristic |
 |---|---|
 | **CPV-cohort outlier** | A priced contract whose `amount_eur` exceeds **25×** the **leave-one-out p95** of its CPV-division cohort (the candidate is excluded from its own percentile), for divisions with **≥12** priced contracts. Catches a single award far above everything comparable. |
-| **Decimal shift** | A contract **above** its cohort's normal band `[median/8, median×8]` (leave-one-out median) whose `amount_eur ÷ 10` or `÷ 100` lands back **inside** that band. Catches the "valid number, wrong magnitude" loader artifact (e.g. €1,120,000 that should be €112,000) that `value_flag` passes. Deliberately **not** gated behind the 25× gross-outlier test: a typical ×10 shift sits at only ~8–10× its cohort, so requiring 25× first made the single misplaced decimal — the most common loader artifact — undetectable. Being outside the band *and* rescaling back into it is the signal. |
+| **Decimal shift** | A contract **above** its cohort's normal band `[median/2, median×2]` (leave-one-out median) whose `amount_eur ÷ 10` or `÷ 100` lands back **inside** that band — i.e. only (5×,20×] median reads as ÷10 and (50×,200×] as ÷100. The band ratio must stay < 10, or the two windows tile contiguously and the check stops excluding anything. Catches the "valid number, wrong magnitude" loader artifact (e.g. €1,120,000 that should be €112,000) that `value_flag` passes. Deliberately **not** gated behind the 25× gross-outlier test: a typical ×10 shift sits at only ~8–10× its cohort, so requiring 25× first made the single misplaced decimal — the most common loader artifact — undetectable. Being outside the band *and* rescaling back into it is the signal. |
 
 The headline `total` is **deduplicated by contract id** across findings — a
 decimal-shift suspect is usually also a cohort outlier, and counting it in both
@@ -52,7 +52,7 @@ functions with unit fixtures.
 |---|---|---|
 | `minCohort` | 12 | A division needs enough priced rows before its distribution is trustworthy. |
 | `cohortFactor` | 25 | Flag the *gross*, not the merely large — a high bar keeps the report's signal high so readers trust it. Applies to the cohort-outlier finding only. |
-| `decimalRescaleMax` | 8 | Half-width of the cohort's normal band `[median/8, median×8]`: the original must sit above it and the `÷10`/`÷100` rescale must land inside it to read as a misplaced decimal. |
+| `decimalRescaleMax` | 2 | Half-width of the cohort's normal band `[median/2, median×2]`: the original must sit above it and the `÷10`/`÷100` rescale must land inside it to read as a misplaced decimal. Must keep the band ratio < 10 (see above). |
 | `topExamples` | 20 | Caps examples per finding so the report (and any future notification) stays bounded. |
 
 The thresholds are intentionally conservative: a flood of "big but legitimate"
@@ -62,6 +62,9 @@ corpus — the detection logic is pure and unit-tested
 iterate.
 
 ## Scope and known limitations
+
+- **Downward shifts are not detected.** The detector only looks above the cohort band, so a
+  value that lost a digit (÷10 too *small*) passes silently — a possible future addition.
 
 - The report runs in the **full** and **slice** derive paths (right after
   `assertIntegrity`). It does **not** run in the work-backfill path — so "every

@@ -15,7 +15,12 @@
 export const ANOMALY_DEFAULTS = {
   minCohort: 12, // a CPV division needs ≥12 priced contracts before its distribution is trusted
   cohortFactor: 25, // flag a contract whose amount_eur exceeds 25× its cohort p95 (gross, not just big)
-  decimalRescaleMax: 8, // a ÷10 or ÷100 rescale must land within [median/8, median×8] to read as a shift
+  // A ÷10 or ÷100 rescale must land within [median/2, median×2] to read as a shift. The band
+  // ratio MUST stay < 10: at ratio ≥ 10 the ÷10 and ÷100 acceptance windows tile contiguously
+  // and the check degenerates to "flag anything above the band" (at the old value 8 that meant
+  // everything in 8×–800× median read as a decimal shift). Ratio 4 leaves real exclusion gaps:
+  // only (5×,20×] median reads as ÷10 and (50×,200×] as ÷100.
+  decimalRescaleMax: 2,
   topExamples: 20, // cap examples carried per finding so the report (and any notification) stays bounded
 };
 
@@ -120,8 +125,9 @@ export function cpvCohortOutliers(rows, opts = {}) {
 
 /**
  * Likely decimal-shift artifacts: a contract ABOVE its cohort's normal band whose amount ÷10 or
- * ÷100 falls back inside that band [median/decimalRescaleMax, median×decimalRescaleMax] (median is
- * leave-one-out, so the candidate can't drag its own anchor). That pattern — "valid number, wrong
+ * ÷100 falls back inside that band [median/decimalRescaleMax, median×decimalRescaleMax]; the band
+ * ratio is kept < 10 so the ÷10/÷100 acceptance windows stay disjoint (median is leave-one-out,
+ * so the candidate can't drag its own anchor). That pattern — "valid number, wrong
  * magnitude" — is exactly what per-row value_flag cannot catch. Deliberately NOT gated behind the
  * cohortFactor gross-outlier test: a typical ×10-shifted contract sits at only ~8–10× its cohort,
  * far below the 25× gross bar, so gating there made the single-decimal shift — the most common
@@ -212,7 +218,7 @@ export function formatAnomalyReport(report) {
     lines.push(`  • ${f.key} (${f.label}): ${f.total}`);
     for (const ex of f.examples.slice(0, 5)) {
       const amt = Math.round(ex.amountEur).toLocaleString('bg-BG');
-      const ctx = ex.ratio
+      const ctx = ex.rescaledBy == null
         ? `${ex.ratio.toFixed(1)}× cohort p95`
         : `÷${ex.rescaledBy} → near median`;
       lines.push(`      - ${ex.id}  €${amt}  [CPV ${ex.division}, ${ctx}]`);

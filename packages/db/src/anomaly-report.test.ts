@@ -135,7 +135,7 @@ describe('decimalShiftSuspects', () => {
   // run independently of the gross-outlier gate.
   it('flags a single ×10 shift that is NOT a 25× gross outlier (€112k cohort → €1.12M row)', () => {
     const rows = [
-      ...cohort('45', 200, 100_000), // median ≈ 112k, band [14k, 896k]
+      ...cohort('45', 200, 100_000), // median ≈ 112k, band [56k, 224k]
       { id: 'shift10', division: '45', amountEur: 1_120_000 }, // ÷10 → 112k ≈ median; only ~9× p95
     ];
     expect(cpvCohortOutliers(rows).total).toBe(0); // sanity: below the gross gate…
@@ -147,7 +147,18 @@ describe('decimalShiftSuspects', () => {
   it('does NOT flag a row inside the cohort band (nothing to rescale)', () => {
     const rows = [
       ...cohort('45', 200, 100_000),
-      { id: 'normal-large', division: '45', amountEur: 500_000 }, // within [median/8, median×8]
+      { id: 'normal-large', division: '45', amountEur: 220_000 }, // within [median/2, median×2]
+    ];
+    expect(decimalShiftSuspects(rows).total).toBe(0);
+  });
+
+  it('does NOT flag values in the exclusion gap between the ÷10 and ÷100 windows', () => {
+    // Regression for the vacuous-band defect: with decimalRescaleMax=2 only (5×,20×] median
+    // reads as ÷10 and (50×,200×] as ÷100. A legit large award at ~30× median rescales to
+    // 3× median (outside the band both ways) and must NOT be labeled a decimal shift.
+    const rows = [
+      ...cohort('45', 200, 100_000), // median ≈ 112k
+      { id: 'legit-30x', division: '45', amountEur: 3_400_000 }, // ÷10 = 340k > 2×median; ÷100 = 34k < median/2
     ];
     expect(decimalShiftSuspects(rows).total).toBe(0);
   });
@@ -164,8 +175,8 @@ describe('decimalShiftSuspects', () => {
 
 describe('buildAnomalyReport / formatAnomalyReport', () => {
   const fixtureRows = [
-    ...cohort('45', 200, 100_000), // median ≈ 112k, band [14k, 896k]
-    { id: 'big', division: '45', amountEur: 93_000_000 }, // gross outlier; ÷100 = 930k stays outside the band
+    ...cohort('45', 200, 100_000), // median ≈ 112k, band [56k, 224k]
+    { id: 'big', division: '45', amountEur: 93_000_000 }, // gross outlier; ÷100 = 930k and ÷10 = 9.3M both stay outside [median/2, median×2]
     { id: 'shift', division: '45', amountEur: 100_000 * 100 }, // gross outlier AND ÷100 decimal shift
   ];
   const runner: AnomalyRunner = (sql: string) =>
