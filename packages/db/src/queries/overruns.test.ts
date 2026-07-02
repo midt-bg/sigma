@@ -4,6 +4,7 @@ import {
   getOverrunsAnalytics,
   getOverrunsHeadline,
   getTopOverruns,
+  SECTOR_KEY_SQL,
 } from './overruns';
 
 // getTopOverruns runs two statements (see overruns.ts): a leaderboard SELECT (carries ORDER BY +
@@ -203,7 +204,7 @@ const MARKERS = {
   corpus: 'corpus_signing_eur', // single conditional-aggregate pass
   median: 'median_pct', // window-function median
   authority: 'GROUP BY t.authority_id',
-  sector: 'GROUP BY t.cpv_code',
+  sector: 'GROUP BY sector_key',
 } as const;
 
 type AnalyticsFakes = {
@@ -361,11 +362,11 @@ describe('getOverrunsAnalytics', () => {
   it('labels CPV divisions, assigns the works/goods/services bucket and €-weighted growth', async () => {
     const { db } = fakeAnalyticsDb({
       sector: [
-        { cpv_code: '45233110', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 }, // works
-        { cpv_code: '72000000', risk_eur: 4_000_000, signing_eur: 10_000_000, count: 6 }, // services
-        { cpv_code: '33600000', risk_eur: 3_000_000, signing_eur: 6_000_000, count: 5 }, // goods
-        { cpv_code: '99000000', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // not in taxonomy
-        { cpv_code: null, risk_eur: 1_000_000, signing_eur: 2_000_000, count: 1 }, // NULL cpv_code
+        { sector_key: '45', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 }, // works
+        { sector_key: '72', risk_eur: 4_000_000, signing_eur: 10_000_000, count: 6 }, // services
+        { sector_key: '33', risk_eur: 3_000_000, signing_eur: 6_000_000, count: 5 }, // goods
+        { sector_key: '99', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // not in taxonomy
+        { sector_key: null, risk_eur: 1_000_000, signing_eur: 2_000_000, count: 1 }, // NULL cpv_code
       ],
     });
 
@@ -385,22 +386,41 @@ describe('getOverrunsAnalytics', () => {
     expect(bySector[4]!.bucket).toBe('other');
   });
 
+  it('keys the sector GROUP BY on the SQL cpvDivision mirror, not a naive substr or the full code', async () => {
+    // The two by-sector perf/correctness traps, pinned: (1) `substr(t.cpv_code, 1, 2)` truncates
+    // BEFORE normalization, filing ' 45000000' under „Сектор 4"; (2) `GROUP BY t.cpv_code` returns
+    // one row per distinct 8-digit code — thousands of rows shipped out of D1 for a 15-row table.
+    // The fix groups on SECTOR_KEY_SQL: separators stripped in SQL, substr only once the cleaned
+    // code provably starts with two digits, full-code fallback otherwise — division-sized output.
+    const { db, sql } = fakeAnalyticsDb();
+
+    await getOverrunsAnalytics(db, { by: 'absolute' });
+
+    const sectorSql = sql.find((q) => q.includes(MARKERS.sector))!;
+    expect(sectorSql).toContain(SECTOR_KEY_SQL); // SELECT key = the shared cpvDivision mirror
+    expect(sectorSql).toContain("GLOB '[0-9][0-9]*'"); // …which only substr-s provably-clean codes
+    expect(sectorSql).not.toContain('substr(t.cpv_code'); // trap 1: truncate-before-normalize
+    expect(sectorSql).not.toMatch(/GROUP BY t\.cpv_code/); // trap 2: one row per distinct full code
+  });
+
   it('lands a dirty leading-char CPV in the same division on both surfaces', async () => {
     // ' 45000000': the old SQL substr(cpv_code, 1, 2) truncated to ' 4' BEFORE normalization, so the
     // by-sector table filed the contract under division '4' (→ „Сектор 4"/other) while the leaderboard
-    // — cpvDivision over the full code — showed it as 45/Строителство. Now both run cpvDivision on the
-    // full code, so the dirty group merges into division 45 alongside the clean one.
+    // — cpvDivision over the full code — showed it as 45/Строителство. Now SECTOR_KEY_SQL folds every
+    // cleanable code into its two-digit division in SQL (' 45000000' arrives merged into '45'), and a
+    // code it can't clean falls through as the raw full code for the JS re-key to fold in — simulated
+    // here by 'x45000000'.
     const { db } = fakeAnalyticsDb({
       leaderboard: [rawRow({ cpv_code: ' 45000000' })],
       sector: [
-        { cpv_code: '45233110', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 },
-        { cpv_code: ' 45000000', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // dirty
+        { sector_key: '45', risk_eur: 8_000_000, signing_eur: 16_000_000, count: 12 },
+        { sector_key: 'x45000000', risk_eur: 2_000_000, signing_eur: 4_000_000, count: 3 }, // fallback
       ],
     });
 
     const { rows, bySector } = await getOverrunsAnalytics(db, { by: 'absolute' });
 
-    expect(bySector).toHaveLength(1); // dirty group folded into 45, not split off as '4'
+    expect(bySector).toHaveLength(1); // fallback group folded into 45, not split off as '4' or 'x4'
     expect(bySector[0]!.code).toBe('45');
     expect(bySector[0]!.label).toBe('Строителство');
     expect(bySector[0]!.bucket).toBe('works');
