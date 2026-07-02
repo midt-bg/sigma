@@ -163,6 +163,18 @@ const DELTA = '(c.current_value_eur - c.signing_value_eur)';
 const PCT = '(c.current_value_eur - c.signing_value_eur) / c.signing_value_eur';
 const SIGNING = 'c.signing_value_eur';
 
+// SQL-side canonical CPV-division key for the by-sector GROUP BY — an exact mirror of cpvDivision
+// (strip every non-digit, keep the first two digits) that keeps the result set division-sized.
+// SQLite/D1 has no regexp-replace, so the mirror deletes the separator characters real codes carry
+// (space, tab, '-', '.', '/') and takes substr(clean, 1, 2) ONLY when the cleaned string provably
+// starts with two digits — in that case deleting non-digits cannot have reordered the digit
+// sequence, so substr(clean, 1, 2) IS cpvDivision(code). Any code still dirty after cleaning falls
+// back to the FULL raw code, which the JS re-key (cpvDivision) folds into its proper division. Net:
+// cpvDivision semantics preserved exactly, with one output row per division (≤ the ~100-division
+// CPV catalogue, plus rare unparseable stragglers) instead of one per distinct 8-digit code.
+const CPV_CLEAN = `replace(replace(replace(replace(replace(t.cpv_code, ' ', ''), char(9), ''), '-', ''), '.', ''), '/', '')`;
+export const SECTOR_KEY_SQL = `CASE WHEN ${CPV_CLEAN} GLOB '[0-9][0-9]*' THEN substr(${CPV_CLEAN}, 1, 2) ELSE t.cpv_code END`;
+
 // Median overrun pct via a window-function pass over the overrun subset: returns the one (odd n) or
 // two (even n) middle rows by pct and averages them. One row out — bounded. Defined once and reused by
 // both the lean /analytics headline (as a scalar subquery) and the full /overruns analytics query, so
@@ -419,7 +431,7 @@ interface AuthorityRaw {
 }
 
 interface SectorRaw {
-  cpv_code: string | null;
+  sector_key: string | null;
   risk_eur: number;
   signing_eur: number;
   count: number;
@@ -427,7 +439,7 @@ interface SectorRaw {
 
 // The full analytical page in five bounded queries. None duplicates another's COUNT/SUM: the corpus
 // totals come from the single conditional-aggregate pass, the leaderboard carries a LIMIT, and every
-// GROUP BY is bounded by its key (authorities/sectors LIMIT-ed). The authority and sector aggregates
+// GROUP BY is bounded by its key (authorities LIMIT-ed; sectors keyed by SECTOR_KEY_SQL, division-sized). The authority and sector aggregates
 // both carry SUM(signing) alongside SUM(delta) so the displayed РАСТЕЖ is the real €-weighted growth.
 export async function getOverrunsAnalytics(
   db: D1Database,
@@ -475,23 +487,24 @@ export async function getOverrunsAnalytics(
       .bind(authLimit)
       .all<AuthorityRaw>(),
     // By-sector (CPV division): € at risk (SUM delta), the SUM of signing (growth denominator) and the
-    // contract count. ONE GROUP BY over OVERRUN_WHERE rows keyed by the FULL cpv_code — NOT a SQL
-    // substr, which would truncate before normalization and disagree with the leaderboard on dirty
-    // codes (' 45000000' → substr '4 ' vs cpvDivision '45'). The canonical division, label and
-    // works/goods/services bucket are all resolved in JS via cpvDivision(full code), exactly like the
-    // leaderboard mapping, so the same contract lands in the same sector on both surfaces. Output is
-    // bounded by the CPV catalogue (distinct codes), and the JS merge re-applies secLimit.
+    // contract count. ONE GROUP BY over OVERRUN_WHERE rows keyed by SECTOR_KEY_SQL — the exact SQL
+    // mirror of cpvDivision — NOT a naive substr(t.cpv_code, 1, 2), which would truncate before
+    // normalization and disagree with the leaderboard on dirty codes (' 45000000' → ' 4' vs '45'),
+    // and NOT the full cpv_code, which would return one row per distinct 8-digit code (thousands)
+    // instead of one per division. Codes SECTOR_KEY_SQL can't clean fall through as full raw codes
+    // and the JS re-key below folds them in; no SQL LIMIT, so a division's dirty fragment can never
+    // be truncated away pre-merge — the merge re-applies secLimit.
     db
       .prepare(
-        `SELECT t.cpv_code AS cpv_code,
+        `SELECT ${SECTOR_KEY_SQL} AS sector_key,
                 SUM(${DELTA}) AS risk_eur,
                 SUM(${SIGNING}) AS signing_eur,
                 COUNT(*) AS count
          FROM contracts c
          JOIN tenders t ON t.id = c.tender_id
          WHERE ${OVERRUN_WHERE}
-         GROUP BY t.cpv_code
-         ORDER BY risk_eur DESC, t.cpv_code`,
+         GROUP BY sector_key
+         ORDER BY risk_eur DESC, sector_key`,
       )
       .all<SectorRaw>(),
   ]);
@@ -515,15 +528,17 @@ export async function getOverrunsAnalytics(
     growth: r.signing_eur > 0 ? r.total_overrun_eur / r.signing_eur : 0,
   }));
 
-  // Re-key the SQL groups by the CANONICAL division — cpvDivision over the FULL cpv_code, the exact
-  // same call the leaderboard row mapping makes — and fold all codes that collapse onto the same
-  // division together. This keeps the two surfaces in lock-step: the division a row groups under is
-  // exactly the one its label and works/goods/services bucket resolve from, so a dirty CPV code
-  // (stray leading char, separators) can't land a contract in „Без код"/„other" here while the
-  // leaderboard shows its real sector. Re-sort + slice applies the secLimit post-merge.
+  // Re-key the SQL groups by the CANONICAL division — cpvDivision, the exact same call the
+  // leaderboard row mapping makes. SECTOR_KEY_SQL already emits the canonical two-digit division for
+  // every code it can clean (cpvDivision('45') === '45', a no-op re-key); the codes it couldn't
+  // clean arrive as full raw codes and fold into their proper division here. This keeps the two
+  // surfaces in lock-step: the division a row groups under is exactly the one its label and
+  // works/goods/services bucket resolve from, so a dirty CPV code (stray leading char, separators)
+  // can't land a contract in „Без код"/„other" here while the leaderboard shows its real sector.
+  // Re-sort + slice applies the secLimit post-merge.
   const sectorAgg = new Map<string, { riskEur: number; signingEur: number; contracts: number }>();
   for (const r of sectorRes.results) {
-    const code = cpvDivision(r.cpv_code);
+    const code = cpvDivision(r.sector_key);
     const acc = sectorAgg.get(code) ?? { riskEur: 0, signingEur: 0, contracts: 0 };
     acc.riskEur += r.risk_eur;
     acc.signingEur += r.signing_eur;
