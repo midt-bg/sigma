@@ -613,3 +613,565 @@
   height: 12px;
   border-radius: 2px;
 }
+
+/* ── Contracts overview (/trends): lenses, distribution rows, contract cards ──
+   Translated from the „Договори — обзор" design mock into the site's token palette: ink line for
+   € volume, muted info bars for counts, accent red only for the selection/„над типичното" cues. */
+
+.ov-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin: var(--s-5) 0 var(--s-4);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.ov-controls-label {
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ov-chips {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.ov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 11px/1 var(--font-mono);
+  padding: 6px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  text-decoration: none;
+}
+.ov-chip:visited {
+  color: var(--accent);
+}
+.ov-chip span {
+  opacity: 0.6;
+}
+.ov-hint {
+  font: 400 12px/1 var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* Segmented link controls (angle switcher, step, sorts) */
+.ov-seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ov-seg a {
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 8px 13px;
+  color: var(--text-muted);
+  background: var(--surface);
+  text-decoration: none;
+  border-right: 1px solid var(--rule-soft);
+  white-space: nowrap;
+}
+.ov-seg a:last-child {
+  border-right: none;
+}
+.ov-seg a:hover {
+  color: var(--text);
+}
+.ov-seg a[aria-current] {
+  background: var(--ink);
+  color: var(--paper);
+}
+.ov-seg a:visited {
+  color: var(--text-muted);
+}
+.ov-seg a[aria-current]:visited {
+  color: var(--paper);
+}
+
+/* Panels */
+.ov-panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: var(--s-4) var(--s-5);
+  margin-bottom: var(--s-5);
+}
+.ov-panel-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-3);
+}
+.ov-panel-title {
+  font: 600 20px/1.15 var(--font-serif);
+  margin: 0;
+}
+.ov-panel-title em {
+  color: var(--accent);
+}
+.ov-panel-hint {
+  margin: 6px 0 0;
+  font: 400 12px/1.45 var(--font-mono);
+  color: var(--text-faint);
+  max-width: 62ch;
+}
+.ov-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.ov-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 400 11px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-legend-bar {
+  width: 9px;
+  height: 9px;
+  background: oklch(55% 0.03 240 / 0.55);
+  border-radius: 1px;
+}
+.ov-legend-line {
+  width: 14px;
+  height: 2.4px;
+  background: var(--ink);
+  border-radius: 2px;
+  margin-left: 8px;
+}
+
+/* Combo chart (bars = contracts, line = € volume) */
+.combo-chart {
+  position: relative;
+  margin-top: var(--s-2);
+}
+.combo-grid {
+  stroke: var(--rule-soft);
+  stroke-width: 1;
+}
+.combo-bar {
+  fill: oklch(55% 0.03 240 / 0.5);
+}
+.combo-bar.is-hover {
+  fill: oklch(55% 0.03 240 / 0.9);
+}
+.combo-bar.is-partial {
+  fill: oklch(55% 0.03 240 / 0.25);
+}
+.combo-line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.combo-line-partial {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  opacity: 0.7;
+}
+.combo-cursor {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.combo-dot {
+  fill: var(--accent);
+  stroke: var(--paper);
+  stroke-width: 1.6;
+}
+.combo-xlab {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  padding: 0 2px;
+  font: 400 10px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.combo-tip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -108%);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 7px 10px;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 5;
+}
+.combo-tip-label {
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.combo-tip-row {
+  display: flex;
+  gap: var(--s-3);
+  justify-content: space-between;
+  margin-top: 5px;
+  font: 400 10px/1 var(--font-mono);
+}
+.combo-tip-row strong {
+  font: 600 11.5px/1 var(--font-mono);
+}
+
+/* Year cards under the chart */
+.ov-years {
+  display: flex;
+  gap: 7px;
+  margin-top: var(--s-4);
+  flex-wrap: wrap;
+}
+.ov-year {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  min-width: 78px;
+  text-decoration: none;
+  color: var(--text);
+}
+.ov-year:visited {
+  color: var(--text);
+}
+.ov-year:hover {
+  border-color: var(--ink);
+}
+.ov-year.is-active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.ov-year.is-active:visited {
+  color: var(--accent);
+}
+.ov-year.is-slim {
+  min-width: 0;
+}
+.ov-year-label {
+  font: 600 13px/1 var(--font-mono);
+}
+.ov-year-partial {
+  font: 400 9px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-year-val {
+  font: 400 10px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-year.is-active .ov-year-val,
+.ov-year.is-active .ov-year-partial {
+  color: var(--accent);
+}
+
+/* CPV lens: header + clickable distribution rows */
+.ov-cpv {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ov-cpv .ov-panel-head,
+.ov-cpv-head,
+.ov-cpv-row,
+.ov-cpv-foot {
+  padding-left: var(--s-5);
+  padding-right: var(--s-5);
+}
+.ov-cpv-head,
+.ov-cpv-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 92px 56px minmax(180px, 320px);
+  gap: var(--s-3);
+  align-items: center;
+}
+.ov-cpv[data-compact] .ov-cpv-row {
+  grid-template-columns: 18px 52px minmax(0, 1fr) 92px;
+}
+.ov-cpv-head {
+  padding-top: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--ink);
+  font: 500 9px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ov-cpv-head .num {
+  text-align: right;
+}
+.ov-cpv-row {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule-soft);
+  border-left: 2px solid transparent;
+  text-decoration: none;
+  color: var(--text);
+}
+.ov-cpv-row:visited {
+  color: var(--text);
+}
+.ov-cpv-row:hover {
+  background: oklch(48% 0.18 28 / 0.05);
+}
+.ov-cpv-row.is-active {
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
+}
+.ov-cpv-code {
+  font: 600 11px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-cpv-row.is-active .ov-cpv-code {
+  color: var(--accent);
+}
+.ov-cpv-name {
+  min-width: 0;
+}
+.ov-cpv-name .clamp {
+  display: block;
+  font-size: 13px;
+}
+.ov-cpv-row.is-active .ov-cpv-name .clamp {
+  font-weight: 600;
+}
+.ov-cpv-range {
+  display: block;
+  margin-top: 2px;
+  font: 400 10px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-cpv-med {
+  text-align: right;
+  white-space: nowrap;
+  font: 600 12px/1 var(--font-mono);
+}
+.ov-cpv-n {
+  text-align: right;
+  white-space: nowrap;
+  font: 400 11.5px/1 var(--font-mono);
+  color: var(--text-muted);
+}
+.ov-check {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 9px/1 var(--font-mono);
+  color: var(--paper);
+}
+.ov-cpv-row.is-active .ov-check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.ov-dist {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.ov-dist-axis {
+  stroke: var(--rule-soft);
+  stroke-width: 1;
+}
+.ov-dist-box {
+  fill: oklch(55% 0.03 240 / 0.16);
+}
+.ov-dot {
+  fill: oklch(18% 0.012 70 / 0.4);
+}
+.ov-dot.is-outlier {
+  fill: var(--accent);
+}
+.ov-dist-median {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+.ov-cpv-foot {
+  padding-top: 6px;
+  padding-bottom: var(--s-3);
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 92px 56px minmax(180px, 320px);
+  gap: var(--s-3);
+}
+.ov-cpv-foot .ov-dist-ticks {
+  grid-column: 5;
+}
+.ov-dist-ticks line {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.ov-dist-ticks text {
+  font: 400 8px var(--font-mono);
+  fill: var(--text-faint);
+}
+
+/* Cross lens: year picker + CPV picker side by side */
+.ov-cross {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--s-5);
+  align-items: start;
+}
+.ov-cross .ov-panel {
+  margin-bottom: 0;
+}
+.ov-cross + .ov-panel,
+.ov-cross {
+  margin-bottom: var(--s-5);
+}
+@media (max-width: 960px) {
+  .ov-cross {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Shared contracts list: card grid */
+.ov-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-3);
+}
+.ov-card {
+  display: block;
+  border: 1px solid var(--rule-soft);
+  border-radius: 4px;
+  padding: 12px 14px;
+  background: var(--paper);
+  text-decoration: none;
+  color: var(--text);
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
+}
+.ov-card:visited {
+  color: var(--text);
+}
+.ov-card:hover {
+  border-color: var(--rule);
+  box-shadow: 0 2px 8px oklch(18% 0.012 70 / 0.06);
+}
+.ov-card .clamp {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.ov-card-date {
+  font: 500 11px/1 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-card-val {
+  font: 600 13px/1 var(--font-mono);
+  white-space: nowrap;
+}
+.ov-card-buyer {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ov-card-seller {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.ov-card-seller span {
+  color: var(--accent);
+}
+.ov-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule-soft);
+  min-width: 0;
+}
+.ov-card-cpv {
+  font: 600 9.5px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 3px 5px;
+  white-space: nowrap;
+}
+.ov-card-cohort {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 500 9.5px/1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.ov-card-rel {
+  margin-left: auto;
+  font: 600 10.5px/1 var(--font-mono);
+  white-space: nowrap;
+}
+.ov-rel-hi {
+  color: var(--accent);
+}
+.ov-rel-lo {
+  color: oklch(50% 0.05 240);
+}
+.ov-rel-mid {
+  color: var(--text-faint);
+}
+.ov-empty {
+  padding: var(--s-5) 0;
+  text-align: center;
+  font: 400 12px/1.5 var(--font-mono);
+  color: var(--text-faint);
+}
+.ov-note {
+  margin: var(--s-4) calc(-1 * var(--s-5)) calc(-1 * var(--s-4));
+  padding: 11px var(--s-5) 14px;
+  background: oklch(55% 0.03 240 / 0.06);
+  border-top: 1px solid oklch(55% 0.03 240 / 0.16);
+  border-radius: 0 0 5px 5px;
+  font: 400 11.5px/1.45 var(--font-sans);
+  color: var(--text-muted);
+}
+@media (max-width: 760px) {
+  .ov-cpv-head,
+  .ov-cpv-row {
+    grid-template-columns: 52px minmax(0, 1fr) 92px;
+  }
+  .ov-cpv-head .num + .num,
+  .ov-cpv-head span:last-child,
+  .ov-cpv-row .ov-cpv-n,
+  .ov-cpv-row .ov-dist,
+  .ov-cpv-foot {
+    display: none;
+  }
+}
