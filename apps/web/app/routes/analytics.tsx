@@ -378,8 +378,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   value: formatYearlyGrowth(trend.avgYoy),
                   label: 'СРЕДЕН РЪСТ',
                   accent: true,
-                  summary:
-                    'Типичният годишен ръст на разходите за последните 3 пълни години.',
+                  summary: 'Типичният годишен ръст на разходите за последните 3 пълни години.',
                   hint: 'Същата стойност като на страницата „Тренд".',
                 },
                 {
