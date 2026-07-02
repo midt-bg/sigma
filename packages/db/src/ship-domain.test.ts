@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +44,14 @@ describe('ship-domain', () => {
     const workDb = resolve(dir, 'work.sqlite');
     const persistTo = resolve(dir, 'served');
     try {
-      readScript(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+      // Full migration chain, like scripts/import.mjs — ship-domain's precompute/derive steps
+      // reference the 0003 health-index columns.
+      const migrationsDir = resolve(root, 'packages/db/migrations');
+      for (const f of readdirSync(migrationsDir)
+        .filter((n) => n.endsWith('.sql'))
+        .sort()) {
+        readScript(workDb, resolve(migrationsDir, f));
+      }
       sqlite(
         workDb,
         `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority line 1

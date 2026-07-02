@@ -3,7 +3,15 @@
 // both route through scripts/load-eop.mjs; only the date window and derive mode differ.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.ts';
@@ -96,7 +104,9 @@ function execWranglerD1File(file, attempt = 1) {
   const combined = `${result.stdout || ''}${result.stderr || ''}`;
   if (attempt < 5 && LOCK_ERROR_PATTERN.test(combined)) {
     const delayMs = 1500 * attempt;
-    console.log(`==> transient D1 lock on ${basename(file)} (attempt ${attempt}); retrying in ${delayMs}ms`);
+    console.log(
+      `==> transient D1 lock on ${basename(file)} (attempt ${attempt}); retrying in ${delayMs}ms`,
+    );
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
     return execWranglerD1File(file, attempt + 1);
   }
@@ -308,7 +318,16 @@ function runWorkBackfill() {
   if (existsSync(workDb)) rmSync(workDb, { force: true });
   console.log(`==> Sigma import (work DB ${workDb})`);
 
-  sqliteFile(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+  // Apply the FULL migration chain (not just 0000_init): later migrations are additive
+  // (e.g. 0003 adds the health-index columns normalize-raw.sql writes into), and the work DB
+  // must match the table shape `wrangler d1 migrations apply` gives the served D1.
+  const migrationsDir = resolve(root, 'packages/db/migrations');
+  const migrationFiles = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+  for (const migration of migrationFiles) {
+    sqliteFile(workDb, resolve(migrationsDir, migration));
+  }
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
   let loadFlags = explicitRangeFlags();

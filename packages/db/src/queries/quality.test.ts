@@ -1,10 +1,16 @@
 /// <reference types="node" />
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { coverageTier, getQuality, getQualityScorecard, getQualitySummary, qualityBlend } from './quality';
+import {
+  coverageTier,
+  getQuality,
+  getQualityScorecard,
+  getQualitySummary,
+  qualityBlend,
+} from './quality';
 
 // Integration test for the /quality query module. Unlike competition.test.ts's canned-row fake D1,
 // the quality tables (contract_features + the six *_quality_totals rollups) are NEW — so this builds
@@ -163,7 +169,26 @@ let d1: D1Database;
 
 beforeAll(() => {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8'));
+  // Full migration chain — the fixture writes 0003's health-index columns.
+  const migrationsDir = resolve(root, 'packages/db/migrations');
+  for (const f of readdirSync(migrationsDir)
+    .filter((n) => n.endsWith('.sql'))
+    .sort()) {
+    db.exec(readFileSync(resolve(migrationsDir, f), 'utf8'));
+  }
+  // 0000_init ships the quality tables too; drop them so QUALITY_DDL (the ETL-derive shape this
+  // test mirrors verbatim) is the single source of the schema under test.
+  for (const t of [
+    'contract_features',
+    'authority_quality_totals',
+    'bidder_quality_totals',
+    'sector_quality_totals',
+    'region_quality_totals',
+    'year_quality_totals',
+    'funding_quality_totals',
+  ]) {
+    db.exec(`DROP TABLE IF EXISTS ${t};`);
+  }
   db.exec(QUALITY_DDL);
   db.exec(FIXTURE);
   d1 = asD1(db);

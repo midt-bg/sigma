@@ -4,7 +4,7 @@
 // and would exit the import non-zero. Mirrors the repo's SQL-test style (shell out to the sqlite3
 // CLI), and injects the same `(sql) => rows[]` runner the import uses on the sqlite path.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,14 @@ import {
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+// The full migration chain, in apply order — the ETL scripts under test (precompute.sql) now
+// reference columns added by later migrations (e.g. 0003's health-index columns), exactly like
+// scripts/import.mjs, which also applies the whole chain to a fresh work DB.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrationPaths = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -60,7 +67,7 @@ VALUES
 function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
-  readScript(dbPath, schemaPath);
+  for (const migration of migrationPaths) readScript(dbPath, migration);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }
