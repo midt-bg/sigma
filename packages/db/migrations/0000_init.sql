@@ -365,3 +365,41 @@ CREATE INDEX idx_authority_totals_type ON authority_totals(type_group);
 CREATE INDEX idx_authority_totals_name ON authority_totals(name);
 CREATE INDEX idx_flow_pairs_won ON flow_pairs(won_eur DESC);
 CREATE INDEX idx_flow_pairs_authority ON flow_pairs(authority_id);
+
+-- ===================================================================================
+-- 1c) CONTRACT QUALITY / HEALTH INDEX — Phase 4 entity rollups (scripts/derive-health.sql).
+--     Built on the served D1 after precompute.sql; the per-contract scoring (Phase 5) joins
+--     against these. See docs/contract-quality-spec.local.md §7.2.
+-- ===================================================================================
+
+CREATE TABLE authority_health_rollup (
+  authority_id        TEXT PRIMARY KEY REFERENCES authorities(id),
+  hhi                 REAL,    -- SUM((won/total)*(won/total)) over the authority's bidders
+  single_offer_share  REAL,    -- bids_received=1 / known-bids contracts
+  direct_award_share  REAL,    -- procedure_type='Пряко договаряне' / total
+  avg_annex_count     REAL,
+  avg_cost_overrun    REAL,    -- mean current/signing where it grew
+  cancelled_share     REAL,    -- tenders.cancelled=1 / tenders (authority)
+  contracts_with_bids INTEGER,
+  total_contracts     INTEGER
+);
+CREATE TABLE bidder_health_rollup (
+  bidder_id        TEXT PRIMARY KEY REFERENCES bidders(id),
+  buyer_hhi        REAL,     -- SUM((won_from_buyer/total_won)^2) across buyers
+  buyer_count      INTEGER,
+  avg_repeat_share REAL,
+  total_contracts  INTEGER
+);
+CREATE TABLE sector_concentration (
+  cpv_division       TEXT NOT NULL,
+  bidder_id          TEXT NOT NULL REFERENCES bidders(id),
+  won_eur            REAL NOT NULL,
+  contracts          INTEGER NOT NULL,
+  division_total_eur REAL NOT NULL,
+  win_share          REAL NOT NULL,
+  PRIMARY KEY (cpv_division, bidder_id)
+);
+CREATE INDEX idx_sector_concentration_bidder ON sector_concentration(bidder_id);
+CREATE TABLE health_percentiles (         -- corpus distribution snapshot (calibration + validation)
+  signal TEXT PRIMARY KEY, p05 REAL, p25 REAL, p50 REAL, p75 REAL, p95 REAL
+);

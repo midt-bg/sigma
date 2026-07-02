@@ -106,7 +106,8 @@ function safeD1(sql) {
   try {
     return d1(sql);
   } catch (err) {
-    const msg = String(err?.message ?? err);
+    // wrangler writes the SQLITE error to stdout, not the exception message.
+    const msg = `${err?.message ?? err} ${err?.stdout ?? ''} ${err?.stderr ?? ''}`;
     if (/no such table|does not exist/i.test(msg)) return [];
     throw err;
   }
@@ -204,8 +205,8 @@ function resolveCatchupPlan() {
 }
 
 function validateDeriveMode(mode) {
-  if (!['full', 'slice'].includes(mode))
-    throw new Error(`unknown --derive=${mode}; expected full|slice`);
+  if (!['full', 'slice', 'health'].includes(mode))
+    throw new Error(`unknown --derive=${mode}; expected full|slice|health`);
 }
 
 function runFullDerive() {
@@ -217,7 +218,14 @@ function runFullDerive() {
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
+  runHealthDerive();
   assertIntegrity(d1, { label: 'full derive (D1)' });
+}
+
+// Standalone Phase 4/5 re-derive for the Contract Quality / Health Index (docs/contract-quality-spec.local.md
+// §8) — runs against the already-populated served D1 without the ~25-minute full re-import.
+function runHealthDerive() {
+  execSql(resolve(root, 'scripts/derive-health.sql'));
 }
 
 function runSliceDerive() {
@@ -340,12 +348,19 @@ if (arg('work-db') !== undefined) {
   process.exit(0);
 }
 
+let deriveMode = String(arg('derive') || 'full');
+
+if (!catchup && deriveMode === 'health') {
+  console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'}, derive=health only)`);
+  run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
+  runHealthDerive();
+  process.exit(0);
+}
+
 console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'})`);
 run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
 execSqlStatements(dropTransientStagingStatements(), 'drop-stale-transient-staging');
 execSql(resolve(root, 'scripts/work-staging-schema.sql'));
-
-let deriveMode = String(arg('derive') || 'full');
 let loadFlags = explicitRangeFlags();
 if (catchup) {
   const plan = resolveCatchupPlan();
@@ -359,6 +374,7 @@ validateDeriveMode(deriveMode);
 
 run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
 if (deriveMode === 'slice') runSliceDerive();
+else if (deriveMode === 'health') runHealthDerive();
 else runFullDerive();
 execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
 
