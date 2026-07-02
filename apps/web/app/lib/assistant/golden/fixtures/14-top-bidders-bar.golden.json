@@ -1,0 +1,41 @@
+{
+  "id": "14-top-bidders-bar",
+  "prompt": "Топ изпълнители (стълбовидна)",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT b.name AS name, t.won_eur AS won_eur FROM company_totals t JOIN bidders b ON b.id = t.bidder_id ORDER BY t.won_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "name": "Строй ЕООД",
+            "won_eur": 2222222
+          },
+          {
+            "name": "Пътища АД",
+            "won_eur": 1111111
+          },
+          {
+            "name": "ИТ Сервиз ООД",
+            "won_eur": 333333
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Топ изпълнители по спечелено",
+    "question": "Топ изпълнители (стълбовидна)",
+    "blocks": [
+      {
+        "type": "bar",
+        "resultId": "R1",
+        "labelCol": "name",
+        "valueCol": "won_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

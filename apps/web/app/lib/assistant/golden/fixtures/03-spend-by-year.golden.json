@@ -1,0 +1,45 @@
+{
+  "id": "03-spend-by-year",
+  "prompt": "Как се променя разходът по години?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT substr(c.signed_at, 1, 4) AS year, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND c.signed_at IS NOT NULL GROUP BY year ORDER BY year",
+      "result": {
+        "rows": [
+          {
+            "year": "2021",
+            "total_eur": 1000000
+          },
+          {
+            "year": "2022",
+            "total_eur": 1500000
+          },
+          {
+            "year": "2023",
+            "total_eur": 1750000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по година",
+    "question": "Как се променя разходът по години?",
+    "blocks": [
+      {
+        "type": "text",
+        "md": "Динамика на разходите по година на подписване."
+      },
+      {
+        "type": "timeseries",
+        "resultId": "R1",
+        "periodCol": "year",
+        "valueCol": "total_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

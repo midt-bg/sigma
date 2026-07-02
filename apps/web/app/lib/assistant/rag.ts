@@ -27,7 +27,25 @@ export const EMBED_DIM = 1024;
 export const MAX_EMBED_CHARS = 2048;
 
 export interface EmbeddingRunner {
-  run(model: string, inputs: { text: string[] }): Promise<{ data: number[][] }>;
+  run(
+    model: string,
+    inputs: { text: string[] },
+    // Workers AI binding option: route this inference through a Cloudflare AI Gateway. The real `Ai`
+    // binding accepts it; `gatewayRunner` below injects it so RAG embeddings transit the gateway too.
+    options?: { gateway?: { id: string } },
+  ): Promise<{ data: number[][] }>;
+}
+
+/**
+ * Wrap the raw Workers AI binding so every embedding inference is routed through the given AI Gateway
+ * (id = the gateway slug). Returns the runner unchanged when no gateway id is configured — the caller
+ * (chat route) enforces the fail-closed policy before any model traffic, so in the live path an id is
+ * always present. Keeping the passthrough here lets operator/seed paths degrade gracefully.
+ */
+export function gatewayRunner(ai: EmbeddingRunner, gatewayId: string | undefined): EmbeddingRunner {
+  const id = gatewayId?.trim();
+  if (!id) return ai;
+  return { run: (model, inputs) => ai.run(model, inputs, { gateway: { id } }) };
 }
 export interface VectorRecord {
   id: string;

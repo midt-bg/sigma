@@ -24,21 +24,31 @@
     { "binding": "REPORTS", "bucket_name": "sigma-reports" },
   ],
   // AI assistant (docs/spec/ai-assistant.md): Workers AI for RAG embeddings + a Vectorize index for
-  // schema-grounding and semantic search. The BgGPT API key is a SECRET — set with
-  // `wrangler secret put BGGPT_API_KEY`, never committed.
+  // schema-grounding and semantic search. The provider API key is a SECRET — set with
+  // `wrangler secret put ASSISTANT_API_KEY`, never committed.
   //
   // ⚠️ DEPLOY GATE (review #80): these bindings reference resources that must EXIST before
   // `wrangler deploy` — the Vectorize index `sigma-assistant`, the R2 bucket `sigma-reports`, and the
-  // BGGPT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
+  // ASSISTANT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
   // CD. Provision first (see app/lib/assistant/README.md → „Provisioning gate"); until then the
   // assistant route degrades to a 503 rather than crashing.
   "ai": { "binding": "AI" },
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "sigma-assistant" }],
-  // Public config for the assistant. AI_GATEWAY_BASE_URL routes BgGPT through the Cloudflare AI
-  // Gateway (spec §9.5); empty string falls back to api.bggpt.ai.
+  // Public config for the assistant. All model traffic is routed through the Cloudflare AI Gateway
+  // (spec §9.5) — MANDATORY, fail closed: with AI_GATEWAY_BASE_URL empty the assistant returns 503
+  // rather than calling the provider directly. Set it per-environment to the gateway's OpenAI-compatible
+  // upstream endpoint, e.g. (account <account-id>):
+  //   https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openrouter/v1
+  // AI_GATEWAY_ID is the gateway slug (<gateway> above); it routes the Workers AI RAG embeddings
+  // through the same gateway. ASSISTANT_MODEL selects the model (provider-scoped id) — swap models by
+  // editing it alone. ASSISTANT_API_KEY is a SECRET (not here). Left empty in source so a deploy must
+  // opt in explicitly.
   "vars": {
+    // Empty in source (opt-in per deploy, fail-closed). The fork's preview environment sets the
+    // concrete gateway URL + slug on -contracts; upstream deploys configure their own per environment.
     "AI_GATEWAY_BASE_URL": "",
-    "BGGPT_MODEL": "bggpt-gemma-3-27b-fp8",
+    "AI_GATEWAY_ID": "",
+    "ASSISTANT_MODEL": "google/gemma-4-31b-it",
     "MAX_STEPS": "6",
     // Reserved for the launch-gate global circuit-breaker — declared but NOT yet read by any code.
     "BGGPT_RATE_LIMIT_RPM": "120",

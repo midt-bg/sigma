@@ -1,0 +1,41 @@
+{
+  "id": "20-count-by-year",
+  "prompt": "Брой договори по година",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT substr(c.signed_at, 1, 4) AS year, COUNT(*) AS contracts FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND c.signed_at IS NOT NULL GROUP BY year ORDER BY year LIMIT 5",
+      "result": {
+        "rows": [
+          {
+            "year": "2021",
+            "contracts": 50
+          },
+          {
+            "year": "2022",
+            "contracts": 70
+          },
+          {
+            "year": "2023",
+            "contracts": 65
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Брой договори по година",
+    "question": "Брой договори по година",
+    "blocks": [
+      {
+        "type": "timeseries",
+        "resultId": "R1",
+        "periodCol": "year",
+        "valueCol": "contracts"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

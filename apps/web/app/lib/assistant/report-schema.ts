@@ -66,6 +66,7 @@ export interface EmitBar {
   resultId: string;
   labelCol: string;
   valueCol: string;
+  format?: CellFormat;
 }
 export interface EmitFlows {
   type: 'flows';
@@ -79,6 +80,7 @@ export interface EmitTimeseries {
   resultId: string;
   periodCol: string;
   valueCol: string;
+  format?: CellFormat;
 }
 export type EmitBlock =
   | EmitText
@@ -121,7 +123,12 @@ export type ResolvedBlock =
       rows: ResolvedRow[];
       truncated?: boolean;
     }
-  | { type: 'bar'; points: { label: string | number | null; value: number }[]; truncated?: boolean }
+  | {
+      type: 'bar';
+      points: { label: string | number | null; value: number }[];
+      truncated?: boolean;
+      format?: CellFormat;
+    }
   | {
       type: 'flows';
       edges: { from: string; to: string; valueEur: number }[];
@@ -131,6 +138,7 @@ export type ResolvedBlock =
       type: 'timeseries';
       points: { period: string | number | null; value: number }[];
       truncated?: boolean;
+      format?: CellFormat;
     };
 
 export interface ResolvedReport {
@@ -510,7 +518,7 @@ export function bindReport(
             const value = asNumber(vals[i] ?? null);
             if (value !== null) points.push({ label: sanitizeCell(labels[i] ?? null), value });
           }
-          blocks.push({ type: 'bar', points, truncated: r.truncated ?? false });
+          blocks.push({ type: 'bar', points, truncated: r.truncated ?? false, format: b.format });
         }
         break;
       }
@@ -544,7 +552,12 @@ export function bindReport(
             const value = asNumber(vals[i] ?? null);
             if (value !== null) points.push({ period: sanitizeCell(period[i] ?? null), value });
           }
-          blocks.push({ type: 'timeseries', points, truncated: r.truncated ?? false });
+          blocks.push({
+            type: 'timeseries',
+            points,
+            truncated: r.truncated ?? false,
+            format: b.format,
+          });
         }
         break;
       }

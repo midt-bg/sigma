@@ -12,6 +12,9 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "test:golden": {
+      "dependsOn": ["^build"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

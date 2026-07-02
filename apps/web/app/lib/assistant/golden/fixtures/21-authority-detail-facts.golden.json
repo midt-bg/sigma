@@ -1,0 +1,58 @@
+{
+  "id": "21-authority-detail-facts",
+  "prompt": "Детайли за възложител №5",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT COUNT(*) AS contracts, SUM(c.amount_eur) AS total_eur, COUNT(DISTINCT c.bidder_id) AS suppliers FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND t.authority_id = 5",
+      "result": {
+        "rows": [
+          {
+            "contracts": 30,
+            "total_eur": 750000,
+            "suppliers": 9
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Детайли за възложител",
+    "question": "Детайли за възложител №5",
+    "blocks": [
+      {
+        "type": "facts",
+        "items": [
+          {
+            "term": "Договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            }
+          },
+          {
+            "term": "Обща стойност (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            }
+          },
+          {
+            "term": "Доставчици",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "suppliers"
+            },
+            "sub": "уникални"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

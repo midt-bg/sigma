@@ -33,6 +33,62 @@ export const ALLOWED_TABLES: ReadonlySet<string> = new Set(TABLES.map((t) => t.n
 
 const deny = (reason: string): GuardResult => ({ ok: false, reason });
 
+// Scalar/aggregate functions blocked at the AST level, by NORMALISED name, regardless of quoting.
+// The L1 text blocklist (sql-guard.ts) matches `\b(load_extension|randomblob|…)\s*\(` — a word-boundary
+// regex a DOUBLE-QUOTED identifier slips (`"randomblob"(…)`: the `"` breaks `\b`), yet SQLite resolves a
+// quoted identifier in call position as the function and runs it. node-sql-parser normalises both
+// `fn(…)` and `"fn"(…)` to the same name, so a name check here closes the quoting bypass AND the
+// long-known group_concat/quote/hex read-exfil gap. Classes: memory-amplification DoW
+// (randomblob/zeroblob/printf/format/group_concat), data exfil/encoding (quote/hex), and RCE where
+// extensions can load (load_extension). None appear in any canonical query.
+const DANGEROUS_FUNCTIONS: ReadonlySet<string> = new Set([
+  'load_extension',
+  'randomblob',
+  'zeroblob',
+  'printf',
+  'format',
+  'group_concat',
+  'quote',
+  'hex',
+]);
+
+// The normalised, lowercased name of a function-call node, or null if `obj` is not one. A scalar call is
+// `{ type:'function', name:{ name:[{ value }] } }` (quoted or not — same value); an aggregate is
+// `{ type:'aggr_func', name:'GROUP_CONCAT' }` (a bare UPPERCASE string). A schema-qualified name is
+// multi-part; the function is the last part.
+function functionName(obj: Record<string, unknown>): string | null {
+  if (obj.type === 'aggr_func' && typeof obj.name === 'string') return obj.name.toLowerCase();
+  if (obj.type === 'function') {
+    const parts = (obj.name as { name?: Array<{ value?: unknown }> } | null)?.name;
+    if (Array.isArray(parts) && parts.length > 0) {
+      const last = parts[parts.length - 1]?.value;
+      if (typeof last === 'string') return last.toLowerCase();
+    }
+  }
+  return null;
+}
+
+// Walk the AST and reject the first call to a DANGEROUS_FUNCTIONS member anywhere — SELECT list, WHERE,
+// HAVING, a nested sub-query, a function argument. The AST is a finite tree, so the walk terminates.
+function denyDangerousFunction(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyDangerousFunction(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!node || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  const fn = functionName(obj);
+  if (fn && DANGEROUS_FUNCTIONS.has(fn)) return `function not allowed: ${fn}`;
+  for (const key of Object.keys(obj)) {
+    const r = denyDangerousFunction(obj[key]);
+    if (r) return r;
+  }
+  return null;
+}
+
 // Loose view over the parsed statement — node-sql-parser's union types are awkward to narrow, and we
 // only read a few discriminant fields.
 type LimitNode = { seperator?: string; value?: unknown[] } | null | undefined;
@@ -43,10 +99,11 @@ type FromEntry = {
   using?: unknown; // USING(...) join condition — the other bounded form
   expr?: { type?: string; ast?: unknown } | null; // sub-query ({ ast }) or table-valued fn ({ type:'function' })
 } | null;
-type LooseSelect = {
+export type LooseSelect = {
   type?: string;
   columns?: Array<{ as?: string | null; expr?: { column?: string } | null } | null> | null;
   from?: FromEntry[] | null;
+  where?: unknown; // WHERE expression tree (binary_expr/column_ref/…) — read by the default-filters gate
   with?: Array<{ name?: { value?: string } } | null> | null;
   limit?: LimitNode;
   _next?: LooseSelect | null; // compound (UNION/INTERSECT/EXCEPT) continuation
@@ -318,6 +375,11 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   const dupCol = denyDuplicateColumns(ast);
   if (dupCol) return deny(dupCol);
 
+  // Block dangerous scalar/aggregate functions by AST name, so double-quoting (`"randomblob"(…)`) can't
+  // slip the L1 text blocklist (DoW / exfil / load_extension — see DANGEROUS_FUNCTIONS).
+  const badFn = denyDangerousFunction(ast);
+  if (badFn) return deny(badFn);
+
   // Every FROM source must be a plain table or a sub-query, at ANY nesting depth — fail closed on
   // anything else. This blocks table-valued functions (`pragma_table_info(…)`, `json_each(…)`,
   // `json_tree(…)`, `generate_series(…)`) — invisible to parser.tableList() (it returns [] for the
@@ -364,4 +426,23 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
     ? enforceLimit(sql, maxRows)
     : `${sql.replace(/;?\s*$/u, '')} LIMIT ${maxRows}`;
   return { ok: true, sql: limited };
+}
+
+/**
+ * Parse `sql` to a single SELECT AST for downstream structural checks (e.g. the default-filters gate),
+ * or null if it is not exactly one parseable SELECT. Fail-soft by design: this is NOT a security gate —
+ * `assertReadOnlySelect`/`guardSelect` run first in run_sql and already reject anything unparseable or
+ * non-SELECT. Reuses the module parser so callers need not depend on node-sql-parser directly.
+ */
+export function parseSingleSelect(sql: string): LooseSelect | null {
+  let parsed: AST | AST[];
+  try {
+    parsed = parser.astify(sql);
+  } catch {
+    return null;
+  }
+  const statements = Array.isArray(parsed) ? parsed : [parsed];
+  if (statements.length !== 1) return null;
+  const ast = statements[0] as unknown as LooseSelect;
+  return ast.type === 'select' ? ast : null;
 }

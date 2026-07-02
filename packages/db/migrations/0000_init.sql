@@ -125,7 +125,7 @@ CREATE TABLE contracts (
   awarded_to_group INTEGER,                -- this AWARD went to an обединение (per-contract, distinct from bidders.is_consortium)
   value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | annex_suspect | value_suspect (data-quality verdict)
   date_flag        TEXT NOT NULL DEFAULT 'ok',  -- ok | signed_after_publication (non-destructive date-quality verdict)
-  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL = excluded (value_suspect)
+  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL only when unrecoverable (value_suspect w/o procEst) → excluded from sums + rollups. Corrected value_suspect rows keep a non-NULL procEst amount and ARE summed.
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
@@ -198,11 +198,11 @@ CREATE INDEX idx_parties_eik ON parties(eik);
 -- One row (id = 1). Index KPIs + freshness for the home page.
 CREATE TABLE home_totals (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
-  contracts    INTEGER NOT NULL,          -- contracts with a clean (non-NULL) amount_eur
-  value_eur    REAL NOT NULL,             -- SUM(amount_eur) over those same rows (count/sum cover one set)
+  contracts    INTEGER NOT NULL,          -- COUNT(*) over ALL contracts — corpus record tally, NOT the amount_eur-filtered basis the sector/authority/company rollups (and E4) reconcile on
+  value_eur    REAL NOT NULL,             -- COALESCE(SUM(amount_eur),0) over clean (non-NULL) rows only; deliberately a different set than `contracts` above — `suspect` bridges the two
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
-  suspect      INTEGER NOT NULL,          -- value_suspect rows (NULL amount_eur): surfaced, never summed
+  suspect      INTEGER NOT NULL,          -- COUNT(value_flag = 'value_suspect') — data-quality badge, surfaced never summed; NOT the NULL-amount set (corrected suspect rows carry a procEst amount and ARE summed)
   first_date   TEXT,
   last_date    TEXT,
   as_of        TEXT,                       -- data_freshness 'admin' as_of (latest real contract date)
