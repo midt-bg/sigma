@@ -427,8 +427,10 @@ export interface NetworkData {
 // Procurement spend by period for the /trends chart. Contracts without a usable signing date are
 // excluded from the series and reported as coverage, never silently dropped.
 
+export type TrendGranularity = 'month' | 'quarter' | 'year';
+
 export interface TrendPoint {
-  period: string; // 'YYYY-MM' (month granularity) or 'YYYY' (year)
+  period: string; // 'YYYY-MM' (month), 'YYYY-Qn' (quarter) or 'YYYY' (year)
   valueEur: number;
   contracts: number;
   partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
@@ -443,7 +445,7 @@ export interface TrendYear {
 }
 
 export interface TrendData {
-  granularity: 'month' | 'year';
+  granularity: TrendGranularity;
   points: TrendPoint[]; // continuous and zero-filled, sorted by period
   years: TrendYear[]; // per-year summary with year-over-year change
   sectors: SectorRef[]; // options for the sector select
@@ -452,8 +454,40 @@ export interface TrendData {
   scope: {
     sector: string | null;
     funding: 'all' | 'eu' | 'national';
-    granularity: 'month' | 'year';
+    granularity: TrendGranularity;
   };
+}
+
+// ── Contracts overview (/trends lenses) ──────────────────────────────────────────────────────────
+// Per-CPV-group price distribution and the shared filtered contract cards for the overview surface.
+// A "group" is the 5-digit CPV class prefix — fine enough that contracts inside it are comparable,
+// coarse enough that cohorts stay populated.
+
+export interface CpvGroupStat {
+  group: string; // 5-digit CPV prefix, e.g. '33600'
+  name: string | null; // representative cpv_description within the group (most common among the sample)
+  contracts: number; // contracts with a positive EUR value in the group
+  medianEur: number;
+  p10Eur: number;
+  p90Eur: number;
+  maxEur: number;
+  sampleEur: number[]; // real contract values: a quantile ladder plus the top outliers (dot cloud)
+}
+
+export interface CpvGroupMedian {
+  group: string;
+  name: string | null;
+  contracts: number;
+  medianEur: number;
+}
+
+export interface OverviewContract {
+  id: string; // contract slug for /contracts/:id
+  signedAt: string | null;
+  valueEur: number;
+  authorityName: string;
+  bidderName: string; // display name (consortiums folded to 'X и др.')
+  cpvGroup: string | null; // 5-digit CPV prefix, null when the tender has no usable CPV
 }
 
 // ── Regions (map) ─────────────────────────────────────────────────────────────────────────────────
