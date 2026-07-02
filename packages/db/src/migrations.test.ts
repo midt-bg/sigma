@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migration2 = resolve(root, 'packages/db/migrations/0002_contracts_overrun_index.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -27,6 +28,7 @@ describe('served migrations', () => {
     try {
       readScript(dbPath, migration0);
       readScript(dbPath, migration1);
+      readScript(dbPath, migration2);
 
       expect(
         sqlite(
@@ -65,6 +67,14 @@ describe('served migrations', () => {
         sqlite(
           dbPath,
           "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_flow_pairs_bidder' AND tbl_name='flow_pairs';",
+        ).trim(),
+      ).toBe('1');
+
+      // 0002 adds the partial overrun index used by /overruns + /analytics (OVERRUN_WHERE).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun' AND tbl_name='contracts';",
         ).trim(),
       ).toBe('1');
 
