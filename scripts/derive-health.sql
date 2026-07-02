@@ -104,10 +104,17 @@ CREATE TABLE IF NOT EXISTS sector_concentration (
 );
 CREATE INDEX IF NOT EXISTS idx_sector_concentration_bidder ON sector_concentration(bidder_id);
 DELETE FROM sector_concentration;
+-- HAVING <> 0 guards win_share's division: a CPV division whose priced contracts sum to 0 EUR
+-- (a single amount_eur=0 contract, or exact +/- offsets) would otherwise yield 0/0 = NULL and
+-- abort the whole derive on win_share's NOT NULL constraint. Such a division carries no
+-- meaningful share, so it is skipped here; downstream (derive-contract-features.sql LEFT JOIN)
+-- its contracts get sector_win_share NULL — an honest "unknown", never a fabricated 0 score.
 WITH div_totals AS (
   SELECT substr(t.cpv_code,1,2) div, SUM(c.amount_eur) total_eur
   FROM contracts c JOIN tenders t ON t.id=c.tender_id
-  WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'')<>'' GROUP BY substr(t.cpv_code,1,2))
+  WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'')<>''
+  GROUP BY substr(t.cpv_code,1,2)
+  HAVING SUM(c.amount_eur) <> 0)
 INSERT INTO sector_concentration (cpv_division, bidder_id, won_eur, contracts, division_total_eur, win_share)
 SELECT substr(t.cpv_code,1,2), c.bidder_id, SUM(c.amount_eur), COUNT(*), dt.total_eur,
        SUM(c.amount_eur)/dt.total_eur
