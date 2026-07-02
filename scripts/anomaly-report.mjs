@@ -32,8 +32,29 @@ export function percentile(values, q) {
   return lo === hi ? xs[lo] : xs[lo] + (xs[hi] - xs[lo]) * (pos - lo);
 }
 
-/** Group `{ division, amountEur }` rows into per-division stats (count, median, p95). Pure. */
-export function cohortStats(rows) {
+/**
+ * Leave-one-out percentile: linear-interpolation percentile over `sorted` (ascending, finite) with
+ * the element at `excludeIndex` removed — WITHOUT materialising the n−1 copy (index math instead),
+ * so per-row leave-one-out stays O(1) after the per-division sort. Why it exists: with a plain p95
+ * over a cohort that CONTAINS the candidate, a lone gross outlier drags its own anchor upward —
+ * linear interpolation reaches into the outlier for cohorts of 12–20 rows, making the exact case
+ * the report exists for invisible there. Excluding the candidate from its own percentile closes
+ * that blind spot at any cohort size. Pure.
+ */
+export function percentileExcluding(sorted, excludeIndex, q) {
+  const n = sorted.length;
+  if (n <= 1) return 0; // nothing left after exclusion
+  const at = (k) => sorted[k < excludeIndex ? k : k + 1];
+  const m = n - 1;
+  if (m === 1) return at(0);
+  const pos = (m - 1) * Math.min(1, Math.max(0, q));
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return lo === hi ? at(lo) : at(lo) + (at(hi) - at(lo)) * (pos - lo);
+}
+
+/** Group rows into per-division ASCENDING sorted finite amounts. Shared by stats + detectors. */
+function sortedAmountsByDivision(rows) {
   const byDivision = new Map();
   for (const r of rows) {
     const div = r.division;
@@ -42,8 +63,26 @@ export function cohortStats(rows) {
     if (!byDivision.has(div)) byDivision.set(div, []);
     byDivision.get(div).push(amt);
   }
+  for (const amts of byDivision.values()) amts.sort((a, b) => a - b);
+  return byDivision;
+}
+
+/** Leftmost index of `value` in ascending `sorted` (value is guaranteed present by construction). */
+function indexOfSorted(sorted, value) {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Group `{ division, amountEur }` rows into per-division stats (count, median, p95). Pure. */
+export function cohortStats(rows) {
   const stats = new Map();
-  for (const [div, amts] of byDivision) {
+  for (const [div, amts] of sortedAmountsByDivision(rows)) {
     stats.set(div, {
       count: amts.length,
       median: percentile(amts, 0.5),
@@ -54,45 +93,54 @@ export function cohortStats(rows) {
 }
 
 /**
- * Contracts whose amount_eur grossly exceeds their CPV-division cohort (> cohortFactor × p95), only
- * for divisions with a trustworthy sample (≥ minCohort). Pure: rows are `{ id, division, amountEur }`.
+ * Contracts whose amount_eur grossly exceeds their CPV-division cohort (> cohortFactor × the
+ * LEAVE-ONE-OUT p95 — the candidate is excluded from its own percentile, see percentileExcluding),
+ * only for divisions with a trustworthy sample (≥ minCohort rows including the candidate). Pure:
+ * rows are `{ id, division, amountEur }`. Returns all hit ids (for cross-finding dedupe) plus a
+ * bounded examples list.
  */
 export function cpvCohortOutliers(rows, opts = {}) {
   const { minCohort, cohortFactor, topExamples } = { ...ANOMALY_DEFAULTS, ...opts };
-  const stats = cohortStats(rows);
+  const byDivision = sortedAmountsByDivision(rows);
   const hits = [];
   for (const r of rows) {
     const amt = Number(r.amountEur);
-    const c = stats.get(r.division);
-    if (!c || c.count < minCohort || c.p95 <= 0 || !Number.isFinite(amt)) continue;
-    const ratio = amt / c.p95;
+    const amts = byDivision.get(r.division);
+    if (!amts || amts.length < minCohort || !Number.isFinite(amt)) continue;
+    const p95 = percentileExcluding(amts, indexOfSorted(amts, amt), 0.95);
+    if (p95 <= 0) continue;
+    const ratio = amt / p95;
     if (ratio > cohortFactor) {
-      hits.push({ id: r.id, division: r.division, amountEur: amt, cohortP95: c.p95, ratio });
+      hits.push({ id: r.id, division: r.division, amountEur: amt, cohortP95: p95, ratio });
     }
   }
   hits.sort((a, b) => b.ratio - a.ratio);
-  return { total: hits.length, examples: hits.slice(0, topExamples) };
+  return { total: hits.length, ids: hits.map((h) => h.id), examples: hits.slice(0, topExamples) };
 }
 
 /**
- * Likely decimal-shift artifacts: a gross cohort outlier whose amount ÷10 or ÷100 would fall back
- * inside the cohort's normal band [median/decimalRescaleMax, median×decimalRescaleMax]. That pattern —
- * "valid number, wrong magnitude" — is exactly what per-row value_flag cannot catch. Pure.
+ * Likely decimal-shift artifacts: a contract ABOVE its cohort's normal band whose amount ÷10 or
+ * ÷100 falls back inside that band [median/decimalRescaleMax, median×decimalRescaleMax] (median is
+ * leave-one-out, so the candidate can't drag its own anchor). That pattern — "valid number, wrong
+ * magnitude" — is exactly what per-row value_flag cannot catch. Deliberately NOT gated behind the
+ * cohortFactor gross-outlier test: a typical ×10-shifted contract sits at only ~8–10× its cohort,
+ * far below the 25× gross bar, so gating there made the single-decimal shift — the most common
+ * loader artifact — undetectable. Being outside the band plus rescaling back into it IS the signal.
+ * Pure. Returns all hit ids (for cross-finding dedupe) plus a bounded examples list.
  */
 export function decimalShiftSuspects(rows, opts = {}) {
-  const { minCohort, cohortFactor, decimalRescaleMax, topExamples } = {
-    ...ANOMALY_DEFAULTS,
-    ...opts,
-  };
-  const stats = cohortStats(rows);
+  const { minCohort, decimalRescaleMax, topExamples } = { ...ANOMALY_DEFAULTS, ...opts };
+  const byDivision = sortedAmountsByDivision(rows);
   const hits = [];
   for (const r of rows) {
     const amt = Number(r.amountEur);
-    const c = stats.get(r.division);
-    if (!c || c.count < minCohort || c.median <= 0 || !Number.isFinite(amt)) continue;
-    if (amt / c.p95 <= cohortFactor) continue; // only consider gross outliers
-    const lo = c.median / decimalRescaleMax;
-    const hi = c.median * decimalRescaleMax;
+    const amts = byDivision.get(r.division);
+    if (!amts || amts.length < minCohort || !Number.isFinite(amt)) continue;
+    const median = percentileExcluding(amts, indexOfSorted(amts, amt), 0.5);
+    if (median <= 0) continue;
+    const lo = median / decimalRescaleMax;
+    const hi = median * decimalRescaleMax;
+    if (amt <= hi) continue; // the original must sit well OUTSIDE the cohort's normal band
     const shift = [10, 100].find((d) => amt / d >= lo && amt / d <= hi);
     if (shift) {
       hits.push({
@@ -100,18 +148,19 @@ export function decimalShiftSuspects(rows, opts = {}) {
         division: r.division,
         amountEur: amt,
         rescaledBy: shift,
-        cohortMedian: c.median,
+        cohortMedian: median,
       });
     }
   }
   hits.sort((a, b) => b.amountEur - a.amountEur);
-  return { total: hits.length, examples: hits.slice(0, topExamples) };
+  return { total: hits.length, ids: hits.map((h) => h.id), examples: hits.slice(0, topExamples) };
 }
 
 const FETCH_PRICED_BY_DIVISION = `
   SELECT c.id AS id, substr(t.cpv_code, 1, 2) AS division, c.amount_eur AS amountEur
   FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE c.amount_eur IS NOT NULL AND t.cpv_code IS NOT NULL AND length(t.cpv_code) >= 2`;
+  WHERE c.amount_eur IS NOT NULL AND t.cpv_code IS NOT NULL AND length(t.cpv_code) >= 2
+  ORDER BY c.id`;
 
 function rows(runner, sql) {
   const out = runner(sql);
@@ -130,20 +179,34 @@ export function buildAnomalyReport(runner, opts = {}) {
   }));
   const cohort = cpvCohortOutliers(priced, opts);
   const decimal = decimalShiftSuspects(priced, opts);
+  // Headline total = UNIQUE contracts across findings. A decimal-shift hit is often also a cohort
+  // outlier; summing per-finding totals would double-count it and ~2× inflate the number the
+  // reader is asked to trust. Per-finding totals stay per-finding; the headline is deduped by id.
+  const flagged = new Set([...cohort.ids, ...decimal.ids]);
   return {
     sampled: priced.length,
     findings: [
-      { key: 'cpv-cohort-outlier', label: 'Договор далеч над CPV кохортата', ...cohort },
-      { key: 'decimal-shift', label: 'Вероятно изместена десетична', ...decimal },
+      {
+        key: 'cpv-cohort-outlier',
+        label: 'Договор далеч над CPV кохортата',
+        total: cohort.total,
+        examples: cohort.examples,
+      },
+      {
+        key: 'decimal-shift',
+        label: 'Вероятно изместена десетична',
+        total: decimal.total,
+        examples: decimal.examples,
+      },
     ],
-    total: cohort.total + decimal.total,
+    total: flagged.size,
   };
 }
 
 /** Render the report as text for the import log. Pure. */
 export function formatAnomalyReport(report) {
   const lines = [
-    `anomaly report — ${report.sampled} priced contracts sampled, ${report.total} flagged`,
+    `anomaly report — ${report.sampled} priced contracts sampled, ${report.total} unique contracts flagged`,
   ];
   for (const f of report.findings) {
     lines.push(`  • ${f.key} (${f.label}): ${f.total}`);

@@ -12,6 +12,7 @@ import {
   decimalShiftSuspects,
   formatAnomalyReport,
   percentile,
+  percentileExcluding,
   type AnomalyRunner,
 } from '../../../scripts/anomaly-report.mjs';
 
@@ -22,6 +23,22 @@ describe('percentile', () => {
     expect(percentile([0, 10], 0.5)).toBe(5);
     expect(percentile([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5);
     expect(percentile([5, 1, 4, 2, 3], 0)).toBe(1); // sorts internally
+  });
+});
+
+describe('percentileExcluding', () => {
+  it('matches percentile() over the array with the element removed', () => {
+    const sorted = [1, 2, 3, 4, 5, 6, 7, 8, 9, 1000];
+    for (let j = 0; j < sorted.length; j++) {
+      const without = sorted.filter((_, k) => k !== j);
+      expect(percentileExcluding(sorted, j, 0.95)).toBeCloseTo(percentile(without, 0.95));
+      expect(percentileExcluding(sorted, j, 0.5)).toBeCloseTo(percentile(without, 0.5));
+    }
+  });
+
+  it('handles degenerate sizes', () => {
+    expect(percentileExcluding([7], 0, 0.95)).toBe(0); // nothing left
+    expect(percentileExcluding([7, 9], 1, 0.95)).toBe(7); // one left
   });
 });
 
@@ -63,8 +80,8 @@ describe('cpvCohortOutliers', () => {
     ];
     const out = cpvCohortOutliers(rows);
     expect(out.total).toBe(2);
-    expect(out.examples[0].id).toBe('bigger'); // highest ratio first
-    expect(out.examples[0].ratio).toBeGreaterThan(ANOMALY_DEFAULTS.cohortFactor);
+    expect(out.examples[0]!.id).toBe('bigger'); // highest ratio first
+    expect(out.examples[0]!.ratio).toBeGreaterThan(ANOMALY_DEFAULTS.cohortFactor);
   });
 
   it('does NOT flag when the cohort is too small to trust', () => {
@@ -83,17 +100,56 @@ describe('cpvCohortOutliers', () => {
     ];
     expect(cpvCohortOutliers(rows).total).toBe(0); // ~7× p95 < 25×
   });
+
+  // Reviewer repro (#148): with a plain p95 the lone outlier contaminates its own anchor — linear
+  // interpolation reaches into the outlier for n = 12..20, so a 50M contract in a ~100k cohort sat
+  // at only 2–19× "p95" and was never flagged. Leave-one-out p95 must catch it at every size.
+  it('flags a lone gross outlier in small cohorts (n = 12..20, leave-one-out p95)', () => {
+    for (let n = 12; n <= 20; n++) {
+      const rows = [
+        ...cohort('45', n - 1, 100_000),
+        { id: 'lone', division: '45', amountEur: 50_000_000 },
+      ];
+      const out = cpvCohortOutliers(rows);
+      expect(out.total).toBe(1);
+      expect(out.examples[0]!.id).toBe('lone');
+      expect(out.examples[0]!.ratio).toBeGreaterThan(ANOMALY_DEFAULTS.cohortFactor);
+    }
+  });
 });
 
 describe('decimalShiftSuspects', () => {
   it('flags a gross outlier whose ÷10 or ÷100 lands back near the cohort median', () => {
     const rows = [
-      ...cohort('45', 200, 100_000), // median ≈ 119k
+      ...cohort('45', 200, 100_000), // median ≈ 112k
       { id: 'shift100', division: '45', amountEur: 100_000 * 100 }, // ÷100 → 100k ≈ median
     ];
     const out = decimalShiftSuspects(rows);
     expect(out.total).toBe(1);
     expect(out.examples[0]).toMatchObject({ id: 'shift100', rescaledBy: 100 });
+  });
+
+  // Reviewer repro (#148): a typical ×10 shift sits at only ~8–9× its cohort p95 — far below the
+  // 25× gross gate the old code required first — so the single misplaced decimal (the most common
+  // loader artifact, and this detector's headline case) was undetectable. The rescale test must
+  // run independently of the gross-outlier gate.
+  it('flags a single ×10 shift that is NOT a 25× gross outlier (€112k cohort → €1.12M row)', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000), // median ≈ 112k, band [14k, 896k]
+      { id: 'shift10', division: '45', amountEur: 1_120_000 }, // ÷10 → 112k ≈ median; only ~9× p95
+    ];
+    expect(cpvCohortOutliers(rows).total).toBe(0); // sanity: below the gross gate…
+    const out = decimalShiftSuspects(rows);
+    expect(out.total).toBe(1); // …yet the decimal shift is caught
+    expect(out.examples[0]).toMatchObject({ id: 'shift10', rescaledBy: 10 });
+  });
+
+  it('does NOT flag a row inside the cohort band (nothing to rescale)', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000),
+      { id: 'normal-large', division: '45', amountEur: 500_000 }, // within [median/8, median×8]
+    ];
+    expect(decimalShiftSuspects(rows).total).toBe(0);
   });
 
   it('does NOT flag a gross outlier that stays gross after rescale', () => {
@@ -108,18 +164,33 @@ describe('decimalShiftSuspects', () => {
 
 describe('buildAnomalyReport / formatAnomalyReport', () => {
   const fixtureRows = [
-    ...cohort('45', 200, 100_000),
-    { id: 'big', division: '45', amountEur: 90_000_000 },
-    { id: 'shift', division: '45', amountEur: 100_000 * 100 },
+    ...cohort('45', 200, 100_000), // median ≈ 112k, band [14k, 896k]
+    { id: 'big', division: '45', amountEur: 93_000_000 }, // gross outlier; ÷100 = 930k stays outside the band
+    { id: 'shift', division: '45', amountEur: 100_000 * 100 }, // gross outlier AND ÷100 decimal shift
   ];
   const runner: AnomalyRunner = (sql: string) =>
     sql.includes('FROM contracts') ? (fixtureRows as Array<Record<string, unknown>>) : [];
 
-  it('assembles findings without throwing (observe, not gate)', () => {
+  it('assembles findings and dedupes the headline total by contract id', () => {
     const report = buildAnomalyReport(runner);
     expect(report.sampled).toBe(fixtureRows.length);
     expect(report.findings.map((f) => f.key)).toEqual(['cpv-cohort-outlier', 'decimal-shift']);
-    expect(report.total).toBeGreaterThan(0);
+    // 'big' and 'shift' are both cohort outliers; 'shift' is ALSO a decimal-shift suspect. The
+    // per-finding totals keep their own counts, but the headline total must count 'shift' ONCE.
+    expect(report.findings[0]!.total).toBe(2);
+    expect(report.findings[1]!.total).toBe(1);
+    expect(report.total).toBe(2); // NOT 3 — deduped across findings
+  });
+
+  it('counts a decimal shift that is not a gross outlier exactly once', () => {
+    const rows = [
+      ...cohort('45', 200, 100_000),
+      { id: 'shift10', division: '45', amountEur: 1_120_000 }, // decimal-shift only (~9× p95)
+    ];
+    const report = buildAnomalyReport(() => rows as Array<Record<string, unknown>>);
+    expect(report.findings[0]!.total).toBe(0);
+    expect(report.findings[1]!.total).toBe(1);
+    expect(report.total).toBe(1);
   });
 
   it('formats a bounded, human-readable summary', () => {
