@@ -1,6 +1,67 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
-import { companyListParams, getMulti, leaderboardRankOffset, MAX_MULTI_VALUES } from './filters';
+import {
+  authorityListFilters,
+  companyListFilters,
+  contractListFilters,
+  getMulti,
+  leaderboardRankOffset,
+  MAX_MULTI_VALUES,
+} from './filters';
+
+describe('contractListFilters', () => {
+  it('parses the bids filter the HTML list and CSV export must share (issue #138)', () => {
+    const sp = new URLSearchParams('bids=1&year=2025&authority=123');
+    const f = contractListFilters(sp);
+    expect(f.bids).toBe('one');
+    expect(f.years).toEqual(['2025']);
+    expect(f.authority).toBe('123');
+  });
+
+  it('leaves bids null when the param is absent or not "1"', () => {
+    expect(contractListFilters(new URLSearchParams('')).bids).toBeNull();
+    expect(contractListFilters(new URLSearchParams('bids=two')).bids).toBeNull();
+  });
+
+  it('normalises an unknown sort to the default rather than passing it through', () => {
+    expect(contractListFilters(new URLSearchParams('sort=bogus')).sort).toBe('value-desc');
+  });
+});
+
+describe('authorityListFilters', () => {
+  it('parses the same filter set the HTML list and CSV export must share (#138)', () => {
+    const f = authorityListFilters(
+      new URLSearchParams('type=municipality&sector=45&year=2025&eu=eu&q=път'),
+    );
+    expect(f).toMatchObject({
+      types: ['municipality'],
+      sectors: ['45'],
+      years: ['2025'],
+      eu: 'eu',
+      q: 'път',
+    });
+  });
+});
+
+describe('companyListFilters', () => {
+  it('parses the same filter set the HTML list and CSV export must share (#138)', () => {
+    const f = companyListFilters(
+      new URLSearchParams('kind=company&count=2-5&sector=45&year=2025&eu=national&q=строителство'),
+    );
+    expect(f).toMatchObject({
+      kinds: ['company'],
+      countBucket: '2-5',
+      sectors: ['45'],
+      years: ['2025'],
+      eu: 'national',
+      q: 'строителство',
+    });
+  });
+
+  it('normalises an unknown sort to the default rather than passing it through', () => {
+    expect(companyListFilters(new URLSearchParams('sort=bogus')).sort).toBe('won');
+  });
+});
 
 describe('getMulti', () => {
   it('caps repeated and CSV multi-value params', () => {
@@ -42,7 +103,7 @@ describe('getMulti', () => {
     params.set('year', '2024,2016,unknown');
     params.set('eu', 'eu');
 
-    expect(companyListParams(params)).toMatchObject({
+    expect(companyListFilters(params)).toMatchObject({
       sectors: [knownSector],
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',

@@ -4,7 +4,7 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import { normalizeCompanySort } from '@sigma/db';
+import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
@@ -30,7 +30,51 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .slice(0, MAX_MULTI_VALUES);
 }
 
-export function companyListParams(sp: URLSearchParams) {
+/**
+ * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
+ * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL
+ * independently and drifted: the CSV bag silently dropped `bids`, so a „само една оферта" list
+ * exported every contract (issue #138). Both routes must spread this so they can never diverge again;
+ * the only route-specific extras are pagination (`cursor`, `pageSize`), which the CSV does not use.
+ * Keep the keys aligned with @sigma/db CONTRACT_FILTER_KEYS (the csv-export cache classifier guards it).
+ */
+export function contractListFilters(sp: URLSearchParams) {
+  return {
+    sort: normalizeContractSort(sp.get('sort')),
+    years: getMulti(sp, 'year'),
+    sectors: getMulti(sp, 'sector'),
+    procedureGroups: getMulti(sp, 'procedure'),
+    valueBucket: sp.get('value'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    authority: sp.get('authority'),
+    bidder: sp.get('bidder'),
+    q: sp.get('q'),
+    bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+  };
+}
+
+/**
+ * The authorities list filter set — the single source of truth shared by /authorities and
+ * /authorities.csv (same #138 drift-prevention rationale as contractListFilters). Only pagination is
+ * route-specific. Keep aligned with @sigma/db AUTHORITY_FILTER_KEYS.
+ */
+export function authorityListFilters(sp: URLSearchParams) {
+  return {
+    sort: normalizeAuthoritySort(sp.get('sort')),
+    types: getMulti(sp, 'type'),
+    sectors: getMulti(sp, 'sector'),
+    years: getMulti(sp, 'year'),
+    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
+    q: sp.get('q'),
+  };
+}
+
+/**
+ * The companies list filter set — the single source of truth shared by /companies and
+ * /companies.csv (same #138 drift-prevention rationale as contractListFilters). Only pagination is
+ * route-specific. Keep aligned with @sigma/db COMPANY_FILTER_KEYS.
+ */
+export function companyListFilters(sp: URLSearchParams) {
   return {
     sort: normalizeCompanySort(sp.get('sort')),
     kinds: getMulti(sp, 'kind') as EntityKind[],

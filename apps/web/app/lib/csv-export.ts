@@ -5,7 +5,11 @@ const CSV_CACHE_CONTROL = 'public, max-age=3600';
 const CSV_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
 const ARRAY_FILTERS = ['years', 'sectors', 'procedureGroups', 'kinds', 'types'] as const;
-const SCALAR_FILTERS = ['valueBucket', 'eu', 'authority', 'bidder', 'countBucket'] as const;
+// `bids` ('one' | null) is a response-affecting filter: without it here a „само една оферта" export
+// was misclassified as unfiltered and served from / written to the shared unfiltered cache object —
+// a cache-poisoning variant of #56/#122 on top of the wrong-data bug (#138). hasScalarFilter treats
+// 'one' as set and null as absent, so it slots in cleanly. Other routes simply never carry the key.
+const SCALAR_FILTERS = ['valueBucket', 'eu', 'authority', 'bidder', 'countBucket', 'bids'] as const;
 const FILENAMES = {
   contracts: 'sigma-contracts.csv',
   companies: 'sigma-companies.csv',

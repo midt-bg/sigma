@@ -1,11 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, date, money, moneyBare } from '@sigma/shared';
-import {
-  contractsSummary,
-  getContractFacets,
-  listContracts,
-  normalizeContractSort,
-} from '@sigma/db';
+import { contractsSummary, getContractFacets, listContracts } from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -15,6 +10,7 @@ import { Pagination } from '../components/Pagination';
 import { Callout } from '../components/ui';
 import {
   buildSectorGroup,
+  contractListFilters,
   getMulti,
   leaderboardRankOffset,
   pageNav,
@@ -49,17 +45,10 @@ export function headers() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
+  // Filters come from the shared parser so the HTML list and the CSV export apply an identical set
+  // (issue #138); only pagination is route-specific here.
   const params = {
-    sort: normalizeContractSort(sp.get('sort')),
-    years: getMulti(sp, 'year'),
-    sectors: getMulti(sp, 'sector'),
-    procedureGroups: getMulti(sp, 'procedure'),
-    valueBucket: sp.get('value'),
-    eu: (sp.get('eu') as 'eu' | 'national' | null) || null,
-    authority: sp.get('authority'),
-    bidder: sp.get('bidder'),
-    q: sp.get('q'),
-    bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+    ...contractListFilters(sp),
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.contracts,
   };
