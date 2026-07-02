@@ -1,6 +1,7 @@
 // Keep this allow-list in sync with query params consumed by apps/web/app/routes loaders.
 export const CACHE_QUERY_PARAMS = new Set([
   'a', // /compare — entity A slug
+  'angle', // /trends: time | cpv | cross lens
   'authority',
   'b', // /compare — entity B slug
   'bidder',
@@ -9,11 +10,11 @@ export const CACHE_QUERY_PARAMS = new Set([
   'center',
   'cohort', // /price-anomaly — selected CPV cohorts (repeatable); faceting changes the result set
   'count',
-  'cpv', // /contracts — exact 5-digit CPV filter; changes the result set + headline totals
+  'cpv', // /contracts + /trends — exact 5-digit CPV filter; changes the result set + headline totals
+  'cpvSort', // /trends: CPV list ordering
   'cursor',
   'eu',
   'funding',
-  'g',
   'kind',
   'metric', // /compare leaderboard dimension
   'p',
@@ -22,7 +23,8 @@ export const CACHE_QUERY_PARAMS = new Set([
   'q',
   'sector',
   'sort',
-  'top',
+  'step', // /trends: series granularity (m|q|y; replaced the old `g` param)
+  'top', // singleSelectFilters: top-20 vs top-50 on /flows and /competition
   'type',
   'value',
   'year',
