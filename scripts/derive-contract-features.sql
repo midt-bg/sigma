@@ -79,6 +79,7 @@ DROP TABLE IF EXISTS tmp_peer_multi;
 DROP TABLE IF EXISTS tmp_b1;
 DROP TABLE IF EXISTS tmp_c;
 DROP TABLE IF EXISTS tmp_d;
+DROP TABLE IF EXISTS tmp_diag;
 
 DELETE FROM contract_features;
 
@@ -411,7 +412,11 @@ SELECT cf.contract_id,
 FROM contract_features cf JOIN tmp_score_ctx ctx ON ctx.contract_id = cf.contract_id;
 CREATE UNIQUE INDEX idx_tmp_b1 ON tmp_b1(contract_id);
 
-SELECT (SELECT COUNT(*) FROM tmp_b1 WHERE unmapped = 1) AS unmapped_procedure_rows;
+-- Stashed (not SELECTed) here: local D1 runs the whole file as one batch, and a bare SELECT on
+-- tmp_b1 would leave a cursor that makes the DROP TABLE below fail with SQLITE_LOCKED. The final
+-- summary SELECT surfaces it as unmapped_procedure_rows.
+CREATE TABLE tmp_diag AS
+SELECT COUNT(*) AS unmapped_procedure_rows FROM tmp_b1 WHERE unmapped = 1;
 
 UPDATE contract_features
 SET score_b = CASE
@@ -594,6 +599,7 @@ WHERE w.contract_id = contract_features.contract_id;
 SELECT
   (SELECT COUNT(*) FROM contracts) AS contracts_rows,
   (SELECT COUNT(*) FROM contract_features) AS contract_features_rows,
+  (SELECT unmapped_procedure_rows FROM tmp_diag) AS unmapped_procedure_rows,
   (SELECT COUNT(*) FROM contract_features WHERE score_coverage IS NULL) AS null_coverage_rows,
   (SELECT COUNT(*) FROM contract_features WHERE effective_peer_key IS NULL) AS null_peer_key_rows,
   (SELECT COUNT(*) FROM contract_features WHERE scoring_regime = 'framework') AS framework_regime_rows,
@@ -604,18 +610,25 @@ SELECT
   (SELECT COUNT(*) FROM contract_features WHERE single_offer = 1 AND score_a_bids > 0 AND peer_has_multi = 1) AS a1_floor_violations,
   (SELECT COUNT(*) FROM contract_features cf JOIN contracts c ON c.id = cf.contract_id JOIN tenders t ON t.id = c.tender_id
      WHERE t.procedure_type = 'Пряко договаряне' AND cf.score_b <> 0) AS direct_award_b1_nonzero,
-  (SELECT MIN(x) FROM (SELECT score_a AS x FROM contract_features WHERE score_a IS NOT NULL
-     UNION ALL SELECT score_b FROM contract_features WHERE score_b IS NOT NULL
-     UNION ALL SELECT score_c FROM contract_features WHERE score_c IS NOT NULL
-     UNION ALL SELECT score_d FROM contract_features WHERE score_d IS NOT NULL
-     UNION ALL SELECT score_e FROM contract_features WHERE score_e IS NOT NULL
-     UNION ALL SELECT score_overall FROM contract_features WHERE score_overall IS NOT NULL)) AS min_any_score,
-  (SELECT MAX(x) FROM (SELECT score_a AS x FROM contract_features WHERE score_a IS NOT NULL
-     UNION ALL SELECT score_b FROM contract_features WHERE score_b IS NOT NULL
-     UNION ALL SELECT score_c FROM contract_features WHERE score_c IS NOT NULL
-     UNION ALL SELECT score_d FROM contract_features WHERE score_d IS NOT NULL
-     UNION ALL SELECT score_e FROM contract_features WHERE score_e IS NOT NULL
-     UNION ALL SELECT score_overall FROM contract_features WHERE score_overall IS NOT NULL)) AS max_any_score;
+  -- Nested 3+3 (not one 6-term UNION ALL chain): local D1 enforces a low
+  -- SQLITE_MAX_COMPOUND_SELECT, so a flat 6-term compound fails with
+  -- "too many terms in compound SELECT". Each inner compound stays ≤ 3 terms.
+  (SELECT MIN(x) FROM (
+     SELECT x FROM (SELECT score_a AS x FROM contract_features WHERE score_a IS NOT NULL
+       UNION ALL SELECT score_b FROM contract_features WHERE score_b IS NOT NULL
+       UNION ALL SELECT score_c FROM contract_features WHERE score_c IS NOT NULL)
+     UNION ALL
+     SELECT x FROM (SELECT score_d AS x FROM contract_features WHERE score_d IS NOT NULL
+       UNION ALL SELECT score_e FROM contract_features WHERE score_e IS NOT NULL
+       UNION ALL SELECT score_overall FROM contract_features WHERE score_overall IS NOT NULL))) AS min_any_score,
+  (SELECT MAX(x) FROM (
+     SELECT x FROM (SELECT score_a AS x FROM contract_features WHERE score_a IS NOT NULL
+       UNION ALL SELECT score_b FROM contract_features WHERE score_b IS NOT NULL
+       UNION ALL SELECT score_c FROM contract_features WHERE score_c IS NOT NULL)
+     UNION ALL
+     SELECT x FROM (SELECT score_d AS x FROM contract_features WHERE score_d IS NOT NULL
+       UNION ALL SELECT score_e FROM contract_features WHERE score_e IS NOT NULL
+       UNION ALL SELECT score_overall FROM contract_features WHERE score_overall IS NOT NULL))) AS max_any_score;
 
 -- ── 5e: aggregate UI rollups — six *_quality_totals grains (§7.4/§9/§12.7) ──────────────────────
 -- Universal rule (§9): the `score_overall`/`score_X IS NOT NULL` mask excludes unknown/value_suspect
