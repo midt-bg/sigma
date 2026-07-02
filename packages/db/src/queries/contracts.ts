@@ -5,6 +5,7 @@ import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
+import { assertCovers } from './filter-guard';
 import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -39,17 +40,9 @@ export const CONTRACT_FILTER_KEYS = [
   'bids',
 ] as const satisfies readonly (keyof ContractListParams)[];
 
-// Compile-time completeness guard (issue #138 bug class). The `satisfies` above proves every listed
-// key is a real param; this proves the converse — every ContractListParams field EXCEPT sort/pagination
-// is listed. So a new filter cannot be added to the query (you must add the field to read `p.x` in
-// buildFilters) without also entering CONTRACT_FILTER_KEYS, which in turn forces it into the cache
-// signature (contractFilterSignature `satisfies`) and the csv-export classifier (its guard test). If
-// this line errors, add the new filter key to CONTRACT_FILTER_KEYS.
-type ContractFilterField = Exclude<keyof ContractListParams, 'sort' | 'cursor' | 'pageSize'>;
-const _filterKeysAreComplete: ContractFilterField extends (typeof CONTRACT_FILTER_KEYS)[number]
-  ? true
-  : never = true;
-void _filterKeysAreComplete;
+// Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
+// errors, add the new filter key to CONTRACT_FILTER_KEYS.
+assertCovers<ContractListParams, typeof CONTRACT_FILTER_KEYS>();
 
 const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = lookup({
   'value-desc': { expr: 'COALESCE(c.amount_eur, -1)', dir: 'desc' },
