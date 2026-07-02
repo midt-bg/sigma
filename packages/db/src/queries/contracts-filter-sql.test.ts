@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,8 +14,12 @@ import { listContracts, streamContractsCsv } from './contracts';
 // production migration (node:sqlite, no external dependency), seeded with bids_received ∈
 // {NULL, 0, 1, 2}, and asserts `bids: 'one'` returns exactly the single-bid row.
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
+// Apply the WHOLE migration chain (like src/migrations.test.ts), so a future 000N migration
+// that adds a column read by the export SELECT can't fail this test confusingly.
+const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort();
 
 // One contract per bids_received bucket: NULL (not reported), 0, 1 (the single-offer row), 2.
 const FIXTURE = `
@@ -58,7 +62,7 @@ let open: DatabaseSync | null = null;
 
 function realDb(): D1Database {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(migration0, 'utf8'));
+  for (const m of migrations) db.exec(readFileSync(resolve(migrationsDir, m), 'utf8'));
   db.exec(FIXTURE);
   open = db;
   return d1(db);
@@ -96,8 +100,9 @@ describe('contract filters against a real SQLite engine (#138)', () => {
 
     const singleRows = await csvDataRows(streamContractsCsv(db, { bids: 'one' }));
     expect(singleRows).toHaveLength(1);
-    expect(singleRows[0]!.endsWith(',1')).toBe(true); // bids_received is the last CSV column
-    expect(singleRows[0]!).toContain('300'); // the € 300 single-bid contract, not any other row
+    const cells = singleRows[0]!.split(',');
+    expect(cells[cells.length - 1]).toBe('1'); // bids_received column of the single-bid row
+    expect(cells).toContain('300'); // the € 300 single-bid contract, not any other row
   });
 
   it('bids=one composes with other filters instead of replacing them', async () => {

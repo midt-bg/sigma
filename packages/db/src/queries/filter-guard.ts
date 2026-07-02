@@ -7,6 +7,10 @@
 // cannot reach the query (you must add the field to read `p.x` in buildFilters) without also entering
 // the FILTER_KEYS array, the cache signature and the classifier guard test.
 //
+// Residual gap (accepted): nothing forces the web-side URL parser (apps/web/app/lib/filters.ts) to
+// parse a new key — list and CSV then both ignore it (still consistent), but the URL param is
+// silently dead until the parser is extended.
+//
 // A future 4th list+CSV route gets the whole guarantee with one obvious call:
 //
 //   export const FOO_FILTER_KEYS = [...] as const satisfies readonly (keyof FooListParams)[];
