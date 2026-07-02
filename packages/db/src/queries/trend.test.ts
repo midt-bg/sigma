@@ -158,6 +158,74 @@ describe('getSpendingTrend', () => {
     expect(series.args).toEqual(['2020-01-01', 'auth:111']);
   });
 
+  it('facets the whole series by selected CPV groups with one OR-of-ranges scan (no per-group queries)', async () => {
+    // Distinct fixtures for the faceted vs unfaceted scan: selecting groups must narrow the rows.
+    const ALL = [
+      { period: '2022', value_eur: 9000, eu_value_eur: 0, contracts: 90 },
+      { period: '2023', value_eur: 6000, eu_value_eur: 0, contracts: 60 },
+    ];
+    const FACETED = [
+      { period: '2022', value_eur: 2000, eu_value_eur: 0, contracts: 20 },
+      { period: '2023', value_eur: 1000, eu_value_eur: 0, contracts: 10 },
+    ];
+    const calls: QueryCall[] = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          args: [] as unknown[],
+          bind(...args: unknown[]) {
+            this.args = args;
+            calls.push({ sql, args });
+            return this;
+          },
+          async all<T>() {
+            return { results: (this.args.includes('45233') ? FACETED : ALL) as T[] };
+          },
+          async first<T>() {
+            if (sql.includes('as_of')) return { as_of: null } as T;
+            return { dated: 10, total: 10 } as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const all = await getSpendingTrend(db, { granularity: 'year' }, { includeSectors: false });
+    const faceted = await getSpendingTrend(
+      db,
+      { granularity: 'year', cpvGroups: ['45233', '33600'] },
+      { includeSectors: false },
+    );
+
+    // Selection narrows the chart rows — exact totals from the faceted fixture only.
+    expect(all.totalValueEur).toBe(15000);
+    expect(faceted.totalValueEur).toBe(3000);
+    expect(faceted.points.map((pt) => [pt.period, pt.valueEur, pt.contracts])).toEqual([
+      ['2022', 2000, 20],
+      ['2023', 1000, 10],
+    ]);
+
+    // One aggregate scan: tenders joined once, an OR of half-open index ranges, all params bound.
+    const series = calls.filter((c) => c.sql.includes('GROUP BY period'));
+    expect(series).toHaveLength(2);
+    const sql = series[1]!.sql;
+    expect(sql).toContain('JOIN tenders t ON t.id = c.tender_id');
+    expect(sql).toContain(
+      '((t.cpv_code >= ? AND t.cpv_code < ?) OR (t.cpv_code >= ? AND t.cpv_code < ?))',
+    );
+    expect(series[1]!.args).toEqual(['2020-01-01', '45233', '45234', '33600', '33601']);
+    // The unfaceted default is untouched: no join, no range params.
+    expect(series[0]!.sql).not.toContain('JOIN tenders');
+    expect(series[0]!.args).toEqual(['2020-01-01']);
+  });
+
+  it('ignores malformed CPV groups instead of joining tenders on garbage', async () => {
+    const captured: string[] = [];
+    await getSpendingTrend(fakeDb(captured), { cpvGroups: ['4523', 'abcde', "45'--"] });
+    const series = captured.find((q) => q.includes('GROUP BY period'))!;
+    expect(series).not.toContain('JOIN tenders');
+    expect(series).not.toContain('t.cpv_code >= ?');
+  });
+
   it('folds monthly rows into a continuous quarterly series (queried at month grain)', async () => {
     const sqls: string[] = [];
     const { points, granularity } = await getSpendingTrend(fakeDb(sqls), {
@@ -384,12 +452,28 @@ describe('listOverviewContracts', () => {
   it('applies year and CPV-group cuts and the value sort, all bounded by LIMIT', async () => {
     const calls: QueryCall[] = [];
     const db = overviewDb({ calls, all: () => [] });
-    await listOverviewContracts(db, { year: '2024', cpvGroup: '45233', sort: 'value', limit: 12 });
+    await listOverviewContracts(db, {
+      year: '2024',
+      cpvGroups: ['45233'],
+      sort: 'value',
+      limit: 12,
+    });
     const call = calls[0]!;
     expect(call.sql).toContain('substr(c.signed_at, 1, 4) = ?');
     expect(call.sql).toContain('t.cpv_code >= ? AND t.cpv_code < ?');
     expect(call.sql).toContain('ORDER BY c.amount_eur DESC');
     expect(call.args).toEqual(['2020-01-01', '2024', '45233', '45234', 12]);
+  });
+
+  it('facets on multiple CPV groups as one OR-of-ranges cut and drops malformed codes', async () => {
+    const calls: QueryCall[] = [];
+    const db = overviewDb({ calls, all: () => [] });
+    await listOverviewContracts(db, { cpvGroups: ['45233', '33600', 'bogus'] });
+    const call = calls[0]!;
+    expect(call.sql).toContain(
+      '((t.cpv_code >= ? AND t.cpv_code < ?) OR (t.cpv_code >= ? AND t.cpv_code < ?))',
+    );
+    expect(call.args).toEqual(['2020-01-01', '45233', '45234', '33600', '33601', 24]);
   });
 
   it('defaults to newest-first within the trend window on the same value basis', async () => {

@@ -10,7 +10,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'center',
   'cohort', // /price-anomaly — selected CPV cohorts (repeatable); faceting changes the result set
   'count',
-  'cpv', // /contracts + /trends — exact 5-digit CPV filter; changes the result set + headline totals
+  'cpv', // /contracts — exact 5-digit CPV filter; ALSO /trends: repeatable CPV group multi-select faceting the обзор chart + list (CWE-349)
   'cpvSort', // /trends: CPV list ordering
   'cursor',
   'eu',
