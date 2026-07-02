@@ -3471,12 +3471,15 @@ a.pa-card-cpv:focus-visible {
   fill: var(--text-faint);
 }
 
-/* Cross lens: year picker + CPV picker side by side */
+/* Cross lens: year picker + CPV picker side by side. The columns stretch to equal height and the
+   year panel is a flex column whose chart grows, so the combo chart fills the card instead of
+   floating in dead space above the tall CPV list (the SVG scales via viewBox +
+   preserveAspectRatio="none", so stretching it is safe). */
 .ov-cross {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--s-5);
-  align-items: start;
+  align-items: stretch;
 }
 
 .ov-cross .ovz-panel {
@@ -3488,9 +3491,47 @@ a.pa-card-cpv:focus-visible {
   margin-bottom: var(--s-5);
 }
 
+.ov-cross-year {
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-cross-year .combo-chart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* the inline height (260px) becomes the flex-basis floor; leftover panel height goes to the plot */
+.ov-cross-year .combo-chart svg {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ov-cross-year .ov-years {
+  margin-top: auto;
+  padding-top: var(--s-4);
+}
+
+.ov-cross-chart-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+}
+
 @media (max-width: 960px) {
   .ov-cross {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .ov-cross-year .combo-chart svg {
+    height: 190px !important;
+    flex: 0 0 auto;
   }
 }
 

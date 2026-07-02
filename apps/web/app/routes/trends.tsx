@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigation, useSearchParams } from 'react-router';
 import type { CpvGroupStat, TrendGranularity } from '@sigma/api-contract';
 import { count, date as fmtDate, money, plural } from '@sigma/shared';
 import {
@@ -14,7 +14,7 @@ import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { ComboTrendChart } from '../components/ComboTrendChart';
 import { Callout } from '../components/ui';
 import { publicCache } from '../lib/cache';
-import { singleSelectFilters } from '../lib/filters';
+import { cpvGroupSelection, singleSelectFilters } from '../lib/filters';
 
 // „Договори — обзор": one list of contracts looked at from three angles (lenses) — in time, per CPV
 // group, or both at once. Every control is a plain <Link> mutating the query string, so the page is
@@ -58,16 +58,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const cpvSort = pick(sp.get('cpvSort'), ['n', 'med', 'code'] as const, 'n');
   const yearRaw = sp.get('year');
   const year = yearRaw && /^20\d\d$/.test(yearRaw) ? yearRaw : null;
-  const cpvRaw = sp.get('cpv');
-  const cpv = cpvRaw && /^\d{5}$/.test(cpvRaw) ? cpvRaw : null;
+  // Repeatable ?cpv — the multi-select CPV facet. Validated + bounded by cpvGroupSelection so
+  // hostile input can neither poison the SQL scope nor mint unbounded cache-key variants (CWE-349).
+  const cpvSel = cpvGroupSelection(sp);
 
   // The cross lens always shows the compact quarterly picker; the time lens follows the step toggle.
   const granularity = angle === 'cross' ? 'quarter' : STEP_GRANULARITY[step];
 
   const [trend, stats, contracts] = await Promise.all([
-    getSpendingTrend(db, { granularity }, { includeSectors: false }),
+    // Faceted by the selected CPV groups (one aggregate scan; all groups when nothing is selected),
+    // so the combo chart, year cards and totals all re-run server-side on real data.
+    getSpendingTrend(db, { granularity, cpvGroups: cpvSel }, { includeSectors: false }),
     getCpvGroupStats(db, 10),
-    listOverviewContracts(db, { year, cpvGroup: cpv, sort, limit: 24 }),
+    listOverviewContracts(db, { year, cpvGroups: cpvSel, sort, limit: 24 }),
   ]);
 
   // „Спрямо типичното" baselines for card groups outside the top-N stats (bounded: distinct groups
@@ -76,10 +79,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const missing = contracts
     .map((c) => c.cpvGroup)
     .filter((g): g is string => g != null && !known.has(g));
-  if (cpv && !known.has(cpv)) missing.push(cpv);
+  for (const g of cpvSel) if (!known.has(g)) missing.push(g);
   const medians = await getCpvGroupMedians(db, missing);
 
-  return { angle, step, sort, cpvSort, year, cpv, trend, stats, contracts, medians };
+  return { angle, step, sort, cpvSort, year, cpvSel, trend, stats, contracts, medians };
 }
 
 // ── Presentational helpers ────────────────────────────────────────────────────────────────────────
@@ -182,18 +185,30 @@ function DistAxis({ gMax }: { gMax: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────────
 
 export default function Trends({ loaderData }: Route.ComponentProps) {
-  const { angle, step, sort, cpvSort, year, cpv, trend, stats, contracts, medians } = loaderData;
+  const { angle, step, sort, cpvSort, year, cpvSel, trend, stats, contracts, medians } = loaderData;
   const [sp] = useSearchParams();
+  const navigating = useNavigation().state !== 'idle';
 
-  // Every control is a Link that patches the query string (null deletes a key).
-  const hrefWith = (patch: Record<string, string | null>): string => {
+  // Every control is a Link that patches the query string (null deletes a key; an array replaces
+  // every occurrence of a repeatable key — the CPV multi-select).
+  const hrefWith = (patch: Record<string, string | string[] | null>): string => {
     const next = new URLSearchParams(sp);
     for (const [k, v] of Object.entries(patch)) {
-      if (v == null) next.delete(k);
-      else next.set(k, v);
+      next.delete(k);
+      if (Array.isArray(v)) for (const item of v) next.append(k, item);
+      else if (v != null) next.set(k, v);
     }
     const qs = next.toString();
     return qs ? `/trends?${qs}` : '/trends';
+  };
+
+  // Toggle one CPV group in/out of the multi-select (a plain GET Link — no-JS friendly). The set is
+  // written sorted so equal selections always share one canonical URL/edge-cache key.
+  const hrefToggleCpv = (group: string): string => {
+    const next = (
+      cpvSel.includes(group) ? cpvSel.filter((g) => g !== group) : [...cpvSel, group]
+    ).sort();
+    return hrefWith({ cpv: next.length ? next : null });
   };
 
   // Cohort baseline per CPV group: top-N stats first, on-demand medians for the rest.
@@ -217,8 +232,11 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
         : b.contracts - a.contracts,
   );
 
-  const chips: { label: string; clear: Record<string, string | null> }[] = [];
-  if (cpv) chips.push({ label: `CPV ${cpv}`, clear: { cpv: null } });
+  const chips: { label: string; clear: Record<string, string | string[] | null> }[] = [];
+  for (const g of cpvSel) {
+    const rest = cpvSel.filter((c) => c !== g);
+    chips.push({ label: `CPV ${g}`, clear: { cpv: rest.length ? rest : null } });
+  }
   if (year) chips.push({ label: year, clear: { year: null } });
   const lensHint =
     angle === 'time'
@@ -228,7 +246,7 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
         : 'избери година и CPV код';
 
   const scopeParts: string[] = [];
-  if (cpv) scopeParts.push(`CPV ${cpv}`);
+  for (const g of cpvSel) scopeParts.push(`CPV ${g}`);
   if (year) scopeParts.push(year);
   const scopeText = scopeParts.length ? scopeParts.join(' · ') : 'всички договори';
 
@@ -306,11 +324,11 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
         </div>
       )}
       {cpvRows.map((g) => {
-        const active = g.group === cpv;
+        const active = cpvSel.includes(g.group);
         return (
           <Link
             key={g.group}
-            to={hrefWith({ cpv: active ? null : g.group })}
+            to={hrefToggleCpv(g.group)}
             preventScrollReset
             className={`ov-cpv-row${active ? ' is-active' : ''}`}
             aria-current={active || undefined}
@@ -399,6 +417,15 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
           </div>
         </nav>
 
+        {/* Announce server-rendered chart/list updates when a CPV code or year is (de)selected. */}
+        <p className="sr-only" role="status">
+          {navigating
+            ? 'Обновяване на данните…'
+            : cpvSel.length
+              ? `Графиката и списъкът показват ${count(cpvSel.length)} ${plural(cpvSel.length, 'избрана CPV група', 'избрани CPV групи')}.`
+              : 'Графиката и списъкът показват всички CPV групи.'}
+        </p>
+
         {angle === 'time' && (
           <section className="ovz-panel" aria-label="Разходи във времето">
             <div className="ov-panel-head">
@@ -453,17 +480,30 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
 
         {angle === 'cross' && (
           <div className="ov-cross">
-            <section className="ovz-panel" aria-label="Избор на година">
+            <section className="ovz-panel ov-cross-year" aria-label="Избор на година">
               <h2 className="ovz-panel-title">
                 Избери <em>година</em>
               </h2>
-              <p className="ov-panel-hint">После стеснѝ по CPV код от съседния списък.</p>
+              <p className="ov-panel-hint">
+                После стеснѝ по CPV код от съседния списък — графиката се преизчислява само върху
+                избраните групи.
+              </p>
+              {trend.points.length < 2 && (
+                <p className="muted ov-cross-chart-empty">
+                  Няма достатъчно данни за избраните CPV групи.
+                </p>
+              )}
               {trend.points.length >= 2 && (
                 <ComboTrendChart
                   points={trend.points}
                   granularity={trend.granularity}
-                  cssHeight={150}
+                  cssHeight={260}
                   interactive={false}
+                  ariaLabel={
+                    cpvSel.length
+                      ? `Брой договори и € обем във времето само за избраните CPV групи: ${cpvSel.join(', ')}`
+                      : 'Брой договори и € обем във времето за всички CPV групи'
+                  }
                 />
               )}
               <div className="ov-years">

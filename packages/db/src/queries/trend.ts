@@ -25,6 +25,20 @@ export interface TrendParams {
   granularity?: TrendGranularity;
   authorityId?: string | null;
   bidderId?: string | null;
+  // 5-digit CPV group prefixes (the /trends обзор multi-select). Faceting stays inside the one
+  // aggregate series scan: an OR of half-open cpv_code prefix ranges on the tenders join, never a
+  // per-group query. Malformed codes are dropped here (defense in depth behind the route parser).
+  cpvGroups?: string[] | null;
+}
+
+/** Valid selected 5-digit CPV group codes, or [] — shared by the trend + overview-list scopes. */
+function validCpvGroups(groups: string[] | null | undefined): string[] {
+  return (groups ?? []).filter((g) => /^\d{5}$/.test(g));
+}
+
+/** `(range OR range …)` clause over idx_tenders_cpv for a validated group set (caller pushes params). */
+function cpvGroupsClause(groups: string[]): string {
+  return `(${groups.map(() => '(t.cpv_code >= ? AND t.cpv_code < ?)').join(' OR ')})`;
 }
 
 export interface TrendQueryOptions {
@@ -53,10 +67,16 @@ function scope(p: TrendParams): { join: string; where: string[]; params: unknown
   // amount_eur IS NOT NULL, so the trend must too, or the same total differs between pages.
   const where = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
-  const join = p.sector || p.authorityId ? 'JOIN tenders t ON t.id = c.tender_id' : '';
+  const cpvGroups = validCpvGroups(p.cpvGroups);
+  const join =
+    p.sector || p.authorityId || cpvGroups.length ? 'JOIN tenders t ON t.id = c.tender_id' : '';
   if (p.sector) {
     where.push('substr(t.cpv_code, 1, 2) = ?');
     params.push(p.sector);
+  }
+  if (cpvGroups.length) {
+    where.push(cpvGroupsClause(cpvGroups));
+    for (const g of cpvGroups) params.push(...cpvGroupRange(g));
   }
   if (p.authorityId) {
     where.push('t.authority_id = ?');
@@ -379,7 +399,7 @@ export async function getCpvGroupMedians(
 
 export interface OverviewContractsParams {
   year?: string | null; // 'YYYY'
-  cpvGroup?: string | null; // 5-digit prefix
+  cpvGroups?: string[] | null; // 5-digit prefixes (multi-select facet; OR of index ranges)
   sort?: 'date' | 'value';
   limit?: number;
 }
@@ -410,9 +430,10 @@ export async function listOverviewContracts(
     where.push('substr(c.signed_at, 1, 4) = ?');
     params.push(p.year);
   }
-  if (p.cpvGroup && /^\d{5}$/.test(p.cpvGroup)) {
-    where.push('t.cpv_code >= ? AND t.cpv_code < ?');
-    params.push(...cpvGroupRange(p.cpvGroup));
+  const groups = validCpvGroups(p.cpvGroups);
+  if (groups.length) {
+    where.push(cpvGroupsClause(groups));
+    for (const g of groups) params.push(...cpvGroupRange(g));
   }
   const order =
     p.sort === 'value' ? 'ORDER BY c.amount_eur DESC, c.id' : 'ORDER BY c.signed_at DESC, c.id';

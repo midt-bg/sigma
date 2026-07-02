@@ -106,6 +106,23 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
   });
 
+  it('keys the repeatable /trends CPV multi-select so faceted charts get their own entries (CWE-349)', () => {
+    // The обзор cross lens re-runs the year chart + contract list server-side per selected CPV set;
+    // distinct selections (including subsets) must never share one cached SSR body.
+    const base = cacheUrl('http://local/trends?angle=cross');
+    const one = cacheUrl('http://local/trends?angle=cross&cpv=45233');
+    const two = cacheUrl('http://local/trends?angle=cross&cpv=45233&cpv=33600');
+
+    expect(one.search).not.toBe(base.search);
+    expect(two.search).not.toBe(one.search);
+    expect(two.searchParams.getAll('cpv')).toEqual(['45233', '33600']); // both values keyed
+    // URLSearchParams.sort() is stable per key, so value order is NOT canonicalized here; the UI
+    // writes the selection pre-sorted (hrefToggleCpv) so equal sets share one canonical URL.
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).not.toBe(
+      two.search,
+    );
+  });
+
   it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {
     // ?bids=1 narrows /contracts to single-bid contracts — different rows and totals.
     expect(cacheUrl('http://local/contracts?bids=1').search).not.toBe(
