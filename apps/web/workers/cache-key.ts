@@ -6,15 +6,20 @@
 // read — can't drift unnoticed. It is not absolute: cache-key.test.ts documents the blind spots it
 // can't see (dynamic keys like sel(k), and workers/** is out of scope).
 export const CACHE_QUERY_PARAMS = new Set([
+  'angle', // /trends: time | cpv | cross lens
   'authority',
   'bidder',
   'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals
   'center',
+  'contract', // /quality: scorecard subject
   'count',
+  'cpv', // /trends: 5-digit CPV group filter
+  'cpvSort', // /trends: CPV list ordering
+  'csort', // /quality: contract list ordering
   'cursor',
   'eu',
   'funding',
-  'g',
+  'grain', // /quality: rollup grain (authority|supplier|sector|region|year|funding)
   'kind',
   'p',
   'page', // pageNav: rank offset + "page N of M" in the HTML, but only when cursor is set. Keyed
@@ -23,7 +28,9 @@ export const CACHE_QUERY_PARAMS = new Set([
   'procedure',
   'q',
   'sector',
+  'sel', // /quality: selected ranking row scoping the contract list
   'sort',
+  'step', // /trends: series granularity (m|q|y; replaced the old `g` param)
   'top', // singleSelectFilters: top-20 vs top-50 on /flows and /competition
   'type',
   'value',
