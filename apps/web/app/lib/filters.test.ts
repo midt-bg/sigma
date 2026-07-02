@@ -175,6 +175,20 @@ describe('pageNav', () => {
     }
   });
 
+  it('floors a non-integer ?page so the counter and rank offset stay integers', () => {
+    // ?page=1.5 would otherwise render "Страница 1.5 от M" and a fractional rank offset (12.5).
+    const nav = pageNav({
+      base: sp('cursor=after:x&page=1.5'),
+      total: 100,
+      pageSize: 25,
+      nextCursor: 'after:y',
+      prevCursor: 'before:y',
+    });
+    expect(nav.page).toBe(1);
+    expect(Number.isInteger(nav.page)).toBe(true);
+    expect(leaderboardRankOffset(nav.page, 25)).toBe(0);
+  });
+
   it('advances the rank offset monotonically across normal deep paging', () => {
     // Within the valid range the counter and rank track the cursor 1:1 — neither freezes.
     const offsets = [698, 699, 700].map((p) => {

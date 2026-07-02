@@ -209,7 +209,7 @@ export function pageNav(opts: {
   // first page, so force page 1. Otherwise clamp to the valid range to avoid impossible "N от M".
   const page = !base.get('cursor')
     ? 1
-    : Math.min(Math.max(1, Number(base.get('page') ?? '1') || 1), pageCount);
+    : Math.min(Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1), pageCount);
   return {
     page,
     pageCount,
