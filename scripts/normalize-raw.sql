@@ -46,14 +46,43 @@ DELETE FROM authorities;
 
 -- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
 --    canonical display name and the authority type (Вид на възложителя).
+--    Canonical name is the MODE (most-frequent label) per ЕИК, NOT MIN(#194): one legal entity can
+--    file under several labels (shared ЕИК 000695114 — a school „БСУ Д-р Петър Берон" vs its parent
+--    „МИНИСТЕРСТВО НА ОБРАЗОВАНИЕТО И НАУКАТА"), and MIN() returned the alphabetically-first string, so
+--    a rare school variant beat the dominant ministry (620 rows). We take the highest-frequency name,
+--    tie-broken toward a mixed-case label over an ALL-CAPS one — SQLite UPPER()/LOWER() are ASCII-only
+--    (they do not fold Cyrillic), so "is mixed-case" is detected as "contains a lowercase letter" via a
+--    GLOB range over Latin a-z and Cyrillic а-я — then the longer, then lexically-first name for full
+--    determinism. The ЕИК key is unchanged, so slugs/URLs (packages/db/src/queries/identity.ts keys on
+--    ЕИК) are unaffected — only the displayed label changes.
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
+SELECT
+  'auth:' || s.authority_eik,
+  (
+    SELECT v.authority_name
+    FROM (
+      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL
+      UNION ALL
+      SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL
+    ) v
+    WHERE v.authority_eik = s.authority_eik
+      AND v.authority_name IS NOT NULL AND TRIM(v.authority_name) <> ''
+    GROUP BY v.authority_name
+    ORDER BY
+      COUNT(*) DESC,                                                    -- mode: most-frequent label wins
+      CASE WHEN v.authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,   -- prefer mixed-case over ALL-CAPS
+      LENGTH(v.authority_name) DESC,                                    -- then the more descriptive (longer) label
+      v.authority_name                                                  -- final deterministic tiebreak
+    LIMIT 1
+  ),
+  s.authority_eik,
+  MAX(s.authority_type)
 FROM (
-  SELECT authority_eik, authority_name, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
+  SELECT authority_eik, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
   UNION ALL
-  SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
-)
-GROUP BY authority_eik;
+  SELECT authority_eik, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
+) s
+GROUP BY s.authority_eik;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
 --     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
