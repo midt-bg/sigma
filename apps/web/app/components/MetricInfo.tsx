@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 // A small ⓘ affordance next to a metric label. For pointer users it reveals an elegant popover on
 // hover or keyboard focus (pure CSS `:hover` / `:focus-within`). Because hover does not exist on
@@ -23,6 +23,25 @@ export function MetricInfo({
   const aria = readout ? `${title}. ${summary} ${readout}`.trim() : `${title}. ${summary}`;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  const popRef = useRef<HTMLSpanElement>(null);
+  // Horizontal shift (px) that keeps the click-opened popover inside the viewport on small screens
+  // (mobile audit: at 320px the fixed-width popover clips off-screen for edge-column metrics).
+  const [shift, setShift] = useState(0);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setShift(0);
+      return;
+    }
+    const pop = popRef.current;
+    if (!pop) return;
+    const rect = pop.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    let dx = 0;
+    if (rect.right > vw - 8) dx = vw - 8 - rect.right;
+    if (rect.left + dx < 8) dx = 8 - rect.left;
+    setShift(Math.round(dx));
+  }, [open]);
 
   // Close on outside-click / Esc while open (touch path — pointer users rely on CSS hover/focus).
   useEffect(() => {
@@ -54,7 +73,13 @@ export function MetricInfo({
           ⓘ
         </span>
       </button>
-      <span className={`metric-info-pop${align === 'end' ? ' is-end' : ''}`} aria-hidden="true">
+      <span
+        className={`metric-info-pop${align === 'end' ? ' is-end' : ''}`}
+        aria-hidden="true"
+        ref={popRef}
+        // `translate` composes with the CSS `transform` reveal transition instead of replacing it
+        style={shift !== 0 ? { translate: `${shift}px 0` } : undefined}
+      >
         <span className="metric-info-title">{title}</span>
         <span className="metric-info-summary">{summary}</span>
         {readout ? <span className="metric-info-readout">{readout}</span> : null}
