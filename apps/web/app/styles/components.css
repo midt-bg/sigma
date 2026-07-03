@@ -1,0 +1,548 @@
+/* Reusable UI components — atoms and patterns shared across routes. */
+
+/* Key facts panel — ink top rule, hairline rows, mono labels */
+.facts {
+  border-top: 1px solid var(--ink);
+  margin: 0 0 var(--s-2);
+}
+.facts .row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 1.6fr;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+@media (max-width: 600px) {
+  .facts .row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: var(--s-3) 0;
+  }
+}
+.facts dt {
+  font: 500 10.5px/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.facts dd {
+  margin: 0;
+  font: 15px/1.4 var(--font-sans);
+  color: var(--ink);
+}
+.facts dd .sub {
+  color: var(--ink-soft);
+  font: 12px/1.3 var(--font-mono);
+  letter-spacing: 0.04em;
+  display: block;
+  margin-top: 2px;
+}
+
+/* Totals strip — full ink rules + internal dividers, serif numerics */
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  margin: var(--s-7) 0;
+}
+.totals .cell {
+  padding: var(--s-6) var(--s-6) var(--s-6) 0;
+  border-right: 1px solid var(--rule);
+  min-width: 0;
+}
+.totals .cell + .cell {
+  padding-left: var(--s-6);
+}
+.totals .cell:last-child {
+  border-right: 0;
+  padding-right: 0;
+}
+.totals .num {
+  display: block;
+  /* Scale down on narrower viewports so the widest value ("51,6 млрд.") never overruns its cell. */
+  font: 400 clamp(26px, 2.8vw, 36px) / 1 var(--font-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.totals .label {
+  display: block;
+  margin-top: var(--s-3);
+  font: 10px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+@media (max-width: 960px) {
+  .totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .totals .cell:nth-child(odd) {
+    border-right: 1px solid var(--rule);
+    padding-left: 0;
+  }
+  .totals .cell:nth-child(even) {
+    border-right: 0;
+  }
+  .totals .cell:nth-child(1),
+  .totals .cell:nth-child(2) {
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+/* Red-flag chips */
+.flag {
+  display: inline-block;
+  padding: 2px 8px;
+  font: 500 10.5px/1.5 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  white-space: nowrap;
+  margin: 1px 2px 1px 0;
+  text-decoration: none;
+}
+a.flag:hover {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.flag.soft {
+  background: var(--paper);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.flag.info {
+  background: var(--paper-warm);
+  color: var(--ink-mid);
+  border-color: var(--rule);
+}
+.flag.neutral {
+  background: var(--paper-warm);
+  color: var(--ink-soft);
+  border-color: var(--rule);
+}
+
+/* Entity chip — small bullet for "kind" labels */
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  font: 500 10.5px/1.6 var(--font-mono);
+  letter-spacing: 0.1em;
+  background: var(--paper-warm);
+  color: var(--ink-mid);
+  border: 1px solid var(--rule);
+  text-transform: uppercase;
+}
+
+/* Score badge for red-flag leaderboard */
+.score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+.score .of {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+/* Methodology callout — left rule, paper-warm body, no fill on neutral */
+.callout {
+  border-left: 4px solid var(--ink);
+  background: transparent;
+  padding: var(--s-3) var(--s-5);
+  margin: var(--s-6) 0;
+  font: 14.5px/1.6 var(--font-sans);
+  color: var(--ink-mid);
+}
+.callout.warning {
+  border-left-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+.callout h2,
+.callout h3 {
+  font: 400 18px/1.25 var(--font-serif);
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+.callout strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Big stat — serif numerics, ink top rule */
+.stat {
+  border-top: 1px solid var(--ink);
+  padding-top: var(--s-3);
+  margin-top: var(--s-3);
+}
+.stat .num {
+  font: 400 40px/1 var(--font-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.stat .label {
+  font: 10.5px/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-top: var(--s-2);
+}
+.stat .sub {
+  font: 12px/1.4 var(--font-mono);
+  color: var(--ink-soft);
+  margin-top: var(--s-1);
+}
+
+/* Helper text */
+.muted {
+  color: var(--ink-mid);
+}
+.faint {
+  color: var(--ink-soft);
+}
+.small {
+  font-size: 13px;
+}
+.right {
+  text-align: right;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.cap {
+  font: 500 10.5px/1.3 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+}
+
+/* Inline source citation */
+.source,
+.source-line {
+  font: 11px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin-top: var(--s-3);
+  border-top: 0;
+  padding-top: 0;
+  text-transform: none;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* Pagination footer */
+.paging {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  font: 11px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+@media (max-width: 600px) {
+  .paging {
+    font-size: 10px;
+  }
+  .paging .ctrl a,
+  .paging .ctrl span {
+    padding: 6px var(--s-2);
+    margin-left: 0;
+  }
+  .paging .ctrl {
+    display: flex;
+    gap: var(--s-2);
+  }
+}
+
+/* List controls row — sort/count strip above tables */
+.list-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin: 0 0 var(--s-3);
+}
+.list-controls p {
+  margin: 0;
+}
+.paging .ctrl a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 24px;
+  padding: 6px var(--s-3);
+  border: 1px solid var(--rule);
+  text-decoration: none;
+  margin-left: 4px;
+  color: var(--ink-mid);
+  font: 500 10.5px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+}
+.paging .ctrl span {
+  display: inline-block;
+  padding: 6px var(--s-3);
+  border: 1px solid var(--rule);
+  margin-left: 4px;
+  color: var(--ink-mid);
+  font: 500 10.5px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+}
+.paging .ctrl a:hover {
+  background: var(--paper-warm);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.paging .ctrl span.disabled {
+  opacity: 0.4;
+}
+
+/* Mini header for sub-sections — match list-eyebrow */
+.subhead {
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: var(--s-5) 0 var(--s-3);
+}
+
+/* Alert strip — adapt to paper */
+.alert-strip {
+  background: var(--accent-bg);
+  border: 0;
+  border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent);
+  padding: var(--s-3) var(--s-5);
+  margin: var(--s-5) 0 var(--s-3);
+  font: 14.5px/1.5 var(--font-sans);
+  color: var(--ink);
+}
+.alert-strip strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+.alert-strip a {
+  color: var(--accent);
+}
+
+/* Cross-link list (compact links in panels) */
+.linklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.linklist li {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font: 14px/1.4 var(--font-sans);
+}
+.linklist li:last-child {
+  border-bottom: 0;
+}
+.linklist li a {
+  display: flex;
+  align-items: center;
+  min-block-size: 24px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.linklist li a:hover {
+  color: var(--accent);
+}
+.linklist li .sub {
+  display: block;
+  color: var(--ink-soft);
+  font: 11px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  text-transform: uppercase;
+}
+
+/* Inline annotation underline (red-flag explainer style) */
+.annot {
+  border-bottom: 1px dotted var(--accent);
+  cursor: help;
+}
+
+/* Person owner card */
+.owner-card {
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule-soft);
+  padding: var(--s-3) 0;
+  margin-bottom: var(--s-3);
+  background: transparent;
+}
+.owner-card .role {
+  font: 500 10.5px/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.owner-card .name {
+  font: 400 20px/1.25 var(--font-serif);
+  letter-spacing: -0.01em;
+  margin: 4px 0 6px;
+  color: var(--ink);
+}
+.owner-card .meta {
+  font: 13px/1.45 var(--font-sans);
+  color: var(--ink-mid);
+}
+.owner-card .meta .share {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* JS visibility helpers */
+.hidden {
+  display: none !important;
+}
+
+/* ── Small-screen hardening ───────────────────────────────────────────────
+   Long Bulgarian entity names should wrap rather than push the page wide;
+   oversized serif numerics and section padding tighten up on phones. */
+
+/* Let long names/links break instead of forcing horizontal overflow */
+tbody td,
+.muni-grid a,
+.linklist li,
+.tile h3,
+.participants-list,
+.participants-list li,
+.toc ol li a,
+.section,
+.facts,
+.two-col,
+.callout {
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  /* Totals + stat numerics: dense screens can't carry 36–40px serif figures */
+  .totals .cell {
+    padding: var(--s-5) var(--s-4) var(--s-5) 0;
+  }
+  .totals .cell + .cell {
+    padding-left: var(--s-4);
+  }
+  .totals .cell:nth-child(odd) {
+    padding-left: 0;
+  }
+  .totals .num {
+    font-size: 28px;
+  }
+  .stat .num {
+    font-size: 32px;
+  }
+
+  /* Section rhythm: trim the big top margins so content starts sooner */
+  .section {
+    margin-top: var(--s-6);
+  }
+  main {
+    padding-top: var(--s-6);
+  }
+}
+
+@media (max-width: 460px) {
+  .totals {
+    grid-template-columns: 1fr 1fr;
+  }
+  .totals .num {
+    font-size: 24px;
+  }
+}
+
+/* „данните се преглеждат" — suppressed suspect value */
+.suspect {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* Fixed table column widths (rank / select cells). */
+.col-w-32 {
+  width: 32px;
+}
+.col-w-60 {
+  width: 60px;
+}
+
+/* Spacing utilities replacing one-off inline margins. */
+.m-0 {
+  margin: 0;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.mb-8 {
+  margin-bottom: 8px;
+}
+.mt-s2 {
+  margin-top: var(--s-2);
+}
+.mt-s3 {
+  margin-top: var(--s-3);
+}
+.mt-s4 {
+  margin-top: var(--s-4);
+}
+
+.external-eik-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+.external-eik-link svg {
+  opacity: 0.7;
+}
+
+/* Top route-progress bar. Was an inline style toggling transform/opacity on the
+   navigation state; the two states now live in CSS, switched via [data-busy]. */
+.route-progress {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent, #b00020);
+  transform-origin: left;
+  transform: scaleX(0);
+  opacity: 0;
+  transition:
+    transform 0.1s ease,
+    opacity 0.25s ease 0.15s;
+  z-index: 1000;
+  pointer-events: none;
+}
+.route-progress[data-busy='true'] {
+  transform: scaleX(1);
+  opacity: 1;
+  transition:
+    transform 1.2s ease-out,
+    opacity 0.1s ease;
+}

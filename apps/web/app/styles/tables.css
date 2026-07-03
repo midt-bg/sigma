@@ -1,0 +1,358 @@
+/* Tables — base styles, cell utilities, and mobile reflow.
+   All table-related CSS lives here so it can be found and changed together. */
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+
+/* Fin treatment */
+.table-wrap {
+  overflow: auto;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 13px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+thead th {
+  text-align: left;
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid var(--ink);
+  color: var(--ink-mid);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+thead th:first-child {
+  padding-left: var(--s-3);
+}
+thead th.num,
+tbody td.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* Left-aligned plain count (e.g. offers count) — distinct from the right-aligned .money value column */
+thead th.num-left,
+tbody td.num-left {
+  text-align: left;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+thead th.center,
+tbody td.center {
+  text-align: center;
+}
+tbody td {
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+}
+tbody td:first-child {
+  padding-left: var(--s-3);
+}
+tbody td .small,
+tbody td .small.muted {
+  font: 11px/1.3 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+tbody tr:hover td {
+  background: var(--paper-warm);
+}
+tbody td a {
+  color: var(--ink);
+  text-decoration: none;
+}
+tbody td a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+/* Rank column — small mono soft-ink */
+.rank,
+td.rank {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ink-soft);
+  width: 36px;
+  padding-right: var(--s-3) !important;
+}
+
+/* Money cell */
+.money {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.money .sub,
+.money .eur {
+  display: block;
+  font-weight: 400;
+  color: var(--ink-soft);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* Percent share bar */
+.share {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-variant-numeric: tabular-nums;
+}
+.share-bar {
+  display: inline-block;
+  height: 6px;
+  width: 80px;
+  background: var(--rule-soft);
+  position: relative;
+}
+.share-bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink-mid);
+  display: block;
+}
+.share-bar.warn > i {
+  background: var(--accent);
+}
+.share-num {
+  min-width: 42px;
+  text-align: right;
+  font: 11px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+/* ── Responsive: tablets ──────────────────────────────────────────────────── */
+
+/* Hide secondary columns on narrow viewports to keep the row legible */
+@media (max-width: 760px) {
+  .col-secondary {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  table {
+    font-size: 12px;
+  }
+  thead th,
+  tbody td {
+    padding-right: var(--s-3);
+  }
+  thead th:first-child,
+  tbody td:first-child {
+    padding-left: var(--s-2);
+  }
+  .rank,
+  td.rank {
+    width: 24px;
+    padding-right: var(--s-2) !important;
+  }
+}
+
+/* ── Responsive: phone card reflow (annotated by site.js) ─────────────────
+   Every column becomes a labeled line, so no data is hidden and the row
+   never needs horizontal scrolling. Two shapes: numeric "cards" and text
+   "prose". */
+@media (max-width: 560px) {
+  /* Bring back the column we hide on tablets — as a labeled line, it fits fine */
+  .tbl-cards .col-secondary {
+    display: flex;
+  }
+  .tbl-prose .col-secondary {
+    display: block;
+  }
+
+  .tbl-cards,
+  .tbl-prose {
+    overflow: visible;
+    border-top: 0;
+    border-bottom: 0;
+  }
+  .tbl-cards table,
+  .tbl-cards thead,
+  .tbl-cards tbody,
+  .tbl-cards tr,
+  .tbl-cards td,
+  .tbl-prose table,
+  .tbl-prose thead,
+  .tbl-prose tbody,
+  .tbl-prose tr,
+  .tbl-prose td {
+    display: block;
+    width: auto;
+  }
+  /* Keep headers for assistive tech, hide them visually. left:-9999px pushes
+     the clipped thead fully off-screen so its 1px box can't add ~16px of
+     horizontal page scroll on phones. */
+  .tbl-cards thead,
+  .tbl-prose thead {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* The card shell */
+  .tbl-cards tr,
+  .tbl-prose tr {
+    position: relative;
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--ink);
+    padding: 14px 16px;
+    margin: 0 0 10px;
+    background: var(--paper);
+  }
+  .tbl-cards tbody tr:hover td,
+  .tbl-prose tbody tr:hover td {
+    background: transparent;
+  }
+
+  /* Numeric rows: label left, value right. flex-wrap lets a long text value
+     drop to its own line instead of pushing the card past the viewport. */
+  .tbl-cards td {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 4px 14px;
+    padding: 6px 0 0;
+    margin-top: 6px;
+    border: 0;
+    border-top: 1px dotted var(--rule-soft);
+    min-width: 0;
+    text-align: right;
+    font-size: 13px;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  .tbl-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 52%;
+    text-align: left;
+    font: 500 10px/1.5 var(--font-mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
+  }
+
+  /* Title cell: full-width heading, no label, leaves room for the rank badge */
+  .tbl-cards td.cell-title {
+    display: block;
+    margin: 0;
+    padding: 0 44px 10px 0;
+    border: 0;
+    text-align: left;
+    font-family: var(--font-serif);
+    font-size: 17px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .tbl-cards td.cell-title {
+    overflow-wrap: anywhere;
+  }
+  .tbl-cards td.cell-title::before {
+    content: none;
+  }
+  .tbl-cards td.cell-title a {
+    color: var(--ink);
+    font-weight: 400;
+  }
+  .tbl-cards td.cell-title .small,
+  .tbl-cards td.cell-title .small.muted {
+    display: block;
+    margin-top: 3px;
+  }
+
+  /* Rank → small badge in the card's top-right corner */
+  .tbl-cards td.cell-rank {
+    position: absolute;
+    top: 13px;
+    right: 14px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    display: block;
+    text-align: right;
+    font: 500 11px/1 var(--font-mono);
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+  .tbl-cards td.cell-rank::before {
+    content: '№';
+    opacity: 0.55;
+  }
+
+  /* Share bars stay readable when right-aligned */
+  .tbl-cards .share {
+    justify-content: flex-end;
+  }
+  .tbl-cards .money {
+    text-align: right;
+  }
+
+  /* Prose rows: label stacked above full-width text */
+  .tbl-prose td {
+    padding: 10px 0 0;
+    margin: 0;
+    border: 0;
+    text-align: left;
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  .tbl-prose td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    font: 500 10px/1.5 var(--font-mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .tbl-prose td:first-child {
+    font-weight: 600;
+  }
+}
+
+/* Phones: tables that DON'T reflow into cards (e.g. the home top-10) keep
+   their native columns and scroll sideways. Add a right-edge fade + a thin
+   visible scrollbar so the off-screen right-hand columns are discoverable.
+   Pure CSS scroll-shadow: edge "cover" gradients pinned to the content
+   (background-attachment: local) sit over a fade pinned to the scroller, so
+   the fade only shows while there is more to scroll. */
+@media (max-width: 480px) {
+  .table-wrap:not(.tbl-cards):not(.tbl-prose) {
+    scrollbar-width: thin;
+    background:
+      linear-gradient(to right, var(--paper) 30%, transparent) left center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, var(--paper) 30%, transparent) right center / 24px 100% no-repeat
+        local,
+      linear-gradient(to left, oklch(18% 0.012 70 / 0.12), transparent) right center / 16px 100%
+        no-repeat scroll;
+  }
+}

@@ -213,12 +213,17 @@ export function pageNav(opts: {
   // first page, so force page 1. Otherwise clamp to the valid range to avoid impossible "N от M".
   const page = !base.get('cursor')
     ? 1
-    : Math.min(Math.max(1, Number(base.get('page') ?? '1') || 1), pageCount);
+    : Math.min(Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1), pageCount);
   return {
     page,
     pageCount,
     prevHref:
       page > 1 && prevCursor ? withParams(base, { cursor: prevCursor, page: page - 1 }) : null,
-    nextHref: nextCursor ? withParams(base, { cursor: nextCursor, page: page + 1 }) : null,
+    // Gate Next on both the cursor and the display bound so it disables on the shown last page and
+    // the "N от M" counter + "#" rank can't freeze at pageCount while the cursor walks past it (#87).
+    nextHref:
+      nextCursor && page < pageCount
+        ? withParams(base, { cursor: nextCursor, page: page + 1 })
+        : null,
   };
 }

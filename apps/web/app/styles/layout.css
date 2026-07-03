@@ -1,0 +1,661 @@
+/* Structural layout patterns — grids and containers that hold page content. */
+
+/* Section heading row */
+.section {
+  margin: var(--s-8) 0 0;
+}
+.section h2 {
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--ink);
+  margin-bottom: var(--s-5);
+}
+.section .section-hint {
+  font: 14px/1.55 var(--font-sans);
+  color: var(--ink-mid);
+  margin: calc(-1 * var(--s-3)) 0 var(--s-5);
+  max-width: 60ch;
+}
+.section .section-hint a {
+  color: var(--ink);
+}
+
+/* Two-column section (filter rail + content)
+   Editorial posture: quiet rail, collapsible groups, full-width table side. */
+.split {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--s-7);
+  margin-top: var(--s-5);
+  align-items: start;
+}
+.split > aside {
+  position: sticky;
+  top: var(--s-3);
+  min-width: 0;
+}
+.split > section,
+.split > div {
+  min-width: 0;
+}
+
+/* Filter group — both static <h4> and <details>/<summary> patterns */
+.split aside .filter-group {
+  margin: 0;
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.split aside .filter-group:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.split aside .filter-group > h4,
+.split aside .filter-group > summary {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  font-weight: 500;
+  list-style: none;
+  cursor: default;
+  padding: 0 0 var(--s-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.split aside .filter-group > summary {
+  cursor: pointer;
+}
+.split aside .filter-group > summary::-webkit-details-marker {
+  display: none;
+}
+.split aside .filter-group > summary::after {
+  content: '+';
+  font-family: var(--font-mono);
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.18s ease;
+}
+.split aside details[open].filter-group > summary::after {
+  content: '\2013';
+}
+.split aside .filter-group > summary:hover {
+  color: var(--ink);
+}
+.split aside ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--s-2) 0;
+  font-size: 14px;
+}
+.split aside li {
+  padding: 4px 0;
+  color: var(--ink-mid);
+}
+.split aside li.active {
+  font-weight: 500;
+  color: var(--ink);
+}
+.split aside label.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-block-size: 24px;
+  padding: 2px 0;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink);
+  cursor: pointer;
+}
+.split aside label.check input {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  inline-size: 24px;
+  block-size: 24px;
+  margin: 0;
+}
+.split aside label.check .small.muted {
+  margin-left: auto;
+  padding-left: var(--s-2);
+}
+.split aside .filter-subgroup {
+  margin: 0;
+  padding: 1px 0;
+}
+.split aside .filter-subgroup > summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: 4px 0;
+  list-style: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.split aside .filter-subgroup > summary::-webkit-details-marker {
+  display: none;
+}
+.split aside .filter-subgroup > summary::after {
+  content: '+';
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-left: auto;
+}
+.split aside .filter-subgroup[open] > summary::after {
+  content: '\2013';
+}
+.split aside .filter-subgroup > summary input {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  inline-size: 24px;
+  block-size: 24px;
+  margin: 0;
+}
+.split aside .filter-subgroup-label {
+  min-width: 0;
+}
+.split aside .filter-subgroup > summary .small.muted {
+  flex-shrink: 0;
+  padding-left: var(--s-1);
+}
+.split aside .filter-subgroup > label.check {
+  margin-left: var(--s-4);
+}
+
+/* Rail wrapper used on narrow viewports — becomes a single disclosure */
+.filters-toggle {
+  display: none;
+  margin: 0 0 var(--s-4);
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.filters-toggle > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--s-3) 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.filters-toggle > summary::-webkit-details-marker {
+  display: none;
+}
+.filters-toggle > summary::after {
+  content: '+';
+  color: var(--ink-soft);
+  font-size: 16px;
+}
+.filters-toggle[open] > summary::after {
+  content: '\2013';
+}
+.filters-toggle .filters-body {
+  padding: 0 0 var(--s-4);
+}
+
+/* Filter-rail disclosure — CSS-only, no JS, identical SSR/client markup.
+   Desktop: the rail is the sticky left column and always visible; the toggle is hidden.
+   ≤960px (when .split stacks to one column): the rail collapses behind a tappable „Филтри"
+   label backed by an off-screen checkbox. All rules are scoped to the classes, so absent
+   markup is a no-op. (A native <details> can't be force-opened by CSS, hence the checkbox.) */
+.filter-rail-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.filter-rail-summary {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .split {
+    grid-template-columns: 1fr;
+    gap: var(--s-5);
+  }
+  .split > aside {
+    position: static;
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    padding: var(--s-3) 0;
+  }
+  .split aside .filter-group {
+    padding: var(--s-2) 0;
+  }
+  /* Stacked rail collapses behind the „Филтри" toggle; the off-screen checkbox drives it. */
+  .filter-rail-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    cursor: pointer;
+    min-height: 44px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+  }
+  .filter-rail-summary::after {
+    content: '+';
+    color: var(--ink-soft);
+    font-size: 16px;
+  }
+  .filter-rail-toggle:checked ~ .filter-rail-summary {
+    color: var(--ink);
+  }
+  .filter-rail-toggle:checked ~ .filter-rail-summary::after {
+    content: '\2013';
+  }
+  .filter-rail-toggle:focus-visible ~ .filter-rail-summary {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .filter-rail-toggle:not(:checked) ~ form {
+    display: none;
+  }
+}
+
+/* Two-card layout */
+.two-col {
+  display: grid;
+  /* minmax(0, …) caps each track's minimum at 0; a bare `1fr` minimum is `auto`
+     (= min-content), which lets a nowrap child (e.g. a long ranked-bar authority
+     name) blow the track past the viewport and force a horizontal scroll on
+     narrow screens. minmax(0, …) lets the child's own ellipsis do its job. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-7);
+}
+@media (max-width: 760px) {
+  .two-col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The third-party accessibility launcher (.a11y-tools, loaded async from
+   /assets/accessibility/) pins its 50px button at `top: 420px` inside a
+   viewport-tall fixed container, so on phones it floats over the middle-right of
+   the card lists and covers the right-aligned values. Pin it to the bottom-right
+   corner on narrow screens so it clears the content; the fly-out menu still
+   anchors to the same container. `!important` beats the async widget stylesheet
+   regardless of load order. */
+html .a11y-tools__button {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+@media (max-width: 760px) {
+  .a11y-tools__button {
+    top: auto !important;
+    bottom: 0 !important;
+  }
+}
+
+/* Stacked horizontal bar */
+.hbar {
+  display: flex;
+  width: 100%;
+  height: 18px;
+  border: 1px solid var(--rule);
+  margin: var(--s-2) 0 6px;
+  background: var(--paper);
+}
+.hbar > span {
+  display: block;
+  height: 100%;
+  border-right: 1px solid var(--paper);
+}
+.hbar > span:last-child {
+  border-right: 0;
+}
+.hbar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font: 11px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.hbar-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* Expandable row (red-flag leaderboard) */
+details.row {
+  border-bottom: 1px solid var(--rule-soft);
+}
+details.row > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 0;
+  display: grid;
+  grid-template-columns: 32px 1fr 200px 140px 80px;
+  gap: var(--s-3);
+  align-items: center;
+}
+@media (max-width: 860px) {
+  details.row > summary {
+    grid-template-columns: 28px 1fr auto;
+    grid-template-areas:
+      'exp name score'
+      'exp meta meta';
+    column-gap: var(--s-3);
+    row-gap: 4px;
+  }
+  details.row > summary .expander {
+    grid-area: exp;
+  }
+  details.row > summary > :nth-child(2) {
+    grid-area: name;
+  }
+  details.row > summary > :nth-child(3),
+  details.row > summary > :nth-child(4) {
+    grid-area: meta;
+    font: 11px/1.4 var(--font-mono);
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+  }
+  details.row > summary > :nth-child(3) {
+    display: inline;
+  }
+  details.row > summary > :nth-child(4) {
+    display: inline;
+    margin-left: var(--s-3);
+  }
+  details.row > summary > :nth-child(5) {
+    grid-area: score;
+    justify-self: end;
+  }
+  details.row .body {
+    padding: var(--s-2) var(--s-4) var(--s-5);
+  }
+}
+details.row > summary::-webkit-details-marker {
+  display: none;
+}
+details.row[open] > summary {
+  background: var(--paper-warm);
+}
+details.row .expander {
+  text-align: center;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+}
+details.row[open] .expander::before {
+  content: '−';
+}
+details.row:not([open]) .expander::before {
+  content: '+';
+}
+details.row .body {
+  padding: var(--s-2) 44px var(--s-5) 44px;
+  background: var(--paper-warm);
+  border-top: 1px solid var(--rule-soft);
+}
+details.row .body h4 {
+  margin-bottom: var(--s-2);
+}
+details.row .body .signals {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: var(--s-3) 0 var(--s-4);
+}
+details.row .body .signal {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: var(--s-4);
+  padding: var(--s-2) 0;
+  border-bottom: 1px dotted var(--rule);
+  font-size: 14px;
+}
+@media (max-width: 600px) {
+  details.row .body .signal {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+details.row .body .signal .name {
+  font-weight: 500;
+  color: var(--ink);
+}
+details.row .body .signal .why {
+  color: var(--ink-mid);
+}
+
+/* Story tiles (home page + similar) */
+.tiles {
+  display: grid;
+  /* Four lenses: stay 4-up on desktop, fall to a 2×2 square on mid widths, then stack.
+     (Avoids the auto-fit 3-column state that left a lone "orphan" tile on a second row.) */
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--ink);
+}
+@media (max-width: 1024px) {
+  .tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .tile:nth-child(2n + 1) {
+    padding-left: 0;
+  }
+  .tile:nth-child(2n) {
+    border-right: 0;
+  }
+}
+@media (max-width: 560px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
+}
+.tile {
+  border-bottom: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  padding: var(--s-5) var(--s-5) var(--s-6) var(--s-5);
+}
+/* Column-aware dividers: the grid wraps to 2×2 (and 1-col), so the leftmost tile of each row sits
+   flush and the rightmost has no divider — independent of how many rows the tiles wrap into. */
+.tile:nth-child(4n + 1) {
+  padding-left: 0;
+}
+.tile:nth-child(4n) {
+  border-right: 0;
+}
+.tile .kicker {
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: var(--s-2);
+}
+.tile .kicker.info {
+  color: var(--ink-mid);
+}
+.tile h3 {
+  margin-bottom: var(--s-2);
+  line-height: 1.2;
+  font: 400 22px/1.2 var(--font-serif);
+  letter-spacing: -0.01em;
+}
+.tile h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.tile h3 a:hover {
+  color: var(--accent);
+}
+.tile .desc {
+  font: 14px/1.55 var(--font-sans);
+  color: var(--ink-mid);
+}
+
+/* Richer analytics hub lens cards: keep the editorial tile chrome, but give each lens room for a
+   live data teaser. */
+.tiles.analytics-lenses {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.tiles.analytics-lenses .tile:nth-child(2n + 1) {
+  padding-left: 0;
+}
+.tiles.analytics-lenses .tile:nth-child(2n) {
+  border-right: 0;
+}
+.lens-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+}
+.lens-preview {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule-soft);
+}
+.lens-preview-title {
+  margin-bottom: var(--s-2);
+  font: 500 10.5px/1.35 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.lens-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+.lens-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px var(--s-3);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  align-items: baseline;
+}
+.lens-name {
+  min-width: 0;
+  font: 14px/1.35 var(--font-sans);
+  color: var(--ink);
+}
+.lens-value {
+  font: 12px/1.2 var(--font-mono);
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.lens-meta,
+.lens-share {
+  grid-column: 1 / -1;
+  font: 12px/1.35 var(--font-mono);
+  color: var(--ink-soft);
+}
+.lens-share .share {
+  width: 100%;
+  justify-content: space-between;
+}
+.lens-share .share-bar {
+  flex: 1;
+  width: auto;
+}
+.lens-chart {
+  margin: var(--s-2) 0 var(--s-3);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.lens-chart .trend-svg {
+  max-height: 150px;
+}
+.lens-map {
+  margin: var(--s-2) auto var(--s-3);
+  max-width: 320px;
+}
+.lens-map .map-wrap svg {
+  max-width: 100%;
+}
+.lens-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin: 0;
+}
+.lens-metrics dt {
+  margin-bottom: 4px;
+  font: 500 10.5px/1.25 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.lens-metrics dd {
+  margin: 0;
+  font: 14px/1.35 var(--font-sans);
+  color: var(--ink);
+}
+.lens-link {
+  margin-top: auto;
+  padding-top: var(--s-4);
+  font: 500 14px/1.3 var(--font-sans);
+}
+.lens-link a {
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .tiles.analytics-lenses {
+    grid-template-columns: 1fr;
+  }
+  .tiles.analytics-lenses .tile {
+    padding-left: 0;
+    border-right: 0;
+  }
+  .lens-card {
+    min-height: 0;
+  }
+  .lens-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Filter rail: no-JS apply button + active-filter chip strip */
+.filter-apply {
+  display: inline-block;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  margin: var(--s-3) 0;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 8px var(--s-4);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  margin: 0 0 var(--s-4);
+  font: 12px/1.5 var(--font-mono);
+  color: var(--ink-soft);
+}
+.filter-rail .small.muted > a {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+}
