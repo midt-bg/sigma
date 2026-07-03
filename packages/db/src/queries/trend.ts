@@ -29,6 +29,10 @@ export interface TrendParams {
   // aggregate series scan: an OR of half-open cpv_code prefix ranges on the tenders join, never a
   // per-group query. Malformed codes are dropped here (defense in depth behind the route parser).
   cpvGroups?: string[] | null;
+  // The current (as_of) period is still filling, so by default it is EXCLUDED from the series and
+  // the per-year fold — a half-filled month/quarter/year reading as a real dip is worse than a
+  // shorter chart. Opt in (the /trends „вкл. текущия месец" toggle) to get it back, flagged `partial`.
+  includeCurrent?: boolean;
 }
 
 /** Valid selected 5-digit CPV group codes, or [] — shared by the trend + overview-list scopes. */
@@ -178,6 +182,12 @@ export async function getSpendingTrend(
       byQuarter.set(period, acc);
     }
     rows = [...byQuarter.values()];
+  }
+  // Default: drop the current (as_of) period entirely — month, quarter AND year grain — before the
+  // zero-fill, so the series ends on the last COMPLETE period. With includeCurrent it stays in,
+  // flagged `partial` below (dashed tail / faded bar in the charts, YoY suppressed).
+  if (!(p.includeCurrent ?? false) && partialPeriod) {
+    rows = rows.filter((r) => r.period !== partialPeriod);
   }
   let points: TrendPoint[] = [];
   if (rows.length) {

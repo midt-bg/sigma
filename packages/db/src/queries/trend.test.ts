@@ -135,8 +135,64 @@ describe('getSpendingTrend', () => {
     ]);
   });
 
-  it('marks the as_of period and year partial and suppresses the partial year YoY', async () => {
+  it('excludes the current (as_of) month by default — the series ends on the last complete month', async () => {
     const { points, years } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {});
+    // 2023-01 is the as_of month → dropped; the zero-fill ends at the last remaining actual.
+    expect(points.map((p) => p.period)).toEqual(['2022-01', '2022-02', '2022-03']);
+    expect(points.every((p) => !p.partial)).toBe(true);
+    // The as_of year had only the current month → it disappears from the per-year fold too.
+    expect(years.map((y) => y.year)).toEqual(['2022']);
+  });
+
+  it('excludes the current quarter by default at quarter grain', async () => {
+    const { points } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {
+      granularity: 'quarter',
+    });
+    // Both 2022 months fold into 2022-Q1; the as_of quarter (2023-Q1) is dropped, so the series
+    // ends on the last complete quarter that has data — no zero-fill past it.
+    expect(points.map((p) => p.period)).toEqual(['2022-Q1']);
+    expect(points.every((p) => !p.partial)).toBe(true);
+  });
+
+  it('excludes the current year by default at year grain', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return {
+              results: [
+                { period: '2022', value_eur: 4000, contracts: 40 },
+                { period: '2023', value_eur: 1500, contracts: 15 },
+              ] as T[],
+            };
+          },
+          async first<T>() {
+            if (sql.includes('as_of')) return { as_of: '2023-06-15' } as T;
+            return COVERAGE as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const { points, years } = await getSpendingTrend(db, { granularity: 'year' });
+    expect(points.map((p) => p.period)).toEqual(['2022']);
+    expect(years.map((y) => y.year)).toEqual(['2022']);
+
+    const included = await getSpendingTrend(db, { granularity: 'year', includeCurrent: true });
+    expect(included.points.map((p) => p.period)).toEqual(['2022', '2023']);
+    expect(included.points.at(-1)).toMatchObject({ partial: true });
+    expect(included.years.find((y) => y.year === '2023')).toMatchObject({
+      partial: true,
+      yoyPct: null,
+    });
+  });
+
+  it('with includeCurrent, marks the as_of period and year partial and suppresses the partial year YoY', async () => {
+    const { points, years } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {
+      includeCurrent: true,
+    });
     expect(points.at(-1)).toMatchObject({ period: '2023-01', partial: true });
     expect(points.find((p) => p.period === '2022-03')).toMatchObject({ partial: false });
     const y2023 = years.find((y) => y.year === '2023')!;
@@ -280,9 +336,10 @@ describe('getSpendingTrend', () => {
     expect(points.at(-1)).toMatchObject({ valueEur: 5000, contracts: 50 });
   });
 
-  it('marks the as_of quarter partial', async () => {
+  it('with includeCurrent, marks the as_of quarter partial', async () => {
     const { points, years } = await getSpendingTrend(fakeDb(undefined, '2023-01-15'), {
       granularity: 'quarter',
+      includeCurrent: true,
     });
     expect(points.at(-1)).toMatchObject({ period: '2023-Q1', partial: true });
     expect(points.find((p) => p.period === '2022-Q1')).toMatchObject({ partial: false });
