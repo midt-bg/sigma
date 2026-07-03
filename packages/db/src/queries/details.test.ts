@@ -197,28 +197,32 @@ describe('getContract', () => {
 
   it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {
     const detail = await getContract(
-      fakeDb({ ...baseContractRow, contract_number: 'C-1' }, [], [
-        {
-          value_before: 1000,
-          value_after: 1200,
-          value_delta: 999, // dirty source: disagrees with after − before; the computed value wins
-          currency: 'EUR',
-          published_at: '2024-03-01',
-          document_number: 'A1',
-          description: '  Удължаване на срока  ',
-          fx_rate: null,
-        },
-        {
-          value_before: 1200,
-          value_after: 1500,
-          value_delta: null, // missing → derived from before/after
-          currency: 'EUR',
-          published_at: '2024-06-01',
-          document_number: 'A2',
-          description: null,
-          fx_rate: null,
-        },
-      ]),
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-1' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 1200,
+            value_delta: 999, // dirty source: disagrees with after − before; the computed value wins
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: '  Удължаване на срока  ',
+            fx_rate: null,
+          },
+          {
+            value_before: 1200,
+            value_after: 1500,
+            value_delta: null, // missing → derived from before/after
+            currency: 'EUR',
+            published_at: '2024-06-01',
+            document_number: 'A2',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
       'c:1',
     );
 
@@ -239,18 +243,22 @@ describe('getContract', () => {
 
   it('shows „—" for a value-less annex (null value_after) and a null delta', async () => {
     const detail = await getContract(
-      fakeDb({ ...baseContractRow, contract_number: 'C-4' }, [], [
-        {
-          value_before: null,
-          value_after: null, // a description-only annex, e.g. a deadline extension
-          value_delta: null,
-          currency: 'EUR',
-          published_at: '2024-03-01',
-          document_number: 'A1',
-          description: 'Удължаване на срока',
-          fx_rate: null,
-        },
-      ]),
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-4' },
+        [],
+        [
+          {
+            value_before: null,
+            value_after: null, // a description-only annex, e.g. a deadline extension
+            value_delta: null,
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: 'Удължаване на срока',
+            fx_rate: null,
+          },
+        ],
+      ),
       'c:1',
     );
 
@@ -263,18 +271,22 @@ describe('getContract', () => {
 
   it('converts foreign-currency amendments to EUR via the annex fx rate', async () => {
     const detail = await getContract(
-      fakeDb({ ...baseContractRow, contract_number: 'C-2' }, [], [
-        {
-          value_before: 1000,
-          value_after: 2000,
-          value_delta: 1000,
-          currency: 'USD',
-          published_at: '2024-03-01',
-          document_number: 'A1',
-          description: null,
-          fx_rate: 0.9,
-        },
-      ]),
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-2' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 2000,
+            value_delta: 1000,
+            currency: 'USD',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: 0.9,
+          },
+        ],
+      ),
       'c:1',
     );
 
@@ -286,18 +298,22 @@ describe('getContract', () => {
 
   it('normalises BGN amendment values via the fixed peg', async () => {
     const detail = await getContract(
-      fakeDb({ ...baseContractRow, contract_number: 'C-3' }, [], [
-        {
-          value_before: 1955.83,
-          value_after: 3911.66,
-          value_delta: 1955.83,
-          currency: 'BGN',
-          published_at: '2024-03-01',
-          document_number: 'A1',
-          description: null,
-          fx_rate: null,
-        },
-      ]),
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-3' },
+        [],
+        [
+          {
+            value_before: 1955.83,
+            value_after: 3911.66,
+            value_delta: 1955.83,
+            currency: 'BGN',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
       'c:1',
     );
 

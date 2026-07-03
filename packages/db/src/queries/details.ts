@@ -519,10 +519,7 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
-    db
-      .prepare(AMENDMENTS_SQL)
-      .bind(r.unp, r.contract_number)
-      .all<AmendmentRow>(),
+    db.prepare(AMENDMENTS_SQL).bind(r.unp, r.contract_number).all<AmendmentRow>(),
   ]);
 
   // value_low values ARE populated (counted in sums) but stay labelled, so include them here so the
