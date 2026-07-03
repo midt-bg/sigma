@@ -2360,12 +2360,16 @@ a.pa-card-cpv:focus-visible {
 .ov-board-list {
   list-style: none;
   margin: 0;
-  padding: 0 8px 8px;
+  padding: 0 var(--s-2) var(--s-2);
   overflow-y: auto;
   overflow-x: hidden;
   max-height: 560px;
 }
 
+/* Right-side breathing room comes from the ROW (not the list) so the selected-row highlight still
+   reaches near the card edge while the value text / truncated titles never touch the boundary. The
+   bar track lives inside .ov-row-body, so every row's track shrinks by the same inset and the
+   proportional bar-width math is untouched — in normal and fullscreen mode alike. */
 .ov-row {
   display: grid;
   grid-template-columns: 32px 1fr;
@@ -2373,7 +2377,7 @@ a.pa-card-cpv:focus-visible {
   align-items: center;
   width: 100%;
   text-align: left;
-  padding: 9px 8px;
+  padding: 9px var(--s-3) 9px var(--s-2);
   border: none;
   border-bottom: 1px solid var(--rule-soft);
   border-left: 2px solid transparent;
@@ -2828,6 +2832,7 @@ a.pa-card-cpv:focus-visible {
 .ov-sector-table thead th {
   padding: 6px 8px 7px;
   text-align: right;
+  white-space: nowrap;
   border-bottom: 1px solid var(--ink);
 }
 
@@ -2894,6 +2899,7 @@ a.pa-card-cpv:focus-visible {
 .ov-auth-table thead th {
   padding: 6px 8px 7px;
   text-align: right;
+  white-space: nowrap;
   border-bottom: 1px solid var(--ink);
 }
 
