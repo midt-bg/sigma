@@ -46,6 +46,22 @@ DELETE FROM authorities;
 
 -- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
 --    canonical display name and the authority type (Вид на възложителя).
+--
+--    MULTI-ЕИК GUARD (#196): ~406 of ~4874 authority_eik values (~8%) are a LIST of several ЕИК
+--    joined by „; " — joint procurements where one notice names several co-authorities, e.g.
+--    '000590540; 000582020; 829091529' (source data/admin-tenders-load.sql:47202). Keying
+--    'auth:' || authority_eik on such a list would mint ONE phantom authority for the whole list
+--    (a ЕИК that exists nowhere), so we EXCLUDE list-valued rows here (WHERE authority_eik NOT LIKE
+--    '%;%'). Because tenders (2a/2b) and contracts (5) only attach to an authority that EXISTS in
+--    this table, dropping the phantom node here transitively keeps those joint-procurement rows out
+--    of the served tenders/contracts and every downstream rollup — no fake single authority, no
+--    misattributed value. The raw staging rows (raw_contracts/raw_tenders) are left untouched, so
+--    the joint procurements stay fully traceable for the follow-up.
+--
+--    DEFERRED (proposal 1, #196): the full split — attributing a joint procurement to each real ЕИК
+--    (or to a lead authority) without double-counting its value in the totals — needs a product
+--    decision on how joint procurements are modelled, so it is intentionally NOT done here. This is
+--    the conservative proposal 2: exclude the list-valued rows until that decision lands.
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
 FROM (
@@ -53,6 +69,7 @@ FROM (
   UNION ALL
   SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
 )
+WHERE authority_eik NOT LIKE '%;%'  -- exclude multi-ЕИК joint-procurement lists (see guard above)
 GROUP BY authority_eik;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
