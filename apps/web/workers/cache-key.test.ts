@@ -123,6 +123,23 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/quality?band=6').search).not.toBe(
       cacheUrl('http://local/quality?band=weak').search,
     );
+    // ?rdir flips the „Разбивка" row order; ?rfrom/?rto narrow its rows. Distinct values render
+    // different tables, so each must mint its own cache entry (CWE-349).
+    expect(cacheUrl('http://local/quality?rdir=desc').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?rdir=desc').search).not.toBe(
+      cacheUrl('http://local/quality?rdir=asc').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10&rto=60').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10&rto=60').search).not.toBe(
+      cacheUrl('http://local/quality?rfrom=10&rto=70').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10').search).not.toBe(
+      cacheUrl('http://local/quality?rto=10').search,
+    );
   });
 });
 

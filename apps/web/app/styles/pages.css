@@ -1582,6 +1582,48 @@
   color: var(--paper);
 }
 
+/* „Разбивка" avg-index range filter (?rfrom/?rto) — a compact GET form in the filter-bar idiom */
+.q-range {
+  margin-bottom: var(--s-4);
+  gap: var(--s-3);
+}
+.q-range-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.q-range input[type='number'] {
+  inline-size: 5.5em;
+  padding: 4px var(--s-2);
+  font: 12px var(--font-mono);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+.q-range button {
+  padding: 4px var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  cursor: pointer;
+  color: var(--ink-mid);
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.q-range button:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.q-range a {
+  color: var(--ink);
+  text-decoration: none;
+  border: 1px solid var(--rule);
+  padding: 4px var(--s-2);
+  background: var(--wash, transparent);
+}
+
 /* index bar + pillar mini-pills (table cells and cards) */
 .q-index {
   display: inline-flex;

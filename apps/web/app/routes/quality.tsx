@@ -1,14 +1,16 @@
-import { Link } from 'react-router';
+import { Form, Link } from 'react-router';
 import type {
   QualityContractRow,
   QualityCoverageTier,
   QualityGrain,
   QualityPillars,
+  QualityRankDir,
   QualityRankRow,
+  QualityRankSort,
   QualityScorecard,
 } from '@sigma/api-contract';
 import { count, date, money, pct, plural } from '@sigma/shared';
-import { getQuality, QUALITY_WEIGHTS } from '@sigma/db';
+import { getQuality, QUALITY_WEIGHTS, qualityRankDefaultDir } from '@sigma/db';
 import type { Route } from './+types/quality';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -17,6 +19,7 @@ import { MetricInfo } from '../components/MetricInfo';
 import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { Callout, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { qualityRankingControls } from '../lib/filters';
 import { seoMeta } from '../lib/meta';
 
 // „Индекс на качеството" — the Contract Quality / Health Index page. Reads the ETL-built
@@ -100,6 +103,12 @@ const PILLAR_META: {
   },
 ];
 
+// Header-hint reading order per sort key × direction („Подреждане: …“).
+const DIR_HINTS: Record<QualityRankSort, Record<QualityRankDir, string>> = {
+  score: { asc: 'най-слабите отгоре', desc: 'най-добрите отгоре' },
+  contracts: { desc: 'най-много договори отгоре', asc: 'най-малко договори отгоре' },
+};
+
 const COVERAGE_LABELS: Record<QualityCoverageTier, string> = {
   high: 'Високо',
   medium: 'Средно',
@@ -142,15 +151,21 @@ const COV_TIERS: { tier: QualityCoverageTier; range: string; label: string }[] =
 export async function loader({ request, context }: Route.LoaderArgs) {
   const db = context.cloudflare.env.DB;
   const sp = new URL(request.url).searchParams;
+  // „Разбивка" ranking controls come from the shared parser (validated before they can shape a
+  // cache key or a query — CWE-349); the db layer re-validates at its own boundary.
+  const rank = qualityRankingControls(sp);
   let data = null;
   try {
     data = await getQuality(db, {
       grain: (sp.get('grain') as QualityGrain | null) ?? undefined,
       sort: sp.get('sort') === 'contracts' ? 'contracts' : 'score',
+      dir: rank.rankDir,
       contractSort: sp.get('csort') === 'value' ? 'value' : 'score',
       sel: sp.get('sel'),
       contractId: sp.get('contract'),
       band: sp.get('band'),
+      rankFrom: rank.rankFrom,
+      rankTo: rank.rankTo,
     });
   } catch (err) {
     // The health tables are built by the daily ETL (ship-domain rebuilds contract_features
@@ -247,17 +262,24 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
   const { overview, ranking, contracts, scorecard, scope } = data;
 
   // Preserve the page state in every internal link (grain/sort/selection/scorecard subject).
-  const qs = (patch: Record<string, string | null>) => {
+  const defaultDir = qualityRankDefaultDir(scope.sort);
+  // ?rdir is written only when it differs from the sort key's default, so canonical URLs stay clean.
+  const rdirParam = scope.sortDir === defaultDir ? null : scope.sortDir;
+  const rangeActive = scope.rankFrom != null || scope.rankTo != null;
+  const qs = (patch: Record<string, string | number | null>) => {
     const params = new URLSearchParams();
-    const state: Record<string, string | null> = {
+    const state: Record<string, string | number | null> = {
       grain: scope.grain === 'authority' ? null : scope.grain,
       sort: scope.sort === 'score' ? null : scope.sort,
+      rdir: rdirParam,
+      rfrom: scope.rankFrom,
+      rto: scope.rankTo,
       csort: scope.contractSort === 'score' ? null : scope.contractSort,
       sel: scope.sel,
       band: scope.band,
       ...patch,
     };
-    for (const [k, v] of Object.entries(state)) if (v != null && v !== '') params.set(k, v);
+    for (const [k, v] of Object.entries(state)) if (v != null && v !== '') params.set(k, String(v));
     const s = params.toString();
     return s ? `/quality?${s}` : '/quality';
   };
@@ -485,8 +507,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
           }
           hint={
             scope.grain === 'authority' || scope.grain === 'supplier'
-              ? `Само редове с поне ${scope.minScored} оценени договора, за да няма шум при малки бройки. Подреждане: най-слабите отгоре.`
-              : 'Подреждане: най-слабите отгоре.'
+              ? `Само редове с поне ${scope.minScored} оценени договора, за да няма шум при малки бройки. Подреждане: ${DIR_HINTS[scope.sort][scope.sortDir]}.`
+              : `Подреждане: ${DIR_HINTS[scope.sort][scope.sortDir]}.`
           }
         >
           <nav className="q-grains" aria-label="Разбивка по">
@@ -495,6 +517,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
                 key={g.key}
                 to={qs({ grain: g.key === 'authority' ? null : g.key, sel: null, contract: null })}
                 aria-current={scope.grain === g.key ? 'true' : undefined}
+                preventScrollReset
               >
                 {g.label}
               </Link>
@@ -502,20 +525,104 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             <span className="q-sort">
               Подреди:{' '}
               <Link
-                to={qs({ sort: null })}
+                to={qs({ sort: null, rdir: null })}
                 aria-current={scope.sort === 'score' ? 'true' : undefined}
+                preventScrollReset
               >
                 индекс
               </Link>{' '}
               <Link
-                to={qs({ sort: 'contracts' })}
+                to={qs({ sort: 'contracts', rdir: null })}
                 aria-current={scope.sort === 'contracts' ? 'true' : undefined}
+                preventScrollReset
               >
                 договори
+              </Link>
+              {' · '}
+              <Link
+                to={qs({ rdir: defaultDir === 'asc' ? null : 'asc' })}
+                aria-current={scope.sortDir === 'asc' ? 'true' : undefined}
+                aria-label={`Възходящо — ${DIR_HINTS[scope.sort].asc}`}
+                title={`Възходящо — ${DIR_HINTS[scope.sort].asc}.`}
+                preventScrollReset
+              >
+                ↑
+              </Link>{' '}
+              <Link
+                to={qs({ rdir: defaultDir === 'desc' ? null : 'desc' })}
+                aria-current={scope.sortDir === 'desc' ? 'true' : undefined}
+                aria-label={`Низходящо — ${DIR_HINTS[scope.sort].desc}`}
+                title={`Низходящо — ${DIR_HINTS[scope.sort].desc}.`}
+                preventScrollReset
+              >
+                ↓
               </Link>
             </span>
           </nav>
 
+          {/* Avg-index range over the rollup rows (0–100 display scale). Plain GET form (no-JS
+              friendly); a new range recomputes the ranking from the top. */}
+          <Form
+            method="get"
+            className="flow-controls q-range"
+            role="group"
+            aria-label="Диапазон по среден индекс"
+            preventScrollReset
+          >
+            {scope.grain !== 'authority' && (
+              <input type="hidden" name="grain" value={scope.grain} />
+            )}
+            {scope.sort !== 'score' && <input type="hidden" name="sort" value={scope.sort} />}
+            {rdirParam && <input type="hidden" name="rdir" value={rdirParam} />}
+            {scope.contractSort !== 'score' && (
+              <input type="hidden" name="csort" value={scope.contractSort} />
+            )}
+            {scope.sel && <input type="hidden" name="sel" value={scope.sel} />}
+            {scope.band && <input type="hidden" name="band" value={scope.band} />}
+            <span className="q-range-label">
+              Индекс
+              <MetricInfo
+                title="Диапазон по индекс"
+                summary="Филтрира редовете по средния им индекс (0–100)."
+              />
+            </span>
+            <label>
+              От:
+              <input
+                type="number"
+                name="rfrom"
+                min={0}
+                max={100}
+                step={1}
+                inputMode="numeric"
+                defaultValue={scope.rankFrom ?? ''}
+              />
+            </label>
+            <label>
+              До:
+              <input
+                type="number"
+                name="rto"
+                min={0}
+                max={100}
+                step={1}
+                inputMode="numeric"
+                defaultValue={scope.rankTo ?? ''}
+              />
+            </label>
+            <button type="submit">Приложи</button>
+            {rangeActive && (
+              <Link to={qs({ rfrom: null, rto: null })} preventScrollReset>
+                индекс {scope.rankFrom ?? 0}–{scope.rankTo ?? 100} ✕
+              </Link>
+            )}
+          </Form>
+
+          <p className="sr-only" role="status">
+            {`Разбивка: ${count(ranking.length)} ${plural(ranking.length, 'ред', 'реда')}${
+              rangeActive ? ` · филтър по индекс ${scope.rankFrom ?? 0}–${scope.rankTo ?? 100}` : ''
+            }.`}
+          </p>
           {ranking.length ? (
             <DataTable
               columns={rankColumns(scope.grain, qs)}
@@ -525,8 +632,17 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             />
           ) : (
             <p className="muted">
-              Няма достатъчно данни за тази разбивка — индексът се преизчислява при всяко обновяване
-              на данните.
+              {rangeActive ? (
+                <>
+                  Няма редове със среден индекс {scope.rankFrom ?? 0}–{scope.rankTo ?? 100} в тази
+                  разбивка.{' '}
+                  <Link to={qs({ rfrom: null, rto: null })} preventScrollReset>
+                    Изчисти диапазона ✕
+                  </Link>
+                </>
+              ) : (
+                'Няма достатъчно данни за тази разбивка — индексът се преизчислява при всяко обновяване на данните.'
+              )}
             </p>
           )}
         </Section>
@@ -554,12 +670,14 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             <Link
               to={qs({ csort: null })}
               aria-current={scope.contractSort === 'score' ? 'true' : undefined}
+              preventScrollReset
             >
               индекс
             </Link>{' '}
             <Link
               to={qs({ csort: 'value' })}
               aria-current={scope.contractSort === 'value' ? 'true' : undefined}
+              preventScrollReset
             >
               стойност
             </Link>

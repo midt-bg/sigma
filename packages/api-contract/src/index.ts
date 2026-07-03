@@ -593,6 +593,8 @@ export interface CompetitionData {
 
 export type QualityGrain = 'authority' | 'supplier' | 'sector' | 'region' | 'year' | 'funding';
 export type QualityRankSort = 'score' | 'contracts';
+/** Ranking direction over the active sort key; default: score → 'asc' (weakest first), contracts → 'desc'. */
+export type QualityRankDir = 'asc' | 'desc';
 export type QualityContractSort = 'score' | 'value';
 /** §6.2 confidence tiers over score_coverage; 'none' = withheld („недостатъчно данни"). */
 export type QualityCoverageTier = 'high' | 'medium' | 'low' | 'none';
@@ -688,9 +690,12 @@ export interface QualityData {
   scope: {
     grain: QualityGrain;
     sort: QualityRankSort;
+    sortDir: QualityRankDir; // effective ranking direction (defaulted per sort key)
     contractSort: QualityContractSort;
     sel: string | null; // selected ranking key filtering the contracts list
     band: string | null; // histogram score band: bin index '0'–'19' (5-point bins) or 'weak'|'mid'|'good'
+    rankFrom: number | null; // „Разбивка“ avg-index range bounds, display-scale ints 0–100 (from ≤ to)
+    rankTo: number | null;
     top: number;
     minScored: number; // floor applied to authority/supplier rankings (small-sample noise)
   };

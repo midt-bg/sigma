@@ -28,6 +28,9 @@ export const CACHE_QUERY_PARAMS = new Set([
   // coupling the key to cursor presence, and q/cursor already make key cardinality client-unbounded.
   'procedure',
   'q',
+  'rdir', // /quality: „Разбивка" ranking direction (asc|desc) — flips the rendered row order (CWE-349)
+  'rfrom', // /quality: „Разбивка" avg-index range lower bound — changes the rendered rows (CWE-349)
+  'rto', // /quality: „Разбивка" avg-index range upper bound — changes the rendered rows (CWE-349)
   'sector',
   'sel', // /quality: selected ranking row scoping the contract list
   'sort',

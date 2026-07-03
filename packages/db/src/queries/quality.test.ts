@@ -306,6 +306,97 @@ describe('getQuality — ranking', () => {
   });
 });
 
+describe('getQuality — ranking direction', () => {
+  it('flips the score sort to best-first on dir=desc (exact first row both ways)', async () => {
+    const asc = await getQuality(d1, { grain: 'authority' });
+    expect(asc.ranking.map((r) => r.key)).toEqual(['auth:100000001', 'auth:100000002']);
+    expect(asc.scope.sortDir).toBe('asc'); // score defaults to weakest-first
+
+    const desc = await getQuality(d1, { grain: 'authority', dir: 'desc' });
+    expect(desc.ranking.map((r) => r.key)).toEqual(['auth:100000002', 'auth:100000001']);
+    expect(desc.ranking[0]!.avgOverall).toBe(0.69);
+    expect(desc.scope.sortDir).toBe('desc');
+  });
+
+  it('flips the contracts sort to fewest-first on dir=asc', async () => {
+    const desc = await getQuality(d1, { grain: 'authority', sort: 'contracts' });
+    expect(desc.ranking.map((r) => r.key)).toEqual(['auth:100000002', 'auth:100000001']);
+    expect(desc.scope.sortDir).toBe('desc'); // contracts defaults to biggest-first
+
+    const asc = await getQuality(d1, { grain: 'authority', sort: 'contracts', dir: 'asc' });
+    expect(asc.ranking.map((r) => r.key)).toEqual(['auth:100000001', 'auth:100000002']);
+  });
+
+  it('drops a malformed dir at the query boundary — default order, never raw SQL', async () => {
+    const r = await getQuality(d1, { grain: 'authority', dir: 'up; DROP TABLE x' as never });
+    expect(r.ranking.map((x) => x.key)).toEqual(['auth:100000001', 'auth:100000002']);
+    expect(r.scope.sortDir).toBe('asc');
+  });
+});
+
+describe('getQuality — ranking avg-index range (?rfrom/?rto)', () => {
+  // Authority rollup avg_overall: А 0.321 · Б 0.690 (display 32 and 69 on the 0–100 scale).
+  it('narrows the rollup to rows inside [from, to] with exact row counts', async () => {
+    const low = await getQuality(d1, { grain: 'authority', rankFrom: 0, rankTo: 50 });
+    expect(low.ranking.map((r) => r.key)).toEqual(['auth:100000001']);
+
+    const high = await getQuality(d1, { grain: 'authority', rankFrom: 35, rankTo: 100 });
+    expect(high.ranking.map((r) => r.key)).toEqual(['auth:100000002']);
+
+    const all = await getQuality(d1, { grain: 'authority', rankFrom: 0, rankTo: 100 });
+    expect(all.ranking).toHaveLength(2);
+  });
+
+  it('keeps both bounds inclusive — from=to pins rows sitting exactly on the boundary', async () => {
+    const pin = await getQuality(d1, { grain: 'authority', rankFrom: 69, rankTo: 69 });
+    expect(pin.ranking.map((r) => r.key)).toEqual(['auth:100000002']); // avg 0.690 = 69/100
+
+    const empty = await getQuality(d1, { grain: 'authority', rankFrom: 68, rankTo: 68 });
+    expect(empty.ranking).toEqual([]);
+  });
+
+  it('supports one-sided ranges and swaps an inverted pair', async () => {
+    const from = await getQuality(d1, { grain: 'authority', rankFrom: 50 });
+    expect(from.ranking.map((r) => r.key)).toEqual(['auth:100000002']);
+
+    const to = await getQuality(d1, { grain: 'authority', rankTo: 50 });
+    expect(to.ranking.map((r) => r.key)).toEqual(['auth:100000001']);
+
+    const swapped = await getQuality(d1, { grain: 'authority', rankFrom: 50, rankTo: 0 });
+    expect(swapped.ranking.map((r) => r.key)).toEqual(['auth:100000001']);
+    expect(swapped.scope.rankFrom).toBe(0);
+    expect(swapped.scope.rankTo).toBe(50);
+  });
+
+  it('filters the other grains too (year rollup)', async () => {
+    const y = await getQuality(d1, { grain: 'year', rankFrom: 60, rankTo: 100 });
+    expect(y.ranking.map((r) => r.key)).toEqual(['2025']); // avg 0.63; 2024 (0.44) is out
+  });
+
+  it('drops malformed bounds at the query boundary — non-int / out-of-range never reach SQL', async () => {
+    for (const bad of [-5, 101, 3.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = await getQuality(d1, { grain: 'authority', rankFrom: bad, rankTo: bad });
+      expect(r.scope.rankFrom).toBeNull();
+      expect(r.scope.rankTo).toBeNull();
+      expect(r.ranking).toHaveLength(2); // unfiltered — the bogus bound was dropped, not clamped
+    }
+    const str = await getQuality(d1, { grain: 'authority', rankFrom: '10; --' as never });
+    expect(str.scope.rankFrom).toBeNull();
+    expect(str.ranking).toHaveLength(2);
+  });
+
+  it('composes with sort and direction', async () => {
+    const r = await getQuality(d1, {
+      grain: 'authority',
+      sort: 'contracts',
+      dir: 'asc',
+      rankFrom: 0,
+      rankTo: 50,
+    });
+    expect(r.ranking.map((x) => x.key)).toEqual(['auth:100000001']); // range ∧ fewest-first
+  });
+});
+
 describe('getQuality — contracts list & scoping', () => {
   it('lists scored contracts weakest-first, unscored value_suspect rows last (never as 0)', async () => {
     const { contracts } = await getQuality(d1, {});

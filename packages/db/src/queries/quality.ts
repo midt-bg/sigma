@@ -14,6 +14,7 @@ import type {
   QualityLeaves,
   QualityOverview,
   QualityPillars,
+  QualityRankDir,
   QualityRankRow,
   QualityRankSort,
   QualityScorecard,
@@ -27,11 +28,14 @@ import { typeLabel } from './rows';
 export interface QualityParams {
   grain?: QualityGrain;
   sort?: QualityRankSort;
+  dir?: QualityRankDir | null; // ranking direction; defaulted per sort key (see qualityRankDefaultDir)
   contractSort?: QualityContractSort;
   sel?: string | null; // selected ranking key → scopes the contracts list
   contractId?: string | null; // scorecard subject; defaults to the weakest listed contract
   band?: string | null; // histogram score-band filter over the contracts list (validated here)
   top?: number;
+  rankFrom?: number | null; // „Разбивка" avg-index range, display-scale ints 0–100 (validated here)
+  rankTo?: number | null;
 }
 
 const DEFAULT_TOP = 20;
@@ -40,6 +44,14 @@ const CONTRACT_LIMIT = 12;
 // Authority/supplier rows need a minimal scored sample before an average is meaningful (same
 // small-sample guard as competition's minContracts). Sector/region/year/funding are corpus-wide cuts.
 const MIN_SCORED = 20;
+
+/**
+ * Default ranking direction per sort key — the page's historical reading order: score lists the
+ * weakest rows first (asc), contracts lists the biggest samples first (desc). ?rdir flips it.
+ */
+export function qualityRankDefaultDir(sort: QualityRankSort): QualityRankDir {
+  return sort === 'contracts' ? 'desc' : 'asc';
+}
 
 /** Pillar weights (spec §3.2); the ETL renormalizes over non-NULL pillars, we mirror that here. */
 export const QUALITY_WEIGHTS: Record<keyof QualityPillars, number> = {
@@ -160,37 +172,37 @@ function rankSql(grain: QualityGrain): string {
                      ${cols('avg_a', 'avg_b', 'avg_c', 'avg_d', 'avg_e')},
                      total_contracts, scored_contracts, mean_coverage
               FROM authority_quality_totals
-              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?`;
     case 'supplier':
       return `SELECT bidder_id AS key, name, NULL AS sub, avg_overall,
                      ${cols('NULL', 'NULL', 'avg_c', 'avg_d', 'NULL')},
                      total_contracts, scored_contracts, mean_coverage
               FROM bidder_quality_totals
-              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?`;
     case 'sector':
       return `SELECT division AS key, NULL AS name, NULL AS sub, avg_overall,
                      ${cols('avg_a', 'NULL', 'avg_c', 'NULL', 'NULL')},
                      total_contracts, scored_contracts, mean_coverage
               FROM sector_quality_totals
-              WHERE avg_overall IS NOT NULL AND division <> 'NA' AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND division <> 'NA' AND scored_contracts >= ?`;
     case 'region':
       return `SELECT nuts AS key, nuts_label AS name, nuts AS sub, avg_overall,
                      ${cols('NULL', 'NULL', 'NULL', 'NULL', 'NULL')},
                      total_contracts, scored_contracts, mean_coverage
               FROM region_quality_totals
-              WHERE avg_overall IS NOT NULL AND nuts <> 'NA' AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND nuts <> 'NA' AND scored_contracts >= ?`;
     case 'year':
       return `SELECT year AS key, year AS name, NULL AS sub, avg_overall,
                      ${cols('avg_a', 'avg_b', 'avg_c', 'avg_d', 'avg_e')},
                      total_contracts, scored_contracts, mean_coverage
               FROM year_quality_totals
-              WHERE avg_overall IS NOT NULL AND year <> 'NA' AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND year <> 'NA' AND scored_contracts >= ?`;
     case 'funding':
       return `SELECT funding_key AS key, NULL AS name, NULL AS sub, avg_overall,
                      ${cols('NULL', 'NULL', 'NULL', 'NULL', 'NULL')},
                      total_contracts, scored_contracts, mean_coverage
               FROM funding_quality_totals
-              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?1`;
+              WHERE avg_overall IS NOT NULL AND scored_contracts >= ?`;
   }
 }
 
@@ -198,17 +210,28 @@ async function qualityRanking(
   db: D1Database,
   grain: QualityGrain,
   sort: QualityRankSort,
+  dir: QualityRankDir,
   top: number,
   minScored: number,
+  range: { from: number | null; to: number | null }, // avg_overall bounds in [0,1], both inclusive
 ): Promise<QualityRankRow[]> {
+  // Direction is an allow-listed literal ('asc'|'desc' validated in getQuality) — never raw input.
+  const d = dir === 'desc' ? 'DESC' : 'ASC';
   const order =
     sort === 'contracts'
-      ? 'ORDER BY total_contracts DESC, avg_overall ASC, key'
-      : // weakest first; ties break toward the larger sample (the more telling case)
-        'ORDER BY avg_overall ASC, total_contracts DESC, key';
+      ? `ORDER BY total_contracts ${d}, avg_overall ASC, key`
+      : // ties break toward the larger sample (the more telling case)
+        `ORDER BY avg_overall ${d}, total_contracts DESC, key`;
+  // Avg-index range filter (?rfrom/?rto, already divided from the 0–100 display scale): bound
+  // params appended after the grain SQL's minScored placeholder. Both bounds are inclusive, so a
+  // from=to pin keeps rows sitting exactly on the boundary.
+  const rangeWhere =
+    (range.from != null ? ' AND avg_overall >= ?' : '') +
+    (range.to != null ? ' AND avg_overall <= ?' : '');
+  const rangeParams = [range.from, range.to].filter((v): v is number => v != null);
   const { results } = await db
-    .prepare(`${rankSql(grain)} ${order} LIMIT ?2`)
-    .bind(minScored, top)
+    .prepare(`${rankSql(grain)}${rangeWhere} ${order} LIMIT ?`)
+    .bind(minScored, ...rangeParams, top)
     .all<RankRow>();
   const sectorByCode = new Map(CPV_SECTORS.map((s) => [s.code, s.short ?? s.label]));
   return results.map((r) => {
@@ -497,6 +520,17 @@ const GRAINS: QualityGrain[] = ['authority', 'supplier', 'sector', 'region', 'ye
 export async function getQuality(db: D1Database, p: QualityParams = {}): Promise<QualityData> {
   const grain: QualityGrain = p.grain && GRAINS.includes(p.grain) ? p.grain : 'authority';
   const sort: QualityRankSort = p.sort === 'contracts' ? 'contracts' : 'score';
+  // Direction: strict allow-list, anything else falls back to the sort key's default order.
+  const sortDir: QualityRankDir =
+    p.dir === 'asc' || p.dir === 'desc' ? p.dir : qualityRankDefaultDir(sort);
+  // Avg-index range: display-scale ints 0–100 only (divided to [0,1] at the SQL boundary below);
+  // a malformed bound is dropped, an inverted pair is swapped — never passed into SQL as-is.
+  const rankBound = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 100 ? v : null;
+  let rankFrom = rankBound(p.rankFrom);
+  let rankTo = rankBound(p.rankTo);
+  if (rankFrom != null && rankTo != null && rankFrom > rankTo)
+    [rankFrom, rankTo] = [rankTo, rankFrom];
   const contractSort: QualityContractSort = p.contractSort === 'value' ? 'value' : 'score';
   const sel = p.sel ?? null;
   // Validate at the query boundary (the route validates too, but this module must not trust its
@@ -506,7 +540,10 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
   const minScored = grain === 'authority' || grain === 'supplier' ? MIN_SCORED : 1;
   const [overview, ranking, contracts] = await Promise.all([
     qualityOverview(db),
-    qualityRanking(db, grain, sort, top, minScored),
+    qualityRanking(db, grain, sort, sortDir, top, minScored, {
+      from: rankFrom != null ? rankFrom / 100 : null,
+      to: rankTo != null ? rankTo / 100 : null,
+    }),
     qualityContracts(db, grain, sel, contractSort, band),
   ]);
   const scorecardId = p.contractId ?? contracts[0]?.id ?? null;
@@ -516,7 +553,7 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
     ranking,
     contracts,
     scorecard,
-    scope: { grain, sort, contractSort, sel, band, top, minScored },
+    scope: { grain, sort, sortDir, contractSort, sel, band, rankFrom, rankTo, top, minScored },
   };
 }
 

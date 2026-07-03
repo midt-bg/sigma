@@ -177,6 +177,29 @@ export function buildSectorGroup(
 // Canonical serialization order so the same logical state always yields the same URL string —
 // good for history/bookmarks/caching. Keys not listed keep their existing relative order, appended
 // after the known ones. Filter facets first, then search/sort, then the paging cursor markers.
+/** /quality „Разбивка" ranking controls read from the URL (?rdir/?rfrom/?rto). */
+export interface QualityRankingControls {
+  rankDir: 'asc' | 'desc' | null; // null = the sort key's default order
+  rankFrom: number | null; // avg-index range bounds on the 0–100 display scale (from ≤ to)
+  rankTo: number | null;
+}
+
+/**
+ * Parse + validate the „Разбивка" ranking controls: ?rdir is an allow-listed asc|desc; ?rfrom/?rto
+ * are digits-only ints ≤ 100 (no signs, decimals or SQL-ish shapes reach a query or a cache key —
+ * CWE-349); an inverted pair is swapped so the range is always from ≤ to. The db layer re-validates.
+ */
+export function qualityRankingControls(sp: URLSearchParams): QualityRankingControls {
+  const rdir = sp.get('rdir');
+  const rangeInt = (raw: string | null): number | null =>
+    raw != null && /^\d{1,3}$/.test(raw) && Number(raw) <= 100 ? Number(raw) : null;
+  let rankFrom = rangeInt(sp.get('rfrom'));
+  let rankTo = rangeInt(sp.get('rto'));
+  if (rankFrom != null && rankTo != null && rankFrom > rankTo)
+    [rankFrom, rankTo] = [rankTo, rankFrom];
+  return { rankDir: rdir === 'asc' || rdir === 'desc' ? rdir : null, rankFrom, rankTo };
+}
+
 const PARAM_ORDER = [
   'q',
   'type',
@@ -192,6 +215,9 @@ const PARAM_ORDER = [
   'top',
   'count',
   'sort',
+  'rdir',
+  'rfrom',
+  'rto',
   'cursor',
   'page',
 ];
