@@ -1,0 +1,185 @@
+/* Home / landing page styles — hero panel, search, ranked bars, tabset. */
+
+/* Home hero — title panel on the left, the brand mark as a quiet grey watermark on the right.
+   Folds the image away on narrow screens where the header needs the full measure. */
+.hero-panel {
+  display: flex;
+  align-items: center;
+  gap: var(--s-7);
+  margin: 0 0 var(--s-7);
+}
+.hero-panel .page-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.hero-mark {
+  flex: 0 0 auto;
+  width: clamp(180px, 24vw, 320px);
+  height: auto;
+}
+@media (max-width: 860px) {
+  .hero-mark {
+    display: none;
+  }
+}
+
+/* Ranked horizontal bar chart (home: top ministries / municipalities by spend). CSS-only, no lib. */
+.ranked-bars {
+  list-style: none;
+  margin: var(--s-2) 0 var(--s-3);
+  padding: 0;
+  border-top: 1px solid var(--ink);
+}
+.ranked-bars li {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ranked-bars a {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-2);
+  font: 15px/1.35 var(--font-sans);
+  text-decoration: none;
+  color: var(--ink);
+  overflow: hidden;
+}
+.rb-fill {
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  background: var(--paper-deep);
+  /* Darker, slightly thicker baseline = the "subbar": its length is the value cue. Square the
+     bottom corners so the rule ends crisply; round only the top of the soft fill. */
+  border-bottom: 2px solid var(--rule);
+  border-radius: 3px 3px 0 0;
+  z-index: 0;
+}
+.ranked-bars a:hover .rb-fill {
+  background: var(--rule-soft);
+  border-bottom-color: var(--ink-soft);
+}
+.rb-name {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ranked-bars a:hover .rb-name {
+  text-decoration: underline;
+}
+.rb-val {
+  position: relative;
+  z-index: 1;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* Single-offer money-portion (homepage "Поръчки с една оферта"). Reuses the platform's composition
+   bar (.hbar + .hbar-legend): the single-offer share is the accent-red bucket — the established
+   convention for the non-competitive slice — so it reads as a breakdown, not a progress track. */
+.so-portion {
+  margin: var(--s-3) 0 var(--s-4);
+}
+.so-portion-head {
+  margin-bottom: 8px;
+  font: 15px/1.5 var(--font-sans);
+  color: var(--ink-mid);
+}
+.so-portion-pct {
+  font: 600 28px/1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.so-portion-cap {
+  margin-top: 6px;
+}
+
+/* CSS-only tabset (homepage single-offer: Скорошни / Най-големи по стойност). No JS. */
+.tabset .tab-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.tab-labels {
+  display: flex;
+  gap: var(--s-4);
+  border-bottom: 1px solid var(--rule);
+  margin: var(--s-2) 0 var(--s-3);
+}
+.tab-labels label {
+  cursor: pointer;
+  padding: var(--s-2) 0;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-soft);
+  font: 600 14px/1.2 var(--font-sans);
+}
+.tabset .tab-panel {
+  display: none;
+}
+#so-recent:checked ~ .tab-labels label[for='so-recent'],
+#so-top:checked ~ .tab-labels label[for='so-top'],
+#company-recent:checked ~ .tab-labels label[for='company-recent'],
+#company-top:checked ~ .tab-labels label[for='company-top'],
+#authority-recent:checked ~ .tab-labels label[for='authority-recent'],
+#authority-top:checked ~ .tab-labels label[for='authority-top'] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+#so-recent:checked ~ .tab-panel[data-tab='recent'],
+#so-top:checked ~ .tab-panel[data-tab='top'],
+#company-recent:checked ~ .tab-panel[data-tab='recent'],
+#company-top:checked ~ .tab-panel[data-tab='top'],
+#authority-recent:checked ~ .tab-panel[data-tab='recent'],
+#authority-top:checked ~ .tab-panel[data-tab='top'] {
+  display: block;
+}
+#so-recent:focus-visible ~ .tab-labels label[for='so-recent'],
+#so-top:focus-visible ~ .tab-labels label[for='so-top'],
+#company-recent:focus-visible ~ .tab-labels label[for='company-recent'],
+#company-top:focus-visible ~ .tab-labels label[for='company-top'],
+#authority-recent:focus-visible ~ .tab-labels label[for='authority-recent'],
+#authority-top:focus-visible ~ .tab-labels label[for='authority-top'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Municipality grid */
+.muni-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 var(--s-6);
+  border-top: 1px solid var(--ink);
+  margin: var(--s-2) 0 var(--s-3);
+}
+.muni-grid a {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font: 15px/1.35 var(--font-sans);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s-3);
+  text-decoration: none;
+  color: var(--ink);
+}
+.muni-grid a:hover {
+  color: var(--accent);
+}
+.muni-grid a .num {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+}

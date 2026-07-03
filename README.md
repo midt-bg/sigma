@@ -14,6 +14,7 @@
 - [`docs/deploy.md`](docs/deploy.md) — деплой към Cloudflare.
 - [`docs/architecture.md`](docs/architecture.md) — архитектурни решения (ADR).
 - [`docs/spec/ai-assistant.md`](docs/spec/ai-assistant.md) — спецификация на AI асистента (планиран).
+- [`docs/README.md`](docs/README.md) — **пълен индекс** на документацията, вкл. достъпност и стандартите за ревю.
 
 ## Какво показва текущата версия
 
