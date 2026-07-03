@@ -3153,6 +3153,13 @@ a.pa-card-cpv:focus-visible {
   margin-left: 8px;
 }
 
+.ov-legend-fc {
+  width: 14px;
+  height: 0;
+  border-top: 2.4px dashed var(--accent);
+  margin-left: 8px;
+}
+
 /* Combo chart (bars = contracts, line = € volume) */
 .combo-chart {
   position: relative;
@@ -3190,6 +3197,50 @@ a.pa-card-cpv:focus-visible {
   stroke-width: 2;
   stroke-dasharray: 4 4;
   opacity: 0.7;
+}
+
+/* Forecast layer: shaded „ПРОГНОЗА" region, dashed accent € line, hollow projected bars. */
+.combo-fc-region {
+  fill: color-mix(in oklch, var(--accent) 4%, transparent);
+}
+
+.combo-fc-edge {
+  stroke: color-mix(in oklch, var(--accent) 45%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.combo-fc-label {
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  fill: color-mix(in oklch, var(--accent) 70%, var(--text-faint));
+  text-anchor: middle;
+}
+
+.combo-bar.is-forecast {
+  fill: oklch(55% 0.03 240 / 0.14);
+}
+
+.combo-bar.is-forecast.is-hover {
+  fill: oklch(55% 0.03 240 / 0.3);
+}
+
+.combo-line-forecast {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  opacity: 0.75;
+}
+
+.combo-tip-badge {
+  margin-left: 6px;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in oklch, var(--accent) 60%, transparent);
+  border-radius: 2px;
+  color: color-mix(in oklch, var(--accent) 80%, var(--paper));
+  font-size: 8px;
+  letter-spacing: 0.1em;
 }
 
 .combo-cursor {

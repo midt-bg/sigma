@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { TrendGranularity, TrendPoint } from '@sigma/api-contract';
 import { count, money, monthYear } from '@sigma/shared';
+import type { ForecastPoint } from '../lib/trends-forecast';
 
 // Bar + line combo for the contracts overview (/trends): bars carry the contract count, the ink line
 // the € volume. Server-rendered SVG like TrendChart; the only client behavior is the hover tooltip
@@ -26,12 +27,16 @@ export function periodLabel(period: string, granularity: TrendGranularity): stri
 export function ComboTrendChart({
   points,
   granularity,
+  forecast = [],
   cssHeight = 240,
   interactive = true,
   ariaLabel = 'Брой договори и € обем във времето',
 }: {
   points: TrendPoint[];
   granularity: TrendGranularity;
+  // Projected months appended after the actuals — rendered as a dashed accent line under a
+  // „ПРОГНОЗА" region, never in the actuals' style (see lib/trends-forecast.ts for the method).
+  forecast?: ForecastPoint[];
   cssHeight?: number;
   interactive?: boolean;
   ariaLabel?: string;
@@ -39,9 +44,22 @@ export function ComboTrendChart({
   const [hover, setHover] = useState<number | null>(null);
   if (points.length < 2) return null;
 
-  const n = points.length;
-  const vMax = Math.max(1, ...points.map((p) => p.valueEur)) * 1.12;
-  const cMax = Math.max(1, ...points.map((p) => p.contracts));
+  // Actuals first, projection after; index >= fcStart ⇒ forecast point.
+  const all: { period: string; valueEur: number; contracts: number; partial: boolean }[] = [
+    ...points,
+    ...forecast.map((f) => ({
+      period: f.period,
+      valueEur: f.valueEur,
+      contracts: f.contracts,
+      partial: false,
+    })),
+  ];
+  const fcStart = points.length;
+  const hasForecast = forecast.length > 0;
+
+  const n = all.length;
+  const vMax = Math.max(1, ...all.map((p) => p.valueEur)) * 1.12;
+  const cMax = Math.max(1, ...all.map((p) => p.contracts));
   const x = (i: number) => (n > 1 ? PAD + (i * (W - 2 * PAD)) / (n - 1) : W / 2);
   const yV = (v: number) => BOT - (v / vMax) * (BOT - TOP);
   const yC = (c: number) => BOT - (c / cMax) * (BOT - TOP) * 0.62;
@@ -50,21 +68,31 @@ export function ComboTrendChart({
   // Final period is partial (still filling): dashed line tail + faded bar, like TrendChart.
   const partialIdx = points.findIndex((p) => p.partial);
   const hasPartial = partialIdx > 0;
-  const solidEnd = hasPartial ? partialIdx - 1 : n - 1;
-  const xy = (i: number) => `${x(i).toFixed(1)} ${yV(points[i]!.valueEur).toFixed(1)}`;
+  const solidEnd = hasPartial ? partialIdx - 1 : fcStart - 1;
+  const xy = (i: number) => `${x(i).toFixed(1)} ${yV(all[i]!.valueEur).toFixed(1)}`;
   const line = points
     .slice(0, solidEnd + 1)
     .map((_p, i) => `${i ? 'L' : 'M'}${xy(i)}`)
     .join(' ');
   const dashed = hasPartial ? `M${xy(solidEnd)} L${xy(partialIdx)}` : '';
+  // The projection opens from the last drawn actual point (partial tail if shown, else the last
+  // complete month) and runs through every forecast month, dashed in the accent color.
+  const fcLine = hasForecast
+    ? [fcStart - 1, ...forecast.map((_f, i) => fcStart + i)]
+        .map((idx, i) => `${i ? 'L' : 'M'}${xy(idx)}`)
+        .join(' ')
+    : '';
+  // Region boundary: halfway between the last actual and the first projected month.
+  const fcEdge = hasForecast ? (x(fcStart - 1) + x(fcStart)) / 2 : 0;
 
   // x-axis year labels at the first period of each year (or every point at year grain).
   const yearStart = granularity === 'year' ? null : granularity === 'quarter' ? '-Q1' : '-01';
-  const ticks = points
+  const ticks = all
     .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
-    .filter(({ i }) => yearStart == null || points[i]!.period.endsWith(yearStart));
+    .filter(({ i }) => yearStart == null || all[i]!.period.endsWith(yearStart));
 
-  const hp = hover != null ? points[hover] : null;
+  const hp = hover != null ? all[hover] : null;
+  const hoverIsForecast = hover != null && hover >= fcStart;
 
   return (
     <div className="combo-chart" onMouseLeave={() => interactive && setHover(null)}>
@@ -86,10 +114,32 @@ export function ComboTrendChart({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {points.map((p, i) => (
+        {hasForecast && (
+          <>
+            <rect
+              className="combo-fc-region"
+              x={fcEdge.toFixed(1)}
+              y={0}
+              width={(W - fcEdge).toFixed(1)}
+              height={BOT}
+            />
+            <line
+              className="combo-fc-edge"
+              x1={fcEdge.toFixed(1)}
+              y1={4}
+              x2={fcEdge.toFixed(1)}
+              y2={BOT}
+              vectorEffect="non-scaling-stroke"
+            />
+            <text className="combo-fc-label" x={(fcEdge + (W - fcEdge) / 2).toFixed(1)} y={16}>
+              ПРОГНОЗА
+            </text>
+          </>
+        )}
+        {all.map((p, i) => (
           <rect
             key={p.period}
-            className={`combo-bar${hover === i ? ' is-hover' : ''}${p.partial ? ' is-partial' : ''}`}
+            className={`combo-bar${hover === i ? ' is-hover' : ''}${p.partial ? ' is-partial' : ''}${i >= fcStart ? ' is-forecast' : ''}`}
             x={(x(i) - bw / 2).toFixed(1)}
             y={yC(p.contracts).toFixed(1)}
             width={bw.toFixed(1)}
@@ -100,6 +150,9 @@ export function ComboTrendChart({
         <path className="combo-line" d={line} vectorEffect="non-scaling-stroke" />
         {hasPartial && (
           <path className="combo-line-partial" d={dashed} vectorEffect="non-scaling-stroke" />
+        )}
+        {hasForecast && (
+          <path className="combo-line-forecast" d={fcLine} vectorEffect="non-scaling-stroke" />
         )}
         {hp && hover != null && (
           <>
@@ -138,6 +191,7 @@ export function ComboTrendChart({
           <div className="combo-tip-label">
             {periodLabel(hp.period, granularity)}
             {hp.partial ? ' · частично' : ''}
+            {hoverIsForecast && <span className="combo-tip-badge">ПРОГНОЗА</span>}
           </div>
           <div className="combo-tip-row">
             <span>€ обем</span>
@@ -145,7 +199,7 @@ export function ComboTrendChart({
           </div>
           <div className="combo-tip-row">
             <span>договори</span>
-            <strong>{count(hp.contracts)}</strong>
+            <strong>{count(Math.round(hp.contracts))}</strong>
           </div>
         </div>
       )}

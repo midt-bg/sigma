@@ -15,6 +15,7 @@ import { ComboTrendChart } from '../components/ComboTrendChart';
 import { Callout } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { cpvGroupSelection, singleSelectFilters } from '../lib/filters';
+import { buildForecast } from '../lib/trends-forecast';
 
 // „Договори — обзор": one list of contracts looked at from three angles (lenses) — in time, per CPV
 // group, or both at once. Every control is a plain <Link> mutating the query string, so the page is
@@ -89,7 +90,27 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   for (const g of cpvSel) if (!known.has(g)) missing.push(g);
   const medians = await getCpvGroupMedians(db, missing);
 
-  return { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians };
+  // Seasonal projection (month grain only — the method is month-seeded; see lib/trends-forecast.ts).
+  // With „вкл. текущия месец" on, the partial month is drawn as an actual, so the projection is
+  // trimmed to strictly-later months — the same period is never both actual and forecast.
+  const lastShown = trend.points.at(-1)?.period ?? '';
+  const forecast =
+    granularity === 'month' ? buildForecast(trend.points).filter((f) => f.period > lastShown) : [];
+
+  return {
+    angle,
+    step,
+    sort,
+    cpvSort,
+    year,
+    cpvSel,
+    cur,
+    trend,
+    forecast,
+    stats,
+    contracts,
+    medians,
+  };
 }
 
 // ── Presentational helpers ────────────────────────────────────────────────────────────────────────
@@ -192,8 +213,20 @@ function DistAxis({ gMax }: { gMax: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────────
 
 export default function Trends({ loaderData }: Route.ComponentProps) {
-  const { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians } =
-    loaderData;
+  const {
+    angle,
+    step,
+    sort,
+    cpvSort,
+    year,
+    cpvSel,
+    cur,
+    trend,
+    forecast,
+    stats,
+    contracts,
+    medians,
+  } = loaderData;
   const [sp] = useSearchParams();
   const navigating = useNavigation().state !== 'idle';
 
@@ -451,6 +484,11 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
                 <span className="ovz-legend" aria-hidden="true">
                   <span className="ov-legend-bar" /> договори
                   <span className="ov-legend-line" /> € обем
+                  {forecast.length > 0 && (
+                    <>
+                      <span className="ov-legend-fc" /> прогноза
+                    </>
+                  )}
                 </span>
                 <div className="ovz-seg" role="group" aria-label="Стъпка на графиката">
                   {steps.map((s) => (
@@ -478,7 +516,11 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
             {trend.points.length >= 2 ? (
-              <ComboTrendChart points={trend.points} granularity={trend.granularity} />
+              <ComboTrendChart
+                points={trend.points}
+                granularity={trend.granularity}
+                forecast={forecast}
+              />
             ) : (
               <p className="muted">Няма достатъчно данни.</p>
             )}
