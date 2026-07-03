@@ -36,7 +36,12 @@ const FX_RATE = 7;
 
 // One amendment row; id = natural_key (as refresh-slice.sql's promote step writes it) and
 // document_number = id (so the FX test can address rows by name).
-function amd(id: string, published_at: string | null, value_after: number | null, currency = 'BGN') {
+function amd(
+  id: string,
+  published_at: string | null,
+  value_after: number | null,
+  currency = 'BGN',
+) {
   const pub = published_at === null ? 'NULL' : `'${published_at}'`;
   const val = value_after === null ? 'NULL' : String(value_after);
   return `('${id}', '${id}', 'C', 'U', ${val}, '${currency}', ${pub}, '${id}', 'eop')`;
@@ -101,7 +106,10 @@ describe('amendment timeline SQL (real SQLite, AMENDMENTS_SQL)', () => {
         `INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at)
          VALUES ('USD', '2024-06-06', 0.92, 'ecb', '2024-06-07');`,
       );
-      insert(dbPath, [amd('kSat', '2024-06-08', 1000, 'USD'), amd('kFar', '2024-06-17', 1000, 'USD')]);
+      insert(dbPath, [
+        amd('kSat', '2024-06-08', 1000, 'USD'),
+        amd('kFar', '2024-06-17', 1000, 'USD'),
+      ]);
       const byId = new Map(timelineRows(dbPath).map((r) => [r[DOC_NUMBER], r]));
       expect(byId.get('kSat')?.[FX_RATE]).toBe('0.92'); // Saturday → Thursday's rate via the lookback
       expect(byId.get('kFar')?.[FX_RATE]).toBe(''); // 11 days later → outside the window → null → „—"

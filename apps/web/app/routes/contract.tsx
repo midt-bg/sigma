@@ -212,7 +212,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                       <td className="money">
                         {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
                       </td>
-                      <td className="money">{a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}</td>
+                      <td className="money">
+                        {a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
+                      </td>
                       <td>{a.description ?? '—'}</td>
                     </tr>
                   ))}
@@ -220,13 +222,13 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               </table>
             </div>
             <p className="small muted mt-8">
-              {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} · източник:
-              ЦАИС ЕОП.
+              {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} ·
+              източник: ЦАИС ЕОП.
             </p>
             {v.suspect && (
               <p className="small muted">
-                За този договор стойностите по анексите се показват както са в източника — СИГМА не ги
-                потвърждава за тоталите (виж <Link to="/methodology">методология</Link>).
+                За този договор стойностите по анексите се показват както са в източника — СИГМА не
+                ги потвърждава за тоталите (виж <Link to="/methodology">методология</Link>).
               </p>
             )}
           </Section>
