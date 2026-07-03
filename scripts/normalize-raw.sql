@@ -87,6 +87,15 @@ FROM (
   UNION ALL
   SELECT authority_eik, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
 ) s
+-- MULTI-ЕИК GUARD (#196): ~405 of ~4874 authority_eik values are a LIST of several ЕИК joined by
+-- „; " (joint procurements naming several co-authorities, e.g. '000590540; 000582020; 829091529';
+-- source data/admin-tenders-load.sql:47202). Keying 'auth:' || authority_eik on such a list mints
+-- ONE phantom authority for the whole list, so we EXCLUDE list-valued rows. Because tenders (2a/2b)
+-- and contracts (5) only attach to an authority that EXISTS here, dropping the phantom transitively
+-- keeps those joint-procurement rows out of every downstream rollup. Raw staging is untouched, so
+-- they stay traceable. DEFERRED (proposal 1, #196): the full split — attributing to each real ЕИК
+-- without double-counting value — needs a product decision, so this is the conservative exclude.
+WHERE s.authority_eik NOT LIKE '%;%'
 GROUP BY s.authority_eik;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
