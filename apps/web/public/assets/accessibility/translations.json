@@ -1,35 +1,35 @@
 {
-    "bg": {
-        "reset": "Нулирай",
-        "fontDown": "Намали шрифта",
-        "fontUp": "Увеличи шрифта",
-        "dyslexic": "За хора с дислексия",
-        "text": "Текстова версия",
-        "yellow": "Жълта тема",
-        "dark": "тъмна тема",
-        "blue": "синя тема",
-        "default": "оригинална тема",
-        "showAccessMenu": "покажи меню за достъпност",
-        "accessMenu": "Меню за достъпност",
-        "toNav": "КЪМ НАВИГАЦИЯТА",
-        "toMain": "КЪМ ОСНОВНОТО СЪДЪРЖАНИЕ",
-        "changeContrast": "ПРОМЕНИ КОНТРАСТА",
-        "logoText": "© Информационно обслужване АД"
-    },
-    "en": {
-        "reset": "reset",
-        "fontDown": "Decrease font size",
-        "fontUp": "Increase font size",
-        "dyslexic": "For dyslexic people",
-        "text": "Text version",
-        "yellow": "Yellow theme",
-        "dark": "Dark theme",
-        "blue": "Blue theme",
-        "default": "Default theme",
-        "showAccessMenu": "Show accessibility menu",
-        "accessMenu": "Accessibility menu",
-        "toNav": "TO NAVIGATION",
-        "toMain": "TO MAIN CONTENT",
-        "changeContrast": "CHANGE CONTRAST"
-    }
+  "bg": {
+    "reset": "Нулирай",
+    "fontDown": "Намали шрифта",
+    "fontUp": "Увеличи шрифта",
+    "dyslexic": "За хора с дислексия",
+    "text": "Текстова версия",
+    "yellow": "Жълта тема",
+    "dark": "тъмна тема",
+    "blue": "синя тема",
+    "default": "оригинална тема",
+    "showAccessMenu": "покажи меню за достъпност",
+    "accessMenu": "Меню за достъпност",
+    "toNav": "КЪМ НАВИГАЦИЯТА",
+    "toMain": "КЪМ ОСНОВНОТО СЪДЪРЖАНИЕ",
+    "changeContrast": "ПРОМЕНИ КОНТРАСТА",
+    "logoText": "© Информационно обслужване АД"
+  },
+  "en": {
+    "reset": "reset",
+    "fontDown": "Decrease font size",
+    "fontUp": "Increase font size",
+    "dyslexic": "For dyslexic people",
+    "text": "Text version",
+    "yellow": "Yellow theme",
+    "dark": "Dark theme",
+    "blue": "Blue theme",
+    "default": "Default theme",
+    "showAccessMenu": "Show accessibility menu",
+    "accessMenu": "Accessibility menu",
+    "toNav": "TO NAVIGATION",
+    "toMain": "TO MAIN CONTENT",
+    "changeContrast": "CHANGE CONTRAST"
+  }
 }

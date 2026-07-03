@@ -7,10 +7,7 @@
   // bubblewrap (bwrap) can create the user namespace its sandbox needs.
   // Without this, `unshare(CLONE_NEWUSER)` is blocked and codex-workers fail
   // with "bwrap: No permissions to create a new namespace".
-  "runArgs": [
-    "--security-opt", "seccomp=unconfined",
-    "--security-opt", "apparmor=unconfined"
-  ],
+  "runArgs": ["--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined"],
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
