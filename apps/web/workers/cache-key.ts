@@ -12,6 +12,7 @@ export const CACHE_QUERY_PARAMS = new Set([
   'count',
   'cpv', // /contracts — exact 5-digit CPV filter; ALSO /trends: repeatable CPV group multi-select faceting the обзор chart + list (CWE-349)
   'cpvSort', // /trends: CPV list ordering
+  'cur', // /trends: include the current (partial) period — changes the chart, totals and year cards
   'cursor',
   'eu',
   'funding',

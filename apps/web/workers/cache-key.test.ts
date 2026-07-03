@@ -106,6 +106,16 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
   });
 
+  it('keys the /trends „вкл. текущия месец" toggle so the with-current chart gets its own entry (CWE-349)', () => {
+    // ?cur=1 re-runs the trend server-side WITH the current partial period — a different chart,
+    // different totals and year cards. It must never share a cached SSR body with the default view.
+    const base = cacheUrl('http://local/trends');
+    const withCurrent = cacheUrl('http://local/trends?cur=1');
+
+    expect(withCurrent.search).not.toBe(base.search);
+    expect(withCurrent.searchParams.get('cur')).toBe('1');
+  });
+
   it('keys the repeatable /trends CPV multi-select so faceted charts get their own entries (CWE-349)', () => {
     // The обзор cross lens re-runs the year chart + contract list server-side per selected CPV set;
     // distinct selections (including subsets) must never share one cached SSR body.

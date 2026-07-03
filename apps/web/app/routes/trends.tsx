@@ -61,6 +61,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Repeatable ?cpv — the multi-select CPV facet. Validated + bounded by cpvGroupSelection so
   // hostile input can neither poison the SQL scope nor mint unbounded cache-key variants (CWE-349).
   const cpvSel = cpvGroupSelection(sp);
+  // „вкл. текущия месец": the current (incomplete) period is excluded from the chart by default;
+  // ?cur=1 opts back in (validated to exactly '1' so the edge-cache key space stays two-valued).
+  const cur = sp.get('cur') === '1';
 
   // The cross lens always shows the compact quarterly picker; the time lens follows the step toggle.
   const granularity = angle === 'cross' ? 'quarter' : STEP_GRANULARITY[step];
@@ -68,7 +71,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const [trend, stats, contracts] = await Promise.all([
     // Faceted by the selected CPV groups (one aggregate scan; all groups when nothing is selected),
     // so the combo chart, year cards and totals all re-run server-side on real data.
-    getSpendingTrend(db, { granularity, cpvGroups: cpvSel }, { includeSectors: false }),
+    getSpendingTrend(
+      db,
+      { granularity, cpvGroups: cpvSel, includeCurrent: cur },
+      { includeSectors: false },
+    ),
     getCpvGroupStats(db, 10),
     listOverviewContracts(db, { year, cpvGroups: cpvSel, sort, limit: 24 }),
   ]);
@@ -82,7 +89,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   for (const g of cpvSel) if (!known.has(g)) missing.push(g);
   const medians = await getCpvGroupMedians(db, missing);
 
-  return { angle, step, sort, cpvSort, year, cpvSel, trend, stats, contracts, medians };
+  return { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians };
 }
 
 // ── Presentational helpers ────────────────────────────────────────────────────────────────────────
@@ -185,7 +192,8 @@ function DistAxis({ gMax }: { gMax: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────────
 
 export default function Trends({ loaderData }: Route.ComponentProps) {
-  const { angle, step, sort, cpvSort, year, cpvSel, trend, stats, contracts, medians } = loaderData;
+  const { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians } =
+    loaderData;
   const [sp] = useSearchParams();
   const navigating = useNavigation().state !== 'idle';
 
@@ -255,6 +263,13 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
     { key: 'cpv', label: 'По CPV код' },
     { key: 'cross', label: 'Време × CPV' },
   ];
+  // The toggle names the unit the chart steps in (the control lives on the time lens only).
+  const curLabel =
+    step === 'y'
+      ? 'вкл. текущата година'
+      : step === 'q'
+        ? 'вкл. текущото тримесечие'
+        : 'вкл. текущия месец';
   const steps: { key: Step; label: string }[] = [
     { key: 'm', label: 'Мес.' },
     { key: 'q', label: 'Трим.' },
@@ -449,6 +464,17 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
                     </Link>
                   ))}
                 </div>
+                {/* The current period is still filling, so it is hidden by default; this GET toggle
+                    brings it back, rendered dashed/faded and labelled „частично". */}
+                <div className="ovz-seg" role="group" aria-label="Текущ период">
+                  <Link
+                    to={hrefWith({ cur: cur ? null : '1' })}
+                    preventScrollReset
+                    aria-current={cur || undefined}
+                  >
+                    {curLabel}
+                  </Link>
+                </div>
               </div>
             </div>
             {trend.points.length >= 2 ? (
@@ -590,8 +616,9 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
 
         <Callout title="За покритието на данните">
           <p style={{ margin: 0 }}>
-            Изгледът включва договорите с валидна дата на сключване и стойност в евро. Последният
-            период е непълен и е отбелязан като „частично". Виж методологията за подробности.
+            Изгледът включва договорите с валидна дата на сключване и стойност в евро. Текущият
+            (непълен) период е скрит по подразбиране — контролът „вкл. текущия месец" го показва,
+            отбелязан като „частично". Виж методологията за подробности.
           </p>
         </Callout>
       </main>
