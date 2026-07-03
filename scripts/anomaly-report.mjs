@@ -218,9 +218,10 @@ export function formatAnomalyReport(report) {
     lines.push(`  • ${f.key} (${f.label}): ${f.total}`);
     for (const ex of f.examples.slice(0, 5)) {
       const amt = Math.round(ex.amountEur).toLocaleString('bg-BG');
-      const ctx = ex.rescaledBy == null
-        ? `${ex.ratio.toFixed(1)}× cohort p95`
-        : `÷${ex.rescaledBy} → near median`;
+      const ctx =
+        ex.rescaledBy == null
+          ? `${ex.ratio.toFixed(1)}× cohort p95`
+          : `÷${ex.rescaledBy} → near median`;
       lines.push(`      - ${ex.id}  €${amt}  [CPV ${ex.division}, ${ctx}]`);
     }
   }
