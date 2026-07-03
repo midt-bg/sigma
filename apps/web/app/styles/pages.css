@@ -1395,6 +1395,54 @@
   inline-size: 100%;
   block-size: auto;
 }
+/* clickable histogram bins/zones — GET links filtering the contracts list by score band */
+.q-bin-link,
+.q-zone-link {
+  cursor: pointer;
+  outline: none;
+}
+.q-bin-hit {
+  fill: transparent;
+}
+.q-bin-link:hover .q-bin,
+.q-bin-link:focus-visible .q-bin {
+  opacity: 0.75;
+}
+.q-bin-link:focus-visible .q-bin-hit,
+.q-zone-link:focus-visible .q-zone-label {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.q-zone-link:hover .q-zone-label {
+  text-decoration: underline;
+}
+/* an active band dims everything outside the selection and outlines the selected bins */
+.q-hist.has-band .q-bin:not(.is-selected) {
+  opacity: 0.3;
+}
+.q-hist.has-band .q-bin.is-selected {
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+.q-band-chip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  margin: var(--s-2) 0 0;
+  font: 500 12px/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+.q-band-chip b {
+  color: var(--ink);
+}
+.q-band-tag {
+  font: 500 11px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  background: var(--paper-warm);
+  color: var(--ink-mid);
+}
 .q-zone {
   opacity: 0.35;
 }

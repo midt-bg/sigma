@@ -30,6 +30,7 @@ export interface QualityParams {
   contractSort?: QualityContractSort;
   sel?: string | null; // selected ranking key → scopes the contracts list
   contractId?: string | null; // scorecard subject; defaults to the weakest listed contract
+  band?: string | null; // histogram score-band filter over the contracts list (validated here)
   top?: number;
 }
 
@@ -323,13 +324,37 @@ const CONTRACT_SELECT = `
   JOIN authorities a ON a.id = t.authority_id
   JOIN bidders b ON b.id = c.bidder_id`;
 
+/**
+ * Histogram score-band filter → [lo, hi) over score_overall. Bin index '0'–'19' maps to the exact
+ * 5-point bins the overview histogram is built from (bin 19 closes at 1.0 inclusive, mirroring the
+ * `score >= 1.0 → 19` clause in qualityOverview); 'weak'|'mid'|'good' map to the page's zone bands.
+ * Returns null for anything else — an unknown value must never reach SQL.
+ */
+export function qualityBandRange(band: string): { lo: number; hi: number | null } | null {
+  if (/^(?:[0-9]|1[0-9])$/.test(band)) {
+    const bin = Number(band);
+    return { lo: bin / 20, hi: bin === 19 ? null : (bin + 1) / 20 };
+  }
+  if (band === 'weak') return { lo: 0, hi: 0.5 };
+  if (band === 'mid') return { lo: 0.5, hi: 0.7 };
+  if (band === 'good') return { lo: 0.7, hi: null };
+  return null;
+}
+
 async function qualityContracts(
   db: D1Database,
   grain: QualityGrain,
   sel: string | null,
   sort: QualityContractSort,
+  band: string | null,
 ): Promise<QualityContractRow[]> {
   const scope = contractScope(grain, sel);
+  // NULL score_overall never satisfies >= — unscored contracts stay outside every band, not at 0.
+  const range = band ? qualityBandRange(band) : null;
+  const bandWhere = range
+    ? `AND f.score_overall >= ?${range.hi != null ? ' AND f.score_overall < ?' : ''}`
+    : '';
+  const bandParams = range ? (range.hi != null ? [range.lo, range.hi] : [range.lo]) : [];
   // Scored contracts lead (weakest first); unscored value_suspect rows are still listed — after the
   // scored ones — so exclusion is visible, not silent. Coverage-withheld rows stay off this list.
   const order =
@@ -339,10 +364,10 @@ async function qualityContracts(
   const { results } = await db
     .prepare(
       `${CONTRACT_SELECT}
-       WHERE (f.score_overall IS NOT NULL OR f.value_flag = 'value_suspect') ${scope.where}
+       WHERE (f.score_overall IS NOT NULL OR f.value_flag = 'value_suspect') ${scope.where} ${bandWhere}
        ${order} LIMIT ?`,
     )
-    .bind(...scope.params, CONTRACT_LIMIT)
+    .bind(...scope.params, ...bandParams, CONTRACT_LIMIT)
     .all<ContractRowRaw>();
   return results.map(mapContractRow);
 }
@@ -474,12 +499,15 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
   const sort: QualityRankSort = p.sort === 'contracts' ? 'contracts' : 'score';
   const contractSort: QualityContractSort = p.contractSort === 'value' ? 'value' : 'score';
   const sel = p.sel ?? null;
+  // Validate at the query boundary (the route validates too, but this module must not trust its
+  // callers): a bogus band is dropped, never passed into SQL.
+  const band = p.band && qualityBandRange(p.band) ? p.band : null;
   const top = p.top && p.top > 0 ? Math.min(Math.floor(p.top), MAX_TOP) : DEFAULT_TOP;
   const minScored = grain === 'authority' || grain === 'supplier' ? MIN_SCORED : 1;
   const [overview, ranking, contracts] = await Promise.all([
     qualityOverview(db),
     qualityRanking(db, grain, sort, top, minScored),
-    qualityContracts(db, grain, sel, contractSort),
+    qualityContracts(db, grain, sel, contractSort, band),
   ]);
   const scorecardId = p.contractId ?? contracts[0]?.id ?? null;
   const scorecard = scorecardId ? await getQualityScorecard(db, scorecardId) : null;
@@ -488,7 +516,7 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
     ranking,
     contracts,
     scorecard,
-    scope: { grain, sort, contractSort, sel, top, minScored },
+    scope: { grain, sort, contractSort, sel, band, top, minScored },
   };
 }
 

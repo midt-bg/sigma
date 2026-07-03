@@ -115,6 +115,14 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts?cursor=c5&page=2').search).not.toBe(
       cacheUrl('http://local/contracts?cursor=c5&page=5').search,
     );
+    // ?band (histogram score-band click-filter on /quality) narrows the contracts list — distinct
+    // bands and the unfiltered view must each get their own entry.
+    expect(cacheUrl('http://local/quality?band=6').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?band=6').search).not.toBe(
+      cacheUrl('http://local/quality?band=weak').search,
+    );
   });
 });
 

@@ -341,6 +341,49 @@ describe('getQuality — contracts list & scoping', () => {
     const { scorecard } = await getQuality(d1, {});
     expect(scorecard?.id).toBe('c:1');
   });
+
+  it('score-band filter narrows to the exact histogram bin (bounds match the overview bins)', async () => {
+    // Overall scores: c:1 .321 → bin 6 [.30,.35) · c:4 .563 → bin 11 [.55,.60) · c:2 .784 → bin 15.
+    const bin6 = await getQuality(d1, { band: '6' });
+    expect(bin6.contracts.map((c) => c.id)).toEqual(['c:1']);
+
+    const bin11 = await getQuality(d1, { band: '11' });
+    expect(bin11.contracts.map((c) => c.id)).toEqual(['c:4']);
+
+    // Adjacent empty bin: honest empty set, and the unscored c:3 never leaks into any band.
+    const bin7 = await getQuality(d1, { band: '7' });
+    expect(bin7.contracts).toEqual([]);
+
+    // Top bin closes at 1.0 inclusive (mirrors the `>= 1.0 → 19` histogram clause).
+    const bin19 = await getQuality(d1, { band: '19' });
+    expect(bin19.contracts).toEqual([]);
+  });
+
+  it('named zone bands map to the page zones: weak [0,.5) · mid [.5,.7) · good [.7,1]', async () => {
+    const byBand = async (band: string) =>
+      (await getQuality(d1, { band })).contracts.map((c) => c.id);
+    expect(await byBand('weak')).toEqual(['c:1']); // .321
+    expect(await byBand('mid')).toEqual(['c:4']); // .563
+    expect(await byBand('good')).toEqual(['c:2']); // .784
+  });
+
+  it('band composes with the sel scope (AND) and malformed values never reach SQL', async () => {
+    // sel (authority Б → c:2, c:4) ∧ band=good → only c:2.
+    const scoped = await getQuality(d1, {
+      grain: 'authority',
+      sel: 'auth:100000002',
+      band: 'good',
+    });
+    expect(scoped.contracts.map((c) => c.id)).toEqual(['c:2']);
+    expect(scoped.scope.band).toBe('good');
+
+    // Malformed shapes: out-of-range, negative, fractional, SQL-ish, wrong name — all dropped.
+    for (const band of ['20', '-1', '1.5', '6 OR 1=1', 'strong', '']) {
+      const r = await getQuality(d1, { band });
+      expect(r.scope.band).toBeNull();
+      expect(r.contracts).toHaveLength(4); // unfiltered — the bogus value never reached a WHERE
+    }
+  });
 });
 
 describe('getQualityScorecard', () => {

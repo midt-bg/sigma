@@ -13,6 +13,7 @@ import type { Route } from './+types/quality';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
+import { MetricInfo } from '../components/MetricInfo';
 import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { Callout, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
@@ -149,6 +150,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       contractSort: sp.get('csort') === 'value' ? 'value' : 'score',
       sel: sp.get('sel'),
       contractId: sp.get('contract'),
+      band: sp.get('band'),
     });
   } catch (err) {
     // The health tables are built by the daily ETL (ship-domain rebuilds contract_features
@@ -168,6 +170,20 @@ function band(s: number | null | undefined): 'good' | 'mid' | 'weak' | 'unknown'
   if (s >= 0.7) return 'good';
   if (s >= 0.5) return 'mid';
   return 'weak';
+}
+
+// Display label of a validated ?band value (bin index '0'–'19' or a named zone) on the 0–100 scale.
+const ZONE_BAND_LABELS: Record<string, string> = {
+  weak: 'слабо (0–49)',
+  mid: 'средно (50–69)',
+  good: 'добро (70–100)',
+};
+function bandLabel(b: string): string {
+  if (/^\d+$/.test(b)) {
+    const i = Number(b);
+    return `${i * 5}–${(i + 1) * 5}`;
+  }
+  return ZONE_BAND_LABELS[b] ?? b;
 }
 
 function IndexBar({ score }: { score: number | null }) {
@@ -238,6 +254,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
       sort: scope.sort === 'score' ? null : scope.sort,
       csort: scope.contractSort === 'score' ? null : scope.contractSort,
       sel: scope.sel,
+      band: scope.band,
       ...patch,
     };
     for (const [k, v] of Object.entries(state)) if (v != null && v !== '') params.set(k, v);
@@ -418,9 +435,14 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
           title={
             <>
               Разпределение на <em>оценките</em>
+              <MetricInfo
+                title="Разпределение"
+                summary="Хистограма на оценените договори по индекс 0–100 в 20 интервала по 5 точки. Договор без достатъчно данни не участва — той е „недостатъчно данни“, никога нула. Клик върху стълб или зона филтрира списъка с договори по този диапазон."
+                readout={`${count(overview.scoredContracts)} оценени договора · 20 интервала × 5 точки`}
+              />
             </>
           }
-          hint="Само оценени договори; договорите без оценка не са нули и стоят извън хистограмата."
+          hint="Само оценени договори; договорите без оценка не са нули и стоят извън хистограмата. Клик върху стълб или зона показва договорите в диапазона."
         >
           <div className="q-dist">
             <div className="q-dist-chart">
@@ -428,7 +450,17 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
                 histogram={overview.histogram}
                 mean={overview.avgOverall}
                 scored={overview.scoredContracts}
+                selBand={scope.band}
+                hrefFor={(b) => `${qs({ band: b })}#distribution`}
               />
+              {scope.band && (
+                <p className="q-band-chip">
+                  <span>
+                    Филтър: индекс <b>{bandLabel(scope.band)}</b>
+                  </span>
+                  <Link to={`${qs({ band: null })}#distribution`}>изчисти ✕</Link>
+                </p>
+              )}
             </div>
             <div className="q-conf">
               <h4>Ниво на увереност</h4>
@@ -531,6 +563,18 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             >
               стойност
             </Link>
+            {scope.band && (
+              <>
+                {' · '}
+                <span className="q-band-tag">индекс {bandLabel(scope.band)}</span>{' '}
+                <Link to={qs({ band: null })}>✕</Link>
+              </>
+            )}
+          </p>
+          <p className="sr-only" role="status">
+            {`Показани ${count(contracts.length)} ${plural(contracts.length, 'договор', 'договора')}${
+              scope.band ? ` · филтър по индекс ${bandLabel(scope.band)}` : ''
+            }.`}
           </p>
           {contracts.length ? (
             <div className="q-contract-grid">
@@ -544,7 +588,10 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
               ))}
             </div>
           ) : (
-            <p className="muted">Няма оценени договори за избрания разрез.</p>
+            <p className="muted">
+              Няма оценени договори за избрания разрез.{' '}
+              {scope.band && <Link to={qs({ band: null })}>Изчисти филтъра по индекс</Link>}
+            </p>
           )}
           <p className="small muted">
             Договорите с недостатъчни данни за стойността (value_suspect ·{' '}
@@ -637,87 +684,129 @@ function rankColumns(
 }
 
 // SVG histogram — 20 bins over the scored corpus, band-zone underlay, corpus-mean marker. CSS-only
-// colors via currentColor classes; no chart library (same spirit as TrendChart/StackedBar).
+// colors via currentColor classes; no chart library (same spirit as TrendChart/StackedBar). Every
+// bin and zone label is a plain GET link (no-JS friendly) that filters the contracts list below to
+// that score band (?band=…); clicking the active bin/zone clears the filter again. Tooltips are
+// native SVG <title> children — the page's existing title-attr pattern, no separate tooltip style.
 function Histogram({
   histogram,
   mean,
   scored,
+  selBand,
+  hrefFor,
 }: {
   histogram: { bin: number; count: number }[];
   mean: number | null;
   scored: number;
+  selBand: string | null;
+  hrefFor: (band: string | null) => string;
 }) {
   const W = 600;
-  const H = 172;
-  const PLOT_BOT = 140;
-  const PLOT_TOP = 24;
+  const H = 248;
+  const PLOT_BOT = 210;
+  const PLOT_TOP = 28;
   const counts = new Array<number>(20).fill(0);
   for (const b of histogram) if (b.bin >= 0 && b.bin < 20) counts[b.bin] = b.count;
   const max = Math.max(1, ...counts);
   const bw = W / 20;
-  const zones: { from: number; to: number; label: string; cls: string }[] = [
-    { from: 0, to: 0.5, label: 'СЛАБО', cls: 'weak' },
-    { from: 0.5, to: 0.7, label: 'СРЕДНО', cls: 'mid' },
-    { from: 0.7, to: 1, label: 'ДОБРО', cls: 'good' },
+  const share = (n: number) => (scored > 0 ? pct(n / scored) : '—');
+  const zones: { key: 'weak' | 'mid' | 'good'; from: number; to: number; label: string }[] = [
+    { key: 'weak', from: 0, to: 0.5, label: 'СЛАБО' },
+    { key: 'mid', from: 0.5, to: 0.7, label: 'СРЕДНО' },
+    { key: 'good', from: 0.7, to: 1, label: 'ДОБРО' },
   ];
+  const zoneCount = (z: { from: number; to: number }) =>
+    counts.reduce((t, c, i) => (i / 20 >= z.from && i / 20 < z.to ? t + c : t), 0);
+  // Is bin i inside the current selection? (a selected zone highlights all of its bins)
+  const inSel = (i: number) =>
+    selBand != null &&
+    (selBand === String(i) ||
+      (selBand === 'weak' && i < 10) ||
+      (selBand === 'mid' && i >= 10 && i < 14) ||
+      (selBand === 'good' && i >= 14));
   return (
     <svg
-      className="q-hist"
+      className={`q-hist${selBand ? ' has-band' : ''}`}
       viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label={`Хистограма на ${count(scored)} оценени договора по индекс 0–100${mean == null ? '' : `, среден ${score100(mean)}`}`}
+      role="group"
+      aria-label={`Хистограма на ${count(scored)} оценени договора по индекс 0–100${mean == null ? '' : `, среден ${score100(mean)}`}. Клик върху стълб филтрира списъка с договори.`}
     >
       {zones.map((z) => (
-        <g key={z.label}>
+        <g key={z.key}>
           <rect
-            className={`q-zone q-zone-${z.cls}`}
+            className={`q-zone q-zone-${z.key}`}
             x={z.from * W}
             y={6}
             width={(z.to - z.from) * W}
             height={PLOT_BOT - 6}
           />
-          <text
-            className={`q-zone-label q-zone-label-${z.cls}`}
-            x={((z.from + z.to) / 2) * W}
-            y={18}
-            textAnchor="middle"
+          <a
+            href={hrefFor(selBand === z.key ? null : z.key)}
+            className="q-zone-link"
+            aria-current={selBand === z.key ? 'true' : undefined}
           >
-            {z.label}
-          </text>
+            <title>{`Зона „${ZONE_BAND_LABELS[z.key]}“: ${count(zoneCount(z))} ${plural(zoneCount(z), 'договор', 'договора')} · ${share(zoneCount(z))} от оценените — клик за филтър.`}</title>
+            <text
+              className={`q-zone-label q-zone-label-${z.key}`}
+              x={((z.from + z.to) / 2) * W}
+              y={20}
+              textAnchor="middle"
+            >
+              {z.label}
+            </text>
+          </a>
         </g>
       ))}
       {counts.map((c, i) => {
         const h = (c / max) * (PLOT_BOT - PLOT_TOP);
         const mid = (i + 0.5) / 20;
         return (
-          <rect
+          <a
             key={i}
-            className={`q-bin q-fill-${band(mid)}`}
-            x={i * bw + 1.5}
-            y={PLOT_BOT - h}
-            width={bw - 3}
-            height={h}
-            rx={1}
-          />
+            href={hrefFor(selBand === String(i) ? null : String(i))}
+            className="q-bin-link"
+            aria-current={selBand === String(i) ? 'true' : undefined}
+          >
+            <title>{`Индекс ${i * 5}–${(i + 1) * 5}: ${count(c)} ${plural(c, 'договор', 'договора')} · ${share(c)} от оценените — клик за филтър.`}</title>
+            {/* full-height invisible hit area so even a near-empty bin stays clickable */}
+            <rect className="q-bin-hit" x={i * bw} y={6} width={bw} height={PLOT_BOT - 6} />
+            <rect
+              className={`q-bin q-fill-${band(mid)}${inSel(i) ? ' is-selected' : ''}`}
+              x={i * bw + 1.5}
+              y={PLOT_BOT - h}
+              width={bw - 3}
+              height={h}
+              rx={1}
+            />
+          </a>
         );
       })}
       <line className="q-axis" x1={0} y1={PLOT_BOT} x2={W} y2={PLOT_BOT} />
       {[0, 25, 50, 75, 100].map((t) => (
-        <text key={t} className="q-tick" x={(t / 100) * W} y={156} textAnchor="middle">
+        <text key={t} className="q-tick" x={(t / 100) * W} y={PLOT_BOT + 16} textAnchor="middle">
           {t}
         </text>
       ))}
       {mean != null && (
-        <>
+        <g>
+          <title>{`Среден индекс на оценените договори: ${score100(mean)} от 100.`}</title>
           <line className="q-mean" x1={mean * W} y1={6} x2={mean * W} y2={PLOT_BOT} />
-          <text className="q-mean-label" x={mean * W} y={170} textAnchor="middle">
+          <text className="q-mean-label" x={mean * W} y={PLOT_BOT + 34} textAnchor="middle">
             среден {score100(mean)}
           </text>
-        </>
+        </g>
       )}
     </svg>
   );
 }
+
+// One-sentence hover explanations for the confidence tiers (§6.2 coverage bands).
+const COV_TITLES: Record<QualityCoverageTier, string> = {
+  high: 'Покритие на данните ≥ 0,80 — оценката се публикува без уговорки.',
+  medium: 'Покритие на данните 0,60–0,79 — оценката се публикува.',
+  low: 'Покритие на данните 0,40–0,59 — оценката се публикува с уговорка.',
+  none: 'Покритие под 0,40 или недостоверна стойност — договорът остава без оценка, никога нула.',
+};
 
 function ConfidenceMix({
   confidence,
@@ -747,7 +836,7 @@ function ConfidenceMix({
       </div>
       <ul className="q-conf-legend">
         {parts.map((p) => (
-          <li key={p.tier}>
+          <li key={p.tier} title={COV_TITLES[p.tier]}>
             <i className={`q-dot q-cov-dot-${p.tier}`} aria-hidden="true" />
             <span>{COVERAGE_LABELS[p.tier]}</span>
             <b>{pct(p.n / total)}</b>

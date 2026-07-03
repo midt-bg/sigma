@@ -690,6 +690,7 @@ export interface QualityData {
     sort: QualityRankSort;
     contractSort: QualityContractSort;
     sel: string | null; // selected ranking key filtering the contracts list
+    band: string | null; // histogram score band: bin index '0'–'19' (5-point bins) or 'weak'|'mid'|'good'
     top: number;
     minScored: number; // floor applied to authority/supplier rankings (small-sample noise)
   };

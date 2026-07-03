@@ -8,6 +8,7 @@
 export const CACHE_QUERY_PARAMS = new Set([
   'angle', // /trends: time | cpv | cross lens
   'authority',
+  'band', // /quality: histogram score-band filter on the contracts list — changes rows (CWE-349)
   'bidder',
   'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals
   'center',
