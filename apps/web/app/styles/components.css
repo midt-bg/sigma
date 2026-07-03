@@ -546,3 +546,45 @@ tbody td,
     transform 1.2s ease-out,
     opacity 0.1s ease;
 }
+
+/* Save Button (Watchlist) — shares geometry with source-cta */
+.save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 11px var(--s-5);
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font: 500 12px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.save-btn:hover {
+  background: var(--surface);
+}
+.save-btn.is-saved {
+  background: var(--ink);
+  color: var(--paper);
+}
+.save-btn.is-saved:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.save-btn svg {
+  flex: none;
+}
+.save-btn-text {
+  /* wrapper for screen reader live regions if needed, or normal text */
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+  flex-wrap: wrap;
+}
