@@ -55,6 +55,11 @@ DELETE FROM authorities;
 --    GLOB range over Latin a-z and Cyrillic а-я — then the longer, then lexically-first name for full
 --    determinism. The ЕИК key is unchanged, so slugs/URLs (packages/db/src/queries/identity.ts keys on
 --    ЕИК) are unaffected — only the displayed label changes.
+--    PERF: the mode is a correlated subquery keyed on authority_eik, so raw_contracts/raw_tenders
+--    need an authority_eik index or it re-scans the full staging once per authority (O(groups×rows)).
+--    These indexes make each lookup an index seek; harmless if the columns are already covered.
+CREATE INDEX IF NOT EXISTS idx_raw_contracts_authority_eik ON raw_contracts(authority_eik);
+CREATE INDEX IF NOT EXISTS idx_raw_tenders_authority_eik ON raw_tenders(authority_eik);
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT
   'auth:' || s.authority_eik,
