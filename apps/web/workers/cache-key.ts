@@ -1,14 +1,11 @@
 // Keep this allow-list in sync with query params consumed by apps/web/app/routes loaders.
 export const CACHE_QUERY_PARAMS = new Set([
-  'a', // /compare — entity A slug
   'angle', // /trends: time | cpv | cross lens
   'authority',
-  'b', // /compare — entity B slug
   'bidder',
   'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals (CWE-349, #56)
   'by', // /overruns — sort dimension (absolute | percent)
   'center',
-  'cohort', // /price-anomaly — selected CPV cohorts (repeatable); faceting changes the result set
   'count',
   'cpv', // /contracts — exact 5-digit CPV filter; ALSO /trends: repeatable CPV group multi-select faceting the обзор chart + list (CWE-349)
   'cpvSort', // /trends: CPV list ordering
@@ -16,8 +13,8 @@ export const CACHE_QUERY_PARAMS = new Set([
   'cursor',
   'eu',
   'funding',
+  'g', // RESERVED for #144 — /network graph-only re-centre fetch (?g=1); see RESERVED_CACHE_PARAMS
   'kind',
-  'metric', // /compare leaderboard dimension
   'p',
   'page', // pagination offset — distinct pages must not share a cache entry
   'procedure',
@@ -37,6 +34,15 @@ export const CACHE_QUERY_PARAMS = new Set([
 // INTENTIONALLY_UNKEYED` as the invariant, so any future read-but-ignored param must be listed here
 // with a justification rather than silently absent (CWE-349, #56).
 export const INTENTIONALLY_UNKEYED = new Set<string>([]);
+
+// Allow-list entries keyed AHEAD of their reader: params owned by another OPEN stacked/parallel PR
+// whose route lands separately. The reverse drift guard ("no stale allow-list entries") skips
+// exactly these, so a key nothing will ever read cannot hide here indefinitely — every entry must
+// name its owning PR and is removed (from this set) the moment that PR's reader merges. Keep this
+// set minimal.
+export const RESERVED_CACHE_PARAMS = new Set<string>([
+  'g', // #144 (feat/network-force-layout): /network reads ?g=1 for the graph-only re-centre fetch
+]);
 
 export function cacheKey(request: Request, deployTag: string): Request {
   const url = new URL(request.url);

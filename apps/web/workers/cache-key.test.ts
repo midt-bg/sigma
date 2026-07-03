@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cacheKey, CACHE_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './cache-key';
+import {
+  cacheKey,
+  CACHE_QUERY_PARAMS,
+  INTENTIONALLY_UNKEYED,
+  RESERVED_CACHE_PARAMS,
+} from './cache-key';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
@@ -31,7 +36,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
 function consumedQueryParams(): Set<string> {
   const patterns = [
-    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\s*\.\s*(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
   ];
 
@@ -155,11 +160,29 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
 
     // Security direction: every param a route loader / SSR render consumes must be keyed (in the
     // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
-    // cache entry and the wrong data gets served. The reverse direction (allow-list entries nothing
-    // reads yet) is intentionally NOT asserted: params for stacked-later routes legitimately sit in
-    // the allow-list ahead of their route.
+    // cache entry and the wrong data gets served.
     const allowed = new Set([...CACHE_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
+  });
+
+  it('does not retain allow-list entries that nothing reads (reverse drift guard)', () => {
+    // Hygiene direction: an allow-list entry no route consumes fragments the cache for free and
+    // hides dead keying decisions. Params owned by another OPEN PR may sit in the allow-list ahead
+    // of their reader, but only via the documented RESERVED_CACHE_PARAMS set (each entry names its
+    // owning PR) — never silently.
+    const consumed = consumedQueryParams();
+    const stale = [...CACHE_QUERY_PARAMS]
+      .filter((p) => !consumed.has(p) && !RESERVED_CACHE_PARAMS.has(p))
+      .sort();
+    expect(stale).toEqual([]);
+  });
+
+  it('keeps RESERVED_CACHE_PARAMS honest: subset of the allow-list, and no entry has a reader yet', () => {
+    const consumed = consumedQueryParams();
+    for (const p of RESERVED_CACHE_PARAMS) {
+      expect(CACHE_QUERY_PARAMS.has(p)).toBe(true); // a reservation outside the allow-list keys nothing
+      expect(consumed.has(p)).toBe(false); // reader merged => drop the reservation, keep the key
+    }
   });
 });
