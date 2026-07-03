@@ -645,14 +645,24 @@ main.narrow {
   font: 400 clamp(15px, 1.4vw, 17px)/1.55 var(--font-sans);
   color: var(--ink-mid);
 }
-/* Source CTA — solid, icon-led deep link to the procedure's documents on the public ЦАИС ЕОП
-   portal. Rendered as a child of the page header so it sits under the contract lede and is the
-   first action a reader sees. Solid ink → accent on hover, matching the site's button language. */
-.source-cta {
-  display: inline-flex;
+/* Header actions row — wraps the page header's inline actions (source CTA + copy-citation
+   button) so they sit on one line and wrap gracefully on narrow viewports. */
+.header-actions {
+  display: flex;
   align-items: center;
   gap: var(--s-3);
   margin-top: var(--s-6);
+  flex-wrap: wrap;
+}
+
+/* Source CTA & copy-citation button — solid, icon-led actions. The source CTA is a deep link to
+   the procedure's documents on the public ЦАИС ЕОП portal; the copy button reuses the same button
+   language. Solid ink → accent on hover, matching the site's button language. */
+.source-cta,
+.save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
   padding: 11px var(--s-5);
   border: 1px solid var(--ink);
   background: var(--ink);
@@ -664,20 +674,28 @@ main.narrow {
   transition:
     background 0.15s ease,
     border-color 0.15s ease;
+  cursor: pointer;
 }
 /* Keep the label/icon legible once the link is visited — the global `a:visited { color: --ink }`
    (specificity 0,1,1) would otherwise repaint the text ink-on-ink into an invisible black box. */
 .source-cta:visited {
   color: var(--paper);
 }
-.source-cta:hover {
+.source-cta:hover,
+.save-btn:hover {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--paper);
   text-decoration: none;
 }
-.source-cta svg {
+.source-cta svg,
+.save-btn svg {
   flex: none;
+}
+/* Confirmation state after a successful copy — flip to the positive (teal) accent. */
+.save-btn.is-saved {
+  background: var(--pos);
+  border-color: var(--pos);
 }
 .source-cta .cta-ext {
   font-size: 13px;
