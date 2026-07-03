@@ -249,7 +249,10 @@ async function qualityRanking(
 
 // Contracts-list / scorecard scope: a selected ranking row narrows the list to its contracts. The
 // key shapes match what the ETL grouped by in the corresponding *_quality_totals build.
-function contractScope(grain: QualityGrain, sel: string | null): { where: string; params: unknown[] } {
+function contractScope(
+  grain: QualityGrain,
+  sel: string | null,
+): { where: string; params: unknown[] } {
   if (!sel) return { where: '', params: [] };
   switch (grain) {
     case 'authority':
@@ -261,7 +264,7 @@ function contractScope(grain: QualityGrain, sel: string | null): { where: string
     case 'region':
       return { where: 'AND t.place_of_performance = ?', params: [sel] };
     case 'year':
-      return { where: "AND substr(c.signed_at, 1, 4) = ?", params: [sel] };
+      return { where: 'AND substr(c.signed_at, 1, 4) = ?', params: [sel] };
     case 'funding':
       return sel === 'eu'
         ? { where: 'AND c.eu_funded = 1', params: [] }
@@ -382,7 +385,8 @@ export function qualityBlend(pillars: QualityPillars): {
   const keys = Object.keys(QUALITY_WEIGHTS) as (keyof QualityPillars)[];
   const present = keys.filter((k) => pillars[k] != null);
   const effectiveWeights: QualityPillars = { a: null, b: null, c: null, d: null, e: null };
-  if (present.length === 0) return { wmean: null, worst: null, worstPillar: null, effectiveWeights };
+  if (present.length === 0)
+    return { wmean: null, worst: null, worstPillar: null, effectiveWeights };
   const wsum = present.reduce((t, k) => t + QUALITY_WEIGHTS[k], 0);
   let wmean = 0;
   let worst: number | null = null;
@@ -498,7 +502,12 @@ export async function getQualitySummary(db: D1Database): Promise<QualitySummary>
               AVG(score_coverage) AS mean_coverage
        FROM contract_features`,
     )
-    .first<{ total: number; scored: number; avg_overall: number | null; mean_coverage: number | null }>();
+    .first<{
+      total: number;
+      scored: number;
+      avg_overall: number | null;
+      mean_coverage: number | null;
+    }>();
   return {
     totalContracts: row?.total ?? 0,
     scoredContracts: row?.scored ?? 0,

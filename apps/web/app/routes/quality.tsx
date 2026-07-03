@@ -109,10 +109,26 @@ const COVERAGE_LABELS: Record<QualityCoverageTier, string> = {
 // §3.4 value_flag gate — static reference rows (the ETL applies these before any pillar is scored).
 const GATE_ROWS: { flag: string; tone: 'good' | 'mid' | 'weak'; rule: string }[] = [
   { flag: 'ok', tone: 'good', rule: 'чист договор — оценяват се всички измерения.' },
-  { flag: 'review', tone: 'mid', rule: 'сива зона на надценяване — стълб C × 0,90; увереност −1 ниво.' },
-  { flag: 'value_low', tone: 'mid', rule: 'нулева/нищожна стойност — точността на прогнозата (C3) става NULL.' },
-  { flag: 'annex_suspect', tone: 'weak', rule: 'анекс е раздул стойността — превишението (C2) става NULL; C от анексите.' },
-  { flag: 'value_suspect', tone: 'weak', rule: 'извън прага за достоверност — цял C = NULL и договорът е НЕОЦЕНЕН, извън средните.' },
+  {
+    flag: 'review',
+    tone: 'mid',
+    rule: 'сива зона на надценяване — стълб C × 0,90; увереност −1 ниво.',
+  },
+  {
+    flag: 'value_low',
+    tone: 'mid',
+    rule: 'нулева/нищожна стойност — точността на прогнозата (C3) става NULL.',
+  },
+  {
+    flag: 'annex_suspect',
+    tone: 'weak',
+    rule: 'анекс е раздул стойността — превишението (C2) става NULL; C от анексите.',
+  },
+  {
+    flag: 'value_suspect',
+    tone: 'weak',
+    rule: 'извън прага за достоверност — цял C = NULL и договорът е НЕОЦЕНЕН, извън средните.',
+  },
 ];
 
 const COV_TIERS: { tier: QualityCoverageTier; range: string; label: string }[] = [
@@ -176,7 +192,11 @@ function PillarPills({ pillars }: { pillars: QualityPillars }) {
         const v = pillars[p.key];
         const h = v == null ? 2 : Math.max(2, v * 26);
         return (
-          <span key={p.key} className="q-pill" title={`${p.name}: ${v == null ? 'няма данни' : score100(v)}`}>
+          <span
+            key={p.key}
+            className="q-pill"
+            title={`${p.name}: ${v == null ? 'няма данни' : score100(v)}`}
+          >
             <i className={`q-${band(v)}`} style={{ height: `${h.toFixed(1)}px` }} />
             <b>{p.letter}</b>
           </span>
@@ -230,7 +250,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
   const totals: Total[] = [
     { num: `${score100(overview.avgOverall)}/100`, label: 'среден индекс (оценени договори)' },
     {
-      num: overview.totalContracts > 0 ? pct(overview.scoredContracts / overview.totalContracts) : '—',
+      num:
+        overview.totalContracts > 0 ? pct(overview.scoredContracts / overview.totalContracts) : '—',
       label: `оценени договори (${count(overview.scoredContracts)})`,
     },
     {
@@ -258,8 +279,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             Ниският резултат е <b>сигнал за слабо качество на процеса</b> — не доказателство за
             нарушение. Индексът не открива тръжни картели, необичайно ниски оферти или конфликт на
             интереси; тези данни липсват във фийда. Договор без достатъчно данни е{' '}
-            <b>„недостатъчно данни“</b>, никога нула, и не влиза в нито една средна. Всеки резултат е
-            проследим до конкретните договори.
+            <b>„недостатъчно данни“</b>, никога нула, и не влиза в нито една средна. Всеки резултат
+            е проследим до конкретните договори.
           </p>
         </Callout>
 
@@ -317,8 +338,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
                   Във всяко измерение — <b>претеглена средна</b> на наличните показатели.
                 </li>
                 <li>
-                  Между измеренията — <b>0,6 × средна + 0,4 × най-слабото</b>, за да не се „изкупува“
-                  слабо звено със силни.
+                  Между измеренията — <b>0,6 × средна + 0,4 × най-слабото</b>, за да не се
+                  „изкупува“ слабо звено със силни.
                 </li>
                 <li>
                   Измерение без никакви данни <b>отпада</b>, а теглата се пренормират до сбор 1.
@@ -414,7 +435,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
               <p className="small muted">Колко пълни са данните зад всяка оценка.</p>
               <ConfidenceMix confidence={overview.confidence} />
               <p className="small muted">
-                „Няма оценка“ обхваща договорите с покритие под 0,40 и {count(overview.suspectContracts)}{' '}
+                „Няма оценка“ обхваща договорите с покритие под 0,40 и{' '}
+                {count(overview.suspectContracts)}{' '}
                 {plural(overview.suspectContracts, 'договор', 'договора')} value_suspect — те се
                 изключват от всички средни, не се записват като нула.
               </p>
@@ -497,10 +519,16 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
         >
           <p className="q-sort standalone">
             Подреди:{' '}
-            <Link to={qs({ csort: null })} aria-current={scope.contractSort === 'score' ? 'true' : undefined}>
+            <Link
+              to={qs({ csort: null })}
+              aria-current={scope.contractSort === 'score' ? 'true' : undefined}
+            >
               индекс
             </Link>{' '}
-            <Link to={qs({ csort: 'value' })} aria-current={scope.contractSort === 'value' ? 'true' : undefined}>
+            <Link
+              to={qs({ csort: 'value' })}
+              aria-current={scope.contractSort === 'value' ? 'true' : undefined}
+            >
               стойност
             </Link>
           </p>
@@ -520,8 +548,8 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
           )}
           <p className="small muted">
             Договорите с недостатъчни данни за стойността (value_suspect ·{' '}
-            {count(overview.suspectContracts)} в корпуса) не получават оценка и се изключват от всички
-            средни — не се записват като нула. Оценката е ориентир за преглед, не заключение.
+            {count(overview.suspectContracts)} в корпуса) не получават оценка и се изключват от
+            всички средни — не се записват като нула. Оценката е ориентир за преглед, не заключение.
           </p>
         </Section>
 
@@ -566,7 +594,12 @@ function rankColumns(
       secondary: true,
       cell: (r) => (r.sub ? <Chip>{r.sub}</Chip> : null),
     },
-    { key: 'index', header: 'Индекс', align: 'num', cell: (r) => <IndexBar score={r.avgOverall} /> },
+    {
+      key: 'index',
+      header: 'Индекс',
+      align: 'num',
+      cell: (r) => <IndexBar score={r.avgOverall} />,
+    },
     {
       key: 'pillars',
       header: 'Измерения A–E',
@@ -643,7 +676,12 @@ function Histogram({
             width={(z.to - z.from) * W}
             height={PLOT_BOT - 6}
           />
-          <text className={`q-zone-label q-zone-label-${z.cls}`} x={((z.from + z.to) / 2) * W} y={18} textAnchor="middle">
+          <text
+            className={`q-zone-label q-zone-label-${z.cls}`}
+            x={((z.from + z.to) / 2) * W}
+            y={18}
+            textAnchor="middle"
+          >
             {z.label}
           </text>
         </g>
@@ -895,16 +933,24 @@ function Scorecard({ card }: { card: QualityScorecard }) {
 }
 
 // Raw leaves → display rows per pillar. Missing values render as „—" (unknown, never zero).
-function scorecardLeaves(card: QualityScorecard): Record<keyof QualityPillars, { k: string; v: string }[]> {
+function scorecardLeaves(
+  card: QualityScorecard,
+): Record<keyof QualityPillars, { k: string; v: string }[]> {
   const l = card.leaves;
   const num = (v: number | null, dp = 2) =>
-    v == null ? '—' : v.toFixed(dp).replace(/\.?0+$/, '').replace('.', ',');
+    v == null
+      ? '—'
+      : v
+          .toFixed(dp)
+          .replace(/\.?0+$/, '')
+          .replace('.', ',');
   const yesNo = (v: boolean | null) => (v == null ? '—' : v ? 'да' : 'не');
   return {
     a: [
       {
         k: 'Брой оферти',
-        v: l.bidsReceived == null ? '—' : `${l.bidsReceived}${l.singleOffer ? ' · единствена' : ''}`,
+        v:
+          l.bidsReceived == null ? '—' : `${l.bidsReceived}${l.singleOffer ? ' · единствена' : ''}`,
       },
       { k: 'Дял МСП', v: l.smeRate == null ? '—' : pct(l.smeRate) },
       { k: 'Електронен търг', v: yesNo(l.isEauction) },
@@ -912,17 +958,29 @@ function scorecardLeaves(card: QualityScorecard): Record<keyof QualityPillars, {
     b: [
       { k: 'Вид процедура', v: l.procedureType ?? '—' },
       { k: 'Ускорена процедура', v: yesNo(l.isAccelerated) },
-      { k: 'Срок за оферти', v: l.bidWindowDays == null ? '—' : `${Math.round(l.bidWindowDays)} дни` },
+      {
+        k: 'Срок за оферти',
+        v: l.bidWindowDays == null ? '—' : `${Math.round(l.bidWindowDays)} дни`,
+      },
     ],
     c: [
       { k: 'Брой анекси', v: l.annexCount == null ? '—' : String(l.annexCount) },
       { k: 'Превишение', v: l.costOverrunRatio == null ? '—' : `${num(l.costOverrunRatio)}×` },
-      { k: 'Отклонение от прогнозата', v: l.estimateDevRatio == null ? '—' : pct(l.estimateDevRatio) },
+      {
+        k: 'Отклонение от прогнозата',
+        v: l.estimateDevRatio == null ? '—' : pct(l.estimateDevRatio),
+      },
     ],
     d: [
       { k: 'HHI на купувача', v: num(l.authorityHhi) },
-      { k: 'Дял повторни печалби', v: l.repeatWinIntensity == null ? '—' : pct(l.repeatWinIntensity) },
-      { k: 'Възраст на връзката', v: l.edgeAgeYears == null ? '—' : `${num(l.edgeAgeYears, 1)} г.` },
+      {
+        k: 'Дял повторни печалби',
+        v: l.repeatWinIntensity == null ? '—' : pct(l.repeatWinIntensity),
+      },
+      {
+        k: 'Възраст на връзката',
+        v: l.edgeAgeYears == null ? '—' : `${num(l.edgeAgeYears, 1)} г.`,
+      },
     ],
     e: [
       {

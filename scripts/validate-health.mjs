@@ -71,10 +71,14 @@ check('value_suspect contracts excluded from every numerator', () => {
   // the invariant is that every one of them is excluded, however many there are.
   if (suspects.length < 1) throw new Error(`expected at least 1 value_suspect row, found 0`);
   const leaked = suspects.filter((s) => {
-    const cf = one(`SELECT score_overall FROM contract_features WHERE contract_id = ?`, s.contract_id);
+    const cf = one(
+      `SELECT score_overall FROM contract_features WHERE contract_id = ?`,
+      s.contract_id,
+    );
     return cf.score_overall !== null;
   });
-  if (leaked.length > 0) throw new Error(`${leaked.length} value_suspect rows have non-NULL score_overall`);
+  if (leaked.length > 0)
+    throw new Error(`${leaked.length} value_suspect rows have non-NULL score_overall`);
   const authorityLeaks = suspects.filter((s) => {
     const at = one(
       `SELECT scored_contracts, total_contracts FROM authority_quality_totals WHERE authority_id = ?`,
@@ -83,7 +87,9 @@ check('value_suspect contracts excluded from every numerator', () => {
     return !at || at.scored_contracts >= at.total_contracts;
   });
   if (authorityLeaks.length > 0)
-    throw new Error(`${authorityLeaks.length} value_suspect authorities have scored_contracts >= total_contracts`);
+    throw new Error(
+      `${authorityLeaks.length} value_suspect authorities have scored_contracts >= total_contracts`,
+    );
   return `${suspects.length} value_suspect rows, all score_overall NULL, all authorities scored<total`;
 });
 
@@ -154,22 +160,29 @@ check('Spearman-lite A vs B decile correlation (informational, no hard gate)', (
   const db_ = rows.map((r) => decile(r.score_b));
   const n = da.length;
   const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-  const ma = mean(da), mb = mean(db_);
-  let cov = 0, va = 0, vb = 0;
+  const ma = mean(da),
+    mb = mean(db_);
+  let cov = 0,
+    va = 0,
+    vb = 0;
   for (let i = 0; i < n; i++) {
     cov += (da[i] - ma) * (db_[i] - mb);
     va += (da[i] - ma) ** 2;
     vb += (db_[i] - mb) ** 2;
   }
   const corr = cov / Math.sqrt(va * vb);
-  console.log(`  n=${n} decile-correlation(A,B) = ${corr.toFixed(3)} (informational; >0.7 would warrant revisiting §3.2 weights)`);
+  console.log(
+    `  n=${n} decile-correlation(A,B) = ${corr.toFixed(3)} (informational; >0.7 would warrant revisiting §3.2 weights)`,
+  );
 });
 
 // 6) e-auction mean A-pillar > non-eauction mean within the same CPV division (print top-3
 // divisions with both present)
-check('e-auction contracts score higher A-pillar than non-eauction peers (same CPV division)', () => {
-  const rows = all(
-    `SELECT CASE WHEN t.cpv_code IS NULL OR LENGTH(TRIM(t.cpv_code)) < 2 THEN 'NA' ELSE substr(t.cpv_code,1,2) END AS division,
+check(
+  'e-auction contracts score higher A-pillar than non-eauction peers (same CPV division)',
+  () => {
+    const rows = all(
+      `SELECT CASE WHEN t.cpv_code IS NULL OR LENGTH(TRIM(t.cpv_code)) < 2 THEN 'NA' ELSE substr(t.cpv_code,1,2) END AS division,
        AVG(CASE WHEN cf.is_eauction = 1 THEN cf.score_a END) AS ea_avg,
        AVG(CASE WHEN cf.is_eauction = 0 OR cf.is_eauction IS NULL THEN cf.score_a END) AS non_ea_avg,
        SUM(CASE WHEN cf.is_eauction = 1 AND cf.score_a IS NOT NULL THEN 1 ELSE 0 END) AS ea_n,
@@ -180,26 +193,29 @@ check('e-auction contracts score higher A-pillar than non-eauction peers (same C
      GROUP BY division
      HAVING ea_n > 0 AND non_ea_n > 0
      ORDER BY ea_n DESC LIMIT 3`,
-  );
-  if (rows.length === 0) {
-    console.log('  no CPV division has both e-auction and non-e-auction scored rows');
-    return;
-  }
-  for (const r of rows) {
-    console.log(
-      `  division ${r.division}: eauction avg_a=${r.ea_avg?.toFixed(3)} (n=${r.ea_n})  non-eauction avg_a=${r.non_ea_avg?.toFixed(3)} (n=${r.non_ea_n})`,
     );
-  }
-  // Majority gate, not all-of: division-level comparison is coarser than the spec's
-  // CPV × band × year peer grain (§10.7), and division 33 (pharma) legitimately inverts —
-  // its e-auctions are dominated by low-bid framework call-offs.
-  const worse = rows.filter((r) => r.ea_avg <= r.non_ea_avg);
-  if (worse.length * 2 > rows.length)
-    throw new Error(`${worse.length}/${rows.length} top divisions have eauction avg_a <= non-eauction avg_a`);
-});
+    if (rows.length === 0) {
+      console.log('  no CPV division has both e-auction and non-e-auction scored rows');
+      return;
+    }
+    for (const r of rows) {
+      console.log(
+        `  division ${r.division}: eauction avg_a=${r.ea_avg?.toFixed(3)} (n=${r.ea_n})  non-eauction avg_a=${r.non_ea_avg?.toFixed(3)} (n=${r.non_ea_n})`,
+      );
+    }
+    // Majority gate, not all-of: division-level comparison is coarser than the spec's
+    // CPV × band × year peer grain (§10.7), and division 33 (pharma) legitimately inverts —
+    // its e-auctions are dominated by low-bid framework call-offs.
+    const worse = rows.filter((r) => r.ea_avg <= r.non_ea_avg);
+    if (worse.length * 2 > rows.length)
+      throw new Error(
+        `${worse.length}/${rows.length} top divisions have eauction avg_a <= non-eauction avg_a`,
+      );
+  },
+);
 
 // 7) Пряко договаряне AND amount_eur > 215000 -> B-pillar <= 0.05
-check("Пряко договаряне + amount_eur > 215000 => score_b <= 0.05", () => {
+check('Пряко договаряне + amount_eur > 215000 => score_b <= 0.05', () => {
   const bad = one(
     `SELECT COUNT(*) AS n FROM contract_features cf
      JOIN contracts c ON c.id = cf.contract_id

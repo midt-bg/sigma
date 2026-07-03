@@ -1186,10 +1186,18 @@
   --q-unknown: var(--ink-soft);
   --q-conf-medium: oklch(55% 0.05 230); /* the mock's slate-blue "medium confidence" */
 }
-.q-good { color: var(--q-good); }
-.q-mid { color: var(--q-mid); }
-.q-weak { color: var(--q-weak); }
-.q-unknown { color: var(--q-unknown); }
+.q-good {
+  color: var(--q-good);
+}
+.q-mid {
+  color: var(--q-mid);
+}
+.q-weak {
+  color: var(--q-weak);
+}
+.q-unknown {
+  color: var(--q-unknown);
+}
 
 /* pillar strip */
 .q-pillar-grid {
@@ -1357,10 +1365,18 @@
   flex: none;
   background: var(--q-unknown);
 }
-.q-cov-dot-high { background: var(--q-good); }
-.q-cov-dot-medium { background: var(--q-conf-medium); }
-.q-cov-dot-low { background: var(--q-mid); }
-.q-cov-dot-none { background: var(--rule); }
+.q-cov-dot-high {
+  background: var(--q-good);
+}
+.q-cov-dot-medium {
+  background: var(--q-conf-medium);
+}
+.q-cov-dot-low {
+  background: var(--q-mid);
+}
+.q-cov-dot-none {
+  background: var(--rule);
+}
 
 /* distribution + confidence */
 .q-dist {
@@ -1379,25 +1395,60 @@
   inline-size: 100%;
   block-size: auto;
 }
-.q-zone { opacity: 0.35; }
-.q-zone-weak { fill: var(--accent-bg); }
-.q-zone-mid { fill: oklch(94% 0.05 90); }
-.q-zone-good { fill: oklch(94% 0.04 150); }
+.q-zone {
+  opacity: 0.35;
+}
+.q-zone-weak {
+  fill: var(--accent-bg);
+}
+.q-zone-mid {
+  fill: oklch(94% 0.05 90);
+}
+.q-zone-good {
+  fill: oklch(94% 0.04 150);
+}
 .q-zone-label {
   font: 600 9px var(--font-mono);
   letter-spacing: 0.1em;
 }
-.q-zone-label-weak { fill: var(--q-weak); }
-.q-zone-label-mid { fill: var(--q-mid); }
-.q-zone-label-good { fill: var(--q-good); }
-.q-fill-good { fill: var(--q-good); }
-.q-fill-mid { fill: var(--q-mid); }
-.q-fill-weak { fill: var(--q-weak); }
-.q-fill-unknown { fill: var(--q-unknown); }
-.q-axis { stroke: var(--rule); stroke-width: 1; }
-.q-tick { font: 400 9px var(--font-mono); fill: var(--ink-soft); }
-.q-mean { stroke: var(--ink); stroke-width: 1.4; stroke-dasharray: 4 3; }
-.q-mean-label { font: 600 9px var(--font-mono); fill: var(--ink); }
+.q-zone-label-weak {
+  fill: var(--q-weak);
+}
+.q-zone-label-mid {
+  fill: var(--q-mid);
+}
+.q-zone-label-good {
+  fill: var(--q-good);
+}
+.q-fill-good {
+  fill: var(--q-good);
+}
+.q-fill-mid {
+  fill: var(--q-mid);
+}
+.q-fill-weak {
+  fill: var(--q-weak);
+}
+.q-fill-unknown {
+  fill: var(--q-unknown);
+}
+.q-axis {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.q-tick {
+  font: 400 9px var(--font-mono);
+  fill: var(--ink-soft);
+}
+.q-mean {
+  stroke: var(--ink);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 3;
+}
+.q-mean-label {
+  font: 600 9px var(--font-mono);
+  fill: var(--ink);
+}
 .q-conf h4 {
   margin: 0 0 var(--s-1);
   font-size: 15px;
@@ -1408,10 +1459,18 @@
   overflow: hidden;
   margin-block: var(--s-2);
 }
-.q-cov-fill-high { background: var(--q-good); }
-.q-cov-fill-medium { background: var(--q-conf-medium); }
-.q-cov-fill-low { background: var(--q-mid); }
-.q-cov-fill-none { background: var(--rule); }
+.q-cov-fill-high {
+  background: var(--q-good);
+}
+.q-cov-fill-medium {
+  background: var(--q-conf-medium);
+}
+.q-cov-fill-low {
+  background: var(--q-mid);
+}
+.q-cov-fill-none {
+  background: var(--rule);
+}
 .q-conf-legend {
   margin: 0 0 var(--s-2);
   padding: 0;
@@ -1533,14 +1592,33 @@
   white-space: nowrap;
   color: var(--text-muted);
 }
-.q-cov-high { color: var(--q-good); border-color: color-mix(in oklab, var(--q-good) 45%, transparent); }
-.q-cov-medium { color: var(--q-conf-medium); border-color: color-mix(in oklab, var(--q-conf-medium) 45%, transparent); }
-.q-cov-low { color: var(--q-mid); border-color: color-mix(in oklab, var(--q-mid) 55%, transparent); }
-.q-cov-none { color: var(--ink-soft); }
-.q-cov-text-high { color: var(--q-good); }
-.q-cov-text-medium { color: var(--q-conf-medium); }
-.q-cov-text-low { color: var(--q-mid); }
-.q-cov-text-none { color: var(--ink-soft); }
+.q-cov-high {
+  color: var(--q-good);
+  border-color: color-mix(in oklab, var(--q-good) 45%, transparent);
+}
+.q-cov-medium {
+  color: var(--q-conf-medium);
+  border-color: color-mix(in oklab, var(--q-conf-medium) 45%, transparent);
+}
+.q-cov-low {
+  color: var(--q-mid);
+  border-color: color-mix(in oklab, var(--q-mid) 55%, transparent);
+}
+.q-cov-none {
+  color: var(--ink-soft);
+}
+.q-cov-text-high {
+  color: var(--q-good);
+}
+.q-cov-text-medium {
+  color: var(--q-conf-medium);
+}
+.q-cov-text-low {
+  color: var(--q-mid);
+}
+.q-cov-text-none {
+  color: var(--ink-soft);
+}
 .q-drill {
   font: 500 11px/1 var(--font-mono);
   white-space: nowrap;
