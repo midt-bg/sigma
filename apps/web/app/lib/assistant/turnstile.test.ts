@@ -40,13 +40,18 @@ describe('verifyTurnstileToken', () => {
   });
 
   it('passes secret, response, and remoteip to siteverify', async () => {
-    const spy = vi.fn(() => siteverify(true));
-    vi.stubGlobal('fetch', spy);
+    let body: FormData | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { body?: unknown }) => {
+        body = init?.body as FormData;
+        return siteverify(true);
+      }),
+    );
     await verifyTurnstileToken('tok', 'sekret', '1.2.3.4');
-    const body = spy.mock.calls[0][1].body as FormData;
-    expect(body.get('secret')).toBe('sekret');
-    expect(body.get('response')).toBe('tok');
-    expect(body.get('remoteip')).toBe('1.2.3.4');
+    expect(body?.get('secret')).toBe('sekret');
+    expect(body?.get('response')).toBe('tok');
+    expect(body?.get('remoteip')).toBe('1.2.3.4');
   });
 });
 
