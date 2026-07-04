@@ -22,15 +22,42 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 
 -- @refresh-batch authorities-bidders
 -- ── 1) Authorities referenced by OCDS staging (new ones only; INSERT OR IGNORE) ────────────────────
+-- Canonical name is the MODE per ЕИК (not MIN), multi-ЕИК joint-procurement lists are excluded, and
+-- the mode subquery is index-backed — kept identical to normalize-raw.sql step 1 so the incremental
+-- path and the full rebuild agree (#194 / #196; parity test in packages/db/src/refresh-slice.test.ts).
+CREATE INDEX IF NOT EXISTS idx_raw_contracts_authority_eik ON raw_contracts(authority_eik);
+CREATE INDEX IF NOT EXISTS idx_raw_tenders_authority_eik ON raw_tenders(authority_eik);
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
+SELECT
+  'auth:' || s.authority_eik,
+  (
+    SELECT v.authority_name
+    FROM (
+      SELECT source, authority_eik, authority_name FROM raw_contracts
+      UNION ALL
+      SELECT source, authority_eik, authority_name FROM raw_tenders
+    ) v
+    WHERE v.authority_eik = s.authority_eik
+      AND (v.source LIKE 'eop:%' OR v.source LIKE 'ocds:%')
+      AND v.authority_name IS NOT NULL AND TRIM(v.authority_name) <> ''
+    GROUP BY v.authority_name
+    ORDER BY
+      COUNT(*) DESC,                                                    -- mode: most-frequent label wins
+      CASE WHEN v.authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,   -- prefer mixed-case over ALL-CAPS
+      LENGTH(v.authority_name) DESC,                                    -- then the more descriptive (longer) label
+      v.authority_name                                                  -- final deterministic tiebreak
+    LIMIT 1
+  ),
+  s.authority_eik,
+  MAX(s.authority_type)
 FROM (
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_contracts
+  SELECT source, authority_eik, authority_type FROM raw_contracts
   UNION ALL
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_tenders
-)
-WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
-GROUP BY authority_eik;
+  SELECT source, authority_eik, authority_type FROM raw_tenders
+) s
+WHERE (s.source LIKE 'eop:%' OR s.source LIKE 'ocds:%') AND s.authority_eik IS NOT NULL
+  AND s.authority_eik NOT LIKE '%;%'   -- exclude multi-ЕИК joint-procurement lists (#196)
+GROUP BY s.authority_eik;
 
 -- type_group for any authority still missing it (covers the rows just inserted) — same heuristic as
 -- normalize-raw.sql step 1b.
@@ -56,10 +83,12 @@ SELECT
   MAX(grp),
   CASE WHEN MAX(grp) = 1 THEN 'consortium' ELSE 'company' END
 FROM (
-  SELECT contractor_name, eik_clean,
-    CASE WHEN eik_clean NOT GLOB '*[^0-9]*' AND LENGTH(eik_clean) IN (9, 13) THEN 1 ELSE 0 END AS eik_valid,
+  SELECT
+    contractor_name,
+    eik_clean,
+    eik_valid,
     CASE
-      WHEN eik_clean NOT GLOB '*[^0-9]*' AND LENGTH(eik_clean) IN (9, 13) THEN 'eik:' || eik_clean
+      WHEN eik_valid = 1 THEN 'eik:' || eik_clean
       WHEN contractor_name IS NOT NULL AND TRIM(contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(contractor_name, '  ', ' '), '  ', ' ')))
       ELSE NULL
     END AS bidder_key,
@@ -71,9 +100,35 @@ FROM (
       THEN 1 ELSE 0
     END AS grp
   FROM (
-    SELECT contractor_name,
-      TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
-    FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+    SELECT
+      contractor_name,
+      eik_clean,
+      -- Bulgarian ЕИК/Булстат checksum — identical to normalize-raw.sql step 4 (#195), so the
+      -- incremental path's bidder identity stays in parity with the full rebuild.
+      CASE
+        WHEN eik_clean IS NULL OR eik_clean GLOB '*[^0-9]*' OR LENGTH(eik_clean) NOT IN (9, 13) THEN 0
+        WHEN (
+          CASE
+            WHEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
+            WHEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
+            ELSE 0
+          END
+        ) <> CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) THEN 0
+        WHEN LENGTH(eik_clean) = 9 THEN 1
+        WHEN (
+          CASE
+            WHEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
+            WHEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
+            ELSE 0
+          END
+        ) = CAST(SUBSTR(eik_clean, 13, 1) AS INTEGER) THEN 1
+        ELSE 0
+      END AS eik_valid
+    FROM (
+      SELECT contractor_name,
+        TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
+      FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+    )
   )
 )
 WHERE bidder_key IS NOT NULL
@@ -1244,16 +1299,43 @@ WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NUL
   OR b.id IN (
     SELECT bidder_key
     FROM (
-      SELECT contractor_name, eik_clean,
+      SELECT
+        contractor_name,
         CASE
-          WHEN eik_clean NOT GLOB '*[^0-9]*' AND LENGTH(eik_clean) IN (9, 13) THEN 'eik:' || eik_clean
+          WHEN eik_valid = 1 THEN 'eik:' || eik_clean
           WHEN contractor_name IS NOT NULL AND TRIM(contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(contractor_name, '  ', ' '), '  ', ' ')))
           ELSE NULL
         END AS bidder_key
       FROM (
-        SELECT contractor_name,
-          TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
-        FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+        SELECT
+          contractor_name,
+          eik_clean,
+          -- Same Bulgarian ЕИК checksum as the bidder INSERT above and normalize-raw.sql (#195),
+          -- so the touched-bidder key matches the actual bidders.id keying.
+          CASE
+            WHEN eik_clean IS NULL OR eik_clean GLOB '*[^0-9]*' OR LENGTH(eik_clean) NOT IN (9, 13) THEN 0
+            WHEN (
+              CASE
+                WHEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (1 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 2 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
+                WHEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11 < 10 THEN (3 * CAST(SUBSTR(eik_clean, 1, 1) AS INTEGER) + 4 * CAST(SUBSTR(eik_clean, 2, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 3, 1) AS INTEGER) + 6 * CAST(SUBSTR(eik_clean, 4, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 5, 1) AS INTEGER) + 8 * CAST(SUBSTR(eik_clean, 6, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 7, 1) AS INTEGER) + 10 * CAST(SUBSTR(eik_clean, 8, 1) AS INTEGER)) % 11
+                ELSE 0
+              END
+            ) <> CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) THEN 0
+            WHEN LENGTH(eik_clean) = 9 THEN 1
+            WHEN (
+              CASE
+                WHEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (2 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 3 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
+                WHEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11 < 10 THEN (4 * CAST(SUBSTR(eik_clean, 9, 1) AS INTEGER) + 9 * CAST(SUBSTR(eik_clean, 10, 1) AS INTEGER) + 5 * CAST(SUBSTR(eik_clean, 11, 1) AS INTEGER) + 7 * CAST(SUBSTR(eik_clean, 12, 1) AS INTEGER)) % 11
+                ELSE 0
+              END
+            ) = CAST(SUBSTR(eik_clean, 13, 1) AS INTEGER) THEN 1
+            ELSE 0
+          END AS eik_valid
+        FROM (
+          SELECT contractor_name,
+            TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
+          FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+        )
       )
     )
     WHERE bidder_key IS NOT NULL
