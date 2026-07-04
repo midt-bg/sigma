@@ -129,6 +129,36 @@ INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
 FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 
+-- ── 4c) cpv_division_stats (value percentiles per CPV division - „Подобни договори" benchmark) ──
+-- Nearest-rank percentiles (k = ceil(q*n), emulated as CAST(n*q + 0.9999999 AS INTEGER) because
+-- SQLite lacks ceil()) over the clean-value cohort: value_flag = 'ok', amount_eur > 0, known CPV.
+-- The contract page reads ONE row here instead of scanning its whole division per view (D1 meters
+-- rows read). The cohort includes the candidate itself - the shown band is display context and is
+-- deliberately coarse, unlike scripts/anomaly-report.mjs which needs leave-one-out p95 for flagging.
+CREATE TABLE IF NOT EXISTS cpv_division_stats (
+  division TEXT PRIMARY KEY, priced_contracts INTEGER NOT NULL,
+  p25_eur REAL NOT NULL, median_eur REAL NOT NULL, p75_eur REAL NOT NULL,
+  p90_eur REAL NOT NULL, p95_eur REAL NOT NULL, p99_eur REAL NOT NULL
+);
+DELETE FROM cpv_division_stats;
+INSERT INTO cpv_division_stats (division, priced_contracts, p25_eur, median_eur, p75_eur, p90_eur, p95_eur, p99_eur)
+SELECT division, MAX(cnt),
+       MAX(CASE WHEN rn = CAST(cnt * 0.25 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.50 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.75 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.90 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.95 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.99 + 0.9999999 AS INTEGER) THEN amount_eur END)
+FROM (
+  SELECT substr(t.cpv_code, 1, 2) AS division, c.amount_eur,
+         ROW_NUMBER() OVER (PARTITION BY substr(t.cpv_code, 1, 2) ORDER BY c.amount_eur, c.id) AS rn,
+         COUNT(*)     OVER (PARTITION BY substr(t.cpv_code, 1, 2)) AS cnt
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id
+  WHERE c.amount_eur IS NOT NULL AND c.amount_eur > 0 AND c.value_flag = 'ok'
+    AND COALESCE(t.cpv_code, '') <> ''
+)
+GROUP BY division;
+
 -- ── 5) flow_pairs (per authority → bidder) ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS flow_pairs (
   authority_id TEXT NOT NULL REFERENCES authorities(id), bidder_id TEXT NOT NULL REFERENCES bidders(id),

@@ -327,6 +327,35 @@ export interface ContractRecord extends ContractDetail {
   sourceNames: { authority: string; bidder: string }; // verbatim source names
 }
 
+/** Precomputed value percentiles of one CPV division (cpv_division_stats rollup). */
+export interface CpvCohortStats {
+  division: string;
+  pricedContracts: number;
+  p25Eur: number;
+  medianEur: number;
+  p75Eur: number;
+  p90Eur: number;
+  p95Eur: number;
+  p99Eur: number;
+}
+
+/** Coarse position of one contract's value inside its CPV-division cohort. */
+export type CohortBand =
+  | 'top1'
+  | 'top5'
+  | 'top10'
+  | 'top25'
+  | 'above-median'
+  | 'below-median'
+  | 'bottom25';
+
+/** The „Подобни договори" benchmark for the contract page - null when there is no honest cohort. */
+export interface ContractCohortBenchmark {
+  amountEur: number;
+  band: CohortBand;
+  stats: CpvCohortStats;
+}
+
 // ── Flows ───────────────────────────────────────────────────────────────────────────────────────
 
 export interface FlowPair {

@@ -15,6 +15,7 @@ export * from './flows';
 export * from './network';
 export * from './trend';
 export * from './regions';
+export * from './cohort';
 export * from './competition';
 export * from './search';
 export * from './details';
