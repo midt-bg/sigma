@@ -320,16 +320,16 @@ function seedCollidingPartySlot(dbPath: string): void {
        region_nuts, contact_email, contact_phone)
     VALUES
       ('ocds:2026-06-01', '2026-06-08T00:00:00Z', 'ocds-shared', 'ORG-0003',
-       '111111111', 'Company A', 'Addr A 1', 'City A', 'BG331', 'a@example.test', '+359000000011'),
+       '111111113', 'Company A', 'Addr A 1', 'City A', 'BG331', 'a@example.test', '+359000000011'),
       ('ocds:2026-06-05', '2026-06-08T00:00:00Z', 'ocds-shared', 'ORG-0003',
-       '222222222', 'Company B', 'Addr B 2', 'City B', 'BG421', 'b@example.test', '+359000000022');`,
+       '222222226', 'Company B', 'Addr B 2', 'City B', 'BG421', 'b@example.test', '+359000000022');`,
   );
 }
 
 function seedTwoCollidingBidders(dbPath: string): void {
   for (const [eik, name] of [
-    ['111111111', 'Company A'],
-    ['222222222', 'Company B'],
+    ['111111113', 'Company A'],
+    ['222222226', 'Company B'],
   ] as const) {
     sqlite(
       dbPath,
@@ -920,19 +920,19 @@ describe('refresh-slice EOP base derivation', () => {
     const sliceDb = resolve(dir, 'slice.sqlite');
     try {
       const partyByEik =
-        "SELECT eik, locality, street_address, contact_email FROM parties WHERE eik IN ('111111111','222222222') ORDER BY eik";
+        "SELECT eik, locality, street_address, contact_email FROM parties WHERE eik IN ('111111113','222222226') ORDER BY eik";
       const bidderByEik =
-        "SELECT eik_normalized AS eik, settlement, address, contact_email FROM bidders WHERE eik_normalized IN ('111111111','222222222') ORDER BY eik_normalized";
+        "SELECT eik_normalized AS eik, settlement, address, contact_email FROM bidders WHERE eik_normalized IN ('111111113','222222226') ORDER BY eik_normalized";
       // Each company must be enriched from its OWN party row, not the latest slot occupant's.
       const expectedParties = [
         {
-          eik: '111111111',
+          eik: '111111113',
           locality: 'City A',
           street_address: 'Addr A 1',
           contact_email: 'a@example.test',
         },
         {
-          eik: '222222222',
+          eik: '222222226',
           locality: 'City B',
           street_address: 'Addr B 2',
           contact_email: 'b@example.test',
@@ -940,13 +940,13 @@ describe('refresh-slice EOP base derivation', () => {
       ];
       const expectedBidders = [
         {
-          eik: '111111111',
+          eik: '111111113',
           settlement: 'City A',
           address: 'Addr A 1',
           contact_email: 'a@example.test',
         },
         {
-          eik: '222222222',
+          eik: '222222226',
           settlement: 'City B',
           address: 'Addr B 2',
           contact_email: 'b@example.test',
@@ -1012,18 +1012,18 @@ describe('refresh-slice integrity gate', () => {
     try {
       initWorkDb(dbPath);
       // window 1: contract attributed to bidder A
-      seedReattrContract(dbPath, 'eop:contracts:2026-06-02', '111111111', 'Company A');
+      seedReattrContract(dbPath, 'eop:contracts:2026-06-02', '111111113', 'Company A');
       readScript(dbPath, refreshSlicePath);
-      expect(wonEur('111111111')).toBeGreaterThan(0);
+      expect(wonEur('111111113')).toBeGreaterThan(0);
 
       // window 2: same contract_number+unp re-imported with a different contractor → re-attribution
       resetRawStaging(dbPath);
-      seedReattrContract(dbPath, 'eop:contracts:2026-06-05', '222222222', 'Company B');
+      seedReattrContract(dbPath, 'eop:contracts:2026-06-05', '222222226', 'Company B');
       readScript(dbPath, refreshSlicePath);
 
       // A's scoped rollup was rebuilt to empty (the value moved), B now carries it…
-      expect(wonEur('111111111')).toBe(0);
-      expect(wonEur('222222222')).toBeGreaterThan(0);
+      expect(wonEur('111111113')).toBe(0);
+      expect(wonEur('222222226')).toBeGreaterThan(0);
 
       // …so the gate reconciles on the slice-built DB (rollup check runs; staging self-skips here).
       const results = assertIntegrity(run, { label: 'test-slice', exit: false });
