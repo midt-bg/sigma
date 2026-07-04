@@ -348,9 +348,17 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             <Link to={`/contracts?authority=${a.eik}`}>
               Виж всички / филтрирай / свали като CSV →
             </Link>
+            {' · '}
+            <a href={`/authorities/${a.eik}.rss`}>Следи новите договори (RSS)</a>
           </p>
         </Section>
       </main>
+      <link
+        rel="alternate"
+        type="application/rss+xml"
+        title={`${a.name} - нови договори`}
+        href={`/authorities/${a.eik}.rss`}
+      />
     </>
   );
 }

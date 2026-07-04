@@ -408,9 +408,17 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             <Link to={`/contracts?bidder=${c.slug}`}>
               Виж всички / филтрирай / свали като CSV →
             </Link>
+            {' · '}
+            <a href={`/companies/${c.slug}.rss`}>Следи новите договори (RSS)</a>
           </p>
         </Section>
       </main>
+      <link
+        rel="alternate"
+        type="application/rss+xml"
+        title={`${c.displayName} - нови договори`}
+        href={`/companies/${c.slug}.rss`}
+      />
     </>
   );
 }
