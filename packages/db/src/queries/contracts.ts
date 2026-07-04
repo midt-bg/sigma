@@ -235,6 +235,27 @@ export async function listSingleOfferContracts(
   return rows.results.map(toItem);
 }
 
+/**
+ * The newest contracts of one entity, for the profile RSS feeds - date-desc with the same
+ * signed/published fallback the profile "Най-нови" tab uses, id tiebreak for a stable order.
+ * Reuses the shared SELECT/FROM and row mapper so feed items match the HTML lists exactly.
+ */
+export async function listRecentEntityContracts(
+  db: D1Database,
+  entity: { kind: 'authority'; authorityId: string } | { kind: 'company'; bidderId: string },
+  limit = 50,
+): Promise<ContractListItem[]> {
+  const scope = entity.kind === 'authority' ? 't.authority_id = ?' : 'c.bidder_id = ?';
+  const id = entity.kind === 'authority' ? entity.authorityId : entity.bidderId;
+  const rows = await db
+    .prepare(
+      `${SELECT} ${FROM} WHERE ${scope} ORDER BY COALESCE(c.signed_at, c.published_at) DESC, c.id DESC LIMIT ?`,
+    )
+    .bind(id, limit)
+    .all<ContractRow>();
+  return rows.results.map(toItem);
+}
+
 export interface ContractListResult extends Page<ContractListItem> {
   valueEur: number;
   suspect: number;

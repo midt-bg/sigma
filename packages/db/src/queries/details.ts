@@ -93,6 +93,33 @@ interface CompanyTotalsFull {
   last_date: string | null;
 }
 
+/**
+ * Display name for an authority's RSS feed header - one indexed rollup read instead of the full
+ * profile DTO. Null mirrors the profile page's 404 (an entity absent from authority_totals).
+ */
+export async function getAuthorityHead(
+  db: D1Database,
+  authorityId: string,
+): Promise<{ name: string } | null> {
+  const row = await db
+    .prepare(`SELECT name FROM authority_totals WHERE authority_id = ?`)
+    .bind(authorityId)
+    .first<{ name: string }>();
+  return row ? { name: cleanName(row.name) } : null;
+}
+
+/** Company counterpart of getAuthorityHead - same display-name rules as the profile page. */
+export async function getCompanyHead(
+  db: D1Database,
+  bidderId: string,
+): Promise<{ name: string } | null> {
+  const row = await db
+    .prepare(`SELECT name, kind FROM company_totals WHERE bidder_id = ?`)
+    .bind(bidderId)
+    .first<{ name: string; kind: 'company' | 'consortium' }>();
+  return row ? { name: entityName(cleanName(row.name), row.kind) } : null;
+}
+
 export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
   const row = await db
     .prepare(`SELECT * FROM company_totals WHERE bidder_id = ?`)

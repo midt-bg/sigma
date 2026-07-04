@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getContractFacets, listContracts, normalizeContractSort } from './contracts';
+import {
+  getContractFacets,
+  listContracts,
+  listRecentEntityContracts,
+  normalizeContractSort,
+} from './contracts';
 
 describe('normalizeContractSort', () => {
   it('passes known sort keys through', () => {
@@ -126,5 +131,52 @@ describe('getContractFacets', () => {
       label: 'Неизвестна',
       count: 3,
     });
+  });
+});
+
+describe('listRecentEntityContracts', () => {
+  function capturingDb() {
+    const captured: { sql: string; binds: unknown[] }[] = [];
+    const db = {
+      prepare(sql: string) {
+        const entry = { sql, binds: [] as unknown[] };
+        captured.push(entry);
+        return {
+          bind(...args: unknown[]) {
+            entry.binds = args;
+            return this;
+          },
+          async all<T>() {
+            return { results: [contractRow] as T[] };
+          },
+        };
+      },
+    } as D1Database;
+    return { db, captured };
+  }
+
+  it('scopes an authority feed by t.authority_id and orders date-desc with id tiebreak', async () => {
+    const { db, captured } = capturingDb();
+    const items = await listRecentEntityContracts(db, {
+      kind: 'authority',
+      authorityId: 'auth:123456789',
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.sql).toContain('WHERE t.authority_id = ?');
+    expect(captured[0]?.sql).toContain(
+      'ORDER BY COALESCE(c.signed_at, c.published_at) DESC, c.id DESC',
+    );
+    expect(captured[0]?.binds).toEqual(['auth:123456789', 50]);
+    expect(items[0]?.subject).toBe('Subject');
+    expect(items[0]?.id).toBe('1'); // contractSlug strips the 'c:' prefix
+  });
+
+  it('scopes a company feed by c.bidder_id and honours a custom limit', async () => {
+    const { db, captured } = capturingDb();
+    await listRecentEntityContracts(db, { kind: 'company', bidderId: 'eik:111111111' }, 20);
+
+    expect(captured[0]?.sql).toContain('WHERE c.bidder_id = ?');
+    expect(captured[0]?.binds).toEqual(['eik:111111111', 20]);
   });
 });
