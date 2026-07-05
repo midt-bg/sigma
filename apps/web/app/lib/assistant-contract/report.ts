@@ -44,6 +44,20 @@ export interface ProvenanceSource {
   sql?: string; // present only for run_sql
 }
 
+// Role-④ (LLM Verifier) audit trail — what the risk-scaled verification pass decided for this report
+// (spec addendum §1/§2 defense 5). 'skipped' = deterministic gate found no ranking/risk claims (no LLM
+// call); 'verified' = verdicts applied; 'error' = the verifier call failed and the fail-closed strip
+// removed all extracted prose claims except the structural „Как е изчислено" methodology callout
+// (guardrail D — kept + flagged). Claim ids ("C0"…) are the verifier's stable numbering: title
+// first, then text/callout blocks in report order (see ../assistant/verifier.ts extractClaims).
+export type ReportVerificationStatus = 'skipped' | 'verified' | 'error';
+export interface ReportVerification {
+  status: ReportVerificationStatus;
+  strippedClaimIds: string[]; // prose blocks removed from the published report
+  uncertainClaimIds: string[]; // kept-but-flagged (uncertain verdicts + an unsupported title/methodology callout)
+  errors?: string[]; // present only on status 'error' — why the pass fail-closed (server-side audit; stripped from the client payload)
+}
+
 export interface ReportProvenance {
   question: string; // the asked question (also shown on the report — watermark, spec §4/§7)
   sources: ProvenanceSource[]; // how each snapshot result set was produced (one per handle)
@@ -51,6 +65,8 @@ export interface ReportProvenance {
   freshness: SourceFreshness[]; // per-source as-of; a report mixing sources shows each
   model: string; // e.g. 'bggpt-gemma-3-27b-fp8'
   promptVersion: string; // system-prompt / describe-schema version, for regression tracing
+  // ADDITIVE (schemaVersion stays 1): absent on reports persisted before the verifier existed.
+  verification?: ReportVerification;
   // (open) `corpusVersion?: string` — a stronger reproducibility anchor than freshness dates; see README.
 }
 
