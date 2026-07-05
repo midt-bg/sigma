@@ -18,6 +18,8 @@ interface AssistantPanelProps {
   /** The visitor picked a starter chip — POST its server-authored `send` question. */
   onPick: (send: string) => void;
   onCollapse: () => void;
+  /** Called when the user taps „Отвори" on a report chip — closes the dock on mobile before navigating. */
+  onOpenReport?: () => void;
   /** Clear the conversation and return to the empty state with fresh starter prompts. */
   onNewChat: () => void;
   onRetry: () => void;
@@ -38,6 +40,7 @@ export const AssistantPanel = ({
   onStop,
   onPick,
   onCollapse,
+  onOpenReport,
   onNewChat,
   onRetry,
   error,
@@ -85,7 +88,12 @@ export const AssistantPanel = ({
         {messages.length === 0 ? (
           <AssistantEmptyState prompts={prompts} onPick={onPick} />
         ) : (
-          <AssistantTranscript messages={messages} phase={phase} busy={busy} />
+          <AssistantTranscript
+            messages={messages}
+            phase={phase}
+            busy={busy}
+            onOpenReport={onOpenReport}
+          />
         )}
       </div>
 

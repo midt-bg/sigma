@@ -14,6 +14,8 @@ interface AssistantTranscriptProps {
   /** A turn is in flight. While busy, the streaming message's report result is withheld (mid-turn it
    *  may still change on retry) and the settled-turn no-answer fallback is suppressed. */
   busy: boolean;
+  /** Called when the user taps „Отвори" — forwarded to ReportChip to close the dock on mobile. */
+  onOpenReport?: () => void;
 }
 
 // Shown when a turn SETTLES having made tool calls but produced neither a report nor prose — e.g. the
@@ -34,7 +36,12 @@ const STICK_THRESHOLD_PX = 40;
  * content in view while streaming, but only while the reader is already near the bottom — so scrolling
  * up to read history isn't interrupted.
  */
-export const AssistantTranscript = ({ messages, phase, busy }: AssistantTranscriptProps) => {
+export const AssistantTranscript = ({
+  messages,
+  phase,
+  busy,
+  onOpenReport,
+}: AssistantTranscriptProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -50,6 +57,7 @@ export const AssistantTranscript = ({ messages, phase, busy }: AssistantTranscri
           question: output.report.question,
           createdAt:
             (message as { createdAt?: Date }).createdAt?.toISOString() ?? new Date().toISOString(),
+          leadStat: projectChip(output.report).leadStat,
         });
       }
     }
@@ -100,6 +108,7 @@ export const AssistantTranscript = ({ messages, phase, busy }: AssistantTranscri
               <ReportChip
                 {...projectChip(report.report)}
                 href={report.storedId ? `/reports/${report.storedId}` : undefined}
+                onOpen={onOpenReport}
               />
             ) : null}
             {/* Suppress the failure line while the last turn is still in flight: a first emit that

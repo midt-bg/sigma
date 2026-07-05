@@ -216,6 +216,10 @@ function buildToolSet(ctx: ToolContext, modelId: string): ToolSet {
     execute: async (input: unknown) => {
       const r = finalizeReport(input, ctx);
       if (!r.ok) return { ok: false as const, errors: r.errors };
+      if (r.warnings.length > 0)
+        console.warn('[assistant] partial report: missing display columns rendered as null', {
+          warnings: r.warnings,
+        });
       // Record that a valid report exists this turn, so chooseToolChoice stops force-finalizing on the
       // remaining steps (a legitimate multi-query flow that already emitted must not be re-forced).
       ctx.reportEmitted = true;
@@ -392,6 +396,13 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
           });
           return;
         }
+        if (built.warnings.length > 0)
+          console.warn(
+            '[assistant] partial fallback report: missing display columns rendered as null',
+            {
+              warnings: built.warnings,
+            },
+          );
         const storedId = await persistReport(opts.ctx, built, modelId);
         const toolCallId = `fallback_${randomReportId()}`;
         writer.write({ type: 'tool-input-start', toolCallId, toolName: 'emit_report' });

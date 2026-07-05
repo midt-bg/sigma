@@ -105,11 +105,11 @@ describe('negative fixtures each violate exactly one property', () => {
     expect(() => assertNoProseFigures(bind)).toThrow();
   });
 
-  it('dangling-handle: a missing column reference fails to bind', async () => {
+  it('dangling-column: a missing column reference renders null and surfaces a warning', async () => {
     const { bind } = await replayFixture(byId('93-neg-dangling-handle'));
-    expect(bind.ok).toBe(false);
-    if (!bind.ok) expect(bind.errors.join(' ')).toMatch(/no column "nonexistent_col"/i);
-    expect(() => assertSchemaValid(bind)).toThrow();
+    expect(bind.ok).toBe(true);
+    if (bind.ok) expect(bind.warnings.join(' ')).toMatch(/no column "nonexistent_col"/i);
+    expect(() => assertSchemaValid(bind)).not.toThrow();
   });
 
   it('home-totals: the real reconcile_rollup tool rejects a home_totals target', async () => {

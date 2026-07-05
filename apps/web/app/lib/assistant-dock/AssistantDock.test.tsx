@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createRoutesStub, Outlet } from 'react-router';
 import { COLLAPSED_KEY } from './storage';
 import { AssistantDock } from './AssistantDock';
 
@@ -114,5 +115,88 @@ describe('AssistantDock', () => {
     await user.click(screen.getByRole('button', { name: 'Нов разговор' }));
 
     expect(mock.chat.reset).toHaveBeenCalledTimes(1);
+  });
+
+  // The ReportChip uses <Link>, so these tests need a router context. They also keep the dock mounted
+  // across navigation (mimicking the root-layout pattern in root.tsx) so the collapse assertion holds.
+  const reportMessage = {
+    id: '1',
+    role: 'assistant',
+    parts: [
+      {
+        type: 'tool-emit_report',
+        state: 'output-available',
+        output: {
+          ok: true,
+          report: { title: 'Справка', question: 'test', blocks: [] },
+          storedId: 'r_test',
+        },
+      },
+    ],
+  };
+
+  it('collapses the dock on mobile when „Отвори" is clicked on a report chip', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    // jsdom does not implement showModal() — define it so the focus effect can open the <dialog>
+    // without throwing.
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      value: function (this: HTMLDialogElement) {
+        this.setAttribute('open', '');
+      },
+      writable: true,
+      configurable: true,
+    });
+    localStorage.setItem(COLLAPSED_KEY, '0'); // force expanded; mobile default is collapsed
+    mock.chat.messages = [reportMessage];
+    const Stub = createRoutesStub([
+      {
+        path: '/',
+        Component: () => (
+          <>
+            <AssistantDock />
+            <Outlet />
+          </>
+        ),
+        children: [{ path: 'reports/:id', Component: () => null }],
+      },
+    ]);
+    render(<Stub />);
+
+    await user.click(screen.getByRole('link', { name: 'Отвори' }));
+
+    expect(screen.getByRole('button', { name: 'Асистент' })).toBeInTheDocument();
+    delete (HTMLDialogElement.prototype as { showModal?: unknown }).showModal;
+  });
+
+  it('does not collapse the dock on desktop when „Отвори" is clicked on a report chip', async () => {
+    const user = userEvent.setup();
+    // matchMedia already stubbed to matches=false (desktop) in beforeEach
+    mock.chat.messages = [reportMessage];
+    const Stub = createRoutesStub([
+      {
+        path: '/',
+        Component: () => (
+          <>
+            <AssistantDock />
+            <Outlet />
+          </>
+        ),
+        children: [{ path: 'reports/:id', Component: () => null }],
+      },
+    ]);
+    render(<Stub />);
+
+    await user.click(screen.getByRole('link', { name: 'Отвори' }));
+
+    // onOpenReport is undefined on desktop — clicking „Отвори" navigates but does not collapse the dock.
+    expect(screen.getByRole('button', { name: 'Свий асистента' })).toBeInTheDocument();
   });
 });

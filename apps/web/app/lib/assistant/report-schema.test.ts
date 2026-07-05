@@ -301,6 +301,31 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
     }
   });
 
+  it('degrades a missing table display column to null cells and records a warning', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            { key: 'authority', header: 'Институция', format: 'text' },
+            { key: 'nonexistent_col', header: 'Липсваща', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.warnings.join(' ')).toMatch(/no column "nonexistent_col"/);
+      const table = out.report.blocks[0];
+      if (table?.type === 'table') {
+        expect(table.rows[0]!.cells[1]).toBeNull();
+        expect(table.rows[1]!.cells[1]).toBeNull();
+      }
+    }
+  });
+
   it('gates material numbers in prose (guardrail E2)', () => {
     const out = bindReport(
       emit([{ type: 'text', md: 'Похарчени са 1 234 567 €, тоест над 12 млрд.' }]),
@@ -482,6 +507,15 @@ describe('null values in chart blocks (review #80)', () => {
       expect(pts).toHaveLength(2); // Q2 (null) dropped
       expect(pts.map((p) => p.label)).toEqual(['Q1', 'Q3']);
     }
+  });
+
+  it('hard-errors a bar block with a missing column so the model retries rather than charting nulls', () => {
+    const out = bindReport(
+      emit([{ type: 'bar', resultId: 'R1', labelCol: 'authority', valueCol: 'nonexistent_col' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/no column "nonexistent_col"/);
   });
 
   it('drops timeseries points with a null value', () => {

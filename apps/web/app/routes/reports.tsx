@@ -72,6 +72,7 @@ export default function ReportsIndexPage() {
             <li key={r.id} className="reports-list__item">
               <Link to={`/reports/${r.id}`} className="reports-list__link">
                 <span className="reports-list__title">{r.title}</span>
+                {r.leadStat && <span className="reports-list__lead-stat">{r.leadStat}</span>}
                 {r.question && r.question !== r.title && (
                   <span className="reports-list__question">{r.question}</span>
                 )}

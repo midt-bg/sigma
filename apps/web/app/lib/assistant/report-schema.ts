@@ -148,7 +148,9 @@ export interface ResolvedReport {
   watermark: 'ai-generated'; // renderer always shows the „AI-генерирано, неофициално" label (§9.12)
 }
 
-export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; errors: string[] };
+export type BindResult =
+  | { ok: true; report: ResolvedReport; warnings: string[] }
+  | { ok: false; errors: string[] };
 
 export interface BindOptions {
   // Server-authoritative question text (the actual latest user message), set by the chat route. When
@@ -385,6 +387,10 @@ export function bindReport(
   opts: BindOptions = {},
 ): BindResult {
   const errors: string[] = [];
+  // Non-fatal issues: missing columns and out-of-range rows render as null rather than blocking the
+  // report. The model referenced a valid handle but the column/row wasn't in the actual DB result —
+  // the report displays with null in those slots rather than forcing a retry.
+  const warnings: string[] = [];
   const byHandle = new Map(results.map((r) => [r.handle, r]));
 
   const cell = (ref: CellRef, where: string): string | number | null => {
@@ -419,7 +425,20 @@ export function bindReport(
     return r ?? null;
   };
 
-  const requireCols = (r: QueryResult, cols: string[], where: string): boolean => {
+  // Table display columns: warn on missing so the block still renders with null cells rather than
+  // blocking the whole report. Returns true so the table is always built when called.
+  const requireCols = (r: QueryResult, cols: string[], where: string): true => {
+    for (const c of cols) {
+      if (!r.columns.includes(c)) {
+        warnings.push(`${where}: result "${r.handle}" has no column "${c}" — rendered as null`);
+      }
+    }
+    return true;
+  };
+
+  // Chart columns (bar, flows, timeseries): a missing valueCol produces all-null coercions →
+  // zero points → an empty chart that shows nothing useful. Force a model retry instead.
+  const requireChartCols = (r: QueryResult, cols: string[], where: string): boolean => {
     let ok = true;
     for (const c of cols) {
       if (!r.columns.includes(c)) {
@@ -524,13 +543,20 @@ export function bindReport(
             // (a legitimate "no results" answer; review #80).
             blocks.push({ type: 'table', columns, rows: [], truncated: r.truncated ?? false });
           } else {
-            // Require both the display columns AND the link id columns to exist — without the latter an
-            // immutable report could not reconstruct its entity links.
-            const needed = [
-              ...b.columns.map((c) => c.key),
-              ...b.columns.flatMap((c) => (c.link ? [c.link.idCol] : [])),
-            ];
-            if (requireCols(r, needed, at)) {
+            // Link id columns are structural — an immutable report needs them to reconstruct
+            // entity links (spec §4). Missing → hard error so the model retries with the right name.
+            const linkIdCols = b.columns.flatMap((c) => (c.link ? [c.link.idCol] : []));
+            const missingLinks = linkIdCols.filter((c) => !r.columns.includes(c));
+            for (const c of missingLinks)
+              errors.push(`${at}: result "${r.handle}" has no column "${c}"`);
+            if (missingLinks.length === 0) {
+              // Display columns: warn if missing (renders null in that slot) so a partially-missing
+              // result still produces a viewable report instead of forcing a retry.
+              requireCols(
+                r,
+                b.columns.map((c) => c.key),
+                at,
+              );
               const idx = b.columns.map((c) => r.columns.indexOf(c.key));
               const linkIdx = b.columns.map((c) => (c.link ? r.columns.indexOf(c.link.idCol) : -1));
               blocks.push({
@@ -552,7 +578,7 @@ export function bindReport(
       }
       case 'bar': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.labelCol, b.valueCol], at))) {
+        if (r && (r.rows.length === 0 || requireChartCols(r, [b.labelCol, b.valueCol], at))) {
           const labels = colValues(r, b.labelCol);
           const vals = colValues(r, b.valueCol);
           const points: { label: string | number | null; value: number }[] = [];
@@ -566,7 +592,10 @@ export function bindReport(
       }
       case 'flows': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.fromCol, b.toCol, b.valueCol], at))) {
+        if (
+          r &&
+          (r.rows.length === 0 || requireChartCols(r, [b.fromCol, b.toCol, b.valueCol], at))
+        ) {
           const from = colValues(r, b.fromCol);
           const to = colValues(r, b.toCol);
           const val = colValues(r, b.valueCol);
@@ -586,7 +615,7 @@ export function bindReport(
       }
       case 'timeseries': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.periodCol, b.valueCol], at))) {
+        if (r && (r.rows.length === 0 || requireChartCols(r, [b.periodCol, b.valueCol], at))) {
           const period = colValues(r, b.periodCol);
           const vals = colValues(r, b.valueCol);
           const points: { period: string | number | null; value: number }[] = [];
@@ -632,5 +661,6 @@ export function bindReport(
       blocks,
       watermark: 'ai-generated',
     },
+    warnings,
   };
 }

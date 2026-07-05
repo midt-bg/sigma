@@ -134,6 +134,7 @@ export const AssistantDock = () => {
       onStop={chat.stop}
       onPick={(prompt) => chat.sendMessage({ text: prompt })}
       onCollapse={collapse}
+      onOpenReport={isMobile ? collapse : undefined}
       onNewChat={newChat}
       onRetry={retry}
       error={chat.error?.message}

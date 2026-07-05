@@ -146,6 +146,8 @@ export interface ReportIndexEntry {
   title: string;
   question: string;
   createdAt: string;
+  /** Lead statistic for the listing page (e.g. "Общо: 2,6 млн €"). Optional — absent for older entries. */
+  leadStat?: string | null;
 }
 
 const isReportIndexEntry = (v: unknown): v is ReportIndexEntry => {

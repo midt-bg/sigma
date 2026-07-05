@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRoutesStub } from 'react-router';
 import { ReportChip } from './ReportChip';
 
@@ -45,5 +45,22 @@ describe('ReportChip', () => {
     renderChip({ title: 'X', leadStat: null });
 
     expect(screen.queryByRole('link', { name: 'Отвори' })).not.toBeInTheDocument();
+  });
+
+  it('calls onOpen when „Отвори" is clicked', () => {
+    const onOpen = vi.fn();
+    const Stub = createRoutesStub([
+      {
+        path: '/',
+        Component: () => (
+          <ReportChip title="X" leadStat={null} href="/reports/r_1" onOpen={onOpen} />
+        ),
+      },
+    ]);
+    render(<Stub />);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Отвори' }));
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });
