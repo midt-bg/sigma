@@ -17,9 +17,10 @@ import {
 // <title> per region for hover (the no-JS fallback). Sequential monochrome ramp from --paper to --ink
 // (palette tokens, no off-palette blue or green), matching the site's ink-based viz language.
 //
-// Progressive enhancement: with JS, hovering a region fills an Information Card beside the map (not an
-// overlay) with that zone's summary stats — the same figures the ranked tables list — and a toggle in
-// the card switches the colouring/grouping between oblasts (NUTS3) and planning regions (NUTS2, each a
+// Progressive enhancement: with JS, hovering (or tapping, since touch screens never fire
+// onMouseEnter) a region fills an Information Card beside the map (not an overlay) with that
+// zone's summary stats — the same figures the ranked tables list — and a toggle in the card
+// switches the colouring/grouping between oblasts (NUTS3) and planning regions (NUTS2, each a
 // group of oblasts). No JS → the native <title> tooltip still works and the card shows its prompt.
 const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 8%, var(--paper))', // 0 = no / negligible spend
@@ -87,6 +88,7 @@ export function Choropleth({
                 fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
               }}
               onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
+              onClick={() => setHovered(r ? shape.nuts3 : null)}
             >
               <title>{label}</title>
             </path>
