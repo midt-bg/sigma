@@ -1389,6 +1389,28 @@
   .q-dist {
     grid-template-columns: 1fr;
   }
+  /* pillar strip (mock: "Индекс на качеството"): 5 cards no longer fit the auto-fit grid without
+     going cramped or wrapping to a 3rd row, so on phones it becomes an edge-to-edge swipe carousel
+     instead — bleed past `main`'s gutter and snap one card at a time. */
+  .q-pillar-grid {
+    display: flex;
+    grid-template-columns: none;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * var(--gutter));
+    padding-inline: var(--gutter);
+    padding-bottom: 2px;
+  }
+  .q-pillar-grid::-webkit-scrollbar {
+    display: none;
+  }
+  .q-pillar-card {
+    flex: 0 0 auto;
+    min-inline-size: 158px;
+    scroll-snap-align: start;
+  }
 }
 .q-hist {
   display: block;
@@ -1561,6 +1583,21 @@
 .q-grains > a[aria-current] {
   background: var(--ink);
   color: var(--paper);
+}
+@media (max-width: 720px) {
+  /* grain switcher (mock): keep the segmented control on one scrollable line rather than letting
+     6 grains wrap to a 2nd/3rd row and push the page content down. */
+  .q-grains {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .q-grains::-webkit-scrollbar {
+    display: none;
+  }
+  .q-grains > a {
+    white-space: nowrap;
+  }
 }
 .q-sort {
   padding: 0 var(--s-3);
