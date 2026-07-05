@@ -22,15 +22,55 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 
 -- @refresh-batch authorities-bidders
 -- ── 1) Authorities referenced by OCDS staging (new ones only; INSERT OR IGNORE) ────────────────────
+-- Canonical name = FREQUENCY MODE of the recorded variants, matching normalize-raw.sql step 1 (NOT
+-- MIN(), which under a shared ЕИК lets a second-order unit's name beat the parent body — #194). Ties
+-- break on shorter length then lexically, so the pick is deterministic. Existing authorities keep their
+-- name (INSERT OR IGNORE); the full normalize is authoritative and re-derives every name.
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
-FROM (
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_contracts
+WITH src AS (
+  SELECT authority_eik, authority_name, authority_type FROM raw_contracts
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
   UNION ALL
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_tenders
+  SELECT authority_eik, authority_name, authority_type FROM raw_tenders
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
+),
+name_mode AS (
+  SELECT authority_eik, authority_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY COUNT(*) DESC, LENGTH(authority_name) ASC, authority_name ASC
+    ) AS rn
+  FROM src
+  WHERE authority_name IS NOT NULL AND TRIM(authority_name) <> ''
+  GROUP BY authority_eik, authority_name
 )
-WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
-GROUP BY authority_eik;
+SELECT 'auth:' || s.authority_eik,
+       COALESCE((SELECT nm.authority_name FROM name_mode nm WHERE nm.authority_eik = s.authority_eik AND nm.rn = 1),
+                MIN(s.authority_name)),
+       s.authority_eik,
+       MAX(s.authority_type)
+FROM src s
+GROUP BY s.authority_eik;
+
+-- Canonical-name override — same curated table as normalize step 1b; pins authoritative names for
+-- shared-ЕИК bodies. Keyed by ЕИК → label-only. Unlike the mode INSERT above it DOES correct existing
+-- rows, so any authority whose name it changes is marked touched below to refresh its rollup + FTS.
+-- Table created here too so refresh is self-sufficient if the seed was skipped. No-op when empty. (#194)
+CREATE TABLE IF NOT EXISTS authority_name_overrides (
+  eik            TEXT PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  note           TEXT
+);
+UPDATE authorities SET name = (
+  SELECT o.canonical_name FROM authority_name_overrides o WHERE o.eik = authorities.bulstat
+)
+WHERE bulstat IN (SELECT eik FROM authority_name_overrides)
+  AND name IS NOT (SELECT o.canonical_name FROM authority_name_overrides o WHERE o.eik = authorities.bulstat);
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT a.id
+FROM authorities a
+JOIN authority_totals at ON at.authority_id = a.id
+WHERE a.name IS NOT at.name;
 
 -- type_group for any authority still missing it (covers the rows just inserted) — same heuristic as
 -- normalize-raw.sql step 1b.

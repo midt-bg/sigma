@@ -21,7 +21,8 @@
 -- Cleaning policy — staging stays 100% raw; cleaning happens only here:
 --   * Currency is kept per row as it appears (BGN pre-2026, EUR from 2026, a few foreign) —
 --     NOT coerced to one currency. Money sums must group/convert by currency downstream.
---   * Authorities dedupe on ЕИК (Вид на възложителя kept as `type`); a canonical name is kept.
+--   * Authorities dedupe on ЕИК (Вид на възложителя kept as `type`); the canonical display name is the
+--     FREQUENCY MODE of the recorded name variants, with a curated override for shared-ЕИК cases (#194).
 --   * Bidders dedupe on raw contractor ЕИК (kept verbatim in bulstat); is_consortium comes from
 --     the admin "възложена на група" flag (awarded_to_group), not a name heuristic. Resolving the
 --     members hidden behind a single consortium ЕИК needs the Търговски регистър (joined on ЕИК),
@@ -44,18 +45,54 @@ DELETE FROM tenders;
 DELETE FROM bidders;
 DELETE FROM authorities;
 
--- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
---    canonical display name and the authority type (Вид на възложителя).
+-- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging. The display name is the
+--    FREQUENCY MODE of the recorded name variants (the most-recorded spelling), NOT MIN(): MIN() returns
+--    the alphabetically-first string, so under a SHARED ЕИК a second-order spending unit's name can beat
+--    the parent body (#194: „Б"СУ sorts before „М"инистерство in Cyrillic, so a school won over МОН).
+--    Ties break on shorter length (prefers the concise form over a composite „child - parent"), then
+--    lexically — a total order, so the pick is deterministic across rebuilds. Step 1b then pins an
+--    authoritative name where the mode is still undesirable. `type` is the most-recorded Вид на
+--    възложителя (MAX = arbitrary-but-stable; only feeds the non-critical type_group bucket).
+--    Label-only: the id (`auth:'||ЕИК`) and profile URL are unaffected (packages/db/src/queries/identity.ts).
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
-FROM (
+WITH src AS (
   SELECT authority_eik, authority_name, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
   UNION ALL
   SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
+),
+name_mode AS (
+  SELECT authority_eik, authority_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY COUNT(*) DESC, LENGTH(authority_name) ASC, authority_name ASC
+    ) AS rn
+  FROM src
+  WHERE authority_name IS NOT NULL AND TRIM(authority_name) <> ''
+  GROUP BY authority_eik, authority_name
 )
-GROUP BY authority_eik;
+SELECT 'auth:' || s.authority_eik,
+       COALESCE((SELECT nm.authority_name FROM name_mode nm WHERE nm.authority_eik = s.authority_eik AND nm.rn = 1),
+                MIN(s.authority_name)),
+       s.authority_eik,
+       MAX(s.authority_type)
+FROM src s
+GROUP BY s.authority_eik;
 
--- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
+-- 1b) Canonical-name override — authoritative names for ЕИК where the frequency mode is still wrong or
+--     undesirable (shared ЕИК, composite variants). Keyed by ЕИК → label-only, the profile URL stays
+--     stable. Seeded by scripts/seed-authority-names.sql (parked Търговски регистър pipeline stand-in);
+--     table created here too so normalize is self-sufficient if the seed was skipped. No-op when empty.
+CREATE TABLE IF NOT EXISTS authority_name_overrides (
+  eik            TEXT PRIMARY KEY,
+  canonical_name TEXT NOT NULL,
+  note           TEXT
+);
+UPDATE authorities SET name = (
+  SELECT o.canonical_name FROM authority_name_overrides o WHERE o.eik = authorities.bulstat
+)
+WHERE bulstat IN (SELECT eik FROM authority_name_overrides);
+
+-- 1c) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
 --     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
 UPDATE authorities SET type_group = CASE
   WHEN name LIKE 'Община%' OR name LIKE 'ОБЩИНА%' OR name LIKE '%Столична община%' OR name LIKE '%СТОЛИЧНА ОБЩИНА%' THEN 'община'

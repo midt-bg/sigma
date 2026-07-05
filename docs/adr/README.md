@@ -14,3 +14,4 @@
 | [0004](0004-style-src-unsafe-inline.md) | `style-src` запазва `'unsafe-inline'` (CSP) | Прието |
 | [0005](0005-blue-green-d1-rollback.md) | Blue/green D1 слотове за rollback на refresh | Прието |
 | [0006](0006-eop-wins-dedup.md) | Dedup на два източника: EOP печели по `contract_number` | Прието |
+| [0007](0007-authority-canonical-name.md) | Каноничното име на възложителя: мода + курирана таблица (не `MIN`) | Прието |
