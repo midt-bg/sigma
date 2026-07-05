@@ -3,7 +3,7 @@
 -- sector_concentration) has (re)built its rollups on the served D1:
 --   (cd apps/web && wrangler d1 execute sigma --local --file ../../scripts/derive-contract-features.sql)
 --
--- Spec: docs/contract-quality-spec.local.md §4 (leaf defs), §5 (peer key), §5.6 (fallback), §6
+-- Spec: Contract Quality / Health Index design spec §4 (leaf defs), §5 (peer key), §5.6 (fallback), §6
 -- (coverage), §7.3 (DDL), §8 (build order). §12 corrections OVERRIDE earlier sections — this file
 -- follows §12.2 (21-value procedure map), §12.3 (framework/DPS regime, contracts.framework is
 -- 100% NULL), §12.5 (year-band 'NA' for the 37 NULL/out-of-range signing years).

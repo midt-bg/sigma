@@ -588,7 +588,7 @@ export interface CompetitionData {
 
 // ── Quality index ───────────────────────────────────────────────────────────────────────────────
 // The Contract Quality / Health Index page (/quality). All scores are [0, 1] REALs from the ETL's
-// contract_features / *_quality_totals tables (docs/contract-quality-spec.local.md §12.0); NULL means
+// contract_features / *_quality_totals tables (Contract Quality / Health Index spec §12.0); NULL means
 // "insufficient data" — never zero. A low score is a weak-quality SIGNAL, not proof of wrongdoing.
 
 export type QualityGrain = 'authority' | 'supplier' | 'sector' | 'region' | 'year' | 'funding';

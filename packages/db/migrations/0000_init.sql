@@ -360,7 +360,7 @@ CREATE INDEX idx_flow_pairs_authority ON flow_pairs(authority_id);
 -- ===================================================================================
 -- 1c) CONTRACT QUALITY / HEALTH INDEX — Phase 4 entity rollups (scripts/derive-health.sql).
 --     Built on the served D1 after precompute.sql; the per-contract scoring (Phase 5) joins
---     against these. See docs/contract-quality-spec.local.md §7.2.
+--     against these. See the Contract Quality / Health Index design spec §7.2.
 -- ===================================================================================
 
 CREATE TABLE authority_health_rollup (
@@ -397,7 +397,7 @@ CREATE TABLE health_percentiles (         -- corpus distribution snapshot (calib
 
 -- ===================================================================================
 -- 1d) CONTRACT QUALITY / HEALTH INDEX — Phase 5 per-contract feature store
---     (scripts/derive-contract-features.sql). See docs/contract-quality-spec.local.md §7.3.
+--     (scripts/derive-contract-features.sql). See the Contract Quality / Health Index design spec §7.3.
 --     score_a..score_e / score_overall are REALs in [0,1]; populated by the scoring UPDATEs
 --     in scripts/derive-contract-features.sql (NULL = unknown/withheld, never zero).
 -- ===================================================================================

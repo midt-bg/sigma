@@ -269,8 +269,8 @@ function runFullDerive() {
   reportAnomalies(d1, 'full derive (D1)');
 }
 
-// Standalone Phase 4/5 re-derive for the Contract Quality / Health Index (docs/contract-quality-spec.local.md
-// §8) — runs against the already-populated served D1 without the ~25-minute full re-import.
+// Standalone Phase 4/5 re-derive for the Contract Quality / Health Index (design spec §8) — runs
+// against the already-populated served D1 without the ~25-minute full re-import.
 function runHealthDerive() {
   execSql(resolve(root, 'scripts/derive-health.sql'));
   execSql(resolve(root, 'scripts/derive-contract-features.sql'));
@@ -283,8 +283,8 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
   // Full Phase 4/5 recompute, not a scoped refresh of just the touched authority/bidder/contract
-  // ids — correct-over-incremental for now; a scoped refresh (docs/contract-quality-spec.local.md
-  // §8) is a documented future optimization once the full recompute cost is measured on prod D1.
+  // ids — correct-over-incremental for now; a scoped refresh (design spec §8) is a documented
+  // future optimization once the full recompute cost is measured on prod D1.
   runHealthDerive();
   assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');

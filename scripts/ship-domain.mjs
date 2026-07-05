@@ -222,7 +222,7 @@ console.log('==> precompute on served D1');
 d1File(resolve(root, 'scripts/seed-state-owned.sql'));
 d1File(resolve(root, 'scripts/precompute.sql'));
 
-// Contract Quality / Health Index Phases 4-5 (docs/contract-quality-spec.local.md §8) — run
+// Contract Quality / Health Index Phases 4-5 (design spec §8) — run
 // directly on the served D1 right after precompute, same pattern as precompute itself, so the
 // daily ETL keeps authority/bidder/sector/region/year/funding_quality_totals current on prod D1.
 console.log('==> health derive on served D1');

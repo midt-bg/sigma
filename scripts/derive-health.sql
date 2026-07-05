@@ -3,7 +3,7 @@
 -- flow_pairs/authority_totals/tenders.estimated_value_eur on the served D1:
 --   (cd apps/web && wrangler d1 execute sigma --local --file ../../scripts/derive-health.sql)
 --
--- Spec: docs/contract-quality-spec.local.md §7.2 (table DDL + INSERT bodies) + §8 (build order).
+-- Spec: Contract Quality / Health Index design spec §7.2 (table DDL + INSERT bodies) + §8 (build order).
 -- §12 corrections override earlier sections on conflict (score scale, procedure-type vocabulary —
 -- neither concerns these four tables, which are raw fractions/counts, not [0,1] pillar scores).
 --
