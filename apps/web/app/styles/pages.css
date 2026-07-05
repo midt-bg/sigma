@@ -652,6 +652,14 @@
   color: #fff;
   background: var(--accent);
 }
+@media (hover: none) and (pointer: coarse) {
+  /* review #141: buttons were ~28px tall — below the 44px touch-target floor used elsewhere
+     (.pa-seg/.ov-seg/.q-grains). Grow the hit area directly; .map-toggle's overflow:hidden rules
+     out the invisible negative-margin trick used for .nav-search/.nav-toggle. */
+  .map-toggle button {
+    padding: 15px 10px;
+  }
+}
 .map-card-title {
   margin: 0;
   font-size: 1.05rem;
