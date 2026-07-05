@@ -3,7 +3,7 @@
 -- (+ scripts/derive-amendments.sql for current_value/annex_count) have populated staging:
 --   (cd apps/web && wrangler d1 execute sigma --local --file ../../scripts/normalize-raw.sql)
 --
--- SOURCE MODEL (see docs/etl-pipeline.md): the EOP open-data feed is the authoritative base for
+-- SOURCE MODEL (see docs/etl.md): the EOP open-data feed is the authoritative base for
 -- 2020-2026 (raw_contracts + raw_tenders, source 'eop:%'). The OCDS JSON feed is the
 -- go-forward delta for new 2026+ data (source 'ocds:%'); its rows carry their procedure fields on
 -- the contract row, so they flow through here automatically and a UNP with no tenders-export row
