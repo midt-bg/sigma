@@ -5,6 +5,7 @@
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
 import { csvCell } from './csv';
+import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { toCompanyListItem, type CompanyTotalsRow } from './rows';
@@ -32,6 +33,10 @@ export const COMPANY_FILTER_KEYS = [
   'eu',
   'q',
 ] as const satisfies readonly (keyof CompanyListParams)[];
+
+// Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
+// errors, add the new filter key to COMPANY_FILTER_KEYS.
+assertCovers<CompanyListParams, typeof COMPANY_FILTER_KEYS>();
 
 const SORTS: Record<CompanySort, { col: string; dir: 'asc' | 'desc' }> = lookup({
   won: { col: 'won_eur', dir: 'desc' },

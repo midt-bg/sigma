@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AUTHORITY_FILTER_KEYS, COMPANY_FILTER_KEYS, CONTRACT_FILTER_KEYS } from '@sigma/db';
 import { DATA_SOURCE } from './dataSource';
 import { isUnfilteredCsvExport, servedCsvExport } from './csv-export';
 
@@ -305,11 +306,42 @@ describe('isUnfilteredCsvExport', () => {
     ['authority', { authority: '123456789' }],
     ['bidder', { bidder: 'acme' }],
     ['q', { q: 'rail' }],
+    ['bids', { bids: 'one' }],
     ['companies.kinds', { kinds: ['company'] }],
     ['companies.countBucket', { countBucket: '2-5' }],
     ['authorities.types', { types: ['municipality'] }],
   ])('treats %s as narrowing', (_name, params) => {
     expect(isUnfilteredCsvExport({ sort: 'value-desc', ...params })).toBe(false);
+  });
+
+  // Completeness guard (issue #138): every filter ANY list query consumes must also be seen by the
+  // cache classifier, or a filtered export gets served from / written to the unfiltered cache object.
+  // Iterating all three *_FILTER_KEYS means adding a key to any of them without teaching
+  // isUnfilteredCsvExport about it fails CI — closing the whole bug class across contracts/authorities/
+  // companies, not just `bids`.
+  const ALL_FILTER_KEYS = [
+    ...CONTRACT_FILTER_KEYS,
+    ...AUTHORITY_FILTER_KEYS,
+    ...COMPANY_FILTER_KEYS,
+  ] as const;
+  // A representative "active" value per filter key (arrays non-empty, scalars truthy non-empty).
+  const ACTIVE: Record<(typeof ALL_FILTER_KEYS)[number], unknown> = {
+    years: ['2025'],
+    sectors: ['45'],
+    procedureGroups: ['open'],
+    valueBucket: 'gt100m',
+    eu: 'eu',
+    authority: '123456789',
+    bidder: 'acme',
+    q: 'rail',
+    bids: 'one',
+    types: ['municipality'],
+    kinds: ['company'],
+    countBucket: '2-5',
+  };
+  it.each([...new Set(ALL_FILTER_KEYS)])('classifier recognises the %s list filter', (key) => {
+    expect(ACTIVE[key]).toBeDefined(); // a new filter key without a representative value here is a bug
+    expect(isUnfilteredCsvExport({ sort: 'value-desc', [key]: ACTIVE[key] })).toBe(false);
   });
 });
 

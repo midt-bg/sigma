@@ -30,7 +30,7 @@ freshness = `d:${normalize(home_totals.refreshed_at)}|c:${BUILD_ID}`
 
 The freshness token is a **single global** version and invalidates the cache **every epoch**. So a question whose answer includes the still-growing present — a current/partial period („за 2026" mid-year) or an all-time / no-period question — gets **no durable cross-epoch reuse** from L1 anyway, while carrying the risk that a within-epoch data change not yet reflected in `refreshed_at` serves a stale under-count of a **named** window. The master invariant's guarantee is therefore scoped, by design, to **fixed-period** questions (§0).
 
-L1 (`buildDedupRequest`, `dedup-request.ts`) enforces this: it dedups **iff** the turn resolved an explicit period whose data is no longer settling — `temporal.ts`'s `recencyCaveat === false` (a fully-elapsed window past the ingest-lag horizon, e.g. „2025" asked in 2026). A settling period, or no resolved period at all, **skips L1** and regenerates (falling through to L0 when a `clientRequestId` is present). Rationale and trade-offs: [ADR 0001](../adr/0001-report-dedup-settled-periods-only.md).
+L1 (`buildDedupRequest`, `dedup-request.ts`) enforces this: it dedups **iff** the turn resolved an explicit period whose data is no longer settling — `temporal.ts`'s `recencyCaveat === false` (a fully-elapsed window past the ingest-lag horizon, e.g. „2025" asked in 2026). A settling period, or no resolved period at all, **skips L1** and regenerates (falling through to L0 when a `clientRequestId` is present). Rationale and trade-offs: [ADR 0007](../adr/0007-report-dedup-settled-periods-only.md).
 
 ## 2. F1 — `dedup.ts` (pure module, KV-backed, unblocked)
 
