@@ -562,73 +562,75 @@ function SectorSection({ rows }: { rows: OverrunSectorRow[] }) {
             </li>
           ))}
         </ul>
-        <table className="ov-sector-table">
-          <caption className="sr-only">
-            Раздуване по сектори (CPV): код, сектор, общ растеж (сума раздуване / сума при
-            сключване) и обща сума под риск.
-          </caption>
-          <thead>
-            <tr>
-              <th>
-                CPV
-                <MetricInfo
-                  title="CPV"
-                  summary="Двуцифреният CPV раздел на поръчката — първите две цифри от CPV кода определят сектора."
-                />
-              </th>
-              <th>
-                Сектор
-                <MetricInfo
-                  title="Сектор"
-                  summary="Името на CPV раздела; точката отбелязва типа — строителство, доставки или услуги."
-                />
-              </th>
-              <th>
-                Растеж
-                <MetricInfo
-                  align="end"
-                  title="Растеж"
-                  summary="Общият растеж на сектора: сборът на раздуванията, разделен на сбора на подписаните стойности на раздутите му договори."
-                  readout="Претеглен по €, не средно на процентите — малките договори не изкривяват."
-                />
-              </th>
-              <th>
-                € риск
-                <MetricInfo
-                  align="end"
-                  title="€ риск"
-                  summary="Сумата под риск: сборът на (текуща − подписана стойност) по раздутите договори в сектора."
-                  readout="Само договори с анекс, текуща > подписана и подписана стойност ≥ 1000 €."
-                />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => (
-              <tr key={s.code}>
-                <td className="ov-sector-code">{s.code || '—'}</td>
-                <td className="ov-sector-name">
-                  <span
-                    aria-hidden="true"
-                    className={`ov-sector-dot ${s.bucket}`}
-                    title={BUCKET_LABEL[s.bucket]}
+        <div className="ov-table-scroll">
+          <table className="ov-sector-table">
+            <caption className="sr-only">
+              Раздуване по сектори (CPV): код, сектор, общ растеж (сума раздуване / сума при
+              сключване) и обща сума под риск.
+            </caption>
+            <thead>
+              <tr>
+                <th>
+                  CPV
+                  <MetricInfo
+                    title="CPV"
+                    summary="Двуцифреният CPV раздел на поръчката — първите две цифри от CPV кода определят сектора."
                   />
-                  <span className="clamp1">{s.label}</span>
-                </td>
-                <td
-                  className={
-                    s.code === topGrowthCode && rows.length > 1
-                      ? 'ov-sector-growth is-top'
-                      : 'ov-sector-growth'
-                  }
-                >
-                  {signedPct(s.growth)}
-                </td>
-                <td className="ov-sector-risk">{moneyBare(s.riskEur)}</td>
+                </th>
+                <th>
+                  Сектор
+                  <MetricInfo
+                    title="Сектор"
+                    summary="Името на CPV раздела; точката отбелязва типа — строителство, доставки или услуги."
+                  />
+                </th>
+                <th>
+                  Растеж
+                  <MetricInfo
+                    align="end"
+                    title="Растеж"
+                    summary="Общият растеж на сектора: сборът на раздуванията, разделен на сбора на подписаните стойности на раздутите му договори."
+                    readout="Претеглен по €, не средно на процентите — малките договори не изкривяват."
+                  />
+                </th>
+                <th>
+                  € риск
+                  <MetricInfo
+                    align="end"
+                    title="€ риск"
+                    summary="Сумата под риск: сборът на (текуща − подписана стойност) по раздутите договори в сектора."
+                    readout="Само договори с анекс, текуща > подписана и подписана стойност ≥ 1000 €."
+                  />
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((s) => (
+                <tr key={s.code}>
+                  <td className="ov-sector-code">{s.code || '—'}</td>
+                  <td className="ov-sector-name">
+                    <span
+                      aria-hidden="true"
+                      className={`ov-sector-dot ${s.bucket}`}
+                      title={BUCKET_LABEL[s.bucket]}
+                    />
+                    <span className="clamp1">{s.label}</span>
+                  </td>
+                  <td
+                    className={
+                      s.code === topGrowthCode && rows.length > 1
+                        ? 'ov-sector-growth is-top'
+                        : 'ov-sector-growth'
+                    }
+                  >
+                    {signedPct(s.growth)}
+                  </td>
+                  <td className="ov-sector-risk">{moneyBare(s.riskEur)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
