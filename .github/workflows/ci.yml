@@ -51,3 +51,10 @@ jobs:
       - name: Test
         if: ${{ !cancelled() }}
         run: pnpm test
+      # Docs integrity (#102): fail on a dangling docs reference in source or an
+      # unindexed doc. The checker self-tests first, so the gate is itself gated.
+      - name: Docs integrity
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm check:docs:test
+          pnpm check:docs
