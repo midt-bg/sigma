@@ -535,6 +535,18 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+@media (hover: none) and (pointer: coarse) {
+  /* 30px is below the 44px touch floor. Grow the buttons directly rather than the invisible
+     ::after overlay used for .metric-info-btn — the two zoom buttons stack with only 4px gap, so
+     overlaid hit areas would overlap each other. */
+  .net-zoom {
+    gap: 8px;
+  }
+  .net-zoom button {
+    width: 44px;
+    height: 44px;
+  }
+}
 /* Graph + side Information Card layout (mirrors /map). Card wraps under the graph on narrow screens. */
 .net-explore {
   display: flex;
