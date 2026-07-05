@@ -14,6 +14,8 @@
     "test": "turbo run test",
     "test:golden": "turbo run test:golden",
     "lint": "prettier --check .",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:docs:test": "node --test scripts/check-docs.test.mjs",
     "format": "prettier --write .",
     "setup": "node scripts/setup.mjs",
     "import": "node scripts/import.mjs",

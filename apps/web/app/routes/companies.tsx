@@ -12,7 +12,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { Callout, Chip, OwnershipChip } from '../components/ui';
 import {
   buildSectorGroup,
-  companyListParams,
+  companyListFilters,
   getMulti,
   leaderboardRankOffset,
   pageNav,
@@ -47,8 +47,7 @@ export function headers() {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const params = {
-    ...companyListParams(sp),
-    q: sp.get('q'),
+    ...companyListFilters(sp),
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.companies,
   };
