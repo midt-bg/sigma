@@ -17,7 +17,7 @@
 //        sort=value-desc → non-increasing (largest → smallest)
 //        sort=date-desc  → non-decreasing
 //      The fixture is constructed so that `amount_eur` decreases with `i`
-//      and `signed_at` increases with `i` (see `setup.ts:buildContractsInsert`),
+//      and `signed_at` increases with `i` (see `helpers/fixtures.ts:buildContractsInsert`),
 //      so newest-first dates yield smallest-first amounts. Verifying the
 //      concatenated sequence is monotonic nails down the keyset pivot: the
 //      cursor must encode the LAST row of page 1 (not page 0, not page 2).
