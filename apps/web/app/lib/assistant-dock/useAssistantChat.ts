@@ -65,9 +65,14 @@ const transport = new DefaultChatTransport<UIMessage>({
 export const useAssistantChat = (): UseChatHelpers<UIMessage> & {
   phase: AssistantPhase | null;
   reset: () => void;
+  aborted: boolean;
 } => {
   // The ephemeral turn phase, delivered as a transient data part via onData (never in messages).
   const [phase, setPhase] = useState<AssistantPhase | null>(null);
+  // The SDK exposes no abort signal: after stop() the status settles to 'ready' exactly like a
+  // natural finish (classifyingFetch swallows the AbortError on purpose). Minted here, where the
+  // user acts, so the transcript can announce „прекъснат" instead of a false „готов".
+  const [aborted, setAborted] = useState(false);
   // Throttle streamed token updates so the dock re-renders ~20×/s instead of once per token (the SDK's
   // intended knob for this); the final message still renders in full once the stream settles.
   const chat = useChat({
@@ -109,13 +114,26 @@ export const useAssistantChat = (): UseChatHelpers<UIMessage> & {
     if (status === 'submitted' || status === 'ready' || status === 'error') setPhase(null);
   }, [status]);
 
+  // A new turn supersedes the aborted marker. Keyed on status (not on the stop/send wrappers) so
+  // it also covers turns started via regenerate, which is passed through unwrapped.
+  useEffect(() => {
+    if (status === 'submitted' || status === 'streaming') setAborted(false);
+  }, [status]);
+
+  // Record the user's stop of a busy turn before delegating; stop while idle is a no-op marker-wise.
+  const stop: typeof chat.stop = (...args) => {
+    if (status === 'submitted' || status === 'streaming') setAborted(true);
+    return chat.stop(...args);
+  };
+
   // Start a fresh chat: abort any in-flight turn, drop the transcript (memory + storage), clear the error.
   const reset = () => {
     suppressPersist.current = true;
-    chat.stop();
+    chat.stop(); // raw SDK stop: a reset is not a user "stop", so it must not mark the turn aborted
     chat.setMessages([]);
     chat.clearError();
     clearTranscript();
+    setAborted(false);
   };
 
   // Wrap sendMessage so a new turn lifts the post-reset suppression — only then may persistence resume.
@@ -124,5 +142,5 @@ export const useAssistantChat = (): UseChatHelpers<UIMessage> & {
     return chat.sendMessage(...args);
   };
 
-  return { ...chat, sendMessage, reset, phase };
+  return { ...chat, sendMessage, stop, reset, phase, aborted };
 };

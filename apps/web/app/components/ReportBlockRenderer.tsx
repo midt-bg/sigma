@@ -44,22 +44,40 @@ function BarBlock({
 }) {
   if (points.length === 0) return <p className="chart-empty">Няма данни</p>;
   const max = Math.max(1, ...points.map((p) => p.value));
+  const rows = points.map((p) => ({
+    label: p.label == null || p.label === '' ? '—' : String(p.label),
+    value: formatCell(p.value, format ?? 'money'),
+    pct: ((p.value / max) * 100).toFixed(1),
+  }));
   return (
     <div className="report-block report-block--bar">
-      <ul className="report-bar" role="list">
-        {points.map((p, i) => {
-          const pct = ((p.value / max) * 100).toFixed(1);
-          const label = p.label == null || p.label === '' ? '—' : String(p.label);
-          return (
-            <li key={i} className="report-bar__row">
-              <span className="report-bar__fill" style={{ width: `${pct}%` }} aria-hidden="true" />
-              <span className="report-bar__label">{label}</span>
-              <span className="report-bar__value num">
-                {formatCell(p.value, format ?? 'money')}
-              </span>
-            </li>
-          );
-        })}
+      {/* Visually-hidden data table — the AT-accessible source (WCAG 1.1.1).
+          The bar list is aria-hidden; screen readers and text-only mode use this table instead.
+          AccessibilityWidget's SURVIVAL_CSS reveals .ts-data-table when text-only is active. */}
+      <table className="ts-data-table" aria-label="Данни от диаграмата">
+        <thead>
+          <tr>
+            <th scope="col">Категория</th>
+            <th scope="col">Стойност</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              <td>{row.label}</td>
+              <td>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <ul className="report-bar" role="list" aria-hidden="true">
+        {rows.map((row, i) => (
+          <li key={i} className="report-bar__row">
+            <span className="report-bar__fill" style={{ width: `${row.pct}%` }} />
+            <span className="report-bar__label">{row.label}</span>
+            <span className="report-bar__value num">{row.value}</span>
+          </li>
+        ))}
       </ul>
       {truncated && (
         <p className="report-block__truncated-note">

@@ -23,6 +23,7 @@ type Props = Parameters<typeof AssistantPanel>[0];
 const props = (over: Partial<Props> = {}): Props => ({
   messages: [],
   busy: false,
+  aborted: false,
   phase: null,
   onSend: vi.fn(),
   onStop: vi.fn(),
@@ -102,6 +103,9 @@ describe('AssistantPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Нов разговор' }));
 
-    expect(screen.getByRole('status')).toHaveTextContent('Започнат е нов разговор');
+    // Name-scoped: the transcript renders its own turn-completion status region alongside this one.
+    expect(screen.getByRole('status', { name: 'Състояние на разговора' })).toHaveTextContent(
+      'Започнат е нов разговор',
+    );
   });
 });

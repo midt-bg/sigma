@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UIMessageChunk } from 'ai';
 import { createPhaseFilter } from './stream-phase';
+import { GATEWAY_OVERLOADED_MESSAGE } from './stream-errors';
 
 // Cast a hand-built RAW UIMessageChunk (the wire shape the filter consumes) — NOT the persisted
 // `tool-<name>` part shape; those are different layers. The cast crosses that boundary once here.
@@ -143,6 +144,11 @@ describe('createPhaseFilter', () => {
       data: { reportId: 'abc', title: 'Справка' },
     });
     expect(await runFilter([ready])).toEqual([ready]);
+  });
+
+  it('passes the masked error chunk through verbatim — the gateway-429 shed message reaches the wire', async () => {
+    const shed = asChunk({ type: 'error', errorText: GATEWAY_OVERLOADED_MESSAGE });
+    expect(await runFilter([shed])).toEqual([shed]);
   });
 
   it('passes text and structural markers through unchanged', async () => {

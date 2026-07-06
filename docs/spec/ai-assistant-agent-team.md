@@ -556,7 +556,9 @@ Rides the existing СИГМА architecture (single `apps/web` Worker, D1 as `env
   mobile sheet are classic a11y failure points: each SVG block needs a **screen-reader data-table
   alternative** (nearly free, since ⑥ already holds the bounded result set — §9.1), plus keyboard nav +
   focus trap in the dock/sheet, reduced-motion, and a live region for streamed tokens. Treat AA as part
-  of the launch gate, alongside Turnstile/rate-limiting.
+  of the launch gate, alongside Turnstile/rate-limiting. Implementation and rationale (native-dialog
+  trap on mobile, deliberately non-modal desktop panel, silenced in-flight live region): the
+  „Достъпност (WCAG 2.2 AA)" section in [ai-assistant.md](ai-assistant.md).
 - **Memoize generation, dedupe reports (per §9.8).** The full design is §3 *Dedup & idempotency*
   (L1 prompt-hash → L2 SQL → L2.5 result-fingerprint → L3 tool memo, single-flighted through a DO,
   keyed on the composite freshness token). Net effect here: a viral/repeated prompt reuses one R2

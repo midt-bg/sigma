@@ -121,7 +121,10 @@ html.assistant-ready .assistant-dock--panel {
   border: none;
   background: none;
   color: var(--ink-mid);
-  padding: var(--s-1) var(--s-2);
+  /* ≥24px target with margin to spare (WCAG 2.2 §2.5.8): 8px v-padding + 16px icon ≈ 32px. */
+  padding: var(--s-2);
+  min-width: 24px;
+  min-height: 24px;
   cursor: pointer;
 }
 .assistant-panel__collapse svg {
@@ -145,6 +148,9 @@ html.assistant-ready .assistant-dock--panel {
   font: inherit;
   font-size: 0.8125rem;
   line-height: 1;
+  /* 4px padding + 13px text + borders ≈ 23px — under the 24px floor (WCAG 2.2 §2.5.8). */
+  min-width: 24px;
+  min-height: 24px;
   cursor: pointer;
 }
 .assistant-panel__new-chat:hover {
@@ -256,6 +262,12 @@ html.assistant-ready .assistant-dock--panel {
 }
 .report-chip__open {
   font-weight: 600;
+  /* Standalone link (not inline in a sentence), so the 2.5.8 inline exception doesn't apply —
+     give it the 24px floor. */
+  display: inline-flex;
+  align-items: center;
+  min-width: 24px;
+  min-height: 24px;
 }
 
 .assistant-empty {
@@ -553,6 +565,12 @@ html.a11y-textonly .assistant-dock {
 }
 
 /* ── Bar chart block ────────────────────────────────────────────────── */
+
+/* Text-only mode reveals the bar block's .ts-data-table (SURVIVAL_CSS override);
+   hide the visual bar list there so the data isn't presented twice. */
+html.a11y-textonly .report-bar {
+  display: none !important;
+}
 
 .report-bar {
   list-style: none;

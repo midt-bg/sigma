@@ -23,6 +23,7 @@ import {
 } from 'ai';
 import { buildSystemPrompt } from './system-prompt';
 import { createPhaseFilter } from './stream-phase';
+import { classifyStreamError, isGatewayRateLimit } from './stream-errors';
 import { EMIT_REPORT_TOOL } from '../assistant-contract/stream';
 import { EMIT_REPORT_JSON_SCHEMA } from './emit-report-schema';
 import { ASSISTANT_TOOLS, finalizeReport, type ToolContext } from './tools';
@@ -343,7 +344,10 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
       modelProducedText = typeof event.text === 'string' && event.text.trim().length > 0;
       resolveModelFinished();
     },
-    onError: () => {
+    onError: ({ error }) => {
+      // The global BgGPT cap fires in AI Gateway at model-call time (§4) — tag the shed so it is
+      // countable in Workers tail, distinct from provider outages.
+      if (isGatewayRateLimit(error)) console.error('[assistant] gateway 429 — shedding turn');
       modelErrored = true;
       resolveModelFinished();
     },
@@ -408,7 +412,16 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     execute: async ({ writer }) => {
       try {
         // Drop reasoning/sources at source too — defense-in-depth with the phase filter downstream.
-        writer.merge(result.toUIMessageStream({ sendReasoning: false, sendSources: false }));
+        // onError is required here: provider errors arrive as `error` parts of fullStream and are
+        // masked by THIS hook (the SDK default is English "An error occurred."), not by the
+        // createUIMessageStream onError below, which only sees execute/merge rejections.
+        writer.merge(
+          result.toUIMessageStream({
+            sendReasoning: false,
+            sendSources: false,
+            onError: classifyStreamError,
+          }),
+        );
         // Wait for the model loop to settle before the last-resort finalizer, but never indefinitely.
         // onFinish/onError resolve `modelFinished` and in practice one always fires (incl. on abort), so
         // this timer is pure defense-in-depth: if the SDK ever failed to settle, the wrapper would keep the
@@ -506,13 +519,13 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
         opts.onSettled?.(opts.ctx.persistedReport ?? null);
       }
     },
-    // Graceful degradation (§7): a provider outage / rate-limit / timeout surfaces mid-stream as a
-    // readable Bulgarian line instead of a broken connection. The SDK default redacts the error to
-    // "An error occurred." to avoid leaking server details — we log it server-side (Workers tail)
-    // and show our own message. A full rate-limit + circuit-breaker is the launch gate (README).
+    // Graceful degradation (§7): anything that escapes execute/merge (provider errors take the
+    // toUIMessageStream onError above instead) surfaces as a readable Bulgarian line, not a broken
+    // connection — a gateway 429 gets the distinct shed message (§3), everything else the generic
+    // one. We log the raw error server-side (Workers tail); no server detail reaches the user.
     onError: (error) => {
       console.error('[assistant] stream error', error);
-      return 'Асистентът временно не е достъпен. Опитай отново след малко.';
+      return classifyStreamError(error);
     },
   });
   // Only phases + prose + the resolved report reach the dock — the wrapped stream (model loop + any

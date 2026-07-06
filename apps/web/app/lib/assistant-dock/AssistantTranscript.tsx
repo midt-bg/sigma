@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UIMessage } from 'ai';
 import { isToolTurnWithoutReport, projectChip, reportOutputFromMessage } from './report-projection';
 import { addToReportIndex } from './storage';
@@ -14,6 +14,9 @@ interface AssistantTranscriptProps {
   /** A turn is in flight. While busy, the streaming message's report result is withheld (mid-turn it
    *  may still change on retry) and the settled-turn no-answer fallback is suppressed. */
   busy: boolean;
+  /** The last turn was stopped by the user. The SDK settles an aborted stream to status:ready exactly
+   *  like a natural finish, so without this flag the settle announcement would falsely say „готов". */
+  aborted: boolean;
   /** Called when the user taps „Отвори" — forwarded to ReportChip to close the dock on mobile. */
   onOpenReport?: () => void;
 }
@@ -40,10 +43,42 @@ export const AssistantTranscript = ({
   messages,
   phase,
   busy,
+  aborted,
   onOpenReport,
 }: AssistantTranscriptProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+
+  // Turn-completion announcement (WCAG 4.1.3). The in-flight message is aria-live="off" (its text
+  // mutates ~20×/s while streaming — announcing every mutation is SR spam), and flipping that
+  // attribute back on settle doesn't re-announce the settled prose. This status region fills the gap:
+  // one polite announcement per settled turn. Errors stay silent here — AssistantPanel's role="alert"
+  // and the in-log failure lines already announce those. The toggling trailing space re-announces
+  // identical consecutive messages (same trick as AssistantPanel's new-chat status).
+  const prevBusy = useRef(busy);
+  const settleCount = useRef(0);
+  const [settledAnnouncement, setSettledAnnouncement] = useState('');
+  useEffect(() => {
+    const wasBusy = prevBusy.current;
+    prevBusy.current = busy;
+    if (!wasBusy || busy) return;
+    let text: string | null = null;
+    if (aborted) {
+      // A user Stop settles to the same busy:false as a natural finish — announcing „готов" would
+      // tell an SR user their cancelled answer completed. Checked before the role guard: an abort
+      // can land before any assistant part has arrived.
+      text = 'Отговорът е прекъснат';
+    } else {
+      const last = messages[messages.length - 1];
+      if (!last || last.role !== 'assistant') return;
+      const report = reportOutputFromMessage(last);
+      if (report?.ok) text = `Готова е справка: ${report.report.title}`;
+      else if (!report && messageText(last) !== '') text = 'Отговорът е готов';
+    }
+    if (!text) return;
+    settleCount.current += 1;
+    setSettledAnnouncement(`${text}${settleCount.current % 2 === 0 ? ' ' : ''}`);
+  }, [busy, aborted, messages]);
 
   // Index each settled report so /reports can read from localStorage (spec §5: per-browser, no
   // global enumeration). Runs whenever messages change; deduplication is in addToReportIndex.
@@ -79,53 +114,65 @@ export const AssistantTranscript = ({
   }, [messages]);
 
   return (
-    <div
-      ref={scrollRef}
-      onScroll={onScroll}
-      className="assistant-transcript"
-      role="log"
-      aria-live="polite"
-      aria-label="Разговор с асистента"
-    >
-      {messages.map((message, index) => {
-        // Withhold the result for the still-streaming (last) message: its emit_report can settle
-        // {ok:false} mid-turn and flip to a chip on retry. Show chip/failure only once the turn settles.
-        const streaming = busy && index === messages.length - 1;
-        const report = streaming ? null : reportOutputFromMessage(message);
-        // A settled last turn that made tool calls but produced neither a report nor prose — the
-        // no-answer safety net (afc93d8). `!busy` already implies the report tool isn't mid-flight.
-        const showNoAnswer =
-          !busy &&
-          index === messages.length - 1 &&
-          message.role === 'assistant' &&
-          !report &&
-          isToolTurnWithoutReport(message) &&
-          messageText(message) === '';
-        return (
-          <div key={message.id} className="assistant-turn">
-            <AssistantMessage message={message} />
-            {report?.ok ? (
-              <ReportChip
-                {...projectChip(report.report)}
-                href={report.storedId ? `/reports/${report.storedId}` : undefined}
-                onOpen={onOpenReport}
-              />
-            ) : null}
-            {/* Suppress the failure line while the last turn is still in flight: a first emit that
+    <>
+      <p className="sr-only" role="status" aria-label="Състояние на отговора">
+        {settledAnnouncement}
+      </p>
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="assistant-transcript"
+        role="log"
+        aria-live="polite"
+        aria-label="Разговор с асистента"
+      >
+        {messages.map((message, index) => {
+          // Withhold the result for the still-streaming (last) message: its emit_report can settle
+          // {ok:false} mid-turn and flip to a chip on retry. Show chip/failure only once the turn settles.
+          const streaming = busy && index === messages.length - 1;
+          const report = streaming ? null : reportOutputFromMessage(message);
+          // A settled last turn that made tool calls but produced neither a report nor prose — the
+          // no-answer safety net (afc93d8). `!busy` already implies the report tool isn't mid-flight.
+          const showNoAnswer =
+            !busy &&
+            index === messages.length - 1 &&
+            message.role === 'assistant' &&
+            !report &&
+            isToolTurnWithoutReport(message) &&
+            messageText(message) === '';
+          return (
+            // The streaming turn is aria-live="off": its text node mutates on every token batch and
+            // polite logs re-announce mutations. The settled announcement comes from the status
+            // region above; the text itself stays reachable by normal SR reading order.
+            <div
+              key={message.id}
+              className="assistant-turn"
+              aria-live={streaming ? 'off' : undefined}
+            >
+              <AssistantMessage message={message} />
+              {report?.ok ? (
+                <ReportChip
+                  {...projectChip(report.report)}
+                  href={report.storedId ? `/reports/${report.storedId}` : undefined}
+                  onOpen={onOpenReport}
+                />
+              ) : null}
+              {/* Suppress the failure line while the last turn is still in flight: a first emit that
                 returns ok:false is normally RETRIED (the loop re-forces emit_report) and then
                 succeeds, so flashing „не можа да бъде съставена" mid-retry contradicts the report
                 that lands a moment later. Only show it once the turn has settled (or for an earlier
                 turn that genuinely ended on ok:false). While busy the pending indicator shows instead. */}
-            {report && !report.ok && !(busy && index === messages.length - 1) ? (
-              <p className="assistant-transcript__error">Справката не можа да бъде съставена.</p>
-            ) : null}
-            {showNoAnswer ? (
-              <p className="assistant-transcript__error">{NO_ANSWER_FALLBACK}</p>
-            ) : null}
-          </div>
-        );
-      })}
-      <AssistantPhaseLine phase={phase} />
-    </div>
+              {report && !report.ok && !(busy && index === messages.length - 1) ? (
+                <p className="assistant-transcript__error">Справката не можа да бъде съставена.</p>
+              ) : null}
+              {showNoAnswer ? (
+                <p className="assistant-transcript__error">{NO_ANSWER_FALLBACK}</p>
+              ) : null}
+            </div>
+          );
+        })}
+        <AssistantPhaseLine phase={phase} />
+      </div>
+    </>
   );
 };
