@@ -201,33 +201,47 @@ describe('streamCompaniesCsv masking', () => {
 
   it('keeps the other columns unchanged for both masked and legal-entity rows', async () => {
     const csv = await streamCompaniesCsv(maskingDb(), {}).text();
-    const [maskedEik, maskedName, maskedKind, maskedSettlement, maskedWon, maskedContracts, maskedAuth, maskedSector] = parseLine(
-      csv.trim().split('\n')[1],
-    );
-    const [legalEik, legalName, legalKind, legalSettlement, legalWon, legalContracts, legalAuth, legalSector] = parseLine(
-      csv.trim().split('\n')[2],
-    );
+    const [
+      maskedEik,
+      maskedName,
+      maskedKind,
+      maskedSettlement,
+      maskedWon,
+      maskedContracts,
+      maskedAuth,
+      maskedSector,
+    ] = parseLine(csv.trim().split('\n')[1]);
+    const [
+      legalEik,
+      legalName,
+      legalKind,
+      legalSettlement,
+      legalWon,
+      legalContracts,
+      legalAuth,
+      legalSector,
+    ] = parseLine(csv.trim().split('\n')[2]);
 
     expect(maskedEik).toBe('');
     expect(maskedName).toBe(MASKED_NATURAL_PERSON_LABEL);
-    expect([maskedKind, maskedSettlement, maskedWon, maskedContracts, maskedAuth, maskedSector]).toEqual([
-      'company',
-      'Варна',
-      '500',
-      '1',
-      '1',
-      '45',
-    ]);
-    expect([legalEik, legalName, legalKind, legalSettlement, legalWon, legalContracts, legalAuth, legalSector]).toEqual([
-      '333333333',
-      'Пример ООД',
-      'company',
-      'Бургас',
-      '700',
-      '1',
-      '1',
-      '45',
-    ]);
+    expect([
+      maskedKind,
+      maskedSettlement,
+      maskedWon,
+      maskedContracts,
+      maskedAuth,
+      maskedSector,
+    ]).toEqual(['company', 'Варна', '500', '1', '1', '45']);
+    expect([
+      legalEik,
+      legalName,
+      legalKind,
+      legalSettlement,
+      legalWon,
+      legalContracts,
+      legalAuth,
+      legalSector,
+    ]).toEqual(['333333333', 'Пример ООД', 'company', 'Бургас', '700', '1', '1', '45']);
   });
 
   it('masks rows whose legal_form is ЕТ regardless of which source() branch they came from (base-aggregation path)', async () => {

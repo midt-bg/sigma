@@ -4,11 +4,7 @@
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
-import {
-  cleanName,
-  isNaturalPersonBidder,
-  MASKED_NATURAL_PERSON_LABEL,
-} from '@sigma/shared';
+import { cleanName, isNaturalPersonBidder, MASKED_NATURAL_PERSON_LABEL } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
@@ -275,16 +271,7 @@ export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Respon
         const name = isNatural ? MASKED_NATURAL_PERSON_LABEL : r.name;
         const eik = isNatural ? '' : r.eik;
         block +=
-          [
-            eik,
-            name,
-            r.kind,
-            r.settlement,
-            r.won_eur,
-            r.contracts,
-            r.authorities,
-            r.primary_sector,
-          ]
+          [eik, name, r.kind, r.settlement, r.won_eur, r.contracts, r.authorities, r.primary_sector]
             .map(csvCell)
             .join(',') + '\n';
         afterId = r.bidder_id;

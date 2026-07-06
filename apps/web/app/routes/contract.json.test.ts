@@ -152,7 +152,10 @@ describe('contract.json loader', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('X-Privacy-Mask')).toBe('applied');
     expect(response.headers.get('X-Robots-Tag')).toBeNull();
-    const body = (await response.json()) as { bidder: { eik: string | null; name: string; displayName: string }; sourceNames: { bidder: string } };
+    const body = (await response.json()) as {
+      bidder: { eik: string | null; name: string; displayName: string };
+      sourceNames: { bidder: string };
+    };
     expect(body.bidder.eik).toBeNull();
     expect(body.bidder.name).toBe(MASKED_NATURAL_PERSON_LABEL);
     expect(body.bidder.displayName).toBe(MASKED_NATURAL_PERSON_LABEL);
@@ -188,7 +191,10 @@ describe('contract.json loader', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('X-Privacy-Mask')).toBeNull();
     expect(response.headers.get('X-Robots-Tag')).toBeNull();
-    const body = (await response.json()) as { bidder: { eik: string | null; name: string }; sourceNames: { bidder: string } };
+    const body = (await response.json()) as {
+      bidder: { eik: string | null; name: string };
+      sourceNames: { bidder: string };
+    };
     expect(body.bidder.eik).toBe('123456789');
     expect(body.bidder.name).toBe('СОФАРМА ТРЕЙДИНГ АД');
     expect(body.sourceNames.bidder).toBe('СОФАРМА ТРЕЙДИНГ АД');
