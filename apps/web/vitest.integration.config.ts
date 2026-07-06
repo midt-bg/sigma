@@ -22,18 +22,42 @@ function resolveOtelEsmRoot(): string {
   try {
     return path.join(path.dirname(require.resolve('@opentelemetry/api/package.json')), 'build/esm');
   } catch {
+    // Fallback: when `require.resolve` fails (e.g. pnpm hoisting put the package
+    // under a non-default path), walk the pnpm store and pick the highest-versioned
+    // `@opentelemetry/api` directory. A deterministic semver-aware sort guarantees
+    // the same input always resolves to the same output, even if the store ever
+    // hoists more than one version of the package.
     const pnpmStore = path.join(repoRoot, 'node_modules/.pnpm');
-    const packageDir = readdirSync(pnpmStore)
+    const candidates = readdirSync(pnpmStore)
       .filter((entry) => entry.startsWith('@opentelemetry+api@'))
-      .map((entry) => path.join(pnpmStore, entry, 'node_modules/@opentelemetry/api'))
+      .map((entry) => {
+        const version = entry.slice('@opentelemetry+api@'.length);
+        return { entry, version };
+      })
+      .sort((a, b) => compareSemverDesc(a.version, b.version))
+      .map(({ entry }) => path.join(pnpmStore, entry, 'node_modules/@opentelemetry/api'))
       .find((candidate) => existsSync(path.join(candidate, 'build/esm')));
 
-    if (!packageDir) {
+    if (!candidates) {
       throw new Error('Unable to resolve @opentelemetry/api build/esm directory for integration tests');
     }
 
-    return path.join(packageDir, 'build/esm');
+    return path.join(candidates, 'build/esm');
   }
+}
+
+/**
+ * Compare two pnpm-store version strings, descending. Handles plain semver
+ * (`1.9.1`) and pnpm's `<semver>(<peer-deps-hash>)` flavour by stripping the
+ * suffix before comparing the numeric core.
+ */
+function compareSemverDesc(a: string, b: string): number {
+  const core = (s: string) => s.replace(/_.*$/, '');
+  const [aMajor, aMinor, aPatch] = core(a).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const [bMajor, bMinor, bPatch] = core(b).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  if (aMajor !== bMajor) return bMajor - aMajor;
+  if (aMinor !== bMinor) return bMinor - aMinor;
+  return bPatch - aPatch;
 }
 
 const otelEsmRoot = resolveOtelEsmRoot();
