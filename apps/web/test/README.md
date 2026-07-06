@@ -31,13 +31,13 @@ apps/web/test/
 Всички команди се изпълняват от корена на монорепото:
 
 ```bash
-# Unit lane — само чисти функции, без Worker pipeline (~1 s, 30 файла, 284 теста)
+# Unit lane — само чисти функции, без Worker pipeline (~1 s, 31 файла, 335 теста)
 pnpm --filter @sigma/web test:unit
 
 # Integration lane — Worker + D1 + bindings през wrangler.getPlatformProxy (~2–3 s, 7 файла, 34 теста)
 pnpm --filter @sigma/web test:integration
 
-# Двете ленти последователно — CI gate, exit 0 = зелено (общо 37 файлa, 318 теста, ~5–6 s)
+# Двете ленти последователно — CI gate, exit 0 = зелено (общо 38 файлa, 369 теста, ~5–6 s)
 pnpm --filter @sigma/web test
 
 # Typecheck (независимо)
@@ -161,7 +161,7 @@ describe('GET /some-route — body shape', () => {
 
 ### 4. Кога D1 фикстурата не стига
 
-`apps/web/test/integration/global-setup.ts` засява:
+`apps/web/test/integration/global-setup.ts` засява (декларациите на фикстурата + SQL хелпърите за прилагане на миграциите са изнесени в `helpers/fixtures.ts`, за да се споделят и от `setup.ts` — вижте `helpers/fixtures.ts:FIXTURE_STATEMENTS`):
 
 - 1 authority (`auth:BG000000000`), 1 bidder (`eik:BG000000001`), 1 tender (`t:FIX-1`).
 - 30 договора в `contracts` със строго намалящ `amount_eur` (за pagination regression).
