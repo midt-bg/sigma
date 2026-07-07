@@ -35,12 +35,23 @@ describe('authority / contract slugs', () => {
     expect(contractSlug('c:52')).toBe('52');
     expect(contractIdFromSlug('52')).toBe('c:52');
   });
-  it('round-trips normalized EOP/OCDS contract ids', () => {
+  it('round-trips normalized EOP/OCDS contract ids (no "/" in id)', () => {
     const eopId = 'c:e:UNP-1:CONTRACT-1:2026-06-13';
     const ocdsId = 'c:o:UNP-1:CONTRACT-1:2026-06-13';
 
     expect(contractIdFromSlug(contractSlug(eopId))).toBe(eopId);
     expect(contractIdFromSlug(contractSlug(ocdsId))).toBe(ocdsId);
+  });
+  it('percent-encodes "/" in the slug so it does not split the URL path', () => {
+    // AOP contract numbers often contain "/" (e.g. "ОП20-42/22/"). Without encoding the slash
+    // breaks the /contracts/:id route into multiple segments → 404.
+    const id = 'c:e:00797-2020-0039:93-ОП20-42/22/:5:eik:102130456:1';
+    const slug = contractSlug(id);
+    expect(slug).not.toContain('/');
+    expect(slug).toContain('%2F');
+    // The reading side: React Router decodes params.id before contractIdFromSlug sees it.
+    // Simulate that: decodeURIComponent(slug) → raw slug → contractIdFromSlug → original id.
+    expect(contractIdFromSlug(decodeURIComponent(slug))).toBe(id);
   });
 });
 
@@ -49,5 +60,10 @@ describe('hrefForEntity', () => {
     expect(hrefForEntity('authority', 'auth:000695089')).toBe('/authorities/000695089');
     expect(hrefForEntity('company', 'eik:103267194')).toBe('/companies/103267194');
     expect(hrefForEntity('contract', 'c:52')).toBe('/contracts/52');
+  });
+  it('produces a URL-safe href for contract ids containing "/"', () => {
+    const href = hrefForEntity('contract', 'c:e:UNP:ОП20-42/22/');
+    expect(href).not.toContain('/contracts/e:UNP:ОП20-42/22/');
+    expect(href).toBe('/contracts/e:UNP:ОП20-42%2F22%2F');
   });
 });

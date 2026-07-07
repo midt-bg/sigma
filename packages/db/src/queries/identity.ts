@@ -51,9 +51,12 @@ export function authorityIdFromSlug(slug: string): string {
   return 'auth:' + slug;
 }
 
-/** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). */
+/** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`, with `/`
+ *  percent-encoded so it doesn't split the URL path). React Router decodes `%2F` back to `/`
+ *  in params, so the reading side (`contractIdFromSlug`) needs no change. */
 export function contractSlug(contractId: string): string {
-  return contractId.startsWith('c:') ? contractId.slice(2) : contractId;
+  const raw = contractId.startsWith('c:') ? contractId.slice(2) : contractId;
+  return raw.replace(/\//g, '%2F');
 }
 
 /** `/contracts/:id` segment → contract id. */
