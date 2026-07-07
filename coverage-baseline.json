@@ -1,0 +1,29 @@
+{
+  "tolerance": 0.5,
+  "workspaces": {
+    "apps/etl": {
+      "lines": 18.7,
+      "branches": 19.4
+    },
+    "apps/web": {
+      "lines": 89.3,
+      "branches": 81.3
+    },
+    "packages/config": {
+      "lines": 88.2,
+      "branches": 58.3
+    },
+    "packages/db": {
+      "lines": 82,
+      "branches": 65.5
+    },
+    "packages/ingest": {
+      "lines": 83.8,
+      "branches": 78.9
+    },
+    "packages/shared": {
+      "lines": 94.8,
+      "branches": 78.1
+    }
+  }
+}

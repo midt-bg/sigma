@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { sharedCoverage } from '../../vitest.shared';
 
 // The db suite is real-SQLite integration style: tests shell out to the sqlite3 CLI dozens of
 // times each, and the heaviest (ship-domain) legitimately runs for around a minute. On loaded CI
@@ -6,5 +7,9 @@ import { defineConfig } from 'vitest/config';
 // refresh-slice EOP derivation test), so give the whole suite generous headroom - correctness
 // here is asserted by the checks, not by speed.
 export default defineConfig({
-  test: { testTimeout: 120_000 },
+  test: {
+    environment: 'node',
+    testTimeout: 120_000,
+    coverage: sharedCoverage(['src/**']),
+  },
 });
