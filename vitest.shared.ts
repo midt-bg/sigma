@@ -12,7 +12,8 @@ export function sharedCoverage(include: string[]): NonNullable<ViteUserConfig['t
     // by tests, so a new untested module would be invisible to the ratchet.
     include,
     exclude: [
-      '**/*.test.ts',
+      '**/*.test.*',
+      '**/*.spec.*',
       '**/node_modules/**',
       '**/dist/**',
       '**/build/**',

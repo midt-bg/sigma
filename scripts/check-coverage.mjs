@@ -26,15 +26,22 @@
 // Not to be confused with apps/web/app/lib/coverage.ts — that is domain-level
 // *data* coverage, unrelated to test coverage.
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASELINE_FILE = 'coverage-baseline.json';
 const METRICS = ['lines', 'branches', 'functions', 'statements'];
+// Only lines/branches are ratcheted: functions% swings hard in the tiny
+// workspaces (one helper more or less), and statements ≈ lines under v8.
+// Both are still measured and shown in the table.
 const RATCHETED = ['lines', 'branches'];
 const BUMP_NUDGE_PP = 1.0;
+// Baseline keys become filesystem paths and markdown content; keep them to
+// plain `apps/...`/`packages/...` segments — no `..`, no absolute paths, no
+// prototype-shaped keys.
+const WORKSPACE_KEY = /^(apps|packages)\/[A-Za-z0-9_-]+$/;
 
 // ── pure helpers (unit-tested in check-coverage.test.mjs) ──────────────────────
 
@@ -153,12 +160,87 @@ export function updatedBaseline(perWorkspace, tolerance) {
   return { tolerance, workspaces };
 }
 
+/**
+ * Fail-closed validation of the baseline against the repo's test-bearing
+ * workspaces. Errors when the baseline is empty or malformed, when a
+ * workspace with a `test` script has no baseline entry (a forgotten or
+ * deleted key would otherwise silently remove enforcement), or when the
+ * baseline lists a workspace that no longer has tests.
+ */
+export function validateBaseline(baseline, testWorkspaces) {
+  const errors = [];
+  const ws = baseline?.workspaces;
+  if (ws === null || typeof ws !== 'object' || Array.isArray(ws)) {
+    return [`${BASELINE_FILE}: "workspaces" must be an object`];
+  }
+  const keys = Object.keys(ws);
+  if (keys.length === 0) {
+    return [`${BASELINE_FILE}: "workspaces" is empty — the ratchet would silently pass`];
+  }
+  for (const key of keys) {
+    if (!WORKSPACE_KEY.test(key)) {
+      errors.push(`${BASELINE_FILE}: invalid workspace key "${key}"`);
+    }
+  }
+  for (const name of testWorkspaces) {
+    if (!Object.prototype.hasOwnProperty.call(ws, name)) {
+      errors.push(
+        `${name} has a "test" script but no entry in ${BASELINE_FILE} — add one ` +
+          '(run `node scripts/check-coverage.mjs --update` after `pnpm test -- --coverage`).',
+      );
+    }
+  }
+  for (const key of keys) {
+    if (WORKSPACE_KEY.test(key) && !testWorkspaces.includes(key)) {
+      errors.push(
+        `${BASELINE_FILE} lists "${key}" but that workspace has no "test" script — remove the stale entry.`,
+      );
+    }
+  }
+  return errors;
+}
+
+/**
+ * Per-metric changes between two baseline `workspaces` maps (used by --update
+ * to surface what the rewrite actually did). Decreases are the dangerous
+ * case: --update recomputes every workspace, so a real regression elsewhere
+ * would silently ride along with an intended bump.
+ */
+export function baselineChanges(oldWs, newWs) {
+  const changes = [];
+  for (const [name, metrics] of Object.entries(newWs)) {
+    for (const metric of RATCHETED) {
+      const from = oldWs?.[name]?.[metric];
+      const to = metrics[metric];
+      if (typeof from === 'number' && from !== to) {
+        changes.push({ name, metric, from, to, decreased: to < from });
+      }
+    }
+  }
+  return changes;
+}
+
 /** `true` iff this module is the entry point — URL-safe. */
 export function isMain(importMetaUrl, argvPath) {
   return Boolean(argvPath) && importMetaUrl === pathToFileURL(argvPath).href;
 }
 
 // ── entry point ────────────────────────────────────────────────────────────────
+
+/** Workspaces (as `apps/x` / `packages/y`) whose package.json has a test script. */
+function findTestWorkspaces() {
+  const found = [];
+  for (const group of ['apps', 'packages']) {
+    for (const entry of readdirSync(join(ROOT, group), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pkgPath = join(ROOT, group, entry.name, 'package.json');
+      if (!existsSync(pkgPath)) continue;
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      if (pkg.scripts?.test) found.push(`${group}/${entry.name}`);
+    }
+  }
+  return found.sort();
+}
 
 function main() {
   const update = process.argv.includes('--update');
@@ -171,16 +253,25 @@ function main() {
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
   const tolerance = typeof baseline.tolerance === 'number' ? baseline.tolerance : 0.5;
 
+  // Fail closed before comparing anything: an empty/blanked baseline or a
+  // missing/stale workspace key must be an error, not a green no-op.
+  const baselineErrors = validateBaseline(baseline, findTestWorkspaces());
+  if (baselineErrors.length > 0) {
+    for (const e of baselineErrors) console.error(e);
+    process.exit(1);
+  }
+
   const perWorkspace = {};
   const failures = [];
   let bumpable = false;
 
-  for (const name of Object.keys(baseline.workspaces ?? {})) {
+  for (const name of Object.keys(baseline.workspaces)) {
     const summaryPath = join(ROOT, name, 'coverage', 'coverage-summary.json');
     if (!existsSync(summaryPath)) {
       console.error(
         `No coverage report for "${name}" (expected ${name}/coverage/coverage-summary.json). ` +
-          'Run `pnpm test -- --coverage` first.',
+          'Run `pnpm test -- --coverage` first. If it already ran and failed, check the test ' +
+          'output — a crashed vitest process leaves no report.',
       );
       process.exit(1);
     }
@@ -193,8 +284,17 @@ function main() {
 
   if (update) {
     const next = updatedBaseline(perWorkspace, tolerance);
+    const changes = baselineChanges(baseline.workspaces, next.workspaces);
+    for (const c of changes) {
+      const line = `${c.name}: ${c.metric} ${c.from}% → ${c.to}%`;
+      if (c.decreased) {
+        console.error(`⚠ DECREASE ${line} — make sure this drop is intentional before committing.`);
+      } else {
+        console.log(`  ${line}`);
+      }
+    }
     writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`);
-    console.log(`Wrote ${BASELINE_FILE} from current coverage. Review and commit it.`);
+    console.log(`Wrote ${BASELINE_FILE} from current coverage. Review the diff and commit it.`);
     return;
   }
 

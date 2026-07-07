@@ -10,6 +10,8 @@ import {
   mergedTotal,
   renderMarkdown,
   updatedBaseline,
+  validateBaseline,
+  baselineChanges,
 } from './check-coverage.mjs';
 
 function metric(pct, covered = 0, total = 0) {
@@ -136,6 +138,70 @@ test('renderMarkdown on pass shows the tolerance and bump nudge', () => {
   const md = renderMarkdown(per, { 'packages/db': { lines: 80, branches: 70 } }, 0.5, [], true);
   assert.match(md, /✅ No workspace dropped below its baseline \(tolerance 0\.5pp\)/);
   assert.match(md, /--update/);
+});
+
+test('empty workspaces object fails closed, not a green no-op', () => {
+  const errors = validateBaseline({ workspaces: {} }, ['apps/web']);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /"workspaces" is empty/);
+});
+
+test('non-object workspaces (bad merge) fails closed', () => {
+  for (const ws of [null, undefined, [], 'x']) {
+    const errors = validateBaseline({ workspaces: ws }, []);
+    assert.equal(errors.length, 1, `workspaces=${JSON.stringify(ws)}`);
+    assert.match(errors[0], /must be an object/);
+  }
+});
+
+test('test-bearing workspace missing from baseline is an error (deleted-key guard)', () => {
+  const errors = validateBaseline({ workspaces: { 'apps/web': { lines: 80, branches: 70 } } }, [
+    'apps/web',
+    'packages/db',
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /packages\/db has a "test" script but no entry/);
+});
+
+test('stale baseline key for a workspace without tests is an error', () => {
+  const errors = validateBaseline({ workspaces: { 'apps/web': {}, 'packages/gone': {} } }, [
+    'apps/web',
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /"packages\/gone".*no "test" script/);
+});
+
+test('traversal and prototype-shaped baseline keys are rejected', () => {
+  for (const key of ['../../etc', 'apps/../secret', '__proto__', '/abs', 'apps/a/b']) {
+    const errors = validateBaseline({ workspaces: { [key]: {}, 'apps/web': {} } }, ['apps/web']);
+    assert.ok(
+      errors.some((e) => e.includes('invalid workspace key')),
+      `key ${key} should be rejected`,
+    );
+  }
+});
+
+test('valid baseline matching the test workspaces passes validation', () => {
+  const errors = validateBaseline({ workspaces: { 'apps/web': { lines: 80, branches: 70 } } }, [
+    'apps/web',
+  ]);
+  assert.deepEqual(errors, []);
+});
+
+test('baselineChanges flags decreases so --update cannot hide a regression', () => {
+  const changes = baselineChanges(
+    { 'apps/web': { lines: 89.3, branches: 81.3 }, 'packages/db': { lines: 82, branches: 65.5 } },
+    { 'apps/web': { lines: 90.1, branches: 81.3 }, 'packages/db': { lines: 79.2, branches: 65.5 } },
+  );
+  assert.deepEqual(changes, [
+    { name: 'apps/web', metric: 'lines', from: 89.3, to: 90.1, decreased: false },
+    { name: 'packages/db', metric: 'lines', from: 82, to: 79.2, decreased: true },
+  ]);
+});
+
+test('baselineChanges is silent for a brand-new workspace (no old entry)', () => {
+  const changes = baselineChanges({}, { 'apps/new': { lines: 50, branches: 40 } });
+  assert.deepEqual(changes, []);
 });
 
 test('updatedBaseline floors current values and keeps tolerance', () => {

@@ -123,8 +123,11 @@ jobs:
             exit 0
           fi
           marker='<!-- coverage-report -->'
-          existing=$(gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -1)
+          # Two steps, not a pipeline: `gh api | head -1` under the runner's
+          # default `pipefail` can surface gh's SIGPIPE (exit 141) as failure.
+          gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" > comment-ids.txt
+          existing=$(head -1 comment-ids.txt)
           if [ -n "$existing" ]; then
             gh api --method PATCH "repos/${GH_REPO}/issues/comments/${existing}" \
               -F body=@coverage-summary.md > /dev/null
