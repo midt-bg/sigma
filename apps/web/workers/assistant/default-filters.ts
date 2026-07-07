@@ -61,10 +61,9 @@ const CALLOUT_OPTOUT_PUBLISHED_AT =
 /**
  * Resolve the default contract filters against an explicit opt-out set. Deterministic and pure.
  *
- * The emitted `sql.fragment` assumes the query aliases `contracts` as `c` and the joined `tenders`
- * as `t`. Every contract has a tender (`contracts.tender_id NOT NULL REFERENCES tenders`) and
- * `tenders.procedure_type` is `NOT NULL` ('неизвестна' for synthetic orphan headers), so the
- * synthetic-tender guard is a plain inequality that excludes only the `'неизвестна'` sentinel.
+ * The emitted `sql.fragment` assumes the query aliases `contracts` as `c`. The synthetic-tender
+ * guard uses the denormalized `contracts.is_synthetic` flag (1 for synthetic orphan headers,
+ * 0 otherwise) so aggregate queries need no tenders JOIN just to enforce this filter.
  */
 export function applyDefaultFilters(options: DefaultFilterOptions = {}): DefaultFilterResult {
   const excludeNullAmount = options.includeUnsummable !== true;
@@ -86,10 +85,9 @@ export function applyDefaultFilters(options: DefaultFilterOptions = {}): Default
   }
 
   if (excludeSynthetic) {
-    // tenders.procedure_type is NOT NULL ('неизвестна' for synthetic orphan headers) and every
-    // contract has a tender, so a plain inequality suffices — there is no NULL row to guard.
-    conditions.push('t.procedure_type != ?');
-    params.push(SYNTHETIC_PROCEDURE);
+    // contracts.is_synthetic is the denormalized flag (1=synthetic, 0=normal) populated at ETL time.
+    // Constant predicate — no bind parameter needed, and no tenders JOIN required.
+    conditions.push('c.is_synthetic != 1');
     callout.push(CALLOUT_DEFAULT_SYNTHETIC);
   } else {
     callout.push(CALLOUT_OPTOUT_SYNTHETIC);

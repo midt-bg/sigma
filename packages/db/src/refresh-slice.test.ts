@@ -9,6 +9,7 @@ import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const migration0002Path = resolve(root, 'packages/db/migrations/0002_contracts_is_synthetic.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
@@ -175,6 +176,7 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 
 function initWorkDb(dbPath: string): void {
   readScript(dbPath, schemaPath);
+  readScript(dbPath, migration0002Path);
   readScript(dbPath, workStagingSchemaPath);
 }
 

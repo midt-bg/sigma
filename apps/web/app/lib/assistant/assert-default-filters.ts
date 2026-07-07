@@ -62,8 +62,8 @@ function isSyntheticValue(node: unknown): boolean {
   return typeof node.value === 'string' && node.value === SYNTHETIC_SENTINEL;
 }
 
-// `procedure_type != 'неизвестна'` / `<> ?` / `NOT IN ('неизвестна')` — exclude synthetic orphan tenders.
-function matchesSyntheticExclusion(conjunct: unknown): boolean {
+// `procedure_type != 'неизвестна'` / `<> ?` / `NOT IN ('неизвестна')` — backward-compat form.
+function matchesProcedureTypeExclusion(conjunct: unknown): boolean {
   if (
     !isObj(conjunct) ||
     conjunct.type !== 'binary_expr' ||
@@ -86,6 +86,25 @@ function matchesSyntheticExclusion(conjunct: unknown): boolean {
     return list.some(isSyntheticValue);
   }
   return false;
+}
+
+// `c.is_synthetic != 1` / `c.is_synthetic = 0` — preferred form (no tenders JOIN required).
+function matchesIsSyntheticFlag(conjunct: unknown): boolean {
+  if (!isObj(conjunct) || conjunct.type !== 'binary_expr') return false;
+  if (!isColumnRef(conjunct.left, 'is_synthetic')) return false;
+  const right = conjunct.right;
+  if (!isObj(right) || right.type !== 'number') return false;
+  const v = right.value;
+  return (
+    ((conjunct.operator === '!=' || conjunct.operator === '<>') && v === 1) ||
+    (conjunct.operator === '=' && v === 0)
+  );
+}
+
+// Exclude synthetic orphan contracts — accepts both the legacy procedure_type form and the new
+// denormalized is_synthetic flag (set at ETL time, avoids a tenders JOIN in pure aggregates).
+function matchesSyntheticExclusion(conjunct: unknown): boolean {
+  return matchesProcedureTypeExclusion(conjunct) || matchesIsSyntheticFlag(conjunct);
 }
 
 // --- Conditional guard: a time-series that BUCKETS by signed_at (по година/месец) must bracket the date
@@ -111,10 +130,25 @@ function subtreeReferencesSignedAt(node: unknown): boolean {
 
 // A query „buckets by" signed_at when it derives a period from it in the PROJECTION (`substr(signed_at…)
 // AS year`) or GROUP BY — the timeseries shape. signed_at used only in the WHERE is a plain date FILTER
-// (already a range) and is not a bucket.
+// (already a range) and is not a bucket. A bare `c.signed_at` in the SELECT list is just display
+// (e.g. a point-lookup returning the raw date value) — it is NOT a period derivation and must not
+// trigger the date-window guard.
+function projectionDerivesSignedAtPeriod(columns: unknown): boolean {
+  if (!Array.isArray(columns)) return false;
+  return columns.some((col) => {
+    if (!isObj(col)) return false;
+    // node-sql-parser wraps each SELECT item as `{ expr: <node>, as: <alias>|null }`.
+    const expr = isObj(col.expr) ? col.expr : col;
+    // A bare column_ref for signed_at is pure display — not a period derivation.
+    if (isColumnRef(expr, 'signed_at')) return false;
+    // signed_at appearing inside a function call (substr, strftime, …) derives a period bucket.
+    return subtreeReferencesSignedAt(expr);
+  });
+}
+
 function bucketsBySignedAt(sel: LooseSelect): boolean {
   const node = sel as unknown as Record<string, unknown>;
-  return subtreeReferencesSignedAt(node.columns) || subtreeReferencesSignedAt(node.groupby);
+  return projectionDerivesSignedAtPeriod(node.columns) || subtreeReferencesSignedAt(node.groupby);
 }
 
 const UPPER_OPS = new Set(['<', '<=']);
@@ -181,7 +215,7 @@ const REQUIRED: RequiredPredicate[] = (() => {
   if (descriptor.excludeSynthetic) {
     reqs.push({
       matches: matchesSyntheticExclusion,
-      label: "синтетични поръчки (procedure_type != 'неизвестна')",
+      label: 'синтетични поръчки (c.is_synthetic != 1)',
     });
   }
   return reqs;

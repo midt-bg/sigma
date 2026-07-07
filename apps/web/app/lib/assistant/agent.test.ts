@@ -12,14 +12,14 @@ import type { VerificationOutcome } from './verifier';
 
 describe('resolveMaxSteps', () => {
   it('uses the default for a missing or non-numeric value', () => {
-    expect(resolveMaxSteps(undefined)).toBe(6);
-    expect(resolveMaxSteps('')).toBe(6);
-    expect(resolveMaxSteps('abc')).toBe(6);
+    expect(resolveMaxSteps(undefined)).toBe(8);
+    expect(resolveMaxSteps('')).toBe(8);
+    expect(resolveMaxSteps('abc')).toBe(8);
   });
 
   it('falls back to the default for 0 or a negative value (never stalls the loop)', () => {
-    expect(resolveMaxSteps('0')).toBe(6);
-    expect(resolveMaxSteps('-4')).toBe(6);
+    expect(resolveMaxSteps('0')).toBe(8);
+    expect(resolveMaxSteps('-4')).toBe(8);
   });
 
   it('clamps an over-large value to the hard ceiling (never uncaps BgGPT calls)', () => {
@@ -40,6 +40,8 @@ describe('chooseToolChoice', () => {
     hasResults: true,
     reportEmitted: false,
     lastStepFailedEmit: false,
+    rollupTouched: false,
+    reconcileEmitted: false,
   };
 
   it('forces a real tool call on the first step (no prose narration of the call)', () => {
@@ -79,6 +81,27 @@ describe('chooseToolChoice', () => {
       type: 'tool',
       toolName: 'emit_report',
     });
+  });
+
+  it('forces reconcile_rollup near the budget when a rollup table was touched but not reconciled', () => {
+    expect(
+      chooseToolChoice({ ...base, stepNumber: 4, rollupTouched: true, reconcileEmitted: false }),
+    ).toEqual({ type: 'tool', toolName: 'reconcile_rollup' });
+    expect(
+      chooseToolChoice({ ...base, stepNumber: 5, rollupTouched: true, reconcileEmitted: false }),
+    ).toEqual({ type: 'tool', toolName: 'reconcile_rollup' });
+  });
+
+  it('forces emit_report near the budget when rollup was already reconciled', () => {
+    expect(
+      chooseToolChoice({ ...base, stepNumber: 4, rollupTouched: true, reconcileEmitted: true }),
+    ).toEqual({ type: 'tool', toolName: 'emit_report' });
+  });
+
+  it('forces emit_report near the budget when no rollup table was touched', () => {
+    expect(
+      chooseToolChoice({ ...base, stepNumber: 4, rollupTouched: false, reconcileEmitted: false }),
+    ).toEqual({ type: 'tool', toolName: 'emit_report' });
   });
 });
 

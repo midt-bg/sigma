@@ -10,7 +10,7 @@
 // opcodes (OpenWrite, Destroy, CreateBtree, SetCookie, ParseSchema, VUpdate, VBegin, …) which never
 // appear in any read plan. Hence the guard is a DEFAULT-DENY ALLOWLIST keyed by opcode NAME.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -39,11 +39,16 @@ const KNOWN_SQLITE_VERSIONS: ReadonlySet<string> = new Set(['3.53.2', '3.53.0', 
 let db: DatabaseSync;
 
 beforeAll(() => {
-  // Resolve the real schema relative to THIS test file: apps/web/app/lib/assistant → repo root is 5 up.
-  const schemaUrl = new URL('../../../../../packages/db/migrations/0000_init.sql', import.meta.url);
-  const schema = readFileSync(schemaUrl, 'utf8');
+  // Apply every migration in lexicographic order so the schema the guard tests compile against
+  // matches what a freshly provisioned D1 would have (including additive migrations like is_synthetic).
+  const migrationsUrl = new URL('../../../../../packages/db/migrations/', import.meta.url);
+  const files = readdirSync(migrationsUrl)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
   db = new DatabaseSync(':memory:');
-  db.exec(schema);
+  for (const f of files) {
+    db.exec(readFileSync(new URL(f, migrationsUrl), 'utf8'));
+  }
 });
 
 afterAll(() => {

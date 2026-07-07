@@ -96,6 +96,13 @@ export interface ToolContext {
   // Set true by emit_report once a VALID (ok:true) report is produced this turn. Read by the agent loop's
   // step planner (chooseToolChoice) so it stops force-finalizing once a report exists.
   reportEmitted?: boolean;
+  // Set true by run_sql when any query this turn read from a rollup summary table
+  // (authority_totals, company_totals, sector_totals). Read by chooseToolChoice to inject a
+  // reconcile_rollup forcing step before emit_report when the model hasn't reconciled yet.
+  rollupTouched?: boolean;
+  // Set true by reconcile_rollup on a successful (Съгласувано.) call this turn. Prevents
+  // re-forcing reconcile when the model already called it correctly.
+  reconcileEmitted?: boolean;
   // Set by the persist path (emit_report or the fallback finalizer) to the report actually written to R2
   // this turn. Read by runAssistant's onSettled to hand the dedup driver its {reportId, createdAt} (Lane F).
   persistedReport?: { reportId: string; createdAt: string };
@@ -183,12 +190,19 @@ const runSqlTool: AssistantTool = {
       // `meta.rows_read` is the LAST attempt only, so multiply by `total_attempts`: a query D1 auto-
       // retried scanned the table on every attempt, and under-billing retried full scans would let the
       // Denial-of-Wallet guard be undershot (conservative over-estimate is the safe direction — #80).
-      ctx.rowsRead =
-        (ctx.rowsRead ?? 0) + (meta?.rows_read ?? 0) * Math.max(1, meta?.total_attempts ?? 1);
+      const rowsThisQuery = (meta?.rows_read ?? 0) * Math.max(1, meta?.total_attempts ?? 1);
+      ctx.rowsRead = (ctx.rowsRead ?? 0) + rowsThisQuery;
       const qr = toQueryResult(resultHandle(ctx.results.length), results ?? []);
       ctx.results.push(qr);
       ctx.sources.push({ handle: qr.handle, tool: 'run_sql', sql });
-      return forModel(qr);
+      if (touchesRollupTable(sql)) ctx.rollupTouched = true;
+      // Gap 3: expose the rows-read cost so the model can adapt its next query rather than
+      // hitting the budget silently. Omitted when meta is absent (unit mocks / D1 timeouts).
+      const budgetNote =
+        rowsThisQuery > 0
+          ? `\n[Четени редове: ${rowsThisQuery} / общо за хода: ${ctx.rowsRead} / бюджет: ${budget}]`
+          : '';
+      return forModel(qr) + budgetNote;
     } catch (e) {
       // Don't echo the raw D1 error to the model/report — it can leak schema/internal detail. Log it
       // server-side and hand the model a generic, retry-able message (review #80). A timeout lands here
@@ -341,11 +355,19 @@ const sourceLinkTool: AssistantTool = {
 // model presents a count/sum. Only the amount_eur-filtered rollups are valid targets; reconciling
 // against `home_totals` (a corpus COUNT(*) over ALL contracts, incl. NULL-amount rows) would throw on a
 // correct figure, so it is rejected outright (reconcile-rollup.ts header).
-const VALID_ROLLUP_TARGETS: ReadonlySet<string> = new Set([
+export const VALID_ROLLUP_TARGETS: ReadonlySet<string> = new Set([
   'sector_totals',
   'authority_totals',
   'company_totals',
 ]);
+
+function touchesRollupTable(sql: string): boolean {
+  const lower = sql.toLowerCase();
+  for (const t of VALID_ROLLUP_TARGETS) {
+    if (lower.includes(t)) return true;
+  }
+  return false;
+}
 
 // A pointer to the (count, sum) cells of one side, read from a server-executed result handle. The grain
 // is shared between the two sides, so it lives on the tool args, not here.
@@ -462,6 +484,7 @@ const reconcileRollupTool: AssistantTool = {
     if ('error' in rollup) return `Заявката е отхвърлена: ${rollup.error}.`;
     try {
       assertReconciled(aggregate, rollup);
+      ctx.reconcileEmitted = true;
       return 'Съгласувано.';
     } catch (e) {
       // Block-and-surface: hand the model the exact mismatch so it corrects the figure instead of

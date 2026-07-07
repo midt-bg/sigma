@@ -10,8 +10,8 @@ describe('applyDefaultFilters', () => {
       dateField: 'signed_at',
     });
     expect(r.dateColumn).toBe('c.signed_at');
-    expect(r.sql.fragment).toBe('c.amount_eur IS NOT NULL AND t.procedure_type != ?');
-    expect(r.sql.params).toEqual(['неизвестна']);
+    expect(r.sql.fragment).toBe('c.amount_eur IS NOT NULL AND c.is_synthetic != 1');
+    expect(r.sql.params).toEqual([]);
   });
 
   it('defaults to the rollup row-set (amount_eur IS NOT NULL), never value_flag', () => {
@@ -36,7 +36,7 @@ describe('applyDefaultFilters', () => {
     const r = applyDefaultFilters({ includeUnsummable: true });
     expect(r.descriptor.excludeNullAmount).toBe(false);
     expect(r.sql.fragment).not.toContain('amount_eur');
-    expect(r.sql.params).toEqual(['неизвестна']);
+    expect(r.sql.params).toEqual([]);
     expect(r.callout).toContain(
       'ВНИМАНИЕ: по изрично искане са включени договори без канонична стойност (amount_eur липсва); тези редове няма да се съгласуват с обобщените тотали (rollups).',
     );
@@ -45,7 +45,7 @@ describe('applyDefaultFilters', () => {
   it('opting into synthetic drops the filter and warns', () => {
     const r = applyDefaultFilters({ includeSynthetic: true });
     expect(r.descriptor.excludeSynthetic).toBe(false);
-    expect(r.sql.fragment).not.toContain('procedure_type');
+    expect(r.sql.fragment).not.toContain('is_synthetic');
     expect(r.sql.fragment).toBe('c.amount_eur IS NOT NULL');
     expect(r.sql.params).toEqual([]);
     expect(r.callout).toContain(

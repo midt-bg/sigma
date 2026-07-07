@@ -48,7 +48,7 @@ export interface AgentEnv {
 }
 
 const DEFAULT_MODEL = 'google/gemma-4-31b-it';
-const DEFAULT_MAX_STEPS = 6;
+const DEFAULT_MAX_STEPS = 8;
 // Hard ceiling on the tool-loop length regardless of env, bounding worst-case model calls per turn.
 // `MAX_STEPS` is operator-supplied config — a misconfigured deploy could otherwise stall the loop
 // (0/negative) or uncap it (a huge value). (review #80)
@@ -65,7 +65,11 @@ export function resolveMaxSteps(raw: string | undefined): number {
 }
 
 /** Per-step tool-choice, as accepted by the SDK's `prepareStep` (a specific-tool force is an object). */
-export type StepToolChoice = 'auto' | 'required' | { type: 'tool'; toolName: 'emit_report' };
+export type StepToolChoice =
+  | 'auto'
+  | 'required'
+  | { type: 'tool'; toolName: 'emit_report' }
+  | { type: 'tool'; toolName: 'reconcile_rollup' };
 
 export interface ToolChoiceInput {
   stepNumber: number; // 0-based index of the step about to run
@@ -73,6 +77,8 @@ export interface ToolChoiceInput {
   hasResults: boolean; // this turn's run_sql produced ≥1 bindable result handle
   reportEmitted: boolean; // a prior step already produced a valid (ok:true) report
   lastStepFailedEmit: boolean; // the previous step's emit_report returned ok:false (shape errors)
+  rollupTouched: boolean; // any run_sql this turn read from a rollup summary table
+  reconcileEmitted: boolean; // reconcile_rollup already returned Съгласувано. this turn
 }
 
 /**
@@ -86,13 +92,27 @@ export interface ToolChoiceInput {
  * affordance — never a blank turn. (Ordering + step-0 forcing rationale below.)
  */
 export function chooseToolChoice(input: ToolChoiceInput): StepToolChoice {
-  const { stepNumber, maxSteps, hasResults, reportEmitted, lastStepFailedEmit } = input;
+  const {
+    stepNumber,
+    maxSteps,
+    hasResults,
+    reportEmitted,
+    lastStepFailedEmit,
+    rollupTouched,
+    reconcileEmitted,
+  } = input;
   // Force a real tool call on the FIRST step so a weak model can't narrate the call as prose (```sql).
   if (stepNumber === 0) return 'required';
   // Near the budget with gathered data but no report → force finalization from what we have, instead of
   // spending the last steps exploring and returning nothing. Checked before the failed-emit retry because
   // forcing the specific tool is strictly stronger than a bare 'required'.
   if (!reportEmitted && hasResults && stepNumber >= maxSteps - 2) {
+    // Gap 1: if results touched a rollup summary table but reconcile hasn't run yet, force it first.
+    // reconcile_rollup gets the penultimate forced step; emit_report gets the final one — so the model
+    // never presents a rollup-touching aggregate that hasn't been reconciled.
+    if (rollupTouched && !reconcileEmitted) {
+      return { type: 'tool', toolName: 'reconcile_rollup' };
+    }
     return { type: 'tool', toolName: 'emit_report' };
   }
   // A failed emit_report (shape errors returned to the model) → force a retry rather than let it drop to
@@ -174,6 +194,15 @@ const PROMPT_VERSION = `sp_${fnv1a(buildSystemPrompt({}))}`;
 /** Generate a URL-safe random report ID (e.g. `r_a3f8c2d1e9b4`). */
 function randomReportId(): string {
   return `r_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+}
+
+// Gap 2: detect bare numeric tokens in assistant prose that should instead be bound via a result handle.
+// Flags 5+-digit integers (avoids 4-digit years/CPV sub-codes) and currency-prefixed patterns.
+// Only used for telemetry (console.warn) — never a hard block (false-positive risk on IDs, dates, etc.).
+const BARE_NUMBER_RE = /\b\d{5,}\b|€\s*\d+|\b\d+\s*(?:хил\.|млн\.|млрд\.)/i;
+
+function hasBareNumbers(text: string): boolean {
+  return BARE_NUMBER_RE.test(text);
 }
 
 // Whitelist of recognised source values stored in provenance freshness rows.
@@ -343,6 +372,15 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     onFinish: (event) => {
       modelFinishReason = event.finishReason;
       modelProducedText = typeof event.text === 'string' && event.text.trim().length > 0;
+      // Gap 2 telemetry: when the model had real data to present but wrote numbers in prose instead of
+      // binding via a result handle, log a warning for the Promise observer. Not a hard block — false
+      // positives exist (dates, IDs, CPV codes), so this is a signal, not an enforcement gate.
+      if (modelProducedText && opts.ctx.results.length > 0 && hasBareNumbers(event.text)) {
+        console.warn(
+          '[assistant] prose-number leak: bare numeric token in assistant text outside report',
+          { sample: event.text.slice(0, 300) },
+        );
+      }
       resolveModelFinished();
     },
     onError: ({ error }) => {
@@ -385,6 +423,8 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
           hasResults: opts.ctx.results.length > 0,
           reportEmitted: opts.ctx.reportEmitted === true,
           lastStepFailedEmit,
+          rollupTouched: opts.ctx.rollupTouched === true,
+          reconcileEmitted: opts.ctx.reconcileEmitted === true,
         }),
       };
     },

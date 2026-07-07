@@ -92,13 +92,28 @@ export const RECONCILE_RULE =
   'authority_totals / company_totals) покрива, извикай `reconcile_rollup`, за да съгласуваш изчисления ' +
   'агрегат с тотала при същия грейн. Никога не съгласувай срещу home_totals.';
 
+// Explicit arg-shape example because a weak 27B misconstructs the nested {resultId,row,countCol,sumCol}
+// form on the first try, burning a step on a shape-validation error rather than a real mismatch.
+export const RECONCILE_ROLLUP_GUIDE =
+  'ФОРМАТ НА reconcile_rollup — попълвай ТОЧНО:\n' +
+  '{"target":"authority_totals","grain":{"authority_id":"auth:123"},' +
+  '"aggregate":{"resultId":"R1","row":0,"countCol":"contracts","sumCol":"spent_eur"},' +
+  '"rollup":{"resultId":"R2","row":0,"countCol":"contracts","sumCol":"spent_eur"}}\n' +
+  '`resultId` е хендълът от run_sql (R1, R2 …); `row` е 0-базиран индекс; ' +
+  '`countCol`/`sumCol` са ИМЕНА на колони в резултата.';
+
 // The skeleton asks only for a source citation — NOT a freshness citation. Demanding freshness
 // unconditionally made the model fabricate a date, because the route does not yet supply `input.freshness`
 // (its wiring is a launch-gate follow-up). The freshness line below is appended ONLY when a real value is
 // provided, and only then is the model told to cite it (review #80).
+export const SOURCE_LINK_RULE =
+  'ЦИТИРАНЕ НА ИСТОЧНИКА: За конкретен договор/преписка в callout извикай `source_link` с ' +
+  '`eopTenderId` от `tenders.eop_tender_id` (включи го в run_sql заявката). ' +
+  'Връщат се готови дълбоки линкове към ЦАИС ЕОП — копирай ги директно в callout.md.';
+
 export const EDITORIAL_SKELETON =
   'ФОРМА НА СПРАВКАТА: заглавие → едноредов отговор (`text`) → водещи `totals` → поддържащи ' +
-  '`table`/`bar`/`flows`/`timeseries` → `callout`, който цитира източниците.';
+  '`table`/`bar`/`flows`/`timeseries` → `callout`, който цитира източници (използвай `source_link`).';
 
 // The skeleton describes the ideal report form but nothing MANDATED the supporting detail — the weak
 // model sometimes ships a bare totals + one-liner, leaving the reader with a number and no evidence.
@@ -135,8 +150,15 @@ export const HEADLINE_TOTALS_RULE =
 
 const ROLE =
   'Ти си аналитичният асистент на СИГМА — платформа за прозрачност на обществените поръчки. ' +
-  'Отговаряш на български. Базата са публични данни от АОП / ЦАИС ЕОП. Имаш read-only инструменти: ' +
-  '`describe_schema`, `run_sql` (само SELECT), курирани заявки, `semantic_search` и `emit_report`. ' +
+  'Отговаряш на български. Базата са публични данни от АОП / ЦАИС ЕОП. Имаш read-only инструменти:\n' +
+  '- `describe_schema` — речник на данните; извикай ПРЕДИ да пишеш SQL при непознат въпрос.\n' +
+  '- `run_sql` — изпълнява единичен SELECT; резултатът се запазва под хендъл (R1, R2 …).\n' +
+  '- `find_entity` — намери id на възложител/изпълнител по ime (Cyrillic-safe); ползвай вместо LIKE.\n' +
+  '- `semantic_search` — семантично търсене по смисъл за парафрази/синоними.\n' +
+  '- `eop_fetch` — живи данни от ЦАИС ЕОП за конкретна дата, отвъд последния ingest; резултатът НЕ може да се подаде към emit_report — обобщи в текст.\n' +
+  '- `source_link` — официални дълбоки линкове (ЦАИС ЕОП) за цитиране; подай `eopTenderId` от `tenders.eop_tender_id`.\n' +
+  '- `reconcile_rollup` — съгласувай изчислен агрегат с rollup ПРЕДИ да го обявиш (sector_totals / authority_totals / company_totals).\n' +
+  '- `emit_report` — структурирана справка; ЗАДЪЛЖИТЕЛНА за всеки отговор с число/класация.\n' +
   'Преди да пишеш SQL, се съобразявай с правилата по-долу — те описват реалните капани в данните.';
 
 const boundsOf = (p: ResolvedPeriod): string =>
@@ -214,6 +236,8 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     NO_INTERNAL_FIELDS_RULE,
     DATA_TRUST_RULE,
     RECONCILE_RULE,
+    RECONCILE_ROLLUP_GUIDE,
+    SOURCE_LINK_RULE,
     EDITORIAL_SKELETON,
     REPORT_DETAILS_RULE,
     NO_DATA_RULE,
