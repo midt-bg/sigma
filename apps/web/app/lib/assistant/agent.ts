@@ -404,9 +404,10 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     // invoking it) — `tool_choice: 'required'` makes that structurally impossible. Step 0 only: later
     // steps need `auto` so the model can finalize with `emit_report` and stop. Measured against the real
     // streamText path this took the failing cases from 0/4 to 4/4 (run_sql→emit_report). The matching
-    // „run_sql FIRST, emit_report after" ordering rule lives in system-prompt.ts. Trade-off: a pure
-    // meta/clarifying turn is also forced to call one tool first (usually describe_schema) — acceptable
-    // for a data-analysis assistant where nearly every turn is a data question.
+    // „run_sql FIRST, emit_report after" ordering rule lives in system-prompt.ts. A pure meta/clarifying
+    // turn is also forced to call one tool first — it satisfies that with `answer_directly` (a no-op,
+    // no-data escape hatch), NOT a junk run_sql probe, so no stray numeric result gets published as a
+    // hollow report (the #69 residual; see answerDirectlyTool + NON_DATA_TURN_RULE).
     //
     // Additionally: if the last step contained a failed emit_report (ok:false — shape validation errors
     // returned to the model), force `required` again so the model retries the tool call rather than

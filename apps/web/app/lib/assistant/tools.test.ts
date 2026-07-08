@@ -80,6 +80,7 @@ function ctx(
 describe('the tool registry', () => {
   it('exposes the read-only/source tools the model may call', () => {
     expect(ASSISTANT_TOOLS.map((t) => t.name).sort()).toEqual([
+      'answer_directly',
       'describe_schema',
       'eop_fetch',
       'find_entity',
@@ -88,6 +89,18 @@ describe('the tool registry', () => {
       'semantic_search',
       'source_link',
     ]);
+  });
+
+  it('answer_directly is a no-op escape hatch: nudges prose, touches no result state (#69 residual)', async () => {
+    // A non-data turn (greeting/meta) must have a valid tool to satisfy the forced first step WITHOUT
+    // landing a junk numeric result that the fallback would publish as a hollow „totals: 1" report.
+    const c = ctx();
+    const out = await runTool('answer_directly', {}, c);
+    expect(out).toContain('директно'); // instructs the model to answer in prose
+    // The load-bearing property: it leaves ctx.results/sources empty, so buildFallbackReport has nothing
+    // to synthesize from and the no-data affordance path is taken instead.
+    expect(c.results).toHaveLength(0);
+    expect(c.sources).toHaveLength(0);
   });
 
   it('describe_schema returns the data dictionary', async () => {

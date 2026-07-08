@@ -117,6 +117,27 @@ export interface AssistantTool {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
+// Non-data escape hatch. The first agent step forces a tool call (agent.ts chooseToolChoice →
+// 'required') so a weak 27–31B model can't narrate a run_sql as prose. That forcing has a cost: a turn
+// that needs NO data — a greeting, a thank-you, an out-of-scope or clarifying question — is ALSO forced
+// to call something, and with only data tools on offer the model invents a junk probe (e.g. SELECT 1),
+// whose lone numeric cell then gets published as a hollow „totals: 1" report (the #69 residual). This
+// tool gives such a turn a VALID non-query choice: calling it satisfies the forced first step and signals
+// „no DB needed", so the model answers in plain prose on the next (auto) step and NO stray result lands in
+// ctx.results — leaving the fallback finalizer nothing to synthesize a hollow report from. No-arg by
+// design: the model cannot stuff its reply into a parameter, so it must produce the answer as prose.
+const answerDirectlyTool: AssistantTool = {
+  name: 'answer_directly',
+  description:
+    'Извикай ме, когато въпросът НЕ изисква данни от базата — поздрав, благодарност, въпрос ИЗВЪН ' +
+    'обхвата на обществените поръчки, или молба за пояснение. След това отговори с кратък свободен текст. ' +
+    'НЕ ме ползвай, ако въпросът може да се отговори с данни — тогава винаги първо `run_sql`.',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+  async execute() {
+    return 'Няма нужда от заявка към базата. Отговори директно и кратко на потребителя на български.';
+  },
+};
+
 const describeSchemaTool: AssistantTool = {
   name: 'describe_schema',
   description: 'Връща речника на данните и задължителните правила. Извикай го ПРЕДИ да пишеш SQL.',
@@ -497,6 +518,7 @@ const reconcileRollupTool: AssistantTool = {
 
 /** Read-only / source tools the model may call mid-turn (emit_report is finalized separately). */
 export const ASSISTANT_TOOLS: AssistantTool[] = [
+  answerDirectlyTool,
   describeSchemaTool,
   runSqlTool,
   findEntityTool,

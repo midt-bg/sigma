@@ -42,6 +42,15 @@ export const TOOL_WORKFLOW_RULE =
   'извиквай `emit_report`, преди да имаш резултат от `run_sql`. НИКОГА не пиши SQL заявката или ' +
   'извикването на инструмент като текст/код-блок — извиквай инструментите директно.';
 
+// Paired with `answer_directly` (tools.ts) and the step-0 forced tool call. A turn that needs no data must
+// have a valid non-query tool to satisfy the force — otherwise the model invents a junk probe and the
+// server publishes its lone numeric cell as a hollow „totals: 1" report (#69 residual). Tells the model
+// which turns are non-data and to reply in prose after the call.
+export const NON_DATA_TURN_RULE =
+  'БЕЗ ДАННИ: За въпрос, който НЕ изисква данни — поздрав, благодарност, въпрос ИЗВЪН обхвата на ' +
+  'обществените поръчки, или молба за пояснение — първо извикай `answer_directly`, после отговори с ' +
+  'кратък свободен текст. НЕ пускай заявка (`run_sql`) само за да имаш какво да извикаш.';
+
 export const VALUES_BY_REFERENCE_RULE =
   'СТОЙНОСТИ: Никога не пиши числа сам. Блоковете на справката РЕФЕРЕНЦИРАТ хендъли към резултати от ' +
   'инструментите (напр. R1, ред 0, колона "total_eur"); сървърът свързва реалните стойности. ' +
@@ -151,6 +160,7 @@ export const HEADLINE_TOTALS_RULE =
 const ROLE =
   'Ти си аналитичният асистент на СИГМА — платформа за прозрачност на обществените поръчки. ' +
   'Отговаряш на български. Базата са публични данни от АОП / ЦАИС ЕОП. Имаш read-only инструменти:\n' +
+  '- `answer_directly` — за поздрав/благодарност/въпрос извън обхвата или уточнение (без заявка към базата); после отговори кратко в текст.\n' +
   '- `describe_schema` — речник на данните; извикай ПРЕДИ да пишеш SQL при непознат въпрос.\n' +
   '- `run_sql` — изпълнява единичен SELECT; резултатът се запазва под хендъл (R1, R2 …).\n' +
   '- `find_entity` — намери id на възложител/изпълнител по ime (Cyrillic-safe); ползвай вместо LIKE.\n' +
@@ -231,6 +241,7 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     input.temporal ? renderTemporalContext(input.temporal) : '',
     EMIT_REPORT_POLICY,
     TOOL_WORKFLOW_RULE,
+    NON_DATA_TURN_RULE,
     VALUES_BY_REFERENCE_RULE,
     EMIT_REPORT_BLOCKS_GUIDE,
     NO_INTERNAL_FIELDS_RULE,

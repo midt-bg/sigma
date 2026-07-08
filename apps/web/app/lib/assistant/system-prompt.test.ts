@@ -6,6 +6,7 @@ import {
   EMIT_REPORT_POLICY,
   HEADLINE_TOTALS_RULE,
   NO_DATA_RULE,
+  NON_DATA_TURN_RULE,
   NO_INTERNAL_FIELDS_RULE,
   RECONCILE_RULE,
   REPORT_DETAILS_RULE,
@@ -52,6 +53,17 @@ describe('buildSystemPrompt', () => {
     expect(REPORT_DETAILS_RULE).toContain('период');
     expect(REPORT_DETAILS_RULE).toContain('филтри');
     expect(REPORT_DETAILS_RULE).toContain('източниц');
+  });
+
+  it('routes a non-data turn to answer_directly, not a junk run_sql probe (#69 residual)', () => {
+    const p = buildSystemPrompt();
+    expect(p).toContain(NON_DATA_TURN_RULE);
+    // names the escape-hatch tool and the turns it covers, and forbids querying just to satisfy the force
+    expect(NON_DATA_TURN_RULE).toContain('answer_directly');
+    expect(NON_DATA_TURN_RULE).toContain('поздрав');
+    expect(NON_DATA_TURN_RULE).toContain('НЕ пускай заявка');
+    // and the tool is advertised in the ROLE tool list
+    expect(p).toContain('`answer_directly`');
   });
 
   it('tells the model exactly what to answer when the data cannot support a precise answer', () => {
