@@ -64,6 +64,8 @@ function fakeDb(contractRow: typeof baseContractRow, lotRows: unknown[]): D1Data
         async first<T>() {
           if (sql.includes('WHERE c.id = ?')) return contractRow as T;
           if (sql.includes('authority_totals') || sql.includes('company_totals')) return null as T;
+          // The „Подобни договори" cohort lookup — these tests don't exercise it, so no stats row.
+          if (sql.includes('cpv_division_stats')) return null as T;
           throw new Error(`unexpected first query: ${sql}`);
         },
         async all<T>() {

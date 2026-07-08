@@ -20,6 +20,7 @@ import type {
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -449,7 +450,10 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  const [authTotals, compTotals, lotRows] = await Promise.all([
+  // CPV division of this contract, known synchronously from the row we already read — so its cohort
+  // stats load in parallel with the other detail reads below, with no extra contract scan (review nedda76).
+  const cohortDivision = r.cpv_code ? r.cpv_code.slice(0, 2) : '';
+  const [authTotals, compTotals, lotRows, cohortStats] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -483,6 +487,7 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
+    cohortDivision ? getCpvCohortStats(db, cohortDivision) : Promise.resolve(null),
   ]);
 
   // value_low values ARE populated (counted in sums) but stay labelled, so include them here so the
@@ -638,6 +643,7 @@ export async function getContract(
     bidder,
     lots,
     subcontractor,
+    cohort: contractCohort(r.amount_eur, r.value_flag, cohortDivision, cohortStats),
   };
 
   return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };

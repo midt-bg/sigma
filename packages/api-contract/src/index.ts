@@ -320,6 +320,10 @@ export interface ContractDetail {
   lots: ContractLots | null;
   /** Declared subcontractor from the АОП feed ("Подизпълнител"), sparse (~0.8% of contracts). */
   subcontractor: { name: string; eik: string | null; valueEur: number | null } | null;
+  /** „Подобни договори" value benchmark vs the contract's CPV-division cohort — null when no honest
+   *  comparison exists (suspect/absent value, no CPV, or a cohort below the minimum). Computed inside
+   *  getContract from the row it already read, so it costs one extra rollup read, not a second scan. */
+  cohort: ContractCohortBenchmark | null;
 }
 
 /** The machine-readable contract record served at `/contracts/:id.json`. */
@@ -339,13 +343,16 @@ export interface CpvCohortStats {
   p99Eur: number;
 }
 
-/** Coarse position of one contract's value inside its CPV-division cohort. */
+/** Coarse position of one contract's value inside its CPV-division cohort. A „top X%" band is only
+ *  claimed when the cohort is large enough for that cut to be real AND the percentile anchors around
+ *  it are distinct (so a tie-collapsed or tiny cohort never yields a fake „top 1%"). */
 export type CohortBand =
   | 'top1'
   | 'top5'
   | 'top10'
   | 'top25'
   | 'above-median'
+  | 'at-median'
   | 'below-median'
   | 'bottom25';
 

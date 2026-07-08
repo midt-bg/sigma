@@ -1363,9 +1363,13 @@ INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
 FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 
--- cpv_division_stats: same full rebuild as scripts/precompute.sql §4c (small global rollup, like
--- sector_totals/facet_counts above - keep both statements in sync). IF NOT EXISTS bootstraps a
--- served DB that predates migration 0002.
+-- @refresh-batch cohort-stats
+-- cpv_division_stats: same full rebuild as scripts/precompute.sql §4c. Runs in its OWN batch (not in
+-- `globals` with data_freshness/home_totals/sector_totals/facet_counts) because it is the heaviest
+-- statement of the refresh - a full ~150k-row PARTITION BY window sort + rank over the whole corpus.
+-- Bundling it into `globals` risked blowing that single D1 request's CPU budget and failing the entire
+-- step; its own batch isolates that cost, matching how the other heavy rollups get dedicated batches
+-- (review nedda76). IF NOT EXISTS bootstraps a served DB that predates the migration.
 CREATE TABLE IF NOT EXISTS cpv_division_stats (
   division TEXT PRIMARY KEY, priced_contracts INTEGER NOT NULL,
   p25_eur REAL NOT NULL, median_eur REAL NOT NULL, p75_eur REAL NOT NULL,
