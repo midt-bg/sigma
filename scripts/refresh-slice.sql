@@ -1259,6 +1259,20 @@ WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NUL
     WHERE bidder_key IS NOT NULL
   );
 
+-- @refresh-batch contract-synthetic-flag
+-- Denormalize tenders.procedure_type = 'неизвестна' onto contracts.is_synthetic for the refreshed
+-- c:e:/c:o: rows. The full-normalize path sets this in normalize-raw.sql (step 2b); the incremental
+-- refresh must maintain it too, otherwise orphan contracts under a synthetic tender keep the column
+-- default (0) and leak past the default filter (c.is_synthetic != 1) into public answers — and the
+-- reconcilable rollups below (which now exclude synthetic) would disagree with a live aggregate.
+-- Admin-derived c: rows keep their full-normalize value (this scopes to c:e:/c:o: only).
+UPDATE contracts
+SET is_synthetic = COALESCE((
+  SELECT CASE WHEN t.procedure_type = 'неизвестна' THEN 1 ELSE 0 END
+  FROM tenders t WHERE t.id = contracts.tender_id
+), 0)  -- COALESCE: a (today-unreachable) dangling tender_id yields NULL → NOT NULL abort; degrade to 0
+WHERE id GLOB 'c:[eo]:*';
+
 -- 6) Refresh rollups + FTS. Only the D1-hot rollups are scoped to touched rows; cheaper rollups stay
 -- full-recomputed in isolated batches so convergence stays simple.
 -- @refresh-batch company-totals
@@ -1268,11 +1282,11 @@ SELECT b.id, b.name, b.kind, b.ownership_kind, b.eik_normalized, b.eik_valid, b.
   SUM(c.amount_eur), COUNT(*), COUNT(DISTINCT t.authority_id),
   SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END), MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL AND c.bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders)
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND c.bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders)
 GROUP BY b.id;
 UPDATE company_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+  WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders);
 
@@ -1283,11 +1297,11 @@ SELECT a.id, a.name, a.type_group, a.settlement, a.region,
   SUM(c.amount_eur), COUNT(*), COUNT(DISTINCT c.bidder_id), SUM(c.amount_eur) / COUNT(*),
   SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END), MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
-WHERE c.amount_eur IS NOT NULL AND t.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND t.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
 GROUP BY a.id;
 UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+  WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
 
@@ -1352,7 +1366,7 @@ DELETE FROM sector_totals;
 INSERT INTO sector_totals (division, contracts, value_eur)
 SELECT substr(t.cpv_code, 1, 2), COUNT(*), COALESCE(SUM(c.amount_eur), 0)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
 GROUP BY substr(t.cpv_code, 1, 2);
 
 DELETE FROM facet_counts;

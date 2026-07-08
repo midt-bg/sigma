@@ -4,9 +4,10 @@
 // needs `ASSISTANT_API_KEY` + bindings and is only exercised end-to-end on a deployed Worker.
 //
 // Provider-agnostic by design: the OpenAI-compatible provider is pointed at the AI Gateway, whose
-// upstream (OpenRouter today) and model are pure config — switch models/providers by editing
-// `ASSISTANT_MODEL` / `AI_GATEWAY_BASE_URL`, no code change. Routing is MANDATORY: with no gateway
-// URL configured we fail closed rather than call the provider directly (see `buildModel`).
+// upstream (BgGPT via the mamay.ai AI Gateway Custom Provider `bggpt` today) and model are pure config
+// — switch models/providers by editing `ASSISTANT_MODEL` / `AI_GATEWAY_BASE_URL`, no code change.
+// Routing is MANDATORY: with no gateway URL configured we fail closed rather than call the provider
+// directly (see `buildModel`).
 
 import { createOpenAI } from '@ai-sdk/openai';
 import {
@@ -33,16 +34,17 @@ import type { ResolvedReport } from './report-schema';
 import type { TemporalContext } from './temporal';
 
 export interface AgentEnv {
-  /** Provider API key (OpenRouter today). SECRET — `wrangler secret put ASSISTANT_API_KEY`. */
+  /** Provider API key (BgGPT/mamay today). SECRET — `wrangler secret put ASSISTANT_API_KEY`. */
   ASSISTANT_API_KEY: string;
   /**
-   * REQUIRED — OpenAI-compatible endpoint of the Cloudflare AI Gateway upstream, e.g.
-   * `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openrouter/v1`. Empty ⇒ fail closed
+   * REQUIRED — OpenAI-compatible endpoint of the Cloudflare AI Gateway upstream, e.g. (BgGPT wired as
+   * the Custom Provider `bggpt`):
+   * `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/custom-bggpt/v1`. Empty ⇒ fail closed
    * (we never call the provider directly). This is the single lever that guarantees LLM traffic
    * transits the gateway for logging / cost / rate-limit visibility (§9.5).
    */
   AI_GATEWAY_BASE_URL?: string;
-  /** Model id, provider-scoped (e.g. `google/gemma-4-31b-it`). Swappable via config alone. */
+  /** Model id, provider-scoped (e.g. `bggpt-gemma4-31b-it-bg-gptq-w4a16`). Swappable via config alone. */
   ASSISTANT_MODEL?: string;
   MAX_STEPS?: string;
 }

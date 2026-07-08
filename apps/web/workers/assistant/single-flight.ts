@@ -121,19 +121,26 @@ export class SingleFlight {
   }
 
   /**
-   * Driver succeeded: cache the report under every supplied layer, wake waiters, reset. A failed cache
+   * Driver succeeded: wake waiters, then cache the report under every supplied layer. A failed cache
    * write is swallowed (a lost write only causes a future miss → regeneration; numbers never diverge).
+   *
+   * Ordering matters: waiters are blocked on a live request (bounded by the DO's WAITER_MAX_BLOCK_MS),
+   * so we wake them FIRST — off the cache-write critical path — then persist. Snapshot-resolve-reset
+   * runs synchronously (no await), so no interleaved claim can observe a half-cleared flight. The
+   * best-effort writes run in parallel and are still awaited, so a Durable Object handler keeps the
+   * isolate alive until they settle.
    */
   async complete(
     recordAs: readonly DedupPayload[],
     freshness: string,
     result: GeneratorResult,
   ): Promise<void> {
-    for (const payload of recordAs) {
-      await record(this.deps.kv, payload, freshness, result).catch(() => {});
-    }
-    for (const waiter of this.waiters) waiter.resolve(result);
+    const waiters = [...this.waiters];
     this.reset();
+    for (const waiter of waiters) waiter.resolve(result);
+    await Promise.all(
+      recordAs.map((payload) => record(this.deps.kv, payload, freshness, result).catch(() => {})),
+    );
   }
 
   /** Driver failed/crashed/aborted: reject waiters so they regenerate, reset. */

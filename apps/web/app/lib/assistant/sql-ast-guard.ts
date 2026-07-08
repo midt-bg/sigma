@@ -33,14 +33,32 @@ export const ALLOWED_TABLES: ReadonlySet<string> = new Set(TABLES.map((t) => t.n
 
 const deny = (reason: string): GuardResult => ({ ok: false, reason });
 
-// Scalar/aggregate functions blocked at the AST level, by NORMALISED name, regardless of quoting.
-// The L1 text blocklist (sql-guard.ts) matches `\b(load_extension|randomblob|…)\s*\(` — a word-boundary
-// regex a DOUBLE-QUOTED identifier slips (`"randomblob"(…)`: the `"` breaks `\b`), yet SQLite resolves a
-// quoted identifier in call position as the function and runs it. node-sql-parser normalises both
-// `fn(…)` and `"fn"(…)` to the same name, so a name check here closes the quoting bypass AND the
-// long-known group_concat/quote/hex read-exfil gap. Classes: memory-amplification DoW
-// (randomblob/zeroblob/printf/format/group_concat), data exfil/encoding (quote/hex), and RCE where
-// extensions can load (load_extension). None appear in any canonical query.
+// Function policy, enforced at the AST level by NORMALISED name (quoting-proof: node-sql-parser maps
+// both `fn(…)` and `"fn"(…)` to the same name, so a double-quoted identifier — `"randomblob"(…)`, which
+// slips the L1 word-boundary regex because the `"` breaks `\b` — is still caught here). TWO complementary
+// checks (denyForbiddenFunction), primary first:
+//
+//   1. ALLOWED_FUNCTIONS — a POSITIVE allowlist and the FAIL-CLOSED DEFAULT. Any function whose name is
+//      not listed is rejected, so a NEW SQLite aggregate/builder — the next `string_agg` (a 3.44 alias of
+//      group_concat) or `json_pretty` (3.46) — is denied the moment D1's SQLite gains it, with NO code
+//      change. This inverts the old denylist-only posture (review follow-up, ydimitrof/DiyanaDimitrova:
+//      "every new aggregate is one release away from re-opening this hole"). The set is the documented
+//      SQLite built-in scalar/aggregate/date/math/window functions that a read-only analytics query can
+//      legitimately use; extend it here when a new legitimate need appears.
+//   2. DANGEROUS_FUNCTIONS — a denylist retained as an EXPLICIT, tested record of the specifically-
+//      dangerous names (memory-amplification aggregates/string-bombs, exfil encoders, load_extension) and
+//      WHY, and as a backstop should one ever be mistakenly added to the allowlist. Redundant with (1) by
+//      design (belt + suspenders); checked first so its specific reason wins.
+//
+// Classes of the dangerous set: memory-amplification DoW (materialise an unbounded value before capRows /
+// RESULT_BYTE_CAP can measure it) — per-row string-bombs (randomblob/zeroblob/printf/format) and table-
+// collapsing aggregates (group_concat/string_agg/json_group_array/json_group_object/json_pretty, which
+// fold a whole table into one giant value that LIMIT caps by ROWS, not cell width); data exfil/encoding
+// (quote/hex); RCE where extensions can load (load_extension). The per-row json builders/mutators are
+// bounded but denied for family symmetry. `replace` is ALLOWED (single transliteration) and `||` is a
+// legitimate single concatenation — but CHAINING either (inline or across a CTE graph) is a string-length
+// bomb, bounded to one amplifying op per query by denyAmplifyingStringChain. `concat`/`concat_ws` are
+// left OFF the allowlist for the same reason (they fail closed here).
 const DANGEROUS_FUNCTIONS: ReadonlySet<string> = new Set([
   'load_extension',
   'randomblob',
@@ -48,8 +66,117 @@ const DANGEROUS_FUNCTIONS: ReadonlySet<string> = new Set([
   'printf',
   'format',
   'group_concat',
+  'string_agg',
   'quote',
   'hex',
+  'json_group_array',
+  'json_group_object',
+  'json_object',
+  'json_array',
+  'json_quote',
+  'json_pretty',
+  'json_set',
+  'json_insert',
+  'json_replace',
+  'json_patch',
+  'json_remove',
+]);
+
+// Positive allowlist — the fail-closed default (see above). Documented SQLite built-ins a read-only
+// analytics query legitimately uses. Grouped for maintenance; a name absent here is rejected.
+const ALLOWED_FUNCTIONS: ReadonlySet<string> = new Set([
+  // aggregates that reduce to ONE scalar (not a table-collapsing string) — safe
+  'count',
+  'sum',
+  'total',
+  'avg',
+  'min',
+  'max',
+  // core scalar
+  'abs',
+  'coalesce',
+  'ifnull',
+  'nullif',
+  'iif',
+  'length',
+  'octet_length',
+  'instr',
+  'substr',
+  'substring',
+  'upper',
+  'lower',
+  'trim',
+  'ltrim',
+  'rtrim',
+  'replace', // single op only — chaining (inline or cross-CTE) rejected by denyAmplifyingStringChain
+  'char',
+  'unicode',
+  'unhex',
+  'typeof',
+  'sign',
+  'round',
+  'like',
+  'glob',
+  'likelihood',
+  'likely',
+  'unlikely',
+  // NB: concat / concat_ws are deliberately NOT allowlisted — they are string-length AMPLIFIERS (a
+  // CTE chain of `concat(v,v,…,v)` multiplies ×N/level, unbounded by LIMIT). No canonical query uses
+  // them; a bare `||` is the only concatenation a read-only analytics query needs, and even that is
+  // chain-bounded by denyAmplifyingStringChain. Leaving them off the allowlist fails them closed.
+  'random',
+  'changes',
+  'total_changes',
+  // date / time
+  'date',
+  'time',
+  'datetime',
+  'julianday',
+  'unixepoch',
+  'strftime',
+  'timediff',
+  // math (SQLite math extension, 3.35+)
+  'acos',
+  'acosh',
+  'asin',
+  'asinh',
+  'atan',
+  'atan2',
+  'atanh',
+  'ceil',
+  'ceiling',
+  'cos',
+  'cosh',
+  'degrees',
+  'exp',
+  'floor',
+  'ln',
+  'log',
+  'log10',
+  'log2',
+  'mod',
+  'pi',
+  'pow',
+  'power',
+  'radians',
+  'sin',
+  'sinh',
+  'sqrt',
+  'tan',
+  'tanh',
+  'trunc',
+  // window functions (ranking / offset) — do not collapse tables; safe
+  'row_number',
+  'rank',
+  'dense_rank',
+  'ntile',
+  'lag',
+  'lead',
+  'first_value',
+  'last_value',
+  'nth_value',
+  'percent_rank',
+  'cume_dist',
 ]);
 
 // The normalised, lowercased name of a function-call node, or null if `obj` is not one. A scalar call is
@@ -68,12 +195,14 @@ function functionName(obj: Record<string, unknown>): string | null {
   return null;
 }
 
-// Walk the AST and reject the first call to a DANGEROUS_FUNCTIONS member anywhere — SELECT list, WHERE,
-// HAVING, a nested sub-query, a function argument. The AST is a finite tree, so the walk terminates.
-function denyDangerousFunction(node: unknown): string | null {
+// Walk the AST and reject the first call to a forbidden function anywhere — SELECT list, WHERE, HAVING,
+// a nested sub-query, a function argument. A name in DANGEROUS_FUNCTIONS is rejected with its specific
+// reason; any other name NOT in ALLOWED_FUNCTIONS is rejected as the fail-closed default. The AST is a
+// finite tree, so the walk terminates.
+function denyForbiddenFunction(node: unknown): string | null {
   if (Array.isArray(node)) {
     for (const item of node) {
-      const r = denyDangerousFunction(item);
+      const r = denyForbiddenFunction(item);
       if (r) return r;
     }
     return null;
@@ -81,12 +210,123 @@ function denyDangerousFunction(node: unknown): string | null {
   if (!node || typeof node !== 'object') return null;
   const obj = node as Record<string, unknown>;
   const fn = functionName(obj);
-  if (fn && DANGEROUS_FUNCTIONS.has(fn)) return `function not allowed: ${fn}`;
+  if (fn) {
+    if (DANGEROUS_FUNCTIONS.has(fn)) return `function not allowed: ${fn}`;
+    if (!ALLOWED_FUNCTIONS.has(fn)) return `function not allowed: ${fn} (not in allowlist)`;
+  }
   for (const key of Object.keys(obj)) {
-    const r = denyDangerousFunction(obj[key]);
+    const r = denyForbiddenFunction(obj[key]);
     if (r) return r;
   }
   return null;
+}
+
+// String-length AMPLIFICATION guard. `replace(x, a, b)` and `||` concatenation are legitimate read-only
+// string ops (Cyrillic↔Latin transliteration, joining a couple of columns), each bounded by the row size
+// × the byte-capped literals. The DoW risk is not their COUNT but their COMPOUNDING — feeding an already-
+// amplified value back into another amplifier grows length GEOMETRICALLY (×k per level), and `capRows` /
+// `RESULT_BYTE_CAP` measure only AFTER the value materialises in-engine → Worker OOM via run_sql. Two
+// shapes compound; everything else is bounded and must PASS (a flat `a || ' ' || b` sums a few byte-capped
+// cells ONCE — not a bomb, and the old whole-query op-count over-blocked it):
+//
+//   (A) INLINE — a `replace()` fed an already-amplified argument: another `replace` nested in its args
+//       (`replace(replace('A','A','AAAAAAAAAA')…)` → ×10 per level) OR a `||`/concat inside its args
+//       (`replace(v,'x', v||v||…)`). `replace` re-scans and expands whatever it is given, so an amplified
+//       input multiplies. A `||` whose operands are themselves amplifiers is NOT compounding — `||` is
+//       associative, so `(a||b)||c` is just the bounded sum a+b+c; only `replace` re-expands its input.
+//   (B) CROSS-SCOPE — amplifying ops (`replace` or `||`) appearing in ≥2 distinct SELECT scopes (a CTE
+//       chain `WITH l1 AS (SELECT v||v||… FROM l0), l2 AS (… FROM l1)`, or a subquery feeding an outer
+//       amplifier), where each scope reads the prior scope's single already-amplified cell and amplifies
+//       again. A single scope's flat `v||v||…||v` is bounded (×N, N capped by the query length); the
+//       geometric blow-up needs the value to survive a scope boundary and be re-amplified.
+//
+// Quoting-proof (functionName normalises `fn`/`"fn"`). `concat`/`concat_ws` never reach here — they are
+// off ALLOWED_FUNCTIONS, so denyForbiddenFunction rejects them first.
+
+// Does this subtree contain any string-length amplifier — a `replace()` call or a `||` operator?
+function containsAmplifyingOp(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(containsAmplifyingOp);
+  if (!node || typeof node !== 'object') return false;
+  const obj = node as Record<string, unknown>;
+  if (functionName(obj) === 'replace') return true;
+  if (obj.type === 'binary_expr' && obj.operator === '||') return true;
+  return Object.keys(obj).some((key) => containsAmplifyingOp(obj[key]));
+}
+
+// (A) A `replace()` whose ARGUMENTS transitively contain another amplifier (nested replace, or a `||`/
+// concat feeding it) — the multiplicative inline bomb. The function-name identifier subtree is skipped so
+// the replace never counts itself.
+function denyCompoundingReplace(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyCompoundingReplace(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!node || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  if (functionName(obj) === 'replace') {
+    for (const key of Object.keys(obj)) {
+      if (key === 'name') continue; // the identifier of THIS replace, not an argument
+      if (containsAmplifyingOp(obj[key]))
+        return 'function not allowed: nested/compounding replace() string-bomb';
+    }
+  }
+  for (const key of Object.keys(obj)) {
+    const r = denyCompoundingReplace(obj[key]);
+    if (r) return r;
+  }
+  return null;
+}
+
+// Every SELECT node in the tree (main query, CTEs, sub-queries) — each is its own amplification scope.
+function collectSelectNodes(node: unknown, out: Record<string, unknown>[]): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectSelectNodes(item, out);
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  if (obj.type === 'select') out.push(obj);
+  for (const key of Object.keys(obj)) collectSelectNodes(obj[key], out);
+}
+
+// Does THIS select scope contain an amplifier in its OWN expressions — not counting deeper nested selects
+// (each is its own scope, counted separately by the caller)?
+function scopeHasLocalAmplify(selectRoot: Record<string, unknown>): boolean {
+  let found = false;
+  const walk = (node: unknown, isRoot: boolean): void => {
+    if (found || node == null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, false);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (!isRoot && obj.type === 'select') return; // a nested scope — attributed to its own count
+    if (functionName(obj) === 'replace' || (obj.type === 'binary_expr' && obj.operator === '||')) {
+      found = true;
+      return;
+    }
+    for (const key of Object.keys(obj)) walk(obj[key], false);
+  };
+  walk(selectRoot, true);
+  return found;
+}
+
+function denyAmplifyingStringChain(ast: unknown): string | null {
+  // (A) inline compounding — a replace re-expanding an already-amplified argument.
+  const compounding = denyCompoundingReplace(ast);
+  if (compounding) return compounding;
+  // (B) cross-scope chaining — amplifying ops in ≥2 SELECT scopes feed level-to-level.
+  const selects: Record<string, unknown>[] = [];
+  collectSelectNodes(ast, selects);
+  let amplifyingScopes = 0;
+  for (const select of selects) if (scopeHasLocalAmplify(select)) amplifyingScopes++;
+  return amplifyingScopes >= 2
+    ? 'function not allowed: amplifying string chain (replace/|| across scopes — bomb)'
+    : null;
 }
 
 // Loose view over the parsed statement — node-sql-parser's union types are awkward to narrow, and we
@@ -375,10 +615,18 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   const dupCol = denyDuplicateColumns(ast);
   if (dupCol) return deny(dupCol);
 
-  // Block dangerous scalar/aggregate functions by AST name, so double-quoting (`"randomblob"(…)`) can't
-  // slip the L1 text blocklist (DoW / exfil / load_extension — see DANGEROUS_FUNCTIONS).
-  const badFn = denyDangerousFunction(ast);
+  // Enforce the function policy by AST name (quoting-proof): reject the dangerous denylist AND anything
+  // outside the positive allowlist (fail-closed default — the next new aggregate is denied without a code
+  // change). See ALLOWED_FUNCTIONS / DANGEROUS_FUNCTIONS.
+  const badFn = denyForbiddenFunction(ast);
   if (badFn) return deny(badFn);
+
+  // String-length amplification is a memory-amplification bomb when it COMPOUNDS — a replace re-expanding
+  // an already-amplified argument (inline) or amplifying ops chained across ≥2 SELECT scopes (a CTE
+  // graph). A single op and flat `a || ' ' || b` concatenation are bounded and pass — see
+  // denyAmplifyingStringChain (concat/concat_ws already fail the allowlist above).
+  const amplify = denyAmplifyingStringChain(ast);
+  if (amplify) return deny(amplify);
 
   // Every FROM source must be a plain table or a sub-query, at ANY nesting depth — fail closed on
   // anything else. This blocks table-valued functions (`pragma_table_info(…)`, `json_each(…)`,

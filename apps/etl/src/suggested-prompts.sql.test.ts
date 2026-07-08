@@ -9,14 +9,14 @@ import { SLOT1_SQL, SLOT2_SQL, SLOT3_SQL, SLOT4_SQL } from './suggested-prompts'
 
 // Integration test for the starter-prompt slot SQL. The pure-logic unit tests (suggested-prompts.test
 // .ts) never run the actual aggregation; this builds a real SQLite from the production migrations
-// (0000_init + 0001_assistant_prompts) with a deterministic fixture and asserts the numbers each slot
+// (0000_init + 0003_assistant_prompts) with a deterministic fixture and asserts the numbers each slot
 // query returns: the as_of-anchored window, the slot-4 denominator exclusions, and the
 // amount_eur-IS-NOT-NULL sum posture. Mirrors the sqlite3-CLI harness of competition-sql.test.ts (no
 // better-sqlite3 dependency, same as the rest of the suite).
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1 = resolve(root, 'packages/db/migrations/0001_assistant_prompts.sql');
+const migration1 = resolve(root, 'packages/db/migrations/0003_assistant_prompts.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();

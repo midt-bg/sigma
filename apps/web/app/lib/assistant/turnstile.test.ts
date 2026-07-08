@@ -56,30 +56,41 @@ describe('verifyTurnstileToken', () => {
 });
 
 describe('turnstileRejection', () => {
-  it('is a no-op (null) when TURNSTILE_SECRET is unset — dev/staging', async () => {
+  it('is a no-op (null) when TURNSTILE_SECRET is unset outside prod — dev/staging', async () => {
     mockFetch(() => siteverify(false)); // must not be consulted
-    expect(await turnstileRejection(req(), {})).toBeNull();
+    expect(await turnstileRejection(req(), {}, false)).toBeNull();
+  });
+
+  it('fails closed (503) when TURNSTILE_SECRET is unset in production', async () => {
+    mockFetch(() => siteverify(false)); // must not be consulted — no secret to verify against
+    const r = await turnstileRejection(req(), {}, true);
+    expect(r?.status).toBe(503);
+    expect(r?.error).toMatch(/защита|ботове/);
   });
 
   it('rejects 403 when the token header is missing', async () => {
-    const r = await turnstileRejection(req(), { TURNSTILE_SECRET: 's' });
+    const r = await turnstileRejection(req(), { TURNSTILE_SECRET: 's' }, true);
     expect(r?.status).toBe(403);
     expect(r?.error).toMatch(/робот/);
   });
 
   it('proceeds (null) when the token verifies', async () => {
     mockFetch(() => siteverify(true));
-    const r = await turnstileRejection(req({ [TURNSTILE_TOKEN_HEADER]: 'tok' }), {
-      TURNSTILE_SECRET: 's',
-    });
+    const r = await turnstileRejection(
+      req({ [TURNSTILE_TOKEN_HEADER]: 'tok' }),
+      { TURNSTILE_SECRET: 's' },
+      true,
+    );
     expect(r).toBeNull();
   });
 
   it('rejects 403 when the token fails verification', async () => {
     mockFetch(() => siteverify(false));
-    const r = await turnstileRejection(req({ [TURNSTILE_TOKEN_HEADER]: 'bad' }), {
-      TURNSTILE_SECRET: 's',
-    });
+    const r = await turnstileRejection(
+      req({ [TURNSTILE_TOKEN_HEADER]: 'bad' }),
+      { TURNSTILE_SECRET: 's' },
+      true,
+    );
     expect(r?.status).toBe(403);
     expect(r?.error).toMatch(/сигурност/);
   });

@@ -96,8 +96,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   if (rejection) return Response.json({ error: rejection.error }, { status: rejection.status });
 
   // Turnstile edge gate (spec §7): verify the client's bot-check token BEFORE buffering the body or
-  // doing any paid model/D1 work. No-op until TURNSTILE_SECRET is provisioned (dev/preview/staging).
-  const turnstile = await turnstileRejection(request, context.cloudflare.env);
+  // doing any paid model/D1 work. No-op until TURNSTILE_SECRET is provisioned outside prod
+  // (dev/preview/staging); in production a missing secret fails closed (503) — see turnstile.ts.
+  const turnstile = await turnstileRejection(request, context.cloudflare.env, import.meta.env.PROD);
   if (turnstile) return Response.json({ error: turnstile.error }, { status: turnstile.status });
 
   // Reject an over-cap body by its DECLARED Content-Length before buffering it into Worker memory; the
@@ -125,6 +126,24 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Keep only the user/assistant turns the dock sends, most-recent first — drops any client-supplied
   // `system`/`tool` message that would otherwise reach BgGPT as a second system instruction (review #80,
   // red-team R1). See selectClientMessages for why filtering precedes the recency slice.
+  //
+  // ACCEPTED RISK — assistant *prose* in the posted history is NOT cryptographically authenticated yet
+  // (credibility-laundering vector, spec §9.3 / PR #17 review). Mitigations already in place bound the
+  // blast radius: `selectClientMessages` strips client `tool` parts, so a forged *number* can never be
+  // bound (all report figures are re-derived server-side from ctx.results via bindReport, and the user
+  // question is server-authoritative); only free-text prose can be spoofed. The HMAC machinery to close
+  // the residual prose vector exists and is unit-tested (workers/assistant/transcript-hmac.ts:
+  // signMessage / attachSignature / verifyMessage / filterIncomingTranscript), but wiring it end-to-end
+  // is a standalone change, NOT a drop-in here, because:
+  //   1. condenseForPost (assistant-dock/condense.ts) emits a synthetic *assistant*-role recap for older
+  //      turns — client-authored, so inherently unsignable; strict verification would silently drop it
+  //      and lose all pre-window context. Closing this needs server-side condensation (post-verify) or a
+  //      signed-recap protocol.
+  //   2. The client must round-trip each server signature + slot (via UIMessage metadata) and a stable
+  //      conversationId; useAssistantChat/storage persist full messages, but the SDK metadata round-trip
+  //      and the condense interaction need a runtime pass to verify.
+  //   3. ASSISTANT_HMAC_KEY must be provisioned per-worker (like ASSISTANT_API_KEY / TURNSTILE_SECRET).
+  // Tracked as a follow-up; until then this endpoint accepts unsigned assistant prose by design.
   const messages = selectClientMessages(parsed.messages, MAX_MESSAGES);
   if (messages.length === 0) return Response.json({ error: 'няма съобщения' }, { status: 400 });
   // The total body cap leaves room for ONE message to dominate (re-billed as prompt tokens every step);

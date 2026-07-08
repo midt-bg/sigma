@@ -101,7 +101,7 @@ this is defence-in-depth + layout safety.)
 
 ## Data model — committed, etl-owned
 
-`packages/db/migrations/0001_assistant_prompts.sql`:
+`packages/db/migrations/0003_assistant_prompts.sql`:
 ```sql
 CREATE TABLE assistant_prompts (
   slot INTEGER PRIMARY KEY,          -- 1..4

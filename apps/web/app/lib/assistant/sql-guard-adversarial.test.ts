@@ -19,7 +19,7 @@
 //   - CLOSED (was a read-only gap): scalar exfiltration (group_concat/quote/hex) and dangerous scalar
 //     functions re-reached by DOUBLE-QUOTING the name (`"randomblob"(…)`, `"load_extension"(…)`,
 //     `"printf"('%1000000d',…)`) — these slip Layer-1's `\bfn\s*\(` blocklist (the `"` breaks the
-//     boundary) but are now rejected by Layer 2's AST name blocklist (`denyDangerousFunction` in
+//     boundary) but are now rejected by Layer 2's AST name policy (`denyForbiddenFunction` in
 //     sql-ast-guard.ts), which normalises `fn` and `"fn"` to the same name. Sections B and G assert the
 //     rejection (at Layer 2) rather than the former pass.
 
@@ -63,7 +63,7 @@ describe('sql-guard adversarial / parser-differential', () => {
 
   describe('B. scalar exfiltration is blocked at Layer 2 (closed read-only gap)', () => {
     // The Layer-1 scalar blocklist never covered group_concat/quote/hex (column concat/encoding into one
-    // cell). Layer 2's AST name blocklist (denyDangerousFunction) now rejects them — closing the gap.
+    // cell). Layer 2's AST name policy (denyForbiddenFunction) now rejects them — closing the gap.
     it('rejects group_concat at Layer 2 — column concatenation', () => {
       const r = run('SELECT group_concat(name) AS n FROM authorities');
       expect(r.ok).toBe(false);
@@ -79,6 +79,116 @@ describe('sql-guard adversarial / parser-differential', () => {
       const r = run('SELECT hex(name) AS n FROM contracts WHERE amount_eur IS NOT NULL');
       expect(r.ok).toBe(false);
       expect(r.layer).toBe(2);
+    });
+    // json_group_array/json_object/… are the JSON equivalents of group_concat — one aggregate call
+    // collapses the whole table into a single giant JSON string in the isolate. The bare form is caught
+    // cheaply at Layer 1 (added to the scalar regex); the double-quoted form slips L1's word-boundary
+    // regex and is caught by Layer 2's AST name blocklist — the same split as randomblob/"randomblob".
+    it('rejects bare json_group_array at Layer 1 — JSON string bomb', () => {
+      expectReject(
+        'SELECT json_group_array(name) AS n FROM authorities',
+        1,
+        /function not allowed/i,
+      );
+    });
+    it('rejects double-quoted "json_group_array" at Layer 2 — quoting slips L1', () => {
+      expectReject(
+        'SELECT "json_group_array"(name) AS n FROM authorities',
+        2,
+        /function not allowed/i,
+      );
+    });
+    // NESTED replace() is a string-bomb: replace(replace('A','A','AAAAAAAAAA')…) grows a single cell ×10
+    // per level with NO FROM, so the table allowlist never engages and LIMIT / rows-read budget / byte cap
+    // can't bound it before it materialises. A SINGLE replace is legitimate (transliteration) and passes;
+    // only nesting is a bomb, and a text regex can't tell one replace from two — so it is an L2 AST check
+    // (denyCompoundingReplace, folded into denyAmplifyingStringChain), quoting-proof for the double-quoted
+    // form too.
+    it('rejects a bare NESTED replace() string-bomb at Layer 2 (single replace stays allowed at L1)', () => {
+      expectReject(
+        "SELECT replace(replace('A', 'A', 'AAAAAAAAAA'), 'A', 'BBBBBBBBBB') AS bomb",
+        2,
+        /function not allowed/i,
+      );
+    });
+    it('rejects double-quoted NESTED "replace" at Layer 2 — quoting-proof', () => {
+      expectReject(
+        "SELECT \"replace\"(\"replace\"('A', 'A', 'AAAAAAAAAA'), 'A', 'BBBBBBBBBB') AS bomb",
+        2,
+        /function not allowed/i,
+      );
+    });
+    // string_agg is a SQLite 3.44+ built-in ALIAS of group_concat (D1 runs recent SQLite) — same table-
+    // collapse DoW: it folds the whole table into one string before LIMIT/capRows apply. json_pretty
+    // (3.46) is the smaller JSON-expansion sibling. Both are the exact class this guard closes (review
+    // follow-up, ydimitrof/DiyanaDimitrova). Bare → L1 regex; double-quoted → L2 AST name-normalisation.
+    it('rejects bare string_agg at Layer 1 — group_concat alias (table-collapse bomb)', () => {
+      expectReject("SELECT string_agg(subject, ',') FROM contracts", 1, /function not allowed/i);
+    });
+    it('rejects double-quoted "string_agg" at Layer 2 — quoting slips L1', () => {
+      expectReject(
+        'SELECT "string_agg"(subject, \',\') FROM contracts',
+        2,
+        /function not allowed/i,
+      );
+    });
+    it('rejects bare json_pretty at Layer 1 — JSON expansion sibling', () => {
+      expectReject("SELECT json_pretty('{}') AS x", 1, /function not allowed/i);
+    });
+    // Fail-closed default: any function NOT on the positive allowlist is rejected at L2, so the NEXT new
+    // SQLite aggregate/builder (the one after string_agg) is denied with no code change — the inversion
+    // the reviewers asked for. A plausible-but-unlisted name stands in for that future function.
+    it('rejects an unknown/unlisted function at Layer 2 (allowlist fail-closed default)', () => {
+      expectReject('SELECT frobnicate_agg(name) FROM authorities', 2, /not in allowlist/i);
+    });
+
+    // STRING-LENGTH AMPLIFICATION via a CTE CHAIN (review follow-up, lyubomir-bozhinov). The per-
+    // expression function checks (denyForbiddenFunction) miss a chain where each CTE level reads the PRIOR
+    // CTE's single cell and multiplies it ×10 — the injected LIMIT 500 bounds only the final row count, and
+    // capRows / RESULT_BYTE_CAP measure only AFTER the value materialises in-engine → Worker OOM. Bounded
+    // now by denyAmplifyingStringChain, which flags amplifying ops (replace + `||`) spread across ≥2 SELECT
+    // scopes (the cross-scope compounding signal) while letting a bounded flat concat in one scope pass.
+    // All three amplifiers — concat (off the allowlist), replace, and the `||` operator (a binary_expr,
+    // invisible to the function allowlist) — are covered.
+    it('rejects a concat() CTE-chain string-bomb at Layer 2', () => {
+      expectReject(
+        `WITH l0 AS (SELECT 'X' AS v),
+         l1 AS (SELECT concat(v,v,v,v,v,v,v,v,v,v) AS v FROM l0),
+         l2 AS (SELECT concat(v,v,v,v,v,v,v,v,v,v) AS v FROM l1)
+         SELECT v FROM l2`,
+        2,
+        /function not allowed/i,
+      );
+    });
+    it('rejects a replace() CTE-chain string-bomb at Layer 2 (un-nested per level, chained via CTEs)', () => {
+      expectReject(
+        `WITH l0 AS (SELECT 'X' AS v),
+         l1 AS (SELECT replace(v,'X','XXXXXXXXXX') AS v FROM l0),
+         l2 AS (SELECT replace(v,'X','XXXXXXXXXX') AS v FROM l1)
+         SELECT v FROM l2`,
+        2,
+        /amplifying string chain/i,
+      );
+    });
+    it('rejects a `||` operator CTE-chain string-bomb at Layer 2 (operator, not a function)', () => {
+      expectReject(
+        `WITH l0 AS (SELECT 'X' AS v),
+         l1 AS (SELECT v||v||v||v||v||v||v||v||v||v AS v FROM l0),
+         l2 AS (SELECT v||v||v||v||v||v||v||v||v||v AS v FROM l1)
+         SELECT v FROM l2`,
+        2,
+        /amplifying string chain/i,
+      );
+    });
+    it('rejects bare concat() at Layer 2 — dropped from the allowlist (amplifier, no canonical use)', () => {
+      expectReject('SELECT concat(name, name) AS x FROM authorities', 2, /not in allowlist/i);
+    });
+    // A SINGLE amplifying op stays legitimate: one transliteration replace is bounded by the byte-capped
+    // seed and must still pass both layers (guards the fix against over-blocking real analytics SQL).
+    it('still accepts a single transliteration replace() (one amplifying op, bounded)', () => {
+      expect(run("SELECT replace(name, 'а', 'a') AS n FROM authorities WHERE id = 'x'").ok).toBe(
+        true,
+      );
     });
   });
 

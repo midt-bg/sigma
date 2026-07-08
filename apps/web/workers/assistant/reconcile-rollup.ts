@@ -3,14 +3,17 @@
 // When the assistant computes an aggregate (a COUNT/SUM over filtered contracts) for a scope that a
 // precomputed rollup also covers, it must reconcile the two AT THE SAME GRAIN before presenting a
 // number. The rollups (sector_totals, authority_totals, company_totals) are built with the invariant
-// that every (count, sum) pair ranges over exactly the `amount_eur IS NOT NULL` rows; a live
-// aggregate that disagrees means a filter or join drifted. On mismatch we BLOCK and surface the
+// that every (count, sum) pair ranges over exactly the `amount_eur IS NOT NULL AND is_synthetic != 1`
+// rows — the SAME basis the assistant's default filters apply (default-filters.ts excludes synthetic
+// 'неизвестна' orphan headers) — so a live aggregate that disagrees means a filter or join drifted.
+// On mismatch we BLOCK and surface the
 // discrepancy — we never silently substitute one figure for the other, because either could be the
 // wrong one. Money is REAL (float), so sums reconcile within a tolerance; counts must match exactly.
 //
-// VALID RECONCILE TARGETS: only the amount_eur-filtered rollups above. Do NOT reconcile a count
-// against `home_totals.contracts` — that column is a corpus `COUNT(*)` over ALL contracts (incl.
-// NULL-amount rows), a different row-set; reconciling against it would throw on a correct number.
+// VALID RECONCILE TARGETS: only the amount_eur + non-synthetic rollups above. Do NOT reconcile a
+// count against `home_totals.contracts` — that column is a synthetic-inclusive corpus `COUNT(*)` over
+// ALL contracts (incl. NULL-amount rows), a different row-set; reconciling against it would throw on
+// a correct number.
 
 export interface Aggregate {
   /** The exact grain this figure is computed at, e.g. { division: '45', year: '2024' }. */

@@ -305,11 +305,31 @@ describe('guardSelect', () => {
       "SELECT format('%1000000d', 1) AS x",
       'SELECT group_concat(name) AS x FROM authorities',
       'SELECT "group_concat"(name) AS x FROM authorities',
+      // string_agg = SQLite 3.44+ alias of group_concat; json_pretty (3.46) expands JSON — same class
+      "SELECT string_agg(name, ',') AS x FROM authorities",
+      'SELECT "string_agg"(name, \',\') AS x FROM authorities',
+      "SELECT json_pretty('{}') AS x",
       'SELECT quote(name) AS x FROM authorities',
       'SELECT hex(name) AS x FROM authorities',
+      // json_* aggregate/builder functions: same memory-amplification vector as group_concat —
+      // an aggregate collapses the whole table into one giant JSON string in the isolate (LIMIT
+      // cannot bound an aggregate), so they belong in the same denylist, quoted forms included.
+      'SELECT json_group_array(name) AS x FROM authorities',
+      'SELECT "json_group_array"(name) AS x FROM authorities',
+      'SELECT json_group_object(name, id) AS x FROM authorities',
+      "SELECT json_object('k', name) AS x FROM authorities",
+      'SELECT json_array(name) AS x FROM authorities',
+      'SELECT json_quote(name) AS x FROM authorities',
+      "SELECT json_set('{}', '$.k', name) AS x FROM authorities",
+      // NESTED replace() string-bomb — replace(replace('A','A','AAAAAAAAAA')…) ×10 per level with NO
+      // FROM (the table allowlist never engages). Quoting-proof: the double-quoted nested form is caught
+      // by name too. (A SINGLE replace stays allowed — see the "safe functions" test below.)
+      "SELECT replace(replace('A', 'A', 'AAAAAAAAAA'), 'A', 'BBBBBBBBBB') AS bomb",
+      "SELECT \"replace\"(\"replace\"('A', 'A', 'AAAAAAAAAA'), 'A', 'BBBBBBBBBB') AS bomb",
       // hidden in WHERE / nested, not just the SELECT list
       "SELECT id FROM authorities WHERE name = quote('x')",
       'SELECT id FROM authorities WHERE id IN (SELECT hex(name) FROM authorities)',
+      'SELECT id FROM authorities WHERE id IN (SELECT json_group_array(name) FROM authorities)',
     ];
     for (const sql of blocked) {
       const r = guardSelect(sql);
@@ -318,17 +338,62 @@ describe('guardSelect', () => {
     }
   });
 
-  it('still accepts safe scalar/aggregate functions', () => {
+  it('still accepts safe scalar/aggregate/date/window functions (positive allowlist)', () => {
     const allowed = [
       'SELECT upper(name) AS x FROM authorities',
+      'SELECT lower(name) AS x FROM authorities',
       'SELECT substr(name, 1, 3) AS x FROM authorities',
+      "SELECT instr(name, 'x') AS x FROM authorities",
+      'SELECT trim(name) AS x, length(name) AS n FROM authorities',
       'SELECT count(*) AS n FROM authorities',
+      'SELECT count(DISTINCT bidder_id) AS n FROM contracts',
       'SELECT sum(amount_eur) AS s FROM contracts WHERE amount_eur IS NOT NULL',
-      'SELECT coalesce(amount_eur, 0) AS a FROM contracts',
+      'SELECT avg(amount_eur) AS a, min(amount_eur) AS mn, max(amount_eur) AS mx FROM contracts',
+      'SELECT round(amount_eur, 2) AS r, abs(amount_eur) AS ab FROM contracts',
+      'SELECT coalesce(amount_eur, 0) AS a, ifnull(amount_eur, 0) AS b FROM contracts',
+      // date/time
+      "SELECT strftime('%Y', signed_at) AS y FROM contracts",
+      'SELECT date(signed_at) AS d, datetime(signed_at) AS dt FROM contracts',
+      // window function (ranking) — needs PARTITION for node-sql-parser to parse the OVER clause
+      'SELECT rank() OVER (PARTITION BY bidder_id ORDER BY amount_eur) AS r FROM contracts',
+      // single-level replace() is legitimate (Cyrillic↔Latin transliteration); only nesting is a bomb
+      "SELECT replace(name, 'а', 'a') AS n FROM authorities",
+      // FLAT concatenation of DISTINCT operands sums a few byte-capped cells ONCE — bounded, NOT a bomb.
+      // The old whole-query op-count over-blocked any query with ≥2 `||`; the compounding/cross-scope
+      // guard now lets these through (regression fix — mirrors the opcode-guard SCALAR_READS corpus).
+      "SELECT upper(name) || '-' || lower(name) AS x FROM authorities",
+      "SELECT name || ' (' || id || ')' AS label FROM authorities",
+      // a single-scope transliteration replace ALONGSIDE a bounded flat concat — one amplifier per scope,
+      // no compounding, must still pass.
+      "SELECT replace(name, 'а', 'a') || '·' AS n FROM authorities",
     ];
     for (const sql of allowed) {
       const r = guardSelect(sql);
       expect(r.ok, sql).toBe(true);
+    }
+  });
+
+  it('rejects COMPOUNDING amplifiers but not flat/single ones (string-bomb boundary)', () => {
+    // Bombs: a replace re-expanding an already-amplified argument, or amplifiers chained across scopes.
+    const bombs: { sql: string; reason: RegExp }[] = [
+      // (A) inline — a `||` feeding a replace's replacement argument multiplies per pass
+      {
+        sql: "SELECT replace(v, 'x', v || v || v || v || v) AS b FROM (SELECT name AS v FROM authorities)",
+        reason: /nested\/compounding replace/i,
+      },
+      // (B) cross-scope — a CTE chain where each level re-amplifies the prior cell
+      {
+        sql: `WITH l0 AS (SELECT 'X' AS v),
+              l1 AS (SELECT v || v || v || v || v AS v FROM l0),
+              l2 AS (SELECT v || v || v || v || v AS v FROM l1)
+              SELECT v FROM l2`,
+        reason: /amplifying string chain/i,
+      },
+    ];
+    for (const { sql, reason } of bombs) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason, sql).toMatch(reason);
     }
   });
 });
