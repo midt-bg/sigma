@@ -291,7 +291,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           <Section
             id="similar"
             title="Подобни договори"
-            hint="Стойността спрямо договорите с чиста стойност в същия CPV сектор (2020 г. - днес)."
+            hint="Стойността спрямо всички договори с чиста стойност в същия CPV сектор в базата."
           >
             <p>
               <strong>{money(cohort.amountEur)}</strong> е{' '}
