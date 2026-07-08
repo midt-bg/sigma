@@ -39,6 +39,12 @@ export interface ReportRef {
 
 export interface AssistantHmacEnv {
   ASSISTANT_HMAC_KEY?: string;
+  /**
+   * The immediately-prior signing key, set ONLY during a rotation window (ADR-0012 §6). Signing always
+   * uses the current key; verification accepts EITHER key, so messages signed under the old key stay
+   * valid until the window closes and this is unset. Absent outside a rotation.
+   */
+  ASSISTANT_HMAC_KEY_PREVIOUS?: string;
 }
 
 export type DropReason =
@@ -62,8 +68,9 @@ export interface FilterResult {
 // Domain separation prefix — versioned so the wire format can evolve without silent collisions.
 const SIGN_PREFIX = 'sigma-transcript-v1';
 
-let cachedKeyMaterial: string | null = null;
-let cachedKeyPromise: Promise<CryptoKey> | null = null;
+// Imported keys keyed by their raw material. A Map (not a single slot) so a rotation window — where
+// sign uses the current key and verify may fall back to the previous one — doesn't thrash re-imports.
+const keyCache = new Map<string, Promise<CryptoKey>>();
 
 function keyMaterial(env: AssistantHmacEnv): string {
   const key = env.ASSISTANT_HMAC_KEY?.trim();
@@ -73,18 +80,26 @@ function keyMaterial(env: AssistantHmacEnv): string {
   return key;
 }
 
-function importedKey(material: string): Promise<CryptoKey> {
-  if (cachedKeyMaterial === material && cachedKeyPromise) return cachedKeyPromise;
+// The previous signing key during a rotation window, or null outside one / when it equals the current
+// key (nothing extra to try).
+function previousKeyMaterial(env: AssistantHmacEnv, current: string): string | null {
+  const prev = env.ASSISTANT_HMAC_KEY_PREVIOUS?.trim();
+  return prev && prev !== current ? prev : null;
+}
 
-  cachedKeyMaterial = material;
-  cachedKeyPromise = crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(material),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  return cachedKeyPromise;
+function importedKey(material: string): Promise<CryptoKey> {
+  let cached = keyCache.get(material);
+  if (!cached) {
+    cached = crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(material),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    keyCache.set(material, cached);
+  }
+  return cached;
 }
 
 /**
@@ -93,8 +108,7 @@ function importedKey(material: string): Promise<CryptoKey> {
  * `ASSISTANT_HMAC_KEY` between cases and want to stay order-independent.
  */
 export function resetKeyCache(): void {
-  cachedKeyMaterial = null;
-  cachedKeyPromise = null;
+  keyCache.clear();
 }
 
 function hex(buffer: ArrayBuffer): string {
@@ -154,10 +168,16 @@ function hasValidSlot(msg: TranscriptMessage): boolean {
   );
 }
 
-async function computeSignature(env: AssistantHmacEnv, msg: TranscriptMessage): Promise<string> {
-  const key = await importedKey(keyMaterial(env));
+async function computeSignatureWith(material: string, msg: TranscriptMessage): Promise<string> {
+  const key = await importedKey(material);
   const signature = await crypto.subtle.sign('HMAC', key, canonicalBytes(msg) as BufferSource);
   return hex(signature);
+}
+
+// Signing (and the fast path of verification) always uses the CURRENT key. `async` so an unset-key
+// throw from `keyMaterial` surfaces as a rejected promise (fail closed), not a synchronous exception.
+async function computeSignature(env: AssistantHmacEnv, msg: TranscriptMessage): Promise<string> {
+  return computeSignatureWith(keyMaterial(env), msg);
 }
 
 // Length-aware constant-time comparison of two hex strings. Length is not secret here, but
@@ -185,15 +205,22 @@ export async function attachSignature(
   return { ...msg, sig };
 }
 
-/** Verify a message's `sig` against a freshly computed signature (constant-time). */
+/**
+ * Verify a message's `sig` against a freshly computed signature (constant-time). During a rotation
+ * window the previous key is also accepted, so messages signed just before a key swap survive until
+ * the window closes (ADR-0012 §6). Signing is unaffected — always the current key.
+ */
 export async function verifyMessage(
   env: AssistantHmacEnv,
   msg: TranscriptMessage,
 ): Promise<boolean> {
   if (!msg.sig) return false;
   if (!hasValidSlot(msg)) return false;
-  const expected = await computeSignature(env, msg);
-  return constantTimeEqual(msg.sig, expected);
+  const current = keyMaterial(env);
+  if (constantTimeEqual(msg.sig, await computeSignatureWith(current, msg))) return true;
+  const previous = previousKeyMaterial(env, current);
+  if (!previous) return false;
+  return constantTimeEqual(msg.sig, await computeSignatureWith(previous, msg));
 }
 
 function compareSlot(a: TranscriptMessage, b: TranscriptMessage): number {

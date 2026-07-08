@@ -238,3 +238,44 @@ describe('filterIncomingTranscript', () => {
     expect(kept).toHaveLength(3);
   });
 });
+
+describe('key rotation window (ASSISTANT_HMAC_KEY_PREVIOUS)', () => {
+  // During a rotation the current key is the new one; the previous key is the one messages in flight
+  // were signed under. Both must verify; signing must use only the current key.
+  const rotating: AssistantHmacEnv = {
+    ASSISTANT_HMAC_KEY: 'unit-test-key-bbbb', // new (== otherEnv's key)
+    ASSISTANT_HMAC_KEY_PREVIOUS: 'unit-test-key-aaaa', // old (== env's key)
+  };
+
+  it('accepts a message signed under the previous key', async () => {
+    const m = await signed({}, env); // signed with the OLD key
+    expect(await verifyMessage(rotating, m)).toBe(true);
+  });
+
+  it('accepts a message signed under the current key', async () => {
+    const m = await signed({}, otherEnv); // signed with the NEW key
+    expect(await verifyMessage(rotating, m)).toBe(true);
+  });
+
+  it('rejects a message signed under a key that is neither current nor previous', async () => {
+    const strangerEnv: AssistantHmacEnv = { ASSISTANT_HMAC_KEY: 'unit-test-key-cccc' };
+    const m = await signed({}, strangerEnv);
+    expect(await verifyMessage(rotating, m)).toBe(false);
+  });
+
+  it('signs with the current key only (previous-key holders cannot verify a fresh signature)', async () => {
+    const m = await attachSignature(rotating, msg()); // signed under the NEW key
+    // A server still on only the OLD key must NOT accept it — signing never uses the previous key.
+    expect(await verifyMessage(env, m)).toBe(false);
+    expect(await verifyMessage(rotating, m)).toBe(true);
+  });
+
+  it('ignores a previous key equal to the current key (no-op)', async () => {
+    const sameEnv: AssistantHmacEnv = {
+      ASSISTANT_HMAC_KEY: 'unit-test-key-aaaa',
+      ASSISTANT_HMAC_KEY_PREVIOUS: 'unit-test-key-aaaa',
+    };
+    const m = await signed({}, env);
+    expect(await verifyMessage(sameEnv, m)).toBe(true);
+  });
+});

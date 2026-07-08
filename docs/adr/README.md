@@ -18,4 +18,6 @@
 | [0008](0008-rag-adopted-not-a-deviation.md) | RAG е приет слой на асистента, не отклонение от спецификацията | Прието |
 | [0009](0009-global-bggpt-cap-is-a-durable-object.md) | Глобалният BgGPT лимит се налага от Durable Object, не от AI Gateway | Прието |
 | [0010](0010-dedup-gates-on-stable-bounds.md) | Dedup гейт по стабилни граници (не recency) + разпознаване на ISO диапазони | Прието |
+| [0011](0011-transcript-hmac-signing.md) | Интегритет на транскрипта чрез HMAC-подпис на сървърните съобщения (§9.3) | Прието |
+| [0012](0012-transcript-hmac-enforcement.md) | Налагане на HMAC по живия път: filter-on-ingest (sanitize), ENVIRONMENT-gating, ключ и ротация | Прието |
 | [0013](0013-voice-via-ai-gateway.md) | Voice lane през AI Gateway — provider endpoints (без dynamic routes) | Прието |

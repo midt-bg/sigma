@@ -24,6 +24,8 @@ import {
 } from 'ai';
 import { buildSystemPrompt } from './system-prompt';
 import { createPhaseFilter } from './stream-phase';
+import { createTranscriptSigner } from '../../../workers/assistant/transcript-signer';
+import type { AssistantHmacEnv } from '../../../workers/assistant/transcript-hmac';
 import { classifyStreamError, isGatewayRateLimit } from './stream-errors';
 import { EMIT_REPORT_TOOL, INSUFFICIENT_DATA_MESSAGE } from '../assistant-contract/stream';
 import { EMIT_REPORT_JSON_SCHEMA } from './emit-report-schema';
@@ -338,6 +340,13 @@ export interface RunAssistantOptions {
    * waiters are woken (or released to regenerate). Fire-and-forget on the caller side (`ctx.waitUntil`).
    */
   onSettled?: (result: { reportId: string; createdAt: string } | null) => void;
+  /**
+   * §9.3 transcript signing (ADR-0011/0012). When present, this turn's server message is HMAC-signed
+   * and stamped with a `message-metadata` chunk AFTER the phase filter — so it binds exactly the prose +
+   * report chip the client stores, and the next turn's ingest gate can prove it authentic. Absent ⇒ the
+   * assistant runs unsigned (feature unprovisioned: no `ASSISTANT_HMAC_KEY`).
+   */
+  signing?: { env: AssistantHmacEnv; conversationId: string; turnIndex: number };
 }
 
 /**
@@ -580,5 +589,16 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
   });
   // Only phases + prose + the resolved report reach the dock — the wrapped stream (model loop + any
   // synthesized fallback report) runs through the allowlist filter; internals never leave the Worker.
-  return createUIMessageStreamResponse({ stream: stream.pipeThrough(createPhaseFilter()) });
+  const filtered = stream.pipeThrough(createPhaseFilter());
+  // §9.3: sign AFTER the phase filter, so the metadata binds exactly the prose + report chip the client
+  // stores (not the model's stripped tool traffic). Only when a key is configured (ADR-0012 §5).
+  const outbound = opts.signing
+    ? filtered.pipeThrough(
+        createTranscriptSigner(opts.signing.env, {
+          conversationId: opts.signing.conversationId,
+          turnIndex: opts.signing.turnIndex,
+        }),
+      )
+    : filtered;
+  return createUIMessageStreamResponse({ stream: outbound });
 }

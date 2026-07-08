@@ -16,7 +16,6 @@ import {
   resolveSqlTimeoutMs,
   type ToolContext,
 } from '../lib/assistant/tools';
-import { selectClientMessages } from '../lib/assistant/chat-input';
 import { firstPartyRejection } from '../lib/assistant/request-guard';
 import { turnstileRejection } from '../lib/assistant/turnstile';
 import { resolveTemporalContext } from '../lib/assistant/temporal';
@@ -25,6 +24,9 @@ import { freshnessVersion } from '../lib/csv-export';
 import { freshnessToken, type DedupHit } from '../../workers/assistant/dedup';
 import { buildDedupRequest, type DedupRequest } from '../../workers/assistant/dedup-request';
 import { dedupPart } from '../../workers/assistant/dedup-stream';
+import { gateTranscript, type Signing } from '../lib/assistant/transcript-gate';
+import { createTranscriptSigner } from '../../workers/assistant/transcript-signer';
+import type { AssistantHmacEnv } from '../../workers/assistant/transcript-hmac';
 import { rateLimitBgGptGlobal } from '../../workers/bggpt-global-rate-limit';
 
 function latestUserText(messages: UIMessage[]): string {
@@ -66,15 +68,34 @@ function parseFilterContext(value: unknown): string | undefined {
   return trimmed && trimmed.length <= MAX_FILTER_CONTEXT_CHARS ? trimmed : undefined;
 }
 
+// §9.3 conversation binding (ADR-0011): the client mints a stable opaque id per thread and echoes it
+// every turn; the server binds it into each message signature. Not a secret — an attacker choosing
+// their own id only scopes forgeries that still fail without the key. An absent/malformed id becomes
+// '' , which drops every signed message (secure default) rather than verifying against a wildcard.
+const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
+function parseConversationId(value: unknown): string {
+  return typeof value === 'string' && CONVERSATION_ID_RE.test(value) ? value : '';
+}
+
 // A standalone UI-message stream carrying ONLY the `data-dedup` part — served when an existing report
 // satisfies the turn. One curated part, so it needs no phase filter (that seam strips the model's tool
 // traffic; there is none here). The dock renders the "reuse existing report" affordance from it (3c).
-function dedupResponse(hit: DedupHit): Response {
-  const stream = createUIMessageStream<UIMessage>({
+function dedupResponse(hit: DedupHit, signing?: Signing): Response {
+  const base = createUIMessageStream<UIMessage>({
     execute: ({ writer }) => {
       writer.write(dedupPart(hit));
     },
   });
+  // §9.3: a cache-hit is a server-authored assistant message too — sign it so it survives the next
+  // turn's ingest gate (its chip binds the reused /reports/:id). No-op when unsigned (no key).
+  const stream = signing
+    ? base.pipeThrough(
+        createTranscriptSigner(signing.env, {
+          conversationId: signing.conversationId,
+          turnIndex: signing.turnIndex,
+        }),
+      )
+    : base;
   return createUIMessageStreamResponse({ stream });
 }
 
@@ -114,7 +135,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
     return Response.json({ error: 'историята е твърде голяма' }, { status: 413 });
   }
-  let parsed: { messages?: UIMessage[]; clientRequestId?: unknown; filterContext?: unknown };
+  let parsed: {
+    messages?: UIMessage[];
+    clientRequestId?: unknown;
+    filterContext?: unknown;
+    conversationId?: unknown;
+  };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {
@@ -123,36 +149,51 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Optional dedup fields (sent by the dock from 3c; absent today). Validated at this boundary.
   const clientRequestId = parseClientRequestId(parsed.clientRequestId);
   const filterContext = parseFilterContext(parsed.filterContext);
-  // Keep only the user/assistant turns the dock sends, most-recent first — drops any client-supplied
-  // `system`/`tool` message that would otherwise reach BgGPT as a second system instruction (review #80,
-  // red-team R1). See selectClientMessages for why filtering precedes the recency slice.
-  //
-  // ACCEPTED RISK — assistant *prose* in the posted history is NOT cryptographically authenticated yet
-  // (credibility-laundering vector, spec §9.3 / PR #17 review). Mitigations already in place bound the
-  // blast radius: `selectClientMessages` strips client `tool` parts, so a forged *number* can never be
-  // bound (all report figures are re-derived server-side from ctx.results via bindReport, and the user
-  // question is server-authoritative); only free-text prose can be spoofed. The HMAC machinery to close
-  // the residual prose vector exists and is unit-tested (workers/assistant/transcript-hmac.ts:
-  // signMessage / attachSignature / verifyMessage / filterIncomingTranscript), but wiring it end-to-end
-  // is a standalone change, NOT a drop-in here, because:
-  //   1. condenseForPost (assistant-dock/condense.ts) emits a synthetic *assistant*-role recap for older
-  //      turns — client-authored, so inherently unsignable; strict verification would silently drop it
-  //      and lose all pre-window context. Closing this needs server-side condensation (post-verify) or a
-  //      signed-recap protocol.
-  //   2. The client must round-trip each server signature + slot (via UIMessage metadata) and a stable
-  //      conversationId; useAssistantChat/storage persist full messages, but the SDK metadata round-trip
-  //      and the condense interaction need a runtime pass to verify.
-  //   3. ASSISTANT_HMAC_KEY must be provisioned per-worker (like ASSISTANT_API_KEY / TURNSTILE_SECRET).
-  // Tracked as a follow-up; until then this endpoint accepts unsigned assistant prose by design.
-  const messages = selectClientMessages(parsed.messages, MAX_MESSAGES);
+  const conversationId = parseConversationId(parsed.conversationId);
+  const env = context.cloudflare.env;
+
+  // §9.3 transcript integrity (ADR-0011/0012): before the model reads ANY prior turn, drop every
+  // assistant/tool message that is not a current, authentic, in-order, same-conversation server emission
+  // — closing forgery, replay, reordering, cross-conversation splicing and report-chip laundering. The
+  // gate VERIFIES on the full messages (chips bind the signature) and only then strips them to the
+  // text-only, role-filtered, recency-capped view the model consumes. Gated on the RUNTIME `ENVIRONMENT`
+  // binding, never the `import.meta.env.PROD` build constant (which inlines `true` for staging too — the
+  // misclassification flagged in review #64). Production without a key fails closed; dev/preview without a
+  // key runs with the filter off (feature unprovisioned), mirroring Turnstile.
+  const hmacKey = (env as { ASSISTANT_HMAC_KEY?: string }).ASSISTANT_HMAC_KEY?.trim();
+  // Stable public deploys (production + staging, both live/unauthenticated) MUST have a key — an
+  // unsigned transcript there would let the model read forgeable history. Ephemeral previews stay
+  // fail-open (they can run UI-only without the key); local dev has no ENVIRONMENT and stays open.
+  const deployEnv = (env as { ENVIRONMENT?: string }).ENVIRONMENT;
+  const gate = await gateTranscript({
+    rawMessages: parsed.messages,
+    conversationId,
+    hmacKey,
+    requireKey: deployEnv === 'production' || deployEnv === 'staging',
+    env: env as AssistantHmacEnv,
+    maxMessages: MAX_MESSAGES,
+  });
+  if (gate.refuse) {
+    console.error(
+      '[assistant] ASSISTANT_HMAC_KEY unset in production — refusing (fail closed, §9.3)',
+    );
+    return Response.json({ error: 'Асистентът временно не е достъпен.' }, { status: 503 });
+  }
+  if (gate.dropped.length > 0) {
+    console.warn('[assistant] dropped inauthentic transcript messages (§9.3)', {
+      dropped: gate.dropped,
+    });
+  }
+  const messages = gate.messages;
   if (messages.length === 0) return Response.json({ error: 'няма съобщения' }, { status: 400 });
   // The total body cap leaves room for ONE message to dominate (re-billed as prompt tokens every step);
   // reject an oversized individual message too (review #80).
   if (messages.some((m) => messageTextChars(m) > MAX_MESSAGE_CHARS)) {
     return Response.json({ error: 'съобщението е твърде дълго' }, { status: 413 });
   }
+  // §9.3 emit slot: sign this turn's server message (and any dedup cache-hit) when a key is configured.
+  const signing: Signing | undefined = gate.signing;
 
-  const env = context.cloudflare.env;
   // Fail fast and CLEARLY if the assistant is unprovisioned, rather than starting a turn that surfaces a
   // generic mid-stream 401 indistinguishable from a real outage (review #80). We require BOTH the
   // provider key AND the AI Gateway base URL: routing through the gateway is mandatory (fail closed),
@@ -261,7 +302,10 @@ export async function action({ request, context }: Route.ActionArgs) {
         // the DoW cap on requests that cost nothing to serve, defeating this whole dedup lane).
         const layer =
           claim.kind === 'hit' ? claim.layer : dedup.doName.startsWith('L0|') ? 'L0' : 'L1';
-        return dedupResponse({ reportId: claim.reportId, createdAt: claim.createdAt, layer });
+        return dedupResponse(
+          { reportId: claim.reportId, createdAt: claim.createdAt, layer },
+          signing,
+        );
       }
       // This branch generates (paid) → consult the account-wide breaker BEFORE the model call (#135).
       const denied = await rateLimitBgGptGlobal(request, env.BGGPT_CIRCUIT_BREAKER, isProd);
@@ -285,6 +329,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         temporal,
         abortSignal: request.signal,
         onSettled,
+        signing,
       });
     }
     // Dedup disabled (no KV/DO binding, or no safe key) → generate; still gate on the global breaker.
@@ -297,6 +342,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       schemaContext,
       temporal,
       abortSignal: request.signal,
+      signing,
     });
   } catch (error) {
     // Setup-time failure (missing key, bad config, malformed history) — degrade to a readable 503

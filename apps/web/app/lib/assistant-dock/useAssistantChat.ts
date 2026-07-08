@@ -5,7 +5,14 @@ import { classifyHttpError, networkError } from './errors';
 import { nextTurnstileToken, withTurnstileHeader } from './turnstile-token';
 import { isPhasePart, type AssistantPhase } from '../assistant-contract/stream';
 import { condenseForPost } from './condense';
-import { clearTranscript, loadTranscript, saveTranscript, trimMessages } from './storage';
+import {
+  clearTranscript,
+  loadConversationId,
+  loadTranscript,
+  resetConversationId,
+  saveTranscript,
+  trimMessages,
+} from './storage';
 
 const ENDPOINT = '/assistant/chat';
 
@@ -57,14 +64,22 @@ export const classifyingFetch = async (
  * (condense.ts), then apply the count/byte trim as the hard backstop against the server's caps — a
  * pathological transcript can still never 413. Exported for tests.
  */
-export const prepareChatBody = (messages: UIMessage[]): { messages: UIMessage[] } => ({
+export const prepareChatBody = (
+  messages: UIMessage[],
+  conversationId: string,
+): { messages: UIMessage[]; conversationId: string } => ({
   messages: trimMessages(condenseForPost(messages)),
+  conversationId,
 });
 
 const transport = new DefaultChatTransport<UIMessage>({
   api: ENDPOINT,
   fetch: classifyingFetch,
-  prepareSendMessagesRequest: ({ messages }) => ({ body: prepareChatBody(messages) }),
+  // Read the conversation id at send time (minted lazily on first send) so every POST in the thread
+  // carries the same id — the server binds its per-message signatures to it (spec §9.3).
+  prepareSendMessagesRequest: ({ messages }) => ({
+    body: prepareChatBody(messages, loadConversationId()),
+  }),
 });
 
 /** useChat wired to /assistant/chat, with the transcript restored from / persisted to localStorage. */
@@ -139,6 +154,7 @@ export const useAssistantChat = (): UseChatHelpers<UIMessage> & {
     chat.setMessages([]);
     chat.clearError();
     clearTranscript();
+    resetConversationId(); // a fresh chat is a fresh conversation — new id for the next turn's signatures
     setAborted(false);
   };
 

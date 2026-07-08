@@ -11,7 +11,13 @@ import { devWarn } from './dev-warn';
 
 export const TRANSCRIPT_KEY = 'sigma.assistant.transcript';
 export const COLLAPSED_KEY = 'sigma.assistant.collapsed';
+export const CONVERSATION_ID_KEY = 'sigma.assistant.conversationId';
 export const REPORTS_INDEX_KEY = 'sigma.reports.index';
+
+// Mirrors the server's accepted shape (assistant.chat.tsx → CONVERSATION_ID_RE). Guards a corrupt/legacy
+// stored id from being POSTed — a mismatch would just make every server signature verify against the
+// wrong conversation and drop the whole history.
+const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 
 // POST cap: the server keeps only the last 24 messages (assistant.chat.tsx → MAX_MESSAGES); mirror it so
 // we never POST more than it will use. Applied to the wire copy in useAssistantChat, after condensation.
@@ -111,6 +117,39 @@ export const clearTranscript = (storage = defaultStorage()): void => {
     storage.setItem(TRANSCRIPT_KEY, '[]');
   } catch (error) {
     devWarn('[assistant] transcript not cleared (storage unavailable)', error);
+  }
+};
+
+// A stable per-conversation id, minted once and reused across every POST in a thread so the server's
+// per-message HMAC signatures (spec §9.3) bind to one consistent conversation. Minted lazily on first
+// send and persisted; reset alongside the transcript so a new chat is a new conversation. crypto.randomUUID
+// is available in every target runtime (secure-context browsers + Workers); if storage is blocked the id
+// falls back to an in-memory value for the session, which still round-trips within a single page load.
+export const loadConversationId = (storage = defaultStorage()): string => {
+  try {
+    const raw = storage?.getItem(CONVERSATION_ID_KEY);
+    if (raw && CONVERSATION_ID_RE.test(raw)) return raw;
+  } catch {
+    // Unreadable storage — fall through and mint a fresh id.
+  }
+  const id = crypto.randomUUID();
+  try {
+    storage?.setItem(CONVERSATION_ID_KEY, id);
+  } catch {
+    // Storage blocked — the minted id is ephemeral but consistent for this page load.
+  }
+  return id;
+};
+
+// Mint and persist a new conversation id, superseding the current one. Called on reset() so signed
+// messages from the previous chat can never be spliced into the next (they'd fail the wrong-conversation
+// check server-side, but starting a clean conversation is the correct model).
+export const resetConversationId = (storage = defaultStorage()): void => {
+  if (!storage) return;
+  try {
+    storage.setItem(CONVERSATION_ID_KEY, crypto.randomUUID());
+  } catch (error) {
+    devWarn('[assistant] conversation id not reset (storage unavailable)', error);
   }
 };
 

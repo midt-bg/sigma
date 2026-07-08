@@ -62,6 +62,12 @@ const bulletFor = (message: UIMessage): string | null => {
  * Condense the history for POSTing: at most `KEEP_RECENT` recent messages verbatim, preceded by ONE
  * synthetic assistant message that recaps every older turn as a bullet line. Meaning survives where
  * today the oldest turns are silently dropped by the count/byte trim.
+ *
+ * NB — interaction with §9.3 HMAC ingest (ADR-0012 §4): the recap is an UNSIGNED, client-authored
+ * assistant message, so once a signing key is provisioned the server drops it on ingest (an untrusted
+ * summary must never reach the model as if authoritative). It therefore only carries older-turn context
+ * in dev/preview/unprovisioned deploys; in signed production a >CONDENSE_THRESHOLD thread is effectively
+ * trimmed to its recent verbatim window until the server-side signed summary (E2 transcript-trim) lands.
  */
 export function condenseForPost(messages: UIMessage[]): UIMessage[] {
   if (messages.length <= CONDENSE_THRESHOLD) return messages;

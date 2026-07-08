@@ -3,9 +3,12 @@ import type { UIMessage } from 'ai';
 import {
   clearTranscript,
   COLLAPSED_KEY,
+  CONVERSATION_ID_KEY,
   loadCollapsed,
+  loadConversationId,
   loadTranscript,
   MAX_MESSAGES,
+  resetConversationId,
   saveCollapsed,
   saveTranscript,
   STORAGE_MAX_MESSAGES,
@@ -166,6 +169,54 @@ describe('clearTranscript', () => {
 
   it('does not throw when storage is unavailable', () => {
     expect(() => clearTranscript(throwingStorage)).not.toThrow();
+  });
+});
+
+describe('conversation id', () => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it('mints a valid id on first read and persists it', () => {
+    const store = fakeStorage();
+
+    const id = loadConversationId(store);
+
+    expect(id).toMatch(UUID_RE);
+    expect(store.getItem(CONVERSATION_ID_KEY)).toBe(id);
+  });
+
+  it('returns the same id on every subsequent read (stable across POSTs)', () => {
+    const store = fakeStorage();
+
+    expect(loadConversationId(store)).toBe(loadConversationId(store));
+  });
+
+  it('re-mints when the stored id is malformed (rejects corrupt storage)', () => {
+    const store = fakeStorage();
+    store.setItem(CONVERSATION_ID_KEY, 'not a valid id!!');
+
+    const id = loadConversationId(store);
+
+    expect(id).toMatch(UUID_RE);
+    expect(store.getItem(CONVERSATION_ID_KEY)).toBe(id);
+  });
+
+  it('mints an ephemeral id when storage is blocked', () => {
+    expect(loadConversationId(throwingStorage)).toMatch(UUID_RE);
+  });
+
+  it('resetConversationId replaces the id with a fresh one', () => {
+    const store = fakeStorage();
+    const first = loadConversationId(store);
+
+    resetConversationId(store);
+    const second = loadConversationId(store);
+
+    expect(second).toMatch(UUID_RE);
+    expect(second).not.toBe(first);
+  });
+
+  it('does not throw when storage is unavailable', () => {
+    expect(() => resetConversationId(throwingStorage)).not.toThrow();
   });
 });
 

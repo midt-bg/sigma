@@ -86,12 +86,12 @@ describe('prepareChatBody', () => {
 
   it('short history goes out verbatim', () => {
     const msgs = Array.from({ length: 5 }, (_, i) => msg(`m${i}`, `t${i}`));
-    expect(prepareChatBody(msgs)).toEqual({ messages: msgs });
+    expect(prepareChatBody(msgs, 'conv-1')).toEqual({ messages: msgs, conversationId: 'conv-1' });
   });
 
   it('long history is condensed to one recap + recent turns and stays under the POST caps', () => {
     const msgs = Array.from({ length: 40 }, (_, i) => msg(`m${i}`, `въпрос ${i} `.repeat(50)));
-    const { messages } = prepareChatBody(msgs);
+    const { messages } = prepareChatBody(msgs, 'conv-1');
 
     expect(messages.length).toBeLessThanOrEqual(MAX_MESSAGES);
     expect(messages[0].id).toMatch(/^recap-/);
@@ -107,7 +107,7 @@ describe('prepareChatBody', () => {
     // deliberate precedence — material numbers re-derive server-side, so the verbatim recent turns are the
     // higher-value context. Invariants: never over cap, never empty, newest turn always retained.
     const msgs = Array.from({ length: 40 }, (_, i) => msg(`m${i}`, 'x'.repeat(30 * 1024)));
-    const { messages } = prepareChatBody(msgs);
+    const { messages } = prepareChatBody(msgs, 'conv-1');
 
     const bytes = new TextEncoder().encode(JSON.stringify(messages)).length;
     expect(bytes).toBeLessThanOrEqual(MAX_BYTES);

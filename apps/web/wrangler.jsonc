@@ -109,6 +109,13 @@
     // IN via wrangler-render, which stamps this var at deploy. The route reads it via assistantEnabled(); an
     // unset OR non-truthy var is OFF. Killing the live endpoint is clearing that var + redeploy.
     "ASSISTANT_ENABLED": "false",
+    // Runtime deploy-env for the §9.3 transcript-HMAC gate (ADR-0012). The gate requires a signing key
+    // ONLY when this is "production" or "staging" (public, unauthenticated → fail-closed); "preview"/
+    // "development" fail OPEN (UI-only without the key). Committed "development" so local `wrangler dev`
+    // and any deploy that doesn't override it stay fail-open; a deployment opts a public env in by setting
+    // ENVIRONMENT to its name. Deliberately NOT derived from import.meta.env.PROD, which Vite inlines true
+    // for the staging build too.
+    "ENVIRONMENT": "development",
   },
   "unsafe": {
     "bindings": [
