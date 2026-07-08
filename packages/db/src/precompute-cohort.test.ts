@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
   resolve(root, 'packages/db/migrations/0000_init.sql'),
   resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql'),
-  resolve(root, 'packages/db/migrations/0003_cpv_division_stats.sql'),
+  resolve(root, 'packages/db/migrations/0004_cpv_division_stats.sql'),
 ];
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
