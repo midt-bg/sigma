@@ -20,7 +20,19 @@ function readScript(dbPath: string, path: string): void {
 function d1Json<T>(persistTo: string, sql: string): T[] {
   const out = execFileSync(
     'pnpm',
-    ['exec', 'wrangler', 'd1', 'execute', 'sigma', '--local', '--persist-to', persistTo, '--json', '--command', sql],
+    [
+      'exec',
+      'wrangler',
+      'd1',
+      'execute',
+      'sigma',
+      '--local',
+      '--persist-to',
+      persistTo,
+      '--json',
+      '--command',
+      sql,
+    ],
     { cwd: apiDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   ).trim();
   return (JSON.parse(out)[0]?.results ?? []) as T[];
@@ -47,18 +59,25 @@ Description line 2', 'test');
          INSERT INTO data_freshness (source, rows, refreshed_at) VALUES ('eop', 1, '2026-06-08');`,
       );
 
-      execFileSync('node', ['scripts/ship-domain.mjs', `--work-db=${workDb}`, `--persist-to=${persistTo}`], {
-        cwd: root,
-        stdio: 'pipe',
-        maxBuffer: 128 * 1024 * 1024,
-      });
-
-      expect(d1Json<{ name: string }>(persistTo, "SELECT name FROM authorities WHERE id='auth:1'")[0]?.name).toBe(
-        'Authority line 1\nAuthority line 2',
+      execFileSync(
+        'node',
+        ['scripts/ship-domain.mjs', `--work-db=${workDb}`, `--persist-to=${persistTo}`],
+        {
+          cwd: root,
+          stdio: 'pipe',
+          maxBuffer: 128 * 1024 * 1024,
+        },
       );
+
       expect(
-        d1Json<{ description: string }>(persistTo, "SELECT description FROM amendments WHERE id='am:1:C1:A1'")[0]
-          ?.description,
+        d1Json<{ name: string }>(persistTo, "SELECT name FROM authorities WHERE id='auth:1'")[0]
+          ?.name,
+      ).toBe('Authority line 1\nAuthority line 2');
+      expect(
+        d1Json<{ description: string }>(
+          persistTo,
+          "SELECT description FROM amendments WHERE id='am:1:C1:A1'",
+        )[0]?.description,
       ).toBe('Description line 1\nDescription line 2');
     } finally {
       rmSync(dir, { recursive: true, force: true });

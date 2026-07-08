@@ -25,7 +25,9 @@ const VOLATILE_COLUMNS = new Set(['created_at', 'refreshed_at']);
 
 const [aArg, bArg] = process.argv.slice(2);
 if (!aArg || !bArg) {
-  console.error('usage: node scripts/compare-served-sqlite.mjs <early+refresh sqlite-or-dir> <full sqlite-or-dir>');
+  console.error(
+    'usage: node scripts/compare-served-sqlite.mjs <early+refresh sqlite-or-dir> <full sqlite-or-dir>',
+  );
   process.exit(2);
 }
 
@@ -80,7 +82,11 @@ function findSqlite(path) {
       const child = `${dir}/${entry.name}`;
       if (entry.isDirectory()) {
         walk(child);
-      } else if (entry.isFile() && entry.name.endsWith('.sqlite') && entry.name !== 'metadata.sqlite') {
+      } else if (
+        entry.isFile() &&
+        entry.name.endsWith('.sqlite') &&
+        entry.name !== 'metadata.sqlite'
+      ) {
         const size = statSync(child).size;
         if (!best || size > best.size) best = { path: child, size };
       }

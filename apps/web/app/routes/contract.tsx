@@ -7,6 +7,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
+import { RiskIndicators } from '../components/RiskIndicators';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -270,6 +271,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           </div>
         </Section>
 
+        <RiskIndicators contract={c} />
+
         <Section id="facts" title="Подробности">
           <FactsList
             rows={[
@@ -303,7 +306,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <span className="muted">не е посочен в данните</span>
                   ),
                 // Break the gross count down by status/category — surfaces what „Брой оферти" actually
-                // means (it's the gross submitted count, including rejections — see docs/etl-pipeline.md
+                // means (it's the gross submitted count, including rejections — see docs/etl.md
                 // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
                 // only appears when the source published a non-zero value, so contracts without any
                 // rejection/SME data fall back to the original „самите оферти…" footnote.

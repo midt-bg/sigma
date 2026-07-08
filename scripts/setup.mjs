@@ -23,6 +23,8 @@ try {
   run('wrangler', ['d1', 'execute', 'sigma', '--local', '--file', seedFile], apiDir);
   console.log('\n==> Done. Start everything with: pnpm dev');
 } catch {
-  console.error('\n!! Local D1 setup failed — check that wrangler is on PATH, then re-run `pnpm setup`.');
+  console.error(
+    '\n!! Local D1 setup failed — check that wrangler is on PATH, then re-run `pnpm setup`.',
+  );
   process.exitCode = 1;
 }

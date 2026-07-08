@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CPV_CATEGORIES,
-  CPV_SECTORS,
-  categoryForDivision,
-  procedureGroup,
-} from './index';
+import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision, procedureGroup } from './index';
 
 describe('CPV_CATEGORIES', () => {
   it('partitions exactly the configured CPV sector divisions', () => {

@@ -9,7 +9,7 @@ Analyze the currently staged git changes and propose a commit message that stric
 3. Analyze the staged changes to identify:
    - Files modified, added, or deleted
    - The nature of the change (new feature, bug fix, refactor, docs, perf, test, build, ci, chore, style)
-   - Whether the change introduces a backward-incompatible API or behavior change (a *breaking change*)
+   - Whether the change introduces a backward-incompatible API or behavior change (a _breaking change_)
    - The scope — the section of the codebase affected (module, package, component)
 4. Compose the commit message in this exact structure:
 
@@ -63,7 +63,7 @@ These are conventions layered on top of the spec for readability:
 
 - Header target ≤ 72 characters; hard upper limit 100.
 - Description: imperative mood, lowercase first word, no trailing period (e.g. `add login button`, not `Added login button.`).
-- Body: explain the *why* and any non-obvious context, not the *what* (the diff already shows that). Wrap lines around 72 characters. Bullet points are acceptable.
+- Body: explain the _why_ and any non-obvious context, not the _what_ (the diff already shows that). Wrap lines around 72 characters. Bullet points are acceptable.
 - Match the scope vocabulary already in this repo's `git log`.
 
 ## Examples

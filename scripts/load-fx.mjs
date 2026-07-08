@@ -30,7 +30,8 @@ const apply = process.argv.includes('--apply');
 const remoteFlag = process.argv.includes('--remote') ? '--remote' : '--local';
 const workDb = arg('work-db');
 const persistTo = arg('persist-to');
-if (workDb && process.argv.includes('--remote')) throw new Error('--work-db and --remote are mutually exclusive');
+if (workDb && process.argv.includes('--remote'))
+  throw new Error('--work-db and --remote are mutually exclusive');
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
 const API = 'https://api.frankfurter.app';
 const FX_LOOKBACK_DAYS = 10;
@@ -51,7 +52,8 @@ function queryTarget(sql) {
     }).trim();
     return out ? JSON.parse(out) : [];
   }
-  const persistArgs = remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
+  const persistArgs =
+    remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
   const out = execFileSync(
     'wrangler',
     ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--json', '--command', sql],
@@ -131,7 +133,10 @@ const tuple = (r) =>
 const CHUNK = 250;
 const stmts = ["DELETE FROM fx_rates WHERE source = 'ecb:frankfurter';"];
 for (let i = 0; i < rows.length; i += CHUNK) {
-  const batch = rows.slice(i, i + CHUNK).map(tuple).join(',\n  ');
+  const batch = rows
+    .slice(i, i + CHUNK)
+    .map(tuple)
+    .join(',\n  ');
   if (batch)
     stmts.push(
       `INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at) VALUES\n  ${batch};`,
@@ -144,14 +149,22 @@ console.log(`\nwrote ${rows.length} rates → ${outFile}`);
 
 if (apply) {
   if (workDb) {
-    execFileSync('sqlite3', ['-bail', String(workDb)], { input: readFileSync(outFile), stdio: ['pipe', 'inherit', 'inherit'] });
+    execFileSync('sqlite3', ['-bail', String(workDb)], {
+      input: readFileSync(outFile),
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
     console.log('applied to sqlite work DB.');
   } else {
-    const persistArgs = remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
-    execFileSync('wrangler', ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--file', outFile], {
-      cwd: apiDir,
-      stdio: 'inherit',
-    });
+    const persistArgs =
+      remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
+    execFileSync(
+      'wrangler',
+      ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--file', outFile],
+      {
+        cwd: apiDir,
+        stdio: 'inherit',
+      },
+    );
     console.log('applied to D1.');
   }
 }

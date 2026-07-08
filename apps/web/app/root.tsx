@@ -89,7 +89,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             publisher: { '@id': `${origin}/#organization` },
             potentialAction: {
               '@type': 'SearchAction',
-              target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+              target: {
+                '@type': 'EntryPoint',
+                urlTemplate: `${origin}/search?q={search_term_string}`,
+              },
               'query-input': 'required name=search_term_string',
             },
           },
@@ -121,10 +124,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
         {schemaOrg && (
-          <script
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{ __html: schemaOrg }}
-          />
+          <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: schemaOrg }} />
         )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>

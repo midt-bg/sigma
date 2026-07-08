@@ -5,8 +5,9 @@
 // `wrangler deploy` needs the real IDs — this script substitutes them from env vars and
 // writes a sibling `wrangler.deploy.<ext>` that the package `deploy` script passes via
 // `--config`. Optional deploy-time name env vars (`SIGMA_WEB_NAME`, `SIGMA_ETL_NAME`,
-// `SIGMA_WORKFLOW_NAME`, `SIGMA_D1_NAME`, `SIGMA_CSV_CACHE_NAME`) explicitly override resource
-// names for alternate environments while leaving committed names unchanged when unset.
+// `SIGMA_WORKFLOW_NAME`, `SIGMA_D1_NAME`, `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`,
+// `SIGMA_VECTORIZE_NAME`) explicitly override resource names for alternate environments while
+// leaving committed names unchanged when unset.
 //
 // usage: node scripts/wrangler-render.mjs <path/to/wrangler.toml|jsonc>
 
@@ -16,12 +17,20 @@ import { basename, dirname, extname, join } from 'node:path';
 // Sentinel <- env var. The sentinels appear verbatim in the committed wrangler.* files;
 // the values come from the environment at deploy time. Add a row to extend (e.g. a future KV).
 const SENTINELS = {
-  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID',          // D1 database_id (UUID v4 shape)
+  '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID', // D1 database_id (UUID v4 shape)
 };
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
 // rate-limit namespace_ids to be account-unique — a duplicate silently merges two buckets.
-const REQUIRED_RATE_LIMITERS = ['CSV_RATE_LIMITER', 'AGG_RATE_LIMITER', 'SEARCH_RATE_LIMITER'];
+// ASSISTANT_RATE_LIMITER is the most important to assert: unlike the others (which fail OPEN), it fails
+// CLOSED in prod, so a dropped/typo'd binding silently 503s every assistant request rather than merely
+// disabling a throttle (review #80, follow-up).
+const REQUIRED_RATE_LIMITERS = [
+  'CSV_RATE_LIMITER',
+  'AGG_RATE_LIMITER',
+  'SEARCH_RATE_LIMITER',
+  'ASSISTANT_RATE_LIMITER',
+];
 
 const input = process.argv[2];
 if (!input) {
@@ -44,7 +53,9 @@ for (const [sentinel, envVar] of Object.entries(SENTINELS)) {
 
 if (missing.length) {
   console.error(`✘ wrangler-render: ${input} needs ${missing.join(', ')}`);
-  console.error('  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.');
+  console.error(
+    '  set them in .env.local (then: set -a; source .env.local; set +a) or as repo secrets for CI.',
+  );
   process.exit(1);
 }
 
@@ -54,13 +65,22 @@ if (ext === '.json' || ext === '.jsonc') {
     webName: process.env.SIGMA_WEB_NAME || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
     csvCacheName: process.env.SIGMA_CSV_CACHE_NAME || '',
+    reportsName: process.env.SIGMA_REPORTS_NAME || '',
+    vectorizeName: process.env.SIGMA_VECTORIZE_NAME || '',
   };
-  if (names.webName || names.d1Name || names.csvCacheName) {
+  if (
+    names.webName ||
+    names.d1Name ||
+    names.csvCacheName ||
+    names.reportsName ||
+    names.vectorizeName
+  ) {
     out = renderJson(out, names);
   }
-  // Rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
-  // namespace_id collision would silently disable a limiter rather than erroring. Catch both here so
-  // the deploy fails loudly instead.
+  // Most rate limiters fail OPEN at runtime (apps/web/workers/rate-limit.ts), so a missing binding or a
+  // namespace_id collision would silently disable a limiter rather than erroring; ASSISTANT_RATE_LIMITER
+  // fails CLOSED, where the same misconfig instead 503s the whole endpoint. Catch both here so the deploy
+  // fails loudly instead of shipping a silently-broken limiter either way.
   assertRateLimiters(out, input);
 } else if (ext === '.toml') {
   const names = {
@@ -109,16 +129,27 @@ function assertRateLimiters(text, source) {
 }
 
 function renderJson(text, names) {
-  const obj = JSON.parse(stripJsonLineComments(text));
+  // JSONC: strip line comments AND trailing commas before JSON.parse (mirrors assertRateLimiters).
+  const obj = JSON.parse(stripJsonLineComments(text).replace(/,(\s*[}\]])/g, '$1'));
   if (names.webName) obj.name = names.webName;
   if (names.d1Name && Array.isArray(obj.d1_databases)) {
     for (const db of obj.d1_databases) {
       if (db && typeof db === 'object') db.database_name = names.d1Name;
     }
   }
-  if (names.csvCacheName && Array.isArray(obj.r2_buckets)) {
+  if (Array.isArray(obj.r2_buckets)) {
+    // Target buckets by BINDING, not blanket: a single name var must not rename every bucket
+    // (e.g. staging's SIGMA_CSV_CACHE_NAME would otherwise clobber the REPORTS bucket too).
     for (const bucket of obj.r2_buckets) {
-      if (bucket && typeof bucket === 'object') bucket.bucket_name = names.csvCacheName;
+      if (!bucket || typeof bucket !== 'object') continue;
+      if (names.csvCacheName && bucket.binding === 'CSV_CACHE')
+        bucket.bucket_name = names.csvCacheName;
+      if (names.reportsName && bucket.binding === 'REPORTS') bucket.bucket_name = names.reportsName;
+    }
+  }
+  if (names.vectorizeName && Array.isArray(obj.vectorize)) {
+    for (const index of obj.vectorize) {
+      if (index && typeof index === 'object') index.index_name = names.vectorizeName;
     }
   }
   return `${JSON.stringify(obj, null, 2)}\n`;

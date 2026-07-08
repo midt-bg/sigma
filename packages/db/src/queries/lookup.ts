@@ -7,4 +7,5 @@
 // the CSV export, silently produces an empty file). Use this for every `MAP[userInput]` lookup.
 //
 // `Object.values(map)` and `map[ownKey]` keep working unchanged; only the prototype chain is removed.
-export const lookup = <T extends object>(entries: T): T => Object.assign(Object.create(null), entries);
+export const lookup = <T extends object>(entries: T): T =>
+  Object.assign(Object.create(null), entries);

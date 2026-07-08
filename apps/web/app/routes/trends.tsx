@@ -1,7 +1,6 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { TrendYear } from '@sigma/api-contract';
 import { count, money, pct, signedPct } from '@sigma/shared';
-import { CPV_SECTORS } from '@sigma/config';
 import { getSpendingTrend } from '@sigma/db';
 import type { Route } from './+types/trends';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -10,6 +9,7 @@ import { DataTable, type Column } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { singleSelectFilters } from '../lib/filters';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -28,16 +28,10 @@ export function headers() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
-  const sector = sp.get('sector');
+  const { sector, funding, unknownSector } = singleSelectFilters(sp);
   const granularity = sp.get('g') === 'year' ? 'year' : 'month';
   const db = context.cloudflare.env.DB;
-  // A bogus ?sector would silently empty the chart; flag it and ignore it instead.
-  const unknownSector = Boolean(sector) && !CPV_SECTORS.some((s) => s.code === sector);
-  const data = await getSpendingTrend(db, {
-    sector: unknownSector ? null : sector,
-    funding: (sp.get('funding') as 'eu' | 'national' | null) || 'all',
-    granularity,
-  });
+  const data = await getSpendingTrend(db, { sector, funding, granularity });
   return { data, unknownSector };
 }
 

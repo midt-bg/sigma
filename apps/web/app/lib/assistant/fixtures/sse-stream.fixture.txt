@@ -1,0 +1,30 @@
+# Илюстративна последователност от raw SSE chunk-ове за POST /assistant/chat
+# (UI message stream на Vercel AI SDK v6). FE-ът НЕ парсва това ръчно — ползва useChat от
+# @ai-sdk/react, който попълва message.parts. Тук е само за reference какво има по жицата.
+# Всеки event е ред "data: <json>" + празен ред. Справката идва в tool-output-available за emit_report.
+
+data: {"type":"start"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"t0"}
+
+data: {"type":"text-delta","id":"t0","delta":"Извличам най-големите възложители по похарчено…"}
+
+data: {"type":"text-end","id":"t0"}
+
+data: {"type":"tool-input-start","toolCallId":"call_1","toolName":"run_sql"}
+
+data: {"type":"tool-input-available","toolCallId":"call_1","toolName":"run_sql","input":{"sql":"SELECT a.name AS authority, a.id AS authority_id, t.spent_eur FROM authority_totals t JOIN authorities a ON a.id = t.authority_id ORDER BY t.spent_eur DESC LIMIT 3"}}
+
+data: {"type":"tool-output-available","toolCallId":"call_1","output":"R1 (колони: authority, authority_id, spent_eur) — 3 ред(а)\n[[\"Министерство на финансите\",\"auth:000695089\",1234567], …]"}
+
+data: {"type":"tool-input-available","toolCallId":"call_2","toolName":"emit_report","input":{"title":"Най-големи възложители по похарчено","question":"Кои са най-големите възложители?","blocks":[{"type":"table","resultId":"R1","columns":[{"key":"authority","header":"Възложител","format":"text","link":{"kind":"authority","idCol":"authority_id"}},{"key":"spent_eur","header":"Похарчено (€)","align":"right","format":"money"}]}]}}
+
+data: {"type":"tool-output-available","toolCallId":"call_2","output":{"ok":true,"report":{"title":"Най-големи възложители по похарчено","question":"Кои са най-големите възложители по похарчени средства?","watermark":"ai-generated","blocks":[{"type":"table","columns":[{"key":"authority","header":"Възложител","format":"text","link":{"kind":"authority","idCol":"authority_id"}},{"key":"spent_eur","header":"Похарчено (€)","align":"right","format":"money"}],"rows":[{"cells":["Министерство на финансите",1234567],"links":["auth:000695089",null]}]}]}}}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish"}
+
+data: [DONE]

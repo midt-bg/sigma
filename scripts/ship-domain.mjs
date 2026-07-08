@@ -57,7 +57,9 @@ function d1File(file) {
     } catch (err) {
       if (i >= attempts) throw err;
       const backoff = Math.min(30, 2 ** i);
-      console.error(`!! d1 execute failed (attempt ${i}/${attempts}) for ${file}; retrying in ${backoff}s`);
+      console.error(
+        `!! d1 execute failed (attempt ${i}/${attempts}) for ${file}; retrying in ${backoff}s`,
+      );
       execFileSync('sleep', [String(backoff)]);
     }
   }
@@ -151,7 +153,8 @@ function insertStatements(table, cols, rows) {
   for (const row of rows) {
     const tuple = `(${cols.map((c) => sqlLiteral(row[c])).join(',')})`;
     const tupleBytes = Buffer.byteLength(tuple) + 2;
-    if (batch.length && (batch.length >= MAX_BATCH_ROWS || bytes + tupleBytes > MAX_BATCH_BYTES)) flush();
+    if (batch.length && (batch.length >= MAX_BATCH_ROWS || bytes + tupleBytes > MAX_BATCH_BYTES))
+      flush();
     batch.push(tuple);
     bytes += tupleBytes;
   }
@@ -175,7 +178,11 @@ if (remote && targetPopulated && !replaceRemote) {
 }
 if (targetPopulated) {
   for (const table of ['authorities', 'bidders', 'tenders', 'contracts']) {
-    if (!allowShrink && beforeCounts[table] > 0 && sourceCounts[table] < beforeCounts[table] * 0.5) {
+    if (
+      !allowShrink &&
+      beforeCounts[table] > 0 &&
+      sourceCounts[table] < beforeCounts[table] * 0.5
+    ) {
       throw new Error(
         `refusing to ship: source ${table} ${sourceCounts[table]} is less than half of target ${beforeCounts[table]}`,
       );
