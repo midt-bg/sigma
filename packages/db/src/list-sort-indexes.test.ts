@@ -13,13 +13,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // missing ordering index is a real cost/latency defect (docs/review-security.md "D1 разход и индекси").
 //
 // This proves, on a real sqlite3 with no ANALYZE stats (matching production D1), that:
-//   (a) BEFORE migration 0002 the six non-default list sorts full-scan (temp-B-tree sort), and
-//   (b) AFTER 0002 each walks its new index with no ORDER BY sort step.
+//   (a) BEFORE migration 0005 the six non-default list sorts full-scan (temp-B-tree sort), and
+//   (b) AFTER 0005 each walks its new index with no ORDER BY sort step.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
-const migration2 = resolve(root, 'packages/db/migrations/0002_list_sort_indexes.sql');
+const migration2 = resolve(root, 'packages/db/migrations/0005_list_sort_indexes.sql');
 
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
@@ -105,8 +105,8 @@ function seed(dbPath: string): void {
 
 describe('list sort ordering indexes', () => {
   let dir: string;
-  let before: string; // schema WITHOUT 0002 (current main)
-  let after: string; // schema WITH 0002 (the fix)
+  let before: string; // schema WITHOUT 0005 (current main)
+  let after: string; // schema WITH 0005 (the fix)
 
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), 'sigma-sort-idx-'));
