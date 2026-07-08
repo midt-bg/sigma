@@ -100,8 +100,9 @@ the non-`ok` arm of invariant 2 (negative source values), both of which only **w
    so rollup reconciliation (invariant 1) stays consistent as well. Asserting it exactly needs the
    dedup drop tracked separately — record `candidates_deduped = COUNT(DISTINCT <domain contract id>)`
    over the eligible set in `pipeline_stats` and assert `inserted == candidates_deduped`, or rely on
-   **#99 golden totals** (an independent recount). Tracked as the follow-up; this gate covers
-   over-insertion, and invariant 0 covers empty-corpus.
+   **#99 golden totals** (an independent recount — implemented as
+   `packages/db/src/golden-dataset.test.ts`, see [`review-testing.md`](review-testing.md)); this gate
+   covers over-insertion, and invariant 0 covers empty-corpus.
 
 ## Tolerances (and what is *not* tolerated)
 
@@ -133,7 +134,9 @@ Two boundaries are deliberate, documented so the gate is not mistaken for more t
   total** passes: e.g. a contract attached to the wrong authority (or a `flow_pairs` `GROUP BY` key drift)
   moves value between two authorities while `SUM` stays put, so the gate is green even though that
   authority's page and the Sankey show wrong numbers. Empirically confirmed (moving €500 k between two
-  authorities passes). Per-grain checking is **#99 golden totals**, not this gate.
+  authorities passes). Per-grain checking is **#99 golden totals**, not this gate — covered by the
+  golden dataset test (`packages/db/src/golden-dataset.test.ts`), which recounts every grain of a
+  synthetic corpus against hand-verified absolute numbers.
 - **On the in-place D1 paths the gate runs post-publish.** `runFullDerive` / `runSliceDerive` and
   `ship-domain.mjs` call `assertIntegrity` **after** `precompute.sql` has already written the served D1
   (D1 has no cheap blue-green swap), so on a violation `process.exit(1)` stops the run but the bad
