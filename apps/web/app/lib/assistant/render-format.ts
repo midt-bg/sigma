@@ -51,5 +51,7 @@ export function entityHref(kind: EntityKind, id: string): string {
   const path = hrefForEntity(kind, id);
   const prefix = `/${collection}/`;
   const slug = path.startsWith(prefix) ? path.slice(prefix.length) : path;
-  return `${prefix}${encodeURIComponent(slug)}`;
+  // Decode first: contractSlug pre-encodes `/` as `%2F` so hrefForEntity may return an already
+  // percent-encoded slug. Decode before re-encoding so we don't double-encode `%2F` → `%252F`.
+  return `${prefix}${encodeURIComponent(decodeURIComponent(slug))}`;
 }

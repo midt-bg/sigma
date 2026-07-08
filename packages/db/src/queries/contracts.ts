@@ -446,7 +446,7 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            contractSlug(r.id),
+            r.id.startsWith('c:') ? r.id.slice(2) : r.id,
             r.unp,
             r.subject,
             cleanName(r.authority_name),

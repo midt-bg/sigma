@@ -52,11 +52,12 @@ export function authorityIdFromSlug(slug: string): string {
 }
 
 /** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`, with `/`
- *  percent-encoded so it doesn't split the URL path). React Router decodes `%2F` back to `/`
- *  in params, so the reading side (`contractIdFromSlug`) needs no change. */
+ *  percent-encoded so it doesn't split the URL path. `%` is also encoded first so a bare `%`
+ *  in source data can't produce a malformed percent sequence). React Router decodes `%2F` back
+ *  to `/` in params, so the reading side (`contractIdFromSlug`) needs no change. */
 export function contractSlug(contractId: string): string {
   const raw = contractId.startsWith('c:') ? contractId.slice(2) : contractId;
-  return raw.replace(/\//g, '%2F');
+  return raw.replace(/%/g, '%25').replace(/\//g, '%2F');
 }
 
 /** `/contracts/:id` segment → contract id. */

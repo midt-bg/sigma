@@ -42,9 +42,10 @@ describe('authority / contract slugs', () => {
     expect(contractIdFromSlug(contractSlug(eopId))).toBe(eopId);
     expect(contractIdFromSlug(contractSlug(ocdsId))).toBe(ocdsId);
   });
-  it('percent-encodes "/" in the slug so it does not split the URL path', () => {
+  it('percent-encodes "/" and bare "%" in the slug so the URL path is always valid', () => {
     // AOP contract numbers often contain "/" (e.g. "ОП20-42/22/"). Without encoding the slash
-    // breaks the /contracts/:id route into multiple segments → 404.
+    // breaks the /contracts/:id route into multiple segments → 404. "%" is encoded first so a
+    // bare "%" in source data can't produce a malformed percent sequence → URIError in React Router.
     const id = 'c:e:00797-2020-0039:93-ОП20-42/22/:5:eik:102130456:1';
     const slug = contractSlug(id);
     expect(slug).not.toContain('/');
@@ -52,6 +53,13 @@ describe('authority / contract slugs', () => {
     // The reading side: React Router decodes params.id before contractIdFromSlug sees it.
     // Simulate that: decodeURIComponent(slug) → raw slug → contractIdFromSlug → original id.
     expect(contractIdFromSlug(decodeURIComponent(slug))).toBe(id);
+
+    // A literal "%" in source data must not produce a malformed percent sequence.
+    const idWithPercent = 'c:e:UNP:50%ADVANCE:_:eik:123456789:1';
+    const slugWithPercent = contractSlug(idWithPercent);
+    expect(slugWithPercent).toContain('%25');
+    expect(() => decodeURIComponent(slugWithPercent)).not.toThrow();
+    expect(contractIdFromSlug(decodeURIComponent(slugWithPercent))).toBe(idWithPercent);
   });
 });
 

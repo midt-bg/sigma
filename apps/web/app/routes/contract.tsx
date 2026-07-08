@@ -475,7 +475,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в СИГМА
               </a>
-              <span className="sub">машиночетим, всички полета — /contracts/{c.id}.json</span>
+              <span className="sub">машиночетим, всички полета — /contracts/{decodeURIComponent(c.id)}.json</span>
             </li>
           </ul>
 
