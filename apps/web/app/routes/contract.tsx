@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
-import { contractIdFromSlug, getContract } from '@sigma/db';
+import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -47,7 +47,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   const c = data?.contract;
   return seoMeta({
     matches,
-    path: `/contracts/${params.id}`,
+    path: `/contracts/${contractSlug(contractIdFromSlug(params.id))}`,
     title: `${c?.subject ?? 'Договор'} — СИГМА`,
     description: c
       ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
