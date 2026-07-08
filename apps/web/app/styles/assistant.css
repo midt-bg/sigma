@@ -379,6 +379,22 @@ html.assistant-ready .assistant-dock--panel {
   color: var(--paper);
   border-color: var(--accent);
 }
+/* Right-side control cluster: the optional Clear next to the primary Send/Stop. */
+.assistant-composer__actions-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+/* Secondary (ghost) action — quieter than Send so it never competes with the primary. */
+.assistant-composer__clear {
+  flex: none;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
 .assistant-composer__send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -387,13 +403,93 @@ html.assistant-ready .assistant-dock--panel {
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* Centre the icon; symmetric padding → a square-ish toggle (Preflight makes the svg display:block, so
+   without this the icon + anything beside it would stack and left-align). */
+.assistant-composer__mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-2);
+}
 
-/* Accessibility text-only mode linearises the page and hides all <svg> (the dock's icons). Hide the
-   floating dock/launcher there too — consistent with how that mode hides the other floating toggles —
-   instead of leaving an icon-stripped panel hovering over the linear layout. */
+.assistant-composer__mic-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Recording state: the toggle inverts; an aria-hidden pure-CSS equalizer + timer sit beside it (frozen
+   under prefers-reduced-motion via the global rule). The mic-status <p> is a separate polite live region. */
+.assistant-composer__mic[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--paper);
+}
+.assistant-composer__mic-timer {
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.assistant-composer__mic-viz {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  color: var(--accent);
+}
+.assistant-composer__mic-bar {
+  width: 3px;
+  height: 100%;
+  background: currentColor;
+  border-radius: 2px;
+  transform: scaleY(0.35);
+  transform-origin: center;
+  animation: assistant-mic-eq 900ms ease-in-out infinite;
+}
+.assistant-composer__mic-bar:nth-child(3n) {
+  animation-delay: 150ms;
+}
+.assistant-composer__mic-bar:nth-child(3n + 1) {
+  animation-delay: 300ms;
+}
+.assistant-composer__mic-bar:nth-child(4n) {
+  animation-delay: 450ms;
+}
+@keyframes assistant-mic-eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.assistant-composer__mic-status {
+  /* Inset from the composer edges + wrap long words, so the full-size a11y copy never hugs the sides. */
+  margin: 0;
+  padding: var(--s-1) var(--s-2);
+  font-size: 1em;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+/* Text-only mode hides all <svg> and linearises; the dock's icons are text-paired, so relinearise the
+   launcher + desktop panel in-flow rather than hiding the dock (the mobile --sheet stays a native <dialog>). */
 html.a11y-textonly .assistant-launcher,
-html.a11y-textonly .assistant-dock {
-  display: none !important;
+html.a11y-textonly .assistant-dock--panel {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  animation: none !important;
+}
+html.a11y-textonly .assistant-dock--panel {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  border-left: none !important;
+}
+/* The in-flow panel overlays nothing, so drop the desktop content-push (WCAG 2.4.11 is moot inline). */
+html.a11y-textonly body:has(.assistant-dock--panel) {
+  padding-right: 0 !important;
 }
 
 @media (max-width: 760px) {

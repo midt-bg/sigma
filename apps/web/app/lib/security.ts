@@ -36,7 +36,9 @@ export function baseSecurityHeaders(isProd: boolean): Headers {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
-    'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+    // microphone=(self): the assistant's voice input needs getUserMedia same-origin. Camera +
+    // geolocation stay fully denied. Site-wide broadening compensated by the strict CSP (no inline script).
+    'Permissions-Policy': 'geolocation=(), microphone=(self), camera=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
   });

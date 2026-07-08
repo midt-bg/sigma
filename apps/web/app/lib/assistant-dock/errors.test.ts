@@ -1,5 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import { ASSISTANT_ERROR_COPY, classifyHttpError, networkError } from './errors';
+import {
+  ASSISTANT_ERROR_COPY,
+  VOICE_ERROR_COPY,
+  classifyHttpError,
+  classifyMediaError,
+  micStatusText,
+  networkError,
+} from './errors';
+import type { VoiceInput, VoiceState } from './useVoiceInput';
+
+const voice = (state: VoiceState, over: Partial<VoiceInput> = {}): VoiceInput => ({
+  state,
+  startedAt: null,
+  endingSoon: false,
+  start: () => {},
+  stop: () => {},
+  ...over,
+});
+
+describe('micStatusText', () => {
+  it('recording, not ending soon → the speak-now line', () => {
+    expect(micStatusText(voice({ status: 'recording' }, { endingSoon: false }))).toBe(
+      'Записва се. Говорете сега.',
+    );
+  });
+
+  it('recording, ending soon → the ten-seconds-left warning', () => {
+    expect(micStatusText(voice({ status: 'recording' }, { endingSoon: true }))).toBe(
+      'Остават 10 секунди…',
+    );
+  });
+
+  it('requesting → the permission-prompt line', () => {
+    expect(micStatusText(voice({ status: 'requesting' }))).toBe('Изисква се достъп до микрофона…');
+  });
+
+  it('error → the error message verbatim', () => {
+    expect(micStatusText(voice({ status: 'error', kind: 'denied', message: 'няма достъп' }))).toBe(
+      'няма достъп',
+    );
+  });
+
+  it('idle → empty (nothing to announce)', () => {
+    expect(micStatusText(voice({ status: 'idle' }))).toBe('');
+  });
+});
 
 describe('classifyHttpError', () => {
   it('maps 429 to the rate-limited copy', () => {
@@ -40,5 +85,32 @@ describe('classifyHttpError', () => {
 describe('networkError', () => {
   it('returns the offline copy', () => {
     expect(networkError()).toBe(ASSISTANT_ERROR_COPY.network);
+  });
+});
+
+describe('classifyMediaError', () => {
+  it('maps a denied mic permission (NotAllowedError) to the denied copy', () => {
+    expect(classifyMediaError({ name: 'NotAllowedError' })).toBe('denied');
+  });
+
+  it('maps a blocked secure-context (SecurityError) to the denied copy', () => {
+    expect(classifyMediaError({ name: 'SecurityError' })).toBe('denied');
+  });
+
+  it('maps a missing device (NotFoundError) to the capture copy', () => {
+    expect(classifyMediaError({ name: 'NotFoundError' })).toBe('capture');
+  });
+
+  it('maps an unknown / non-error value to the capture copy', () => {
+    expect(classifyMediaError(null)).toBe('capture');
+  });
+});
+
+describe('VOICE_ERROR_COPY', () => {
+  it('every error line points the user back to typing (never a dead mic)', () => {
+    expect(VOICE_ERROR_COPY.denied).toContain('напишете');
+    expect(VOICE_ERROR_COPY.capture).toContain('напишете');
+    expect(VOICE_ERROR_COPY.unsupported).toContain('Напишете');
+    expect(VOICE_ERROR_COPY.transcription).toContain('напишете');
   });
 });

@@ -7,6 +7,7 @@ import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { rateLimitTranscribeRoute } from './transcribe-rate-limit';
 import { withRequestLog } from './request-log';
 
 // Durable Objects for the AI assistant. Both must be named exports of the worker entry so their
@@ -137,6 +138,13 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     import.meta.env.PROD,
   );
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
+
+  const transcribeRateLimitResponse = await rateLimitTranscribeRoute(
+    request,
+    env,
+    import.meta.env.PROD,
+  );
+  if (transcribeRateLimitResponse) return transcribeRateLimitResponse;
 
   const response = await requestHandler(request, { cloudflare: { env, ctx } });
   const cacheable =

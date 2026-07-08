@@ -23,6 +23,13 @@ describe('securityHeaders CSP', () => {
     expect(csp).not.toContain('nonce-');
   });
 
+  it('allows the microphone same-origin (voice input) but keeps camera + geolocation denied', () => {
+    const pp = baseSecurityHeaders(true).get('Permissions-Policy') ?? '';
+    expect(pp).toContain('microphone=(self)');
+    expect(pp).toContain('camera=()');
+    expect(pp).toContain('geolocation=()');
+  });
+
   it('omits the CSP outside production but keeps the base hardening headers', () => {
     const dev = securityHeaders('n', false);
     expect(dev.get('Content-Security-Policy')).toBeNull();

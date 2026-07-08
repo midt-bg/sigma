@@ -73,6 +73,12 @@
     // concrete gateway URL + slug on -contracts; upstream deploys configure their own per environment.
     "AI_GATEWAY_BASE_URL": "",
     "AI_GATEWAY_ID": "",
+    // Voice STT (ADR-0013): the BgGPT primary routes through the sigma-assistant gateway's
+    // custom-bggpt-voice provider (the route appends `/audio/transcriptions`); every request carries
+    // cf-aig-collect-log:false so the gateway records metadata but NEVER the audio. Empty in source
+    // (opt-in per deploy, fail-closed) — the fork sets the concrete gateway URL on -contracts; upstream
+    // deploys configure their own per environment. VOICE_ASSISTANT_API_KEY is a SECRET (not here).
+    "BGGPT_STT_BASE_URL": "",
     "ASSISTANT_MODEL": "bggpt-gemma4-31b-it-bg-gptq-w4a16",
     "MAX_STEPS": "6",
     // Account-wide BgGPT RPM cap enforced by the BGGPT_CIRCUIT_BREAKER DO (#135): read via
@@ -140,6 +146,17 @@
         // so the assistant takes 1005.
         "namespace_id": "1005",
         "simple": { "limit": 10, "period": 60 },
+      },
+      {
+        // Per-IP throttle for POST /assistant/transcribe — each call runs a paid Workers AI Whisper
+        // transcription. Separate binding from the chat limiter so voice abuse can't drain the chat
+        // budget. Tighter (5/60): one call ≈ one audio-minute of paid inference. 1001–1005 taken
+        // (csv/agg/search/health/assistant); transcribe takes 1006. Must stay unique — a duplicate
+        // silently disables one limiter with no deploy error.
+        "name": "TRANSCRIBE_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 5, "period": 60 },
       },
     ],
   },
