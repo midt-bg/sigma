@@ -1,4 +1,9 @@
-import { bidderIdFromSlug, getCompanyHead, listRecentEntityContracts } from '@sigma/db';
+import {
+  bidderIdFromSlug,
+  companySlug,
+  getCompanyHead,
+  listRecentEntityContracts,
+} from '@sigma/db';
 import type { Route } from './+types/company.rss';
 import { publicCache } from '../lib/cache';
 import { withDataSource } from '../lib/dataSource';
@@ -13,6 +18,10 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
   if (!slug.trim()) return withDataSource(new Response('Not Found', { status: 404 }));
   const bidderId = bidderIdFromSlug(slug);
   if (!bidderId) return withDataSource(new Response('Not Found', { status: 404 }));
+  // Build the self/site links from the CANONICAL slug (re-derived from the resolved bidder id), not the
+  // raw request param, so a resolvable-but-non-canonical request (e.g. a name-keyed slug with different
+  // base64 padding) still emits the same URLs as the HTML profile (review ydimitrof).
+  const canonicalSlug = companySlug(bidderId);
   const db = context.cloudflare.env.DB;
   const { origin } = new URL(request.url);
   return withDbRetry(async () => {
@@ -22,8 +31,8 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
     const xml = rssFeed({
       title: `${head.name} - нови договори - СИГМА`,
       description: `Най-новите договори за обществени поръчки, спечелени от ${head.name}.`,
-      siteLink: `${origin}/companies/${slug}`,
-      selfLink: `${origin}/companies/${slug}.rss`,
+      siteLink: `${origin}/companies/${canonicalSlug}`,
+      selfLink: `${origin}/companies/${canonicalSlug}.rss`,
       items: contracts.map((c) => contractRssItem(c, 'authority', origin)),
     });
     return withDataSource(

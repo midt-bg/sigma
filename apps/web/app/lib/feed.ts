@@ -84,9 +84,14 @@ export function rssFeed(opts: {
         .join('\n'),
     )
     .join('\n');
-  // Channel-level pubDate comes from the newest item so the output is a pure function of the data
-  // (deterministic for tests and for the edge cache) - no "now" timestamp anywhere.
-  const newest = opts.items.find((item) => item.pubDate != null)?.pubDate;
+  // Channel-level pubDate is the newest item's date, computed as the MAX over all items rather than
+  // trusting input order: rssFeed is generic and cannot enforce the caller's newest-first ordering, so
+  // a future reordering must not silently yield a wrong channel <pubDate> (review ydimitrof). Still a
+  // pure function of the data — no "now" timestamp anywhere (RFC-822 dates compare via Date.parse).
+  const newest = opts.items.reduce<string | undefined>((max, item) => {
+    if (!item.pubDate) return max;
+    return max === undefined || Date.parse(item.pubDate) > Date.parse(max) ? item.pubDate : max;
+  }, undefined);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">',

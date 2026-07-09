@@ -96,4 +96,20 @@ describe('company.rss loader', () => {
     expect(body).toContain('<link>https://sigma.midt.bg/companies/222222222</link>');
     expect(body).not.toContain('222222222.rss.rss');
   });
+
+  it('builds self/site links from the canonical slug, not the raw request param', async () => {
+    // 'nWA==' is a non-canonical encoding of the name-keyed slug 'nWA' (companySlug strips the '='
+    // base64 padding). The links must use the canonical 'nWA', matching the HTML profile.
+    const res = await call(
+      'https://sigma.midt.bg/companies/nWA==.rss',
+      'nWA==',
+      fakeDb({ name: 'X', kind: 'company' }),
+    );
+    const body = await res.text();
+    expect(body).toContain('<link>https://sigma.midt.bg/companies/nWA</link>');
+    expect(body).toContain(
+      '<atom:link href="https://sigma.midt.bg/companies/nWA.rss" rel="self" type="application/rss+xml"/>',
+    );
+    expect(body).not.toContain('nWA==');
+  });
 });

@@ -1,4 +1,9 @@
-import { authorityIdFromSlug, getAuthorityHead, listRecentEntityContracts } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  authoritySlug,
+  getAuthorityHead,
+  listRecentEntityContracts,
+} from '@sigma/db';
 import type { Route } from './+types/authority.rss';
 import { publicCache } from '../lib/cache';
 import { withDataSource } from '../lib/dataSource';
@@ -18,6 +23,10 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
   // would diverge from the HTML authority route. An unknown slug just yields getAuthorityHead === null
   // → 404 below, at the cost of one indexed no-row lookup (review ydimitrof).
   const authorityId = authorityIdFromSlug(eik);
+  // Build the self/site links from the CANONICAL slug (derived from the resolved id), not the raw
+  // request param, so a resolvable-but-non-canonical request still emits the same URLs as the HTML
+  // profile (review ydimitrof).
+  const canonicalEik = authoritySlug(authorityId);
   const { origin } = new URL(request.url);
   return withDbRetry(async () => {
     const head = await getAuthorityHead(db, authorityId);
@@ -26,8 +35,8 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
     const xml = rssFeed({
       title: `${head.name} - нови договори - СИГМА`,
       description: `Най-новите договори за обществени поръчки, възложени от ${head.name}.`,
-      siteLink: `${origin}/authorities/${eik}`,
-      selfLink: `${origin}/authorities/${eik}.rss`,
+      siteLink: `${origin}/authorities/${canonicalEik}`,
+      selfLink: `${origin}/authorities/${canonicalEik}.rss`,
       items: contracts.map((c) => contractRssItem(c, 'bidder', origin)),
     });
     return withDataSource(

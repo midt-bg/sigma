@@ -135,4 +135,16 @@ describe('rssFeed', () => {
     expect(xml).not.toContain('<item>');
     expect(xml).not.toContain('<pubDate>');
   });
+
+  it('channel pubDate is the MAX item date, not the first — even if items are mis-ordered', () => {
+    // rssFeed cannot enforce the caller's newest-first order, so it computes the max defensively.
+    const older = contractRssItem(item({ signedAt: '2026-01-10' }), 'bidder', 'https://x.bg');
+    const newer = contractRssItem(item({ signedAt: '2026-08-20' }), 'bidder', 'https://x.bg');
+    // Newest is SECOND in the array → a `find`-first would wrongly pick the older one. Anchor on the
+    // channel's <language> line (only the channel pubDate follows it) to target the channel, not items.
+    const xml = rssFeed({ ...opts, items: [older, newer] });
+    expect(xml).toContain(
+      '<language>bg</language>\n    <pubDate>Thu, 20 Aug 2026 00:00:00 GMT</pubDate>',
+    );
+  });
 });
