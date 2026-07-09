@@ -94,6 +94,68 @@ describe('validateEmitShape', () => {
     expect(validateEmitShape(tbl({ kind: 'company' })).ok).toBe(false); // idCol required
   });
 
+  it('validates the optional column align (whitelist left|right), rejecting anything else', () => {
+    const tbl = (align: unknown) => ({
+      title: 't',
+      question: '',
+      blocks: [
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'name', header: 'Име', align, format: 'text' }],
+        },
+      ],
+    });
+    expect(validateEmitShape(tbl('right')).ok).toBe(true);
+    expect(validateEmitShape(tbl(undefined)).ok).toBe(true);
+    expect(validateEmitShape(tbl('center')).ok).toBe(false);
+    expect(validateEmitShape(tbl('"><b>')).ok).toBe(false);
+  });
+
+  it('caps oversized model arrays (blocks, items, columns)', () => {
+    const many = (n: number, make: (i: number) => unknown) =>
+      Array.from({ length: n }, (_, i) => make(i));
+    // too many blocks
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: many(101, () => ({ type: 'text', md: 'x' })),
+      }).ok,
+    ).toBe(false);
+    // too many totals items
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [
+          {
+            type: 'totals',
+            items: many(51, () => ({
+              label: 'x',
+              ref: { resultId: 'R1', row: 0, col: 'c' },
+              format: 'money',
+            })),
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+    // too many columns
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [
+          {
+            type: 'table',
+            resultId: 'R1',
+            columns: many(51, (i) => ({ key: `k${i}`, header: 'h', format: 'text' })),
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+  });
+
   it('rejects a non-integer ref row (review #80)', () => {
     const out = validateEmitShape({
       title: 't',
