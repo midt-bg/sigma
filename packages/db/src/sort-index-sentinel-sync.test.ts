@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // expression the query layer emits (queries/contracts.ts SORTS). The EXPLAIN test proves the plan on a
 // local sqlite3, whose planner is not bit-exact to D1 — so back it with a planner-INDEPENDENT static
 // check that the sentinels themselves match. A .sql migration can't import a TS constant, so this
-// compares the two source files directly; a drift fails here regardless of the DB engine (review ydimitrof).
+// compares the two source files directly; a drift fails here regardless of the DB engine.
 
 // This file is packages/db/src/…, so one level up is the @sigma/db package root.
 const dbRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
