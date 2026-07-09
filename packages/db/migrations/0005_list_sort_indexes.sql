@@ -9,6 +9,10 @@
 
 -- /contracts ?sort=date-desc | date-asc — ORDER BY COALESCE(signed_at, …), c.id (queries/contracts.ts).
 -- idx_contracts_signed is on the bare signed_at column and does NOT match the COALESCE expression.
+-- SYNC: the sentinels below ('' for desc, '9999-99' for asc) must stay byte-identical to the SORTS
+-- map in queries/contracts.ts (`date-desc`/`date-asc` expr). If a default there changes, the index
+-- expression stops matching and SQLite silently falls back to a full scan + temp-B-tree sort — change
+-- both together. The list-sort-indexes.test.ts EXPLAIN assertions catch a drift.
 CREATE INDEX IF NOT EXISTS idx_contracts_signed_desc
   ON contracts(COALESCE(signed_at, '') DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contracts_signed_asc

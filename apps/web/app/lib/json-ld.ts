@@ -8,7 +8,7 @@
 // safeJson helper in routes/contract.json.tsx. Kept as defense-in-depth: today the only value that
 // reaches root.tsx's JSON-LD is the request origin (which `new URL()` cannot make carry `</script>`),
 // but this makes the sink safe for any DB/user-derived field added to the graph later.
-export function jsonLdScript(value: unknown): string {
+export function serializeJsonForScript(value: unknown): string {
   // JSON.stringify returns `undefined` (not a string) for `undefined`, a function, or a symbol \u2014 a
   // later `.replace` on it would throw. Emit valid JSON (`null`) instead, so the helper is safe for
   // any value even though today's callers always pass an object (review ydimitrof).
