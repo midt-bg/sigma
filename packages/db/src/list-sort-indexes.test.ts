@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // list-sort-indexes migration the six non-default list sorts full-scan (temp-B-tree sort), and AFTER
 // it each walks its new index with no ORDER BY sort step — on the first page AND on a keyset page.
 //
-// Known boundaries of this guarantee (review ydimitrof):
+// Known boundaries of this guarantee:
 // - The local sqlite3 CLI's query planner is not version-identical to Cloudflare D1's; the EXPLAIN
 //   plans are a strong indication, not a bit-exact production proof. (The sqlite3 binary itself is a
 //   pre-existing suite-wide dependency — migrations/refresh-slice/ship-domain tests all exec it — so
@@ -29,7 +29,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrationsDir = resolve(root, 'packages/db/migrations');
 
 // Apply EVERY migration on the branch, not a hardcoded subset — so the "BEFORE" base is exactly the
-// real served schema minus this PR's index, and the test survives any renumbering (review ydimitrof).
+// real served schema minus this PR's index, and the test survives any renumbering.
 const allMigrations = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort();

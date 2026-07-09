@@ -11,7 +11,7 @@
 export function serializeJsonForScript(value: unknown): string {
   // JSON.stringify returns `undefined` (not a string) for `undefined`, a function, or a symbol \u2014 a
   // later `.replace` on it would throw. Emit valid JSON (`null`) instead, so the helper is safe for
-  // any value even though today's callers always pass an object (review ydimitrof).
+  // any value even though today's callers always pass an object.
   const json = JSON.stringify(value);
   if (json === undefined) return 'null';
   return json
