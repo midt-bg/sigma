@@ -37,4 +37,12 @@ describe('jsonLdScript', () => {
     const value = { '@context': 'https://schema.org', name: 'СИГМА', url: 'https://sigma.midt.bg' };
     expect(jsonLdScript(value)).toBe(JSON.stringify(value));
   });
+
+  it('returns valid JSON (not a throw) for values that stringify to undefined', () => {
+    // JSON.stringify(undefined | function | symbol) === undefined; the helper must not call .replace
+    // on it. Emitting "null" keeps the <script> body parseable.
+    expect(jsonLdScript(undefined)).toBe('null');
+    expect(jsonLdScript(() => 1)).toBe('null');
+    expect(JSON.parse(jsonLdScript(undefined))).toBeNull();
+  });
 });

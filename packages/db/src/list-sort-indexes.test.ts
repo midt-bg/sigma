@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,17 +12,27 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // table before applying LIMIT — a full-corpus scan on every request. D1 bills on rows SCANNED, so a
 // missing ordering index is a real cost/latency defect (docs/review-security.md "D1 разход и индекси").
 //
-// This proves, on a real sqlite3 with no ANALYZE stats (matching production D1), that:
-//   (a) BEFORE migration 0005 the six non-default list sorts full-scan (temp-B-tree sort), and
-//   (b) AFTER 0005 each walks its new index with no ORDER BY sort step.
+// This proves, on a real sqlite3 with no ANALYZE stats (matching production D1), that BEFORE the
+// list-sort-indexes migration the six non-default list sorts full-scan (temp-B-tree sort), and AFTER
+// it each walks its new index with no ORDER BY sort step — on the first page AND on a keyset page.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
-const migration2 = resolve(root, 'packages/db/migrations/0005_list_sort_indexes.sql');
+const migrationsDir = resolve(root, 'packages/db/migrations');
 
-function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
+// Apply EVERY migration on the branch, not a hardcoded subset — so the "BEFORE" base is exactly the
+// real served schema minus this PR's index, and the test survives any renumbering (review ydimitrof).
+const allMigrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort();
+const sortIndexMigration = allMigrations.find((f) => f.includes('list_sort_indexes'));
+if (!sortIndexMigration) throw new Error('list_sort_indexes migration not found');
+const baseMigrations = allMigrations.filter((f) => f !== sortIndexMigration);
+
+function readScript(dbPath: string, file: string): void {
+  execFileSync('sqlite3', ['-bail', dbPath], {
+    input: `.read ${resolve(migrationsDir, file)}\n`,
+    stdio: 'pipe',
+  });
 }
 
 function plan(dbPath: string, sql: string): string {
@@ -32,8 +42,9 @@ function plan(dbPath: string, sql: string): string {
   });
 }
 
-// Faithful shapes of the keyset list queries (queries/{contracts,companies,authorities}.ts). Only the
-// ORDER BY + FROM/JOINs drive the plan, so the SELECT list is trimmed to the id.
+// Faithful shapes of the keyset list queries (queries/{contracts,companies,authorities}.ts): the same
+// FROM/JOINs and the same ORDER BY expression, on the first page (no cursor) and on a keyset page
+// (the `WHERE (expr <cmp> ? OR (expr = ? AND id <cmp> ?))` seek every page after the first uses).
 const CONTRACTS_FROM =
   'FROM contracts c JOIN tenders t ON t.id = c.tender_id ' +
   'JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id';
@@ -42,32 +53,38 @@ const SORTS = [
   {
     name: 'contracts date-desc',
     index: 'idx_contracts_signed_desc',
-    sql: `SELECT c.id ${CONTRACTS_FROM} ORDER BY COALESCE(c.signed_at, '') DESC, c.id DESC LIMIT 16`,
+    firstPage: `SELECT c.id ${CONTRACTS_FROM} ORDER BY COALESCE(c.signed_at, '') DESC, c.id DESC LIMIT 16`,
+    keysetPage: `SELECT c.id ${CONTRACTS_FROM} WHERE (COALESCE(c.signed_at, '') < '2023-05-20' OR (COALESCE(c.signed_at, '') = '2023-05-20' AND c.id < 'c:500')) ORDER BY COALESCE(c.signed_at, '') DESC, c.id DESC LIMIT 16`,
   },
   {
     name: 'contracts date-asc',
     index: 'idx_contracts_signed_asc',
-    sql: `SELECT c.id ${CONTRACTS_FROM} ORDER BY COALESCE(c.signed_at, '9999-99') ASC, c.id ASC LIMIT 16`,
+    firstPage: `SELECT c.id ${CONTRACTS_FROM} ORDER BY COALESCE(c.signed_at, '9999-99') ASC, c.id ASC LIMIT 16`,
+    keysetPage: `SELECT c.id ${CONTRACTS_FROM} WHERE (COALESCE(c.signed_at, '9999-99') > '2023-05-20' OR (COALESCE(c.signed_at, '9999-99') = '2023-05-20' AND c.id > 'c:500')) ORDER BY COALESCE(c.signed_at, '9999-99') ASC, c.id ASC LIMIT 16`,
   },
   {
     name: 'companies count-desc',
     index: 'idx_company_totals_count',
-    sql: `SELECT bidder_id FROM company_totals ORDER BY contracts DESC, bidder_id DESC LIMIT 26`,
+    firstPage: `SELECT bidder_id FROM company_totals ORDER BY contracts DESC, bidder_id DESC LIMIT 26`,
+    keysetPage: `SELECT bidder_id FROM company_totals WHERE (contracts < 10 OR (contracts = 10 AND bidder_id < 'eik:100')) ORDER BY contracts DESC, bidder_id DESC LIMIT 26`,
   },
   {
     name: 'companies authorities-desc',
     index: 'idx_company_totals_authorities',
-    sql: `SELECT bidder_id FROM company_totals ORDER BY authorities DESC, bidder_id DESC LIMIT 26`,
+    firstPage: `SELECT bidder_id FROM company_totals ORDER BY authorities DESC, bidder_id DESC LIMIT 26`,
+    keysetPage: `SELECT bidder_id FROM company_totals WHERE (authorities < 5 OR (authorities = 5 AND bidder_id < 'eik:100')) ORDER BY authorities DESC, bidder_id DESC LIMIT 26`,
   },
   {
     name: 'authorities count-desc',
     index: 'idx_authority_totals_count',
-    sql: `SELECT authority_id FROM authority_totals ORDER BY contracts DESC, authority_id DESC LIMIT 26`,
+    firstPage: `SELECT authority_id FROM authority_totals ORDER BY contracts DESC, authority_id DESC LIMIT 26`,
+    keysetPage: `SELECT authority_id FROM authority_totals WHERE (contracts < 10 OR (contracts = 10 AND authority_id < 'auth:50')) ORDER BY contracts DESC, authority_id DESC LIMIT 26`,
   },
   {
     name: 'authorities avg-desc',
     index: 'idx_authority_totals_avg',
-    sql: `SELECT authority_id FROM authority_totals ORDER BY avg_eur DESC, authority_id DESC LIMIT 26`,
+    firstPage: `SELECT authority_id FROM authority_totals ORDER BY avg_eur DESC, authority_id DESC LIMIT 26`,
+    keysetPage: `SELECT authority_id FROM authority_totals WHERE (avg_eur < 100 OR (avg_eur = 100 AND authority_id < 'auth:50')) ORDER BY avg_eur DESC, authority_id DESC LIMIT 26`,
   },
 ] as const;
 
@@ -105,32 +122,37 @@ function seed(dbPath: string): void {
 
 describe('list sort ordering indexes', () => {
   let dir: string;
-  let before: string; // schema WITHOUT 0005 (current main)
-  let after: string; // schema WITH 0005 (the fix)
+  let before: string; // every migration EXCEPT the sort-index one (= real main minus this PR)
+  let after: string; // every migration (base + the sort-index one)
 
   beforeAll(() => {
     dir = mkdtempSync(resolve(tmpdir(), 'sigma-sort-idx-'));
     before = resolve(dir, 'before.sqlite');
     after = resolve(dir, 'after.sqlite');
     for (const db of [before, after]) {
-      readScript(db, migration0);
-      readScript(db, migration1);
+      for (const m of baseMigrations) readScript(db, m);
       seed(db);
     }
-    readScript(after, migration2);
+    readScript(after, sortIndexMigration);
   });
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  // The defect: without the ordering index, every one of these sorts sorts the whole table.
-  it.each(SORTS)('$name full-scans + sorts BEFORE the fix', ({ sql }) => {
-    expect(plan(before, sql)).toContain('USE TEMP B-TREE FOR ORDER BY');
+  // The defect: without the ordering index, the sort sorts the whole table — first page AND keyset page.
+  it.each(SORTS)('$name full-scans + sorts BEFORE the fix', ({ firstPage, keysetPage }) => {
+    expect(plan(before, firstPage)).toContain('USE TEMP B-TREE FOR ORDER BY');
+    expect(plan(before, keysetPage)).toContain('USE TEMP B-TREE FOR ORDER BY');
   });
 
-  // The fix: each sort walks its dedicated index and drops the ORDER BY sort step entirely.
-  it.each(SORTS)('$name walks $index with no sort step AFTER the fix', ({ index, sql }) => {
-    const p = plan(after, sql);
-    expect(p).toContain(index);
-    expect(p).not.toContain('USE TEMP B-TREE FOR ORDER BY');
-  });
+  // The fix: each sort walks its dedicated index and drops the ORDER BY sort step — on both pages.
+  it.each(SORTS)(
+    '$name walks $index with no sort step AFTER the fix',
+    ({ index, firstPage, keysetPage }) => {
+      for (const sql of [firstPage, keysetPage]) {
+        const p = plan(after, sql);
+        expect(p).toContain(index);
+        expect(p).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+      }
+    },
+  );
 });

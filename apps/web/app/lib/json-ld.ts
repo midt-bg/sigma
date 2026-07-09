@@ -9,7 +9,12 @@
 // reaches root.tsx's JSON-LD is the request origin (which `new URL()` cannot make carry `</script>`),
 // but this makes the sink safe for any DB/user-derived field added to the graph later.
 export function jsonLdScript(value: unknown): string {
-  return JSON.stringify(value)
+  // JSON.stringify returns `undefined` (not a string) for `undefined`, a function, or a symbol \u2014 a
+  // later `.replace` on it would throw. Emit valid JSON (`null`) instead, so the helper is safe for
+  // any value even though today's callers always pass an object (review ydimitrof).
+  const json = JSON.stringify(value);
+  if (json === undefined) return 'null';
+  return json
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
