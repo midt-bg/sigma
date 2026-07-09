@@ -23,6 +23,14 @@ const BLOCK_TYPES = new Set([
 
 const ENTITY_KINDS = new Set(['company', 'authority', 'contract']);
 
+// Upper bounds on model-emitted array sizes. bindReport sanitises/scans every block, item and column,
+// and result rows are byte-capped upstream — but nothing bounded the array LENGTHS, so a very long (or
+// non-LLM) emission would scan an unbounded structure. These ceilings are far above any real report
+// (review follow-up).
+const MAX_BLOCKS = 100;
+const MAX_ITEMS = 50;
+const MAX_COLUMNS = 50;
+
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isNonEmptyStr = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 // row indices are 0-based, non-negative INTEGERS. A non-integer (1.5) slips bindReport's `row < length`
@@ -31,6 +39,10 @@ const isIndex = (v: unknown): v is number => typeof v === 'number' && Number.isI
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const isFormat = (v: unknown): v is CellFormat => isStr(v) && FORMATS.has(v as CellFormat);
+// A table column's optional horizontal alignment. Whitelisted here so an out-of-enum value the type
+// claims impossible ('left'|'right') cannot reach a renderer that interpolates it into an attribute
+// or style (review follow-up).
+const isAlign = (v: unknown): boolean => v === undefined || v === 'left' || v === 'right';
 // A table column's optional entity link. `kind` must be a known EntityKind (it reaches entityHref,
 // where an unknown kind silently builds a wrong-entity `/contracts/…` citation — review #80).
 const isLink = (v: unknown): boolean =>
@@ -53,6 +65,7 @@ export function validateEmitShape(input: unknown): ShapeResult {
     errors.push('blocks must be an array');
     return { ok: false, errors };
   }
+  if (input.blocks.length > MAX_BLOCKS) errors.push(`blocks: at most ${MAX_BLOCKS}`);
 
   input.blocks.forEach((b, i) => {
     const at = `block[${i}]`;
@@ -73,6 +86,7 @@ export function validateEmitShape(input: unknown): ShapeResult {
         break;
       case 'totals':
         need(Array.isArray(b.items), 'items must be an array');
+        need(!Array.isArray(b.items) || b.items.length <= MAX_ITEMS, `at most ${MAX_ITEMS} items`);
         if (Array.isArray(b.items))
           b.items.forEach((it, j) =>
             need(
@@ -83,6 +97,7 @@ export function validateEmitShape(input: unknown): ShapeResult {
         break;
       case 'facts':
         need(Array.isArray(b.items), 'items must be an array');
+        need(!Array.isArray(b.items) || b.items.length <= MAX_ITEMS, `at most ${MAX_ITEMS} items`);
         if (Array.isArray(b.items))
           b.items.forEach((it, j) =>
             need(isObj(it) && isStr(it.term) && isCellRef(it.ref), `items[${j}] needs {term, ref}`),
@@ -91,15 +106,20 @@ export function validateEmitShape(input: unknown): ShapeResult {
       case 'table':
         need(isNonEmptyStr(b.resultId), 'resultId required');
         need(Array.isArray(b.columns) && b.columns.length > 0, 'columns must be a non-empty array');
+        need(
+          !Array.isArray(b.columns) || b.columns.length <= MAX_COLUMNS,
+          `at most ${MAX_COLUMNS} columns`,
+        );
         if (Array.isArray(b.columns))
           b.columns.forEach((c, j) =>
             need(
               isObj(c) &&
                 isNonEmptyStr(c.key) &&
                 isStr(c.header) &&
+                isAlign(c.align) &&
                 isFormat(c.format) &&
                 isLink(c.link),
-              `columns[${j}] needs {key, header, format, link?:{kind:company|authority|contract, idCol}}`,
+              `columns[${j}] needs {key, header, align?:left|right, format, link?:{kind:company|authority|contract, idCol}}`,
             ),
           );
         break;
