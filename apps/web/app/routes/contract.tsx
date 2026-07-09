@@ -298,7 +298,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <strong>{COHORT_BAND_LABELS[cohort.band]}</strong> сред{' '}
               {count(cohort.stats.pricedContracts)}{' '}
               {plural(cohort.stats.pricedContracts, 'договор', 'договора')} в сектор „
-              {c.sector?.short ?? `CPV ${cohort.stats.division}`}" (CPV {cohort.stats.division}).
+              {c.sector?.short ?? `CPV ${cohort.stats.division}`}“ (CPV {cohort.stats.division}).
               Медианата за сектора е <strong>{money(cohort.stats.medianEur)}</strong>.
             </p>
             <p className="small muted">
