@@ -450,9 +450,13 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  // CPV division of this contract, known synchronously from the row we already read — so its cohort
-  // stats load in parallel with the other detail reads below, with no extra contract scan (review nedda76).
-  const cohortDivision = r.cpv_code ? r.cpv_code.slice(0, 2) : '';
+  // The cohort benchmark only exists for a clean, comparable value (the same gate contractCohort
+  // applies). Test that gate HERE too, from the row we already read, so a suspect/valueless contract
+  // skips the cpv_division_stats PK read entirely instead of paying for it and discarding the result
+  // (review ydimitrof — the PR's own „one extra rollup read, not a second scan" goal). The division is
+  // known synchronously, so when it IS read, it loads in parallel with the other detail reads.
+  const hasCleanValue = r.value_flag === 'ok' && r.amount_eur != null && r.amount_eur > 0;
+  const cohortDivision = hasCleanValue && r.cpv_code ? r.cpv_code.slice(0, 2) : '';
   const [authTotals, compTotals, lotRows, cohortStats] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
