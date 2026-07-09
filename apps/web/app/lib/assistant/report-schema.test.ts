@@ -489,6 +489,16 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('3 < 5 е вярно твърдение')).toHaveLength(0);
   });
 
+  it('flags spelled trillion/billion magnitudes (the gap above милиард — review follow-up)', () => {
+    // "3 трилиона лева" slipped the whole gate: the digit "3" cannot reach "лева" across the Cyrillic
+    // word, and трилион/билион were not in the spelled-magnitude stem — an unbound order-up figure on a
+    // public report, the "12 млрд." vector one magnitude higher.
+    expect(findProseNumbers('По изчисления са усвоени 3 трилиона лева')).not.toHaveLength(0);
+    expect(findProseNumbers('два билиона евро')).not.toHaveLength(0);
+    expect(findProseNumbers('трилион')).not.toHaveLength(0);
+    expect(findProseNumbers('квадрилион')).not.toHaveLength(0);
+  });
+
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {
     const fullwidth = (s: string) => s.replace(/[0-9]/g, (d) => String.fromCharCode(0xff10 + +d));
     const arabicIndic = (s: string) => s.replace(/[0-9]/g, (d) => String.fromCharCode(0x0660 + +d));
