@@ -40,6 +40,15 @@ describe('buildSystemPrompt', () => {
     expect(p).not.toContain('## Канонични примерни заявки'); // full dictionary not dumped
   });
 
+  it('always carries the hard data-traps even under RAG (never fewer constraints than no-RAG)', () => {
+    // A retrieval that misses the money-sum trap must not leave the turn LESS constrained than the
+    // full-dictionary fallback — the traps are injected unconditionally, RAG only adds relevant extras.
+    const p = buildSystemPrompt({ schemaContext: ['lots са на grain по лот'] });
+    expect(p).toContain('Задължителни правила за данните');
+    expect(p).toContain('НИКОГА не сумирай'); // DATA_TRAPS[0], the amount vs amount_eur trap
+    expect(p).toContain('ocid'); // the ocid≠УНП join trap
+  });
+
   it('includes a per-source freshness line when supplied', () => {
     const p = buildSystemPrompt({ freshness: 'D1: 2026-06-18; EOP: на живо' });
     expect(p).toContain('СВЕЖЕСТ НА ДАННИТЕ: D1: 2026-06-18; EOP: на живо');
