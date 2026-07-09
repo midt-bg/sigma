@@ -13,8 +13,14 @@ const XML_ESCAPES: Record<string, string> = {
   "'": '&apos;',
 };
 
+// Control characters that are NOT legal in XML 1.0 even when entity-escaped: everything below U+0020
+// except TAB (U+0009), LF (U+000A) and CR (U+000D). A stray one in a source subject/name would make
+// the whole feed invalid XML and strict readers reject it, so drop them before escaping (review
+// ydimitrof). There is no meaningful replacement — they carry no display value.
+const XML_INVALID_CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+
 export function xmlEscape(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch] ?? ch);
+  return value.replace(XML_INVALID_CONTROL, '').replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch] ?? ch);
 }
 
 /** 'YYYY-MM-DD' -> RFC 822 (RSS pubDate); null for absent or malformed dates. */
@@ -55,7 +61,10 @@ export function contractRssItem(
     description: parts.join(' · '),
     // Fall back to publishedAt when there is no signing date, matching the query's
     // `ORDER BY COALESCE(signed_at, published_at)`: an item positioned as "new" by publish date must
-    // carry a <pubDate> so readers can order it, and the channel pubDate stays the true newest (review ydimitrof).
+    // carry a <pubDate> so readers can order it, and the channel pubDate stays the true newest (review
+    // ydimitrof). `??` (not `||`) is deliberate: it mirrors SQL COALESCE, which treats an empty string
+    // as PRESENT (only NULL falls through). Real data has NULL signed_at, so the two never disagree —
+    // and keeping the same rule here holds pubDate in sync with the row's ordering position.
     pubDate: rssDate(item.signedAt ?? item.publishedAt),
   };
 }

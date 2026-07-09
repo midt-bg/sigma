@@ -32,6 +32,13 @@ describe('xmlEscape', () => {
   it('passes ordinary Bulgarian text through unchanged', () => {
     expect(xmlEscape('Община „Пример“ - договори')).toBe('Община „Пример“ - договори');
   });
+  it('drops XML-1.0-invalid control characters but keeps tab / newline / CR', () => {
+    const c = (n: number) => String.fromCharCode(n);
+    // U+0000, U+0008, U+001F are illegal in XML 1.0 → stripped; the surrounding text survives.
+    expect(xmlEscape(`a${c(0)}b${c(8)}c${c(0x1f)}d`)).toBe('abcd');
+    // TAB (U+0009), LF (U+000A), CR (U+000D) are legal → preserved verbatim.
+    expect(xmlEscape(`x${c(9)}y${c(10)}z${c(13)}w`)).toBe(`x${c(9)}y${c(10)}z${c(13)}w`);
+  });
 });
 
 describe('rssDate', () => {
