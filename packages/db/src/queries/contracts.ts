@@ -88,6 +88,7 @@ interface ContractRow {
   bidder_kind: 'company' | 'consortium';
   procedure_type: string;
   signed_at: string | null;
+  published_at: string | null;
   bids_received: number | null;
   amount_eur: number | null;
 }
@@ -96,7 +97,7 @@ const SELECT = `
   SELECT c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title) AS subject, t.source_id AS unp,
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
          c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
-         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur`;
+         t.procedure_type, c.signed_at, c.published_at, c.bids_received, c.amount_eur`;
 const FROM = `
   FROM contracts c
   JOIN tenders t ON t.id = c.tender_id
@@ -208,6 +209,7 @@ function toItem(r: ContractRow): ContractListItem {
     bidderKind: r.bidder_kind,
     procedureLabel: procedureGroup(r.procedure_type).label,
     signedAt: r.signed_at,
+    publishedAt: r.published_at,
     bidsReceived: r.bids_received,
     valueEur: r.amount_eur,
   };

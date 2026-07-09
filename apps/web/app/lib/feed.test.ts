@@ -18,6 +18,7 @@ function item(overrides: Partial<ContractListItem> = {}): ContractListItem {
     bidderKind: 'company',
     procedureLabel: 'Открита процедура',
     signedAt: '2026-05-15',
+    publishedAt: null,
     bidsReceived: 3,
     valueEur: 12345.67,
     ...overrides,
@@ -67,6 +68,18 @@ describe('contractRssItem', () => {
     expect(rss.description).toContain('Стойност: без обявена стойност');
     expect(rss.description).not.toContain('Подписан:');
     expect(rss.pubDate).toBeNull();
+  });
+
+  it('falls back to publishedAt for pubDate when there is no signing date', () => {
+    // Mirrors the query's ORDER BY COALESCE(signed_at, published_at): an item ordered by publish date
+    // must still carry a <pubDate> so readers can sort it. The description omits „Подписан:" (no signing).
+    const rss = contractRssItem(
+      item({ signedAt: null, publishedAt: '2026-05-10' }),
+      'bidder',
+      'https://x.bg',
+    );
+    expect(rss.pubDate).toBe('Sun, 10 May 2026 00:00:00 GMT');
+    expect(rss.description).not.toContain('Подписан:');
   });
 });
 

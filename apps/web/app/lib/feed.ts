@@ -53,7 +53,10 @@ export function contractRssItem(
     title: `${item.subject} - ${other}`,
     link: `${origin}/contracts/${item.id}`,
     description: parts.join(' · '),
-    pubDate: rssDate(item.signedAt),
+    // Fall back to publishedAt when there is no signing date, matching the query's
+    // `ORDER BY COALESCE(signed_at, published_at)`: an item positioned as "new" by publish date must
+    // carry a <pubDate> so readers can order it, and the channel pubDate stays the true newest (review ydimitrof).
+    pubDate: rssDate(item.signedAt ?? item.publishedAt),
   };
 }
 

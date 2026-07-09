@@ -33,6 +33,7 @@ const contractRow = {
   bidder_kind: 'company' as const,
   procedure_type: 'Открита процедура',
   signed_at: '2024-01-01',
+  published_at: '2024-01-02',
   bids_received: 3,
   amount_eur: 1000,
   sort_value: 1000,
