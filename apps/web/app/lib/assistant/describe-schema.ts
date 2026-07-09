@@ -169,14 +169,19 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
   },
 ];
 
+// Render DATA_TRAPS as a numbered list. Shared by describeSchema (full dictionary) and the RAG
+// hard-traps block (system-prompt.ts) so both paths render the traps identically and cannot drift.
+export function renderTraps(): string {
+  return DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n');
+}
+
 /** Build the schema prompt asset the agent reads before writing SQL (returned by the tool). */
 export function describeSchema(): string {
-  const traps = DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const tables = TABLES.map((t) => `- ${t.name} — grain: ${t.grain}\n    ${t.columns}`).join('\n');
   const queries = CANONICAL_QUERIES.map((q) => `-- ${q.intent}\n${q.sql}`).join('\n\n');
   return [
     '# Речник на данните (чети преди да пишеш SQL)',
-    '\n## Задължителни правила (капани в данните)\n' + traps,
+    '\n## Задължителни правила за данните (капани — важат за всеки въпрос)\n' + renderTraps(),
     '\n## Таблици\n' + tables,
     '\n## Канонични примерни заявки\n' + queries,
   ].join('\n');
