@@ -12,6 +12,11 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
   const eik = (params.eik ?? '').replace(/\.rss$/, '');
   if (!eik.trim()) return withDataSource(new Response('Not Found', { status: 404 }));
   const db = context.cloudflare.env.DB;
+  // No early slug-validity 404 like company.rss (which short-circuits on bidderIdFromSlug === null):
+  // authorityIdFromSlug is total (authorities are always ЕИК-keyed, no fallible decode), and the raw
+  // ЕИК is not format-constrained in the pipeline, so validating here could reject a real profile and
+  // would diverge from the HTML authority route. An unknown slug just yields getAuthorityHead === null
+  // → 404 below, at the cost of one indexed no-row lookup (review ydimitrof).
   const authorityId = authorityIdFromSlug(eik);
   const { origin } = new URL(request.url);
   return withDbRetry(async () => {

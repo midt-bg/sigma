@@ -74,6 +74,17 @@ describe('authority.rss loader', () => {
     expect(res.status).toBe(404);
   });
 
+  it('404s gracefully for a garbage slug (no early format check, just a no-row lookup)', async () => {
+    // authorityIdFromSlug is total, so an invalid slug is not rejected up front — it resolves to an
+    // authority id that simply matches no row → getAuthorityHead null → 404 (review ydimitrof).
+    const res = await call(
+      'https://sigma.midt.bg/authorities/not-an-eik.rss',
+      'not-an-eik',
+      fakeDb(null),
+    );
+    expect(res.status).toBe(404);
+  });
+
   it('404s for an empty eik', async () => {
     const res = await call('https://sigma.midt.bg/authorities/.rss', '.rss', fakeDb({ name: 'x' }));
     expect(res.status).toBe(404);
