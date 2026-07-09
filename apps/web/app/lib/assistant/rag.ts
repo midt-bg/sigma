@@ -102,12 +102,21 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
   return chunks.length;
 }
 
+// Cosine-similarity floor for a schema match to count as "relevant". Without it, top-K always returns
+// its K least-distant chunks even when ALL are off-topic, and buildSystemPrompt would then use those
+// few chunks INSTEAD of the full dictionary — i.e. partial grounding strictly weaker than the no-RAG
+// fallback. Below the floor we return fewer (or zero) chunks; zero makes buildSystemPrompt fall back to
+// the full static dictionary, which is the safe outcome. bge-m3 cosine puts genuinely relevant chunks
+// well above this; the value is deliberately conservative (review follow-up).
+export const MIN_SCHEMA_SCORE = 0.35;
+
 /** Retrieve the most relevant data-dictionary chunks for a question, to prepend to the prompt. */
 export async function retrieveSchemaContext(
   ai: EmbeddingRunner,
   index: VectorIndex,
   question: string,
   topK = 6,
+  minScore = MIN_SCHEMA_SCORE,
 ): Promise<string[]> {
   const [vec] = await embed(ai, [question]);
   if (!vec) return [];
@@ -116,7 +125,10 @@ export async function retrieveSchemaContext(
     returnMetadata: 'all',
     filter: { ns: 'schema' },
   });
-  return matches.map((m) => String(m.metadata?.text ?? '')).filter(Boolean);
+  return matches
+    .filter((m) => m.score >= minScore)
+    .map((m) => String(m.metadata?.text ?? ''))
+    .filter(Boolean);
 }
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────
