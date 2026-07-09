@@ -90,6 +90,22 @@ describe('retrieveSchemaContext', () => {
       expect.objectContaining({ filter: { ns: 'schema' } }),
     );
   });
+
+  it('drops matches below the relevance floor (so an off-topic top-K falls back to the full dictionary)', async () => {
+    const ai = fakeAI();
+    const index = fakeIndex([
+      { id: 'schema:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
+      { id: 'schema:table:parties', score: 0.1, metadata: { text: 'нерелевантно' } },
+    ]);
+    // Only the above-floor chunk survives; the 0.1 match is discarded rather than injected as "context".
+    expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual(['релевантно']);
+  });
+
+  it('returns [] when every match is below the floor (buildSystemPrompt then uses the full dictionary)', async () => {
+    const ai = fakeAI();
+    const index = fakeIndex([{ id: 'schema:table:x', score: 0.05, metadata: { text: 'x' } }]);
+    expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
+  });
 });
 
 describe('semanticSearch', () => {
