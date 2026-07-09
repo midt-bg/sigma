@@ -51,13 +51,19 @@ export function authorityIdFromSlug(slug: string): string {
   return 'auth:' + slug;
 }
 
+/** contract id (`c:*`) → bare id without the leading `c:` prefix. This is the raw, un-encoded form
+ *  — suitable for data export (CSV) where URL escaping is undesirable. Slug/href callers must layer
+ *  `contractSlug` on top for path safety. */
+export function bareContractId(contractId: string): string {
+  return contractId.startsWith('c:') ? contractId.slice(2) : contractId;
+}
+
 /** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). Path-unsafe
  *  characters are percent-encoded: `%` first (to avoid mangling later replacements), then `/`, `?`,
  *  `#`. React Router decodes these back in params, so the reading side (`contractIdFromSlug`) needs
  *  no change. */
 export function contractSlug(contractId: string): string {
-  const raw = contractId.startsWith('c:') ? contractId.slice(2) : contractId;
-  return raw.replace(/%/g, '%25').replace(/[/?#]/g, encodeURIComponent);
+  return bareContractId(contractId).replace(/%/g, '%25').replace(/[/?#]/g, encodeURIComponent);
 }
 
 /** `/contracts/:id` segment → contract id. */

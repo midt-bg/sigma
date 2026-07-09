@@ -6,7 +6,13 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
-import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
+import {
+  authoritySlug,
+  bareContractId,
+  bidderIdFromSlug,
+  companySlug,
+  contractSlug,
+} from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { searchMatchQuery } from './search';
@@ -446,7 +452,8 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            r.id.startsWith('c:') ? r.id.slice(2) : r.id,
+            // CSV carries the raw id (no URL escaping) — see bareContractId.
+            bareContractId(r.id),
             r.unp,
             r.subject,
             cleanName(r.authority_name),

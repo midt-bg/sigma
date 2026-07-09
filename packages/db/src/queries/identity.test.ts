@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   authorityIdFromSlug,
   authoritySlug,
+  bareContractId,
   bidderIdFromSlug,
   companySlug,
   contractIdFromSlug,
@@ -41,6 +42,18 @@ describe('authority / contract slugs', () => {
 
     expect(contractIdFromSlug(contractSlug(eopId))).toBe(eopId);
     expect(contractIdFromSlug(contractSlug(ocdsId))).toBe(ocdsId);
+  });
+  it('bareContractId strips the c: prefix without URL-encoding (CSV/export form)', () => {
+    // Raw form keeps "/" and "%" literal — contractSlug layers encoding on top of this.
+    expect(bareContractId('c:e:UNP:ОП20-42/22/:5:eik:102130456:1')).toBe(
+      'e:UNP:ОП20-42/22/:5:eik:102130456:1',
+    );
+    expect(bareContractId('c:52')).toBe('52');
+    // No leading c: → returned unchanged.
+    expect(bareContractId('52')).toBe('52');
+    // contractSlug builds on bareContractId, encoding only the path-unsafe chars ("/" here).
+    const id = 'c:e:UNP:ОП20-42/22/:5:eik:102130456:1';
+    expect(contractSlug(id)).toBe(bareContractId(id).replace(/\//g, '%2F'));
   });
   it('percent-encodes path-unsafe chars so the URL segment is always valid', () => {
     // "/" splits the route into multiple segments → 404 without encoding.
