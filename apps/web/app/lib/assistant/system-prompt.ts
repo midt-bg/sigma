@@ -11,7 +11,7 @@
 //
 // Pure string assembly — unit-testable, no deps/bindings.
 
-import { DATA_TRAPS, describeSchema } from './describe-schema';
+import { describeSchema, renderTraps } from './describe-schema';
 
 export interface SystemPromptInput {
   // Most-relevant data-dictionary chunks for this question (from rag.retrieveSchemaContext). When
@@ -56,10 +56,7 @@ const ROLE =
 // retrieved chunks INSTEAD of these traps once left a RAG turn with fewer constraints than the no-RAG
 // fallback (the miss that let SUM(amount) through); keep the traps regardless of retrieval (review f/u).
 function hardTraps(): string {
-  return (
-    '# Задължителни правила за данните (важат за всеки въпрос)\n' +
-    DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n')
-  );
+  return '# Задължителни правила за данните (важат за всеки въпрос)\n' + renderTraps();
 }
 
 /** Build the system prompt for a turn. Inject RAG schema context when available; else the full dictionary. */
