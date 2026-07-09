@@ -15,6 +15,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // This proves, on a real sqlite3 with no ANALYZE stats (matching production D1), that BEFORE the
 // list-sort-indexes migration the six non-default list sorts full-scan (temp-B-tree sort), and AFTER
 // it each walks its new index with no ORDER BY sort step — on the first page AND on a keyset page.
+//
+// Known boundaries of this guarantee (review ydimitrof):
+// - The local sqlite3 CLI's query planner is not version-identical to Cloudflare D1's; the EXPLAIN
+//   plans are a strong indication, not a bit-exact production proof. (The sqlite3 binary itself is a
+//   pre-existing suite-wide dependency — migrations/refresh-slice/ship-domain tests all exec it — so
+//   a missing binary fails the whole suite, not just this file.)
+// - The index-walk claim covers the UNFILTERED sort paths (the default list views). With an active
+//   filter the planner may prefer the filter's index and sort the (small) filtered set instead —
+//   that is the correct trade, but it is not what this test asserts.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrationsDir = resolve(root, 'packages/db/migrations');
