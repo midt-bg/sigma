@@ -17,7 +17,7 @@ const XML_ESCAPES: Record<string, string> = {
 // except TAB (U+0009), LF (U+000A) and CR (U+000D). A stray one in a source subject/name would make
 // the whole feed invalid XML and strict readers reject it, so drop them before escaping (review
 // ydimitrof). There is no meaningful replacement — they carry no display value.
-const XML_INVALID_CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+const XML_INVALID_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
 
 export function xmlEscape(value: string): string {
   return value.replace(XML_INVALID_CONTROL, '').replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch] ?? ch);
