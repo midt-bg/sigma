@@ -11,7 +11,7 @@
 //
 // Pure string assembly — unit-testable, no deps/bindings.
 
-import { describeSchema } from './describe-schema';
+import { DATA_TRAPS, describeSchema } from './describe-schema';
 
 export interface SystemPromptInput {
   // Most-relevant data-dictionary chunks for this question (from rag.retrieveSchemaContext). When
@@ -50,11 +50,24 @@ const ROLE =
   '`describe_schema`, `run_sql` (само SELECT), курирани заявки, `semantic_search` и `emit_report`. ' +
   'Преди да пишеш SQL, се съобразявай с правилата по-долу — те описват реалните капани в данните.';
 
+// The imperative MUST/NEVER traps are the hard-constraint core of the dictionary (SUM only amount_eur,
+// ocid≠УНП, …). They are short and must hold for EVERY question, so they are injected unconditionally —
+// RAG then only selects the extra tables/example-queries relevant to the question. Injecting the
+// retrieved chunks INSTEAD of these traps once left a RAG turn with fewer constraints than the no-RAG
+// fallback (the miss that let SUM(amount) through); keep the traps regardless of retrieval (review f/u).
+function hardTraps(): string {
+  return (
+    '# Задължителни правила за данните (важат за всеки въпрос)\n' +
+    DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n')
+  );
+}
+
 /** Build the system prompt for a turn. Inject RAG schema context when available; else the full dictionary. */
 export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   const schema =
     input.schemaContext && input.schemaContext.length > 0
-      ? '# Релевантни правила за данните (за този въпрос)\n' +
+      ? hardTraps() +
+        '\n\n# Релевантни правила за данните (за този въпрос)\n' +
         input.schemaContext.map((c) => `- ${c}`).join('\n')
       : describeSchema();
 
