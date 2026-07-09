@@ -169,9 +169,16 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // not a FROM source): `load_extension` loads a dynamic library (RCE where SQLite enables it — D1
   // disables it, but block defensively); `randomblob`/`zeroblob` build arbitrarily large blobs; and
   // `printf`/`format` with a width specifier (`printf('%1000000d', x)`) build arbitrarily large STRINGS.
-  // All materialise in Worker memory before capRows can measure the row — a single row can OOM the
-  // isolate. No analytics query needs any of them (review #80, red-team R2; printf/format f/u).
-  if (/\b(?:load_extension|randomblob|zeroblob|printf|format)\s*\(/i.test(sql)) {
+  // The string-building AGGREGATES are the same amplification class one step up — `group_concat` /
+  // `json_group_array` / `json_group_object` collapse an ENTIRE full-table scan into ONE huge cell that
+  // materialises before capRows can measure it (and capRows keeps the first row whole), so a single
+  // returned row can OOM the isolate. All of these materialise in Worker memory before capRows sees the
+  // row; no analytics query needs any of them (review #80, red-team R2; printf/format + aggregate f/u).
+  if (
+    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|json_group_array|json_group_object)\s*\(/i.test(
+      sql,
+    )
+  ) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };
