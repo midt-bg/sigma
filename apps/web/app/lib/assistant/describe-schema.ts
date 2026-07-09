@@ -13,7 +13,10 @@ export const DATA_TRAPS: string[] = [
     '`value_flag`: включи `ok`, `review`, `annex_suspect`, `annex_total_suspect`, `value_low` и ' +
     'поправените `value_suspect` редове.',
   '`amount_eur IS NULL` означава, че няма използваема EUR стойност (например `value_suspect` без ' +
-    'прогноза за поправка или чужда валута без FX курс); само тези редове се изключват от парични суми.',
+    'прогноза за поправка, чужда валута без FX курс, или липсва подписана/текуща стойност); само тези ' +
+    'редове се изключват от парични суми. `amount_eur IS NULL` НЕ Е синоним на `value_suspect`.',
+  "Брой „непотвърдени\" = редове с `value_flag = 'value_suspect'` (НЕ редове с NULL `amount_eur`; " +
+    'готовото число е `home_totals.suspect`).',
   '`value_flag` ∈ {ok, review, annex_suspect, annex_total_suspect, value_suspect, value_low} мени ' +
     'значението на стойността на реда, но не и каноничната база; `date_flag` ∈ {ok, ' +
     'signed_after_publication} е вердикт за датата.',
@@ -64,11 +67,21 @@ export const TABLES: TableDoc[] = [
     grain: 'един възложен договор (на ниво лот)',
     columns:
       'id, tender_id→tenders, bidder_id→bidders, amount (display, в `currency`), currency, ' +
-      'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; сумирай с amount_eur IS NOT NULL), value_flag, date_flag, ' +
+      'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; сумирай с amount_eur IS NOT NULL — NULL=няма надеждна EUR стойност), value_flag, date_flag, ' +
       'fx_converted, fx_rate, signed_at, bids_received, eu_funded',
   },
-  { name: 'amendments', grain: 'един анекс', columns: 'id, contract_id→contracts, …' },
-  { name: 'parties', grain: 'роля по OCDS преписка', columns: 'ocid (≠ УНП!), role, …' },
+  {
+    name: 'amendments',
+    grain: 'един анекс',
+    columns:
+      'id, natural_key, unp (=УНП, свързва tenders/contracts), contract_number, ' +
+      'value_before, value_after, value_delta, currency, published_at',
+  },
+  {
+    name: 'parties',
+    grain: 'една страна по OCDS преписка',
+    columns: 'party_key, eik, ocid (≠ УНП!), party_id, name, region_nuts',
+  },
   {
     name: 'authority_totals',
     grain: 'rollup на възложител',
@@ -109,7 +122,7 @@ export const TABLES: TableDoc[] = [
   },
   {
     name: 'data_freshness',
-    grain: 'view — свежест/обхват',
+    grain: 'таблица — свежест/обхват',
     columns: 'source, as_of, refreshed_at',
   },
 ];
