@@ -13,6 +13,20 @@ import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
 
 /**
+ * Decode a percent-encoded contract slug for human-readable display, falling back to the raw slug
+ * if it holds a malformed escape sequence. `c.id` is the encoded slug (`contractSlug` output, which
+ * escapes bare `%` → `%25`), so this should never throw in practice — but a defensive guard keeps a
+ * single bad id from crashing the whole page render with a `URIError`.
+ */
+function safeDecodeSlug(slug: string): string {
+  try {
+    return decodeURIComponent(slug);
+  } catch {
+    return slug;
+  }
+}
+
+/**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
  * (`bidsReceived`) plus three siblings — `bidsRejected`, `bidsSme`, `bidsNonEea`. Policy:
  *
@@ -471,12 +485,14 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               {/* Plain <a>, not React Router <Link>. The .json endpoint is a resource route
                   (returns application/json, no HTML), so client-side navigation can't render it —
                   React Router would treat the JSON as a route module and crash. target=_blank
-                  opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
+                  opens the raw record in a new tab so the visitor doesn't lose the contract page.
+                  `c.id` is already the percent-encoded slug (contractSlug output), so the href is
+                  path-safe as-is — do not re-encode. The sub-line decodes it purely for display. */}
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в СИГМА
               </a>
               <span className="sub">
-                машиночетим, всички полета — /contracts/{decodeURIComponent(c.id)}.json
+                машиночетим, всички полета — /contracts/{safeDecodeSlug(c.id)}.json
               </span>
             </li>
           </ul>
