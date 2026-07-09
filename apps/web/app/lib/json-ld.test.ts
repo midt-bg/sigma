@@ -38,6 +38,13 @@ describe('serializeJsonForScript', () => {
     expect(serializeJsonForScript(value)).toBe(JSON.stringify(value));
   });
 
+  it('does NOT escape > or & (only < can break out of a script raw-text context)', () => {
+    const out = serializeJsonForScript({ s: 'a > b && c' });
+    expect(out).toContain('a > b && c'); // left verbatim, byte-minimal
+    expect(out).not.toContain('&amp;');
+    expect(out).not.toContain('&gt;');
+  });
+
   it('returns valid JSON (not a throw) for values that stringify to undefined', () => {
     // JSON.stringify(undefined | function | symbol) === undefined; the helper must not call .replace
     // on it. Emitting "null" keeps the <script> body parseable.
