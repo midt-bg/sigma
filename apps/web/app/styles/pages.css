@@ -866,7 +866,6 @@
   fill: var(--ink-soft, #555);
 }
 
-/* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
 /* Map + Information Card side by side; the card wraps under the map on narrow screens. */
 .map-layout {
   display: flex;

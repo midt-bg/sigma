@@ -1185,7 +1185,7 @@ tbody td,
     opacity 0.1s ease;
 }
 
-/* ===== end overruns-dashboard ===== */
+/* ===== end trends-dashboard ===== */
 
 /* ===== chart-fullscreen ===== */
 .fs-btn {
@@ -1549,4 +1549,4 @@ tbody td,
   border-color: var(--accent);
 }
 
-/* ===== end metric-info popover ===== */
+/* ===== end list-search ===== */

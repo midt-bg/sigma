@@ -1,5 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+// useLayoutEffect warns "does nothing on the server" under SSR; fall back to useEffect there since
+// there is no layout to read/flush before paint on the server anyway.
+const useIsoLayoutEffect = typeof document !== 'undefined' ? useLayoutEffect : useEffect;
+
 // A small ⓘ affordance next to a metric label. For pointer users it reveals an elegant popover on
 // hover or keyboard focus (pure CSS `:hover` / `:focus-within`). Because hover does not exist on
 // touch, a click also toggles the popover open via an `is-open` class — and an outside-click or Esc
@@ -27,20 +31,44 @@ export function MetricInfo({
   // Horizontal shift (px) that keeps the click-opened popover inside the viewport on small screens
   // (mobile audit: at 320px the fixed-width popover clips off-screen for edge-column metrics).
   const [shift, setShift] = useState(0);
+  // Keyboard focus (no click) also reveals the popover via CSS `:focus-within`; track it so
+  // `aria-expanded` matches what's actually visible, not just the click-toggled `open` state.
+  const [focused, setFocused] = useState(false);
 
-  useLayoutEffect(() => {
+  useIsoLayoutEffect(() => {
     if (!open) {
       setShift(0);
       return;
     }
     const pop = popRef.current;
+    const recompute = () => {
+      if (!pop) return;
+      const rect = pop.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      let dx = 0;
+      if (rect.right > vw - 8) dx = vw - 8 - rect.right;
+      if (rect.left + dx < 8) dx = 8 - rect.left;
+      setShift(Math.round(dx));
+    };
+    recompute();
     if (!pop) return;
-    const rect = pop.getBoundingClientRect();
-    const vw = document.documentElement.clientWidth;
-    let dx = 0;
-    if (rect.right > vw - 8) dx = vw - 8 - rect.right;
-    if (rect.left + dx < 8) dx = 8 - rect.left;
-    setShift(Math.round(dx));
+    // Re-clamp on resize/scroll while open so the popover can't drift out of the viewport; rAF
+    // coalesces bursts of scroll events into at most one recompute per frame.
+    let raf = 0;
+    const onViewportChange = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        recompute();
+      });
+    };
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+    };
   }, [open]);
 
   // Close on outside-click / Esc while open (touch path — pointer users rely on CSS hover/focus).
@@ -66,8 +94,10 @@ export function MetricInfo({
         type="button"
         className="metric-info-btn"
         aria-label={aria}
-        aria-expanded={open}
+        aria-expanded={open || focused}
         onClick={() => setOpen((v) => !v)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
       >
         <span className="metric-info-glyph" aria-hidden="true">
           ⓘ
