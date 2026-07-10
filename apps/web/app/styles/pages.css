@@ -649,7 +649,7 @@
   border-left: 1px solid var(--rule, #d8d6cf);
 }
 .map-toggle button.is-on {
-  color: #fff;
+  color: var(--paper);
   background: var(--accent);
 }
 @media (hover: none) and (pointer: coarse) {
