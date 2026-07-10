@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+// SSR has no DOM, so useLayoutEffect on the server both does nothing useful and logs React's
+// "useLayoutEffect does nothing on the server" warning. Swap to useEffect during SSR (typeof
+// window guards it) while keeping the client on useLayoutEffect for its pre-paint clamp.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
 // A small ⓘ affordance next to a metric label. For pointer users it reveals an elegant popover on
 // hover or keyboard focus (pure CSS `:hover` / `:focus-within`). Because hover does not exist on
 // touch, a click also toggles the popover open via an `is-open` class — and an outside-click or Esc
@@ -28,7 +33,7 @@ export function MetricInfo({
   // (mobile audit: at 320px the fixed-width popover clips off-screen for edge-column metrics).
   const [shift, setShift] = useState(0);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!open) {
       setShift(0);
       return;

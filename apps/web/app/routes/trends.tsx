@@ -76,7 +76,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map((c) => c.cpvGroup)
     .filter((g): g is string => g != null && !known.has(g));
   if (cpv && !known.has(cpv)) missing.push(cpv);
-  const medians = await getCpvGroupMedians(db, missing);
+  const medians = await getCpvGroupMedians(db, [...new Set(missing)]);
 
   return { angle, step, sort, cpvSort, year, cpv, trend, stats, contracts, medians };
 }
@@ -90,6 +90,7 @@ function multText(mult: number): string {
 }
 
 function relLabel(valueEur: number, medianEur: number): { text: string; cls: string } {
+  if (!(medianEur > 0)) return { text: '', cls: 'ov-rel-mid' };
   const mult = valueEur / medianEur;
   if (mult >= 1.3) return { text: `${multText(mult)} типичното`, cls: 'ov-rel-hi' };
   if (mult <= 0.75) return { text: 'под типичното', cls: 'ov-rel-lo' };

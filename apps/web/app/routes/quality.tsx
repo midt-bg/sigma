@@ -277,6 +277,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
       csort: scope.contractSort === 'score' ? null : scope.contractSort,
       sel: scope.sel,
       band: scope.band,
+      contract: scope.contractId,
       ...patch,
     };
     for (const [k, v] of Object.entries(state)) if (v != null && v !== '') params.set(k, String(v));
@@ -579,6 +580,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
             )}
             {scope.sel && <input type="hidden" name="sel" value={scope.sel} />}
             {scope.band && <input type="hidden" name="band" value={scope.band} />}
+            {scope.contractId && <input type="hidden" name="contract" value={scope.contractId} />}
             <span className="q-range-label">
               Индекс
               <MetricInfo

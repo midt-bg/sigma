@@ -46,6 +46,10 @@ export function ComboTrendChart({
   const yV = (v: number) => BOT - (v / vMax) * (BOT - TOP);
   const yC = (c: number) => BOT - (c / cMax) * (BOT - TOP) * 0.62;
   const bw = Math.max(2, ((W - 2 * PAD) / n) * 0.66);
+  // Bars are centred on x(i), and x(0)/x(n-1) sit on the plot edges — so the first/last bar would
+  // overflow the viewBox by bw/2 (severe at n=2, bw≈324). Inset just the bar x-position at the ends;
+  // the line/cursor/dot keep using x(i) so the value series stays anchored to the true period edges.
+  const barX = (i: number) => Math.min(W - PAD - bw / 2, Math.max(PAD + bw / 2, x(i)));
 
   // Final period is partial (still filling): dashed line tail + faded bar, like TrendChart.
   const partialIdx = points.findIndex((p) => p.partial);
@@ -90,7 +94,7 @@ export function ComboTrendChart({
           <rect
             key={p.period}
             className={`combo-bar${hover === i ? ' is-hover' : ''}${p.partial ? ' is-partial' : ''}`}
-            x={(x(i) - bw / 2).toFixed(1)}
+            x={(barX(i) - bw / 2).toFixed(1)}
             y={yC(p.contracts).toFixed(1)}
             width={bw.toFixed(1)}
             height={(BOT - yC(p.contracts)).toFixed(1)}

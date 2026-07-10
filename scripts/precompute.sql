@@ -39,11 +39,23 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
+-- tenders carries no persisted fx_rate column (unlike contracts, whose rate is captured once at
+-- ETL-import time) — so foreign-currency estimates are converted via the same live fx_rates lookup
+-- the ETL uses elsewhere (scripts/normalize-raw.sql, scripts/refresh-slice.sql): nearest rate on or
+-- before the tender's published_at, within a 10-day lookback window.
 UPDATE tenders SET
   estimated_value_eur = CASE
     WHEN currency = 'EUR' THEN estimated_value
     WHEN COALESCE(currency, 'BGN') = 'BGN' THEN estimated_value / 1.95583
-    ELSE NULL END
+    ELSE (
+      SELECT estimated_value * f.eur_per_unit
+      FROM fx_rates f
+      WHERE f.base_currency = tenders.currency
+        AND f.rate_date <= COALESCE(tenders.published_at, date('now'))
+        AND f.rate_date >= date(COALESCE(tenders.published_at, date('now')), '-10 days')
+      ORDER BY f.rate_date DESC
+      LIMIT 1
+    ) END
 WHERE estimated_value IS NOT NULL;
 
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────

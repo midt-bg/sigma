@@ -694,6 +694,7 @@ export interface QualityData {
     contractSort: QualityContractSort;
     sel: string | null; // selected ranking key filtering the contracts list
     band: string | null; // histogram score band: bin index '0'–'19' (5-point bins) or 'weak'|'mid'|'good'
+    contractId: string | null; // scorecard subject (explicit ?contract or the default weakest-listed id)
     rankFrom: number | null; // „Разбивка“ avg-index range bounds, display-scale ints 0–100 (from ≤ to)
     rankTo: number | null;
     top: number;

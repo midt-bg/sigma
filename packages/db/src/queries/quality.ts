@@ -322,7 +322,7 @@ function mapContractRow(r: ContractRowRaw): QualityContractRow {
     id: r.id,
     slug: contractSlug(r.id),
     signedAt: r.signed_at,
-    cpvDivision: r.cpv_code && r.cpv_code.trim().length >= 2 ? r.cpv_code.slice(0, 2) : null,
+    cpvDivision: r.cpv_code && r.cpv_code.trim().length >= 2 ? r.cpv_code.trim().slice(0, 2) : null,
     authorityName: cleanName(r.authority_name),
     authoritySlug: authoritySlug(r.authority_id),
     bidderDisplayName: entityName(bidderName, r.bidder_kind),
@@ -546,14 +546,31 @@ export async function getQuality(db: D1Database, p: QualityParams = {}): Promise
     }),
     qualityContracts(db, grain, sel, contractSort, band),
   ]);
-  const scorecardId = p.contractId ?? contracts[0]?.id ?? null;
+  // p.contractId is the explicit ?contract request; scorecardId also falls back to the weakest
+  // listed contract so a card always renders. Those must stay distinct in `scope`: only the explicit
+  // request is echoed back for links to preserve (scope.contractId), or the auto-picked default
+  // would get "baked into" the URL on the very first navigation and pin every later view to it.
+  const explicitContractId = p.contractId ?? null;
+  const scorecardId = explicitContractId ?? contracts[0]?.id ?? null;
   const scorecard = scorecardId ? await getQualityScorecard(db, scorecardId) : null;
   return {
     overview,
     ranking,
     contracts,
     scorecard,
-    scope: { grain, sort, sortDir, contractSort, sel, band, rankFrom, rankTo, top, minScored },
+    scope: {
+      grain,
+      sort,
+      sortDir,
+      contractSort,
+      sel,
+      band,
+      contractId: explicitContractId,
+      rankFrom,
+      rankTo,
+      top,
+      minScored,
+    },
   };
 }
 

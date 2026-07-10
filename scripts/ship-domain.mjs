@@ -225,6 +225,16 @@ d1File(resolve(root, 'scripts/precompute.sql'));
 // Contract Quality / Health Index Phases 4-5 (design spec §8) — run
 // directly on the served D1 right after precompute, same pattern as precompute itself, so the
 // daily ETL keeps authority/bidder/sector/region/year/funding_quality_totals current on prod D1.
+//
+// AVAILABILITY WINDOW: derive-contract-features.sql opens with `DROP TABLE IF EXISTS
+// contract_features; CREATE TABLE …` before re-populating it, and `wrangler d1 execute --file` is
+// not atomic — so for the few seconds between that DROP and the final INSERT completing,
+// contract_features is missing/empty on the live-served D1. /quality already tolerates this (its
+// loader catches "no such table" and renders the "still computing" empty state), but any request
+// landing mid-window sees a temporarily empty index rather than the prior day's data. A full
+// staging-table swap (build contract_features_next, then DROP+RENAME atomically) would close this
+// window but touches every one of the ~15 statements in derive-contract-features.sql that reference
+// contract_features by name — out of scope for this change; tracked as a follow-up.
 console.log('==> health derive on served D1');
 d1File(resolve(root, 'scripts/derive-health.sql'));
 d1File(resolve(root, 'scripts/derive-contract-features.sql'));

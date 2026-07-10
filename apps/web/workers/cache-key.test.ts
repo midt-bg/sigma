@@ -141,6 +141,37 @@ describe('cacheKey', () => {
       cacheUrl('http://local/quality?rto=10').search,
     );
   });
+
+  it('keys every recently-added param so a future refactor cannot silently drop it (CWE-349)', () => {
+    // /trends: angle (lens), cpv (5-digit group filter), cpvSort (CPV list ordering), step (series
+    // granularity) — each narrows or reorders the rendered list/chart.
+    expect(cacheUrl('http://local/trends?angle=cpv').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?cpv=45233').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?cpvSort=med').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?step=year').search).not.toBe(
+      cacheUrl('http://local/trends?step=month').search,
+    );
+    // /quality: csort (contract list ordering), contract (scorecard subject), grain (rollup grain),
+    // sel (selected ranking row scoping the contracts list).
+    expect(cacheUrl('http://local/quality?csort=value').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?contract=c1').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?grain=supplier').search).not.toBe(
+      cacheUrl('http://local/quality?grain=year').search,
+    );
+    expect(cacheUrl('http://local/quality?sel=auth:1').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+  });
 });
 
 describe('CACHE_QUERY_PARAMS drift guard', () => {

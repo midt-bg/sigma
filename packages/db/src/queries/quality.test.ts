@@ -143,6 +143,56 @@ INSERT INTO funding_quality_totals VALUES
   ('national', 0.60, 150320, 140000, 0.85, '2026-07-01');
 `;
 
+/**
+ * Extracts the column names a `CREATE TABLE [IF NOT EXISTS] <name> (...)` statement declares, from
+ * raw SQL text — paren-depth aware (so `REFERENCES foo(id)` and similar don't split the column
+ * list early), comments stripped, table-level constraints (PRIMARY/FOREIGN/UNIQUE/CHECK/CONSTRAINT)
+ * excluded. Used by the schema-drift guard below to compare QUALITY_DDL against the real DDL in
+ * scripts/derive-contract-features.sql without executing either.
+ */
+function extractTableColumns(sql: string, table: string): string[] {
+  const noComments = sql.replace(/--[^\n]*/g, '');
+  const start = noComments.search(
+    new RegExp(`CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?${table}\\s*\\(`, 'i'),
+  );
+  if (start === -1) throw new Error(`CREATE TABLE ${table} not found`);
+  const openParen = noComments.indexOf('(', start);
+  let depth = 0;
+  let end = openParen;
+  for (let i = openParen; i < noComments.length; i += 1) {
+    if (noComments[i] === '(') depth += 1;
+    else if (noComments[i] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const body = noComments.slice(openParen + 1, end);
+  // Split on top-level commas only (depth-0), so REFERENCES foo(id) stays inside one column entry.
+  const parts: string[] = [];
+  let depth2 = 0;
+  let cur = '';
+  for (const ch of body) {
+    if (ch === '(') depth2 += 1;
+    else if (ch === ')') depth2 -= 1;
+    if (ch === ',' && depth2 === 0) {
+      parts.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  parts.push(cur);
+  const constraintKeywords = new Set(['PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT']);
+  return parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => p.split(/\s+/)[0]!)
+    .filter((name) => !constraintKeywords.has(name.toUpperCase()));
+}
+
 /** Minimal D1 surface over node:sqlite — enough for the module's prepare().bind().all()/first(). */
 function asD1(db: DatabaseSync): D1Database {
   return {
@@ -192,6 +242,29 @@ beforeAll(() => {
   db.exec(QUALITY_DDL);
   db.exec(FIXTURE);
   d1 = asD1(db);
+});
+
+// Schema-drift guard: QUALITY_DDL above is a third hand-copy of the quality schema (besides
+// 0000_init.sql and scripts/derive-contract-features.sql). Rather than trust it by eyeball, diff its
+// column set against the real ETL DDL it's supposed to mirror for every quality table — so a future
+// column added to one and not the other fails CI instead of silently drifting.
+describe('QUALITY_DDL schema-drift guard', () => {
+  const etlSql = readFileSync(resolve(root, 'scripts/derive-contract-features.sql'), 'utf8');
+  const tables = [
+    'contract_features',
+    'authority_quality_totals',
+    'bidder_quality_totals',
+    'sector_quality_totals',
+    'region_quality_totals',
+    'year_quality_totals',
+    'funding_quality_totals',
+  ];
+
+  it.each(tables)('%s columns match scripts/derive-contract-features.sql exactly', (table) => {
+    const testCols = extractTableColumns(QUALITY_DDL, table).sort();
+    const etlCols = extractTableColumns(etlSql, table).sort();
+    expect(testCols).toEqual(etlCols);
+  });
 });
 
 describe('coverageTier', () => {
@@ -431,6 +504,16 @@ describe('getQuality — contracts list & scoping', () => {
   it('defaults the scorecard to the weakest listed contract', async () => {
     const { scorecard } = await getQuality(d1, {});
     expect(scorecard?.id).toBe('c:1');
+  });
+
+  it('keeps scope.contractId null when no ?contract was requested — an auto-picked default must not get baked into preserved links', async () => {
+    const auto = await getQuality(d1, {});
+    expect(auto.scorecard?.id).toBe('c:1'); // auto-picked for display
+    expect(auto.scope.contractId).toBeNull(); // but not echoed back as "the" selection
+
+    const explicit = await getQuality(d1, { contractId: 'c:2' });
+    expect(explicit.scorecard?.id).toBe('c:2');
+    expect(explicit.scope.contractId).toBe('c:2'); // explicit ?contract IS preserved
   });
 
   it('score-band filter narrows to the exact histogram bin (bounds match the overview bins)', async () => {
