@@ -1,10 +1,11 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { GENERATED_TARGETS, expandTemplate } from '../../../scripts/generate-sql.mjs';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -1032,5 +1033,24 @@ describe('refresh-slice integrity gate', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('generated SQL stays in sync with its templates (single source of truth)', () => {
+  // scripts/normalize-raw.sql and scripts/refresh-slice.sql are checked-in, generated files —
+  // wrangler/sqlite3/the ETL Worker execute them directly and none of those consumers can run a
+  // Node build step first. `pnpm generate:sql` expands *.template.sql `-- @include` markers (e.g.
+  // the ЕИК control-digit checksum in scripts/lib/eik-valid.fragment.sql) into them. This test
+  // regenerates from the templates and diffs against the checked-in files so a hand-edit to one
+  // of the 7 duplicated checksum sites (or the templates going stale) fails CI instead of the two
+  // scripts silently drifting apart.
+  it.each(GENERATED_TARGETS)('$output matches its template', ({ template, output }) => {
+    const templatePath = resolve(root, 'scripts', template);
+    const outputPath = resolve(root, 'scripts', output);
+    const expected = expandTemplate(readFileSync(templatePath, 'utf8'), {
+      baseDir: resolve(root, 'scripts'),
+    });
+    const actual = readFileSync(outputPath, 'utf8');
+    expect(actual).toBe(expected);
   });
 });
