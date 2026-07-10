@@ -1089,32 +1089,44 @@ tbody td,
     opacity 0.1s ease;
 }
 
-/* ===== end overruns-dashboard ===== */
+/* ===== end trends-dashboard ===== */
 
 /* ===== chart-fullscreen ===== */
-.fs-btn {
+/* Shared inline-flex chrome for the two fullscreen toggle buttons; only spacing/casing differ. */
+.fs-btn,
+.trend-fs-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 8px;
-  padding: 3px 8px;
   font: 500 9px/1 var(--font-mono);
   letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-mid);
   background: var(--paper);
   border: 1px solid var(--rule);
   border-radius: 3px;
   cursor: pointer;
+}
+
+.fs-btn {
+  margin-left: 8px;
+  padding: 3px 8px;
+  text-transform: uppercase;
   flex: none;
 }
 
-.fs-btn:hover {
+.trend-fs-btn {
+  margin-left: 4px;
+  padding: 5px 9px;
+}
+
+.fs-btn:hover,
+.trend-fs-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
 
-.fs-btn:focus-visible {
+.fs-btn:focus-visible,
+.trend-fs-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1122,25 +1134,6 @@ tbody td,
 /* ===== end chart-fullscreen ===== */
 
 /* ===== trends chart fullscreen modal ===== */
-.trend-fs-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 4px;
-  padding: 5px 9px;
-  font: 500 9px/1 var(--font-mono);
-  letter-spacing: 0.08em;
-  color: var(--ink-mid);
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.trend-fs-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
 
 .trend-fs-backdrop {
   position: fixed;
@@ -1245,6 +1238,11 @@ tbody td,
   border: none;
   border-radius: 3px;
   cursor: pointer;
+}
+
+.trend-fs-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 @media (max-width: 720px) {

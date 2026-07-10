@@ -145,6 +145,25 @@ describe('cacheKey', () => {
   });
 });
 
+// Raw text of the allow-list file itself, so the dead-entry guard below can read each key's
+// trailing comment (no Node fs in workers/* — see APP_SOURCES above for the same pattern).
+const CACHE_KEY_SOURCE = Object.values(
+  import.meta.glob('./cache-key.ts', { query: '?raw', import: 'default', eager: true }) as Record<
+    string,
+    string
+  >,
+)[0]!;
+
+// Trailing `// comment` per allow-listed key, e.g. `'a', // /compare — entity A slug` → 'a' -> the
+// comment text. Keys with no trailing comment map to ''.
+function allowListComments(): Map<string, string> {
+  const comments = new Map<string, string>();
+  const re = /^\s*'([A-Za-z_]\w*)',(?:\s*\/\/\s*(.*))?$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(CACHE_KEY_SOURCE))) comments.set(m[1], m[2] ?? '');
+  return comments;
+}
+
 describe('CACHE_QUERY_PARAMS drift guard', () => {
   it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
@@ -161,5 +180,18 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
     const allowed = new Set([...CACHE_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
+  });
+
+  it('every allow-list key with no current reader carries a route/pending note (CLAUDE.md: no dead code)', () => {
+    // Soft guard for the reverse direction: an allow-list entry with no consumer today is fine while
+    // its route is stacked-later, but the comment naming that route is the only thing distinguishing
+    // "not built yet" from "dead, nothing will ever read this". Require the note so a key can't just
+    // sit here forever unexplained.
+    const consumed = consumedQueryParams();
+    const comments = allowListComments();
+    const unexplained = [...CACHE_QUERY_PARAMS]
+      .filter((key) => !consumed.has(key))
+      .filter((key) => !/\/[a-z][\w-]*|TODO/.test(comments.get(key) ?? ''));
+    expect(unexplained).toEqual([]);
   });
 });

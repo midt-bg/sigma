@@ -148,7 +148,7 @@ function inspectorFields(row: OverrunRow): { k: string; v: string }[] {
     { k: 'Сключен', v: date(row.signedAt) },
     ...(term ? [{ k: 'Срок', v: term }] : []),
     { k: 'Възложител · ЕИК', v: `${row.authorityName} · ${row.authorityEik || '—'}` },
-    { k: 'Изпълнител · ЕИК', v: `${row.bidderName} · ${row.bidderEik ?? 'непотвърден'}` },
+    { k: 'Изпълнител · ЕИК', v: `${row.bidderName} · ${row.bidderEik || 'непотвърден'}` },
   ];
 }
 
@@ -365,7 +365,7 @@ function AnnexHistory({ annexes, contractSlug }: { annexes: AnnexEntry[]; contra
   );
 }
 
-// ── SECTION 1 + 2 — ranked bars (full width) ↔ scatter cloud + inspector ──────────────
+// ── SECTION 3 + 4 — ranked bars (full width) ↔ scatter cloud + inspector ──────────────
 // One component so the bar list, the scatter and the inspector share the client-selected row.
 function OverrunsDashboard({
   rows,
@@ -524,7 +524,7 @@ function OverrunsDashboard({
   );
 }
 
-// ── SECTION 3 — overrun-by-sector table (CPV division, aggregate growth, € at risk) ───────────
+// ── SECTION 2 — overrun-by-sector table (CPV division, aggregate growth, € at risk) ───────────
 const BUCKET_LABEL: Record<OverrunSectorRow['bucket'], string> = {
   works: 'строителство',
   goods: 'доставки',
@@ -636,7 +636,7 @@ function SectorSection({ rows }: { rows: OverrunSectorRow[] }) {
   );
 }
 
-// ── SECTION 4 — institutions table (total overrun, count, share of max, aggregate growth) ──
+// ── SECTION 1 — institutions table (total overrun, count, share of max, aggregate growth) ──
 function AuthoritySection({ rows }: { rows: OverrunAuthorityRow[] }) {
   const maxTotal = Math.max(1, ...rows.map((r) => r.totalOverrunEur));
   return (
@@ -748,8 +748,8 @@ export default function Overruns({ loaderData }: Route.ComponentProps) {
             </h1>
             <p className="ov-mast-lede">
               Договори, чиято стойност след анекси (допълнителни споразумения след подписването)
-              надхвърля стойността при сключване. Списъкът подрежда по мащаб, облакът показва къде
-              стои всеки договор, а таблицата — кои институции раздуват най-много.
+              надхвърля стойността при сключване. Таблиците долу показват кои институции и сектори
+              раздуват най-много, а класацията и облакът — кои договори точно и къде стоят.
             </p>
           </div>
           <dl className="ov-mast-kpis" aria-label="Обобщение на раздуването">

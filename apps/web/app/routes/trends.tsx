@@ -101,6 +101,7 @@ function multText(mult: number): string {
 }
 
 function relLabel(valueEur: number, medianEur: number): { text: string; cls: string } {
+  if (!(medianEur > 0)) return { text: '≈ типичното', cls: 'ov-rel-mid' };
   const mult = valueEur / medianEur;
   if (mult >= 1.3) return { text: `${multText(mult)} типичното`, cls: 'ov-rel-hi' };
   if (mult <= 0.75) return { text: 'под типичното', cls: 'ov-rel-lo' };
