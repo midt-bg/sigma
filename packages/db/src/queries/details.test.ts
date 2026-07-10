@@ -241,6 +241,33 @@ describe('getContract', () => {
     });
   });
 
+  it('shows „—" for delta when only one of before/after is present, even if the source has a raw value_delta', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-5' },
+        [],
+        [
+          {
+            value_before: null, // unknown before-value → can't reconcile after − before
+            value_after: 1200,
+            value_delta: 999, // would be self-inconsistent against valueAfterEur if shown
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: 1200,
+      deltaEur: null, // renders „—" rather than a value that can't be reconciled
+    });
+  });
+
   it('shows „—" for a value-less annex (null value_after) and a null delta', async () => {
     const detail = await getContract(
       fakeDb(

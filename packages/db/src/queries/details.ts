@@ -655,14 +655,10 @@ export async function getContract(
       description: am.description?.trim() || null,
       valueAfterEur: afterEur,
       // Compute delta from the SAME before/after we display, so the row is self-consistent (after −
-      // before == delta) even when the source's recorded value_delta disagrees with them. Fall back
-      // to the recorded delta only when before/after can't yield one.
-      deltaEur:
-        beforeEur != null && afterEur != null
-          ? afterEur - beforeEur
-          : am.value_delta != null
-            ? eurFromNative(am.value_delta, am.currency, am.fx_rate)
-            : null,
+      // before == delta) even when the source's recorded value_delta disagrees with them. When only
+      // one of before/after is known, the recorded delta can't be reconciled against valueAfterEur —
+      // show „—" rather than a figure that might not add up.
+      deltaEur: beforeEur != null && afterEur != null ? afterEur - beforeEur : null,
     };
   });
 
