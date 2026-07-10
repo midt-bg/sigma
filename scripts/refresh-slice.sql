@@ -1002,6 +1002,14 @@ SET status = 'awarded'
 WHERE status <> 'awarded'
   AND EXISTS (SELECT 1 FROM raw_contracts c WHERE 't:' || c.unp = tenders.id);
 
+-- Denormalise authority onto the touched (window) contracts so the authority RSS feed's scoped index
+-- (idx_contracts_authority_recent, migration 0006) covers the just-inserted rows too — otherwise a
+-- newly-signed contract would be missing from the feed until the next full import. Scoped to the
+-- touched set; tenders.id is the PK, so the lookup is indexed.
+UPDATE contracts
+   SET authority_id = (SELECT t.authority_id FROM tenders t WHERE t.id = contracts.tender_id)
+ WHERE id IN (SELECT id FROM refresh_touched_contracts);
+
 
 -- 5) Promote window amendments into served domain history and roll touched contracts.
 -- @refresh-batch amendments

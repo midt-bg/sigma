@@ -560,6 +560,13 @@ WHERE x.bidder_key IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
 
+-- Denormalise the parent tender's authority onto the contract row so the entity RSS feed can walk a
+-- scoped index (idx_contracts_authority_recent, migration 0006) instead of temp-B-tree-sorting all of
+-- an authority's contracts. tender_id is set above and tenders.id is the PK, so this is an indexed lookup.
+UPDATE contracts
+   SET authority_id = (SELECT t.authority_id FROM tenders t WHERE t.id = contracts.tender_id)
+ WHERE authority_id IS NULL;
+
 -- Reconciliation guard: the final summary reports the contracts inserted alongside the surviving
 -- staging candidates, so a future NOT NULL/foreign-key mismatch is visible instead of hidden by
 -- INSERT OR IGNORE.

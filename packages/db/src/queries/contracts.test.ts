@@ -156,7 +156,7 @@ describe('listRecentEntityContracts', () => {
     return { db, captured };
   }
 
-  it('scopes an authority feed by t.authority_id and orders date-desc with id tiebreak', async () => {
+  it('scopes an authority feed by c.authority_id and orders date-desc with id tiebreak', async () => {
     const { db, captured } = capturingDb();
     const items = await listRecentEntityContracts(db, {
       kind: 'authority',
@@ -164,7 +164,9 @@ describe('listRecentEntityContracts', () => {
     });
 
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.sql).toContain('WHERE t.authority_id = ?');
+    // Scoped on the denormalised contract column (migration 0006), not t.authority_id, so it can use
+    // idx_contracts_authority_recent.
+    expect(captured[0]?.sql).toContain('WHERE c.authority_id = ?');
     expect(captured[0]?.sql).toContain(
       'ORDER BY COALESCE(c.signed_at, c.published_at) DESC, c.id DESC',
     );

@@ -247,7 +247,10 @@ export async function listRecentEntityContracts(
   entity: { kind: 'authority'; authorityId: string } | { kind: 'company'; bidderId: string },
   limit = 50,
 ): Promise<ContractListItem[]> {
-  const scope = entity.kind === 'authority' ? 't.authority_id = ?' : 'c.bidder_id = ?';
+  // Scope on the contract-row columns (bidder_id, and the denormalised authority_id — migration 0006)
+  // so the ORDER BY walks idx_contracts_{bidder,authority}_recent scoped to the entity and stops at
+  // LIMIT, instead of gathering all of the entity's contracts and temp-B-tree-sorting them (DoW).
+  const scope = entity.kind === 'authority' ? 'c.authority_id = ?' : 'c.bidder_id = ?';
   const id = entity.kind === 'authority' ? entity.authorityId : entity.bidderId;
   const rows = await db
     .prepare(
