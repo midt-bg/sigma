@@ -168,9 +168,30 @@ const FETCH_PRICED_BY_DIVISION = `
   WHERE c.amount_eur IS NOT NULL AND t.cpv_code IS NOT NULL AND length(t.cpv_code) >= 2
   ORDER BY c.id`;
 
+// Observability for the multi-ЕИК GUARD (#196, review on #203): normalize-raw.sql/refresh-slice.sql
+// silently EXCLUDE any authority_eik value that is a ';'-joined list of several ЕИК (joint
+// procurements). The exclusion is intentional and conservative, but was invisible — this counts it
+// every refresh so a GROWING number (the corpus starting to lean on joint procurements more) is
+// something a human notices instead of a number nobody watches.
+const FETCH_MULTI_EIK_EXCLUDED = `
+  SELECT COUNT(DISTINCT authority_eik) AS excludedAuthorities, COUNT(*) AS excludedRows
+  FROM (
+    SELECT authority_eik FROM raw_contracts WHERE authority_eik LIKE '%;%'
+    UNION ALL
+    SELECT authority_eik FROM raw_tenders WHERE authority_eik LIKE '%;%'
+  )`;
+
 function rows(runner, sql) {
   const out = runner(sql);
   return Array.isArray(out) ? out : [];
+}
+
+function multiEikExcluded(runner) {
+  const row = rows(runner, FETCH_MULTI_EIK_EXCLUDED)[0] ?? {};
+  return {
+    authorities: Number(row.excludedAuthorities ?? 0),
+    rows: Number(row.excludedRows ?? 0),
+  };
 }
 
 /**
@@ -206,6 +227,7 @@ export function buildAnomalyReport(runner, opts = {}) {
       },
     ],
     total: flagged.size,
+    multiEikExcluded: multiEikExcluded(runner),
   };
 }
 
@@ -225,5 +247,8 @@ export function formatAnomalyReport(report) {
       lines.push(`      - ${ex.id}  €${amt}  [CPV ${ex.division}, ${ctx}]`);
     }
   }
+  lines.push(
+    `  • multi-ЕИК authorities excluded (#196): ${report.multiEikExcluded.authorities} lists / ${report.multiEikExcluded.rows} raw rows`,
+  );
   return lines.join('\n');
 }

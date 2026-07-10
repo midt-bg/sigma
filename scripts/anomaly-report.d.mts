@@ -40,10 +40,16 @@ export interface Finding {
   examples: OutlierExample[];
 }
 
+export interface MultiEikExcluded {
+  authorities: number;
+  rows: number;
+}
+
 export interface AnomalyReport {
   sampled: number;
   total: number;
   findings: Finding[];
+  multiEikExcluded: MultiEikExcluded;
 }
 
 export const ANOMALY_DEFAULTS: Required<AnomalyOptions>;

@@ -214,5 +214,23 @@ describe('buildAnomalyReport / formatAnomalyReport', () => {
   it('tolerates an empty corpus', () => {
     const empty = buildAnomalyReport(() => []);
     expect(empty).toMatchObject({ sampled: 0, total: 0 });
+    expect(empty.multiEikExcluded).toEqual({ authorities: 0, rows: 0 });
+  });
+});
+
+describe('multiEikExcluded (#196 observability)', () => {
+  it('surfaces the multi-ЕИК exclusion count from the report and its text', () => {
+    const runner: AnomalyRunner = (sql: string) => {
+      if (sql.includes('FROM contracts')) return [];
+      if (sql.includes('raw_contracts') || sql.includes('raw_tenders')) {
+        return [{ excludedAuthorities: 405, excludedRows: 812 }];
+      }
+      return [];
+    };
+    const report = buildAnomalyReport(runner);
+    expect(report.multiEikExcluded).toEqual({ authorities: 405, rows: 812 });
+    expect(formatAnomalyReport(report)).toContain(
+      'multi-ЕИК authorities excluded (#196): 405 lists / 812 raw rows',
+    );
   });
 });
