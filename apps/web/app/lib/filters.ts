@@ -176,10 +176,9 @@ export function buildSectorGroup(
 }
 
 // Canonical serialization order so the same logical state always yields the same URL string —
-// good for history/bookmarks/caching. Keys not listed keep their existing relative order, appended
-// after the known ones. Filter facets first, then search/sort, then the paging cursor markers.
-// Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in filters.test.ts)
-// since withParams keeps only known params; unlisted-but-known params sort last.
+// good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
+// markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
+// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts last.
 export const PARAM_ORDER = [
   'q',
   'type',
