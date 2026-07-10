@@ -88,7 +88,7 @@ export function Choropleth({
                 fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
               }}
               onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
-              onClick={() => setHovered(r ? shape.nuts3 : null)}
+              onClick={() => setHovered(r && hovered !== shape.nuts3 ? shape.nuts3 : null)}
             >
               <title>{label}</title>
             </path>
