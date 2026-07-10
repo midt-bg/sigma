@@ -212,11 +212,24 @@ export function sanitizeProse(md: string): string {
   return out.trim();
 }
 
+// Our synthetic entity-id scheme (`auth:`=authority, `eik:`/`name:`=company, `c:e:`/`c:o:`=contract — the
+// JOIN/link keys from identity.ts / entityKindOfId) is internal plumbing, never a user-facing value. When the
+// model SELECTs an id column as a *display* column (Q17/Q46: „Възложител = auth:000695089"), the raw scheme
+// prefix would surface in the public report. Strip a leading scheme token so a stray id renders as its
+// real-world value (name / ЕИК / УНП), not our internals. Entity LINKS are unaffected — bindReport binds them
+// from the raw row value on a separate path, before sanitizeCell. Longer contract forms precede `c:` so the
+// alternation strips the full token (`c:e:` before `c:`), not just the first two chars.
+const ENTITY_ID_PREFIX = /^(?:auth:|eik:|name:|c:o:|c:e:|c:)/;
+export function stripEntityIdPrefix(v: string): string {
+  return v.replace(ENTITY_ID_PREFIX, '');
+}
+
 // Data cells carry submitter-influenceable text (company/authority names, contract subjects). Tag-strip
 // string values so no markup survives into the public report even if a renderer forgets to escape —
-// defence-in-depth on top of React's default escaping (spec §7). Numbers/null are never markup.
+// defence-in-depth on top of React's default escaping (spec §7). Numbers/null are never markup. Also
+// strips the internal entity-id scheme (above) so a raw id column never leaks as a visible cell.
 export function sanitizeCell(v: string | number | null): string | number | null {
-  return typeof v === 'string' ? sanitizeProse(v) : v;
+  return typeof v === 'string' ? sanitizeProse(stripEntityIdPrefix(v)) : v;
 }
 
 // Guardrail E2 (spec addendum): a DETERMINISTIC check that model prose carries no material number —

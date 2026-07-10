@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   bindReport,
   findProseNumbers,
+  sanitizeCell,
   sanitizeProse,
+  stripEntityIdPrefix,
   type EmitReportInput,
   type QueryResult,
 } from './report-schema';
@@ -372,6 +374,53 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
       results,
     );
     expect(out.ok).toBe(true);
+  });
+});
+
+describe('entity-id scheme never leaks as a display cell (Q17/Q46 follow-up)', () => {
+  it('strips each internal id prefix down to its real-world value', () => {
+    expect(stripEntityIdPrefix('auth:000695089')).toBe('000695089'); // authority → bare ЕИК
+    expect(stripEntityIdPrefix('eik:831915840')).toBe('831915840'); // company → bare ЕИК
+    expect(stripEntityIdPrefix('name:СОФАРМА АД')).toBe('СОФАРМА АД'); // company fallback → name
+    expect(stripEntityIdPrefix('c:e:00123-2024-0001')).toBe('00123-2024-0001'); // contract → УНП
+    expect(stripEntityIdPrefix('c:o:ocds-abc-123')).toBe('ocds-abc-123'); // contract → ocid
+  });
+
+  it('leaves ordinary values, NUTS codes and numbers untouched', () => {
+    expect(sanitizeCell('СОФАРМА АД')).toBe('СОФАРМА АД');
+    expect(sanitizeCell('BG411')).toBe('BG411'); // NUTS3 code is not our scheme — must survive
+    expect(sanitizeCell('2024')).toBe('2024');
+    expect(sanitizeCell(1234567)).toBe(1234567);
+    expect(sanitizeCell(null)).toBe(null);
+  });
+
+  it('cleans a raw id shown as a visible column while the entity link keeps the full id', () => {
+    // The model put `authority_id` (an `auth:…` column) as a DISPLAY key — the Q17/Q46 defect. The cell must
+    // render the bare ЕИК, yet a link declared on the same id column must still bind the FULL id for /authorities/<id>.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority_id',
+              header: 'Възложител',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id' },
+            },
+            { key: 'spent_eur', header: 'Похарчено (€)', align: 'right', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const row0 = out.report.blocks[0].rows[0]!;
+      expect(row0.cells).toEqual(['000695089', 1234567]); // prefix stripped from the visible cell
+      expect(row0.links).toEqual(['auth:000695089', null]); // link still carries the full, prefixed id
+    }
   });
 });
 

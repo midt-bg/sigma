@@ -32,9 +32,26 @@ describe('describe-schema data dictionary', () => {
 
   it('data traps are non-empty, distinct imperative rules', () => {
     // Exact count (not a floor) so an accidental deletion trips the test too (review #52).
-    expect(DATA_TRAPS.length).toBe(15);
+    expect(DATA_TRAPS.length).toBe(17);
     expect(new Set(DATA_TRAPS).size).toBe(DATA_TRAPS.length);
     for (const trap of DATA_TRAPS) expect(trap.trim().length).toBeGreaterThan(20);
+  });
+
+  it('steers display away from raw entity-id columns — Q17/Q46 leak guard', () => {
+    // The model showed `auth:…`/`eik:…` ids as visible cells. A trap must forbid id columns as display and
+    // point at the name + link.idCol mechanism instead (the deterministic backstop lives in report-schema).
+    const joined = DATA_TRAPS.join('\n');
+    expect(joined).toMatch(/НИКОГА не ги показвай като видима колона/);
+    expect(joined).toContain('link.idCol');
+    expect(joined).toMatch(/`a\.name`.*възложител/);
+  });
+
+  it('bounds recency/relative-date queries with an upper signed_at cap — Q19 future-date guard', () => {
+    // „последната седмица" leaked a 2029 row (no upper bound). A trap must cap the top end at date('now').
+    const joined = DATA_TRAPS.join('\n');
+    expect(joined).toMatch(/последн(ата седмица|ите N дни)/);
+    expect(joined).toContain("c.signed_at <= date('now')");
+    expect(joined).toContain("c.signed_at >= date('now','-7 days')");
   });
 
   it('CPV reference maps the health theme to divisions 33 and 85 (not 38) — Q24 guard', () => {
