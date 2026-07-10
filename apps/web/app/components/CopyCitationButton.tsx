@@ -1,7 +1,27 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
+function copyWithExecCommand(text: string): boolean {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.setAttribute('aria-hidden', 'true');
+  textarea.tabIndex = -1;
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(textarea);
+  return ok;
+}
+
 export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -12,30 +32,42 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
     };
   }, []);
 
+  const resetAfterDelay = useCallback(() => {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = window.setTimeout(() => setStatus('idle'), 2000);
+  }, []);
+
   const handleCopy = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard
         .writeText(textToCopy)
         .then(() => {
-          setCopied(true);
-          if (timeoutRef.current !== null) {
-            window.clearTimeout(timeoutRef.current);
-          }
-          timeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
+          setStatus('copied');
+          resetAfterDelay();
         })
         .catch((err) => {
           console.error('Failed to copy text:', err);
+          setStatus(copyWithExecCommand(textToCopy) ? 'copied' : 'failed');
+          resetAfterDelay();
         });
+      return;
     }
-  }, [textToCopy]);
+    setStatus(copyWithExecCommand(textToCopy) ? 'copied' : 'failed');
+    resetAfterDelay();
+  }, [textToCopy, resetAfterDelay]);
+
+  const copied = status === 'copied';
+  const failed = status === 'failed';
 
   return (
     <button
       type="button"
       onClick={handleCopy}
-      className={`save-btn ${copied ? 'is-saved' : ''}`}
-      aria-label="Копирай данните като цитат"
-      title="Копирай основните факти"
+      className={`copy-btn ${copied ? 'is-copied' : ''}`}
+      aria-label={failed ? 'Копирането не бе успешно' : 'Копирай данните като цитат'}
+      title={failed ? 'Копирането не бе успешно — опитайте отново' : 'Копирай основните факти'}
     >
       {copied ? (
         <svg
@@ -67,8 +99,8 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
         </svg>
       )}
-      <span className="save-btn-text" aria-live="polite">
-        {copied ? 'Копирано!' : 'Копирай'}
+      <span className="copy-btn-text" aria-live="polite">
+        {copied ? 'Копирано!' : failed ? 'Неуспешно копиране' : 'Копирай'}
       </span>
     </button>
   );

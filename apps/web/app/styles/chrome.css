@@ -659,7 +659,7 @@ main.narrow {
    the procedure's documents on the public ЦАИС ЕОП portal; the copy button reuses the same button
    language. Solid ink → accent on hover, matching the site's button language. */
 .source-cta,
-.save-btn {
+.copy-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--s-3);
@@ -682,18 +682,18 @@ main.narrow {
   color: var(--paper);
 }
 .source-cta:hover,
-.save-btn:hover {
+.copy-btn:hover {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--paper);
   text-decoration: none;
 }
 .source-cta svg,
-.save-btn svg {
+.copy-btn svg {
   flex: none;
 }
 /* Confirmation state after a successful copy — flip to the positive (teal) accent. */
-.save-btn.is-saved {
+.copy-btn.is-copied {
   background: var(--pos);
   border-color: var(--pos);
 }
@@ -777,10 +777,10 @@ main.narrow {
     padding: 11px 0;
     margin: -11px 0;
   }
-  /* source-cta/save-btn were ~34px tall (11px padding + 12px mono label) — below the 44px floor.
+  /* source-cta/copy-btn were ~34px tall (11px padding + 12px mono label) — below the 44px floor.
      Grow the hit area invisibly, same trick as .nav-search/.nav-toggle above. */
   .source-cta,
-  .save-btn {
+  .copy-btn {
     padding-block: 16px;
     margin-block: -5px;
   }
