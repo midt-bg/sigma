@@ -43,6 +43,15 @@ describe('shouldSubmitLive', () => {
   it('submits when the settled value really differs from the URL', () => {
     expect(shouldSubmitLive({ composing: false, debounced: 'мост', urlQ: '' })).toBe(true);
   });
+
+  it('does not submit a sub-threshold query (below the 2-char/searchable-term floor)', () => {
+    // A lone letter (or bare punctuation) never yields FTS terms — don't navigate or write ?q= for it.
+    expect(shouldSubmitLive({ composing: false, debounced: 'я', urlQ: '' })).toBe(false);
+  });
+
+  it('still submits clearing the field even though empty has no searchable terms', () => {
+    expect(shouldSubmitLive({ composing: false, debounced: '', urlQ: 'мост' })).toBe(true);
+  });
 });
 
 describe('isComposingAfter', () => {
