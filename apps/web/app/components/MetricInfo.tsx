@@ -28,7 +28,9 @@ export function MetricInfo({
   // (mobile audit: at 320px the fixed-width popover clips off-screen for edge-column metrics).
   const [shift, setShift] = useState(0);
 
-  useLayoutEffect(() => {
+  const useIsoLayoutEffect = typeof document !== 'undefined' ? useLayoutEffect : useEffect;
+
+  useIsoLayoutEffect(() => {
     if (!open) {
       setShift(0);
       return;
