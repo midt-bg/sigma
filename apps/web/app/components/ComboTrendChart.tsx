@@ -48,6 +48,9 @@ export function ComboTrendChart({
   const bw = Math.max(2, ((W - 2 * PAD) / n) * 0.66);
 
   // Final period is partial (still filling): dashed line tail + faded bar, like TrendChart.
+  // `partial` is only ever set on the as_of (final) period (see TrendPoint in api-contract), so a
+  // leading partial can't occur — `> 0` intentionally treats an all-partial single-point series (or
+  // the impossible partialIdx === 0 case) as fully solid, mirroring TrendChart.
   const partialIdx = points.findIndex((p) => p.partial);
   const hasPartial = partialIdx > 0;
   const solidEnd = hasPartial ? partialIdx - 1 : n - 1;

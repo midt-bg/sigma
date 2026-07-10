@@ -245,8 +245,8 @@ export function categoryForDivision(division: string | null | undefined): CpvCat
 
 export type CpvBucket = 'works' | 'goods' | 'services' | 'other';
 
-const CPV_BUCKET_WORKS: ReadonlySet<string> = new Set(['45']);
-const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
+export const CPV_BUCKET_WORKS: ReadonlySet<string> = new Set(['45']);
+export const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
   '50',
   '51',
   '55',
@@ -270,6 +270,35 @@ const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
   '98',
 ]);
 
+// Explicit goods membership (not "everything not works/services") so a future service division added
+// to CPV_SECTORS but forgotten in CPV_BUCKET_SERVICES fails the partition test below instead of
+// silently landing here as goods. See the partition test in index.test.ts.
+export const CPV_BUCKET_GOODS: ReadonlySet<string> = new Set([
+  '03',
+  '09',
+  '14',
+  '15',
+  '16',
+  '18',
+  '19',
+  '22',
+  '24',
+  '30',
+  '31',
+  '32',
+  '33',
+  '34',
+  '35',
+  '37',
+  '38',
+  '39',
+  '41',
+  '42',
+  '43',
+  '44',
+  '48',
+]);
+
 const CPV_DIVISION_SET: ReadonlySet<string> = new Set(CPV_SECTORS.map((s) => s.code));
 
 /** Classify a CPV division/full code into its works/goods/services bucket. Unknown or missing codes
@@ -280,7 +309,8 @@ export function cpvBucket(division: string | null | undefined): CpvBucket {
   if (!CPV_DIVISION_SET.has(code)) return 'other';
   if (CPV_BUCKET_WORKS.has(code)) return 'works';
   if (CPV_BUCKET_SERVICES.has(code)) return 'services';
-  return 'goods';
+  if (CPV_BUCKET_GOODS.has(code)) return 'goods';
+  return 'other';
 }
 
 // ── Procedure groups (ЗОП procedure_type → display group) ──────────────────────────────────────

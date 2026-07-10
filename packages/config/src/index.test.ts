@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CPV_BUCKET_GOODS,
+  CPV_BUCKET_SERVICES,
+  CPV_BUCKET_WORKS,
   CPV_CATEGORIES,
   CPV_SECTORS,
   categoryForDivision,
@@ -78,6 +81,21 @@ describe('cpvBucket', () => {
     for (const sector of CPV_SECTORS) {
       expect(cpvBucket(sector.code)).not.toBe('other');
     }
+  });
+
+  it('partitions CPV_DIVISION_SET exactly across works ∪ goods ∪ services', () => {
+    // The bucket sets must be a partition of every catalogued division — not just individually
+    // non-empty. A future service division added to CPV_SECTORS but forgotten in CPV_BUCKET_SERVICES
+    // would previously fall through to CPV_BUCKET_GOODS silently (goods was "everything else"); with
+    // an explicit goods set, that division now belongs to none of the three sets and this test fails
+    // instead of shipping a mis-bucketed division.
+    const sectorCodes = new Set(CPV_SECTORS.map((sector) => sector.code));
+    const union = new Set([...CPV_BUCKET_WORKS, ...CPV_BUCKET_GOODS, ...CPV_BUCKET_SERVICES]);
+
+    expect(union).toEqual(sectorCodes);
+
+    const totalMembers = CPV_BUCKET_WORKS.size + CPV_BUCKET_GOODS.size + CPV_BUCKET_SERVICES.size;
+    expect(totalMembers).toBe(union.size); // no division counted in more than one bucket
   });
 });
 
