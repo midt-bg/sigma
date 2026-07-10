@@ -17,6 +17,7 @@ import type {
 import {
   CLASSIFIED_PROCEDURE_TYPES,
   NON_COMPETITIVE_PROCEDURE_TYPES,
+  PROCEDURE_UNKNOWN_KEY,
   procedureGroup,
 } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
@@ -263,7 +264,7 @@ async function procedureCompetition(
       nonCompetitiveContracts += r.contracts;
       nonCompetitiveValueEur += r.value_eur;
       classifiedValueEur += r.value_eur;
-    } else if (g.key === 'unknown') {
+    } else if (g.key === PROCEDURE_UNKNOWN_KEY) {
       unknownContracts += r.contracts;
     } else {
       neutralContracts += r.contracts;

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLASSIFIED_PROCEDURE_TYPES, NON_COMPETITIVE_PROCEDURE_TYPES } from '@sigma/config';
 import { describe, expect, it } from 'vitest';
 
 // Integration test for the /competition analytics SQL. The query layer's unit tests (queries/
@@ -105,21 +106,20 @@ INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, va
 
 // Mirrors authoritiesByDirectAward: numerator = non-competitive procedure types, denominator =
 // classified (competitive OR non-competitive) types, so the synthetic „неизвестна" rows drop out.
-// The procedure-type lists mirror @sigma/config (whose membership is asserted in config/index.test.ts).
+// The procedure-type lists are the actual @sigma/config exports (single source of truth) turned into
+// SQL literals here — not hand-copied — so a taxonomy change can't leave this test asserting stale values.
+function sqlList(values: readonly string[]): string {
+  return values.map((v) => `'${v.replace(/'/g, "''")}'`).join(',');
+}
+
 const DIRECT_AWARD_SQL = `
 SELECT a.name,
        ROUND(SUM(CASE WHEN t.procedure_type IN (
-         'Договаряне без предварително обявление','Пряко договаряне',
-         'Договаряне без предварителна покана за участие','Договаряне без публикуване на обявление за поръчка'
+         ${sqlList(NON_COMPETITIVE_PROCEDURE_TYPES)}
        ) THEN 1 ELSE 0 END) * 1.0 / COUNT(*), 2) AS share,
        COUNT(*) AS classified
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
-WHERE t.procedure_type IN (
-        'Открита процедура','Ограничена процедура','Ограничена процедура по ДСП','Ограничена процедура по КС',
-        'Публично състезание','Състезателна процедура с договаряне','Събиране на оферти с обява',
-        'Договаряне без предварително обявление','Пряко договаряне',
-        'Договаряне без предварителна покана за участие','Договаряне без публикуване на обявление за поръчка'
-      )
+WHERE t.procedure_type IN (${sqlList(CLASSIFIED_PROCEDURE_TYPES)})
   AND a.id = 'auth:C'
 GROUP BY t.authority_id;
 `;

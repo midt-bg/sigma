@@ -332,6 +332,11 @@ const PROCEDURE_GROUP_BY_TYPE = new Map<string, ProcedureGroup>(
 
 const PROCEDURE_UNKNOWN = PROCEDURE_GROUPS.find((g) => g.key === 'unknown')!;
 
+/** The group key procedureGroup() falls back to for unrecognised/missing procedure_type values.
+ *  Consumers must compare against this constant, not the string literal, so a key rename breaks
+ *  compilation instead of silently mis-classifying synthetic contracts. */
+export const PROCEDURE_UNKNOWN_KEY: ProcedureGroupKey = PROCEDURE_UNKNOWN.key;
+
 /** Map a raw `procedure_type` to its display group. Unrecognised values fall to the „Неизвестна"
  *  bucket (never silently dropped). Deterministic. */
 export function procedureGroup(procedureType: string | null | undefined): ProcedureGroup {
