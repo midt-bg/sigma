@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { buildContractCitation, buildCompanyCitation, buildAuthorityCitation } from './citation';
-import { money } from '@sigma/shared';
 
 describe('citation builders', () => {
   it('builds a contract citation', () => {
@@ -18,7 +17,7 @@ describe('citation builders', () => {
         'Договор: Доставка на компютри',
         'Възложител: Община Пловдив',
         'Изпълнител: Техно ООД',
-        `Стойност: ${money(125000.5)}`,
+        'Стойност: 125 хил. €',
         'Връзка: https://sigma.test/contracts/abc-123',
       ].join('\n'),
     );
@@ -60,7 +59,7 @@ describe('citation builders', () => {
       [
         'Компания: Техно ООД',
         'ЕИК: 123456789',
-        `Общо спечелено: ${money(5000000)}`,
+        'Общо спечелено: 5 млн. €',
         'Брой договори: 42',
         'Връзка: https://sigma.test/companies/techno-ood',
       ].join('\n'),
@@ -82,7 +81,7 @@ describe('citation builders', () => {
       [
         'Компания: Чуждестранна фирма',
         'ЕИК: Няма',
-        `Общо спечелено: ${money(0)}`,
+        'Общо спечелено: 0 €',
         'Брой договори: 1',
         'Връзка: https://sigma.test/companies/foreign-corp',
       ].join('\n'),
@@ -101,7 +100,7 @@ describe('citation builders', () => {
     expect(citation).toBe(
       [
         'Институция: Община Варна',
-        `Общо похарчено: ${money(1000000)}`,
+        'Общо похарчено: 1 млн. €',
         'Брой договори: 5',
         'Връзка: https://sigma.test/authorities/obshtina-varna',
       ].join('\n'),
