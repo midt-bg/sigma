@@ -10,7 +10,7 @@ import { NetworkGraph } from '../components/NetworkGraph';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { PAGE_SIZE, pageNav } from '../lib/filters';
-import { centerToken, parseCenter } from '../lib/network-center';
+import { centerToken, countDirectEdges, parseCenter } from '../lib/network-center';
 import { counterpartyRows, networkColumns } from '../lib/entity-tables';
 
 export function meta(_: Route.MetaArgs) {
@@ -134,7 +134,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
                 id="links"
                 title={`Всички връзки (${count(counterparties.total)})`}
                 hint={
-                  counterparties.total > data.edges.filter((e) => e.from === data.center?.id).length
+                  counterparties.total > countDirectEdges(data.edges, data.center?.id)
                     ? `Графиката показва само най-големите по стойност; тук е пълният списък с ${count(
                         counterparties.total,
                       )} връзки, по страници.`

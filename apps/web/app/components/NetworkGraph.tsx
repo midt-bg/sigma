@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFetcher } from 'react-router';
 import type { NetworkData, NetworkNode } from '@sigma/api-contract';
 import { count, money, moneyBare } from '@sigma/shared';
-import { centerToken, isAdoptableNetwork } from '../lib/network-center';
+import { centerToken, countDirectEdges, isAdoptableNetwork } from '../lib/network-center';
 import { GEOMETRY, labelPositions } from '../lib/network-layout';
 import { useForceGraph } from '../lib/useForceGraph';
 
@@ -102,8 +102,10 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
   // The graph only draws the top few direct counterparties (HOP1) for readability. Count how many are
   // actually drawn and, when the centre has more, say so plainly rather than letting the cap read as
   // "this is all there is" — the full list lives in the relations table on /network.
-  const directShown = center ? edges.filter((e) => e.from === center.id).length : 0;
-  const truncated = counterpartyTotal > directShown;
+  const directShown = countDirectEdges(edges, center?.id);
+  // counterpartyTotal is null when the COUNT(*) failed — treat that as "possibly truncated" (never
+  // silently claim completeness) rather than comparing against a fabricated number.
+  const truncated = counterpartyTotal === null ? directShown > 0 : counterpartyTotal > directShown;
 
   const maxVal = Math.max(1, ...nodes.map((n) => n.valueEur));
   // Stable per `current` so the force effect (which depends on it) doesn't re-init every render/tick.

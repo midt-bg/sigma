@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { authoritySlug, companySlug } from '@sigma/db';
-import type { NetworkData } from '@sigma/api-contract';
-import { centerToken, isAdoptableNetwork, parseCenter } from './network-center';
+import type { NetworkData, NetworkEdge } from '@sigma/api-contract';
+import { centerToken, countDirectEdges, isAdoptableNetwork, parseCenter } from './network-center';
 
 // The re-centre link side (centerToken) and the loader side (parseCenter) MUST agree on the `?center`
 // grammar, or re-centring breaks silently (the component lands in `failed` with no error). These tests
@@ -52,5 +52,22 @@ describe('isAdoptableNetwork', () => {
 
   it('accepts a centre with at least one neighbour', () => {
     expect(isAdoptableNetwork(net(center, [center, node]))).toBe(true);
+  });
+});
+
+describe('countDirectEdges', () => {
+  const edge = (from: string, to: string): NetworkEdge => ({ from, to, valueEur: 1, contracts: 1 });
+
+  it('counts edges regardless of orientation (authority→company or company→authority)', () => {
+    const edges = [edge('center', 'a'), edge('b', 'center'), edge('c', 'd')];
+    expect(countDirectEdges(edges, 'center')).toBe(2);
+  });
+
+  it('returns 0 for a null centre id', () => {
+    expect(countDirectEdges([edge('a', 'b')], null)).toBe(0);
+  });
+
+  it('returns 0 when no edges touch the centre', () => {
+    expect(countDirectEdges([edge('a', 'b')], 'center')).toBe(0);
   });
 });

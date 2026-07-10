@@ -75,6 +75,33 @@ const COMP_COUNTERPARTIES = [
   },
 ];
 
+// COUNT(*) returns no row (D1 error) instead of the usual { n: 42 } — used to assert the fallback
+// stays `null` ("unknown") rather than masking the failure as the HOP1 draw cap.
+function fakeDbCountFails(): D1Database {
+  return {
+    prepare(sql: string) {
+      return {
+        bind() {
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes('ORDER BY spent_eur')) return { results: PICKER_AUTH as T[] };
+          if (sql.includes('FROM company_totals')) return { results: PICKER_COMP as T[] };
+          if (sql.includes('FROM flow_pairs WHERE authority_id = ?'))
+            return { results: HOP1 as T[] };
+          if (sql.includes('WHERE bidder_id IN')) return { results: HOP2 as T[] };
+          return { results: [] as T[] };
+        },
+        async first<T>() {
+          if (sql.includes('FROM authority_totals WHERE authority_id')) return CENTER_AUTH as T;
+          if (sql.includes('COUNT(*)')) return null as T;
+          return null as T;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
 function fakeDb(): D1Database {
   return {
     prepare(sql: string) {
@@ -145,6 +172,14 @@ describe('getEntityNetwork', () => {
       id: 'auth:C',
     });
     expect(counterpartyTotal).toBe(42); // COUNT(*) over flow_pairs, not the HOP1 cap (2 drawn)
+  });
+
+  it('reports counterpartyTotal as null (not the HOP1 cap) when COUNT(*) fails', async () => {
+    const { counterpartyTotal } = await getEntityNetwork(fakeDbCountFails(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(counterpartyTotal).toBeNull(); // must stay "unknown", never fabricated as hop1.length (2)
   });
 });
 

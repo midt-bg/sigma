@@ -423,7 +423,9 @@ export interface NetworkData {
   // Total direct counterparties the centre actually has in flow_pairs. The graph only draws the top
   // `HOP1` of these (readability cap), so the UI labels „top N of M" instead of silently truncating.
   // The exhaustive, paginated list lives in NetworkCounterpartyPage (the /network relations table).
-  counterpartyTotal: number;
+  // `null` means the COUNT itself failed/returned no row — a real "unknown", never fabricated as a
+  // small number (e.g. the HOP1 draw cap), so it must stay visually distinct from a valid total.
+  counterpartyTotal: number | null;
   centerOptions: { authorities: NetworkCenterOption[]; companies: NetworkCenterOption[] };
 }
 

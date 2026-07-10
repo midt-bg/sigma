@@ -186,7 +186,11 @@ export async function getEntityNetwork(
       .first<{ n: number }>(),
   ]);
   const hop1 = hop1res.results;
-  const counterpartyTotal = totalRow?.n ?? hop1.length;
+  // `totalRow` is only absent if the COUNT query itself failed to return a row (D1 error, not "zero
+  // rows" — COUNT(*) always returns exactly one row). Keep that failure as `null` ("unknown") rather
+  // than substituting the HOP1 draw cap, which would silently mislabel "top N of M" with a fabricated
+  // small M.
+  const counterpartyTotal = totalRow ? totalRow.n : null;
 
   const center = await loadCenter(db, p, hop1[0]);
   if (!center) return { center: null, nodes: [], edges: [], counterpartyTotal: 0, centerOptions };
@@ -253,7 +257,7 @@ export async function getEntityNetwork(
 export async function getEntityCounterparties(
   db: D1Database,
   p: NetworkParams,
-  opts: { cursor?: string | null; pageSize?: number; total?: number } = {},
+  opts: { cursor?: string | null; pageSize?: number; total?: number | null } = {},
 ): Promise<NetworkCounterpartyPage> {
   const isAuth = p.kind === 'authority';
   const centerCol = isAuth ? 'authority_id' : 'bidder_id';
@@ -276,8 +280,9 @@ export async function getEntityCounterparties(
 
   // The counterparty total is the same `COUNT(*) FROM flow_pairs WHERE <centre> = ?` getEntityNetwork
   // already runs. On /network both run, so the caller passes the known total here and we skip a second
-  // identical scan (D1 charges per row read). Standalone callers omit it and we count once, in parallel
-  // with the page query.
+  // identical scan (D1 charges per row read). Standalone callers omit it, and a caller whose own COUNT
+  // failed passes `null` (not a number) — in both of those cases we count here instead of trusting a
+  // missing/failed value, so a failure never gets masked as a reused "total".
   const [rowsRes, totalRow] = await Promise.all([
     db
       .prepare(
@@ -286,7 +291,7 @@ export async function getEntityCounterparties(
       )
       .bind(p.id, ...ks.params, pageSize + 1)
       .all<PairRow>(),
-    opts.total !== undefined
+    typeof opts.total === 'number'
       ? Promise.resolve({ n: opts.total })
       : db
           .prepare(`SELECT COUNT(*) AS n FROM flow_pairs WHERE ${centerCol} = ?`)

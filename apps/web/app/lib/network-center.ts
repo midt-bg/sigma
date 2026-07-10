@@ -1,5 +1,5 @@
 import { authorityIdFromSlug, bidderIdFromSlug, type NetworkParams } from '@sigma/db';
-import type { NetworkData } from '@sigma/api-contract';
+import type { NetworkData, NetworkEdge } from '@sigma/api-contract';
 
 // The /network `?center` grammar — `a:<authority-slug>` | `c:<company-slug>` — lives here once so the
 // link/re-centre side (centerToken) and the loader side (parseCenter) share a single definition and
@@ -29,4 +29,16 @@ export function parseCenter(token: string | null): NetworkParams | null {
 // stranding the user with no way back. Pure so it can be unit-tested.
 export function isAdoptableNetwork(next: NetworkData | null | undefined): boolean {
   return Boolean(next?.center && next.nodes.length >= 2);
+}
+
+// Edge orientation in the graph topology is arbitrary — a direct edge may point either
+// centre→neighbour or neighbour→centre (e.g. authority→company). Count both ends so a centre with
+// only inbound edges doesn't read as having zero direct counterparties. Shared by NetworkGraph (the
+// "N of M" truncation hint) and the /network route (the relations-table hint) so they can't diverge.
+export function countDirectEdges(
+  edges: NetworkEdge[],
+  centerId: string | null | undefined,
+): number {
+  if (!centerId) return 0;
+  return edges.filter((e) => e.from === centerId || e.to === centerId).length;
 }
