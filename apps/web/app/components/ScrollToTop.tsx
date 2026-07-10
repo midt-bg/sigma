@@ -12,11 +12,21 @@ export function ScrollToTop() {
       }
     };
 
-    window.addEventListener('scroll', toggleVisibility, { passive: true });
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        toggleVisibility();
+        ticking = false;
+      });
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
     // Initial check in case the page is loaded already scrolled down
     toggleVisibility();
 
-    return () => window.removeEventListener('scroll', toggleVisibility);
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   const scrollToTop = () => {
