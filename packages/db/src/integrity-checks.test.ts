@@ -20,7 +20,15 @@ import {
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+// Apply the FULL migration chain, not just 0000 — precompute.sql now populates search_index from the
+// related-persons tables (interest_links/persons), which live in 0002. Building only 0000 fails precompute
+// with `no such table: interest_links` (and since precompute is one atomic batch, that takes down every
+// rollup, not just the officials rows). The served D1 always has the whole chain applied; the test must too.
+const migrationPaths = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0002_related_persons_foundation.sql',
+].map((f) => resolve(root, 'packages/db/migrations', f));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -60,7 +68,7 @@ VALUES
 function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
-  readScript(dbPath, schemaPath);
+  for (const m of migrationPaths) readScript(dbPath, m);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }

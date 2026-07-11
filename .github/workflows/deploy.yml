@@ -125,6 +125,20 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: pnpm typecheck
 
+      # Schema before serving: apply the свързани-лица schema to the target env BEFORE the Worker deploys,
+      # so a release that adds those tables never serves against a stale schema. The base schema was
+      # created out-of-band via `d1 execute --file` (import.mjs), leaving wrangler's migration tracking
+      # empty — so `d1 migrations apply` would re-run 0000 and collide. Apply 0002 directly the same way;
+      # 0002 is idempotent (CREATE … IF NOT EXISTS). Render first for the real database_id+name; the guard
+      # above already refused production resource names for non-prod envs.
+      - name: Apply the свързани-лица schema
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0002_related_persons_foundation.sql
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'

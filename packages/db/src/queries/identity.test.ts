@@ -7,6 +7,8 @@ import {
   contractIdFromSlug,
   contractSlug,
   hrefForEntity,
+  personIdFromSlug,
+  personSlug,
 } from './identity';
 
 describe('company slug', () => {
@@ -41,6 +43,25 @@ describe('authority / contract slugs', () => {
 
     expect(contractIdFromSlug(contractSlug(eopId))).toBe(eopId);
     expect(contractIdFromSlug(contractSlug(ocdsId))).toBe(ocdsId);
+  });
+});
+
+describe('person slug (свързани лица)', () => {
+  it('reversibly encodes a person id (Cyrillic name key, URL-safe)', () => {
+    const id = 'person:ИВАН ПЕТРОВ ГЕОРГИЕВ';
+    const slug = personSlug(id);
+    expect(slug).not.toContain(' ');
+    expect(slug).not.toContain('/');
+    expect(slug).not.toContain('+');
+    expect(personIdFromSlug(slug)).toBe(id);
+  });
+  it('round-trips a key that itself contains a pipe (never split-parsed)', () => {
+    // person_id feeds link_key as `person_id|eik`; the slug must not depend on that separator.
+    const id = 'person:ФИРМА | ЕООД';
+    expect(personIdFromSlug(personSlug(id))).toBe(id);
+  });
+  it('returns null for an undecodable slug rather than throwing', () => {
+    expect(personIdFromSlug('!!!not base64!!!')).toBeNull();
   });
 });
 
