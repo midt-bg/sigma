@@ -175,6 +175,44 @@
   box-shadow: inset 3px 0 0 var(--accent);
   padding-left: calc(var(--s-3) + 3px);
 }
+/* Annex „Основание" texts are run-on legal blocks (up to ~6k chars). Collapsed: word-boundary
+   preview + toggle in a width-capped cell. Open: clause paragraphs. Native <details>, so the
+   expander works without JS; the marker is hidden because the toggle label is the affordance. */
+.lot-table td.annex-desc-cell {
+  max-width: 52ch;
+}
+.annex-desc summary {
+  cursor: pointer;
+  list-style: none;
+}
+.annex-desc summary::-webkit-details-marker {
+  display: none;
+}
+.annex-desc .annex-desc-toggle,
+.annex-desc .annex-desc-collapse {
+  color: var(--accent);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.annex-desc .annex-desc-collapse {
+  display: none;
+}
+.annex-desc[open] .annex-desc-preview,
+.annex-desc[open] .annex-desc-toggle {
+  display: none;
+}
+.annex-desc[open] .annex-desc-collapse {
+  display: inline;
+}
+.annex-desc[open] summary {
+  margin-bottom: var(--s-2);
+}
+.annex-desc .annex-desc-para {
+  margin: 0 0 var(--s-2);
+}
+.annex-desc .annex-desc-para:last-child {
+  margin-bottom: 0;
+}
 @media (max-width: 760px) {
   .value-history {
     grid-template-columns: 1fr;
