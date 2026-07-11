@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 
+const SHOW_AFTER_PX = 400;
+
 export function ScrollToTop() {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
     const toggleVisibility = () => {
-      if (window.scrollY > 400) {
+      if (window.scrollY > SHOW_AFTER_PX) {
         setIsVisible(true);
       } else {
         setIsVisible(false);
@@ -30,9 +32,13 @@ export function ScrollToTop() {
   }, []);
 
   const scrollToTop = () => {
+    const prefersReducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+
     window.scrollTo({
       top: 0,
-      behavior: 'smooth',
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
     });
   };
 

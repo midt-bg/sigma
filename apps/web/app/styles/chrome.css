@@ -815,6 +815,12 @@ main.narrow {
   height: 24px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .scroll-to-top {
+    transition: none;
+  }
+}
+
 @media (max-width: 760px) {
   .scroll-to-top {
     bottom: 16px;
