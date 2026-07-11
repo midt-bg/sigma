@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { RiskIndicators } from '../components/RiskIndicators';
+import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -41,6 +42,31 @@ function bidsBreakdown(c: ContractDetail): string | null {
   if (c.bidsSme != null && c.bidsSme > 0) parts.push(`${count(c.bidsSme)} от МСП`);
   if (c.bidsNonEea != null && c.bidsNonEea > 0) parts.push(`${count(c.bidsNonEea)} извън ЕИП`);
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * Annex „Основание" cell. ЦАИС ЕОП ships the amendment clause as one run-on legal block (median
+ * ~800 chars, up to ~6k) — too long for a table cell. Long texts collapse to a word-boundary
+ * preview with a native <details> expander (works without JS) and open into clause paragraphs;
+ * the wording itself is shown verbatim.
+ */
+function AnnexDescription({ text }: { text: string | null }) {
+  if (!text) return <>—</>;
+  if (!annexNeedsExpand(text)) return <>{annexPreview(text)}</>;
+  return (
+    <details className="annex-desc">
+      <summary>
+        <span className="annex-desc-preview">{annexPreview(text)} </span>
+        <span className="annex-desc-toggle">покажи целия текст</span>
+        <span className="annex-desc-collapse">свий</span>
+      </summary>
+      {annexParagraphs(text).map((p, i) => (
+        <p key={i} className="annex-desc-para">
+          {p}
+        </p>
+      ))}
+    </details>
+  );
 }
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
@@ -215,7 +241,9 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                       <td className="money">
                         {a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
                       </td>
-                      <td>{a.description ?? '—'}</td>
+                      <td className="annex-desc-cell">
+                        <AnnexDescription text={a.description} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
