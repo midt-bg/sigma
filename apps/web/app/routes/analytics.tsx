@@ -43,7 +43,8 @@ export async function loader({ context }: Route.LoaderArgs) {
     getCompetitionSummary(db),
     getQualitySummary(db).catch((err) => {
       // the quality tables land with the next full derive — anything else is unexpected
-      if (!isMissingDerivedTableError(err)) console.error('[analytics] getQualitySummary failed', err);
+      if (!isMissingDerivedTableError(err))
+        console.error('[analytics] getQualitySummary failed', err);
       return null;
     }),
   ]);

@@ -532,7 +532,9 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
                       <span className="ov-card-foot">
                         {c.cpvGroup && <span className="ov-card-cpv mono">CPV {c.cpvGroup}</span>}
                         <span className="ov-card-cohort clamp">{cohort?.name ?? ''}</span>
-                        {rel?.text && <span className={`ov-card-rel mono ${rel.cls}`}>{rel.text}</span>}
+                        {rel?.text && (
+                          <span className={`ov-card-rel mono ${rel.cls}`}>{rel.text}</span>
+                        )}
                       </span>
                     </Link>
                   </li>
