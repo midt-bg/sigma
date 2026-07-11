@@ -26,7 +26,8 @@ describe('centerToken ↔ parseCenter round-trip', () => {
     const slug = companySlug(id);
     const token = centerToken({ kind: 'company', slug });
     expect(slug.startsWith('n')).toBe(true);
-    // Whole token is URL-safe; the only ':' is the grammar separator (so no encodeURIComponent needed).
+    // Already URL-safe (base64url + digits), so encodeURIComponent is a no-op here — the
+    // encode/decode round-trip is what matters, not this slug's specific charset.
     expect(token).toMatch(/^c:n[A-Za-z0-9_-]+$/);
     expect(parseCenter(token)).toEqual({ kind: 'company', id });
   });

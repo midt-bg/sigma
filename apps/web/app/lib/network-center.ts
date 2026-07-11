@@ -7,7 +7,7 @@ import type { NetworkData, NetworkEdge } from '@sigma/api-contract';
 // and components/NetworkGraph.tsx (re-centre).
 
 export function centerToken(n: { kind: string; slug: string }): string {
-  return `${n.kind === 'authority' ? 'a' : 'c'}:${n.slug}`;
+  return `${n.kind === 'authority' ? 'a' : 'c'}:${encodeURIComponent(n.slug)}`;
 }
 
 export function parseCenter(token: string | null): NetworkParams | null {
@@ -15,7 +15,14 @@ export function parseCenter(token: string | null): NetworkParams | null {
   const i = token.indexOf(':');
   if (i < 1) return null;
   const kind = token.slice(0, i);
-  const slug = token.slice(i + 1);
+  let slug: string;
+  try {
+    slug = decodeURIComponent(token.slice(i + 1));
+  } catch {
+    // Malformed %-escape (e.g. a hand-edited/bookmarked URL) — fall back to "no centre" like any
+    // other malformed token, matching the `?center` grammar's documented invariant.
+    return null;
+  }
   if (kind === 'a' && slug) return { kind: 'authority', id: authorityIdFromSlug(slug) };
   if (kind === 'c' && slug) {
     const id = bidderIdFromSlug(slug);

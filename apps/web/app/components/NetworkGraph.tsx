@@ -445,10 +445,9 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
       </ul>
       {truncated && center && (
         <p className="net-caption muted">
-          Графиката показва {count(directShown)} от общо {count(counterpartyTotal)} връзки
-          (най-големите по стойност).{' '}
-          {/* Raw token (no encodeURIComponent), matching recentre() — the `a:`/`c:` grammar is
-              provably URL-safe (digits or base64url; the only `:` is the separator the loader splits on). */}
+          {counterpartyTotal === null
+            ? `Графиката показва ${count(directShown)} връзки (възможно е да има още, най-големите по стойност).`
+            : `Графиката показва ${count(directShown)} от общо ${count(counterpartyTotal)} връзки (най-големите по стойност).`}{' '}
           <a href={`/network?center=${centerToken(center)}#links`}>Виж всички</a>.
         </p>
       )}
