@@ -327,6 +327,67 @@ function seedCollidingPartySlot(dbPath: string): void {
   );
 }
 
+// Every raw_contracts/raw_tenders row for this ЕИК has a NULL or blank authority_name, so
+// authority_canonical_name.canonical_name resolves to NULL for it — the fixture for the
+// INSERT OR IGNORE INTO authorities NULL-name regression (authorities.name is NOT NULL).
+function seedNullAuthorityNameFixture(dbPath: string): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       cpv_code, cpv_description, contract_kind, estimated_value, currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, deadline,
+       notice_type, lot_id, lot_name, num_lots, eu_funded, published_at)
+    VALUES
+      ('eop:tenders:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-NONAME', 'TENDER-NONAME',
+       'open', 'No-name tender', '45000000', 'Construction', 'works', 1000, 'BGN', 'basis',
+       'lowest', NULL, '133456780', 'public', 'activity', '2026-06-10', 'notice',
+       NULL, NULL, 1, 0, '2026-06-01');
+
+    INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+       published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+       cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+       lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+       awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+       eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+    VALUES
+      ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-07T00:00:00Z', 0, 'DOC-NONAME',
+       '2026-06-01', 'UNP-NONAME', 'TENDER-NONAME', 'open', 'No-name tender', '45000000',
+       'Construction', 'works', 1000, 'BGN', 'basis', 'lowest', '', '133456780',
+       'public', 'activity', 'notice', NULL, 'CONTRACT-NONAME', '2026-06-02', 1000, 'BGN',
+       'No-name contract', 0, '387654323', 'Bidder NoName', 'BG', 'small', 0, 1, 1, 0, 0, 30);`,
+  );
+}
+
+// Two DISTINCT contracts (different unp, contractor, source) that both happen to have a NULL
+// contract_number — the fixture for the EOP-wins NULL-collapse regression.
+function seedTwoNullContractNumberContracts(dbPath: string): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+       published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+       cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+       lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+       awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+       eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+    VALUES
+      ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-07T00:00:00Z', 0, 'DOC-NULLCNUM-E',
+       '2026-06-01', 'UNP-NULLCNUM-E', 'TENDER-NULLCNUM-E', 'open', 'Null cnum EOP', '45000000',
+       'Construction', 'works', 1000, 'BGN', 'basis', 'lowest', 'Authority NullCnum', '133456781',
+       'public', 'activity', 'notice', NULL, NULL, '2026-06-02', 1000, 'BGN',
+       'Null cnum EOP contract', 0, '187654321', 'Bidder NullCnum EOP', 'BG', 'small', 0, 1, 1, 0, 0, 30),
+      ('ocds:2026-06-02', 2026, 'ocds', '2026-06-08T00:00:00Z', 0, 'DOC-NULLCNUM-O',
+       '2026-06-02', 'OCDS-NULLCNUM-O', 'TENDER-NULLCNUM-O', 'open', 'Null cnum OCDS', '45000000',
+       'Construction', 'works', 2000, 'BGN', 'basis', 'lowest', 'Authority NullCnum', '133456781',
+       'public', 'activity', 'notice', NULL, NULL, '2026-06-02', 2000, 'BGN',
+       'Null cnum OCDS contract', 0, '287654322', 'Bidder NullCnum OCDS', 'BG', 'small', 0, 1, 1, 0, 0, 30);`,
+  );
+}
+
 function seedTwoCollidingBidders(dbPath: string): void {
   for (const [eik, name] of [
     ['111111113', 'Company A'],
@@ -476,6 +537,28 @@ describe('refresh-slice EOP base derivation', () => {
           "SELECT ROUND(SUM(amount_eur), 2) AS total FROM contracts WHERE contract_number = 'CONTRACT-SHARED'",
         )[0]?.total,
       ).toBeCloseTo(1000 / 1.95583, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps two distinct contracts that both have a NULL contract_number', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, workStagingSchemaPath);
+      seedTwoNullContractNumberContracts(dbPath);
+      readScript(dbPath, refreshSlicePath);
+
+      const nullCnumContracts = sqliteJson<{ id: string; contract_subject: string }>(
+        dbPath,
+        "SELECT id, contract_subject FROM contracts WHERE contract_number IS NULL ORDER BY id",
+      );
+      expect(nullCnumContracts).toHaveLength(2);
+      expect(nullCnumContracts.some((row) => row.id.startsWith('c:e:'))).toBe(true);
+      expect(nullCnumContracts.some((row) => row.id.startsWith('c:o:'))).toBe(true);
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -638,6 +721,60 @@ describe('refresh-slice EOP base derivation', () => {
         sliceRows.some((row) => row.id.startsWith('c:o:') && row.contract_number === 'CONTRACT-ID'),
       ).toBe(false);
       expect(sqlite(sliceDb, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates the authority row with a non-null name when every raw authority_name is NULL/blank', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedNullAuthorityNameFixture(dbPath);
+      readScript(dbPath, normalizePath);
+
+      const authority = sqliteJson<{ name: string | null }>(
+        dbPath,
+        "SELECT name FROM authorities WHERE id = 'auth:133456780'",
+      )[0];
+      expect(authority).toBeDefined();
+      expect(authority?.name).toBe('133456780');
+      expect(
+        sqliteJson<{ n: number }>(
+          dbPath,
+          "SELECT COUNT(*) AS n FROM contracts WHERE contract_number = 'CONTRACT-NONAME'",
+        )[0]?.n,
+      ).toBe(1);
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Parity with the normalize-raw test above (AGENTS.md: identity/keying fixes must land in both
+  // scripts/normalize-raw.template.sql and scripts/refresh-slice.template.sql).
+  it('creates the authority row with a non-null name via refresh-slice too', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedNullAuthorityNameFixture(dbPath);
+      readScript(dbPath, refreshSlicePath);
+
+      const authority = sqliteJson<{ name: string | null }>(
+        dbPath,
+        "SELECT name FROM authorities WHERE id = 'auth:133456780'",
+      )[0];
+      expect(authority).toBeDefined();
+      expect(authority?.name).toBe('133456780');
+      expect(
+        sqliteJson<{ n: number }>(
+          dbPath,
+          "SELECT COUNT(*) AS n FROM contracts WHERE contract_number = 'CONTRACT-NONAME'",
+        )[0]?.n,
+      ).toBe(1);
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

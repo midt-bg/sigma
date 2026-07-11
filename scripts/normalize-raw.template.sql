@@ -3,7 +3,7 @@
 -- (+ scripts/derive-amendments.sql for current_value/annex_count) have populated staging:
 --   (cd apps/web && wrangler d1 execute sigma --local --file ../../scripts/normalize-raw.sql)
 --
--- SOURCE MODEL (see docs/etl-pipeline.md): the EOP open-data feed is the authoritative base for
+-- SOURCE MODEL (see docs/etl.md): the EOP open-data feed is the authoritative base for
 -- 2020-2026 (raw_contracts + raw_tenders, source 'eop:%'). The OCDS JSON feed is the
 -- go-forward delta for new 2026+ data (source 'ocds:%'); its rows carry their procedure fields on
 -- the contract row, so they flow through here automatically and a UNP with no tenders-export row
@@ -96,7 +96,11 @@ WHERE rn = 1;
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT
   'auth:' || s.authority_eik,
-  acn.canonical_name,
+  -- authorities.name is NOT NULL (packages/db/migrations/0000_init.sql); acn.canonical_name is
+  -- NULL when every raw_contracts/raw_tenders row for this ЕИК has a NULL/blank authority_name,
+  -- and a NULL here would make INSERT OR IGNORE silently drop the whole authority row (and every
+  -- FK'd tender/contract with it). Fall back to the ЕИК itself so the row always lands.
+  COALESCE(acn.canonical_name, s.authority_eik),
   s.authority_eik,
   MAX(s.authority_type)
 FROM (
@@ -374,6 +378,8 @@ SET ownership_kind = (
     )
   LIMIT 1
 );
+
+CREATE INDEX IF NOT EXISTS idx_raw_cnum ON raw_contracts(contract_number);
 
 -- 5) Contracts — awarded lines (1:1 with staging rows), linked to tender + winning bidder,
 --    with the data-quality verdict (see 0007_data_quality.sql):

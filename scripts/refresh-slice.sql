@@ -32,6 +32,7 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 -- below — D1 batches don't guarantee a TEMP table survives across statements.
 CREATE INDEX IF NOT EXISTS idx_raw_contracts_authority_eik ON raw_contracts(authority_eik);
 CREATE INDEX IF NOT EXISTS idx_raw_tenders_authority_eik ON raw_tenders(authority_eik);
+CREATE INDEX IF NOT EXISTS idx_raw_cnum ON raw_contracts(contract_number);
 DROP TABLE IF EXISTS authority_canonical_name;
 CREATE TABLE authority_canonical_name (authority_eik TEXT PRIMARY KEY, canonical_name TEXT);
 INSERT INTO authority_canonical_name (authority_eik, canonical_name)
@@ -65,7 +66,10 @@ WHERE rn = 1;
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT
   'auth:' || s.authority_eik,
-  acn.canonical_name,
+  -- authorities.name is NOT NULL; acn.canonical_name is NULL when every raw row for this ЕИК has
+  -- a NULL/blank authority_name — fall back to the ЕИК so INSERT OR IGNORE never silently drops
+  -- the row (parity with normalize-raw.template.sql step 1).
+  COALESCE(acn.canonical_name, s.authority_eik),
   s.authority_eik,
   MAX(s.authority_type)
 FROM (
@@ -830,32 +834,35 @@ WHERE x.bidder_key IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders b WHERE b.id = x.bidder_key)
   -- EOP wins: skip OCDS rows when the transient window has an EOP row for the same document.
+  -- Bare equality (not COALESCE(...,'')), matching normalize-raw.template.sql's already-fixed
+  -- dedup: SQL's `=` evaluates to NULL (never TRUE) when either side is NULL, so each NOT EXISTS
+  -- below is vacuously satisfied whenever x.contract_number is NULL. COALESCE(...,'') = COALESCE(...,'')
+  -- instead turned two DISTINCT contracts that both happen to have a NULL contract_number into a
+  -- false match, silently dropping one of them as a "duplicate". Also lets idx_raw_cnum/idx_contracts_cnum
+  -- drive a seek instead of the full scan COALESCE forces.
   AND NOT EXISTS (
     SELECT 1 FROM raw_contracts e
     WHERE e.source LIKE 'eop:%'
-      AND COALESCE(e.contract_number, '') = COALESCE(x.contract_number, '')
+      AND e.contract_number = x.contract_number
   )
   -- Existing admin rows also win.
-  AND NOT EXISTS (SELECT 1 FROM contracts c2 WHERE COALESCE(c2.contract_number, '') = COALESCE(x.contract_number, '') AND c2.id NOT GLOB 'c:[eo]:*')
+  AND NOT EXISTS (SELECT 1 FROM contracts c2 WHERE c2.contract_number = x.contract_number AND c2.id NOT GLOB 'c:[eo]:*')
   -- Existing EOP rows win over later OCDS-only windows too.
-  AND NOT EXISTS (SELECT 1 FROM contracts c3 WHERE c3.id GLOB 'c:e:*' AND COALESCE(c3.contract_number, '') = COALESCE(x.contract_number, ''));
+  AND NOT EXISTS (SELECT 1 FROM contracts c3 WHERE c3.id GLOB 'c:e:*' AND c3.contract_number = x.contract_number);
 
 -- EOP base rows loaded after the last full normalize. This mirrors normalize-raw.sql's EOP branch:
--- newest cumulative bucket wins, existing full-normalize rows win over refresh rows.
+-- newest cumulative bucket wins, existing full-normalize rows win over refresh rows. Matched on
+-- contract_number alone (bare equality — a NULL contract_number never matches another NULL, same
+-- as the EOP-wins dedup above), because that is the only cross-feed key available; there is no
+-- second UNION branch for NULL contract_number here — with no other reliable cross-feed identity
+-- field to join on, treating "both NULL" as a match would delete unrelated OCDS contracts that
+-- merely also lack a contract_number (the same NULL-collapse bug as the dedup above).
 DELETE FROM contracts
 WHERE id IN (
   SELECT DISTINCT c.id
   FROM raw_contracts e
   JOIN contracts c ON c.contract_number = e.contract_number
   WHERE e.source LIKE 'eop:%'
-    AND e.contract_number IS NOT NULL
-    AND c.id GLOB 'c:o:*'
-  UNION
-  SELECT DISTINCT c.id
-  FROM raw_contracts e
-  JOIN contracts c ON c.contract_number IS NULL
-  WHERE e.source LIKE 'eop:%'
-    AND e.contract_number IS NULL
     AND c.id GLOB 'c:o:*'
 );
 
