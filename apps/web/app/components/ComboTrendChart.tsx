@@ -97,6 +97,7 @@ export function ComboTrendChart({
             width={bw.toFixed(1)}
             height={(BOT - yC(p.contracts)).toFixed(1)}
             onMouseEnter={interactive ? () => setHover(i) : undefined}
+            onFocus={interactive ? () => setHover(i) : undefined}
           />
         ))}
         <path className="combo-line" d={line} vectorEffect="non-scaling-stroke" />
