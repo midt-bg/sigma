@@ -70,7 +70,7 @@ function fakeDb(totals: typeof totalsRow | null): D1Database {
         },
         async all<T>() {
           if (sql.includes('company_totals')) return { results: [companyRow] as T[] };
-          if (sql.includes('type_group = \'община\'')) return { results: [authorityRow] as T[] };
+          if (sql.includes("type_group = 'община'")) return { results: [authorityRow] as T[] };
           if (sql.includes('type_group IN')) return { results: [authorityRow] as T[] };
           // listSingleOfferContracts (two calls: 'recent' by date, 'value' by amount)
           if (sql.includes('bids_received = 1') && sql.includes('JOIN')) {
@@ -81,7 +81,8 @@ function fakeDb(totals: typeof totalsRow | null): D1Database {
         async first<T>() {
           if (sql.includes('home_totals')) return (totals as T) ?? (null as T);
           // single-offer aggregate
-          if (sql.includes('COALESCE(SUM(amount_eur)')) return { value_eur: 50000, contracts: 1 } as T;
+          if (sql.includes('COALESCE(SUM(amount_eur)'))
+            return { value_eur: 50000, contracts: 1 } as T;
           return null as T;
         },
       };

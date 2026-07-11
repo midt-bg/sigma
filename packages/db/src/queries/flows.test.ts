@@ -20,7 +20,7 @@ const usesFlowPairsRollup = (sql: string) => sql.includes('FROM flow_pairs');
 const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
 const filtersByYear = (sql: string) => sql.includes('substr(c.signed_at, 1, 4) = ?');
 
-function fakeDb(rows: typeof pairRow[] = [pairRow]): D1Database {
+function fakeDb(rows: (typeof pairRow)[] = [pairRow]): D1Database {
   return {
     prepare(sql: string) {
       return {

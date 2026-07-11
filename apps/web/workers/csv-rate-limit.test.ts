@@ -59,6 +59,21 @@ describe('rateLimitCsvExport', () => {
     expect(limit).toHaveBeenCalledWith({ key: '203.0.113.21' });
   });
 
+  it('limits the single-fetch /contracts.csv.data twin the same as /contracts.csv (#184)', async () => {
+    const { limiter, limit } = rateLimiter(false);
+
+    const response = await rateLimitCsvExport(
+      new Request('http://local/contracts.csv.data', {
+        headers: { 'CF-Connecting-IP': '203.0.113.22' },
+      }),
+      { CSV_RATE_LIMITER: limiter },
+      false,
+    );
+
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.22' });
+    expect(response?.status).toBe(429);
+  });
+
   it('returns a hardened 429 when the limiter rejects the key', async () => {
     const { limiter, limit } = rateLimiter(false);
 

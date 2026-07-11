@@ -84,7 +84,6 @@ Analyze staged git changes and commit them, splitting into multiple focused comm
    - Output **lowercase** types and scopes for consistency with established convention.
 
    Allowed types (conventional / Angular / commitlint set):
-
    - `feat` — new feature (SemVer **MINOR**)
    - `fix` — bug fix (SemVer **PATCH**)
    - `build` — build system or external dependencies
@@ -101,7 +100,7 @@ Analyze staged git changes and commit them, splitting into multiple focused comm
    Style guidelines (on top of the spec):
    - Header target ≤ 72 characters; hard upper limit 100.
    - Description: imperative mood, lowercase first word, no trailing period.
-   - Body: explain *why*, not *what*. Wrap around 72 characters. Bullet points are acceptable.
+   - Body: explain _why_, not _what_. Wrap around 72 characters. Bullet points are acceptable.
    - Do NOT add `Co-Authored-By` or any AI-attribution trailers.
 
 7. **Verify results**:

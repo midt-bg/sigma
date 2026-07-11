@@ -1,0 +1,615 @@
+/* Route-specific styles ported from per-page <style> blocks.
+   Long-term destination: co-located with each route file. */
+
+/* ── Contracts list ───────────────────────────────────────────────────────── */
+
+/* Two-line cell for parties + meta */
+.contract-row td.parties {
+  line-height: 1.45;
+}
+.contract-row td.parties .from {
+  display: block;
+  font-weight: 700;
+}
+.contract-row td.parties .to {
+  display: block;
+  color: var(--text);
+  font-weight: 700;
+  margin-top: 2px;
+}
+.contract-row td.parties .who {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 13px;
+}
+.contract-row td.subj {
+  line-height: 1.4;
+}
+.contract-row td.subj .title {
+  font-weight: 700;
+}
+.contract-row td.subj .unp {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+.contract-row td.subj .eu {
+  display: inline-block;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font: 700 11px/1.5 var(--font-mono);
+  padding: 0 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.contract-row td.meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.contract-row td.meta .pr {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* ── Contract page ───────────────────────────────────────────────────────── */
+
+/* Risk Indicators */
+.risk-indicators {
+  margin: var(--s-6) 0;
+  padding: var(--s-5);
+  background: var(--warning-bg);
+  border-left: 3px solid var(--warning);
+}
+.risk-title {
+  margin: 0 0 var(--s-3);
+  font: 500 13px/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--warning-strong);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.risk-title svg {
+  flex: none;
+}
+.risk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: 400 14px/1.5 var(--font-sans);
+  color: var(--ink);
+}
+.risk-list li {
+  margin: 0 0 var(--s-2);
+  padding-left: 20px;
+  position: relative;
+}
+.risk-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--warning);
+  font-weight: bold;
+}
+.risk-list li:last-child {
+  margin-bottom: 0;
+}
+
+/* Value-history strip + current lot row */
+.value-history {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  margin: var(--s-7) 0;
+}
+.value-history .vh {
+  padding: var(--s-6) var(--s-6) var(--s-6) 0;
+  border-right: 1px solid var(--rule);
+  min-width: 0;
+}
+.value-history .vh + .vh {
+  padding-left: var(--s-6);
+}
+.value-history .vh:last-child {
+  border-right: 0;
+  padding-right: 0;
+}
+.value-history .vh .step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font: 10px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 0 0 var(--s-3);
+}
+.value-history .vh .num {
+  display: block;
+  font: 400 32px/1 var(--font-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.value-history .vh .sub {
+  display: block;
+  margin-top: var(--s-2);
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.value-history .vh .delta {
+  display: block;
+  margin-top: var(--s-2);
+  font: 11px/1.3 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.value-history .vh.now .step {
+  color: var(--accent);
+}
+.value-history .vh.now .step::before {
+  content: '';
+  width: 18px;
+  height: 1px;
+  background: var(--accent);
+}
+.lot-table tbody tr.current td {
+  background: var(--paper-warm);
+}
+/* Left accent bar marks the current lot — drawn with an inset box-shadow (not a border) so it sits
+   inside the cell and isn't collapsed away by the table's border-collapse. Pad the first cell by the
+   bar width so the lot label clears it. */
+.lot-table tbody tr.current td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: calc(var(--s-3) + 3px);
+}
+@media (max-width: 760px) {
+  .value-history {
+    grid-template-columns: 1fr;
+  }
+  .value-history .vh {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: var(--s-5) 0;
+  }
+  .value-history .vh + .vh {
+    padding-left: 0;
+  }
+  .value-history .vh:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .value-history .vh:first-child {
+    padding-top: 0;
+  }
+}
+
+/* ── Search results ───────────────────────────────────────────────────────── */
+
+/* Grouped hit cards */
+.results-group {
+  margin-top: var(--s-6);
+}
+.results-group .head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: var(--s-2);
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: var(--s-3);
+}
+.results-group .head h2 {
+  margin: 0;
+}
+.results-group .head .count {
+  color: var(--ink-mid);
+  font-size: 14px;
+}
+.result {
+  display: grid;
+  grid-template-columns: 96px 1fr 180px;
+  gap: var(--s-4);
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  align-items: start;
+  text-decoration: none;
+  color: inherit;
+}
+.result:hover {
+  background: var(--paper-warm);
+}
+.result .kind {
+  font: 700 11px/1.4 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mid);
+  padding-top: 2px;
+}
+.result .name {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 4px;
+}
+.result .name-parts {
+  display: grid;
+  gap: 2px;
+}
+.result .meta {
+  font-size: 13px;
+  color: var(--ink-mid);
+  line-height: 1.5;
+}
+.result mark {
+  background: oklch(90% 0.11 95);
+  color: var(--ink);
+  padding: 0 1px;
+  font-style: normal;
+}
+.result .amt {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.result .amt .num {
+  font-weight: 700;
+  font-size: 15px;
+  display: block;
+}
+.result .amt .lab {
+  font-size: 12px;
+  color: var(--ink-mid);
+  margin-top: 2px;
+}
+.results-group .footer {
+  padding: var(--s-3) 0;
+  font-size: 14px;
+}
+@media (max-width: 720px) {
+  .result {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .result .amt {
+    text-align: left;
+  }
+}
+
+/* ── Methodology page ────────────────────────────────────────────────────── */
+
+.doc-version {
+  margin: var(--s-4) 0 0;
+  font: 12px/1.4 var(--font-mono);
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+.toc-title {
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+.toc {
+  position: sticky;
+  top: var(--s-5);
+  align-self: start;
+  border-top: 4px solid var(--ink);
+  padding-top: var(--s-3);
+  font-size: 14px;
+}
+.toc h4 {
+  margin: 0 0 var(--s-2);
+}
+.toc ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.toc ol li {
+  margin: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  display: flex;
+  gap: 10px;
+  line-height: 1.35;
+}
+.toc ol li:last-child {
+  border-bottom: 0;
+}
+.toc ol li .n {
+  color: var(--ink-soft);
+  width: 22px;
+  flex: none;
+}
+.toc ol li a {
+  text-decoration: none;
+}
+.toc ol li a:hover {
+  text-decoration: underline;
+}
+.glossary {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 0;
+  margin: 0 0 var(--s-2);
+}
+.glossary > dt {
+  padding: var(--s-4) var(--s-5) var(--s-4) 0;
+  border-top: 1px solid var(--rule);
+  font-weight: 700;
+  font-size: 17px;
+}
+.glossary > dd {
+  padding: var(--s-4) 0;
+  border-top: 1px solid var(--rule);
+  margin: 0;
+  color: var(--ink);
+}
+.glossary > dd .src {
+  display: block;
+  color: var(--ink-mid);
+  font-size: 13px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+.glossary > dd p {
+  margin: 0 0 var(--s-2);
+}
+.glossary > dd p:last-child {
+  margin-bottom: 0;
+}
+.gap-table th,
+.gap-table td {
+  vertical-align: top;
+}
+.gap-table .mono {
+  white-space: nowrap;
+}
+.gap-table tr.has td {
+  background: oklch(98% 0.02 150);
+}
+.gap-table tr.gap td {
+  background: oklch(97% 0.05 95);
+}
+.gap-table tr.gap td:first-child {
+  box-shadow: inset 4px 0 0 oklch(70% 0.12 90);
+}
+.principles {
+  counter-reset: pr;
+  list-style: none;
+  padding: 0;
+  margin: var(--s-2) 0 0;
+}
+.principles li {
+  counter-increment: pr;
+  padding: 14px 0 14px 56px;
+  border-top: 1px solid var(--rule-soft);
+  position: relative;
+}
+.principles li::before {
+  content: counter(pr, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 14px;
+  font: 700 13px/1 var(--font-mono);
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+.principles li strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.principles li:last-child {
+  border-bottom: 1px solid var(--rule-soft);
+}
+@media (max-width: 760px) {
+  .glossary {
+    grid-template-columns: 1fr;
+  }
+  .glossary > dt {
+    padding: 14px 0 4px;
+    border-top: 1px solid var(--rule);
+  }
+  .glossary > dd {
+    padding: 0 0 14px;
+    border-top: 0;
+  }
+  .toc {
+    position: static;
+    border-top-width: 2px;
+  }
+  .gap-table .mono {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .principles li {
+    padding-left: 44px;
+  }
+}
+
+/* ── Static layout helpers ───────────────────────────────────────────────────
+   Small, value-stable rules extracted from former inline `style={…}` attributes
+   so the CSP `style-src` no longer needs `'unsafe-inline'` for these. Only the
+   genuinely dynamic chart-bar widths/colours (StackedBar, RankedBars, ShareBar,
+   SingleOfferPortion) remain inline — those carry per-row computed values and
+   cannot be enumerated as classes. See apps/web/app/lib/security.ts. */
+
+/* Coverage note under the home totals: centred, measure-constrained caption. */
+.coverage-note {
+  margin: var(--s-2) auto 0;
+  max-width: var(--measure);
+}
+
+/* Dev-only error stack in the route ErrorBoundary. */
+.error-stack {
+  overflow-x: auto;
+  margin-top: var(--s-5);
+}
+
+/* Search-tips list inside a Callout. */
+.tips-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+/* Empty-state quote (e.g. company page with no narrative). */
+.empty-quote {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border-left: 3px solid var(--rule, #ccc);
+  color: var(--ink-soft, #555);
+  white-space: pre-wrap;
+}
+
+/* Contract „кой с кого" figures: a prominent amount line + tight caption rows. */
+.figure-amount {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 6px 0 2px;
+}
+.figure-sub {
+  margin: 0 0 8px;
+}
+.figure-note {
+  margin: 8px 0 0;
+}
+
+/* Relationship graph (/network): static styling only; node fill and edge width are computed inline. */
+.network-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.network-svg .edge {
+  stroke: #d8d6cf;
+}
+.network-svg .node {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.network-svg .node-label {
+  fill: var(--ink, #111);
+  font: 11px var(--font-mono, monospace);
+}
+.net-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font: 11px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.net-legend .key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+}
+.net-legend .key.center,
+.net-legend .key.authority {
+  border-radius: 50%;
+}
+.net-legend .key.center {
+  background: var(--accent);
+}
+.net-legend .key.authority {
+  background: var(--ink);
+}
+.net-legend .key.company {
+  border-radius: 2px;
+  background: var(--ink-mid);
+}
+@media (max-width: 760px) {
+  .flow-scroll .network-svg {
+    min-width: 700px;
+  }
+}
+
+/* Spending trend (/trends): static styling; the area and line path data are computed inline. */
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.trend-svg .grid {
+  stroke: #eceae4;
+  stroke-width: 1;
+}
+.trend-svg .area {
+  fill: color-mix(in oklch, var(--ink) 16%, transparent);
+}
+.trend-svg .line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.trend-svg .label {
+  font: 11px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
+.trend-svg .line-partial {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.trend-svg .dot-partial {
+  fill: #fff;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.trend-svg .label-partial {
+  font: 10px var(--font-mono, monospace);
+  fill: var(--ink-soft, #555);
+}
+
+/* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+.map-wrap svg {
+  width: 100%;
+  height: auto;
+  max-width: 760px;
+  display: block;
+  margin: 0 auto;
+}
+.map-wrap path {
+  stroke: #f7f7f4;
+  stroke-width: 1;
+}
+.map-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 12px auto 0;
+  font: 11px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.map-legend .swatch {
+  width: 22px;
+  height: 12px;
+  border-radius: 2px;
+}

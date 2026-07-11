@@ -49,6 +49,19 @@ describe('rateLimitSearchRoute', () => {
     expect(response?.status).toBe(429);
   });
 
+  it('limits the single-fetch /search.data twin the same as /search (#184)', async () => {
+    const { limiter } = rateLimiter(false);
+
+    for (const path of ['/search.data?q=a', '/search/suggest.data?q=a']) {
+      const response = await rateLimitSearchRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.43' } }),
+        { SEARCH_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(response?.status, path).toBe(429);
+    }
+  });
+
   it('does not limit unrelated paths', async () => {
     const { limiter, limit } = rateLimiter(false);
 
