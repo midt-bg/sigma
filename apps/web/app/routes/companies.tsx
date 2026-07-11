@@ -182,6 +182,7 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
             <ListControls
               base={sp}
               activeSort={sort}
+              searchLabel="Търсене сред компаниите"
               sorts={[
                 { value: 'won', label: 'спечелено' },
                 { value: 'count', label: 'договори' },
