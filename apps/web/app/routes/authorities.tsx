@@ -147,6 +147,7 @@ export default function Authorities({ loaderData }: Route.ComponentProps) {
             <ListControls
               base={sp}
               activeSort={sort}
+              searchLabel="Търсене сред институциите"
               sorts={[
                 { value: 'spent', label: 'похарчено' },
                 { value: 'count', label: 'договори' },
