@@ -97,6 +97,9 @@ export function FilterRail({
       </label>
       <Form method="get" onChange={onChange}>
         <input type="hidden" name="sort" value={sort} />
+        {/* Preserve an active in-table search when filters change without JS (the JS path already
+            carries `q` through withParams). */}
+        {sp.get('q') && <input type="hidden" name="q" value={sp.get('q')!} />}
         {preservedScope.map(({ key, value }) => (
           <input type="hidden" name={key} value={value} key={`${key}-${value}`} />
         ))}
