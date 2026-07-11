@@ -125,10 +125,16 @@ export async function retrieveSchemaContext(
     returnMetadata: 'all',
     filter: { ns: 'schema' },
   });
-  return matches
-    .filter((m) => m.score >= minScore)
-    .map((m) => String(m.metadata?.text ?? ''))
-    .filter(Boolean);
+  return (
+    matches
+      // Keep only matches at/above the relevance floor. `?? 0` is defensive, not decorative: our typed
+      // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
+      // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
+      // buildSystemPrompt fall back to the full static dictionary, which is the safe outcome (review, ydimitrof).
+      .filter((m) => (m.score ?? 0) >= minScore)
+      .map((m) => String(m.metadata?.text ?? ''))
+      .filter(Boolean)
+  );
 }
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────

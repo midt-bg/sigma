@@ -106,6 +106,16 @@ describe('retrieveSchemaContext', () => {
     const index = fakeIndex([{ id: 'schema:table:x', score: 0.05, metadata: { text: 'x' } }]);
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
   });
+
+  it('drops a match that arrives with no score at all (defensive — safe full-dictionary fallback)', async () => {
+    const ai = fakeAI();
+    // Simulate an index backend that omits `score` on a match: it must read as below the floor (dropped),
+    // not injected as unranked context. Cast because our typed contract promises a numeric score.
+    const index = fakeIndex([
+      { id: 'schema:table:x', metadata: { text: 'x' } } as unknown as Match,
+    ]);
+    expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual([]);
+  });
 });
 
 describe('semanticSearch', () => {
