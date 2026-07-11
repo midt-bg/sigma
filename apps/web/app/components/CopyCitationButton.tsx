@@ -23,9 +23,12 @@ function copyWithExecCommand(text: string): boolean {
 export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timeoutRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (timeoutRef.current !== null) {
         window.clearTimeout(timeoutRef.current);
       }
@@ -44,11 +47,13 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
       navigator.clipboard
         .writeText(textToCopy)
         .then(() => {
+          if (!mountedRef.current) return;
           setStatus('copied');
           resetAfterDelay();
         })
         .catch((err) => {
           console.error('Failed to copy text:', err);
+          if (!mountedRef.current) return;
           setStatus(copyWithExecCommand(textToCopy) ? 'copied' : 'failed');
           resetAfterDelay();
         });
@@ -66,7 +71,9 @@ export function CopyCitationButton({ textToCopy }: { textToCopy: string }) {
       type="button"
       onClick={handleCopy}
       className={`copy-btn ${copied ? 'is-copied' : ''}`}
-      aria-label={failed ? 'Копирането не бе успешно' : 'Копирай данните като цитат'}
+      aria-label={
+        failed ? 'Копирането не бе успешно' : copied ? 'Копирано!' : 'Копирай данните като цитат'
+      }
       title={failed ? 'Копирането не бе успешно — опитайте отново' : 'Копирай основните факти'}
     >
       {copied ? (

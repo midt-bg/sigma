@@ -3,10 +3,15 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { CopyCitationButton } from './CopyCitationButton';
 
+const originalClipboard = navigator.clipboard;
+const originalExecCommand = document.execCommand;
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  Object.assign(navigator, { clipboard: originalClipboard });
+  Object.assign(document, { execCommand: originalExecCommand });
 });
 
 describe('CopyCitationButton', () => {
@@ -77,5 +82,27 @@ describe('CopyCitationButton', () => {
     unmount();
 
     expect(clearTimeoutSpy).toHaveBeenCalled();
+  });
+
+  it('does not update state after unmount when the clipboard write resolves late', async () => {
+    let resolveWrite: () => void = () => {};
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    Object.assign(navigator, { clipboard: { writeText } });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { unmount } = render(<CopyCitationButton textToCopy="hello" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+
+    unmount();
+    resolveWrite();
+    await Promise.resolve();
+
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
