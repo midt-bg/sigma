@@ -8,6 +8,7 @@ import {
   leaderboardRankOffset,
   MAX_MULTI_VALUES,
   pageNav,
+  searchHref,
 } from './filters';
 
 const sp = (q: string) => new URLSearchParams(q);
@@ -111,6 +112,48 @@ describe('getMulti', () => {
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
     });
+  });
+});
+
+describe('searchHref', () => {
+  it('sets q and resets cursor/page while preserving filters and sort', () => {
+    const sp = new URLSearchParams('sort=name&year=2024&cursor=abc&page=3&sector=45');
+    const out = new URLSearchParams(searchHref(sp, 'mostove'));
+
+    expect(out.get('q')).toBe('mostove');
+    expect(out.get('sort')).toBe('name');
+    expect(out.getAll('year')).toEqual(['2024']);
+    expect(out.get('sector')).toBe('45');
+    expect(out.has('cursor')).toBe(false);
+    expect(out.has('page')).toBe(false);
+  });
+
+  it('drops q when the query is empty or whitespace-only', () => {
+    const sp = new URLSearchParams('q=old&sort=won');
+    expect(new URLSearchParams(searchHref(sp, '')).has('q')).toBe(false);
+    expect(new URLSearchParams(searchHref(sp, '   ')).has('q')).toBe(false);
+  });
+
+  it('trims surrounding whitespace from q', () => {
+    expect(new URLSearchParams(searchHref(new URLSearchParams(), '  foo  ')).get('q')).toBe('foo');
+  });
+
+  it('emits q first in canonical order', () => {
+    expect(searchHref(new URLSearchParams('sort=name'), 'x')).toBe('?q=x&sort=name');
+  });
+
+  it('preserves repeated multi-value params', () => {
+    const sp = new URLSearchParams();
+    sp.append('year', '2024');
+    sp.append('year', '2023');
+    sp.set('sector', '45');
+
+    expect(new URLSearchParams(searchHref(sp, 'q')).getAll('year')).toEqual(['2024', '2023']);
+  });
+
+  it('preserves unknown keys not in PARAM_ORDER (e.g. contracts bids)', () => {
+    const sp = new URLSearchParams('bids=1&sort=value-desc');
+    expect(new URLSearchParams(searchHref(sp, 'q')).get('bids')).toBe('1');
   });
 });
 

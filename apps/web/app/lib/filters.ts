@@ -232,6 +232,11 @@ export function sortHref(base: URLSearchParams, sort: string): string {
   return withParams(base, { sort, cursor: null, page: null });
 }
 
+/** A href with the search `q` set/cleared (and cursor/page reset — a new search starts at page 1). */
+export function searchHref(base: URLSearchParams, q: string): string {
+  return withParams(base, { q: q.trim() || null, cursor: null, page: null });
+}
+
 export interface PageNav {
   page: number; // 1-based, for display
   pageCount: number;

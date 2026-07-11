@@ -4,17 +4,14 @@
 // because the tokenizer splits them the same way on both sides.
 
 import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma/api-contract';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { cleanName, entityName, parseConsortiumMembers, searchTokens } from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
 export type SearchKind = 'official' | 'authority' | 'company' | 'contract';
 
-export const MAX_QUERY_CHARS = 160;
-export const MAX_QUERY_TOKENS = 8;
-// Single-character `*`-prefix terms (e.g. „и*") match a huge slice of the FTS index, turning one
-// request into a full-index COUNT + rank scan. Require ≥2 chars per term so a token actually narrows
-// the postings list; shorter tokens are dropped, and a query with nothing left reads as empty.
-export const MIN_QUERY_TOKEN_CHARS = 2;
+// The tokenizer and its caps live in @sigma/shared so the FTS query builder and the search UI agree
+// on what counts as searchable. Re-exported here for existing @sigma/db consumers.
+export { MAX_QUERY_CHARS, MAX_QUERY_TOKENS, MIN_QUERY_TOKEN_CHARS } from '@sigma/shared';
 
 const GROUPS: {
   kind: SearchKind;
@@ -90,16 +87,9 @@ function deHomoglyph(q: string): string {
  *  term like „ALSTOM" passes through untouched, otherwise its Latin a/o/t/m would be swapped to
  *  Cyrillic and the resulting mixed-script token would match nothing in the index. */
 export function searchMatchQuery(q: string): string | null {
-  const terms = q
-    .slice(0, MAX_QUERY_CHARS)
-    .toLowerCase()
-    .match(/[\p{L}\p{N}]+/gu)
-    ?.filter((t) => t.length >= MIN_QUERY_TOKEN_CHARS);
-  if (!terms || terms.length === 0) return null;
-  return terms
-    .slice(0, MAX_QUERY_TOKENS)
-    .map((t) => `${CYRILLIC.test(t) ? deHomoglyph(t) : t}*`)
-    .join(' ');
+  const terms = searchTokens(q);
+  if (terms.length === 0) return null;
+  return terms.map((t) => `${CYRILLIC.test(t) ? deHomoglyph(t) : t}*`).join(' ');
 }
 
 export function searchMoreHref(kind: SearchKind, query: string): string {
