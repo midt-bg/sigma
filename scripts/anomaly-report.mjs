@@ -248,7 +248,7 @@ export function formatAnomalyReport(report) {
     }
   }
   lines.push(
-    `  • multi-ЕИК authorities excluded (#196): ${report.multiEikExcluded.authorities} lists / ${report.multiEikExcluded.rows} raw rows`,
+    `  • multi-ЕИК lists excluded (#196): ${report.multiEikExcluded.authorities} distinct lists / ${report.multiEikExcluded.rows} raw rows`,
   );
   return lines.join('\n');
 }

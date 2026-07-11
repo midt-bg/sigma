@@ -230,7 +230,7 @@ describe('multiEikExcluded (#196 observability)', () => {
     const report = buildAnomalyReport(runner);
     expect(report.multiEikExcluded).toEqual({ authorities: 405, rows: 812 });
     expect(formatAnomalyReport(report)).toContain(
-      'multi-ЕИК authorities excluded (#196): 405 lists / 812 raw rows',
+      'multi-ЕИК lists excluded (#196): 405 distinct lists / 812 raw rows',
     );
   });
 });

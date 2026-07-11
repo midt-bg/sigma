@@ -96,6 +96,34 @@ END
 WHERE type_group IS NULL;
 
 -- ── 2) Bidders referenced by OCDS staging (new ones only) — same identity rule as normalize step 4 ──
+-- Scratch table of this batch's bidder ids, so the ownership_kind UPDATE below stays SCOPED per
+-- the file header — without it, every refresh re-evaluates ownership_kind for every bidder ever
+-- seen, not just the ones this window touches.
+DROP TABLE IF EXISTS refresh_batch_bidders;
+CREATE TABLE refresh_batch_bidders (bidder_key TEXT PRIMARY KEY);
+INSERT OR IGNORE INTO refresh_batch_bidders (bidder_key)
+SELECT bidder_key
+FROM (
+  SELECT
+    CASE
+      WHEN eik_valid = 1 THEN 'eik:' || eik_clean
+      WHEN contractor_name IS NOT NULL AND TRIM(contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(contractor_name, '  ', ' '), '  ', ' ')))
+      ELSE NULL
+    END AS bidder_key
+  FROM (
+    SELECT
+      contractor_name,
+      eik_clean,
+      -- @include eik-valid.fragment.sql
+    FROM (
+      SELECT contractor_name,
+        TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
+      FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+    )
+  )
+)
+WHERE bidder_key IS NOT NULL;
+
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, is_consortium, kind)
 SELECT
   bidder_key,
@@ -171,7 +199,8 @@ SET ownership_kind = (
       OR (s.eik = '831641791' AND bidders.eik_normalized GLOB '8316417910124*')
     )
   LIMIT 1
-);
+)
+WHERE bidders.id IN (SELECT bidder_key FROM refresh_batch_bidders);
 
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
 SELECT b.id

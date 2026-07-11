@@ -22,6 +22,9 @@ export function expandTemplate(templateSql, { baseDir = scriptsDir } = {}) {
       continue;
     }
     const [, indent, fragmentName] = match;
+    if (fragmentName.includes('/') || fragmentName.includes('\\') || fragmentName.includes('..')) {
+      throw new Error(`invalid fragment name in @include: ${fragmentName}`);
+    }
     const fragment = readFileSync(resolve(baseDir, 'lib', fragmentName), 'utf8');
     const fragmentLines = fragment.replace(/\n$/, '').split('\n');
     for (const fragmentLine of fragmentLines) {

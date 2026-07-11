@@ -780,6 +780,86 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  // Review on #203 (refresh-slice.sql:760): the contracts-batch `bidder_id` is a 2-level
+  // correlated scalar subquery `(SELECT CASE ... FROM (SELECT ... FROM (SELECT ...)))`, distinct
+  // from the GROUP BY aggregate that upserts `bidders` rows above. Exercise that scalar-subquery
+  // path directly (not just the INSERT-path bidder_key computation) and confirm it produces the
+  // same 'eik:'-prefixed checksum-key contract. Also covers the state_owned_eik `ownership_kind`
+  // scoping fix (refresh-slice.template.sql:161): only bidders touched by this refresh window may
+  // have ownership_kind (re)written — a pre-existing bidder outside the window must be untouched.
+  it('resolves bidder_id via the correlated scalar subquery and scopes ownership_kind to the touched batch', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind, ownership_kind)
+           VALUES ('eik:121396123', 'Bulgarian Posts EAD', '121396123', '121396123', 1, 'company', 'municipal');
+
+         CREATE TABLE IF NOT EXISTS state_owned_eik (
+           eik TEXT PRIMARY KEY,
+           ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
+           canonical_name TEXT NOT NULL
+         );
+         INSERT INTO state_owned_eik (eik, ownership_kind, canonical_name) VALUES
+           ('831641791', 'state', 'State Data Services AD'),
+           ('121396123', 'state', 'Bulgarian Posts EAD');
+
+         INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            cpv_code, cpv_description, contract_kind, estimated_value, currency, legal_basis,
+            award_criteria, authority_name, authority_eik, authority_type, main_activity, deadline,
+            notice_type, lot_id, lot_name, num_lots, eu_funded, published_at)
+         VALUES
+           ('eop:tenders:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-BK', 'TENDER-BK',
+            'open', 'BK tender', '45000000', 'Construction', 'works', 2000, 'BGN', 'basis',
+            'lowest', 'Authority BK', '923456780', 'public', 'activity', '2026-06-10', 'notice',
+            NULL, NULL, 1, 0, '2026-06-01');
+
+         INSERT INTO raw_contracts
+           (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+            published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+            cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+            award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+            lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+            awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+            eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+         VALUES
+           ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-07T00:00:00Z', 0, 'DOC-BK-1',
+            '2026-06-01', 'UNP-BK', 'TENDER-BK', 'open', 'BK tender', '45000000',
+            'Construction', 'works', 2000, 'BGN', 'basis', 'lowest', 'Authority BK', '923456780',
+            'public', 'activity', 'notice', '1', 'CONTRACT-BK-1', '2026-06-02', 1000, 'BGN',
+            'BK contract', 0, '831641791', 'State Data Services AD', 'BG', 'large',
+            0, 3, 1, 0, 0, 30);`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      const contract = sqliteJson<{ bidder_id: string | null }>(
+        dbPath,
+        "SELECT bidder_id FROM contracts WHERE contract_number = 'CONTRACT-BK-1'",
+      )[0];
+      expect(contract?.bidder_id).toBe('eik:831641791');
+
+      const touched = sqliteJson<{ ownership_kind: string | null }>(
+        dbPath,
+        "SELECT ownership_kind FROM bidders WHERE id = 'eik:831641791'",
+      )[0];
+      expect(touched?.ownership_kind).toBe('state');
+
+      const untouched = sqliteJson<{ ownership_kind: string | null }>(
+        dbPath,
+        "SELECT ownership_kind FROM bidders WHERE id = 'eik:121396123'",
+      )[0];
+      expect(untouched?.ownership_kind).toBe('municipal');
+
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps contract ids stable across post-amendment and pre-amendment staging', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const fullDb = resolve(dir, 'full.sqlite');
@@ -1190,4 +1270,17 @@ describe('generated SQL stays in sync with its templates (single source of truth
     const actual = readFileSync(outputPath, 'utf8');
     expect(actual).toBe(expected);
   });
+
+  // Review on #203 (scripts/generate-sql.mjs:25): the `@include` fragment name comes straight
+  // from a `\S+` regex match and was passed unguarded into `resolve(baseDir, 'lib', fragmentName)`
+  // — a template containing `-- @include ../../secret.sql` (or a `\`-rooted absolute path) could
+  // read any file reachable from the fragments directory.
+  it.each(['../secret.sql', '..\\secret.sql', '/etc/passwd', 'sub/dir.sql'])(
+    'rejects a traversal fragment name: %s',
+    (fragmentName) => {
+      expect(() =>
+        expandTemplate(`-- @include ${fragmentName}\n`, { baseDir: resolve(root, 'scripts') }),
+      ).toThrow(/invalid fragment name/);
+    },
+  );
 });
