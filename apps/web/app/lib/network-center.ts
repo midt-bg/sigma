@@ -1,4 +1,9 @@
-import { authorityIdFromSlug, bidderIdFromSlug, type NetworkParams } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  bidderIdFromSlug,
+  isValidEikSlug,
+  type NetworkParams,
+} from '@sigma/db';
 import type { NetworkData, NetworkEdge } from '@sigma/api-contract';
 
 // The /network `?center` grammar — `a:<authority-slug>` | `c:<company-slug>` — lives here once so the
@@ -23,7 +28,9 @@ export function parseCenter(token: string | null): NetworkParams | null {
     // other malformed token, matching the `?center` grammar's documented invariant.
     return null;
   }
-  if (kind === 'a' && slug) return { kind: 'authority', id: authorityIdFromSlug(slug) };
+  if (kind === 'a' && slug) {
+    return isValidEikSlug(slug) ? { kind: 'authority', id: authorityIdFromSlug(slug) } : null;
+  }
   if (kind === 'c' && slug) {
     const id = bidderIdFromSlug(slug);
     return id ? { kind: 'company', id } : null;

@@ -63,10 +63,14 @@ export default function Network({ loaderData }: Route.ComponentProps) {
   const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
   const centerValue = data.center ? centerToken(data.center) : '';
+  // `total === null` means the COUNT itself failed ("unknown"), same convention as
+  // NetworkGraph's counterpartyTotal — never fabricate a page count off a failed COUNT. pageNav
+  // handles a null total by gating Next on the cursor alone instead of a fabricated page bound.
+  const cpTotal = counterparties ? counterparties.total : null;
   const cpNav = counterparties
     ? pageNav({
         base: sp,
-        total: counterparties.total,
+        total: cpTotal,
         pageSize: PAGE_SIZE.network,
         nextCursor: counterparties.nextCursor,
         prevCursor: counterparties.prevCursor,
@@ -129,16 +133,18 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               <NetworkGraph data={data} />
             </Section>
 
-            {counterparties && counterparties.total > 0 && (
+            {counterparties && counterparties.rows.length > 0 && (
               <Section
                 id="links"
-                title={`Всички връзки (${count(counterparties.total)})`}
+                title={cpTotal === null ? 'Всички връзки' : `Всички връзки (${count(cpTotal)})`}
                 hint={
-                  counterparties.total > countDirectEdges(data.edges, data.center?.id)
-                    ? `Графиката показва само най-големите по стойност; тук е пълният списък с ${count(
-                        counterparties.total,
-                      )} връзки, по страници.`
-                    : 'Пълният списък с връзките на избраната същност.'
+                  cpTotal === null
+                    ? 'Пълният списък с връзките на избраната същност (общият им брой не е наличен в момента).'
+                    : cpTotal > countDirectEdges(data.edges, data.center?.id)
+                      ? `Графиката показва само най-големите по стойност; тук е пълният списък с ${count(
+                          cpTotal,
+                        )} връзки, по страници.`
+                      : 'Пълният списък с връзките на избраната същност.'
                 }
               >
                 <DataTable
@@ -149,9 +155,12 @@ export default function Network({ loaderData }: Route.ComponentProps) {
                   getKey={(r) => `${r.fromHref}-${r.toHref}`}
                   caption="Всички връзки"
                 />
-                {cpNav && counterparties.total > PAGE_SIZE.network && (
-                  <Pagination nav={cpNav} pageSize={PAGE_SIZE.network} unit="връзки" />
-                )}
+                {cpNav &&
+                  (cpNav.pageCount === null
+                    ? Boolean(counterparties.nextCursor || counterparties.prevCursor)
+                    : cpNav.pageCount > 1) && (
+                    <Pagination nav={cpNav} pageSize={PAGE_SIZE.network} unit="връзки" />
+                  )}
               </Section>
             )}
           </>

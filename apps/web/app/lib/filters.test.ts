@@ -209,7 +209,7 @@ describe('pageNav', () => {
       prevCursor: 'before:y',
     });
     expect(nav.page).toBe(700);
-    expect(nav.page).toBeLessThanOrEqual(nav.pageCount);
+    expect(nav.page).toBeLessThanOrEqual(nav.pageCount!);
     expect(nav.nextHref).toBeNull();
   });
 
@@ -227,7 +227,7 @@ describe('pageNav', () => {
         prevCursor: 'before:y',
       });
       expect(nav.page).toBe(1);
-      expect(nav.page).toBeLessThanOrEqual(nav.pageCount);
+      expect(nav.page).toBeLessThanOrEqual(nav.pageCount!);
     }
   });
 
@@ -295,5 +295,48 @@ describe('pageNav', () => {
       prevCursor: 'before:c',
     });
     expect(mid.nextHref).not.toBeNull();
+  });
+
+  // A failed COUNT(*) (network.tsx's getEntityCounterparties) passes total: null — "unknown", not a
+  // real 0. pageCount must stay null (never fabricated) and Next must gate on the cursor alone, since
+  // there is no real page bound to compare against (#144 review).
+  describe('with an unknown (null) total', () => {
+    it('reports pageCount as null and keeps Next enabled off the cursor alone', () => {
+      const nav = pageNav({
+        base: sp(''),
+        total: null,
+        pageSize: 25,
+        nextCursor: 'after:x',
+        prevCursor: null,
+      });
+      expect(nav.pageCount).toBeNull();
+      expect(nav.page).toBe(1);
+      expect(nav.nextHref).not.toBeNull();
+    });
+
+    it('disables Next once the cursor is exhausted, same as a known total', () => {
+      const nav = pageNav({
+        base: sp('cursor=after:z&page=5'),
+        total: null,
+        pageSize: 25,
+        nextCursor: null,
+        prevCursor: 'before:z',
+      });
+      expect(nav.pageCount).toBeNull();
+      expect(nav.nextHref).toBeNull();
+      expect(nav.prevHref).not.toBeNull();
+    });
+
+    it('does not clamp an oversized ?page (no upper bound to clamp to)', () => {
+      const nav = pageNav({
+        base: sp('cursor=after:x&page=99999'),
+        total: null,
+        pageSize: 25,
+        nextCursor: 'after:y',
+        prevCursor: 'before:y',
+      });
+      expect(nav.page).toBe(99999);
+      expect(nav.nextHref).not.toBeNull();
+    });
   });
 });

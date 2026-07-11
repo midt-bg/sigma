@@ -44,6 +44,15 @@ type SimLink = SimulationLinkDatum<SimNode> & {
   target: string | SimNode;
 };
 
+// `edges` isn't normalised by direction (centre→periphery) — the authority→company normalisation in
+// `networkRows` creates new node objects without touching edge direction, so an edge's `target` isn't
+// guaranteed to be the more-peripheral end. Pure so it's unit-testable without mounting the sim.
+export function linkHop(link: SimLink): number {
+  const source = link.source as SimNode;
+  const target = link.target as SimNode;
+  return Math.max(source.hop, target.hop);
+}
+
 interface Params {
   svgRef: RefObject<SVGSVGElement | null>;
   layerRef: RefObject<SVGGElement | null>;
@@ -143,7 +152,7 @@ export function useForceGraph({
         'link',
         forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
-          .distance((l) => cfg.linkDistance((l.target as SimNode).hop))
+          .distance((l) => cfg.linkDistance(linkHop(l)))
           .strength(cfg.linkStrength),
       )
       .force('charge', forceManyBody<SimNode>().strength(cfg.charge))

@@ -37,6 +37,15 @@ describe('parseCenter rejects malformed tokens (no silent mis-parse)', () => {
   it.each([null, '', 'x', 'a:', ':abc', 'z:abc', 'c:!!!', 'c:n@@@'])('returns null for %p', (t) => {
     expect(parseCenter(t)).toBeNull();
   });
+
+  // `a:` must validate the ЕИК shape the same way `c:` validates via bidderIdFromSlug — an invalid
+  // authority slug (wrong digit count, non-digits) must reject, not be accepted unconditionally.
+  it.each(['a:abc', 'a:123', 'a:00069508900', 'a:00069508900000'])(
+    'rejects a malformed authority slug %p (parity with c:)',
+    (t) => {
+      expect(parseCenter(t)).toBeNull();
+    },
+  );
 });
 
 describe('isAdoptableNetwork', () => {

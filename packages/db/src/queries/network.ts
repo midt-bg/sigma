@@ -320,7 +320,9 @@ export async function getEntityCounterparties(
       valueEur: r.won_eur,
       contracts: r.contracts,
     })),
-    total: totalRow?.n ?? 0,
+    // Preserve a COUNT failure as `null` ("unknown"), same as getEntityNetwork's counterpartyTotal —
+    // coalescing to 0 would be indistinguishable from a real zero and fabricate an empty relations count.
+    total: totalRow ? totalRow.n : null,
     nextCursor,
     prevCursor,
   };

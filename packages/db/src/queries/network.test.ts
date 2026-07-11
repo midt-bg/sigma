@@ -226,6 +226,23 @@ describe('getEntityCounterparties', () => {
     expect(page.total).toBe(7); // the passed value, not the fake's COUNT(*) sentinel (42)
   });
 
+  it('reports total as null (not 0) when COUNT(*) fails — consistent with getEntityNetwork', async () => {
+    const page = await getEntityCounterparties(fakeDbCountFails(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(page.total).toBeNull(); // must stay "unknown", never fabricated as a real zero
+  });
+
+  it('still runs its own COUNT(*) — and can report null — even when the caller passes total: null', async () => {
+    const page = await getEntityCounterparties(
+      fakeDbCountFails(),
+      { kind: 'authority', id: 'auth:C' },
+      { total: null },
+    );
+    expect(page.total).toBeNull();
+  });
+
   it('walks forward then backward through the keyset (before/reverse path)', async () => {
     const p = { kind: 'authority', id: 'auth:C' } as const;
     // page 1 (no cursor) → has a forward cursor

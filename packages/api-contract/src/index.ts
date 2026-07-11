@@ -445,7 +445,9 @@ export interface NetworkCounterparty {
 // are all reachable.
 export interface NetworkCounterpartyPage {
   rows: NetworkCounterparty[];
-  total: number;
+  // `null` means the COUNT itself failed/returned no row — kept as "unknown" for the same reason as
+  // NetworkData.counterpartyTotal above: never fabricate a small number (e.g. 0) on a COUNT failure.
+  total: number | null;
   nextCursor: string | null;
   prevCursor: string | null;
 }

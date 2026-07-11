@@ -96,7 +96,7 @@ export function labelPositions(
 
 export interface ForceConfig {
   charge: number; // many-body strength (negative = repulsion)
-  linkDistance: (hop: number) => number; // target edge length by the OUTER endpoint's hop
+  linkDistance: (hop: number) => number; // target edge length by the more-peripheral endpoint's hop
   linkStrength: number;
   collidePad: number; // extra px added to a node radius for collision
   radialStrength: number; // pull each node back toward its ring

@@ -234,7 +234,9 @@ export function sortHref(base: URLSearchParams, sort: string): string {
 
 export interface PageNav {
   page: number; // 1-based, for display
-  pageCount: number;
+  // `null` means the caller's total is unknown (a failed COUNT(*)) — never fabricate a page bound
+  // from it. Display must render this as "unknown" (see Pagination.tsx), not coerce it to a number.
+  pageCount: number | null;
   prevHref: string | null;
   nextHref: string | null;
 }
@@ -246,18 +248,22 @@ export function leaderboardRankOffset(page: number, pageSize: number): number {
 /** Compute Prev/Next hrefs + page display from keyset cursors and the URL's `page` marker. */
 export function pageNav(opts: {
   base: URLSearchParams;
-  total: number;
+  total: number | null;
   pageSize: number;
   nextCursor: string | null;
   prevCursor: string | null;
 }): PageNav {
   const { base, total, pageSize, nextCursor, prevCursor } = opts;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const pageCount = total === null ? null : Math.max(1, Math.ceil(total / pageSize));
   // ?page is a display/rank marker; real data is cursor-driven. Without a cursor the rows are the
-  // first page, so force page 1. Otherwise clamp to the valid range to avoid impossible "N от M".
+  // first page, so force page 1. Otherwise clamp to the valid range to avoid impossible "N от M" —
+  // an unknown pageCount has no upper bound to clamp to, so only the lower bound applies.
+  const rawPage = Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1);
   const page = !base.get('cursor')
     ? 1
-    : Math.min(Math.max(1, Math.floor(Number(base.get('page') ?? '1')) || 1), pageCount);
+    : pageCount === null
+      ? rawPage
+      : Math.min(rawPage, pageCount);
   return {
     page,
     pageCount,
@@ -265,8 +271,10 @@ export function pageNav(opts: {
       page > 1 && prevCursor ? withParams(base, { cursor: prevCursor, page: page - 1 }) : null,
     // Gate Next on both the cursor and the display bound so it disables on the shown last page and
     // the "N от M" counter + "#" rank can't freeze at pageCount while the cursor walks past it (#87).
+    // When pageCount is unknown (null), gate on the cursor alone — there is no fabricated bound to
+    // compare against.
     nextHref:
-      nextCursor && page < pageCount
+      nextCursor && (pageCount === null || page < pageCount)
         ? withParams(base, { cursor: nextCursor, page: page + 1 })
         : null,
   };
