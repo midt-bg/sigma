@@ -1451,6 +1451,12 @@ tbody td,
   transform: translateY(0);
 }
 
+/* Esc dismissal overrides hover/focus-within/is-open until the triggering hover or focus clears */
+.metric-info.is-dismissed .metric-info-pop {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 .metric-info-title {
   font:
     600 9.5px/1 'IBM Plex Mono',

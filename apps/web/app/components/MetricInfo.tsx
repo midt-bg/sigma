@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { clampPopoverShift } from './metric-info-clamp';
 
 // useLayoutEffect warns "does nothing on the server" under SSR; fall back to useEffect there since
 // there is no layout to read/flush before paint on the server anyway.
@@ -34,6 +35,16 @@ export function MetricInfo({
   // Keyboard focus (no click) also reveals the popover via CSS `:focus-within`; track it so
   // `aria-expanded` matches what's actually visible, not just the click-toggled `open` state.
   const [focused, setFocused] = useState(false);
+  // Mouse hover also reveals the popover via CSS `:hover` — track it for the same reason, and so
+  // Esc can dismiss a hover-only-opened popover (ARIA tooltip pattern: Esc closes it regardless
+  // of which trigger revealed it).
+  const [hovered, setHovered] = useState(false);
+  // Force-hides the popover (via the `is-dismissed` CSS override) after Esc, even while the mouse
+  // is still hovering or the trigger still has focus. Clears once the trigger state that caused it
+  // to show goes away, so the popover can reopen normally afterward.
+  const [dismissed, setDismissed] = useState(false);
+  const wouldBeVisible = open || focused || hovered;
+  const visible = wouldBeVisible && !dismissed;
 
   useIsoLayoutEffect(() => {
     if (!open) {
@@ -45,10 +56,7 @@ export function MetricInfo({
       if (!pop) return;
       const rect = pop.getBoundingClientRect();
       const vw = document.documentElement.clientWidth;
-      let dx = 0;
-      if (rect.right > vw - 8) dx = vw - 8 - rect.right;
-      if (rect.left + dx < 8) dx = 8 - rect.left;
-      setShift(Math.round(dx));
+      setShift(clampPopoverShift(rect, vw));
     };
     recompute();
     if (!pop) return;
@@ -71,30 +79,52 @@ export function MetricInfo({
     };
   }, [open]);
 
-  // Close on outside-click / Esc while open (touch path — pointer users rely on CSS hover/focus).
+  // Close on outside-click while open (touch path — pointer users rely on CSS hover/focus).
   useEffect(() => {
     if (!open) return;
     const onPointer = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
     document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('pointerdown', onPointer);
   }, [open]);
 
+  // Esc closes the popover whenever it's visible — via click-open, keyboard focus, or mouse hover
+  // — not just the click-toggled `open` state. Blurring the active element also drops CSS
+  // `:focus-within`, and `dismissed` overrides `:hover` until the pointer actually leaves.
+  useEffect(() => {
+    if (!wouldBeVisible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      setDismissed(true);
+      // Only blur if focus is actually inside this popover's trigger — otherwise a hover-only
+      // dismiss here would steal focus from an unrelated input elsewhere on the page.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && ref.current?.contains(active)) active.blur();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [wouldBeVisible]);
+
+  // Once every trigger that made the popover visible has cleared, drop the dismissal so hovering
+  // or focusing again reopens it normally.
+  useEffect(() => {
+    if (!wouldBeVisible && dismissed) setDismissed(false);
+  }, [wouldBeVisible, dismissed]);
+
   return (
-    <span className={`metric-info${open ? ' is-open' : ''}`} ref={ref}>
+    <span
+      className={`metric-info${open ? ' is-open' : ''}${dismissed ? ' is-dismissed' : ''}`}
+      ref={ref}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <button
         type="button"
         className="metric-info-btn"
         aria-label={aria}
-        aria-expanded={open || focused}
+        aria-expanded={visible}
         onClick={() => setOpen((v) => !v)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}

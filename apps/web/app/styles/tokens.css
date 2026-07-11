@@ -39,7 +39,7 @@
   --paper-warm: var(--color-paper-warm);
   /* Pure-white raised surface — form chips/toggles that must read as "above" the warm panels
      (the design renders the trend filter chips and the step toggle in #fff on the #FBF8F1 bar). */
-  --paper-raised: #ffffff;
+  --paper-raised: oklch(100% 0 0);
   --paper-deep: var(--color-paper-deep);
   --ink: var(--color-ink);
   --ink-mid: var(--color-ink-mid);
