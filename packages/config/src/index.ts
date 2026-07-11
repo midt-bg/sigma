@@ -8,7 +8,7 @@
 //
 // Coverage verified against the local corpus (May 2026): every one of the 45 divisions below is
 // present, together covering 190,422 contracts / 50.8 bn EUR. The two `curated` divisions — 45
-// Строителство and 15 Храни — are the featured sectors. See docs/mock-coverage.md.
+// Строителство and 15 Храни — are the featured sectors. See docs/core-scope.md § Сектори.
 
 export interface CpvSector {
   /** 2-digit CPV division code. */
