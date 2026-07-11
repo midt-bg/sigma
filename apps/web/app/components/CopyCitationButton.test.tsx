@@ -47,9 +47,7 @@ describe('CopyCitationButton', () => {
 
     await screen.findByText('Неуспешно копиране');
     expect(screen.getByRole('button').className).not.toContain('is-copied');
-    expect(screen.getByRole('button').getAttribute('aria-label')).toBe(
-      'Копирането не бе успешно',
-    );
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Копирането не бе успешно');
   });
 
   it('reports failed when execCommand throws while navigator.clipboard is unavailable', async () => {
