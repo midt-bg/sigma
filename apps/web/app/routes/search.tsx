@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { count, money, plural } from '@sigma/shared';
-import { MAX_QUERY_CHARS, MAX_QUERY_TOKENS, search } from '@sigma/db';
+import { count, money, plural, searchTokens } from '@sigma/shared';
+import { MAX_QUERY_TOKENS, search } from '@sigma/db';
 import type { SearchHit } from '@sigma/api-contract';
 import type { Route } from './+types/search';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -51,13 +51,13 @@ function deHomoglyph(q: string): string {
   return q.replace(/[aceopxykmtABCEHKMOPTX]/g, (ch) => HOMOGLYPHS[ch] ?? ch);
 }
 
+// Share the FTS tokenizer with @sigma/db and the in-table search so all three agree on what counts as
+// a searchable term (incl. the ≥MIN_QUERY_TOKEN_CHARS filter — single chars no longer reach MATCH).
+// deHomoglyph is layered on top and is length-preserving, so it doesn't disturb that filtering.
 function normalizedTerms(q: string, limit: number): string[] {
-  const terms =
-    q
-      .slice(0, MAX_QUERY_CHARS)
-      .toLowerCase()
-      .match(/[\p{L}\p{N}]+/gu) ?? [];
-  return terms.slice(0, limit).map((t) => (CYRILLIC.test(t) ? deHomoglyph(t) : t));
+  return searchTokens(q)
+    .slice(0, limit)
+    .map((t) => (CYRILLIC.test(t) ? deHomoglyph(t) : t));
 }
 
 function cappedQuery(q: string): string {
