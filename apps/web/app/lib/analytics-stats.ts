@@ -91,8 +91,11 @@ export function opaqueHeadline(rows: OpaqueShareYear[]): OpaqueHeadline | null {
   if (usable.length === 0) return null;
   const first = usable[0]!;
   const last = usable[usable.length - 1]!;
-  const firstShare = first.singleOfferValueEur / first.valueEur;
-  const latestShare = last.singleOfferValueEur / last.valueEur;
+  // singleOfferValueEur can exceed valueEur (or dip below 0) on dirty source rows — clamp so the
+  // share stays a valid ratio.
+  const clampRatio = (v: number) => Math.min(1, Math.max(0, v));
+  const firstShare = clampRatio(first.singleOfferValueEur / first.valueEur);
+  const latestShare = clampRatio(last.singleOfferValueEur / last.valueEur);
   return {
     latestYear: last.year,
     latestShare,

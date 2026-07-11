@@ -37,7 +37,7 @@ const SAMPLES: (string | null)[] = [
 ];
 
 function sqlLiteral(v: string | null): string {
-  return v === null ? 'NULL' : `'${v.replace(/'/g, "''").replace('\t', "' || char(9) || '")}'`;
+  return v === null ? 'NULL' : `'${v.replace(/'/g, "''").replace(/\t/g, "' || char(9) || '")}'`;
 }
 
 describe('SECTOR_KEY_SQL (by-sector GROUP BY key)', () => {

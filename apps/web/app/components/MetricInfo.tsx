@@ -40,12 +40,23 @@ export function MetricInfo({
     }
     const pop = popRef.current;
     if (!pop) return;
-    const rect = pop.getBoundingClientRect();
-    const vw = document.documentElement.clientWidth;
-    let dx = 0;
-    if (rect.right > vw - 8) dx = vw - 8 - rect.right;
-    if (rect.left + dx < 8) dx = 8 - rect.left;
-    setShift(Math.round(dx));
+    const recalc = () => {
+      const rect = pop.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      let dx = 0;
+      if (rect.right > vw - 8) dx = vw - 8 - rect.right;
+      if (rect.left + dx < 8) dx = 8 - rect.left;
+      setShift(Math.round(dx));
+    };
+    recalc();
+    // Viewport can change while the popover is open (rotation, browser-chrome resize, scroll on
+    // small screens) — recompute so the popover doesn't drift outside the viewport.
+    window.addEventListener('resize', recalc);
+    window.addEventListener('scroll', recalc, true);
+    return () => {
+      window.removeEventListener('resize', recalc);
+      window.removeEventListener('scroll', recalc, true);
+    };
   }, [open]);
 
   // Close on outside-click / Esc while open (touch path — pointer users rely on CSS hover/focus).
