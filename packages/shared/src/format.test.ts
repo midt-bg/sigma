@@ -13,6 +13,7 @@ import {
   periodRange,
   plural,
   parseConsortiumMembers,
+  signedMoney,
   signedPct,
 } from './format';
 
@@ -84,6 +85,14 @@ describe('count / pct', () => {
     expect(signedPct(-0.0001)).toBe('0%');
     expect(signedPct(-0.233)).toBe('−23,3%');
     expect(signedPct(0.05)).toBe('+5%');
+  });
+  it('signs monetary deltas like signedPct (+ positive, U+2212 negative, no sign on zero)', () => {
+    expect(signedMoney(187_000_000)).toBe(`+187${NBSP}млн.`);
+    expect(signedMoney(-187_000_000)).toBe(`−187${NBSP}млн.`);
+    expect(signedMoney(640)).toBe('+640');
+    expect(signedMoney(-640)).toBe('−640');
+    expect(signedMoney(0)).toBe(moneyBare(0)); // no sign on zero
+    expect(signedMoney(null)).toBe('—');
   });
 });
 
