@@ -203,6 +203,8 @@ function rankSql(grain: QualityGrain): string {
                      total_contracts, scored_contracts, mean_coverage
               FROM funding_quality_totals
               WHERE avg_overall IS NOT NULL AND scored_contracts >= ?`;
+    default:
+      throw new Error(`rankSql: unhandled grain ${grain satisfies never}`);
   }
 }
 
@@ -293,6 +295,8 @@ function contractScope(
       return sel === 'eu'
         ? { where: 'AND c.eu_funded = 1', params: [] }
         : { where: 'AND (c.eu_funded IS NULL OR c.eu_funded = 0)', params: [] };
+    default:
+      throw new Error(`contractScope: unhandled grain ${grain satisfies never}`);
   }
 }
 

@@ -250,6 +250,7 @@ beforeAll(() => {
 // column added to one and not the other fails CI instead of silently drifting.
 describe('QUALITY_DDL schema-drift guard', () => {
   const etlSql = readFileSync(resolve(root, 'scripts/derive-contract-features.sql'), 'utf8');
+  const initSql = readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8');
   const tables = [
     'contract_features',
     'authority_quality_totals',
@@ -264,6 +265,12 @@ describe('QUALITY_DDL schema-drift guard', () => {
     const testCols = extractTableColumns(QUALITY_DDL, table).sort();
     const etlCols = extractTableColumns(etlSql, table).sort();
     expect(testCols).toEqual(etlCols);
+  });
+
+  it.each(tables)('%s columns match packages/db/migrations/0000_init.sql exactly', (table) => {
+    const testCols = extractTableColumns(QUALITY_DDL, table).sort();
+    const initCols = extractTableColumns(initSql, table).sort();
+    expect(testCols).toEqual(initCols);
   });
 });
 

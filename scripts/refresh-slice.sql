@@ -214,7 +214,13 @@ ON CONFLICT(id) DO UPDATE SET
   eop_tender_id = CASE WHEN tenders.procedure_type = 'неизвестна'
     THEN COALESCE(excluded.eop_tender_id, tenders.eop_tender_id)
     ELSE COALESCE(tenders.eop_tender_id, excluded.eop_tender_id) END,
-  corrections_count = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.corrections_count, tenders.corrections_count) ELSE tenders.corrections_count END;
+  -- Monotonic counter: never regress it, regardless of procedure_type — a real tender's
+  -- corrections_count must keep growing across incremental refreshes, not freeze at its first value.
+  corrections_count = CASE
+    WHEN excluded.corrections_count IS NULL THEN tenders.corrections_count
+    WHEN tenders.corrections_count IS NULL THEN excluded.corrections_count
+    ELSE MAX(excluded.corrections_count, tenders.corrections_count)
+  END;
 
 -- @refresh-batch lots
 INSERT OR IGNORE INTO lots (id, tender_id, title, cpv_code, estimated_value)

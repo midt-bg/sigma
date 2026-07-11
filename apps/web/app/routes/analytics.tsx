@@ -17,6 +17,7 @@ import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { Section, ShareBar } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
+import { isMissingDerivedTableError } from '../lib/etl';
 import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
@@ -40,7 +41,11 @@ export async function loader({ context }: Route.LoaderArgs) {
     getRegionalSpending(db, { funding: 'all' }),
     getSpendingTrend(db, { funding: 'all', granularity: 'year' }, { includeSectors: false }),
     getCompetitionSummary(db),
-    getQualitySummary(db).catch(() => null), // the quality tables land with the next full derive
+    getQualitySummary(db).catch((err) => {
+      // the quality tables land with the next full derive — anything else is unexpected
+      if (!isMissingDerivedTableError(err)) console.error('[analytics] getQualitySummary failed', err);
+      return null;
+    }),
   ]);
 
   return {
@@ -199,7 +204,10 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                 {lens.href === '/quality' && (
                   <div className="lens-preview">
                     <p className="lens-preview-title">Среден индекс на корпуса</p>
-                    {quality && quality.scoredContracts > 0 && quality.avgOverall != null ? (
+                    {quality &&
+                    quality.scoredContracts > 0 &&
+                    quality.totalContracts > 0 &&
+                    quality.avgOverall != null ? (
                       <dl className="lens-metrics">
                         <div>
                           <dt>Среден индекс</dt>

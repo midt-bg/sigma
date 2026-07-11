@@ -635,6 +635,7 @@ tbody td,
 .metric-info.is-open .metric-info-pop {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transform: translateY(0);
 }
 

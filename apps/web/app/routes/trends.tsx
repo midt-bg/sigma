@@ -108,7 +108,8 @@ const LOG_MIN = 1e3;
 
 function logMax(groups: CpvGroupStat[]): number {
   const max = Math.max(1e6, ...groups.map((g) => g.maxEur));
-  return 10 ** Math.ceil(Math.log10(max));
+  // epsilon guards exact powers of ten from float rounding nudging log10 just above the integer
+  return 10 ** Math.ceil(Math.log10(max) - 1e-9);
 }
 
 function axisLabel(v: number): string {
@@ -531,7 +532,7 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
                       <span className="ov-card-foot">
                         {c.cpvGroup && <span className="ov-card-cpv mono">CPV {c.cpvGroup}</span>}
                         <span className="ov-card-cohort clamp">{cohort?.name ?? ''}</span>
-                        {rel && <span className={`ov-card-rel mono ${rel.cls}`}>{rel.text}</span>}
+                        {rel?.text && <span className={`ov-card-rel mono ${rel.cls}`}>{rel.text}</span>}
                       </span>
                     </Link>
                   </li>

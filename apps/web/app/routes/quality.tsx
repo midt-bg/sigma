@@ -19,6 +19,7 @@ import { MetricInfo } from '../components/MetricInfo';
 import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { Callout, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { isMissingDerivedTableError } from '../lib/etl';
 import { qualityRankingControls } from '../lib/filters';
 import { seoMeta } from '../lib/meta';
 
@@ -154,10 +155,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // „Разбивка" ranking controls come from the shared parser (validated before they can shape a
   // cache key or a query — CWE-349); the db layer re-validates at its own boundary.
   const rank = qualityRankingControls(sp);
+  const grainParam = sp.get('grain');
+  const grain = GRAIN_OPTIONS.some((g) => g.key === grainParam)
+    ? (grainParam as QualityGrain)
+    : undefined;
   let data = null;
   try {
     data = await getQuality(db, {
-      grain: (sp.get('grain') as QualityGrain | null) ?? undefined,
+      grain,
       sort: sp.get('sort') === 'contracts' ? 'contracts' : 'score',
       dir: rank.rankDir,
       contractSort: sp.get('csort') === 'value' ? 'value' : 'score',
@@ -170,7 +175,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   } catch (err) {
     // The health tables are built by the daily ETL (ship-domain rebuilds contract_features
     // DROP+CREATE); before the first derive — or mid-rebuild — they may not exist yet.
-    if (!/no such table/i.test(err instanceof Error ? err.message : String(err))) throw err;
+    if (!isMissingDerivedTableError(err)) {
+      console.error('[quality] getQuality failed', err);
+      throw err;
+    }
+    console.warn('[quality] quality tables not yet derived, showing empty state', err);
   }
   return { data };
 }
