@@ -234,10 +234,14 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // "12 на сто", "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit
   // words too. NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches
   // after a space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
-  // трилион/билион/квадрилион were omitted from the original stem set, so "3 трилиона лева" slipped the
-  // whole gate (the currency pattern can't bridge the digit to "лева" across the word) — the exact
-  // "12 млрд." defamation vector, one order up. Include the larger magnitudes too (review #80 follow-up).
-  /трилион|билион|квадрилион|милиард|милион|хиляд/giu, // spelled magnitudes (word-only too: "два милиарда", "три трилиона", "триста хиляди")
+  // The magnitude family shares two suffixes: -ИЛИОН (милион, билион, трилион, квадрилион, квинтилион,
+  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард, билиард, …; "мил-иард" ⊃ "илиард").
+  // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
+  // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
+  // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
+  // "Илион" (Troy) is the only near-collision; for a gate that must fail TOWARD flagging an unbound figure,
+  // over-flagging is the safe direction anyway. Digit forms are already caught by `\d{5,}` above.
+  /илион|илиард|хиляд/giu, // spelled magnitudes: милион/милиард/…/квинтилион + inflections; хиляд(а/и)
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
