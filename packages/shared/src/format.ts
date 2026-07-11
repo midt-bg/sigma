@@ -162,7 +162,7 @@ export function unp(value: string | null | undefined): string {
  *
  * `null` is the explicit „nothing-to-show" signal so the renderer can skip the whole block instead
  * of emitting an empty heading. Resolving each member name → ЕИК is parked on the Trade Register
- * backfill (docs/etl-pipeline.md § Multi-source); until that lands the caller stamps every
+ * backfill (docs/core-scope.md — parked Trade Register pipeline); until that lands the caller stamps every
  * participant with `ЕИК неустановен`.
  */
 export type ConsortiumMembership =

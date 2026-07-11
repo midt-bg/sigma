@@ -10,9 +10,11 @@
 
 Дизайнът и решенията живеят в [`docs/`](docs/) — започнете оттам:
 
+- [`docs/architecture.md`](docs/architecture.md) — преглед на системата и карта към решенията.
+- [`docs/adr/`](docs/adr/README.md) — Architecture Decision Records (по едно решение на файл).
+- [`docs/core-scope.md`](docs/core-scope.md) — доменен модел и речник на данните.
 - [`docs/etl.md`](docs/etl.md) — ETL pipeline-ът и емисията от ЦАИС ЕОП.
 - [`docs/deploy.md`](docs/deploy.md) — деплой към Cloudflare.
-- [`docs/architecture.md`](docs/architecture.md) — архитектурни решения (ADR).
 - [`docs/spec/ai-assistant.md`](docs/spec/ai-assistant.md) — спецификация на AI асистента (планиран).
 - [`docs/README.md`](docs/README.md) — **пълен индекс** на документацията, вкл. достъпност и стандартите за ревю.
 
