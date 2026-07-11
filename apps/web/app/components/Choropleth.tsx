@@ -5,6 +5,7 @@ import { BG_MAP } from '../lib/bg-region-geometry';
 import {
   type Grouping,
   isActiveShape,
+  nextClickedHovered,
   shareLabel,
   shareOfTotal,
   tierer,
@@ -30,6 +31,18 @@ const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 80%, var(--paper))',
   'var(--ink)', // 5 = highest
 ];
+
+// Repeat-tap-to-deselect only applies on a coarse (touch) pointer — see nextClickedHovered. `matchMedia`
+// is absent during SSR, so this reads false there and the client re-evaluates on the first click.
+function isCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+}
+
+// How long a hover has to sit still before the aria-live region announces it. Mouse hover fires on
+// every pixel the cursor crosses; without this, a single sweep across the map reads out every region
+// it passed. The visible Information Card still updates instantly — only the screen-reader announcement
+// is throttled, since the ranked table below remains the primary keyboard/AT path.
+const ANNOUNCE_DEBOUNCE_MS = 400;
 
 // `total` enables the Information Card + grouping toggle (the /map page passes it, along with
 // macroRegions). Omitted on the compact analytics-hub preview, where only the bare oblast map is wanted.
@@ -61,6 +74,14 @@ export function Choropleth({
   // The entity whose stats the card shows, by mode.
   const active = withCard ? (group === 'region' ? hoveredMacro : hoveredRegion) : null;
 
+  // Debounced echo of `active`, read out by the sr-only aria-live region below — see
+  // ANNOUNCE_DEBOUNCE_MS. The visible card renders `active` directly, with no delay.
+  const [announced, setAnnounced] = useState<typeof active>(null);
+  useEffect(() => {
+    const id = setTimeout(() => setAnnounced(active), ANNOUNCE_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [active]);
+
   const map = (
     <div className="map-wrap">
       <svg
@@ -88,7 +109,11 @@ export function Choropleth({
                 fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
               }}
               onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
-              onClick={() => setHovered(r && hovered !== shape.nuts3 ? shape.nuts3 : null)}
+              onClick={() =>
+                setHovered(
+                  nextClickedHovered(r ? shape.nuts3 : undefined, hovered, isCoarsePointer()),
+                )
+              }
             >
               <title>{label}</title>
             </path>
@@ -111,8 +136,9 @@ export function Choropleth({
     <div className="map-layout">
       {map}
       {/* Information Card beside the map (not an overlay), with the grouping toggle kept here so all map
-          controls sit together. aria-live announces the stats as the pointer moves; the ranked tables
-          below remain the primary accessible/keyboard data path. */}
+          controls sit together. The visible card updates instantly; a debounced sr-only region below
+          announces it so a mouse sweep across the map doesn't read out every region it passed — the
+          ranked tables below remain the primary accessible/keyboard data path. */}
       <aside className="map-card">
         {hydrated && (
           <div className="map-toggle" role="group" aria-label="Групиране на картата">
@@ -134,7 +160,7 @@ export function Choropleth({
             </button>
           </div>
         )}
-        <div aria-live="polite">
+        <div>
           {active ? (
             <>
               <h3 className="map-card-title">{active.name}</h3>
@@ -170,6 +196,13 @@ export function Choropleth({
             </p>
           )}
         </div>
+        <p className="sr-only" aria-live="polite">
+          {announced
+            ? `${announced.name}: ${money(announced.valueEur)}`
+            : group === 'region'
+              ? 'Посочи район на картата, за да видиш обобщени данни.'
+              : 'Посочи област на картата, за да видиш обобщени данни.'}
+        </p>
       </aside>
     </div>
   );

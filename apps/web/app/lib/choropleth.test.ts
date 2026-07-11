@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
-import { isActiveShape, shareLabel, shareOfTotal, tierer, tierForShape } from './choropleth';
+import {
+  isActiveShape,
+  nextClickedHovered,
+  shareLabel,
+  shareOfTotal,
+  tierer,
+  tierForShape,
+} from './choropleth';
 
 const region = (nuts3: string, nuts2: string, valueEur: number): RegionSpend => ({
   nuts3,
@@ -84,6 +91,25 @@ describe('tierForShape (oblast↔район mapping)', () => {
     expect(tierForShape(undefined, 'oblast', macroByNuts2, tierOblast, tierRegion)).toBe(0);
     const orphan = region('BG999', 'BG99', 50);
     expect(tierForShape(orphan, 'region', macroByNuts2, tierOblast, tierRegion)).toBe(0);
+  });
+});
+
+describe('nextClickedHovered', () => {
+  it('selects the clicked shape on a fine (mouse) pointer even if onMouseEnter already hovered it', () => {
+    // Regression: onMouseEnter fires before onClick on desktop, so a naive `hovered !== nuts3` guard
+    // is always false there and a mouse click could never select anything.
+    expect(nextClickedHovered('BG411', 'BG411', false)).toBe('BG411');
+  });
+  it('selects an unhovered shape on either pointer type', () => {
+    expect(nextClickedHovered('BG411', null, false)).toBe('BG411');
+    expect(nextClickedHovered('BG411', null, true)).toBe('BG411');
+  });
+  it('toggles off on a repeat tap of the already-selected shape on a coarse (touch) pointer', () => {
+    expect(nextClickedHovered('BG411', 'BG411', true)).toBe(null);
+  });
+  it('clears selection when clicking outside any shape, on either pointer type', () => {
+    expect(nextClickedHovered(undefined, 'BG411', false)).toBe(null);
+    expect(nextClickedHovered(undefined, 'BG411', true)).toBe(null);
   });
 });
 

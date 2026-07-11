@@ -53,3 +53,19 @@ export function isActiveShape(
   if (!r || !hoveredRegion) return false;
   return group === 'region' ? r.nuts2 === hoveredRegion.nuts2 : r.nuts3 === hoveredRegion.nuts3;
 }
+
+// Click target for a shape, given the currently hovered nuts3. On a fine pointer (mouse),
+// onMouseEnter has already set `hovered` to the clicked shape by the time onClick fires, so a plain
+// `hovered !== shape.nuts3` guard would always be false and desktop clicks could never select — click
+// must always select on a mouse. On a coarse pointer (touch, which never fires onMouseEnter first),
+// the same click doubles as the only way to clear a selection, so a repeat tap on the already-selected
+// region toggles it off instead of re-selecting it.
+export function nextClickedHovered(
+  nuts3: string | undefined,
+  hovered: string | null,
+  isCoarsePointer: boolean,
+): string | null {
+  if (!nuts3) return null;
+  if (isCoarsePointer && hovered === nuts3) return null;
+  return nuts3;
+}
