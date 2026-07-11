@@ -4,8 +4,10 @@
 // related_persons_internal) into the target SQLite/D1 per migration 0002. Idempotent: it rebuilds the
 // domain tables from staging each run (link_suppressions — human-curated — persist).
 //
-// Integrity gate = certainty 1.0: 0 normalizer over-merges (else fail); only tier A|B links are
-// 'published'; every link carries provenance + matcher_version.
+// Certainty 1.0 comes from the resolver, not a loader gate: it publishes ONLY a key that maps to exactly
+// one valid winner ЕИК; any key spanning >1 valid ЕИК is quarantined (never published) and reported as
+// telemetry. The 0-over-merge libel proof is the labelled company-name-key.test.ts (ADR-0027), not this
+// loader. Only tier A|B links are 'published'; every link carries provenance + matcher_version.
 //
 // Run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs
 import { DatabaseSync } from 'node:sqlite';
@@ -145,19 +147,23 @@ const nameGloballyUnique = (key) => {
   return new Set([...m.values()].filter((v) => v.eik && v.valid).map((v) => v.eik)).size === 1;
 };
 const METHOD_RANK = { exact_name_key: 3, declared_eik: 2, extracted_name: 1 };
-const strictKey = (s) =>
-  s
-    .normalize('NFC')
-    .toUpperCase()
-    .replace(/[\s"„“”«».,\-]/g, '');
-let trueOverMerges = 0;
-for (const [, m] of byKey) {
+// Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
+// valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
+// never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
+// real winner corpus every such collision is presentation-only (case/quotes/space): a generic name shared
+// by distinct entities (e.g. „ВОДОСНАБДЯВАНЕ И КАНАЛИЗАЦИЯ ЕООД" → several regional utilities) or a
+// feed-side duplicate/typo'd ЕИК on one registered name. It is deliberately tied to NO exit code.
+// This is NOT the over-merge libel proof: that is the LABELLED company-name-key.test.ts (ground-truth
+// companyId, bar 0). A self-comparison of the winner set cannot reproduce it — the previous `strictKey`
+// tiebreak stripped a superset of what companyNameKey folds, so it was a structural false-zero that still
+// printed „0 over-merges" and could exit(1) (review #226).
+const ambiguousKeys = [];
+for (const [key, m] of byKey) {
   const valid = [...m.values()].filter((v) => v.eik && v.valid);
-  if (
-    new Set(valid.map((v) => v.eik)).size > 1 &&
-    new Set(valid.map((v) => strictKey(v.name))).size > 1
-  )
-    trueOverMerges++;
+  const eiks = new Set(valid.map((v) => v.eik));
+  if (eiks.size > 1) {
+    ambiguousKeys.push({ key, eiks: [...eiks], names: [...new Set(valid.map((v) => v.name))] });
+  }
 }
 
 // --- load staging → persons / declarations / declared_interests ; resolve → agg ------------------
@@ -566,7 +572,8 @@ const S = {
       r.n,
     ]),
   ),
-  trueOverMerge_LIBEL_GATE: trueOverMerges,
+  ambiguous_name_keys: ambiguousKeys.length,
+  ambiguous_name_key_examples: ambiguousKeys,
   noMatch,
   quarantined,
   immaterialFamilySkipped: immaterialFamily,
@@ -601,8 +608,11 @@ const md = [
 ].join('\n');
 fs.writeFileSync(REPORT, md);
 console.log(
-  trueOverMerges ? `\n!! LIBEL GATE FAILED (${trueOverMerges})` : '\n✓ libel gate: 0 over-merges',
+  ambiguousKeys.length
+    ? `\nℹ ${ambiguousKeys.length} ambiguous name keys (>1 valid ЕИК) — quarantined, never published (telemetry, not a gate; ADR-0027)`
+    : '\nℹ 0 ambiguous name keys',
 );
 console.log(`report → ${REPORT}`);
 db.close();
-process.exitCode = trueOverMerges ? 1 : 0;
+// No exit code is tied to ambiguity — it is expected, quarantined, and safe. The over-merge libel proof
+// is the labelled company-name-key.test.ts; the loader fails only on an actual exception.
