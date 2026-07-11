@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { TrendGranularity, TrendPoint } from '@sigma/api-contract';
-import { count, money, monthYear } from '@sigma/shared';
+import { count, money } from '@sigma/shared';
+import { periodLabel, yearAxisTicks } from '../lib/trendAxis';
 
 // Bar + line combo for the contracts overview (/trends): bars carry the contract count, the ink line
 // the € volume. Server-rendered SVG like TrendChart; the only client behavior is the hover tooltip
@@ -12,16 +13,6 @@ const H = 300;
 const TOP = 10;
 const BOT = 272;
 const PAD = 8;
-
-/** 'YYYY-MM' → 'март 2024', 'YYYY-Qn' → 'Q1 2024', 'YYYY' → '2024'. */
-export function periodLabel(period: string, granularity: TrendGranularity): string {
-  if (granularity === 'year') return period;
-  if (granularity === 'quarter') {
-    const [y, q] = period.split('-Q');
-    return `Q${q} ${y}`;
-  }
-  return monthYear(period);
-}
 
 export function ComboTrendChart({
   points,
@@ -49,6 +40,9 @@ export function ComboTrendChart({
 
   // Final period is partial (still filling): dashed line tail + faded bar, like TrendChart.
   const partialIdx = points.findIndex((p) => p.partial);
+  // Invariant: the partial period is always the last point. `hasPartial` treats index 0 as
+  // "no partial period" — if a partial period ever ends up first, this silently renders the whole
+  // line solid instead of catching the regression.
   const hasPartial = partialIdx > 0;
   const solidEnd = hasPartial ? partialIdx - 1 : n - 1;
   const xy = (i: number) => `${x(i).toFixed(1)} ${yV(points[i]!.valueEur).toFixed(1)}`;
@@ -58,11 +52,7 @@ export function ComboTrendChart({
     .join(' ');
   const dashed = hasPartial ? `M${xy(solidEnd)} L${xy(partialIdx)}` : '';
 
-  // x-axis year labels at the first period of each year (or every point at year grain).
-  const yearStart = granularity === 'year' ? null : granularity === 'quarter' ? '-Q1' : '-01';
-  const ticks = points
-    .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
-    .filter(({ i }) => yearStart == null || points[i]!.period.endsWith(yearStart));
+  const ticks = yearAxisTicks(points, granularity);
 
   const hp = hover != null ? points[hover] : null;
 

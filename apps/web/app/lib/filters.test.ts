@@ -11,6 +11,9 @@ import {
   MAX_MULTI_VALUES,
   pageNav,
   searchHref,
+  trendAngle,
+  trendSort,
+  trendStep,
 } from './filters';
 
 const sp = (q: string) => new URLSearchParams(q);
@@ -137,6 +140,32 @@ describe('cpvGroupSelection', () => {
     expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
     expect(out[0]).toBe('10000');
     expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
+  });
+});
+
+describe('trend param validation (angle/step/sort)', () => {
+  it('trendAngle passes through known values and falls back to "time" otherwise', () => {
+    expect(trendAngle(sp('angle=cpv'))).toBe('cpv');
+    expect(trendAngle(sp('angle=cross'))).toBe('cross');
+    expect(trendAngle(sp('angle=time'))).toBe('time');
+    expect(trendAngle(sp(''))).toBe('time');
+    expect(trendAngle(sp("angle='--drop table"))).toBe('time');
+    expect(trendAngle(sp('angle=CPV'))).toBe('time');
+  });
+
+  it('trendStep passes through known values and falls back to "q" otherwise', () => {
+    expect(trendStep(sp('step=m'))).toBe('m');
+    expect(trendStep(sp('step=y'))).toBe('y');
+    expect(trendStep(sp('step=q'))).toBe('q');
+    expect(trendStep(sp(''))).toBe('q');
+    expect(trendStep(sp('step=bogus'))).toBe('q');
+  });
+
+  it('trendSort passes through known values and falls back to "date" otherwise', () => {
+    expect(trendSort(sp('sort=value'))).toBe('value');
+    expect(trendSort(sp('sort=date'))).toBe('date');
+    expect(trendSort(sp(''))).toBe('date');
+    expect(trendSort(sp('sort=name'))).toBe('date');
   });
 });
 

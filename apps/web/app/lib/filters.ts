@@ -50,6 +50,38 @@ export function cpvGroupSelection(sp: URLSearchParams): string[] {
     .slice(0, MAX_CPV_GROUP_SELECTION);
 }
 
+export const TREND_ANGLES = ['time', 'cpv', 'cross'] as const;
+export type TrendAngle = (typeof TREND_ANGLES)[number];
+
+export const TREND_STEPS = ['m', 'q', 'y'] as const;
+export type TrendStep = (typeof TREND_STEPS)[number];
+
+export const TREND_SORTS = ['date', 'value'] as const;
+export type TrendSort = (typeof TREND_SORTS)[number];
+
+function pickEnum<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
+  return raw != null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+/**
+ * The /trends обзор lens picker (`?angle=`): validated against the known allowlist, same
+ * validate-or-fallback discipline as {@link cpvGroupSelection} — an unrecognized value falls back
+ * to 'time' rather than flowing through unchecked.
+ */
+export function trendAngle(sp: URLSearchParams): TrendAngle {
+  return pickEnum(sp.get('angle'), TREND_ANGLES, 'time');
+}
+
+/** The /trends time-lens granularity toggle (`?step=`), validated the same way as {@link trendAngle}. */
+export function trendStep(sp: URLSearchParams): TrendStep {
+  return pickEnum(sp.get('step'), TREND_STEPS, 'q');
+}
+
+/** The /trends contract-list sort (`?sort=`), validated the same way as {@link trendAngle}. */
+export function trendSort(sp: URLSearchParams): TrendSort {
+  return pickEnum(sp.get('sort'), TREND_SORTS, 'date');
+}
+
 /**
  * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
  * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL

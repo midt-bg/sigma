@@ -14,7 +14,14 @@ import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { ComboTrendChart } from '../components/ComboTrendChart';
 import { Callout } from '../components/ui';
 import { publicCache } from '../lib/cache';
-import { cpvGroupSelection } from '../lib/filters';
+import {
+  cpvGroupSelection,
+  trendAngle,
+  trendSort,
+  trendStep,
+  type TrendAngle,
+  type TrendStep,
+} from '../lib/filters';
 
 // „Договори — обзор": one list of contracts looked at from three angles (lenses) — in time, per CPV
 // group, or both at once. Every control is a plain <Link> mutating the query string, so the page is
@@ -35,8 +42,8 @@ export function headers() {
   return { 'Cache-Control': publicCache(1800) };
 }
 
-type Angle = 'time' | 'cpv' | 'cross';
-type Step = 'm' | 'q' | 'y';
+type Angle = TrendAngle;
+type Step = TrendStep;
 
 function pick<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
   return raw != null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
@@ -52,9 +59,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const db = context.cloudflare.env.DB;
 
-  const angle = pick<Angle>(sp.get('angle'), ['time', 'cpv', 'cross'], 'time');
-  const step = pick<Step>(sp.get('step'), ['m', 'q', 'y'], 'q');
-  const sort = pick(sp.get('sort'), ['date', 'value'] as const, 'date');
+  // angle/step/sort share the same validate-or-fallback discipline as cpvGroupSelection below
+  // (an unrecognized value falls back to a known-safe default rather than passing through).
+  const angle = trendAngle(sp);
+  const step = trendStep(sp);
+  const sort = trendSort(sp);
   const cpvSort = pick(sp.get('cpvSort'), ['n', 'med', 'code'] as const, 'n');
   const yearRaw = sp.get('year');
   const year = yearRaw && /^20\d\d$/.test(yearRaw) ? yearRaw : null;
