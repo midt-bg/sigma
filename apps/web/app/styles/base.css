@@ -166,8 +166,8 @@ code,
     display: none !important;
   }
 
-  /* Expose URLs in print */
-  a[href]:not([href^='#'])::after {
+  /* Expose URLs in print — absolute http(s) links only, not internal relative links */
+  a[href^='http']::after {
     content: ' (' attr(href) ')';
     word-break: break-all;
     font-size: 0.9em;

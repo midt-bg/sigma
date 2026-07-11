@@ -24,7 +24,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { buildAuthorityCitation } from '../lib/citation';
-import { seoMeta, getRootOrigin } from '../lib/meta';
+import { seoMeta, getRootOrigin, FALLBACK_ORIGIN } from '../lib/meta';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.authority.name ?? 'Институция';
@@ -61,7 +61,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const matches = useMatches();
-  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
+  const origin = getRootOrigin(matches) ?? FALLBACK_ORIGIN;
   const a = loaderData.authority;
   const { trend, network, competition } = loaderData;
   const ct = competition;

@@ -25,7 +25,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { buildCompanyCitation } from '../lib/citation';
-import { seoMeta, getRootOrigin } from '../lib/meta';
+import { seoMeta, getRootOrigin, FALLBACK_ORIGIN } from '../lib/meta';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -82,7 +82,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const matches = useMatches();
-  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
+  const origin = getRootOrigin(matches) ?? FALLBACK_ORIGIN;
   const c = loaderData.company;
   const { trend, network } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);

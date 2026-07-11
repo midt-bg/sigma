@@ -12,7 +12,7 @@ import { RiskIndicators } from '../components/RiskIndicators';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { buildContractCitation } from '../lib/citation';
-import { seoMeta, getRootOrigin } from '../lib/meta';
+import { seoMeta, getRootOrigin, FALLBACK_ORIGIN } from '../lib/meta';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -72,7 +72,7 @@ const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена д�
 
 export default function Contract({ loaderData }: Route.ComponentProps) {
   const matches = useMatches();
-  const origin = getRootOrigin(matches) ?? 'https://sigma.midt.bg';
+  const origin = getRootOrigin(matches) ?? FALLBACK_ORIGIN;
   const c = loaderData.contract;
   const v = c.value;
   const crumbId = c.unp || c.contractNumber || c.id;
