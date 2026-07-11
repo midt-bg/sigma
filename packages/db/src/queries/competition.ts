@@ -309,12 +309,12 @@ async function authoritiesByDirectAward(
   const minContracts = p.minContracts ?? DEFAULT_MIN_CONTRACTS;
   const directPlaceholders = NON_COMPETITIVE_PROCEDURE_TYPES.map(() => '?').join(', ');
   const classifiedPlaceholders = CLASSIFIED_PROCEDURE_TYPES.map(() => '?').join(', ');
-  const where = [`t.procedure_type IN (${classifiedPlaceholders})`, ...s.where];
+  const where = [`TRIM(t.procedure_type) IN (${classifiedPlaceholders})`, ...s.where];
   const { results } = await db
     .prepare(
       `SELECT t.authority_id AS authority_id, a.name AS name, a.type_group AS type_group,
               COUNT(*) AS classified,
-              SUM(CASE WHEN t.procedure_type IN (${directPlaceholders}) THEN 1 ELSE 0 END) AS non_competitive,
+              SUM(CASE WHEN TRIM(t.procedure_type) IN (${directPlaceholders}) THEN 1 ELSE 0 END) AS non_competitive,
               -- display total: full clean basis to match the authority rollups (not a share denominator)
               COALESCE(SUM(c.amount_eur), 0) AS value_eur
        FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id

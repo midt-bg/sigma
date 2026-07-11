@@ -77,7 +77,7 @@ function fakeDb(capture?: string[]): D1Database {
           if (sql.includes('JOIN bidders b')) return { results: FLOW_PAIRS as T[] }; // filtered pairs
           if (sql.includes('WITH pair AS')) return { results: CONCENTRATION_ROWS as T[] };
           if (sql.includes('GROUP BY t.procedure_type')) return { results: PROCEDURE_ROWS as T[] };
-          if (sql.includes('t.procedure_type IN (')) return { results: DIRECT_AWARD_ROWS as T[] };
+          if (sql.includes('TRIM(t.procedure_type) IN (')) return { results: DIRECT_AWARD_ROWS as T[] };
           return { results: SINGLE_OFFER_ROWS as T[] }; // single-offer leaderboard
         },
         async first<T>() {
@@ -135,7 +135,7 @@ function scopedFakeDb(calls: QueryCall[]): D1Database {
         async all<T>() {
           if (sql.includes('FROM sector_totals')) return { results: [{ division: '45' }] as T[] };
           if (sql.includes('GROUP BY t.procedure_type')) return { results: PROCEDURE_ROWS as T[] };
-          if (sql.includes('t.procedure_type IN (')) return { results: DIRECT_AWARD_ROWS as T[] };
+          if (sql.includes('TRIM(t.procedure_type) IN (')) return { results: DIRECT_AWARD_ROWS as T[] };
           if (!this.args.includes('auth:111')) {
             if (sql.includes('FROM flow_pairs')) return { results: FLOW_PAIRS as T[] };
             if (sql.includes('WITH pair AS')) return { results: CONCENTRATION_ROWS as T[] };
