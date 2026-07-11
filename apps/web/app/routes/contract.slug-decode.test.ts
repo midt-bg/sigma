@@ -13,14 +13,21 @@ import routeConfig from '../routes';
 // same matcher the server build uses — so we prove `params.id` arrives correctly decoded rather than
 // trusting a stand-in.
 //
-// Not covered here (no unit-test surface): an edge/CDN layer normalising or rejecting "%2F" in the
-// path segment *before* the request reaches the worker. That is infrastructure behaviour; it must be
-// checked with a real HTTP request against a deployed preview, not in-process.
+// Not covered here (no unit-test surface): the Cloudflare edge layer in front of the worker. By default
+// Cloudflare preserves "%2F" (RFC 3986 — reserved characters are not decoded), so the encoded slug
+// reaches the worker intact and this pipeline runs as tested. The residual risk is zone-specific: an
+// explicit URL-normalisation Transform Rule (`url_decode()`) would decode "%2F"→"/" before the worker
+// and reintroduce #213. That is a deployment-config check, verified by `scripts/smoke-encoded-slug.mjs`
+// against a deployed preview (a real HTTP GET of a "/"-in-id contract, expecting 200), not in-process.
 
 // Use the app's real route pattern so this test breaks if `/contracts/:id` is ever renamed.
 const contractPath = (routeConfig as Array<{ path?: string }>).find(
   (r) => r.path === 'contracts/:id',
 )?.path;
+
+// The exact route table the server build matches against — including the `contracts/:id.json` route
+// declared just before `contracts/:id`, so this proves the ordering resolves a no-`.json` URL correctly.
+const routes = routeConfig as unknown as Parameters<typeof matchRoutes>[0];
 
 // Real-world contract id shapes. Each is a domain id (`c:*`); the value is what the DB stores and what
 // `contractIdFromSlug(params.id)` must reconstruct after a full encode → URL → RR-decode trip.
@@ -46,11 +53,13 @@ describe('contract slug decodes end-to-end through React Router matching', () =>
   for (const { label, id } of CASES) {
     it(`round-trips ${label} from an encoded URL back to the domain id`, () => {
       const url = `/contracts/${contractSlug(id)}`;
-      const matches = matchRoutes([{ path: 'contracts/:id', id: 'contract' }], url);
+      const matches = matchRoutes(routes, url);
 
-      // The URL React Router receives is the encoded one — matching must succeed on it.
+      // The URL React Router receives is the encoded one — matching must succeed on it, and against the
+      // real config resolve to the `:id` leaf (not the `.json` sibling).
       expect(matches).not.toBeNull();
-      const decodedId = contractIdFromSlug(matches![0].params.id!);
+      const leaf = matches![matches!.length - 1];
+      const decodedId = contractIdFromSlug(leaf.params.id!);
       expect(decodedId).toBe(id);
     });
   }

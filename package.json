@@ -21,7 +21,8 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "bootstrap:apply": "node scripts/bootstrap.mjs --apply",
     "deploy": "turbo run deploy",
-    "teardown": "node scripts/teardown.mjs"
+    "teardown": "node scripts/teardown.mjs",
+    "smoke:slug": "node scripts/smoke-encoded-slug.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",
