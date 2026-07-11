@@ -21,7 +21,9 @@ export function useFullscreen<T extends HTMLElement>() {
     if (document.fullscreenElement) {
       document.exitFullscreen?.();
     } else {
-      el.requestFullscreen?.().catch((err) => console.debug('[fullscreen] requestFullscreen failed', err));
+      el.requestFullscreen?.().catch((err) =>
+        console.debug('[fullscreen] requestFullscreen failed', err),
+      );
     }
   }, []);
 
