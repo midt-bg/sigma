@@ -107,6 +107,13 @@ export async function getAuthoritySingleOffer(
   return competitionTotals(db, { authorityId });
 }
 
+export async function getAuthorityProcedureCompetition(
+  db: D1Database,
+  authorityId: string,
+): Promise<ProcedureCompetition> {
+  return procedureCompetition(db, { authorityId });
+}
+
 interface AuthorityShareRow {
   authority_id: string;
   name: string;

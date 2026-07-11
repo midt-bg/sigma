@@ -1,8 +1,10 @@
 import { Link } from 'react-router';
+import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
 import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
 import {
   authorityIdFromSlug,
   getAuthority,
+  getAuthorityProcedureCompetition,
   getAuthoritySingleOffer,
   getEntityNetwork,
   getSpendingTrend,
@@ -45,22 +47,34 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const db = context.cloudflare.env.DB;
   const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage, trend, network, competition] = await Promise.all([
+    const [authority, coverage, trend, network, competition, procedure] = await Promise.all([
       getAuthority(db, authorityId),
       getCoverageMeta(db),
       getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
       getEntityNetwork(db, { kind: 'authority', id: authorityId }, { includeCenterOptions: false }),
       getAuthoritySingleOffer(db, authorityId),
+      getAuthorityProcedureCompetition(db, authorityId),
     ]);
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage, trend, network, competition };
+    return { authority, coverage, trend, network, competition, procedure };
   });
 }
 
+// Same wording as the /competition page so the two surfaces never disagree on the verdict.
+const RATING_LABEL: Record<IndicatorRating, string> = {
+  good: 'в нормата на ЕС',
+  mid: 'над целевата стойност на ЕС',
+  bad: 'над прага на ЕС',
+};
+
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
-  const { trend, network, competition } = loaderData;
+  const { trend, network, competition, procedure } = loaderData;
   const ct = competition;
+  const directAwardRating = rateLowerIsBetter(
+    procedure.nonCompetitiveShare,
+    EU_SCOREBOARD.directAward,
+  );
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -145,26 +159,37 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
 
           <Section
             id="single-offer"
-            title="Една оферта"
-            hint="Дял на договорите с известен брой оферти, възложени само с една оферта."
+            title="Конкуренция"
+            hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо праговете на ЕС."
           >
             {ct.contracts > 0 ? (
-              <div>
-                <SingleOfferPortion
-                  valueEur={ct.singleOfferValueEur}
-                  totalEur={ct.valueEur}
-                  singleOffer={ct.singleOffer}
-                  contracts={ct.contracts}
-                  scopeLabel="на поръчките"
-                  captionSuffix="по стойност"
-                />
-                <p className="small muted mt-8">
-                  <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
-                </p>
-              </div>
+              <SingleOfferPortion
+                valueEur={ct.singleOfferValueEur}
+                totalEur={ct.valueEur}
+                singleOffer={ct.singleOffer}
+                contracts={ct.contracts}
+                scopeLabel="на поръчките"
+                captionSuffix="по стойност"
+              />
             ) : (
               <p className="muted">Няма договори с известен брой оферти.</p>
             )}
+            <h3 className="mt-8">Пряко възлагане</h3>
+            {procedure.classifiedContracts > 0 ? (
+              <p className="small">
+                <strong>{pct(procedure.nonCompetitiveShare)}</strong> от класифицираните договори са
+                възложени без обявление ({count(procedure.nonCompetitiveContracts)} от{' '}
+                {count(procedure.classifiedContracts)}) — {RATING_LABEL[directAwardRating]} (целево
+                ≤ {pct(EU_SCOREBOARD.directAward.good)}, високо ≥{' '}
+                {pct(EU_SCOREBOARD.directAward.bad)}). Праговете са външен ориентир на Европейската
+                комисия, не оценка на конкретна процедура.
+              </p>
+            ) : (
+              <p className="muted">Няма класифицирани договори по тип процедура.</p>
+            )}
+            <p className="small muted mt-8">
+              <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
+            </p>
           </Section>
         </div>
 
