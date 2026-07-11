@@ -42,7 +42,7 @@ export function ComboTrendChart({
   const n = points.length;
   const vMax = Math.max(1, ...points.map((p) => p.valueEur)) * 1.12;
   const cMax = Math.max(1, ...points.map((p) => p.contracts));
-  const x = (i: number) => (n > 1 ? PAD + (i * (W - 2 * PAD)) / (n - 1) : W / 2);
+  const x = (i: number) => PAD + (i * (W - 2 * PAD)) / (n - 1);
   const yV = (v: number) => BOT - (v / vMax) * (BOT - TOP);
   const yC = (c: number) => BOT - (c / cMax) * (BOT - TOP) * 0.62;
   const bw = Math.max(2, ((W - 2 * PAD) / n) * 0.66);

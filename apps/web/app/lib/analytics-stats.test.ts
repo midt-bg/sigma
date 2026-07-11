@@ -148,4 +148,15 @@ describe('estimateYoyGrowth', () => {
     expect(g.value).toBeGreaterThan(1.1);
     expect(g.value).toBeLessThan(1.25);
   });
+
+  it('groups monthly points into full calendar years before computing ratios (/analytics granularity)', () => {
+    // /analytics feeds this with `granularity: 'month'` series (365-ish rows/yr, not one row/yr). A
+    // naive "recent N points" implementation would treat 24 monthly points as 2 short years; the
+    // real grouping keys by period.slice(0, 4) so the ratio is still computed year-over-year.
+    const points = [...year(2022, 100, 50), ...year(2023, 130, 55)];
+    expect(points).toHaveLength(24); // sanity: this is monthly input, not 2 yearly rows
+    const g = estimateYoyGrowth(points);
+    expect(g.value).toBeCloseTo(1.3, 5);
+    expect(g.count).toBeCloseTo(1.1, 5);
+  });
 });

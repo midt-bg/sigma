@@ -142,6 +142,10 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const AUTHORITY_LIMIT = 20;
 const SECTOR_LIMIT = 15;
+// Cloudflare D1 caps bound parameters at 100 per statement — below MAX_LIMIT (200), so an
+// `IN (...contractIds)` built straight from a full leaderboard page can't be a single query.
+// See getOverrunAnnexes, which chunks on this.
+const D1_MAX_BOUND_PARAMS = 100;
 
 // The overrun predicate, shared by every query so they never disagree on what counts as a ballooned
 // contract. Uses only `contracts` columns (aliased `c`) so it works both as a WHERE and as a CASE
@@ -321,50 +325,61 @@ interface AnnexRaw {
 // a per-row round trip. The inspector is client-selected, so we pre-fetch every displayed contract's
 // amendments here and the route renders the selected row's slice from memory.
 //
-// Cost: ONE statement. The IN-list is bounded by the leaderboard LIMIT (≤ MAX_LIMIT = 200 ids; default
-// 50), so the parameter count and the join fan-out are both bounded. The join rides idx_amendments_contract
-// (unp, contract_number); rows out = the total amendments across the shown contracts (each overrun
-// contract has annex_count > 0, typically a handful). No N+1, no unbounded scan, no duplicate COUNT.
+// Cost: the IN-list is bounded by the leaderboard LIMIT (≤ MAX_LIMIT = 200 ids; default 50), so the
+// fan-out is bounded — but 200 exceeds D1's 100-bound-parameter cap, so the ids are chunked into
+// D1_MAX_BOUND_PARAMS-sized batches and queried in parallel (≤ 2 statements at MAX_LIMIT). Each batch
+// rides idx_amendments_contract (unp, contract_number); rows out = the total amendments across the
+// shown contracts (each overrun contract has annex_count > 0, typically a handful). No N+1 per row.
 export async function getOverrunAnnexes(
   db: D1Database,
   contractIds: string[],
 ): Promise<OverrunAnnex[]> {
   if (contractIds.length === 0) return [];
-  const placeholders = contractIds.map(() => '?').join(', ');
-  const res = await db
-    .prepare(
-      `SELECT c.id AS contract_id,
-              am.value_before AS value_before, am.value_after AS value_after,
-              am.value_delta AS value_delta, am.currency AS currency,
-              am.published_at AS published_at, am.description AS description
-       FROM contracts c
-       JOIN tenders t ON t.id = c.tender_id
-       JOIN amendments am ON am.unp = t.source_id AND am.contract_number = c.contract_number
-       WHERE c.id IN (${placeholders})
-       ORDER BY c.id, am.published_at IS NULL, am.published_at, am.natural_key`,
-    )
-    .bind(...contractIds)
-    .all<AnnexRaw>();
+  const batches: string[][] = [];
+  for (let i = 0; i < contractIds.length; i += D1_MAX_BOUND_PARAMS) {
+    batches.push(contractIds.slice(i, i + D1_MAX_BOUND_PARAMS));
+  }
+  const results = await Promise.all(
+    batches.map((batch) => {
+      const placeholders = batch.map(() => '?').join(', ');
+      return db
+        .prepare(
+          `SELECT c.id AS contract_id,
+                  am.value_before AS value_before, am.value_after AS value_after,
+                  am.value_delta AS value_delta, am.currency AS currency,
+                  am.published_at AS published_at, am.description AS description
+           FROM contracts c
+           JOIN tenders t ON t.id = c.tender_id
+           JOIN amendments am ON am.unp = t.source_id AND am.contract_number = c.contract_number
+           WHERE c.id IN (${placeholders})
+           ORDER BY c.id, am.published_at IS NULL, am.published_at, am.natural_key`,
+        )
+        .bind(...batch)
+        .all<AnnexRaw>();
+    }),
+  );
   // NB: the ORDER BY pushes undated amendments LAST (`am.published_at IS NULL` sorts 0 before 1)
   // before tie-breaking on natural_key. SQLite would otherwise sort NULL first, so groupAnnexes
   // (overruns-inspector.ts) would number an undated annex „Анекс 1" ahead of earlier dated ones.
 
-  return res.results.map((r) => {
-    const valueBeforeEur = annexEur(r.value_before, r.currency);
-    const valueAfterEur = annexEur(r.value_after, r.currency);
-    let deltaEur = annexEur(r.value_delta, r.currency);
-    if (deltaEur == null && valueBeforeEur != null && valueAfterEur != null) {
-      deltaEur = valueAfterEur - valueBeforeEur;
-    }
-    return {
-      contractId: r.contract_id,
-      date: r.published_at ?? null,
-      reason: r.description?.trim() || null,
-      valueBeforeEur,
-      valueAfterEur,
-      deltaEur,
-    };
-  });
+  return results.flatMap((res) =>
+    res.results.map((r) => {
+      const valueBeforeEur = annexEur(r.value_before, r.currency);
+      const valueAfterEur = annexEur(r.value_after, r.currency);
+      let deltaEur = annexEur(r.value_delta, r.currency);
+      if (deltaEur == null && valueBeforeEur != null && valueAfterEur != null) {
+        deltaEur = valueAfterEur - valueBeforeEur;
+      }
+      return {
+        contractId: r.contract_id,
+        date: r.published_at ?? null,
+        reason: r.description?.trim() || null,
+        valueBeforeEur,
+        valueAfterEur,
+        deltaEur,
+      };
+    }),
+  );
 }
 
 // Lean corpus headline for the /analytics landing card — just the two figures the card shows

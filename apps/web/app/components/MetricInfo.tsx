@@ -27,6 +27,12 @@ export function MetricInfo({
 }) {
   const aria = readout ? `${title}. ${summary} ${readout}`.trim() : `${title}. ${summary}`;
   const [open, setOpen] = useState(false);
+  // Pointer users reveal the popover via CSS `:hover`/`:focus-within` without ever raising `open`
+  // (that state only drives the click/touch path). Track hover and focus separately so
+  // `aria-expanded` reflects the actually-visible state, not just the click toggle.
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const visible = open || hovered || focused;
   const ref = useRef<HTMLSpanElement>(null);
   const popRef = useRef<HTMLSpanElement>(null);
   // Horizontal shift (px) that keeps the click-opened popover inside the viewport on small screens
@@ -77,13 +83,20 @@ export function MetricInfo({
   }, [open]);
 
   return (
-    <span className={`metric-info${open ? ' is-open' : ''}`} ref={ref}>
+    <span
+      className={`metric-info${open ? ' is-open' : ''}`}
+      ref={ref}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <button
         type="button"
         className="metric-info-btn"
         aria-label={aria}
-        aria-expanded={open}
+        aria-expanded={visible}
         onClick={() => setOpen((v) => !v)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
       >
         <span className="metric-info-glyph" aria-hidden="true">
           ⓘ
