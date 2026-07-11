@@ -14,7 +14,7 @@ import { TotalsStrip, type Total } from '../components/TotalsStrip';
 import { ComboTrendChart } from '../components/ComboTrendChart';
 import { Callout } from '../components/ui';
 import { publicCache } from '../lib/cache';
-import { cpvGroupSelection, singleSelectFilters } from '../lib/filters';
+import { cpvGroupSelection } from '../lib/filters';
 
 // „Договори — обзор": one list of contracts looked at from three angles (lenses) — in time, per CPV
 // group, or both at once. Every control is a plain <Link> mutating the query string, so the page is

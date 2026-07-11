@@ -338,6 +338,12 @@ export interface CpvGroupStatsResult {
  * Top-N CPV groups by contract count, each with median / p10–p90 / max and a real-value sample for
  * the distribution row. One grouped scan for the ranking (same precedent as the live sector facet in
  * queries/contracts.ts), then one bounded indexed pass per group.
+ *
+ * Perf note: the ranking scan is a full GROUP BY over all positive-EUR contracts (no rollup table
+ * backs 5-digit CPV groups today — sector_totals is 2-digit division only), so cost grows with
+ * corpus size. The route is edge-cached, so this runs once per cache window, not per request.
+ * TODO: if the corpus grows enough for this to matter, precompute a per-group rollup (mirroring
+ * sector_totals) instead of scanning contracts/tenders live here.
  */
 export async function getCpvGroupStats(db: D1Database, limit = 10): Promise<CpvGroupStatsResult> {
   const [top, totalRow] = await Promise.all([
