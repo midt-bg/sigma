@@ -8,7 +8,7 @@
 -- then ship-domain copies the served tables into the served D1 and runs precompute on it).
 --
 -- Modelling rationale (cleaning policy, value_flag, consortium model, canonical EUR + FX, the
--- synthetic-tender rule) lives in docs/etl-pipeline.md and docs/core-scope.md.
+-- synthetic-tender rule) lives in docs/etl.md and docs/core-scope.md.
 --
 -- Layout: (1) domain tables the explorer reads (+ amendments history + the OCDS parties projection),
 -- (1b) rollups + FTS search, (3) fx_rates / nuts_regions / data_freshness reference, (4) indexes.
@@ -123,9 +123,9 @@ CREATE TABLE contracts (
   bids_received    INTEGER,
   contract_kind    TEXT,                   -- Доставки / Услуги / Строителство
   awarded_to_group INTEGER,                -- this AWARD went to an обединение (per-contract, distinct from bidders.is_consortium)
-  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | annex_suspect | value_suspect (data-quality verdict)
+  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | value_low | value_suspect | annex_suspect (data-quality verdict; assigned in scripts/normalize-raw.sql)
   date_flag        TEXT NOT NULL DEFAULT 'ok',  -- ok | signed_after_publication (non-destructive date-quality verdict)
-  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; NULL = excluded (value_suspect)
+  amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; populated for all flags (value_suspect repaired to the procedure estimate); NULL only when no trustworthy EUR figure (FX-rateless foreign / value_suspect w/o estimate / no signing+current)
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
@@ -198,11 +198,11 @@ CREATE INDEX idx_parties_eik ON parties(eik);
 -- One row (id = 1). Index KPIs + freshness for the home page.
 CREATE TABLE home_totals (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
-  contracts    INTEGER NOT NULL,          -- contracts with a clean (non-NULL) amount_eur
-  value_eur    REAL NOT NULL,             -- SUM(amount_eur) over those same rows (count/sum cover one set)
+  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), NOT the clean-amount_eur count behind value_eur
+  value_eur    REAL NOT NULL,             -- SUM(amount_eur), clean rows only; paired with the (larger) corpus contracts count — the two do NOT cover one set
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
-  suspect      INTEGER NOT NULL,          -- value_suspect rows (NULL amount_eur): surfaced, never summed
+  suspect      INTEGER NOT NULL,          -- COUNT of value_suspect rows (data-quality KPI); summed via repair to the procedure estimate, except a value_suspect row with no estimate (amount_eur NULL, excluded like other NULL rows)
   first_date   TEXT,
   last_date    TEXT,
   as_of        TEXT,                       -- data_freshness 'admin' as_of (latest real contract date)

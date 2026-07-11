@@ -102,6 +102,15 @@ export function signedPct(ratio: number | null | undefined, dp = 1): string {
   return body;
 }
 
+/** Signed monetary delta with an explicit sign, matching signedPct's glyphs: `-1200` → `−1,2 хил.`,
+ *  `1200` → `+1,2 хил.`, `0` → `0`. Uses U+2212 (not a hyphen) so the sign pairs with tabular-nums. */
+export function signedMoney(eur: number | null | undefined): string {
+  if (eur == null || !Number.isFinite(eur)) return EM_DASH;
+  const body = moneyBare(Math.abs(eur));
+  if (Math.round(Math.abs(eur)) === 0) return body; // no sign on zero
+  return eur < 0 ? `${MINUS}${body}` : `+${body}`;
+}
+
 /** ISO date → `DD.MM.YYYY` (`2024-10-14` → `14.10.2024`). Tolerates a datetime prefix. */
 export function date(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
@@ -162,7 +171,7 @@ export function unp(value: string | null | undefined): string {
  *
  * `null` is the explicit „nothing-to-show" signal so the renderer can skip the whole block instead
  * of emitting an empty heading. Resolving each member name → ЕИК is parked on the Trade Register
- * backfill (docs/etl-pipeline.md § Multi-source); until that lands the caller stamps every
+ * backfill (docs/core-scope.md — parked Trade Register pipeline); until that lands the caller stamps every
  * participant with `ЕИК неустановен`.
  */
 export type ConsortiumMembership =
