@@ -89,7 +89,7 @@ function multText(mult: number): string {
   return `×${(Math.round(mult * 10) / 10).toString().replace('.', ',')}`;
 }
 
-function relLabel(valueEur: number, medianEur: number): { text: string; cls: string } {
+export function relLabel(valueEur: number, medianEur: number): { text: string; cls: string } {
   if (!(medianEur > 0)) return { text: '', cls: 'ov-rel-mid' };
   const mult = valueEur / medianEur;
   if (mult >= 1.3) return { text: `${multText(mult)} типичното`, cls: 'ov-rel-hi' };
@@ -106,7 +106,7 @@ function jitter(seedText: string, i: number): number {
 
 const LOG_MIN = 1e3;
 
-function logMax(groups: CpvGroupStat[]): number {
+export function logMax(groups: CpvGroupStat[]): number {
   const max = Math.max(1e6, ...groups.map((g) => g.maxEur));
   // epsilon guards exact powers of ten from float rounding nudging log10 just above the integer
   return 10 ** Math.ceil(Math.log10(max) - 1e-9);

@@ -288,6 +288,9 @@ function contractScope(
     case 'sector':
       return { where: 'AND substr(t.cpv_code, 1, 2) = ?', params: [sel] };
     case 'region':
+      // Invariant confirmed against scripts/derive-contract-features.sql: region_quality_totals.nuts
+      // is built as `COALESCE(t.place_of_performance, 'NA')` — the same raw column filtered here, so
+      // a ranking row's `nuts` key always matches contracts by exact `t.place_of_performance` equality.
       return { where: 'AND t.place_of_performance = ?', params: [sel] };
     case 'year':
       return { where: 'AND substr(c.signed_at, 1, 4) = ?', params: [sel] };
