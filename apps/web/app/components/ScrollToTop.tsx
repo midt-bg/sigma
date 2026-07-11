@@ -6,6 +6,10 @@ export function ScrollToTop() {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
+    // Assumes document/window-level scrolling (confirmed: the app's inner-scrolling
+    // regions — the mobile nav drawer, the search suggestions popover — are both
+    // self-contained overlays, not the main content area). If a page ever scrolls via
+    // an inner container instead, this threshold check needs to target that container.
     const toggleVisibility = () => {
       if (window.scrollY > SHOW_AFTER_PX) {
         setIsVisible(true);

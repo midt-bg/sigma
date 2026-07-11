@@ -807,7 +807,8 @@ main.narrow {
 .scroll-to-top:focus-visible {
   box-shadow:
     0 0 0 3px var(--paper),
-    0 0 0 5px var(--accent);
+    0 0 0 5px var(--accent),
+    0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .scroll-to-top svg {
