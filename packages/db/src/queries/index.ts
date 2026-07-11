@@ -7,6 +7,7 @@ export * from './keyset';
 export * from './sectors';
 export * from './rows';
 export * from './home';
+export * from './flagged';
 export * from './methodology';
 export * from './companies';
 export * from './authorities';

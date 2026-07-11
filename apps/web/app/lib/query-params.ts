@@ -9,6 +9,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'count',
   'cursor',
   'eu',
+  'flag', // /contracts: risk-signal filter (#218) — changes the result set + headline totals
   'funding',
   'g',
   'kind',

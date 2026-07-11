@@ -183,3 +183,74 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* Flagged-value section (#218): a lead accent number + three drill-down breakdown columns. */
+.flagged-lead {
+  margin: var(--s-5) 0 var(--s-6);
+}
+.flagged-lead a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  text-decoration: none;
+  color: var(--ink);
+  flex-wrap: wrap;
+}
+.flagged-lead a:hover .flagged-sub {
+  color: var(--accent);
+}
+.flagged-num {
+  font: 600 clamp(30px, 4vw, 44px) / 1 var(--font-serif);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.flagged-sub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+.flagged-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--s-5) var(--s-7);
+}
+.flagged-h3 {
+  font: 500 10.5px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  margin: 0 0 var(--s-2);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--ink);
+}
+.flagged-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.flagged-list a {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font: 14px/1.35 var(--font-sans);
+  text-decoration: none;
+  color: var(--ink);
+}
+.flagged-list a:hover {
+  color: var(--accent);
+}
+.flagged-val {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.flagged-note {
+  margin-top: var(--s-3);
+}

@@ -6,6 +6,7 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
+import { flagPredicate } from './flagged';
 import {
   authoritySlug,
   bareContractId,
@@ -30,6 +31,8 @@ export interface ContractListParams {
   bidder?: string | null; // bidder slug
   q?: string | null;
   bids?: 'one' | null;
+  flags?: string[]; // risk-signal tokens (#218): a FlagType or `all`; OR-combined
+  authorityTypes?: string[]; // authority `type_group` buckets (#218 breakdown drill-down, `?type=`)
   cursor?: string | null;
   pageSize?: number;
 }
@@ -44,6 +47,8 @@ export const CONTRACT_FILTER_KEYS = [
   'bidder',
   'q',
   'bids',
+  'flags',
+  'authorityTypes',
 ] as const satisfies readonly (keyof ContractListParams)[];
 
 // Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
@@ -177,6 +182,19 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
     );
     params.push(match);
   }
+  if (p.flags?.length) {
+    // Risk-signal filter (#218): OR the requested flag predicates. An unrecognised token yields no
+    // predicate; if none are valid the filter matches nothing (rather than silently showing all).
+    const preds = p.flags
+      .map(flagPredicate)
+      .filter((x): x is string => x != null)
+      .map((x) => `(${x})`);
+    where.push(preds.length ? `(${preds.join(' OR ')})` : '1=0');
+  }
+  if (p.authorityTypes?.length) {
+    where.push(`a.type_group IN (${qs(p.authorityTypes.length)})`);
+    params.push(...p.authorityTypes);
+  }
   return { sql: where.length ? ' WHERE ' + where.join(' AND ') : '', params };
 }
 
@@ -192,6 +210,8 @@ function contractFilterSignature(p: ContractListParams): string {
     bidder,
     q: searchMatchQuery(p.q ?? ''),
     bids: p.bids ?? null,
+    flags: p.flags?.length ? [...p.flags].sort() : null,
+    authorityTypes: p.authorityTypes?.length ? [...p.authorityTypes].sort() : null,
   } satisfies Record<(typeof CONTRACT_FILTER_KEYS)[number], unknown>;
   return filterSignature(filters);
 }

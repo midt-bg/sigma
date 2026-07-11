@@ -4,7 +4,15 @@ const CSV_CONTENT_TYPE = 'text/csv; charset=utf-8';
 const CSV_CACHE_CONTROL = 'public, max-age=3600';
 const CSV_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
-const ARRAY_FILTERS = ['years', 'sectors', 'procedureGroups', 'kinds', 'types'] as const;
+const ARRAY_FILTERS = [
+  'years',
+  'sectors',
+  'procedureGroups',
+  'kinds',
+  'types',
+  'flags',
+  'authorityTypes',
+] as const;
 // `bids` ('one' | null) is a response-affecting filter: without it here a „само една оферта" export
 // was misclassified as unfiltered and served from / written to the shared unfiltered cache object —
 // a cache-poisoning variant of #56/#122 on top of the wrong-data bug (#138). hasScalarFilter treats

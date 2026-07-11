@@ -79,9 +79,18 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
   );
 }
 
+// Bulgarian labels for the risk-signal types (keys mirror flagged.ts FLAG_TYPES / riskLogic.ts).
+const FLAG_LABELS: Record<string, string> = {
+  no_competition: 'Липса на конкуренция',
+  eu_no_competition: 'Липса на конкуренция (със средства от ЕС)',
+  high_markup: 'Ръст на стойността чрез анекси',
+  anomalies: 'Стойностна или времева аномалия',
+};
+
 export default function Home({ loaderData }: Route.ComponentProps) {
   const {
     totals,
+    flagged,
     topCompanies,
     topMinistries,
     topMunicipalities,
@@ -128,6 +137,82 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         Обхват: {coveragePartialNote(endYear)}
         {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
       </p>
+
+      <section className="section flagged" aria-labelledby="flagged">
+        <h2 id="flagged">
+          Договори със <em>сигнали за риск</em>
+        </h2>
+        <p className="section-hint">
+          Обща стойност на договорите, при които СИГМА отбелязва поне един структурен сигнал — липса
+          на конкуренция, ръст на стойността чрез анекси или стойностна/времева аномалия. Сигналите
+          са ориентири за преглед, не присъда. <Link to="/methodology#flagged">Как ги четем →</Link>
+        </p>
+
+        <p className="flagged-lead">
+          <Link to="/contracts?flag=all&sort=value-desc">
+            <strong className="flagged-num">≈ {moneyBare(flagged.totalEur)} €</strong>
+            <span className="flagged-sub">в {count(flagged.contracts)} договора със сигнал →</span>
+          </Link>
+        </p>
+
+        <div className="flagged-cols">
+          <div>
+            <h3 className="flagged-h3">По вид сигнал</h3>
+            <ul className="flagged-list">
+              {flagged.byType
+                .filter((r) => r.contracts > 0)
+                .map((r) => (
+                  <li key={r.type}>
+                    <Link to={`/contracts?flag=${r.type}&sort=value-desc`}>
+                      <span>{FLAG_LABELS[r.type] ?? r.type}</span>
+                      <span className="flagged-val">
+                        {moneyBare(r.eur)} € · {count(r.contracts)}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+            <p className="small muted flagged-note">
+              Един договор може да носи няколко сигнала, затова редовете тук се застъпват и сборът
+              им надхвърля общата (де-дублирана) сума.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="flagged-h3">По сектор</h3>
+            <ul className="flagged-list">
+              {flagged.bySector.map((s) => (
+                <li key={s.code}>
+                  <Link to={`/contracts?flag=all&sector=${s.code}&sort=value-desc`}>
+                    <span>{s.label}</span>
+                    <span className="flagged-val">
+                      {moneyBare(s.eur)} € · {count(s.contracts)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h3 className="flagged-h3">По тип институция</h3>
+            <ul className="flagged-list">
+              {flagged.byAuthorityType.map((a) => (
+                <li key={a.typeGroup}>
+                  <Link
+                    to={`/contracts?flag=all&type=${encodeURIComponent(a.typeGroup)}&sort=value-desc`}
+                  >
+                    <span>{a.typeGroup}</span>
+                    <span className="flagged-val">
+                      {moneyBare(a.eur)} € · {count(a.contracts)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
 
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">
