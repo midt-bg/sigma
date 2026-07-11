@@ -1,7 +1,12 @@
-import type { ChangeEvent, FormEvent } from 'react';
-import { Form, Link, useNavigate, useSearchParams } from 'react-router';
+import { useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
+import { Form, Link, useSearchParams } from 'react-router';
 import { count as fmtCount } from '@sigma/shared';
-import { withParams } from '../lib/filters';
+import {
+  categorySelectionState,
+  filterFormKey,
+  preservedParamInputs,
+  shouldPruneField,
+} from './filterRail.logic';
 
 export interface FilterOption {
   value: string;
@@ -27,10 +32,14 @@ export interface FilterGroup {
   more?: { href: string; label: string };
 }
 
-// Sticky filter rail. Filters live in the URL (shareable). A `<Form method="get">` auto-submits on
-// change when JS is on (instant filtering) and still works via the visible button without JS. The
-// current `sort` is preserved through a hidden field; `cursor`/`page` are intentionally omitted so a
-// new filter resets to page 1.
+// Filter rail (a sticky sidebar on desktop; the „Търси" bar itself is a fixed floating pill — see
+// layout.css). Filters live in the URL (shareable). A native `<Form method="get">` accumulates the
+// selection client-side and applies it in ONE navigation when the visitor presses „Търси" — no
+// per-toggle Worker request / D1 pass (issue #181). Checkboxes are uncontrolled (`defaultChecked`), so
+// they respond instantly and work with JS off. The current `sort` and any `authority`/`bidder` scope
+// are preserved through hidden fields; `cursor`/`page` have no field, so the native submit drops them
+// and the keyset cursor resets to page 1 for free. The URL stays the source of truth: the form is keyed
+// on the query string so „Изчисти", back/forward and shared links remount it and re-apply defaultChecked.
 //
 // All groups render expanded by default so the available filters are visible at a glance; the visitor
 // can collapse any of them by clicking its summary (the `<details>` element preserves that local
@@ -47,26 +56,47 @@ export function FilterRail({
   csvHref?: string;
 }) {
   const [sp] = useSearchParams();
-  const navigate = useNavigate();
-  const preservedScope = ['authority', 'bidder'].flatMap((key) =>
-    sp.getAll(key).map((value) => ({ key, value })),
-  );
-  const groupKeys = groups.map((g) => g.key);
-  const submitForm = (form: HTMLFormElement) => {
-    const data = new FormData(form);
-    const overrides: Record<string, string | string[] | null> = {
-      sort: String(data.get('sort') ?? sort),
-      cursor: null,
-      page: null,
+  const groupKeys = new Set(groups.map((g) => g.key));
+  // Carry forward every current URL param that isn't a form control (search `q`, `authority`/`bidder`
+  // scope, …) so the native GET submit doesn't erase it — the native form serialises only its own
+  // fields. Group keys, `sort`, `cursor`, `page` are excluded (see preservedParamInputs).
+  const preserved = preservedParamInputs(sp, groupKeys);
+  // Count of currently-applied filters (from the loader/URL, not pending toggles), shown on the
+  // submit button so the sticky bar doubles as a „N filters active" indicator.
+  const appliedCount = groups.reduce((total, g) => total + g.selected.length, 0);
+  // The form is keyed on the applied filter set so it remounts (re-applying defaultChecked) on „Изчисти",
+  // back/forward and shared links — see the <Form> below.
+  const formKey = filterFormKey(sp);
+  // Keep the floating apply pill from covering the site footer: as the footer scrolls into view, lift
+  // the pill by however much the footer intrudes into the viewport, so it comes to rest just above it
+  // (the footer constrains it). Enhancement only — with JS off the pill stays at its base offset.
+  // Re-runs on `formKey` because the keyed <Form> remounts the pill (new node) on every filter apply;
+  // an empty dep array would leave the listener writing to the old, detached div.
+  const barRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    const footer = document.querySelector<HTMLElement>('.site-footer');
+    if (!bar || !footer) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const overlap = Math.max(0, window.innerHeight - footer.getBoundingClientRect().top);
+      bar.style.setProperty('--filter-bar-lift', `${overlap}px`);
     };
-    for (const key of groupKeys) {
-      overrides[key] = data.getAll(key).map(String).filter(Boolean);
-    }
-    navigate(withParams(sp, overrides));
-  };
-  const onChange = (e: FormEvent<HTMLFormElement>) => {
-    submitForm(e.currentTarget);
-  };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [formKey]);
+  // „Select all" only toggles its category's child checkboxes in the DOM; it never submits. The visitor
+  // reviews the accumulated selection and presses „Търси" to apply it in one navigation.
   const onCategoryChange = (e: ChangeEvent<HTMLInputElement>, groupKey: string) => {
     e.stopPropagation();
     const input = e.currentTarget;
@@ -77,9 +107,15 @@ export function FilterRail({
       .forEach((member) => {
         if (member.name === groupKey) member.checked = input.checked;
       });
-
-    const form = input.form ?? (input.closest('form') as HTMLFormElement | null);
-    if (form) submitForm(form);
+  };
+  // Progressive enhancement: drop empty-valued controls (the „Всички" radios submit `value=`/`eu=`) so
+  // the applied URL stays canonical. Disabled controls are omitted from the native GET; with JS off this
+  // never runs and the empty params are emitted but harmless (loaders treat empty as unset).
+  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    for (const el of Array.from(e.currentTarget.elements)) {
+      const input = el as HTMLInputElement;
+      if (shouldPruneField(input, groupKeys)) input.disabled = true;
+    }
   };
   return (
     <aside className="filter-rail" aria-label="Филтри">
@@ -95,13 +131,15 @@ export function FilterRail({
       <label htmlFor="filter-rail-toggle" className="filter-rail-summary">
         Филтри
       </label>
-      <Form method="get" onChange={onChange}>
+      {/* Keyed on the applied filter set (cursor/page/sort excluded) so a new URL from clear, back/forward
+          or a shared link remounts the form and re-applies `defaultChecked` — uncontrolled inputs would
+          otherwise keep stale DOM state — while paging or re-sorting preserves open groups + focus. */}
+      <Form method="get" key={formKey} onSubmit={onSubmit}>
         <input type="hidden" name="sort" value={sort} />
-        {/* Preserve an active in-table search when filters change without JS (the JS path already
-            carries `q` through withParams). */}
-        {sp.get('q') && <input type="hidden" name="q" value={sp.get('q')!} />}
-        {preservedScope.map(({ key, value }) => (
-          <input type="hidden" name={key} value={value} key={`${key}-${value}`} />
+        {/* preservedParamInputs already carries every non-form URL param — the in-table search `q`
+            (#204), the authority/bidder scope, etc. — so the native GET submit never erases them. */}
+        {preserved.map(({ key, value }, i) => (
+          <input type="hidden" name={key} value={value} key={`${key}-${i}`} />
         ))}
         {groups.map((g) => {
           return (
@@ -118,28 +156,24 @@ export function FilterRail({
                     type="radio"
                     name={g.key}
                     value=""
-                    checked={g.selected.length === 0}
-                    onChange={() => {}}
+                    defaultChecked={g.selected.length === 0}
                   />{' '}
                   {g.allLabel ?? 'Всички'}
                 </label>
               )}
               {g.categories
                 ? g.categories.map((category) => {
-                    const selected = new Set(g.selected);
-                    const selectedCount = category.options.filter((option) =>
-                      selected.has(option.value),
-                    ).length;
-                    const allSelected =
-                      category.options.length > 0 && selectedCount === category.options.length;
-                    const someSelected = selectedCount > 0;
+                    const { allSelected, someSelected } = categorySelectionState(
+                      category.options.map((o) => o.value),
+                      g.selected,
+                    );
 
                     return (
                       <details className="filter-subgroup" key={category.key} open={someSelected}>
                         <summary>
                           <input
                             type="checkbox"
-                            checked={allSelected}
+                            defaultChecked={allSelected}
                             aria-checked={
                               someSelected && !allSelected
                                 ? 'mixed'
@@ -165,8 +199,7 @@ export function FilterRail({
                               type={g.type}
                               name={g.key}
                               value={o.value}
-                              checked={g.selected.includes(o.value)}
-                              onChange={() => {}}
+                              defaultChecked={g.selected.includes(o.value)}
                             />{' '}
                             {o.label}
                             {o.count != null && (
@@ -183,8 +216,7 @@ export function FilterRail({
                         type={g.type}
                         name={g.key}
                         value={o.value}
-                        checked={g.selected.includes(o.value)}
-                        onChange={() => {}}
+                        defaultChecked={g.selected.includes(o.value)}
                       />{' '}
                       {o.label}
                       {o.count != null && <span className="muted small">{fmtCount(o.count)}</span>}
@@ -198,20 +230,25 @@ export function FilterRail({
             </details>
           );
         })}
-        <noscript>
-          <button type="submit" className="filter-apply">
-            Покажи резултатите
-          </button>
-        </noscript>
-        <p className="small muted mt-s4">
-          <Link to={clearHref}>Изчисти филтрите</Link>
-          {csvHref && (
-            <>
-              {' · '}
-              <a href={csvHref}>Изтегли CSV</a>
-            </>
-          )}
-        </p>
+        {/* One native submit applies the whole accumulated selection. Works with JS off; with JS on it
+            still avoids a Worker request per toggle (issue #181). On desktop this is a floating pill
+            fixed to the bottom of the viewport (see layout.css); the ref feeds the footer-lift effect. */}
+        <div className="filter-apply-bar" ref={barRef}>
+          <div className="filter-apply-inner">
+            <button type="submit" className="filter-apply">
+              Търси{appliedCount > 0 ? ` · ${fmtCount(appliedCount)}` : ''}
+            </button>
+            <p className="small muted filter-apply-links">
+              <Link to={clearHref}>Изчисти филтрите</Link>
+              {csvHref && (
+                <>
+                  {' · '}
+                  <a href={csvHref}>Изтегли CSV</a>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
       </Form>
     </aside>
   );
