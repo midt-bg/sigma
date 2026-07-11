@@ -553,7 +553,7 @@ describe('refresh-slice EOP base derivation', () => {
 
       const nullCnumContracts = sqliteJson<{ id: string; contract_subject: string }>(
         dbPath,
-        "SELECT id, contract_subject FROM contracts WHERE contract_number IS NULL ORDER BY id",
+        'SELECT id, contract_subject FROM contracts WHERE contract_number IS NULL ORDER BY id',
       );
       expect(nullCnumContracts).toHaveLength(2);
       expect(nullCnumContracts.some((row) => row.id.startsWith('c:e:'))).toBe(true);
