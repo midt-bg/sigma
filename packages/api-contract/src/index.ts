@@ -272,6 +272,17 @@ export interface ContractLots {
   signedTotalEur: number | null;
 }
 
+/** One published amendment (annex) to the contract — the recorded history of how the value changed,
+ *  surfaced as a chronological timeline. Native annex values are normalised to EUR (fixed BGN peg /
+ *  FX rate by the annex date) to match the rest of the page. */
+export interface AmendmentEntry {
+  date: string | null; // published_at of the annex
+  documentNumber: string | null;
+  description: string | null; // recorded reason/notes, when the source carries them
+  valueAfterEur: number | null; // the contract value after this annex
+  deltaEur: number | null; // value_after − value_before
+}
+
 export interface ContractDetail {
   id: string;
   subject: string;
@@ -320,6 +331,9 @@ export interface ContractDetail {
   lots: ContractLots | null;
   /** Declared subcontractor from the АОП feed ("Подизпълнител"), sparse (~0.8% of contracts). */
   subcontractor: { name: string; eik: string | null; valueEur: number | null } | null;
+  /** Published amendments (annexes), oldest first — the recorded value history behind
+   *  `value.signingEur` → `value.currentEur`. Empty when the contract has no annexes. */
+  amendments: AmendmentEntry[];
 }
 
 /** The machine-readable contract record served at `/contracts/:id.json`. */

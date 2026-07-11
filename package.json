@@ -13,6 +13,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "prettier --check .",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:docs:test": "node --test scripts/check-docs.test.mjs",
     "format": "prettier --write .",
     "setup": "node scripts/setup.mjs",
     "import": "node scripts/import.mjs",
