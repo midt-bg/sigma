@@ -32,6 +32,9 @@ export function MetricInfo({
   // Horizontal shift (px) that keeps the click-opened popover inside the viewport on small screens
   // (mobile audit: at 320px the fixed-width popover clips off-screen for edge-column metrics).
   const [shift, setShift] = useState(0);
+  // Mirrors `shift` synchronously so `recompute` always reads the value actually applied to the
+  // DOM right now, not a stale render closure — see the idempotency note in `recompute` below.
+  const shiftRef = useRef(0);
   // Keyboard focus (no click) also reveals the popover via CSS `:focus-within`; track it so
   // `aria-expanded` matches what's actually visible, not just the click-toggled `open` state.
   const [focused, setFocused] = useState(false);
@@ -47,21 +50,33 @@ export function MetricInfo({
   const visible = wouldBeVisible && !dismissed;
 
   useIsoLayoutEffect(() => {
-    if (!open) {
+    if (!visible) {
+      shiftRef.current = 0;
       setShift(0);
       return;
     }
     const pop = popRef.current;
     const recompute = () => {
       if (!pop) return;
+      // getBoundingClientRect() reflects the *currently applied* `translate`, so subtract the
+      // shift already in effect to recover the popover's unshifted natural position before
+      // clamping again — otherwise each recompute clamps an already-shifted rect and a
+      // resize/scroll can cancel or compound the previous shift instead of converging.
       const rect = pop.getBoundingClientRect();
+      const naturalRect = {
+        left: rect.left - shiftRef.current,
+        right: rect.right - shiftRef.current,
+      };
       const vw = document.documentElement.clientWidth;
-      setShift(clampPopoverShift(rect, vw));
+      const next = clampPopoverShift(naturalRect, vw);
+      shiftRef.current = next;
+      setShift(next);
     };
     recompute();
     if (!pop) return;
-    // Re-clamp on resize/scroll while open so the popover can't drift out of the viewport; rAF
-    // coalesces bursts of scroll events into at most one recompute per frame.
+    // Re-clamp on resize/scroll while visible (click, hover, or keyboard focus) so the popover
+    // can't drift out of the viewport; rAF coalesces bursts of scroll events into at most one
+    // recompute per frame.
     let raf = 0;
     const onViewportChange = () => {
       if (raf) return;
@@ -77,7 +92,7 @@ export function MetricInfo({
       window.removeEventListener('resize', onViewportChange);
       window.removeEventListener('scroll', onViewportChange, true);
     };
-  }, [open]);
+  }, [visible]);
 
   // Close on outside-click while open (touch path — pointer users rely on CSS hover/focus).
   useEffect(() => {

@@ -20,7 +20,14 @@ describe('clampPopoverShift', () => {
   // wider than the available space never gets pushed past the left inset while chasing the right
   // one — matches the pop's `max-width: min(320px, calc(100vw - 16px))` CSS guarantee.
   it('prioritizes the left clamp when both edges would otherwise clip', () => {
-    expect(clampPopoverShift({ left: -20, right: 304 }, 320)).toBe(28);
+    // Popover (340px) is wider than the 320px viewport's 304px (100vw - 16) budget, so both edge
+    // checks genuinely fire: the right clamp alone would want dx=-18, but the left clamp then
+    // overrides it entirely, landing on 18.
+    const rect = { left: -10, right: 330 };
+    const vw = 320;
+    expect(rect.right > vw - 8).toBe(true); // right-edge clamp condition fires
+    expect(rect.left + (vw - 8 - rect.right) < 8).toBe(true); // left-edge clamp condition also fires
+    expect(clampPopoverShift(rect, vw)).toBe(18);
   });
 
   it('is a no-op for a centered popover with room on both sides', () => {
