@@ -5,7 +5,7 @@ import type {
   CompetitionDirectAward,
   CompetitionPair,
 } from '@sigma/api-contract';
-import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
+import { EU_SCOREBOARD } from '@sigma/config';
 import { count, money, pct } from '@sigma/shared';
 import { getCompetition } from '@sigma/db';
 import type { Route } from './+types/competition';
@@ -143,13 +143,6 @@ const directAwardColumns: Column<CompetitionDirectAward>[] = [
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
 ];
 
-// EU Single Market Scoreboard benchmark, rendered as text (never colour alone) for accessibility.
-const RATING_LABEL: Record<IndicatorRating, string> = {
-  good: 'в нормата на ЕС',
-  mid: 'над целевата стойност на ЕС',
-  bad: 'над прага на ЕС',
-};
-
 const pairColumns: Column<CompetitionPair>[] = [
   { key: 'rank', header: '#', isRank: true, cell: (r) => r.rank },
   {
@@ -181,17 +174,6 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
     { num: count(data.totals.singleOffer), label: 'договора с една оферта' },
     { num: pct(data.totals.singleOfferValueShare), label: 'дял от стойността с една оферта' },
   ];
-
-  // Benchmark the two headline shares against the EU Single Market Scoreboard thresholds.
-  const singleBidderRating = rateLowerIsBetter(
-    data.totals.singleOfferShare,
-    EU_SCOREBOARD.singleBidder,
-  );
-  const directAwardRating = rateLowerIsBetter(
-    data.procedure.nonCompetitiveShare,
-    EU_SCOREBOARD.directAward,
-  );
-  const benchmarkWarn = singleBidderRating === 'bad' || directAwardRating === 'bad';
 
   return (
     <>
@@ -267,31 +249,6 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         )}
 
         <TotalsStrip totals={totals} label="Обобщение на конкуренцията" />
-
-        {data.procedure.classifiedContracts > 0 ? (
-          <Callout
-            variant={benchmarkWarn ? 'warning' : undefined}
-            title="Спрямо праговете на ЕС (Single Market Scoreboard)"
-          >
-            <p style={{ margin: 0 }}>
-              Дял договори с <strong>една оферта</strong>: {pct(data.totals.singleOfferShare)} —{' '}
-              {RATING_LABEL[singleBidderRating]} (целево ≤ {pct(EU_SCOREBOARD.singleBidder.good)},
-              високо ≥ {pct(EU_SCOREBOARD.singleBidder.bad)}). Дял <strong>пряко възлагане</strong>{' '}
-              (без обявление): {pct(data.procedure.nonCompetitiveShare)} —{' '}
-              {RATING_LABEL[directAwardRating]} (целево ≤ {pct(EU_SCOREBOARD.directAward.good)},
-              високо ≥ {pct(EU_SCOREBOARD.directAward.bad)}). Праговете са външен ориентир на
-              Европейската комисия, не оценка на конкретна процедура. Виж{' '}
-              <Link to="/methodology#glossary">методологията</Link>.
-            </p>
-          </Callout>
-        ) : (
-          <Callout title="Спрямо праговете на ЕС (Single Market Scoreboard)">
-            <p style={{ margin: 0 }}>
-              Няма класифицирани договори (по тип процедура) в тази извадка — сравнението с
-              праговете на ЕС не е приложимо.
-            </p>
-          </Callout>
-        )}
 
         <Section
           id="single-offer"
