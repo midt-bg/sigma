@@ -66,6 +66,27 @@ describe('citation builders', () => {
     );
   });
 
+  it('handles contract with no awarded bidder', () => {
+    const c = {
+      subject: 'Прекратена процедура',
+      authority: { name: 'Община Пловдив' },
+      bidder: null,
+      value: { currentEur: null },
+      id: 'abc-123',
+    };
+
+    const citation = buildContractCitation(c, 'https://sigma.test');
+    expect(citation).toBe(
+      [
+        'Договор: Прекратена процедура',
+        'Възложител: Община Пловдив',
+        'Изпълнител: —',
+        'Стойност: —',
+        'Връзка: https://sigma.test/contracts/abc-123',
+      ].join('\n'),
+    );
+  });
+
   it('builds a company citation without EIK', () => {
     const c = {
       displayName: 'Чуждестранна фирма',
@@ -84,6 +105,27 @@ describe('citation builders', () => {
         'Общо спечелено: 0 €',
         'Брой договори: 1',
         'Връзка: https://sigma.test/companies/foreign-corp',
+      ].join('\n'),
+    );
+  });
+
+  it('shows the EIK when hasEik is absent from loaderData but eik is present', () => {
+    const c = {
+      displayName: 'Техно ООД',
+      eik: '123456789',
+      wonEur: 5000000,
+      contracts: 42,
+      slug: 'techno-ood',
+    };
+
+    const citation = buildCompanyCitation(c, 'https://sigma.test');
+    expect(citation).toBe(
+      [
+        'Компания: Техно ООД',
+        'ЕИК: 123456789',
+        'Общо спечелено: 5 млн. €',
+        'Брой договори: 42',
+        'Връзка: https://sigma.test/companies/techno-ood',
       ].join('\n'),
     );
   });

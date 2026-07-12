@@ -4,7 +4,7 @@ export function buildContractCitation(
   c: {
     subject: string;
     authority: { name: string };
-    bidder: { displayName: string };
+    bidder: { displayName: string } | null;
     value: { currentEur: number | null };
     id: string;
   },
@@ -13,7 +13,7 @@ export function buildContractCitation(
   return [
     `Договор: ${c.subject}`,
     `Възложител: ${c.authority.name}`,
-    `Изпълнител: ${c.bidder.displayName}`,
+    `Изпълнител: ${c.bidder ? c.bidder.displayName : '—'}`,
     `Стойност: ${money(c.value.currentEur)}`,
     `Връзка: ${origin}/contracts/${c.id}`,
   ].join('\n');
@@ -26,13 +26,12 @@ export function buildCompanyCitation(
     wonEur: number;
     contracts: number;
     slug: string;
-    hasEik?: boolean;
   },
   origin: string,
 ): string {
   return [
     `Компания: ${c.displayName}`,
-    `ЕИК: ${c.hasEik && c.eik ? c.eik : 'Няма'}`,
+    `ЕИК: ${c.eik ?? 'Няма'}`,
     `Общо спечелено: ${money(c.wonEur)}`,
     `Брой договори: ${count(c.contracts)}`,
     `Връзка: ${origin}/companies/${c.slug}`,
