@@ -23,7 +23,10 @@
    Editorial posture: quiet rail, collapsible groups, full-width table side. */
 .split {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  /* minmax(0,1fr) not 1fr: a bare 1fr track has min-width:auto, so a wide non-wrapping child (a long
+     institution name, the results table) can stretch it past its share and force horizontal overflow.
+     minmax(0,…) caps the content column at the available width. */
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: var(--s-7);
   margin-top: var(--s-5);
   align-items: start;
@@ -220,7 +223,11 @@
 
 @media (max-width: 960px) {
   .split {
-    grid-template-columns: 1fr;
+    /* Same guard as the base rule: the stacked single column holds both the filter rail and the wide
+       results table. A bare 1fr lets the table stretch the track past the viewport, so the full-width
+       „Търси" button renders wider than the sparse filter rows above it (which never reveal the
+       overflow). minmax(0,…) pins the track to the viewport, so button and filters share one width. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--s-5);
   }
   .split > aside {
@@ -643,14 +650,20 @@ details.row .body .signal .why {
   margin: var(--s-2) 0 0;
 }
 .filter-apply {
+  /* THE fix: force border-box. This button computes as content-box (the global `* {box-sizing}` reset
+     isn't winning here), so inline-size EXCLUDED the 32px horizontal padding + 1px border — at 100% it
+     rendered 66px wider than the filter column and overflowed it (the „too wide" bug). border-box makes
+     inline-size include padding+border, so 100% now fits the column exactly instead of overflowing it. */
+  box-sizing: border-box;
   display: block;
   inline-size: 100%;
-  min-block-size: 40px;
-  margin: 0;
+  max-inline-size: 100%;
+  min-block-size: 0;
+  margin: 0 auto;
   border: 1px solid var(--ink);
   background: var(--ink);
   color: var(--paper);
-  padding: 11px var(--s-4);
+  padding: 8px var(--s-6);
   font: 600 11px/1 var(--font-mono);
   letter-spacing: 0.22em;
   text-transform: uppercase;
