@@ -40,6 +40,12 @@ export function EuBenchmarkStat({
         .
       </p>
       <div className="ebs-meter" aria-hidden="true">
+        <span className="ebs-zone ebs-zone-good" style={{ left: 0, width: at(good) }} />
+        <span className="ebs-zone ebs-zone-mid" style={{ left: at(good), width: at(bad - good) }} />
+        <span
+          className="ebs-zone ebs-zone-high"
+          style={{ left: at(bad), width: at(scaleMax - bad) }}
+        />
         <i className={rating === 'bad' ? 'warn' : undefined} style={{ width: at(clamped) }} />
         <span className="ebs-tick" style={{ left: at(good) }}>
           <span className="ebs-tick-label">≤ {pct(good)}</span>

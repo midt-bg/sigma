@@ -628,25 +628,42 @@ tbody td,
 }
 .ebs-meter {
   position: relative;
-  height: 8px;
+  height: 12px;
   background: var(--rule-soft);
-  margin: var(--s-2) 0 22px;
+  margin: var(--s-2) 0 24px;
+}
+/* Threshold zones: the EU bands are visible across the whole track, not just as ticks -
+   under target (lightest), between target and high (a gray step up), over high (accent wash). */
+.ebs-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+}
+.ebs-zone-good {
+  background: var(--rule-soft);
+}
+.ebs-zone-mid {
+  background: var(--rule);
+}
+.ebs-zone-high {
+  background: var(--accent-bg);
 }
 .ebs-meter > i {
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: 3px auto 3px 0;
   display: block;
   background: var(--ink-mid);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 3px 3px 0;
 }
 .ebs-meter > i.warn {
   background: var(--accent);
 }
 .ebs-tick {
   position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 1px;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
   background: var(--ink);
 }
 .ebs-tick-label {
@@ -654,10 +671,11 @@ tbody td,
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  margin-top: 3px;
-  font-size: 11px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1;
-  color: var(--ink-soft);
+  color: var(--ink-mid);
   white-space: nowrap;
 }
 .ebs-thresholds,
