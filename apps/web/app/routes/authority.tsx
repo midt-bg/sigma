@@ -18,7 +18,7 @@ import { DataTable } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
-import { SingleOfferPortion } from '../components/SingleOfferPortion';
+import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
@@ -71,6 +71,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
   const { trend, network, competition, procedure } = loaderData;
   const ct = competition;
+  // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
+  const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
   const directAwardRating = rateLowerIsBetter(
     procedure.nonCompetitiveShare,
     EU_SCOREBOARD.directAward,
@@ -163,31 +165,39 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             hint="Дял на договорите само с една оферта и дял пряко възлагане (без обявление), спрямо праговете на ЕС."
           >
             {ct.contracts > 0 ? (
-              <SingleOfferPortion
-                valueEur={ct.singleOfferValueEur}
-                totalEur={ct.valueEur}
-                singleOffer={ct.singleOffer}
-                contracts={ct.contracts}
-                scopeLabel="на поръчките"
-                captionSuffix="по стойност"
+              <EuBenchmarkStat
+                title="Една оферта"
+                qualifier="от договорите с известен брой оферти са с една оферта"
+                share={ct.singleOfferShare}
+                good={EU_SCOREBOARD.singleBidder.good}
+                bad={EU_SCOREBOARD.singleBidder.bad}
+                rating={singleOfferRating}
+                ratingLabel={RATING_LABEL[singleOfferRating]}
+                detail={`${count(ct.singleOffer)} от ${count(ct.contracts)} договора · ${money(ct.singleOfferValueEur)} от ${money(ct.valueEur)} по стойност (${pct(ct.singleOfferValueShare)})`}
               />
             ) : (
               <p className="muted">Няма договори с известен брой оферти.</p>
             )}
-            <h3 className="mt-8">Пряко възлагане</h3>
             {procedure.classifiedContracts > 0 ? (
-              <p className="small">
-                <strong>{pct(procedure.nonCompetitiveShare)}</strong> от класифицираните договори са
-                възложени без обявление ({count(procedure.nonCompetitiveContracts)} от{' '}
-                {count(procedure.classifiedContracts)}) — {RATING_LABEL[directAwardRating]} (целево
-                ≤ {pct(EU_SCOREBOARD.directAward.good)}, високо ≥{' '}
-                {pct(EU_SCOREBOARD.directAward.bad)}). Праговете са външен ориентир на Европейската
-                комисия, не оценка на конкретна процедура.
-              </p>
+              <EuBenchmarkStat
+                title="Пряко възлагане"
+                qualifier="от класифицираните договори са възложени без обявление"
+                share={procedure.nonCompetitiveShare}
+                good={EU_SCOREBOARD.directAward.good}
+                bad={EU_SCOREBOARD.directAward.bad}
+                rating={directAwardRating}
+                ratingLabel={RATING_LABEL[directAwardRating]}
+                detail={`${count(procedure.nonCompetitiveContracts)} от ${count(procedure.classifiedContracts)} класифицирани договора`}
+              />
             ) : (
-              <p className="muted">Няма класифицирани договори по тип процедура.</p>
+              <div className="ebs">
+                <h3 className="ebs-title">Пряко възлагане</h3>
+                <p className="muted">Няма класифицирани договори по тип процедура.</p>
+              </div>
             )}
             <p className="small muted mt-8">
+              Праговете са външен ориентир на Европейската комисия (Single Market Scoreboard), не
+              оценка на конкретна процедура.{' '}
               <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
             </p>
           </Section>
