@@ -96,11 +96,17 @@ END
 WHERE type_group IS NULL;
 
 -- ── 2) Bidders referenced by OCDS staging (new ones only) — same identity rule as normalize step 4 ──
--- Scratch table of this batch's bidder rows, derived ONCE (single @include of the checksum
--- fragment) and reused both to populate `bidders` and to SCOPE the ownership_kind UPDATE below —
--- without that scoping, every refresh re-evaluates ownership_kind for every bidder ever seen, not
--- just the ones this window touches. Plain (non-TEMP, no PK) scratch table since a bidder_key can
--- repeat across raw rows; the bidders INSERT below dedups via GROUP BY.
+-- Scratch table of this batch's bidder rows, derived here ONCE and reused both to populate
+-- `bidders` and to SCOPE the ownership_kind UPDATE below — without that scoping, every refresh
+-- re-evaluates ownership_kind for every bidder ever seen, not just the ones this window touches.
+-- Plain (non-TEMP, no PK) scratch table since a bidder_key can repeat across raw rows; the
+-- bidders INSERT below dedups via GROUP BY.
+-- NOTE: this file (refresh-slice.sql) is generated from refresh-slice.template.sql by
+-- scripts/generate-sql.mjs (`pnpm generate:sql`). The checksum logic itself lives in ONE place,
+-- scripts/lib/eik-valid.fragment.sql, and is pulled in here and at the other bidder_key sites
+-- below via `@include eik-valid.fragment.sql` in the .template.sql — never edit the checksum in
+-- the generated .sql directly, and keep normalize-raw.template.sql's copy of this fragment
+-- reference in parity (packages/db/src/refresh-slice.test.ts enforces it).
 DROP TABLE IF EXISTS refresh_batch_bidders;
 CREATE TABLE refresh_batch_bidders (bidder_key TEXT, contractor_name TEXT, eik_clean TEXT, eik_valid INTEGER, grp INTEGER);
 INSERT INTO refresh_batch_bidders (bidder_key, contractor_name, eik_clean, eik_valid, grp)
