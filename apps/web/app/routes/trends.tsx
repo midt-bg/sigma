@@ -76,7 +76,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .map((c) => c.cpvGroup)
     .filter((g): g is string => g != null && !known.has(g));
   if (cpv && !known.has(cpv)) missing.push(cpv);
-  const medians = await getCpvGroupMedians(db, [...new Set(missing)]);
+  const medians = missing.length ? await getCpvGroupMedians(db, [...new Set(missing)]) : [];
 
   return { angle, step, sort, cpvSort, year, cpv, trend, stats, contracts, medians };
 }

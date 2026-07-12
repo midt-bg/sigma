@@ -11,10 +11,19 @@ const migrationsDir = resolve(root, 'packages/db/migrations');
 // The FULL chain in apply order — exactly what `wrangler d1 migrations apply` runs on a fresh D1
 // and what scripts/import.mjs applies to a fresh work DB. Every migration must apply cleanly after
 // the ones before it (e.g. 0003's ADD COLUMNs must not duplicate columns already in 0000).
-const migrations = readdirSync(migrationsDir)
+// The exact expected chain, kept in sync by hand: a soft `length >= N` check would still pass if a
+// migration file were accidentally deleted (as long as N remained), silently dropping schema from
+// `wrangler d1 migrations apply` on a fresh D1. Asserting the exact file set makes a lost migration
+// fail loudly instead of passing quietly.
+const EXPECTED_MIGRATION_FILES = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0003_contract_health.sql',
+];
+const migrationFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
-  .sort()
-  .map((f) => resolve(migrationsDir, f));
+  .sort();
+const migrations = migrationFiles.map((f) => resolve(migrationsDir, f));
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -31,7 +40,7 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      expect(migrations.length).toBeGreaterThanOrEqual(3);
+      expect(migrationFiles).toEqual(EXPECTED_MIGRATION_FILES);
       for (const migration of migrations) readScript(dbPath, migration);
 
       expect(

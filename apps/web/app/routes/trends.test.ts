@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { logMax, relLabel } from './trends';
+import { describe, expect, it, vi } from 'vitest';
 import type { CpvGroupStat } from '@sigma/api-contract';
+
+const getCpvGroupMedians = vi.fn().mockResolvedValue([]);
+
+vi.mock('@sigma/db', () => ({
+  getSpendingTrend: vi.fn().mockResolvedValue({ points: [], years: [] }),
+  getCpvGroupStats: vi.fn().mockResolvedValue({ groups: [], totalGroups: 0 }),
+  listOverviewContracts: vi.fn().mockResolvedValue([]),
+  getCpvGroupMedians,
+}));
+
+const { logMax, relLabel, loader } = await import('./trends');
 
 function makeGroup(maxEur: number): CpvGroupStat {
   return {
@@ -50,5 +60,21 @@ describe('relLabel', () => {
 
   it('flags values near the median', () => {
     expect(relLabel(1000, 1000)).toEqual({ text: '≈ типичното', cls: 'ov-rel-mid' });
+  });
+});
+
+describe('loader', () => {
+  function args(url: string) {
+    return {
+      request: new Request(url),
+      context: { cloudflare: { env: { DB: {} } } },
+    } as never;
+  }
+
+  it('skips the getCpvGroupMedians round-trip when nothing is missing from the top-N stats', async () => {
+    getCpvGroupMedians.mockClear();
+    const data = await loader(args('https://x/trends'));
+    expect(getCpvGroupMedians).not.toHaveBeenCalled();
+    expect(data.medians).toEqual([]);
   });
 });

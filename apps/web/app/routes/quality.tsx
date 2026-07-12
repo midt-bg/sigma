@@ -258,7 +258,7 @@ export default function Quality({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
   if (!data) {
     return (
-      <main>
+      <main id="main">
         <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Индекс на качеството' }]} />
         <PageHeader
           kicker="Анализи"
@@ -861,30 +861,14 @@ function Histogram({
       aria-label={`Хистограма на ${count(scored)} оценени договора по индекс 0–100${mean == null ? '' : `, среден ${score100(mean)}`}. Клик върху стълб филтрира списъка с договори.`}
     >
       {zones.map((z) => (
-        <g key={z.key}>
-          <rect
-            className={`q-zone q-zone-${z.key}`}
-            x={z.from * W}
-            y={6}
-            width={(z.to - z.from) * W}
-            height={PLOT_BOT - 6}
-          />
-          <a
-            href={hrefFor(selBand === z.key ? null : z.key)}
-            className="q-zone-link"
-            aria-current={selBand === z.key ? 'true' : undefined}
-          >
-            <title>{`Зона „${ZONE_BAND_LABELS[z.key]}“: ${count(zoneCount(z))} ${plural(zoneCount(z), 'договор', 'договора')} · ${share(zoneCount(z))} от оценените — клик за филтър.`}</title>
-            <text
-              className={`q-zone-label q-zone-label-${z.key}`}
-              x={((z.from + z.to) / 2) * W}
-              y={20}
-              textAnchor="middle"
-            >
-              {z.label}
-            </text>
-          </a>
-        </g>
+        <rect
+          key={z.key}
+          className={`q-zone q-zone-${z.key}`}
+          x={z.from * W}
+          y={6}
+          width={(z.to - z.from) * W}
+          height={PLOT_BOT - 6}
+        />
       ))}
       {counts.map((c, i) => {
         const h = (c / max) * (PLOT_BOT - PLOT_TOP);
@@ -910,6 +894,27 @@ function Histogram({
           </a>
         );
       })}
+      {/* Zone labels render after the bins (SVG paints later elements on top) so their small
+          click/title target sits above the bins' full-height hit rects instead of being
+          shadowed by them. */}
+      {zones.map((z) => (
+        <a
+          key={z.key}
+          href={hrefFor(selBand === z.key ? null : z.key)}
+          className="q-zone-link"
+          aria-current={selBand === z.key ? 'true' : undefined}
+        >
+          <title>{`Зона „${ZONE_BAND_LABELS[z.key]}“: ${count(zoneCount(z))} ${plural(zoneCount(z), 'договор', 'договора')} · ${share(zoneCount(z))} от оценените — клик за филтър.`}</title>
+          <text
+            className={`q-zone-label q-zone-label-${z.key}`}
+            x={((z.from + z.to) / 2) * W}
+            y={20}
+            textAnchor="middle"
+          >
+            {z.label}
+          </text>
+        </a>
+      ))}
       <line className="q-axis" x1={0} y1={PLOT_BOT} x2={W} y2={PLOT_BOT} />
       {[0, 25, 50, 75, 100].map((t) => (
         <text key={t} className="q-tick" x={(t / 100) * W} y={PLOT_BOT + 16} textAnchor="middle">

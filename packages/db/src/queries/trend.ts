@@ -282,7 +282,19 @@ function sampleName(rows: GroupDistRow[]): string | null {
 function toGroupStat(group: string, rows: GroupDistRow[]): CpvGroupStat | null {
   if (!rows.length) return null;
   const cnt = rows[0]!.cnt;
-  const at = (rank: number) => rows.find((r) => r.rn === rank)?.v ?? rows[0]!.v;
+  // Every rank requested here is produced by GROUP_DIST_SQL for the current cnt, so this should
+  // never miss. If a future change to GROUP_DIST_SQL's rank set drops one, fail loud instead of
+  // silently returning the sample minimum (which would masquerade as a real percentile).
+  const at = (rank: number) => {
+    const hit = rows.find((r) => r.rn === rank);
+    if (!hit) {
+      console.error(
+        `getCpvGroupStats: rank ${rank} missing from GROUP_DIST_SQL sample (cnt=${cnt})`,
+      );
+      return rows[0]!.v;
+    }
+    return hit.v;
+  };
   return {
     group,
     name: sampleName(rows),
@@ -316,6 +328,10 @@ export async function getCpvGroupStats(db: D1Database, limit = 10): Promise<CpvG
       )
       .bind(limit)
       .all<{ grp: string; contracts: number }>(),
+    // Deliberately no `amount_eur > 0` filter here: this is the corpus-wide group count (every
+    // 5-digit CPV group that appears in any tender), while the ranking above only considers groups
+    // with positive-value contracts. The two counts intentionally differ — totalGroups can exceed
+    // the number of groups that could ever appear in the top-N ranking.
     db
       .prepare(
         `SELECT COUNT(DISTINCT substr(cpv_code, 1, 5)) AS n

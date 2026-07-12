@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   getCpvGroupMedians,
   getCpvGroupStats,
@@ -305,6 +305,26 @@ describe('getCpvGroupStats', () => {
     expect(dist[0]!.sql).toContain('t.cpv_code >= ? AND t.cpv_code < ?');
     // The distribution query never sorts by anything unindexed and returns only picked ranks.
     expect(dist[0]!.sql).toContain('rn = (cnt - 1) * 5 / 10 + 1');
+  });
+
+  it('logs and falls back to the sample minimum when an expected rank is missing from the sample', async () => {
+    // A group whose sample is missing rank 1 (a stand-in for a future GROUP_DIST_SQL regression
+    // dropping an expected rank) must still return a value — the minimum in the sample — but must
+    // not fail silently.
+    const brokenDb = overviewDb({
+      calls: [],
+      all(sql, args) {
+        if (sql.includes('GROUP BY grp')) return [{ grp: '45000', contracts: 1 }];
+        if (args[0] === '45000') return [{ v: 5000, name: 'x', rn: 2, cnt: 1 }];
+        return [];
+      },
+      first: () => ({ n: 1 }),
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { groups } = await getCpvGroupStats(brokenDb, 1);
+    expect(groups[0]).toMatchObject({ medianEur: 5000, p10Eur: 5000, p90Eur: 5000 });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('rank 1 missing'));
+    errSpy.mockRestore();
   });
 });
 
