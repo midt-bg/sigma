@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertIntegrity,
+  checkContractFeaturesIntegrity,
   checkDateSanity,
   checkEikValidity,
   checkNonEmptyCorpus,
@@ -29,6 +30,7 @@ const migrationPaths = readdirSync(migrationsDir)
   .sort()
   .map((f) => resolve(migrationsDir, f));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
+const deriveContractFeaturesPath = resolve(root, 'scripts/derive-contract-features.sql');
 
 function sqlite(dbPath: string, sql: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: sql, encoding: 'utf8', stdio: 'pipe' });
@@ -74,6 +76,10 @@ function freshDb(): string {
 
 function precompute(dbPath: string): void {
   readScript(dbPath, precomputePath);
+}
+
+function deriveContractFeatures(dbPath: string): void {
+  readScript(dbPath, deriveContractFeaturesPath);
 }
 
 let dirs: string[] = [];
@@ -274,4 +280,82 @@ describe('reconciliation gate — injected violations', () => {
       /integrity gate failed/,
     );
   });
+});
+
+// Contract Quality / Health Index hard gate (PR #188 review): derive-contract-features.sql's own
+// summary SELECT computed these invariants but never asserted them. CLEAN_FIXTURE's tender
+// procedure_type is deliberately lowercase (a real-world casing variant) so it does NOT match the
+// §12.2 exact-case vocabulary map — exercising that on its own would report unmapped_procedure_rows,
+// so this fixture uses the correctly-cased 'Открита процедура' to get a genuinely clean derive.
+describe('contract-features-integrity gate', () => {
+  function deriveFixture(): string {
+    const db = freshDb();
+    sqlite(db, "UPDATE tenders SET procedure_type = 'Открита процедура';");
+    precompute(db);
+    deriveContractFeatures(db);
+    return db;
+  }
+
+  it('self-skips before derive-contract-features.sql has run', () => {
+    const db = track(freshDb());
+    const result = checkContractFeaturesIntegrity(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it('passes clean after a real derive-contract-features.sql run', () => {
+    const db = track(deriveFixture());
+    const result = checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toBe(false);
+  }, 30_000);
+
+  it('catches an orphaned/dropped contract_features row (contracts_rows mismatch)', () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      'DELETE FROM contract_features WHERE contract_id = (SELECT MIN(contract_id) FROM contract_features);',
+    );
+    const result = checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/contract_features_rows .* != contracts_rows/);
+  }, 30_000);
+
+  it('catches an unmapped procedure_type (§12.2 vocabulary gap)', () => {
+    const db = track(freshDb());
+    // one tender left with the fixture's lowercase, out-of-vocabulary procedure_type
+    sqlite(db, "UPDATE tenders SET procedure_type = 'Открита процедура' WHERE id = 't:2';");
+    precompute(db);
+    deriveContractFeatures(db);
+    const result = checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/unmapped procedure_type/);
+  }, 30_000);
+
+  it('catches a direct-award contract with a nonzero score_b', () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      "UPDATE tenders SET procedure_type = 'Пряко договаряне' WHERE id = (SELECT tender_id FROM contracts WHERE id = 'c:1');" +
+        "UPDATE contract_features SET score_b = 0.5 WHERE contract_id = 'c:1';",
+    );
+    const result = checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/direct-award .* nonzero score_b/);
+  }, 30_000);
+
+  it('assertIntegrity with the narrowed checks array gates only contract-features-integrity', () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      'DELETE FROM contract_features WHERE contract_id = (SELECT MIN(contract_id) FROM contract_features);',
+    );
+    expect(() =>
+      assertIntegrity(runner(db), {
+        label: 'test-contract-features',
+        exit: false,
+        checks: [checkContractFeaturesIntegrity],
+      }),
+    ).toThrow(/integrity gate failed/);
+  }, 30_000);
 });
