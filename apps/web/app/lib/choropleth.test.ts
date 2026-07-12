@@ -5,6 +5,7 @@ import {
   activeTopBeneficiaries,
   isActiveShape,
   nextSelected,
+  onGroupSwitch,
   resolveActiveKey,
   shareLabel,
   shareOfTotal,
@@ -73,27 +74,26 @@ describe('tierer', () => {
   });
 });
 
-describe('tierForShape (oblast↔район mapping)', () => {
+describe('tierForShape (oblast vs район, each coloured by its own value)', () => {
   const sofia = region('BG411', 'BG41', 90);
-  const pernik = region('BG414', 'BG41', 10); // same район as sofia
-  const macroByNuts2 = new Map<string, MacroRegionSpend>([['BG41', macro('BG41', 100)]]);
+  const pernik = region('BG414', 'BG41', 10); // same район as sofia, different oblast value
+  const bg41 = macro('BG41', 100);
   const tierOblast = tierer([90, 10]);
   const tierRegion = tierer([100]);
 
   it('colours by the oblast’s own value in oblast mode (siblings can differ)', () => {
-    expect(tierForShape(sofia, 'oblast', macroByNuts2, tierOblast, tierRegion)).not.toBe(
-      tierForShape(pernik, 'oblast', macroByNuts2, tierOblast, tierRegion),
+    expect(tierForShape(sofia, 'oblast', tierOblast, tierRegion)).not.toBe(
+      tierForShape(pernik, 'oblast', tierOblast, tierRegion),
     );
   });
-  it('colours by the parent район’s aggregate in район mode (siblings match)', () => {
-    expect(tierForShape(sofia, 'region', macroByNuts2, tierOblast, tierRegion)).toBe(
-      tierForShape(pernik, 'region', macroByNuts2, tierOblast, tierRegion),
+  it('colours a район shape directly by its own aggregate in район mode', () => {
+    expect(tierForShape(bg41, 'region', tierOblast, tierRegion)).toBe(
+      tierForShape(macro('BG41', 100), 'region', tierOblast, tierRegion),
     );
   });
-  it('returns tier 0 for an undefined shape or an unmapped район', () => {
-    expect(tierForShape(undefined, 'oblast', macroByNuts2, tierOblast, tierRegion)).toBe(0);
-    const orphan = region('BG999', 'BG99', 50);
-    expect(tierForShape(orphan, 'region', macroByNuts2, tierOblast, tierRegion)).toBe(0);
+  it('returns tier 0 for an undefined shape', () => {
+    expect(tierForShape(undefined, 'oblast', tierOblast, tierRegion)).toBe(0);
+    expect(tierForShape(undefined, 'region', tierOblast, tierRegion)).toBe(0);
   });
 });
 
@@ -127,22 +127,45 @@ describe('resolveActiveKey', () => {
   });
 });
 
-describe('isActiveShape', () => {
-  const sofia = region('BG411', 'BG41', 90);
-  const pernik = region('BG414', 'BG41', 10);
-  const varna = region('BG331', 'BG33', 40);
+describe('isActiveShape (direct id equality)', () => {
+  it('is false with no active key', () => {
+    expect(isActiveShape('BG411', null)).toBe(false);
+  });
+  it('matches only the exact oblast id in oblast mode', () => {
+    expect(isActiveShape('BG411', 'BG411')).toBe(true);
+    expect(isActiveShape('BG414', 'BG411')).toBe(false);
+  });
+  it('matches only the exact район id in район mode — no more oblast cross-referencing', () => {
+    expect(isActiveShape('BG41', 'BG41')).toBe(true);
+    expect(isActiveShape('BG33', 'BG41')).toBe(false);
+  });
+});
 
-  it('is false with no hovered region or an undefined shape', () => {
-    expect(isActiveShape(sofia, null, 'oblast')).toBe(false);
-    expect(isActiveShape(undefined, sofia, 'oblast')).toBe(false);
+describe('onGroupSwitch', () => {
+  const sofia = region('BG411', 'BG41', 90);
+  const varna = region('BG331', 'BG33', 40);
+  const byNuts3 = new Map([
+    ['BG411', sofia],
+    ['BG331', varna],
+  ]);
+
+  it('carries a pinned oblast forward to its own район when switching to район mode', () => {
+    expect(onGroupSwitch('region', 'BG411', byNuts3)).toEqual({
+      selectedOblast: 'BG411',
+      selectedRegion: 'BG41',
+    });
   });
-  it('matches only the exact oblast in oblast mode', () => {
-    expect(isActiveShape(sofia, sofia, 'oblast')).toBe(true);
-    expect(isActiveShape(pernik, sofia, 'oblast')).toBe(false);
+  it('resolves no selection to no район when switching to район mode', () => {
+    expect(onGroupSwitch('region', null, byNuts3)).toEqual({
+      selectedOblast: null,
+      selectedRegion: null,
+    });
   });
-  it('matches every oblast in the hovered район in район mode', () => {
-    expect(isActiveShape(pernik, sofia, 'region')).toBe(true); // same nuts2
-    expect(isActiveShape(varna, sofia, 'region')).toBe(false); // different nuts2
+  it('clears the selection outright when switching back to oblast mode', () => {
+    expect(onGroupSwitch('oblast', 'BG411', byNuts3)).toEqual({
+      selectedOblast: null,
+      selectedRegion: null,
+    });
   });
 });
 

@@ -3,11 +3,13 @@ import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import type { RegionTopBeneficiary } from '@sigma/db';
 import { count, money, pct } from '@sigma/shared';
 import { BG_MAP } from '../lib/bg-region-geometry';
+import { BG_MACRO_MAP } from '../lib/bg-macroregion-geometry';
 import {
   activeTopBeneficiaries,
   type Grouping,
   isActiveShape,
   nextSelected,
+  onGroupSwitch,
   resolveActiveKey,
   shareLabel,
   shareOfTotal,
@@ -61,10 +63,13 @@ export function Choropleth({
 
   const withCard = total != null;
   const [group, setGroup] = useState<Grouping>('oblast');
-  const [hovered, setHovered] = useState<string | null>(null); // transient preview, always a nuts3
-  // The pinned selection (also a nuts3), distinct from `hovered` — set only by click/tap, so it
-  // survives the cursor leaving the map (unlike hover, which clears on mouseleave).
-  const [selected, setSelected] = useState<string | null>(null);
+  // Level-aware selection: an oblast (nuts3) slot and a район (nuts2) slot, each with its own
+  // transient hover and pinned-click state — see choropleth.ts's onGroupSwitch for how a pin carries
+  // across the mode toggle (oblast → район) or clears (район → oblast).
+  const [hoveredOblast, setHoveredOblast] = useState<string | null>(null);
+  const [selectedOblast, setSelectedOblast] = useState<string | null>(null);
+  const [hoveredRegion, setHoveredRegion] = useState<string | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   // The grouping toggle only does anything with JS (it flips client state), so render it only after
   // hydration — otherwise no-JS users get a real-looking but inert control. The no-JS map stays in the
   // default „области" colouring, which is what the static aria-label below describes.
@@ -72,12 +77,23 @@ export function Choropleth({
   useEffect(() => setHydrated(true), []);
 
   // Selection always wins over hover — see resolveActiveKey. Everything below (card content, top
-  // beneficiaries, highlight) derives from this resolved key, never from `hovered` directly.
-  const activeKey = resolveActiveKey(selected, hovered);
-  const activeRegion = activeKey ? (byNuts3.get(activeKey) ?? null) : null;
-  const activeMacro = activeRegion ? (macroByNuts2.get(activeRegion.nuts2) ?? null) : null;
+  // beneficiaries, highlight) derives from the active mode's resolved key, never from hover directly.
+  const activeOblastKey = resolveActiveKey(selectedOblast, hoveredOblast);
+  const activeRegionKey = resolveActiveKey(selectedRegion, hoveredRegion);
+  const activeOblast = activeOblastKey ? (byNuts3.get(activeOblastKey) ?? null) : null;
+  const activeMacro = activeRegionKey ? (macroByNuts2.get(activeRegionKey) ?? null) : null;
   // The entity whose stats the card shows, by mode.
-  const active = withCard ? (group === 'region' ? activeMacro : activeRegion) : null;
+  const active = withCard ? (group === 'region' ? activeMacro : activeOblast) : null;
+
+  const switchGroup = (newGroup: Grouping) => {
+    if (newGroup === group) return; // re-clicking the already-active toggle is a no-op
+    setGroup(newGroup);
+    const next = onGroupSwitch(newGroup, selectedOblast, byNuts3);
+    setSelectedOblast(next.selectedOblast);
+    setSelectedRegion(next.selectedRegion);
+    setHoveredOblast(null);
+    setHoveredRegion(null);
+  };
 
   // Debounced echo of `active`, read out by the sr-only aria-live region below — see
   // ANNOUNCE_DEBOUNCE_MS. The visible card renders `active` directly, with no delay.
@@ -89,39 +105,65 @@ export function Choropleth({
 
   const map = (
     <div className="map-wrap">
-      <svg
-        viewBox={BG_MAP.viewBox}
-        role="img"
-        aria-label={`Карта на България: разходи за обществени поръчки по ${
-          group === 'region' ? 'райони' : 'области'
-        }`}
-        onMouseLeave={() => setHovered(null)}
-      >
-        {BG_MAP.regions.map((shape) => {
-          const r = byNuts3.get(shape.nuts3);
-          const label =
-            group === 'region' && r
-              ? `${r.nuts2Name}: ${money(macroByNuts2.get(r.nuts2)?.valueEur ?? 0)}`
-              : r
-                ? `${r.name}: ${money(r.valueEur)}`
-                : shape.nuts3;
-          return (
-            <path
-              key={shape.nuts3}
-              d={shape.d}
-              className={isActiveShape(r, activeRegion, group) ? 'region is-active' : 'region'}
-              style={{
-                fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
-              }}
-              aria-current={r && r.nuts3 === activeKey ? 'true' : undefined}
-              onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
-              onClick={() => setSelected(nextSelected(r ? shape.nuts3 : undefined, selected))}
-            >
-              <title>{label}</title>
-            </path>
-          );
-        })}
-      </svg>
+      {group === 'region' ? (
+        <svg
+          viewBox={BG_MACRO_MAP.viewBox}
+          role="img"
+          aria-label="Карта на България: разходи за обществени поръчки по райони"
+          onMouseLeave={() => setHoveredRegion(null)}
+        >
+          {BG_MACRO_MAP.regions.map((shape) => {
+            const m = macroByNuts2.get(shape.nuts2);
+            const label = m ? `${m.name}: ${money(m.valueEur)}` : shape.nuts2;
+            return (
+              <path
+                key={shape.nuts2}
+                d={shape.d}
+                className={
+                  isActiveShape(shape.nuts2, activeRegionKey) ? 'region is-active' : 'region'
+                }
+                style={{ fill: TIER_FILL[tierForShape(m, 'region', tierOblast, tierRegion)] }}
+                aria-current={shape.nuts2 === activeRegionKey ? 'true' : undefined}
+                onMouseEnter={() => setHoveredRegion(m ? shape.nuts2 : null)}
+                onClick={() =>
+                  setSelectedRegion(nextSelected(m ? shape.nuts2 : undefined, selectedRegion))
+                }
+              >
+                <title>{label}</title>
+              </path>
+            );
+          })}
+        </svg>
+      ) : (
+        <svg
+          viewBox={BG_MAP.viewBox}
+          role="img"
+          aria-label="Карта на България: разходи за обществени поръчки по области"
+          onMouseLeave={() => setHoveredOblast(null)}
+        >
+          {BG_MAP.regions.map((shape) => {
+            const r = byNuts3.get(shape.nuts3);
+            const label = r ? `${r.name}: ${money(r.valueEur)}` : shape.nuts3;
+            return (
+              <path
+                key={shape.nuts3}
+                d={shape.d}
+                className={
+                  isActiveShape(shape.nuts3, activeOblastKey) ? 'region is-active' : 'region'
+                }
+                style={{ fill: TIER_FILL[tierForShape(r, 'oblast', tierOblast, tierRegion)] }}
+                aria-current={shape.nuts3 === activeOblastKey ? 'true' : undefined}
+                onMouseEnter={() => setHoveredOblast(r ? shape.nuts3 : null)}
+                onClick={() =>
+                  setSelectedOblast(nextSelected(r ? shape.nuts3 : undefined, selectedOblast))
+                }
+              >
+                <title>{label}</title>
+              </path>
+            );
+          })}
+        </svg>
+      )}
       <div className="map-legend" aria-hidden="true">
         <span>по-малко</span>
         {TIER_FILL.slice(1).map((fill, i) => (
@@ -134,6 +176,8 @@ export function Choropleth({
 
   if (!withCard) return map;
 
+  const pinned = group === 'region' ? selectedRegion != null : selectedOblast != null;
+
   return (
     <div className="map-layout">
       {map}
@@ -141,19 +185,21 @@ export function Choropleth({
           controls sit together. The visible card updates instantly; a debounced sr-only region below
           announces it so a mouse sweep across the map doesn't read out every region it passed — the
           ranked tables below remain the primary accessible/keyboard data path. */}
-      <aside className={selected ? 'map-card map-card--pinned' : 'map-card'}>
-        {hydrated && selected && (
+      <aside className={pinned ? 'map-card map-card--pinned' : 'map-card'}>
+        {hydrated && pinned && (
           <button
             type="button"
             className="map-card-dismiss"
             aria-label="Затвори картата с данни"
             onClick={() => {
-              setSelected(null);
+              setSelectedOblast(null);
+              setSelectedRegion(null);
               // Also clear the transient hover: some touch browsers synthesize mouseenter/click but
-              // never fire mouseleave on tap, so `hovered` can be left pinned to the last-tapped
-              // shape — without this, resolveActiveKey would fall straight back to that stale value
-              // and the dismiss button would appear to do nothing.
-              setHovered(null);
+              // never fire mouseleave on tap, so hover can be left pinned to the last-tapped shape —
+              // without this, resolveActiveKey would fall straight back to that stale value and the
+              // dismiss button would appear to do nothing.
+              setHoveredOblast(null);
+              setHoveredRegion(null);
             }}
           >
             ✕
@@ -165,7 +211,7 @@ export function Choropleth({
               type="button"
               className={group === 'oblast' ? 'is-on' : undefined}
               aria-pressed={group === 'oblast'}
-              onClick={() => setGroup('oblast')}
+              onClick={() => switchGroup('oblast')}
             >
               По области
             </button>
@@ -173,7 +219,7 @@ export function Choropleth({
               type="button"
               className={group === 'region' ? 'is-on' : undefined}
               aria-pressed={group === 'region'}
-              onClick={() => setGroup('region')}
+              onClick={() => switchGroup('region')}
             >
               По райони
             </button>
@@ -183,8 +229,8 @@ export function Choropleth({
           {active ? (
             <>
               <h3 className="map-card-title">{active.name}</h3>
-              {group === 'oblast' && activeRegion && (
-                <p className="map-card-sub muted">Район: {activeRegion.nuts2Name}</p>
+              {group === 'oblast' && activeOblast && (
+                <p className="map-card-sub muted">Район: {activeOblast.nuts2Name}</p>
               )}
               <dl className="map-card-stats">
                 <div>
@@ -199,15 +245,15 @@ export function Choropleth({
                   <dt>Договори</dt>
                   <dd>{count(active.contracts)}</dd>
                 </div>
-                {group === 'oblast' && activeRegion && (
+                {group === 'oblast' && activeOblast && (
                   <div>
                     <dt>Институции</dt>
-                    <dd>{count(activeRegion.authorities)}</dd>
+                    <dd>{count(activeOblast.authorities)}</dd>
                   </div>
                 )}
               </dl>
               <TopBeneficiaries
-                list={activeTopBeneficiaries(group, activeRegion, topBeneficiaries)}
+                list={activeTopBeneficiaries(group, activeOblast, topBeneficiaries)}
               />
             </>
           ) : (

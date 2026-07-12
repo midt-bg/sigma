@@ -30,40 +30,37 @@ export function shareLabel(group: Grouping): string {
   return group === 'region' ? 'Дял от всички райони' : 'Дял от всички области';
 }
 
-// Colour tier for a geometry path (always a NUTS3 oblast), by mode: its own oblast value in oblast
-// mode, or its parent район's (NUTS2) aggregate value in район mode.
+// Colour tier for a geometry path, by mode. Oblast mode colours a NUTS3 shape by its own value;
+// район mode colours a NUTS2 shape directly by that район's own aggregate (each район is now its
+// own shape, not several oblasts sharing a fill — no more oblast→район lookup needed here, `entity`
+// is simply the shape's own spend record).
 export function tierForShape(
-  r: RegionSpend | undefined,
+  entity: RegionSpend | MacroRegionSpend | undefined,
   group: Grouping,
-  macroByNuts2: Map<string, MacroRegionSpend>,
   tierOblast: (v: number) => number,
   tierRegion: (v: number) => number,
 ): number {
-  if (!r) return 0;
-  if (group === 'region') return tierRegion(macroByNuts2.get(r.nuts2)?.valueEur ?? 0);
-  return tierOblast(r.valueEur);
+  if (!entity) return 0;
+  return group === 'region' ? tierRegion(entity.valueEur) : tierOblast(entity.valueEur);
 }
 
-// A path is highlighted when it is the hovered oblast (oblast mode) or shares the hovered район
-// (район mode — the whole район lights up).
-export function isActiveShape(
-  r: RegionSpend | undefined,
-  hoveredRegion: RegionSpend | null,
-  group: Grouping,
-): boolean {
-  if (!r || !hoveredRegion) return false;
-  return group === 'region' ? r.nuts2 === hoveredRegion.nuts2 : r.nuts3 === hoveredRegion.nuts3;
+// A geometry shape (a NUTS3 oblast in oblast mode, a NUTS2 район in район mode) is highlighted when
+// its own id equals the mode's active key — a direct id-equality check. Each район is its own shape
+// now, so there is no more "does this oblast share the hovered район" cross-referencing.
+export function isActiveShape(shapeKey: string, activeKey: string | null): boolean {
+  return shapeKey === activeKey;
 }
 
-// Click/tap target for the *pinned* selection, given the currently selected nuts3. A click always
-// toggles the pin the same way on fine and coarse pointers alike: clicking the already-pinned region
-// deselects it, clicking a different (or previously unselected) region moves the pin there. Unlike
+// Click/tap target for the *pinned* selection, given the currently selected key (a nuts3 in oblast
+// mode, a nuts2 in район mode — the toggle semantics are identical either way). A click always
+// toggles the pin the same way on fine and coarse pointers alike: clicking the already-pinned shape
+// deselects it, clicking a different (or previously unselected) shape moves the pin there. Unlike
 // hover, `selected` only ever changes on click — never on mouseenter/mouseleave — so there is no
 // fine/coarse pointer ambiguity to resolve here the way the old hover-as-selection code needed.
-export function nextSelected(nuts3: string | undefined, selected: string | null): string | null {
-  if (!nuts3) return selected;
-  if (selected === nuts3) return null;
-  return nuts3;
+export function nextSelected(key: string | undefined, selected: string | null): string | null {
+  if (!key) return selected;
+  if (selected === key) return null;
+  return key;
 }
 
 // The resolved active key driving the card + highlight: a pin always wins over a transient hover,
@@ -72,15 +69,31 @@ export function resolveActiveKey(selected: string | null, hovered: string | null
   return selected ?? hovered;
 }
 
+// Selection carried across the области/райони mode toggle. Switching to район mode carries the
+// pinned oblast's own район forward (so the card keeps showing the district the user already
+// pinned, per today's UX); switching to oblast mode clears the selection outright — there is no
+// single implied oblast to fall back to from a pinned район, so guessing one would be wrong.
+export function onGroupSwitch(
+  newGroup: Grouping,
+  selectedOblast: string | null,
+  byNuts3: Map<string, RegionSpend>,
+): { selectedOblast: string | null; selectedRegion: string | null } {
+  if (newGroup === 'oblast') return { selectedOblast: null, selectedRegion: null };
+  return {
+    selectedOblast,
+    selectedRegion: selectedOblast ? (byNuts3.get(selectedOblast)?.nuts2 ?? null) : null,
+  };
+}
+
 // Top-3-bidders list for the Information Card, only meaningful at oblast (NUTS3) level — a район
 // aggregates several oblasts, so there is no single "region total" a район-level share would be
-// against. Undefined in район mode, when nothing is hovered, or when the loader has no entry for
-// that oblast (e.g. it had no attributed bidders at all).
+// against. Undefined in район mode, when nothing is hovered/selected, or when the loader has no
+// entry for that oblast (e.g. it had no attributed bidders at all).
 export function activeTopBeneficiaries(
   group: Grouping,
-  hoveredRegion: RegionSpend | null,
+  activeOblast: RegionSpend | null,
   topBeneficiaries: Record<string, RegionTopBeneficiary[]> | undefined,
 ): RegionTopBeneficiary[] | undefined {
-  if (group !== 'oblast' || !hoveredRegion) return undefined;
-  return topBeneficiaries?.[hoveredRegion.nuts3];
+  if (group !== 'oblast' || !activeOblast) return undefined;
+  return topBeneficiaries?.[activeOblast.nuts3];
 }
