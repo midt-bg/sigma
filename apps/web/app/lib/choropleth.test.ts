@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
+import type { RegionTopBeneficiary } from '@sigma/db';
 import {
+  activeTopBeneficiaries,
   isActiveShape,
   nextClickedHovered,
   shareLabel,
@@ -129,5 +131,29 @@ describe('isActiveShape', () => {
   it('matches every oblast in the hovered район in район mode', () => {
     expect(isActiveShape(pernik, sofia, 'region')).toBe(true); // same nuts2
     expect(isActiveShape(varna, sofia, 'region')).toBe(false); // different nuts2
+  });
+});
+
+describe('activeTopBeneficiaries', () => {
+  const sofia = region('BG411', 'BG41', 90);
+  const bidders: RegionTopBeneficiary[] = [
+    { bidderId: 'b1', name: 'Alpha OOD', valueEur: 60, share: 0.6 },
+    { bidderId: 'b2', name: 'Beta EOOD', valueEur: 40, share: 0.4 },
+  ];
+  const topBeneficiaries: Record<string, RegionTopBeneficiary[]> = { BG411: bidders };
+
+  it('returns the hovered oblast’s list in oblast mode', () => {
+    expect(activeTopBeneficiaries('oblast', sofia, topBeneficiaries)).toBe(bidders);
+  });
+  it('is undefined in район mode, even with a hovered region', () => {
+    expect(activeTopBeneficiaries('region', sofia, topBeneficiaries)).toBeUndefined();
+  });
+  it('is undefined with no hovered region', () => {
+    expect(activeTopBeneficiaries('oblast', null, topBeneficiaries)).toBeUndefined();
+  });
+  it('is undefined when the loader has no entry for that oblast, and never crashes', () => {
+    const varna = region('BG331', 'BG33', 40);
+    expect(activeTopBeneficiaries('oblast', varna, topBeneficiaries)).toBeUndefined();
+    expect(activeTopBeneficiaries('oblast', sofia, undefined)).toBeUndefined();
   });
 });

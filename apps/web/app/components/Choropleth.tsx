@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
+import type { RegionTopBeneficiary } from '@sigma/db';
 import { count, money, pct } from '@sigma/shared';
 import { BG_MAP } from '../lib/bg-region-geometry';
 import {
+  activeTopBeneficiaries,
   type Grouping,
   isActiveShape,
   nextClickedHovered,
@@ -50,10 +52,12 @@ export function Choropleth({
   regions,
   macroRegions = [],
   total,
+  topBeneficiaries,
 }: {
   regions: RegionSpend[];
   macroRegions?: MacroRegionSpend[];
   total?: number;
+  topBeneficiaries?: Record<string, RegionTopBeneficiary[]>;
 }) {
   const byNuts3 = new Map(regions.map((r) => [r.nuts3, r]));
   const macroByNuts2 = new Map(macroRegions.map((m) => [m.nuts2, m]));
@@ -187,6 +191,9 @@ export function Choropleth({
                   </div>
                 )}
               </dl>
+              <TopBeneficiaries
+                list={activeTopBeneficiaries(group, hoveredRegion, topBeneficiaries)}
+              />
             </>
           ) : (
             <p className="map-card-hint muted">
@@ -204,6 +211,25 @@ export function Choropleth({
               : 'Посочи област на картата, за да видиш обобщени данни.'}
         </p>
       </aside>
+    </div>
+  );
+}
+
+// Top 3 bidder companies by awarded value in the active oblast, with each one's share of the
+// region's total value. Only meaningful at oblast (NUTS3) level, not aggregated across a район.
+function TopBeneficiaries({ list }: { list?: RegionTopBeneficiary[] }) {
+  if (!list || list.length === 0) return null;
+  return (
+    <div className="map-card-top">
+      <p className="map-card-top-title muted">Топ 3 бенефициенти</p>
+      <ul>
+        {list.map((b) => (
+          <li key={b.bidderId}>
+            <span className="map-card-top-name">{b.name}</span>
+            <span className="map-card-top-share">{pct(b.share)}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

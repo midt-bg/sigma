@@ -1,4 +1,5 @@
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
+import type { RegionTopBeneficiary } from '@sigma/db';
 
 // Pure logic for the /map choropleth + Information Card, extracted from components/Choropleth.tsx so it
 // can be unit-tested (the repo's convention is pure-logic lib/*.test.ts; there are no component render
@@ -68,4 +69,17 @@ export function nextClickedHovered(
   if (!nuts3) return null;
   if (isCoarsePointer && hovered === nuts3) return null;
   return nuts3;
+}
+
+// Top-3-bidders list for the Information Card, only meaningful at oblast (NUTS3) level — a район
+// aggregates several oblasts, so there is no single "region total" a район-level share would be
+// against. Undefined in район mode, when nothing is hovered, or when the loader has no entry for
+// that oblast (e.g. it had no attributed bidders at all).
+export function activeTopBeneficiaries(
+  group: Grouping,
+  hoveredRegion: RegionSpend | null,
+  topBeneficiaries: Record<string, RegionTopBeneficiary[]> | undefined,
+): RegionTopBeneficiary[] | undefined {
+  if (group !== 'oblast' || !hoveredRegion) return undefined;
+  return topBeneficiaries?.[hoveredRegion.nuts3];
 }

@@ -694,6 +694,35 @@
   margin: 0;
   font-size: 0.9rem;
 }
+.map-card-top {
+  margin-top: 14px;
+}
+.map-card-top-title {
+  margin: 0 0 8px;
+  font: 12px var(--font-mono, monospace);
+}
+.map-card-top ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.map-card-top li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+.map-card-top-name {
+  overflow-wrap: anywhere;
+}
+.map-card-top-share {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft, #555);
+}
 .map-legend {
   display: flex;
   align-items: center;
