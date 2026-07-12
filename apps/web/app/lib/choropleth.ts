@@ -55,20 +55,21 @@ export function isActiveShape(
   return group === 'region' ? r.nuts2 === hoveredRegion.nuts2 : r.nuts3 === hoveredRegion.nuts3;
 }
 
-// Click target for a shape, given the currently hovered nuts3. On a fine pointer (mouse),
-// onMouseEnter has already set `hovered` to the clicked shape by the time onClick fires, so a plain
-// `hovered !== shape.nuts3` guard would always be false and desktop clicks could never select — click
-// must always select on a mouse. On a coarse pointer (touch, which never fires onMouseEnter first),
-// the same click doubles as the only way to clear a selection, so a repeat tap on the already-selected
-// region toggles it off instead of re-selecting it.
-export function nextClickedHovered(
-  nuts3: string | undefined,
-  hovered: string | null,
-  isCoarsePointer: boolean,
-): string | null {
-  if (!nuts3) return null;
-  if (isCoarsePointer && hovered === nuts3) return null;
+// Click/tap target for the *pinned* selection, given the currently selected nuts3. A click always
+// toggles the pin the same way on fine and coarse pointers alike: clicking the already-pinned region
+// deselects it, clicking a different (or previously unselected) region moves the pin there. Unlike
+// hover, `selected` only ever changes on click — never on mouseenter/mouseleave — so there is no
+// fine/coarse pointer ambiguity to resolve here the way the old hover-as-selection code needed.
+export function nextSelected(nuts3: string | undefined, selected: string | null): string | null {
+  if (!nuts3) return selected;
+  if (selected === nuts3) return null;
   return nuts3;
+}
+
+// The resolved active key driving the card + highlight: a pin always wins over a transient hover,
+// so leaving the map (which clears `hovered`) never empties a pinned card.
+export function resolveActiveKey(selected: string | null, hovered: string | null): string | null {
+  return selected ?? hovered;
 }
 
 // Top-3-bidders list for the Information Card, only meaningful at oblast (NUTS3) level — a район

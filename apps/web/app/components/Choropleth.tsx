@@ -7,7 +7,8 @@ import {
   activeTopBeneficiaries,
   type Grouping,
   isActiveShape,
-  nextClickedHovered,
+  nextSelected,
+  resolveActiveKey,
   shareLabel,
   shareOfTotal,
   tierer,
@@ -33,12 +34,6 @@ const TIER_FILL = [
   'color-mix(in oklch, var(--ink) 80%, var(--paper))',
   'var(--ink)', // 5 = highest
 ];
-
-// Repeat-tap-to-deselect only applies on a coarse (touch) pointer — see nextClickedHovered. `matchMedia`
-// is absent during SSR, so this reads false there and the client re-evaluates on the first click.
-function isCoarsePointer(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
-}
 
 // How long a hover has to sit still before the aria-live region announces it. Mouse hover fires on
 // every pixel the cursor crosses; without this, a single sweep across the map reads out every region
@@ -66,17 +61,23 @@ export function Choropleth({
 
   const withCard = total != null;
   const [group, setGroup] = useState<Grouping>('oblast');
-  const [hovered, setHovered] = useState<string | null>(null); // always a nuts3 (the geometry unit)
+  const [hovered, setHovered] = useState<string | null>(null); // transient preview, always a nuts3
+  // The pinned selection (also a nuts3), distinct from `hovered` — set only by click/tap, so it
+  // survives the cursor leaving the map (unlike hover, which clears on mouseleave).
+  const [selected, setSelected] = useState<string | null>(null);
   // The grouping toggle only does anything with JS (it flips client state), so render it only after
   // hydration — otherwise no-JS users get a real-looking but inert control. The no-JS map stays in the
   // default „области" colouring, which is what the static aria-label below describes.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
-  const hoveredRegion = hovered ? (byNuts3.get(hovered) ?? null) : null;
-  const hoveredMacro = hoveredRegion ? (macroByNuts2.get(hoveredRegion.nuts2) ?? null) : null;
+  // Selection always wins over hover — see resolveActiveKey. Everything below (card content, top
+  // beneficiaries, highlight) derives from this resolved key, never from `hovered` directly.
+  const activeKey = resolveActiveKey(selected, hovered);
+  const activeRegion = activeKey ? (byNuts3.get(activeKey) ?? null) : null;
+  const activeMacro = activeRegion ? (macroByNuts2.get(activeRegion.nuts2) ?? null) : null;
   // The entity whose stats the card shows, by mode.
-  const active = withCard ? (group === 'region' ? hoveredMacro : hoveredRegion) : null;
+  const active = withCard ? (group === 'region' ? activeMacro : activeRegion) : null;
 
   // Debounced echo of `active`, read out by the sr-only aria-live region below — see
   // ANNOUNCE_DEBOUNCE_MS. The visible card renders `active` directly, with no delay.
@@ -108,16 +109,13 @@ export function Choropleth({
             <path
               key={shape.nuts3}
               d={shape.d}
-              className={isActiveShape(r, hoveredRegion, group) ? 'region is-active' : 'region'}
+              className={isActiveShape(r, activeRegion, group) ? 'region is-active' : 'region'}
               style={{
                 fill: TIER_FILL[tierForShape(r, group, macroByNuts2, tierOblast, tierRegion)],
               }}
+              aria-current={r && r.nuts3 === activeKey ? 'true' : undefined}
               onMouseEnter={() => setHovered(r ? shape.nuts3 : null)}
-              onClick={() =>
-                setHovered(
-                  nextClickedHovered(r ? shape.nuts3 : undefined, hovered, isCoarsePointer()),
-                )
-              }
+              onClick={() => setSelected(nextSelected(r ? shape.nuts3 : undefined, selected))}
             >
               <title>{label}</title>
             </path>
@@ -143,7 +141,24 @@ export function Choropleth({
           controls sit together. The visible card updates instantly; a debounced sr-only region below
           announces it so a mouse sweep across the map doesn't read out every region it passed — the
           ranked tables below remain the primary accessible/keyboard data path. */}
-      <aside className="map-card">
+      <aside className={selected ? 'map-card map-card--pinned' : 'map-card'}>
+        {hydrated && selected && (
+          <button
+            type="button"
+            className="map-card-dismiss"
+            aria-label="Затвори картата с данни"
+            onClick={() => {
+              setSelected(null);
+              // Also clear the transient hover: some touch browsers synthesize mouseenter/click but
+              // never fire mouseleave on tap, so `hovered` can be left pinned to the last-tapped
+              // shape — without this, resolveActiveKey would fall straight back to that stale value
+              // and the dismiss button would appear to do nothing.
+              setHovered(null);
+            }}
+          >
+            ✕
+          </button>
+        )}
         {hydrated && (
           <div className="map-toggle" role="group" aria-label="Групиране на картата">
             <button
@@ -168,8 +183,8 @@ export function Choropleth({
           {active ? (
             <>
               <h3 className="map-card-title">{active.name}</h3>
-              {group === 'oblast' && hoveredRegion && (
-                <p className="map-card-sub muted">Район: {hoveredRegion.nuts2Name}</p>
+              {group === 'oblast' && activeRegion && (
+                <p className="map-card-sub muted">Район: {activeRegion.nuts2Name}</p>
               )}
               <dl className="map-card-stats">
                 <div>
@@ -184,15 +199,15 @@ export function Choropleth({
                   <dt>Договори</dt>
                   <dd>{count(active.contracts)}</dd>
                 </div>
-                {group === 'oblast' && hoveredRegion && (
+                {group === 'oblast' && activeRegion && (
                   <div>
                     <dt>Институции</dt>
-                    <dd>{count(hoveredRegion.authorities)}</dd>
+                    <dd>{count(activeRegion.authorities)}</dd>
                   </div>
                 )}
               </dl>
               <TopBeneficiaries
-                list={activeTopBeneficiaries(group, hoveredRegion, topBeneficiaries)}
+                list={activeTopBeneficiaries(group, activeRegion, topBeneficiaries)}
               />
             </>
           ) : (

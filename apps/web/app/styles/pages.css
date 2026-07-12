@@ -620,12 +620,52 @@
 }
 /* The Information Card beside the map. */
 .map-card {
+  position: relative;
   flex: 0 0 250px;
   align-self: stretch;
   border: 1px solid var(--rule, #d8d6cf);
   border-radius: 8px;
   padding: 16px 18px;
   background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+/* Dismiss control for a pinned region — only rendered once something is selected. */
+.map-card-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  /* A tap pins a region on mobile too, but the card sits below the map in the flex-wrap layout — a
+     visitor has to scroll down to see it filled in. `.map-card` is the last item in `.map-layout`
+     with no room below it to detach into, so `position: sticky` here would be a no-op; pin it to
+     the viewport instead (a bottom sheet), which stays visible regardless of scroll position. Give
+     the dismiss control a full 44px touch target (review #141's floor for map controls). */
+  .map-card--pinned {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 20;
+    max-height: 60vh;
+    overflow-y: auto;
+    box-shadow: 0 2px 10px color-mix(in oklch, var(--ink) 18%, transparent);
+  }
+  .map-card-dismiss {
+    top: 2px;
+    right: 2px;
+    width: 44px;
+    height: 44px;
+  }
 }
 /* Grouping toggle, kept inside the card so all map controls sit together. */
 .map-toggle {

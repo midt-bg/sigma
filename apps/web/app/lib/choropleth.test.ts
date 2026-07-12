@@ -4,7 +4,8 @@ import type { RegionTopBeneficiary } from '@sigma/db';
 import {
   activeTopBeneficiaries,
   isActiveShape,
-  nextClickedHovered,
+  nextSelected,
+  resolveActiveKey,
   shareLabel,
   shareOfTotal,
   tierer,
@@ -96,22 +97,33 @@ describe('tierForShape (oblast↔район mapping)', () => {
   });
 });
 
-describe('nextClickedHovered', () => {
-  it('selects the clicked shape on a fine (mouse) pointer even if onMouseEnter already hovered it', () => {
-    // Regression: onMouseEnter fires before onClick on desktop, so a naive `hovered !== nuts3` guard
-    // is always false there and a mouse click could never select anything.
-    expect(nextClickedHovered('BG411', 'BG411', false)).toBe('BG411');
+describe('nextSelected', () => {
+  it('desktop click pins the region', () => {
+    expect(nextSelected('BG411', null)).toBe('BG411');
   });
-  it('selects an unhovered shape on either pointer type', () => {
-    expect(nextClickedHovered('BG411', null, false)).toBe('BG411');
-    expect(nextClickedHovered('BG411', null, true)).toBe('BG411');
+  it('click-same deselects (also covers the coarse-pointer repeat-tap case — same toggle, no pointer branch needed)', () => {
+    expect(nextSelected('BG411', 'BG411')).toBe(null);
   });
-  it('toggles off on a repeat tap of the already-selected shape on a coarse (touch) pointer', () => {
-    expect(nextClickedHovered('BG411', 'BG411', true)).toBe(null);
+  it('click-other moves the selection', () => {
+    expect(nextSelected('BG331', 'BG411')).toBe('BG331');
   });
-  it('clears selection when clicking outside any shape, on either pointer type', () => {
-    expect(nextClickedHovered(undefined, 'BG411', false)).toBe(null);
-    expect(nextClickedHovered(undefined, 'BG411', true)).toBe(null);
+  it('clicking outside any shape leaves the current selection unchanged', () => {
+    expect(nextSelected(undefined, 'BG411')).toBe('BG411');
+  });
+});
+
+describe('resolveActiveKey', () => {
+  it('hover never overrides an existing selection', () => {
+    expect(resolveActiveKey('BG411', 'BG331')).toBe('BG411');
+  });
+  it('falls back to hover when nothing is selected', () => {
+    expect(resolveActiveKey(null, 'BG331')).toBe('BG331');
+  });
+  it('a pinned selection survives a subsequent hover of nothing — clearing hovered (mouseleave) leaves the selection intact', () => {
+    expect(resolveActiveKey('BG411', null)).toBe('BG411');
+  });
+  it('is null when neither is set', () => {
+    expect(resolveActiveKey(null, null)).toBe(null);
   });
 });
 
