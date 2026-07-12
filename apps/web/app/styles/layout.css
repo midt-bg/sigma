@@ -664,7 +664,8 @@ details.row .body .signal .why {
   background: var(--paper);
   color: var(--ink);
 }
-/* 960.02 (not 961) so there is no dead zone with the ≤960px mobile block on fractional/zoomed widths. */
+/* 960.02 (not 961) shrinks the gap with the ≤960px mobile block to the unreachable (960, 960.02] on
+   fractional/zoomed widths (vs a 1px 960–961 dead zone); the base styles render correctly within it. */
 @media (min-width: 960.02px) {
   /* Floating action pill: a compact, content-sized bar centred horizontally and lifted off the bottom
      edge so it reads as an overlay, not a page-bottom chrome. Fixed is viewport-relative here — no

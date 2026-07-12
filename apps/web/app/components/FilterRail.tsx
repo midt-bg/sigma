@@ -112,9 +112,23 @@ export function FilterRail({
   // the applied URL stays canonical. Disabled controls are omitted from the native GET; with JS off this
   // never runs and the empty params are emitted but harmless (loaders treat empty as unset).
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    const pruned: HTMLInputElement[] = [];
     for (const el of Array.from(e.currentTarget.elements)) {
       const input = el as HTMLInputElement;
-      if (shouldPruneField(input, groupKeys)) input.disabled = true;
+      if (shouldPruneField(input, groupKeys)) {
+        input.disabled = true;
+        pruned.push(input);
+      }
+    }
+    // Re-enable after submit. React Router reads FormData synchronously in this event, so a microtask
+    // restores the controls without affecting the submitted query. Without this, a submit that does NOT
+    // remount the form — e.g. re-submitting an unchanged selection, which only drops cursor/page and so
+    // keeps the same `filterFormKey` — would leave the „Всички" radios permanently disabled, since the
+    // imperative `disabled` was never in the JSX and no re-render resets it (#228 review).
+    if (pruned.length) {
+      queueMicrotask(() => {
+        for (const input of pruned) input.disabled = false;
+      });
     }
   };
   return (
