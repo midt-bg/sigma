@@ -5,7 +5,7 @@ import {
   type AuthorityTotalsRow,
   type CompanyTotalsRow,
 } from './rows';
-import { listSingleOfferContracts } from './contracts';
+import { listContracts, listSingleOfferContracts } from './contracts';
 import { getFlaggedValue } from './flagged';
 
 interface HomeTotalsRow {
@@ -59,6 +59,7 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     topSingleOffer,
     singleOfferRow,
     flagged,
+    topFlaggedPage,
   ] = await Promise.all([
     db
       .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
@@ -87,11 +88,14 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
       .first<{ value_eur: number; contracts: number }>(),
     // Flagged-value summary (#218) — live aggregate over existing columns, under the 1h edge cache.
     getFlaggedValue(db),
+    // Top flagged contracts by value, for the homepage table (same shape as the single-offer list).
+    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 10 }),
   ]);
 
   return {
     totals,
     flagged,
+    topFlagged: topFlaggedPage.items,
     topCompanies: companies.results.map(toCompanyListItem),
     topMinistries: ministries.results.map(toAuthorityListItem),
     topMunicipalities: municipalities.results.map(toAuthorityListItem),

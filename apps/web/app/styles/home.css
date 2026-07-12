@@ -184,34 +184,10 @@
   white-space: nowrap;
 }
 
-/* Flagged-value section (#218): a lead accent number + three drill-down breakdown columns. */
-.flagged-lead {
-  margin: var(--s-5) 0 var(--s-6);
-}
-.flagged-lead a {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--s-3);
-  text-decoration: none;
-  color: var(--ink);
-  flex-wrap: wrap;
-}
-.flagged-lead a:hover .flagged-sub {
-  color: var(--accent);
-}
-.flagged-num {
-  font: 600 clamp(30px, 4vw, 44px) / 1 var(--font-serif);
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-.flagged-sub {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--ink-soft);
-}
+/* Flagged-value section (#218): a SingleOfferPortion bar + three drill-down breakdown columns + a
+   top-flagged contracts table (SingleOfferTable). Only the breakdown columns need custom styling. */
 .flagged-cols {
+  margin-block: var(--s-5);
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: var(--s-5) var(--s-7);

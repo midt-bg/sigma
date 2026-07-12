@@ -67,6 +67,8 @@ export interface HomeData {
   totals: HomeTotals;
   /** Total € running through contracts with a risk signal, + breakdowns (issue #218). */
   flagged: FlaggedValue;
+  /** Top flagged contracts by value — for the homepage table (issue #218). */
+  topFlagged: ContractListItem[];
   topCompanies: CompanyListItem[];
   topMinistries: AuthorityListItem[];
   topMunicipalities: AuthorityListItem[];

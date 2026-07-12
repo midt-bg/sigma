@@ -73,7 +73,8 @@ interface AuthTypeRow {
  * NULLs the ETL leaves on unrecoverable `value_suspect` rows (canonical basis, #98) — while the CONTRACT
  * tally counts every flagged row, so a value-suspect contract is counted but contributes €0. The `byType`
  * slices OVERLAP (a contract can be both single-offer and cost-growth), so they sum to more than the
- * de-duplicated total; `bySector`/`byAuthorityType` partition the flagged set, so they sum to the total.
+ * de-duplicated total. `bySector` (top 6) and `byAuthorityType` are TOP slices that need not sum to the
+ * total: flagged rows with a NULL `cpv_code`/`type_group` are excluded, and `bySector` is capped at 6.
  */
 export async function getFlaggedValue(db: D1Database): Promise<FlaggedValue> {
   const typeCols = FLAG_TYPES.flatMap((t) => [
@@ -88,7 +89,7 @@ export async function getFlaggedValue(db: D1Database): Promise<FlaggedValue> {
            COALESCE(SUM(CASE WHEN (${ANY_FLAG_SQL}) THEN c.amount_eur END), 0) AS total_eur,
            COUNT(CASE WHEN (${ANY_FLAG_SQL}) THEN 1 END) AS total_contracts,
            ${typeCols.join(',\n           ')}
-         ${FROM}`,
+         FROM contracts c`,
       )
       .first<TotalRow>(),
     db

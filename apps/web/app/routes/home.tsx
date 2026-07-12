@@ -91,6 +91,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const {
     totals,
     flagged,
+    topFlagged,
     topCompanies,
     topMinistries,
     topMunicipalities,
@@ -148,12 +149,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           са ориентири за преглед, не присъда. <Link to="/methodology#flagged">Как ги четем →</Link>
         </p>
 
-        <p className="flagged-lead">
-          <Link to="/contracts?flag=all&sort=value-desc">
-            <strong className="flagged-num">≈ {moneyBare(flagged.totalEur)} €</strong>
-            <span className="flagged-sub">в {count(flagged.contracts)} договора със сигнал →</span>
-          </Link>
-        </p>
+        <SingleOfferPortion
+          valueEur={flagged.totalEur}
+          totalEur={totals.valueEur}
+          scopeLabel="на всички договори"
+        />
 
         <div className="flagged-cols">
           <div>
@@ -212,6 +212,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </ul>
           </div>
         </div>
+
+        <SingleOfferTable items={topFlagged} allHref="/contracts?flag=all&sort=value-desc" />
       </section>
 
       <section className="section" aria-labelledby="find-yours">
