@@ -5,7 +5,10 @@ export interface GeneratedTarget {
 
 export const GENERATED_TARGETS: GeneratedTarget[];
 
-export function expandTemplate(templateSql: string, options?: { baseDir?: string }): string;
+export function expandTemplate(
+  templateSql: string,
+  options?: { baseDir?: string; templateName?: string },
+): string;
 
 export function generateAll(options?: {
   write?: boolean;

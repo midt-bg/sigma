@@ -1283,4 +1283,21 @@ describe('generated SQL stays in sync with its templates (single source of truth
       ).toThrow(/invalid fragment name/);
     },
   );
+
+  // Review on #203 (scripts/generate-sql.mjs:25): `\S+` also matches a dot-only name that
+  // survives the `/`, `\`, `..` checks (e.g. a bare `.`) but doesn't resolve to a plain
+  // filename — guard with a `path.basename` round-trip check too.
+  it('rejects a non-basename fragment name: .', () => {
+    expect(() => expandTemplate('-- @include .\n', { baseDir: resolve(root, 'scripts') })).toThrow(
+      /invalid fragment name/,
+    );
+  });
+
+  // Review on #203 (scripts/generate-sql.mjs:28): a missing fragment file threw a bare ENOENT
+  // with no indication of which template/@include marker triggered it.
+  it('names the @include marker on a missing fragment target', () => {
+    expect(() =>
+      expandTemplate('-- @include does-not-exist.sql\n', { baseDir: resolve(root, 'scripts') }),
+    ).toThrow(/failed to @include "does-not-exist\.sql"/);
+  });
 });
