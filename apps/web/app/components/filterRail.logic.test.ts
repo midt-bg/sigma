@@ -86,6 +86,18 @@ describe('preservedParamInputs', () => {
       { key: 'bidder', value: 'b' },
     ]);
   });
+
+  it('drops params outside the cache allow-list (cache-poisoning guard, CWE-349 #197/#228)', () => {
+    // An unknown param must NOT be re-emitted as a hidden input: it would inject unkeyed content into
+    // the SSR body of a publicCache'd list route, and cache-key.ts keys only on CACHE_QUERY_PARAMS.
+    const sp = new URLSearchParams('zzz=<script>&q=keep&sector=45');
+    expect(preservedParamInputs(sp, groupKeys)).toEqual([{ key: 'q', value: 'keep' }]);
+  });
+
+  it('drops an unknown param even when it is the only non-owned param', () => {
+    const sp = new URLSearchParams('utm_source=poison&sector=45&sort=value-desc');
+    expect(preservedParamInputs(sp, groupKeys)).toEqual([]);
+  });
 });
 
 describe('shouldPruneField', () => {
@@ -126,6 +138,12 @@ describe('filterFormKey', () => {
   it('is stable across re-sorting (sort is a view option, not a filter)', () => {
     expect(filterFormKey(new URLSearchParams('year=2026&sort=date-desc'))).toBe(
       filterFormKey(new URLSearchParams('year=2026')),
+    );
+  });
+
+  it('is order-insensitive so a re-ordered URL (shared link, back/forward) does not remount (#228)', () => {
+    expect(filterFormKey(new URLSearchParams('sector=45&year=2026&eu=eu'))).toBe(
+      filterFormKey(new URLSearchParams('eu=eu&year=2026&sector=45')),
     );
   });
 });

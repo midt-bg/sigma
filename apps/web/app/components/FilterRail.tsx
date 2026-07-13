@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
-import { Form, Link, useSearchParams } from 'react-router';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Form, Link, useNavigation, useSearchParams } from 'react-router';
 import { count as fmtCount } from '@sigma/shared';
 import {
   categorySelectionState,
@@ -67,6 +67,31 @@ export function FilterRail({
   // The form is keyed on the applied filter set so it remounts (re-applying defaultChecked) on „Изчисти",
   // back/forward and shared links — see the <Form> below.
   const formKey = filterFormKey(sp);
+  // Accessibility (#228 review). Applying filters is one navigation triggered by „Търси"; the keyed
+  // <Form> remounts on the new URL, so the button the visitor just activated is unmounted and keyboard
+  // focus would silently fall to <body> (WCAG 2.4.3). We track the submit and, once the navigation
+  // settles, return focus to the (remounted) „Търси" button and announce the update via a polite live
+  // region. `busy` also drives `aria-busy` on the rail and a „Зареждане…" announcement.
+  const navigation = useNavigation();
+  const busy = navigation.state !== 'idle';
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const submittedRef = useRef(false);
+  // Whether the visitor has toggled a control since the last apply — used to announce (once per editing
+  // burst) that there are pending, not-yet-applied changes, since toggling is otherwise silent for a
+  // screen-reader until „Търси" (WCAG 4.1.3).
+  const dirtyRef = useRef(false);
+  const [status, setStatus] = useState('');
+  useEffect(() => {
+    if (busy || !submittedRef.current) return;
+    submittedRef.current = false;
+    dirtyRef.current = false;
+    // Only reclaim focus if it was actually lost to <body> by the remount — never steal it from wherever
+    // the visitor may have moved in the meantime.
+    if (document.activeElement === document.body || document.activeElement === null) {
+      buttonRef.current?.focus();
+    }
+    setStatus('Резултатите са обновени.');
+  }, [busy]);
   // Keep the floating apply pill from covering the site footer: as the footer scrolls into view, lift
   // the pill by however much the footer intrudes into the viewport, so it comes to rest just above it
   // (the footer constrains it). Enhancement only — with JS off the pill stays at its base offset.
@@ -108,10 +133,45 @@ export function FilterRail({
         if (member.name === groupKey) member.checked = input.checked;
       });
   };
+  // Recompute a category's „Избери всички" checkbox from its members after a CHILD toggles. Without
+  // this the select-all is uncontrolled (`defaultChecked`) and only its `indeterminate` is refreshed on
+  // render, so after manually unchecking every child it stays visibly checked at zero selected until the
+  // next submit/remount (#228 review). Runs via the form-level onChange below (child changes bubble).
+  const syncSelectAll = (subgroup: Element, groupKey: string) => {
+    const selectAll = subgroup.querySelector<HTMLInputElement>(
+      ':scope > summary input[type="checkbox"]',
+    );
+    if (!selectAll) return;
+    const members = Array.from(
+      subgroup.querySelectorAll<HTMLInputElement>('input[type="checkbox"][name]'),
+    ).filter((m) => m.name === groupKey);
+    const checkedCount = members.reduce((n, m) => (m.checked ? n + 1 : n), 0);
+    selectAll.checked = members.length > 0 && checkedCount === members.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < members.length;
+  };
+  // One delegated handler for every control in the form (changes bubble). Announces (once per editing
+  // burst) that there are pending changes, and keeps each category's select-all in sync with its
+  // children. The select-all itself has no `name`, so toggling it is skipped here — onCategoryChange
+  // already drives its children, and those programmatic `.checked` writes don't fire change events.
+  const onFormChange = (e: ChangeEvent<HTMLFormElement>) => {
+    if (!dirtyRef.current) {
+      dirtyRef.current = true;
+      setStatus('Има непроменени филтри. Натиснете „Търси", за да ги приложите.');
+    }
+    // `e.target` is typed as the form; narrow to the actual changed control. A named checkbox inside a
+    // subgroup is a category child → resync its „Избери всички". The select-all itself has no name.
+    const target: EventTarget = e.target;
+    if (target instanceof HTMLInputElement && target.type === 'checkbox' && target.name) {
+      const subgroup = target.closest('.filter-subgroup');
+      if (subgroup) syncSelectAll(subgroup, target.name);
+    }
+  };
   // Progressive enhancement: drop empty-valued controls (the „Всички" radios submit `value=`/`eu=`) so
   // the applied URL stays canonical. Disabled controls are omitted from the native GET; with JS off this
   // never runs and the empty params are emitted but harmless (loaders treat empty as unset).
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    // Mark that this navigation came from „Търси" so the effect above can restore focus once it settles.
+    submittedRef.current = true;
     const pruned: HTMLInputElement[] = [];
     for (const el of Array.from(e.currentTarget.elements)) {
       const input = el as HTMLInputElement;
@@ -132,7 +192,13 @@ export function FilterRail({
     }
   };
   return (
-    <aside className="filter-rail" aria-label="Филтри">
+    <aside className="filter-rail" aria-label="Филтри" aria-busy={busy || undefined}>
+      {/* Polite status region: announces „Зареждане…" while a „Търси" navigation is in flight, that the
+          results were updated once it settles, and (once per editing burst) that toggles are pending
+          apply. Visually hidden — the button label already carries the visible applied-count. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {busy ? 'Зареждане на резултатите…' : status}
+      </p>
       {/* The rail is always visible on desktop. When the layout stacks to one column it collapses
           behind the „Филтри" label, toggled by an off-screen checkbox — a CSS-only disclosure
           (see app.css), so it needs no JS and renders identically on the server and the client. */}
@@ -148,7 +214,7 @@ export function FilterRail({
       {/* Keyed on the applied filter set (cursor/page/sort excluded) so a new URL from clear, back/forward
           or a shared link remounts the form and re-applies `defaultChecked` — uncontrolled inputs would
           otherwise keep stale DOM state — while paging or re-sorting preserves open groups + focus. */}
-      <Form method="get" key={formKey} onSubmit={onSubmit}>
+      <Form method="get" key={formKey} onSubmit={onSubmit} onChange={onFormChange}>
         <input type="hidden" name="sort" value={sort} />
         {/* preservedParamInputs already carries every non-form URL param — the in-table search `q`
             (#204), the authority/bidder scope, etc. — so the native GET submit never erases them. */}
@@ -249,7 +315,7 @@ export function FilterRail({
             fixed to the bottom of the viewport (see layout.css); the ref feeds the footer-lift effect. */}
         <div className="filter-apply-bar" ref={barRef}>
           <div className="filter-apply-inner">
-            <button type="submit" className="filter-apply">
+            <button type="submit" className="filter-apply" ref={buttonRef}>
               Търси{appliedCount > 0 ? ` · ${fmtCount(appliedCount)}` : ''}
             </button>
             <p className="small muted filter-apply-links">
