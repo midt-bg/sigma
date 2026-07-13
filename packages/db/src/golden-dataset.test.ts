@@ -42,14 +42,17 @@ function sqliteJson<T>(dbPath: string, sql: string): T[] {
 }
 
 function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', [dbPath], {
+  // -bail: stop and exit non-zero on the first SQL error inside the `.read` script. Without it
+  // sqlite3 prints the error but exits 0, so a broken derive step would slip past beforeAll and
+  // surface as a confusing downstream assertion instead of the real failure (matches the sibling tests).
+  execFileSync('sqlite3', ['-bail', dbPath], {
     input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
     stdio: 'pipe',
   });
 }
 
 // ── The fixture ──────────────────────────────────────────────────────────────────────────────
-// 2 authorities × 3 bidders × 8 contracts, sized so every total below is recomputable on paper.
+// 2 authorities × 3 bidders × 9 contracts, sized so every total below is recomputable on paper.
 //
 //   Authorities
 //     A1  eik 100000001  „Министерство на тестовата инфраструктура" → type_group 'министерство'
@@ -69,6 +72,14 @@ function readScript(dbPath: string, path: string): void {
 //     c6 A1→B2 BGN cpv45  signing 195.583, annex → current 19558.3  → annex_suspect    100.00 (100× signing ⇒ falls back to signing)
 //     c7 A1→B1 BGN cpv45  signing 0                                 → value_low           0.00 (kept in sums, labelled)
 //     c8 A2→B2 BGN cpv33  signing 39116.6, annex → current 58674.9  → ok             30000.00 (58674.9 ÷ 1.95583; 1.5× is a legit annex)
+//     c9 A2→B1 USD cpv33  signing 50000, est 60000 USD, signed 06-12 → ok            amount_eur NULL
+//        The only USD fx_rate is dated 06-01; the derive carries a rate forward at most 10 days, so a
+//        06-12 signing sits ONE day past the window (date(06-12,'-10d')=06-02 > 06-01) → no bounded prior
+//        rate → amount_eur stays NULL. Exercises the 10-day carry-forward at its rejection boundary AND
+//        the amount_eur-IS-NOT-NULL predicate that guards every value rollup: c9 is counted in the CORPUS
+//        tallies (home/facet/search/freshness COUNT(*)) but excluded from every value SUM and its paired
+//        count (company/authority/sector/flow), and it is 'ok' not value_suspect so the suspect KPI is
+//        untouched. Drop the predicate from the six rollups and this row leaks a NULL into a sum.
 const FIXTURE = `
 INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at) VALUES
   ('USD', '2026-06-01', 0.9, 'test:fixed', '2026-06-09T00:00:00Z');
@@ -109,6 +120,10 @@ VALUES
    'notice', NULL, NULL, 1, 0, '2026-05-20'),
   ('eop:tenders:2026-06-09', 2026, '2026-06-09T00:00:00Z', 'UNP-G8', 'TENDER-G8', 'open',
    'Golden tender 8', '33600000', 'Pharma', 'supplies', 100000, 'BGN', 'basis', 'lowest',
+   'Община Голдънво', '100000002', 'public', 'activity', '2026-05-30',
+   'notice', NULL, NULL, 1, 0, '2026-05-20'),
+  ('eop:tenders:2026-06-09', 2026, '2026-06-09T00:00:00Z', 'UNP-G9', 'TENDER-G9', 'open',
+   'Golden tender 9', '33600000', 'Pharma', 'supplies', 60000, 'USD', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', '2026-05-30',
    'notice', NULL, NULL, 1, 0, '2026-05-20');
 
@@ -168,7 +183,13 @@ VALUES
    'Pharma', 'supplies', 100000, 'BGN', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', 'notice',
    NULL, 'CN-8', '2026-06-08', 39116.6, 'BGN', 'Golden contract 8',
-   0, '121396123', 'Български пощи ЕАД', 'BG', 'large', 0, 4, 1, 1, 0, 30);
+   0, '121396123', 'Български пощи ЕАД', 'BG', 'large', 0, 4, 1, 1, 0, 30),
+  ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G9',
+   '2026-06-11', 'UNP-G9', 'TENDER-G9', 'open', 'Golden tender 9', '33600000',
+   'Pharma', 'supplies', 60000, 'USD', 'basis', 'lowest',
+   'Община Голдънво', '100000002', 'public', 'activity', 'notice',
+   NULL, 'CN-9', '2026-06-12', 50000, 'USD', 'Golden contract 9',
+   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 2, 1, 0, 0, 30);
 
 INSERT INTO raw_amendments
   (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
@@ -201,15 +222,16 @@ const A1 = 'auth:100000001';
 const A2 = 'auth:100000002';
 
 const GOLDEN = {
-  // Corpus shape after normalize: 8 tenders (one per УНП), 8 contracts, 3 bidders, 2 authorities,
-  // 2 promoted amendments.
-  shape: { authorities: 2, tenders: 8, contracts: 8, bidders: 3, amendments: 2 },
+  // Corpus shape after normalize: 9 tenders (one per УНП), 9 contracts, 3 bidders, 2 authorities,
+  // 2 promoted amendments. c9 lands in `contracts` (a real awarded row) despite its NULL amount_eur.
+  shape: { authorities: 2, tenders: 9, contracts: 9, bidders: 3, amendments: 2 },
 
   // Per-contract recount — the grain the reconciliation gate structurally cannot check.
   // amount_eur:      c1 195583÷1.95583=100000 | c2 50000 EUR as-is | c3 50000×0.9=45000
   //                  c4 repaired to est 1000  | c5 15000           | c6 falls back to signing 195.583÷1.95583=100
   //                  c7 0÷1.95583=0           | c8 58674.9÷1.95583=30000 (annexed current, 1.5× is legit)
-  // signing_value_eur: suppressed (NULL) only for value_suspect (c4).
+  //                  c9 NULL (USD signed 1 day past the 10-day fx window → no bounded rate)
+  // signing_value_eur: suppressed (NULL) only for value_suspect (c4); also NULL for c9 (no fx_rate → no EUR value).
   // current_value_eur: only c8 has a trusted current (58674.9÷1.95583=30000); c6's annex is the
   //                    suspect part so it is suppressed; the rest have no current_value.
   contracts: [
@@ -301,12 +323,24 @@ const GOLDEN = {
       fx_rate: null,
       annex_count: 1,
     },
+    {
+      id: `c:e:UNP-G9:CN-9:_:${B1}:1`,
+      bidder_id: B1,
+      amount_eur: null,
+      value_flag: 'ok',
+      signing_value_eur: null,
+      current_value_eur: null,
+      fx_converted: 1,
+      fx_rate: null,
+      annex_count: 0,
+    },
   ],
 
-  // ok: c1,c2,c3,c8 — every other flag exactly once.
+  // ok: c1,c2,c3,c8,c9 — every other flag exactly once. c9 is 'ok' (no over-value/annex/low trigger:
+  // its eff_eur is NULL because the fx lookup misses, so no threshold comparison fires) yet unsummable.
   valueFlags: [
     { value_flag: 'annex_suspect', n: 1 },
-    { value_flag: 'ok', n: 4 },
+    { value_flag: 'ok', n: 5 },
     { value_flag: 'review', n: 1 },
     { value_flag: 'value_low', n: 1 },
     { value_flag: 'value_suspect', n: 1 },
@@ -315,6 +349,8 @@ const GOLDEN = {
   // won_eur:  B1 = c1 100000 + c3 45000 + c5 15000 + c7 0            = 160000 (A1 via G1/G7, A2 via G3/G5 → 2 authorities)
   //           B2 = c2 50000 + c6 100 + c8 30000                       =  80100 (A1 via G2/G6, A2 via G8 → 2)
   //           B3 = c4 1000                                            =   1000
+  //           c9 (also B1, via A2/G9) is NOT here: amount_eur IS NULL, so it is excluded from won_eur,
+  //           the contracts tally paired with it, and the authorities distinct-count — B1 stays 4/2.
   // primary_sector: B1 cpv45 100000 > cpv33 60000 → '45'; B2 cpv45 50100 > cpv33 30000 → '45'; B3 → '33'.
   // eu_eur: only c2 is eu_funded → B2 50000.
   companyTotals: [
@@ -407,26 +443,31 @@ const GOLDEN = {
     { division: '45', contracts: 4, value_eur: 150100 },
   ],
 
-  // value_eur = 150100 + 91000 = 241100; suspect counts value_suspect rows only (c4).
+  // value_eur = 150100 + 91000 = 241100 (c9 adds 0 — NULL amount_eur drops out of SUM); suspect counts
+  // value_suspect rows only (c4). contracts is a CORPUS COUNT(*) → 9 (c9 included). last_date/as_of are
+  // MAX(signed_at) over the corpus → c9's 2026-06-12, the latest signing, even though it is unsummable.
   homeTotals: {
-    contracts: 8,
+    contracts: 9,
     value_eur: 241100,
     authorities: 2,
     bidders: 3,
     suspect: 1,
     first_date: '2026-06-01',
-    last_date: '2026-06-08',
-    as_of: '2026-06-08',
+    last_date: '2026-06-12',
+    as_of: '2026-06-12',
   },
 
-  // procedure: all 8 tenders are 'open'. eu: c2 alone is eu_funded (50000); the other 7 sum 191100.
+  // procedure: all 9 contracts are 'open'. eu: c2 alone is eu_funded (50000); the other 8 (incl. c9) are
+  // key '0'. facet_counts is NOT amount_eur-filtered, so c9 lifts both COUNT(*)s (eu '0' 7→8, procedure
+  // 9) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 8-contract eu '0' still sums 191100.
   facetCounts: [
-    { facet: 'eu', key: '0', contracts: 7, value_eur: 191100 },
+    { facet: 'eu', key: '0', contracts: 8, value_eur: 191100 },
     { facet: 'eu', key: '1', contracts: 1, value_eur: 50000 },
-    { facet: 'procedure', key: 'open', contracts: 8, value_eur: 241100 },
+    { facet: 'procedure', key: 'open', contracts: 9, value_eur: 241100 },
   ],
 
   // A1→B1 c1+c7 = 100000 | A1→B2 c2+c6 = 50100 | A2→B1 c3+c5 = 60000 | A2→B2 c8 = 30000 | A2→B3 c4 = 1000
+  // c9 (A2→B1) drops out (amount_eur IS NULL → excluded by flow_pairs' filter), so A2→B1 stays 60000 / 2 contracts.
   flowPairs: [
     { authority_id: A1, bidder_id: B1, won_eur: 100000, contracts: 2 },
     { authority_id: A1, bidder_id: B2, won_eur: 50100, contracts: 2 },
@@ -435,11 +476,13 @@ const GOLDEN = {
     { authority_id: A2, bidder_id: B3, won_eur: 1000, contracts: 1 },
   ],
 
-  // 2 authorities + 3 companies + 8 contracts (all carry a subject) = 13 FTS rows.
-  searchIndexRows: 13,
+  // 2 authorities + 3 companies + 9 contracts (all carry a subject; the FTS insert is gated on subject,
+  // NOT amount_eur, so c9 is indexed too — reachable by text even though it is unsummable) = 14 FTS rows.
+  searchIndexRows: 14,
 
-  // All fixture contracts are EOP-sourced; latest signed 2026-06-08.
-  dataFreshness: [{ source: 'eop', as_of: '2026-06-08', rows: 8 }],
+  // All fixture contracts are EOP-sourced. data_freshness is a COUNT(*)/MAX(signed_at) over the corpus
+  // (no amount_eur filter), so c9 lifts rows 8→9 and pushes as_of to its 2026-06-12 signing.
+  dataFreshness: [{ source: 'eop', as_of: '2026-06-12', rows: 9 }],
 } as const;
 
 describe('golden dataset (#99): hand-verified totals through the full derive pipeline', () => {
