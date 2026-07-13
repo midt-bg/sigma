@@ -5,7 +5,7 @@ const baseContractRow = {
   id: 'c:1',
   tender_id: 't:UNP-1',
   contract_subject: 'Contract subject',
-  contract_number: null,
+  contract_number: null as string | null,
   document_number: null,
   lot_id: 'lot:UNP-1:1',
   signed_at: '2024-01-15',
@@ -55,6 +55,7 @@ const baseContractRow = {
 function fakeDb(
   contractRow: typeof baseContractRow,
   lotRows: unknown[],
+  amendmentRows: unknown[] = [],
   cohortStatsRow: unknown = null,
 ): D1Database {
   return {
@@ -76,6 +77,10 @@ function fakeDb(
           if (sql.includes('FROM lots l')) {
             expect(binds).toEqual([contractRow.tender_currency, contractRow.tender_id]);
             return { results: lotRows as T[] };
+          }
+          if (sql.includes('FROM amendments')) {
+            expect(binds).toEqual([contractRow.unp, contractRow.contract_number]);
+            return { results: amendmentRows as T[] };
           }
           throw new Error(`unexpected all query: ${sql}`);
         },
@@ -207,7 +212,7 @@ describe('getContract', () => {
       p95_eur: 90_000,
       p99_eur: 400_000,
     };
-    const detail = await getContract(fakeDb(baseContractRow, [], statsRow), 'c:1');
+    const detail = await getContract(fakeDb(baseContractRow, [], [], statsRow), 'c:1');
 
     expect(detail?.cohort).not.toBeNull();
     expect(detail?.cohort?.amountEur).toBe(5000); // the contract's own amount_eur, not a stats field
@@ -243,5 +248,164 @@ describe('getContract', () => {
 
     expect(detail?.cohort).toBeNull();
     expect(cohortQueried).toBe(false);
+  });
+
+  it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-1' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 1200,
+            value_delta: 999, // dirty source: disagrees with after − before; the computed value wins
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: '  Удължаване на срока  ',
+            fx_rate: null,
+          },
+          {
+            value_before: 1200,
+            value_after: 1500,
+            value_delta: null, // missing → derived from before/after
+            currency: 'EUR',
+            published_at: '2024-06-01',
+            document_number: 'A2',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments).toHaveLength(2);
+    expect(detail?.amendments[0]).toMatchObject({
+      date: '2024-03-01',
+      documentNumber: 'A1',
+      valueAfterEur: 1200,
+      deltaEur: 200, // 1200 − 1000, NOT the source's 999
+      description: 'Удължаване на срока', // trimmed
+    });
+    expect(detail?.amendments[1]).toMatchObject({
+      valueAfterEur: 1500,
+      deltaEur: 300, // derived 1500 − 1200
+      description: null,
+    });
+  });
+
+  it('shows „—" for delta when only one of before/after is present, even if the source has a raw value_delta', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-5' },
+        [],
+        [
+          {
+            value_before: null, // unknown before-value → can't reconcile after − before
+            value_after: 1200,
+            value_delta: 999, // would be self-inconsistent against valueAfterEur if shown
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: 1200,
+      deltaEur: null, // renders „—" rather than a value that can't be reconciled
+    });
+  });
+
+  it('shows „—" for a value-less annex (null value_after) and a null delta', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-4' },
+        [],
+        [
+          {
+            value_before: null,
+            value_after: null, // a description-only annex, e.g. a deadline extension
+            value_delta: null,
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: 'Удължаване на срока',
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: null, // renders „—"
+      deltaEur: null,
+      description: 'Удължаване на срока',
+    });
+  });
+
+  it('converts foreign-currency amendments to EUR via the annex fx rate', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-2' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 2000,
+            value_delta: 1000,
+            currency: 'USD',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: 0.9,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: 1800,
+      deltaEur: 900,
+    });
+  });
+
+  it('normalises BGN amendment values via the fixed peg', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-3' },
+        [],
+        [
+          {
+            value_before: 1955.83,
+            value_after: 3911.66,
+            value_delta: 1955.83,
+            currency: 'BGN',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: null,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    const a0 = detail?.amendments[0];
+    expect(a0?.valueAfterEur ?? 0).toBeCloseTo(2000, 6); // 3911.66 / 1.95583
+    expect(a0?.deltaEur ?? 0).toBeCloseTo(1000, 6); // (3911.66 − 1955.83) / 1.95583
+  });
+
+  it('has no amendment history when the contract has no annexes', async () => {
+    const detail = await getContract(fakeDb(baseContractRow, []), 'c:1');
+    expect(detail?.amendments).toEqual([]);
   });
 });

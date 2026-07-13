@@ -419,6 +419,42 @@ interface ContractDetailRow {
   bidder_settlement: string | null;
 }
 
+interface AmendmentRow {
+  value_before: number | null;
+  value_after: number | null;
+  value_delta: number | null;
+  currency: string | null;
+  published_at: string | null;
+  document_number: string | null;
+  description: string | null;
+  fx_rate: number | null;
+}
+
+// The contract's published amendments (annexes) from the served `amendments` table. Exported so the
+// real-SQLite test runs this EXACT query (ordering + FX subquery), not a hand-copied mirror.
+//
+// Ordered by (published_at, id) ASC — the SAME keys `refresh-slice.sql` (≈L1059-1065) derives the
+// served `current_value` by: `ORDER BY published_at DESC, a.id DESC` among `value_after IS NOT NULL`
+// (the promote step ≈L1037-1038 sets `id = natural_key`). So the timeline's last VALUE-bearing row
+// reconciles with the headline „Текуща стойност"; a trailing description-only annex (NULL value_after)
+// honestly shows „—" (no value change) — the headline's `value_after IS NOT NULL` filter skips it too.
+// NULL dates sort FIRST in SQLite ASC, matching the ETL treating an undated annex as never-latest
+// (DESC puts NULL last), so it never displaces the value at the end. FX mirrors the same ≤10-day
+// lookback as `normalize-raw.sql`'s current_value_eur (exact-date would null out a weekend/holiday
+// annex while the headline converts fine). Each annex converts with ITS OWN currency + date — a
+// conscious choice (more correct than the contract's single rate, but can differ from the headline €
+// for a cross-currency annex).
+export const AMENDMENTS_SQL = `SELECT am.value_before, am.value_after, am.value_delta, am.currency, am.published_at,
+        am.document_number, am.description,
+        (SELECT f.eur_per_unit FROM fx_rates f
+           WHERE f.base_currency = am.currency
+             AND f.rate_date <= am.published_at
+             AND f.rate_date >= date(am.published_at, '-10 days')
+           ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate
+ FROM amendments am
+ WHERE am.unp = ? AND am.contract_number = ?
+ ORDER BY am.published_at, am.id`;
+
 export async function getContract(
   db: D1Database,
   contractId: string,
@@ -453,11 +489,11 @@ export async function getContract(
   // The cohort benchmark only exists for a clean, comparable value (the same gate contractCohort
   // applies). Test that gate HERE too, from the row we already read, so a suspect/valueless contract
   // skips the cpv_division_stats PK read entirely instead of paying for it and discarding the result
-  // (review ydimitrof — the PR's own „one extra rollup read, not a second scan" goal). The division is
-  // known synchronously, so when it IS read, it loads in parallel with the other detail reads.
+  // (the PR's own „one extra rollup read, not a second scan" goal). The division is known
+  // synchronously, so when it IS read, it loads in parallel with the other detail reads.
   const hasCleanValue = r.value_flag === 'ok' && r.amount_eur != null && r.amount_eur > 0;
   const cohortDivision = hasCleanValue && r.cpv_code ? r.cpv_code.slice(0, 2) : '';
-  const [authTotals, compTotals, lotRows, cohortStats] = await Promise.all([
+  const [authTotals, compTotals, lotRows, cohortStats, amendmentRows] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -492,6 +528,7 @@ export async function getContract(
         bidder_id: string | null;
       }>(),
     cohortDivision ? getCpvCohortStats(db, cohortDivision) : Promise.resolve(null),
+    db.prepare(AMENDMENTS_SQL).bind(r.unp, r.contract_number).all<AmendmentRow>(),
   ]);
 
   // value_low values ARE populated (counted in sums) but stay labelled, so include them here so the
@@ -616,6 +653,24 @@ export async function getContract(
   // framework ceiling, not this single award. `frameworkAwards` carries the award count when so, else null.
   const frameworkAwards = r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
 
+  // Amendment (annex) history — the recorded sequence behind signing → current. Native annex values
+  // are normalised to EUR (peg / FX by the annex's own date) to match the rest of the page. Oldest first.
+  const amendments: ContractDetail['amendments'] = amendmentRows.results.map((am) => {
+    const beforeEur = eurFromNative(am.value_before, am.currency, am.fx_rate);
+    const afterEur = eurFromNative(am.value_after, am.currency, am.fx_rate);
+    return {
+      date: am.published_at,
+      documentNumber: am.document_number,
+      description: am.description?.trim() || null,
+      valueAfterEur: afterEur,
+      // Compute delta from the SAME before/after we display, so the row is self-consistent (after −
+      // before == delta) even when the source's recorded value_delta disagrees with them. When only
+      // one of before/after is known, the recorded delta can't be reconciled against valueAfterEur —
+      // show „—" rather than a figure that might not add up.
+      deltaEur: beforeEur != null && afterEur != null ? afterEur - beforeEur : null,
+    };
+  });
+
   const detail: ContractDetail = {
     id: contractSlug(r.id),
     subject: r.contract_subject?.trim() || r.title,
@@ -648,6 +703,7 @@ export async function getContract(
     lots,
     subcontractor,
     cohort: contractCohort(r.amount_eur, r.value_flag, cohortDivision, cohortStats),
+    amendments,
   };
 
   return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };
