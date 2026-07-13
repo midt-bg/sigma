@@ -77,6 +77,8 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
         Сигналите са ориентири за преглед, не присъда — отбелязват договор, който заслужава
         внимание, а не доказано нарушение.{' '}
         <Link to="/methodology#flagged">Как четем сигналите →</Link>
+        {' · '}
+        <Link to="/methodology#contact">Смятате сигнал за грешен? →</Link>
       </p>
     </div>
   );
