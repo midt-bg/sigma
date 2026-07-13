@@ -1,4 +1,5 @@
 import type { HomeData, HomeTotals } from '@sigma/api-contract';
+import { isNaturalPersonProfileName } from '@sigma/shared';
 import {
   toAuthorityListItem,
   toCompanyListItem,
@@ -89,13 +90,18 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     // Flagged-value summary (#218) — live aggregate over existing columns, under the 1h edge cache.
     getFlaggedValue(db),
     // Top flagged contracts by value, for the homepage table (same shape as the single-offer list).
-    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 10 }),
+    // Over-fetch so we can drop natural-person (sole-trader ЕТ) bidders below and still fill 10 rows:
+    // an identifiable individual must never appear under a „сигнали за риск" label on this indexed,
+    // edge-cached page (GDPR/ЗЗЛД — mirrors the noindex on sole-trader company profiles, #218 review).
+    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 40 }),
   ]);
 
   return {
     totals,
     flagged,
-    topFlagged: topFlaggedPage.items,
+    topFlagged: topFlaggedPage.items
+      .filter((c) => !isNaturalPersonProfileName(c.bidderDisplayName))
+      .slice(0, 10),
     topCompanies: companies.results.map(toCompanyListItem),
     topMinistries: ministries.results.map(toAuthorityListItem),
     topMunicipalities: municipalities.results.map(toAuthorityListItem),

@@ -33,13 +33,21 @@ export async function loader({ context }: Route.LoaderArgs) {
   return getHomeData(env.DB);
 }
 
-function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHref: string }) {
+function SingleOfferTable({
+  items,
+  allHref,
+  caption = 'Поръчки с една оферта',
+}: {
+  items: ContractListItem[];
+  allHref: string;
+  caption?: string;
+}) {
   if (items.length === 0) return <p className="small muted">Няма данни за този изглед.</p>;
   return (
     <>
       <div className="table-wrap tbl-cards">
         <table>
-          <caption className="sr-only">Поръчки с една оферта</caption>
+          <caption className="sr-only">{caption}</caption>
           <thead>
             <tr>
               <th scope="col">Дата</th>
@@ -147,6 +155,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           Обща стойност на договорите, при които СИГМА отбелязва поне един структурен сигнал — липса
           на конкуренция, ръст на стойността чрез анекси или стойностна/времева аномалия. Сигналите
           са ориентири за преглед, не присъда. <Link to="/methodology#flagged">Как ги четем →</Link>
+          {' · '}
+          <Link to="/methodology#contact">Смятате сигнал за грешен? →</Link>
         </p>
 
         <SingleOfferPortion
@@ -213,7 +223,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           </div>
         </div>
 
-        <SingleOfferTable items={topFlagged} allHref="/contracts?flag=all&sort=value-desc" />
+        <SingleOfferTable
+          items={topFlagged}
+          caption="Договори с най-висока стойност със сигнали за риск"
+          allHref="/contracts?flag=all&sort=value-desc"
+        />
       </section>
 
       <section className="section" aria-labelledby="find-yours">

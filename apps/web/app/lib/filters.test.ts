@@ -33,6 +33,13 @@ describe('contract risk-signal + authority-type filters (#218)', () => {
     expect(f.authorityTypes).toEqual(['министерство', 'община']);
   });
 
+  it('drops unknown ?type buckets (cache-cardinality / DoS allow-list guard, #218 review)', () => {
+    const f = contractListFilters(
+      new URLSearchParams('type=министерство&type=<script>&type=zzz-unbounded'),
+    );
+    expect(f.authorityTypes).toEqual(['министерство']);
+  });
+
   it('the flagged.ts signal set matches riskLogic RiskFlagType (homepage ↔ contract-page parity)', () => {
     // Compile-time: every FLAG_TYPES entry is a valid RiskFlagType. Runtime: the sets are equal.
     const expected: RiskFlagType[] = [
