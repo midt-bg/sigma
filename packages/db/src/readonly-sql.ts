@@ -1,13 +1,13 @@
 // Read-only SQL predicate for the @sigma/db read-only D1 wrapper (issue #199). Answers one question —
 // "would this statement write?" — so the wrapper can gate env.DB.prepare/exec and the web runtime can
 // never mutate D1, even if the assistant run_sql AST guard is bypassed. The check is TEXT-based and
-// literal-aware (a write verb inside a '…' literal is data, not a write). Why not an AST parse here: the
-// loader queries are dynamically assembled and node-sql-parser fail-closes on valid SQLite it cannot
-// parse, so parsing would reject real reads and 500 a live loader. node-sql-parser stays on the
-// assistant run_sql path only. The comment/literal handling mirrors apps/web assistant sql-guard.ts so
-// both layers model strings identically.
+// quote-aware: it tracks all four SQLite quoted regions — '…' string, "…"/`…`/[…] identifiers — so a
+// write verb inside any of them is data, and a quote inside an identifier cannot open a phantom string
+// that hides a following write (the #225 review bypass). Why not an AST parse here: the loader queries
+// are dynamically assembled and node-sql-parser fail-closes on valid SQLite it cannot parse, so parsing
+// would reject real reads and 500 a live loader. node-sql-parser stays on the assistant run_sql path only.
 
-// Statement-level write verbs, matched whole-word OUTSIDE string literals. REPLACE is intentionally
+// Statement-level write verbs, matched whole-word OUTSIDE any quoted region. REPLACE is intentionally
 // absent — it collides with the read-only scalar replace(); its write form `REPLACE INTO` is matched
 // separately, and a leading REPLACE is already rejected by the SELECT/WITH/EXPLAIN allow-list.
 const WRITE_VERBS = [
@@ -39,28 +39,39 @@ const REPLACE_INTO_RE = /\breplace\s+into\b/i;
 const DANGEROUS_FN_RE = /\b(?:load_extension|writefile|readfile|fts3_tokenizer)\s*\(/i;
 const LEADING_READ_RE = /^(?:select|with|explain)\b/i;
 
-// Strip `-- line` and `/* block */` comments, but treat a comment marker inside a '…' literal as data
-// (a `--`/`/*` in a literal is preserved). Mirrors sql-guard.ts; `''` is an escaped quote, not a close.
+// SQLite quoted regions and their closing delimiter. '…'/"…"/`…` escape the delimiter by doubling it
+// (`''`, `""`, `` `` ``); […] has no escape and ends at the first `]`. Tracking all four — not just `'…'`
+// — is what closes the identifier-quote bypass (#225): a `'` inside `"x'"` is an identifier char, not a
+// string open, so it can't hide a following write.
+const QUOTE_CLOSE: Record<string, string> = { "'": "'", '"': '"', '`': '`', '[': ']' };
+
+function isQuoteOpen(ch: string): boolean {
+  return ch === "'" || ch === '"' || ch === '`' || ch === '[';
+}
+
+// Strip `-- line` and `/* block */` comments, but treat a comment marker inside any quoted region as
+// data (a `--`/`/*` inside a string or identifier is preserved).
 function stripComments(sql: string): string {
   let out = '';
   let i = 0;
   const n = sql.length;
-  let inString = false;
+  let quote: string | null = null; // open delimiter of the current quoted region, or null
   while (i < n) {
     const ch = sql[i]!;
-    if (inString) {
-      if (ch === "'" && sql[i + 1] === "'") {
-        out += "''";
+    if (quote) {
+      const close = QUOTE_CLOSE[quote]!;
+      if (ch === close && quote !== '[' && sql[i + 1] === close) {
+        out += ch + close; // doubled delimiter is an escape, not a close
         i += 2;
         continue;
       }
       out += ch;
-      if (ch === "'") inString = false;
+      if (ch === close) quote = null;
       i++;
       continue;
     }
-    if (ch === "'") {
-      inString = true;
+    if (isQuoteOpen(ch)) {
+      quote = ch;
       out += ch;
       i++;
       continue;
@@ -84,52 +95,64 @@ function stripComments(sql: string): string {
   return out;
 }
 
-// Split on top-level `;`, treating a `;` inside a '…' literal (with `''` escapes) as data, so a benign
-// `SELECT ';'` is not mis-counted as stacked. Mirrors sql-guard.ts.
+// Split on top-level `;`, treating a `;` inside any quoted region as data, so a benign `SELECT ';'` or a
+// `;` inside a "…" identifier is not mis-counted as a stacked statement.
 function splitStatements(sql: string): string[] {
   const out: string[] = [];
   let current = '';
-  let inString = false;
+  let quote: string | null = null;
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i]!;
-    if (ch === "'" && inString && sql[i + 1] === "'") {
-      current += "''";
-      i++;
-    } else if (ch === "'") {
-      inString = !inString;
+    if (quote) {
+      const close = QUOTE_CLOSE[quote]!;
+      if (ch === close && quote !== '[' && sql[i + 1] === close) {
+        current += ch + close;
+        i++;
+        continue;
+      }
       current += ch;
-    } else if (ch === ';' && !inString) {
+      if (ch === close) quote = null;
+      continue;
+    }
+    if (isQuoteOpen(ch)) {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ';') {
       out.push(current);
       current = '';
-    } else {
-      current += ch;
+      continue;
     }
+    current += ch;
   }
   out.push(current);
   return out.map((s) => s.trim()).filter(Boolean);
 }
 
-// Blank the contents of every '…' literal (keeping a boundary space) so a write verb used as data —
-// `WHERE status = 'CREATE'`, `'DEL' || 'ETE'` — cannot trip the whole-word write-verb blocklist.
-function stripStringLiterals(sql: string): string {
+// Blank the contents of every quoted region (string OR identifier), keeping a boundary space, so a write
+// verb used as data — `WHERE status = 'CREATE'`, a `"DELETE"` column identifier — cannot trip the
+// write-verb blocklist, and a quote inside an identifier cannot hide a following write.
+function stripQuoted(sql: string): string {
   let out = '';
-  let inString = false;
+  let quote: string | null = null;
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i]!;
-    if (inString) {
-      if (ch === "'" && sql[i + 1] === "'") {
-        i++;
+    if (quote) {
+      const close = QUOTE_CLOSE[quote]!;
+      if (ch === close && quote !== '[' && sql[i + 1] === close) {
+        i++; // doubled-delimiter escape — drop both, stay in the region
         continue;
       }
-      if (ch === "'") {
-        inString = false;
-        out += ' ';
+      if (ch === close) {
+        quote = null;
+        out += ' '; // closing delimiter → boundary space
         continue;
       }
-      continue;
+      continue; // drop the region's content
     }
-    if (ch === "'") {
-      inString = true;
+    if (isQuoteOpen(ch)) {
+      quote = ch;
       continue;
     }
     out += ch;
@@ -140,7 +163,7 @@ function stripStringLiterals(sql: string): string {
 /**
  * True when `rawSql` is a single read-only statement safe to run on a read-only D1 handle. Rejects
  * stacked statements, anything not leading with SELECT/WITH/EXPLAIN, and any statement-level write verb
- * (incl. CTE-prefixed DML like `WITH … DELETE`) found outside a string literal.
+ * (incl. CTE-prefixed DML like `WITH … DELETE`) found outside a quoted region.
  */
 export function isReadOnlySql(rawSql: string): boolean {
   const stripped = stripComments(rawSql).trim();
@@ -149,7 +172,7 @@ export function isReadOnlySql(rawSql: string): boolean {
   if (statements.length !== 1) return false;
   const stmt = statements[0]!;
   if (!LEADING_READ_RE.test(stmt)) return false;
-  const code = stripStringLiterals(stmt);
+  const code = stripQuoted(stmt);
   return !WRITE_VERB_RE.test(code) && !REPLACE_INTO_RE.test(code) && !DANGEROUS_FN_RE.test(code);
 }
 

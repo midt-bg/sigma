@@ -32,6 +32,20 @@ const WRITES: ReadonlyArray<readonly [label: string, sql: string]> = [
   ['writefile side-effect fn', "SELECT writefile('/tmp/x', 'data')"],
   ['readfile side-effect fn', "SELECT readfile('/etc/passwd')"],
   ['fts3_tokenizer pointer fn', "SELECT fts3_tokenizer('x', 1)"],
+  // #225 review bypass: a `'` inside a quoted IDENTIFIER must not open a phantom string that hides the
+  // trailing write. SQLite treats "x'"/`x'`/[x'] as identifiers and still executes the DELETE.
+  [
+    'quote in a "…" identifier hides DELETE',
+    `WITH t("x'") AS (SELECT 1) DELETE FROM secrets WHERE x='y'`,
+  ],
+  [
+    'quote in a `…` identifier hides DELETE',
+    "WITH t(`x'`) AS (SELECT 1) DELETE FROM secrets WHERE x='y'",
+  ],
+  [
+    'quote in a […] identifier hides DELETE',
+    `WITH t([x']) AS (SELECT 1) DELETE FROM secrets WHERE x='y'`,
+  ],
   ['empty', '   '],
 ];
 
@@ -54,6 +68,11 @@ const READS: ReadonlyArray<readonly [label: string, sql: string]> = [
   ],
   ['lowercase select', 'select id from contracts'],
   ['leading line comment then SELECT', '-- note\nSELECT id FROM contracts'],
+  // Quoted IDENTIFIERS equal to a write word are column/alias names, not writes — must not false-reject.
+  ['"…" identifier equal to a write word', 'SELECT "DELETE" AS x FROM t'],
+  ['`…` identifier equal to a write word', 'SELECT `UPDATE` FROM t'],
+  ['[…] identifier equal to a write word', 'SELECT [DROP] FROM t'],
+  ['doubled-quote escape inside an identifier', 'SELECT "a""b" FROM t'],
 ];
 
 describe('isReadOnlySql — rejects writes', () => {
