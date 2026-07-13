@@ -72,6 +72,17 @@ jobs:
             exit 1
           fi
 
+      # deploy.yml refuses to deploy a non-prod env carrying the production resource name (a misconfigured
+      # Environment would target prod). This workflow is MORE destructive — it wipes+reloads the свързани-лица
+      # tables — so it needs the same floor: a dev/staging run must never carry the prod D1 name 'sigma'.
+      - name: Guard — non-prod must not reuse the production D1 name
+        if: ${{ inputs.environment != 'production' }}
+        run: |
+          if [ "${SIGMA_D1_NAME}" = "sigma" ]; then
+            echo "::error::SIGMA_D1_NAME='sigma' (the PRODUCTION database) on a '${{ inputs.environment }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
+            exit 1
+          fi
+
       # Persist the raw XML corpus across runs. fetch.mjs writes to scratch/cacbg/raw/ and skips files
       # already on disk (source is immutable per year), so restoring a prior snapshot lets a re-run resume
       # instead of re-crawling from 2017 — and makes full_crawl=false ("extract from existing raw cache")

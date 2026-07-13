@@ -2,8 +2,9 @@
 // Ship the свързани-лица domain (persons + declarations + declared_interests + interest_links +
 // interest_link_authorities + link_suppressions) from a sqlite work DB to the served D1. Kept SEPARATE
 // from ship-domain.mjs so the EOP deploy path is untouched; reuses the same literal-escaping + batching.
-// Migration 0002 must already be applied (the deploy runs `d1 migrations apply`). No precompute — the
-// query layer reads interest_links directly.
+// Migration 0002 must already be applied (the deploy applies it via `d1 execute --file`, not
+// `d1 migrations apply` — 0000 was created out-of-band so wrangler's migration tracking is empty). No
+// precompute — the query layer reads interest_links directly.
 //
 // related_persons_internal (relative names — PII) is DELIBERATELY NOT shipped: no served query reads it,
 // so pushing it to the public D1 is PII we never surface. It stays in the build/work DB only (load.mjs
@@ -101,6 +102,21 @@ export function parseMinLinks(raw) {
   return n;
 }
 
+/**
+ * The D1 name to ship to. A --remote write MUST name its target explicitly: on a remote run an unset
+ * SIGMA_D1_NAME falling back to the prod default 'sigma' silently wipes+reloads PRODUCTION (this path
+ * DELETEs every свързани-лица table before re-inserting). --local carries no such blast radius, so it
+ * keeps the 'sigma' default. Pure — unit-tested.
+ */
+export function resolveD1Name({ remote, envName }) {
+  if (remote && !envName)
+    throw new Error(
+      "SIGMA_D1_NAME must be set for a --remote ship — refusing the production default 'sigma', which " +
+        "would wipe+reload prod. Set it to the target environment's D1 name.",
+    );
+  return envName || 'sigma';
+}
+
 /** Batched multi-row INSERTs for one table, bounded by D1's statement size. Pure — unit-tested. */
 export function insertStatements(table, cols, rows) {
   if (!cols.length || !rows.length) return [];
@@ -130,7 +146,7 @@ function main() {
   const workDb = arg('work-db', 'data/work/backfill.sqlite');
   const emit = arg('emit', '');
   const remote = Boolean(arg('remote', false));
-  const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
+  const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
   const minLinks = parseMinLinks(arg('min-links', 50));
   if (remote && !arg('yes', false))
     throw new Error('--remote requires --yes (guards against an accidental prod write)');

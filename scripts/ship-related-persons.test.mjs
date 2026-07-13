@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   assertShipFloor,
   parseMinLinks,
+  resolveD1Name,
   insertStatements,
   sqlLiteral,
   sqlIdent,
@@ -84,6 +85,17 @@ test('parseMinLinks rejects the valueless-flag footgun and non-positive-integers
   assert.throws(() => parseMinLinks('2.5'), /positive integer/); // non-integer
   assert.equal(parseMinLinks(50), 50); // default (flag absent) passes through
   assert.equal(parseMinLinks('25'), 25); // --min-links=25
+});
+
+test('resolveD1Name refuses the prod default on a remote ship but keeps it for --local', () => {
+  // The prod-wipe footgun: --remote with an unset SIGMA_D1_NAME must NOT silently fall back to 'sigma'.
+  assert.throws(
+    () => resolveD1Name({ remote: true, envName: undefined }),
+    /must be set for a --remote/,
+  );
+  assert.throws(() => resolveD1Name({ remote: true, envName: '' }), /must be set for a --remote/);
+  assert.equal(resolveD1Name({ remote: true, envName: 'sigma-stage' }), 'sigma-stage'); // explicit is fine
+  assert.equal(resolveD1Name({ remote: false, envName: undefined }), 'sigma'); // --local has no blast radius
 });
 
 test('related_persons_internal (relative-name PII) is NOT shipped to the served D1', () => {

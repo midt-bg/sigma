@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS interest_links (
   --   management_role   — self, relation manages, a single declarant (ambiguous: private manager or small board)
   -- Materiality: only CLOSELY-HELD forms (ООД/ЕООД/ЕТ/…) reach ownership classes; listed АД/ЕАД securities
   -- and management-only roles never become private_ownership/family_ownership (ADR-0022).
-  interest_class    TEXT NOT NULL DEFAULT 'private_ownership',
+  interest_class    TEXT NOT NULL DEFAULT 'management_role', -- fail-closed: a NON-surfaced class, so a writer that sets status but forgets the class can't leak to the public surface (load.mjs always sets it explicitly)
   contemporaneous   INTEGER NOT NULL DEFAULT 0,
   own_institution   TEXT NOT NULL DEFAULT 'none', -- exact (deterministic) | locality (heuristic) | none
   evidence_count    INTEGER NOT NULL DEFAULT 1,   -- # declared_interests supporting this link
