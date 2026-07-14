@@ -208,7 +208,7 @@ gh label list --repo midt-bg/sigma | grep "in-progress"
 
 `node --test scripts/issue-claim.test.mjs` (auto-run by `scripts-test.yml`). ~50 cases grouped by function; boundary/adversarial cases explicit.
 
-- **`parseCommand`** (14): `/assign`, `/unassign`, whitespace, trailing text; **exact-word guard rejects** `/assignee`, `/assign-me`, `/assigned`; case-sensitive; empty.
+- **`parseCommand`**: `/assign`, `/unassign`, whitespace, trailing text; **exact-word guard rejects** `/assignee`, `/assign-me`, `/assigned` (even uppercased); **case-insensitive** (`/ASSIGN` → `/assign`, matching the GHA `startsWith` gate); empty/null/undefined.
 - **`parseClaimMarker`** (8): valid; absent; **malformed JSON → null, no throw (S2)**; missing/non-string `user` → null (S5); mid-body; duplicate markers.
 - **`writeClaim`/`stripClaim`** (10): round-trip; re-claim idempotent same user; re-claim different user drops old; **strip removes duplicate banner + duplicate marker (S3 anti-spoof)**; preserves surrounding text.
 - **`canUnassign`** (7): self; OWNER/MEMBER/COLLABORATOR release other; CONTRIBUTOR/NONE cannot; unknown assoc → false (allowlist).

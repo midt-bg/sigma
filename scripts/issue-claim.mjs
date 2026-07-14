@@ -30,15 +30,19 @@ const USERNAME_RE = /^[A-Za-z0-9-]{1,39}$/;
 
 /**
  * Parses a comment body and returns the first whitespace-delimited token if it
- * is exactly '/assign' or '/unassign'. Any other token (including '/assignee',
- * '/assign-me', '/assigned') returns null. Case-sensitive.
+ * is '/assign' or '/unassign', matched case-insensitively (so '/Assign',
+ * '/ASSIGN' etc. resolve to the canonical lowercase command). Any other token
+ * (including '/assignee', '/assign-me', '/assigned') returns null.
  *
  * @param {string | null | undefined} body
  * @returns {'/assign' | '/unassign' | null}
  */
 export function parseCommand(body) {
   if (!body) return null;
-  const token = body.trim().split(/\s+/)[0] ?? '';
+  // Case-insensitive: matches the GitHub Actions `startsWith` gate (also case-insensitive) so a
+  // '/ASSIGN' comment actually takes effect instead of running the job and silently no-opping.
+  // The exact-word guard still rejects '/assignee', '/assign-me', '/assigned', etc.
+  const token = (body.trim().split(/\s+/)[0] ?? '').toLowerCase();
   if (token === '/assign') return '/assign';
   if (token === '/unassign') return '/unassign';
   return null;

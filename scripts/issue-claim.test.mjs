@@ -72,8 +72,24 @@ describe('parseCommand', () => {
     assert.equal(parseCommand(null), null);
   });
 
-  it('is case-sensitive — /Assign is not /assign', () => {
-    assert.equal(parseCommand('/Assign'), null);
+  it('is case-insensitive — /Assign resolves to /assign', () => {
+    assert.equal(parseCommand('/Assign'), '/assign');
+  });
+
+  it('is case-insensitive — /ASSIGN resolves to /assign', () => {
+    assert.equal(parseCommand('/ASSIGN'), '/assign');
+  });
+
+  it('is case-insensitive — /UnAssign resolves to /unassign', () => {
+    assert.equal(parseCommand('/UnAssign'), '/unassign');
+  });
+
+  it('normalizes case but returns the canonical lowercase command', () => {
+    assert.equal(parseCommand('/UNASSIGN please'), '/unassign');
+  });
+
+  it('rejects /ASSIGNEE even when uppercased (exact-word guard survives lowercasing)', () => {
+    assert.equal(parseCommand('/ASSIGNEE'), null);
   });
 
   it('returns null for undefined', () => {
