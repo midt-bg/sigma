@@ -12,6 +12,11 @@ build/
 .turbo/
 coverage/
 
+# Playwright E2E (#95)
+playwright-report/
+test-results/
+/apps/web/playwright/.cache/
+
 # Cloudflare / wrangler
 .wrangler/
 .dev.vars
