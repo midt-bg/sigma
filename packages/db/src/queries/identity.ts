@@ -59,11 +59,16 @@ export function bareContractId(contractId: string): string {
 }
 
 /** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). Path-unsafe
- *  characters are percent-encoded: `%` first (to avoid mangling later replacements), then `/`, `?`,
- *  `#`. React Router decodes these back in params, so the reading side (`contractIdFromSlug`) needs
- *  no change. */
+ *  characters are percent-encoded: `%` first (to avoid mangling later replacements), then the URL
+ *  structural chars `/`, `?`, `#`, plus whitespace and C0 control chars. Encoding whitespace keeps the
+ *  SSR-emitted href / sitemap `<loc>` a technically-valid URL when a domain id carries a space — e.g. a
+ *  `contract_number` like `ОП 20-42` (review #221; a literal space in `<loc>` violates the sitemap spec).
+ *  Readable chars (incl. Cyrillic) and the structural `:` separators stay literal. React Router decodes
+ *  these back in params, so the reading side (`contractIdFromSlug`) needs no change. */
 export function contractSlug(contractId: string): string {
-  return bareContractId(contractId).replace(/%/g, '%25').replace(/[/?#]/g, encodeURIComponent);
+  return bareContractId(contractId)
+    .replace(/%/g, '%25')
+    .replace(/[/?#\s\u0000-\u001f]/g, encodeURIComponent);
 }
 
 /** `/contracts/:id` segment → contract id. */

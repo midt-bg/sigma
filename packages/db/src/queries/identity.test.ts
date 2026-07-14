@@ -77,6 +77,14 @@ describe('authority / contract slugs', () => {
     expect(slugWithSpecial).not.toMatch(/[?#]/);
     expect(() => decodeURIComponent(slugWithSpecial)).not.toThrow();
     expect(contractIdFromSlug(decodeURIComponent(slugWithSpecial))).toBe(idWithSpecial);
+
+    // A space in the id (e.g. a `contract_number` like „ОП 20-42") must be encoded so the SSR href /
+    // sitemap <loc> stays a valid URL — a literal space is invalid in <loc> (review #221).
+    const idWithSpace = 'c:e:UNP:ОП 20-42:_:eik:123456789:1';
+    const slugWithSpace = contractSlug(idWithSpace);
+    expect(slugWithSpace).not.toContain(' ');
+    expect(slugWithSpace).toContain('%20');
+    expect(contractIdFromSlug(decodeURIComponent(slugWithSpace))).toBe(idWithSpace);
   });
 });
 
