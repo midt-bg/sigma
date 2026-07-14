@@ -39,6 +39,19 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
+-- ── 0b) Per-contract risk flags (#229) ─────────────────────────────────────────────────────────
+-- Canonical single source for the two elementary flags the subject-risk rollups aggregate, and the
+-- flags riskLogic.ts reads on the contract page. NULL = "unknown/ineligible" (the rollup shares drop
+-- NULL from BOTH numerator and denominator — never count it as 0). single-offer basis is
+-- bids_received = 1, the same basis as competition.ts / describe-schema (ADR-0007); high-markup reads
+-- the EUR timeline set just above, so suspect rows (NULL'd there) are ineligible by construction.
+-- Unconditional UPDATE (no WHERE) so a re-run recomputes every row and clears stale values.
+UPDATE contracts SET
+  is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,
+  is_high_markup  = CASE WHEN signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
+                          AND signing_value_eur <> 0
+                     THEN ((current_value_eur - signing_value_eur) / signing_value_eur > 0.2) END;
+
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
   id INTEGER PRIMARY KEY CHECK (id = 1), contracts INTEGER NOT NULL, value_eur REAL NOT NULL,

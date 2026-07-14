@@ -130,6 +130,8 @@ CREATE TABLE contracts (
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
   current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
+  is_single_offer  INTEGER,                -- #229 canonical flag: 1/0 = bids_received = 1; NULL = bid count unknown (never counted as 0 by the rollup shares). Populated by scripts/precompute.sql + refresh-slice.sql
+  is_high_markup   INTEGER,                -- #229 canonical flag: 1/0 = (current_value_eur − signing_value_eur)/signing_value_eur > 0.2; NULL = signing/current EUR absent (suspect rows)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на
