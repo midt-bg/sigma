@@ -1,0 +1,138 @@
+name: stale-assignment-check
+
+# Daily sweep of open issues labelled 'status: in-progress'.
+#
+# Purpose: auto-release zombie claims so contributors who picked up an issue and
+# went quiet don't block others indefinitely.
+#
+# Windows:
+#   14 days of inactivity  → nudge comment (Bulgarian) with <!-- sigma-nudge -->.
+#   21 days of inactivity  → release: strip claim marker, remove label + assignee,
+#                            post release comment (Bulgarian) with <!-- sigma-release -->.
+#
+# The invisible markers (<!-- sigma-nudge --> / <!-- sigma-release -->) make re-runs
+# idempotent: shouldNudge() detects a prior nudge by marker only, not prose.
+#
+# Linked-PR awareness: if a cross-referenced PR is still open the issue is skipped
+# regardless of idle time (fork-source PRs included — hasOpenLinkedPr reads state
+# off the timeline event, no second API call required).
+#
+# All decision logic lives in scripts/issue-claim.mjs (pure functions, unit-tested).
+# This workflow is thin I/O glue: paginate → call pure fn → write result.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily at 06:17 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: stale-assignment-check
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    # Paging through potentially many issues + fetching timelines; cap well under
+    # the 360-min default so a runaway paginate can't pin a runner all day.
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { parseClaimMarker, stripClaim, computeIdleDays, hasOpenLinkedPr, shouldNudge,
+                    IN_PROGRESS, NUDGE_DAYS, RELEASE_DAYS, NUDGE_MARKER, RELEASE_MARKER }
+              = await import(`${process.env.GITHUB_WORKSPACE}/scripts/issue-claim.mjs`);
+
+            const { owner, repo } = context.repo;
+            const nowMs = Date.now();
+
+            // Paginate all open issues labelled 'status: in-progress'.
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              { owner, repo, state: 'open', labels: IN_PROGRESS, per_page: 100 },
+            );
+
+            for (const issue of issues) {
+              // Isolate each issue so one poisoned entry cannot abort the whole sweep (S2).
+              try {
+                // PRs are returned by listForRepo; skip them.
+                if (issue.pull_request) continue;
+
+                const issue_number = issue.number;
+
+                // Skip issues that carry the label but no valid claim record —
+                // leave those for humans to triage.
+                const claim = parseClaimMarker(issue.body || '');
+                if (!claim) continue;
+
+                // Fetch the full timeline for idle-time + linked-PR calculations.
+                const timeline = await github.paginate(
+                  github.rest.issues.listEventsForTimeline,
+                  { owner, repo, issue_number, per_page: 100 },
+                );
+
+                // If an open PR is already linked, work is in flight — skip (O3).
+                if (hasOpenLinkedPr(timeline)) continue;
+
+                const idle = computeIdleDays({ timeline, createdAt: issue.created_at, nowMs });
+
+                if (idle >= RELEASE_DAYS) {
+                  // ── Release path ─────────────────────────────────────────────
+                  // Strip the claim from the issue body.
+                  await github.rest.issues.update({
+                    owner, repo, issue_number,
+                    body: stripClaim(issue.body || ''),
+                  });
+
+                  // Remove the 'status: in-progress' label; swallow 404/422 only (O4).
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner, repo, issue_number, name: IN_PROGRESS,
+                    });
+                  } catch (labelErr) {
+                    if (labelErr.status !== 404 && labelErr.status !== 422) {
+                      core.warning(`#${issue_number}: removeLabel failed (${labelErr.status}): ${labelErr.message}`);
+                    }
+                  }
+
+                  // Remove the assignee; swallow 404/422 only (O4).
+                  try {
+                    await github.rest.issues.removeAssignees({
+                      owner, repo, issue_number,
+                      assignees: [claim.user],
+                    });
+                  } catch (assignErr) {
+                    if (assignErr.status !== 404 && assignErr.status !== 422) {
+                      core.warning(`#${issue_number}: removeAssignees failed (${assignErr.status}): ${assignErr.message}`);
+                    }
+                  }
+
+                  // Post a Bulgarian release comment with the invisible marker (O1).
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number,
+                    body: `${RELEASE_MARKER}\n@${claim.user} Заявката ти за тази задача беше автоматично освободена след 21 дни липса на активност. Ако искаш да продължиш, коментирай \`/assign\` за да я заявиш отново.`,
+                  });
+
+                } else if (shouldNudge({ idleDays: idle, nudgeDays: NUDGE_DAYS, timeline, nudgeMarker: NUDGE_MARKER })) {
+                  // ── Nudge path ───────────────────────────────────────────────
+                  // Post a Bulgarian nudge comment with the invisible marker (O1).
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number,
+                    body: `${NUDGE_MARKER}\n@${claim.user} Все още работиш ли по тази задача? Не сме виждали активност от ${Math.floor(idle)} дни. Ако се окажеш в затруднение, питай в коментар. При липса на активност задачата ще бъде освободена автоматично след 21 дни.`,
+                  });
+                }
+
+              } catch (e) {
+                core.warning(`stale-assignment-check: skipping issue #${issue.number}: ${e.message}`);
+              }
+            }
