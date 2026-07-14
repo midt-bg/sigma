@@ -452,7 +452,9 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            // CSV carries the raw id (no URL escaping) — see bareContractId.
+            // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
+            // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
+            // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
             bareContractId(r.id),
             r.unp,
             r.subject,

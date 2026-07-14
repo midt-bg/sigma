@@ -85,6 +85,15 @@ describe('authority / contract slugs', () => {
     expect(slugWithSpace).not.toContain(' ');
     expect(slugWithSpace).toContain('%20');
     expect(contractIdFromSlug(decodeURIComponent(slugWithSpace))).toBe(idWithSpace);
+
+    // C0 control chars (U+0000–U+001F) and DEL (U+007F) must be encoded too, so an exotic id can never
+    // leave a raw control byte in the SSR href / sitemap <loc> (review #221). Built via fromCharCode so
+    // no literal control byte lives in this source file.
+    const idWithCtrl = `c:e:UNP:${String.fromCharCode(1)}X${String.fromCharCode(0x7f)}:_:eik:123456789:1`;
+    const slugWithCtrl = contractSlug(idWithCtrl);
+    expect(slugWithCtrl).toContain('%01');
+    expect(slugWithCtrl).toContain('%7F');
+    expect(contractIdFromSlug(decodeURIComponent(slugWithCtrl))).toBe(idWithCtrl);
   });
 });
 
