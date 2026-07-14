@@ -11,6 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
+const precomputePath = resolve(root, 'scripts/precompute.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
 
 function sqlite(dbPath: string, sql: string): string {
@@ -637,6 +638,46 @@ describe('refresh-slice EOP base derivation', () => {
         sliceRows.some((row) => row.id.startsWith('c:o:') && row.contract_number === 'CONTRACT-ID'),
       ).toBe(false);
       expect(sqlite(sliceDb, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // #229 drift guard: the daily slice path (refresh-slice.sql) must materialize the same per-contract
+  // flags and per-subject risk aggregates as a full rebuild (normalize-raw + precompute). If a column is
+  // added to one path and not the other, this fails instead of silently shipping stale risk numbers.
+  it('materializes identical risk flags and aggregates on the slice and full paths (#229)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const fullDb = resolve(dir, 'full.sqlite');
+    const sliceDb = resolve(dir, 'slice.sqlite');
+    try {
+      initWorkDb(fullDb);
+      initWorkDb(sliceDb);
+      seedContractIdFixture(fullDb);
+      seedContractIdFixture(sliceDb);
+
+      readScript(fullDb, normalizePath);
+      readScript(fullDb, precomputePath);
+      readScript(sliceDb, refreshSlicePath);
+
+      const flagsSql = 'SELECT id, is_single_offer, is_high_markup FROM contracts ORDER BY id';
+      const fullFlags = sqliteJson<{
+        id: string;
+        is_single_offer: number | null;
+        is_high_markup: number | null;
+      }>(fullDb, flagsSql);
+      expect(sqliteJson(sliceDb, flagsSql)).toEqual(fullFlags);
+      // non-vacuity: the fixture actually exercises the single-offer flag (not an all-NULL vacuous pass).
+      expect(fullFlags.some((row) => row.is_single_offer !== null)).toBe(true);
+
+      const riskCols =
+        'single_offer_k, single_offer_n, ROUND(single_offer_value_share, 6) AS so_vs, ' +
+        'high_markup_k, high_markup_n, ROUND(high_markup_value_share, 6) AS hm_vs';
+      const companySql = `SELECT bidder_id, ${riskCols} FROM company_totals ORDER BY bidder_id`;
+      expect(sqliteJson(sliceDb, companySql)).toEqual(sqliteJson(fullDb, companySql));
+
+      const authoritySql = `SELECT authority_id, ${riskCols} FROM authority_totals ORDER BY authority_id`;
+      expect(sqliteJson(sliceDb, authoritySql)).toEqual(sqliteJson(fullDb, authoritySql));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

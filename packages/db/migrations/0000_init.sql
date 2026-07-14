@@ -226,7 +226,16 @@ CREATE TABLE company_totals (
   primary_sector TEXT,                      -- CPV division carrying the most won €
   eu_eur         REAL NOT NULL DEFAULT 0,  -- won € on EU-funded contracts
   first_date     TEXT,
-  last_date      TEXT
+  last_date      TEXT,
+  -- #229 subject-risk aggregates. Filled by the risk-aggregate UPDATE in precompute.sql / refresh-slice.sql
+  -- over ALL the bidder's contracts (no amount_eur filter — so the count denominators match competition.ts).
+  -- Composite score + band are derived in the read layer (details.ts) from these; NULL = no assessable contract.
+  single_offer_k           INTEGER,        -- # contracts flagged single-offer (is_single_offer = 1)
+  single_offer_n           INTEGER,        -- # eligible (bids_received >= 1) — count-share denominator
+  single_offer_value_share REAL,           -- Σ flagged amount_eur / Σ eligible amount_eur; NULL if no eligible value
+  high_markup_k            INTEGER,        -- # contracts flagged high-markup (is_high_markup = 1)
+  high_markup_n            INTEGER,        -- # eligible (is_high_markup IS NOT NULL)
+  high_markup_value_share  REAL            -- Σ flagged amount_eur / Σ eligible amount_eur; NULL if no eligible value
 );
 
 -- Per authority. Authorities leaderboard (default sort) + authority headline + home slices.
@@ -243,7 +252,15 @@ CREATE TABLE authority_totals (
   primary_sector TEXT,
   eu_eur         REAL NOT NULL DEFAULT 0,
   first_date     TEXT,
-  last_date      TEXT
+  last_date      TEXT,
+  -- #229 subject-risk aggregates (see company_totals). Over ALL the authority's contracts (no amount_eur filter);
+  -- single_offer_n matches getAuthoritySingleOffer; composite + band derived in the read layer. NULL = no assessable contract.
+  single_offer_k           INTEGER,
+  single_offer_n           INTEGER,
+  single_offer_value_share REAL,
+  high_markup_k            INTEGER,
+  high_markup_n            INTEGER,
+  high_markup_value_share  REAL
 );
 
 -- Per CPV division. Sector facet + filter counts on the list pages.
