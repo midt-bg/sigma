@@ -28,6 +28,15 @@ const asArray = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
 // Empty XML elements (<Name/>) parse to {} — String({}) would yield '[object Object]', so collapse any
 // object/null/undefined to '' and trim the rest. The single coercion for every scalar field we persist.
 const flat = (v) => (v == null || typeof v === 'object' ? '' : String(v).trim());
+// Same-person test for the holder-name column. The source is hand-typed, so a SELF stake whose holder
+// cell repeats the declarant's own name with different casing/spacing than <Personal><Name> must NOT be
+// read as a relative's — that fabricates a family_ownership link naming a non-existent relative on a
+// libel-sensitive surface. Case-fold + collapse whitespace before comparing (ADR-0023).
+const nameKey = (v) =>
+  String(v ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
 function cellText(cell) {
   if (cell == null) return '';
   const t = typeof cell === 'object' ? cell['#text'] : cell;
@@ -119,7 +128,7 @@ function parseAssets(pp) {
       if (!company) continue;
       if ((by[cEgn] ?? '').length > 0) egnPresent = true;
       const holder = by[cHolder] ?? '';
-      const holderRelation = !holder || holder === declarant ? 'self' : 'related';
+      const holderRelation = !holder || nameKey(holder) === nameKey(declarant) ? 'self' : 'related';
       if (holderRelation === 'related') familyHoldingCount += 1;
       const seat = isOod ? (by[cSeat] ?? '') : '';
       interests.push({

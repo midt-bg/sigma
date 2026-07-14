@@ -101,6 +101,25 @@ test('family holdings CAPTURED as related interests, holder names never retained
   assert.ok(!JSON.stringify(d).includes('Мария'), 'family holder name leaked'); // …but the relative's NAME never is
 });
 
+test('asset decl: a self stake whose holder repeats the OWN name with case/spacing drift stays self', () => {
+  // Declarations are hand-typed: the holder column often repeats the declarant's own name with different
+  // casing/spacing than <Personal><Name>. An exact compare flips such a SELF stake to 'related' → a
+  // fabricated family_ownership link naming a non-existent relative on a libel-sensitive surface. The
+  // self/related decision must be case- and whitespace-insensitive.
+  const variantSelfRow = `<Row>
+    <Cell Num="1" Description="Ном. по ред">1</Cell>
+    <Cell Num="4" Description="Наименование на дружеството">"ТЕСТ АГРО" ЕООД</Cell>
+    <Cell Num="7" Description="Име: собствено, бащино, фамилно">ИВАН  ПЕТРОВ   ТЕСТОВ</Cell></Row>`;
+  const d = parseDeclaration(assetDecl({ name: 'Иван Петров Тестов', rows: variantSelfRow }));
+  assert.equal(d.interests.length, 1);
+  assert.equal(
+    d.interests[0].holderRelation,
+    'self',
+    'own name with case/space drift must not become a relative',
+  );
+  assert.equal(d.familyHoldingCount, 0, 'no fabricated family holding');
+});
+
 // АД securities table: issuer is in the „Емитент" column (≈col 6), NOT the ООД company column — a
 // declarant's blue-chip share holding must not be mis-read as closely-held ownership.
 const secDecl = `<?xml version="1.0"?>
