@@ -1300,10 +1300,14 @@ WHERE c.amount_eur IS NOT NULL
 GROUP BY t.authority_id, c.bidder_id;
 
 -- @refresh-batch anomalies
--- Scoped re-derive of the anomaly screen for touched contracts (same signals/thresholds as
--- precompute.sql §7 — keep in sync). cpv_price_stats is intentionally NOT rebuilt here: medians over
--- 190k rows drift negligibly within a daily window and are refreshed on every full import. The
--- CREATE guards let the slice run against a database created before the anomaly tables existed.
+-- Scoped re-derive of the anomaly screen for touched contracts. The derive/scoring block between
+-- the @anomaly-derive markers is shared verbatim with scripts/precompute.sql §7 and guarded
+-- byte-identical by packages/db/src/anomaly-parity.test.ts — edit both files together.
+-- cpv_price_stats is intentionally NOT rebuilt here: medians are refreshed only on full import, so
+-- between imports touched contracts are re-derived against the LAST computed medians (untouched
+-- contracts keep their flags, and a cohort newly crossing peers ≥ 10 starts flagging on the next
+-- full import). Documented on /methodology#flags. The CREATE guards let the slice run against a
+-- database created before the anomaly tables existed.
 CREATE TABLE IF NOT EXISTS cpv_price_stats (
   cpv_code TEXT PRIMARY KEY, peers INTEGER NOT NULL, median_eur REAL NOT NULL
 );
@@ -1319,6 +1323,7 @@ CREATE TABLE IF NOT EXISTS contract_anomalies (
   authority_id TEXT NOT NULL, bidder_id TEXT NOT NULL
 );
 DELETE FROM contract_anomalies WHERE contract_id IN (SELECT id FROM refresh_touched_contracts);
+-- @anomaly-derive begin (byte-identical with precompute.sql §7; see anomaly-parity.test.ts)
 INSERT INTO contract_anomalies (
   contract_id, score, rank_value,
   flag_over_estimate, flag_annex_growth, flag_price_outlier, flag_single_bid, flag_no_notice,
@@ -1351,6 +1356,7 @@ FROM (
     SELECT c.id, c.amount_eur, c.signed_at,
       substr(t.cpv_code, 1, 2) AS cpv_division, t.authority_id, c.bidder_id,
       COALESCE(c.signing_value_eur, c.amount_eur) AS paid_eur,
+      -- The comparable estimate: only when it covers exactly this award (see header note).
       CASE WHEN aw.n <= MAX(COALESCE(t.num_lots, 0), 1) THEN
         CASE
           WHEN c.lot_id IS NOT NULL AND l.estimated_value > 0
@@ -1379,15 +1385,18 @@ FROM (
     JOIN tenders t ON t.id = c.tender_id
     LEFT JOIN lots l ON l.id = c.lot_id
     LEFT JOIN cpv_price_stats ps ON ps.cpv_code = t.cpv_code
+-- @anomaly-derive end (the FROM/WHERE scoping below legitimately differs: full corpus there, touched slice here)
     LEFT JOIN (SELECT tender_id, COUNT(*) AS n FROM contracts
                WHERE tender_id IN (SELECT tender_id FROM contracts WHERE id IN (SELECT id FROM refresh_touched_contracts))
                GROUP BY tender_id) aw
       ON aw.tender_id = c.tender_id
     WHERE c.value_flag = 'ok' AND c.amount_eur > 0
       AND c.id IN (SELECT id FROM refresh_touched_contracts)
+-- @anomaly-derive-tail begin (byte-identical with precompute.sql §7)
   ) x
 )
 WHERE flag_over = 1 OR flag_annex = 1 OR flag_outlier = 1;
+-- @anomaly-derive-tail end
 
 -- @refresh-batch entity-search-index
 DELETE FROM search_index WHERE kind = 'company';

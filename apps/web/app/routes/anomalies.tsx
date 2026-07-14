@@ -9,6 +9,7 @@ import { FilterRail, type FilterGroup } from '../components/FilterRail';
 import { ListControls } from '../components/ListControls';
 import { Pagination } from '../components/Pagination';
 import { Callout, Flag } from '../components/ui';
+import { anomalyBadges } from '../lib/anomaly-badges';
 import {
   buildSectorGroup,
   getMulti,
@@ -66,40 +67,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   });
 }
 
-// „×2,3" — ratios read best as multiples with one decimal (Bulgarian decimal comma).
-function times(ratio: number): string {
-  return `×${ratio.toLocaleString('bg-BG', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
-}
-
-// The fired signals as red-flag chips. Each chip carries its numbers inline (ratio + the baseline it
-// was measured against), so a row is verifiable at a glance without opening the contract.
+// The fired signals as red-flag chips. The mapping/copy lives in lib/anomaly-badges (unit tested);
+// each chip carries its numbers inline, so a row is verifiable at a glance without opening the
+// contract.
 function SignalFlags({ item }: { item: AnomalyListItem }) {
-  const s = item.signals;
+  const badges = anomalyBadges(item.signals);
+  if (badges.length === 0) return null;
   return (
     <span className="signal-flags">
-      {s.overEstimateRatio != null && (
-        <Flag>
-          {times(s.overEstimateRatio)} над прогнозата
-          {s.estimatedEur != null && <span className="flag-detail"> (при {money(s.estimatedEur)})</span>}
+      {badges.map((b) => (
+        <Flag key={b.key} variant={b.context ? 'soft' : undefined}>
+          {b.label}
+          {b.detail && <span className="flag-detail"> {b.detail}</span>}
         </Flag>
-      )}
-      {s.annexGrowthRatio != null && (
-        <Flag>+{Math.round((s.annexGrowthRatio - 1) * 100)}% чрез анекси</Flag>
-      )}
-      {s.priceRatio != null && (
-        <Flag>
-          {times(s.priceRatio)} над типичното
-          {s.peerMedianEur != null && (
-            <span className="flag-detail">
-              {' '}
-              (медиана {money(s.peerMedianEur)}
-              {s.peerCount != null ? ` от ${count(s.peerCount)} договора` : ''})
-            </span>
-          )}
-        </Flag>
-      )}
-      {s.singleBid && <Flag variant="soft">единствена оферта</Flag>}
-      {s.noNotice && <Flag variant="soft">без обявление</Flag>}
+      ))}
     </span>
   );
 }

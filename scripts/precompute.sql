@@ -181,11 +181,16 @@ WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
 --     ЗОП чл. 116 caps most modifications at +10/50%, so ≥1.5 is scored higher.
 --   • price_outlier  — contract value ≥ 5× the median of ≥10 clean contracts sharing the same FULL
 --     CPV code, and ≥ €50k. A scope-vs-price proxy (a bigger buy is not a worse price), hence the
---     softest weight; the median + peer count are stored so every ratio is inspectable.
+--     softest weight; the median + peer count are stored so every ratio is inspectable. The peer set
+--     includes the contract itself (negligible at ≥ 10 peers). Medians are rebuilt HERE, on full
+--     import only — the daily slice re-derives touched contracts against the last computed medians.
 --   • single_bid / no_notice — competition context (one offer in a competitive procedure / a
 --     direct no-notice procedure). Context only: they add score but never create a row.
 -- Score = over_estimate 25/35/45 (≥1.1/1.5/3×) + annex_growth 20/30 (≥1.2/1.5×) +
 --         price_outlier 15/25 (≥5/10×) + single_bid 10 + no_notice 5, capped at 100.
+-- The derive/scoring block between the @anomaly-derive markers is shared verbatim with
+-- scripts/refresh-slice.sql (@refresh-batch anomalies) and guarded byte-identical by
+-- packages/db/src/anomaly-parity.test.ts — edit both files together.
 
 CREATE TABLE IF NOT EXISTS cpv_price_stats (
   cpv_code TEXT PRIMARY KEY, peers INTEGER NOT NULL, median_eur REAL NOT NULL
@@ -219,6 +224,7 @@ CREATE INDEX IF NOT EXISTS idx_anomalies_signed ON contract_anomalies(signed_at)
 CREATE INDEX IF NOT EXISTS idx_anomalies_authority ON contract_anomalies(authority_id);
 CREATE INDEX IF NOT EXISTS idx_anomalies_bidder ON contract_anomalies(bidder_id);
 DELETE FROM contract_anomalies;
+-- @anomaly-derive begin (byte-identical with refresh-slice.sql; see anomaly-parity.test.ts)
 INSERT INTO contract_anomalies (
   contract_id, score, rank_value,
   flag_over_estimate, flag_annex_growth, flag_price_outlier, flag_single_bid, flag_no_notice,
@@ -280,12 +286,15 @@ FROM (
     JOIN tenders t ON t.id = c.tender_id
     LEFT JOIN lots l ON l.id = c.lot_id
     LEFT JOIN cpv_price_stats ps ON ps.cpv_code = t.cpv_code
+-- @anomaly-derive end (the FROM/WHERE scoping below legitimately differs: full corpus here, touched slice there)
     LEFT JOIN (SELECT tender_id, COUNT(*) AS n FROM contracts GROUP BY tender_id) aw
       ON aw.tender_id = c.tender_id
     WHERE c.value_flag = 'ok' AND c.amount_eur > 0
+-- @anomaly-derive-tail begin (byte-identical with refresh-slice.sql)
   ) x
 )
 WHERE flag_over = 1 OR flag_annex = 1 OR flag_outlier = 1;
+-- @anomaly-derive-tail end
 
 -- Summary (last result set printed by `wrangler d1 execute`)
 SELECT

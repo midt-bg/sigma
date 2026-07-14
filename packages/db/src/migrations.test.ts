@@ -1,14 +1,13 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migrationsDir = resolve(root, 'packages/db/migrations');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -19,14 +18,20 @@ function readScript(dbPath: string, path: string): void {
 }
 
 describe('served migrations', () => {
-  // 0000_init remains the complete base served schema. Later migrations must be additive over that
-  // base so initial setup (`wrangler d1 migrations apply`) and ETL ships keep the same table shape.
-  it('builds the served schema from the migration chain', () => {
+  // The consolidated 0000_init carries the pre-production schema; later schema changes land as
+  // numbered incremental migrations (the same order `wrangler d1 migrations apply` uses). This
+  // guards that the chain applied in filename order yields the complete served schema — amendments
+  // history, the OCDS parties projection, the EOP tenderId column, the anomaly-screen tables — and
+  // carries no raw_* staging (that lives only in work-staging-schema.sql, applied to the work DB).
+  it('builds the complete served schema from the migration chain', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, migration0);
-      readScript(dbPath, migration1);
+      const migrationFiles = readdirSync(migrationsDir)
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
+      expect(migrationFiles[0]).toBe('0000_init.sql');
+      for (const file of migrationFiles) readScript(dbPath, resolve(migrationsDir, file));
 
       expect(
         sqlite(
@@ -68,7 +73,7 @@ describe('served migrations', () => {
         ).trim(),
       ).toBe('1');
 
-      // The anomaly screen reads precomputed tables — both must ship with the base schema.
+      // The anomaly screen reads precomputed tables — shipped by the 0005_anomalies migration.
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('contract_anomalies', 'cpv_price_stats');").trim(),
       ).toBe('2');

@@ -230,16 +230,19 @@ export async function listAnomalies(
     .filter(Boolean)
     .join(' AND ');
   const sql = `${SELECT}, ${sort.expr} AS sort_value ${FROM}${conds ? ' WHERE ' + conds : ''} ${ks.orderSql} LIMIT ?`;
-  const { results } = await db
-    .prepare(sql)
-    .bind(...filters.params, ...ks.params, pageSize + 1)
-    .all<AnomalyRow & { sort_value: string | number }>();
+  // The page and its headline are independent — one round-trip instead of two sequential ones.
+  const [{ results }, summary] = await Promise.all([
+    db
+      .prepare(sql)
+      .bind(...filters.params, ...ks.params, pageSize + 1)
+      .all<AnomalyRow & { sort_value: string | number }>(),
+    anomaliesSummary(db, p),
+  ]);
 
   const hasMore = results.length > pageSize;
   let rows = results.slice(0, pageSize);
   if (ks.reverse) rows = rows.reverse();
 
-  const summary = await anomaliesSummary(db, p);
   const cursors = pageCursors({
     rows: rows.map((r) => ({ sortValue: r.sort_value, id: r.id })),
     hasMore,
