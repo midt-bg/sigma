@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   contractSitemapPages,
@@ -203,5 +206,27 @@ describe('read-loader corpus is read-only', () => {
     // pass — prove a representative loader emitted SQL, then assert every captured statement is read-only.
     expect(captured.some((sql) => sql.includes('home_totals'))).toBe(true);
     expect(captured.filter((sql) => !isReadOnlySql(sql))).toEqual([]);
+  });
+});
+
+// A getDb-wrapped handle throws on .batch()/.withSession()/.dump(); the corpus above proves the predicate,
+// but a read-loader reaching for one of those would break only at runtime. @sigma/db queries are all read
+// paths (ETL writes live in @sigma/ingest), so forbid those methods in the query source (#225 review).
+const queriesDir = resolve(dirname(fileURLToPath(import.meta.url)), 'queries');
+const stripComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+describe('read-loader query source', () => {
+  it('never calls a getDb-blocked method (.batch/.withSession/.dump)', () => {
+    const offenders = (readdirSync(queriesDir, { recursive: true }) as string[])
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .filter((name) =>
+        /\.(?:batch|withSession|dump)\s*\(/.test(
+          stripComments(readFileSync(resolve(queriesDir, name), 'utf8')),
+        ),
+      )
+      .sort();
+
+    expect(offenders).toEqual([]);
   });
 });
