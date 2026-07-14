@@ -68,6 +68,14 @@ describe('served migrations', () => {
         ).trim(),
       ).toBe('1');
 
+      // The anomaly screen reads precomputed tables — both must ship with the base schema.
+      expect(
+        sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('contract_anomalies', 'cpv_price_stats');").trim(),
+      ).toBe('2');
+      expect(
+        sqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('contract_anomalies') WHERE name='rank_value' AND \"notnull\"=1;").trim(),
+      ).toBe('1');
+
       // The served schema must never carry raw_* staging tables.
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'raw_%';").trim(),

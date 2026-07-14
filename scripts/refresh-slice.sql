@@ -1299,6 +1299,96 @@ FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id
 WHERE c.amount_eur IS NOT NULL
 GROUP BY t.authority_id, c.bidder_id;
 
+-- @refresh-batch anomalies
+-- Scoped re-derive of the anomaly screen for touched contracts (same signals/thresholds as
+-- precompute.sql §7 — keep in sync). cpv_price_stats is intentionally NOT rebuilt here: medians over
+-- 190k rows drift negligibly within a daily window and are refreshed on every full import. The
+-- CREATE guards let the slice run against a database created before the anomaly tables existed.
+CREATE TABLE IF NOT EXISTS cpv_price_stats (
+  cpv_code TEXT PRIMARY KEY, peers INTEGER NOT NULL, median_eur REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS contract_anomalies (
+  contract_id TEXT PRIMARY KEY REFERENCES contracts(id),
+  score INTEGER NOT NULL, rank_value REAL NOT NULL,
+  flag_over_estimate INTEGER NOT NULL DEFAULT 0, flag_annex_growth INTEGER NOT NULL DEFAULT 0,
+  flag_price_outlier INTEGER NOT NULL DEFAULT 0, flag_single_bid INTEGER NOT NULL DEFAULT 0,
+  flag_no_notice INTEGER NOT NULL DEFAULT 0,
+  over_estimate_ratio REAL, estimated_eur REAL, annex_growth_ratio REAL,
+  price_ratio REAL, peer_median_eur REAL, peer_count INTEGER,
+  amount_eur REAL NOT NULL, signed_at TEXT, cpv_division TEXT,
+  authority_id TEXT NOT NULL, bidder_id TEXT NOT NULL
+);
+DELETE FROM contract_anomalies WHERE contract_id IN (SELECT id FROM refresh_touched_contracts);
+INSERT INTO contract_anomalies (
+  contract_id, score, rank_value,
+  flag_over_estimate, flag_annex_growth, flag_price_outlier, flag_single_bid, flag_no_notice,
+  over_estimate_ratio, estimated_eur, annex_growth_ratio, price_ratio, peer_median_eur, peer_count,
+  amount_eur, signed_at, cpv_division, authority_id, bidder_id)
+SELECT
+  id,
+  MIN(100,
+      CASE WHEN flag_over = 1 THEN CASE WHEN over_ratio >= 3 THEN 45 WHEN over_ratio >= 1.5 THEN 35 ELSE 25 END ELSE 0 END
+    + CASE WHEN flag_annex = 1 THEN CASE WHEN growth >= 1.5 THEN 30 ELSE 20 END ELSE 0 END
+    + CASE WHEN flag_outlier = 1 THEN CASE WHEN ratio >= 10 THEN 25 ELSE 15 END ELSE 0 END
+    + CASE WHEN single_bid = 1 THEN 10 ELSE 0 END
+    + CASE WHEN no_notice = 1 THEN 5 ELSE 0 END) AS score,
+  MIN(100,
+      CASE WHEN flag_over = 1 THEN CASE WHEN over_ratio >= 3 THEN 45 WHEN over_ratio >= 1.5 THEN 35 ELSE 25 END ELSE 0 END
+    + CASE WHEN flag_annex = 1 THEN CASE WHEN growth >= 1.5 THEN 30 ELSE 20 END ELSE 0 END
+    + CASE WHEN flag_outlier = 1 THEN CASE WHEN ratio >= 10 THEN 25 ELSE 15 END ELSE 0 END
+    + CASE WHEN single_bid = 1 THEN 10 ELSE 0 END
+    + CASE WHEN no_notice = 1 THEN 5 ELSE 0 END) * 1e12 + amount_eur AS rank_value,
+  flag_over, flag_annex, flag_outlier, single_bid, no_notice,
+  over_ratio, est_eur, growth, ratio, median_eur, peers,
+  amount_eur, signed_at, cpv_division, authority_id, bidder_id
+FROM (
+  SELECT x.*,
+    CASE WHEN x.est_eur >= 1000 AND x.paid_eur >= 10000 AND x.paid_eur / x.est_eur >= 1.10 THEN 1 ELSE 0 END AS flag_over,
+    CASE WHEN x.est_eur > 0 THEN x.paid_eur / x.est_eur END AS over_ratio,
+    CASE WHEN x.growth >= 1.20 THEN 1 ELSE 0 END AS flag_annex,
+    CASE WHEN x.ratio >= 5 AND x.amount_eur >= 50000 THEN 1 ELSE 0 END AS flag_outlier
+  FROM (
+    SELECT c.id, c.amount_eur, c.signed_at,
+      substr(t.cpv_code, 1, 2) AS cpv_division, t.authority_id, c.bidder_id,
+      COALESCE(c.signing_value_eur, c.amount_eur) AS paid_eur,
+      CASE WHEN aw.n <= MAX(COALESCE(t.num_lots, 0), 1) THEN
+        CASE
+          WHEN c.lot_id IS NOT NULL AND l.estimated_value > 0
+               AND COALESCE(l.value_currency, t.currency, 'BGN') IN ('BGN', 'EUR')
+            THEN CASE WHEN COALESCE(l.value_currency, t.currency, 'BGN') = 'EUR'
+                      THEN l.estimated_value ELSE l.estimated_value / 1.95583 END
+          WHEN c.lot_id IS NULL AND COALESCE(t.num_lots, 1) <= 1 AND t.estimated_value > 0
+               AND COALESCE(t.currency, 'BGN') IN ('BGN', 'EUR')
+            THEN CASE WHEN COALESCE(t.currency, 'BGN') = 'EUR'
+                      THEN t.estimated_value ELSE t.estimated_value / 1.95583 END
+        END
+      END AS est_eur,
+      CASE WHEN c.annex_count > 0 AND c.signing_value_eur > 0 AND c.current_value_eur > 0
+           THEN c.current_value_eur / c.signing_value_eur END AS growth,
+      CASE WHEN ps.peers >= 10 AND ps.median_eur > 0 THEN c.amount_eur / ps.median_eur END AS ratio,
+      ps.median_eur, ps.peers,
+      CASE WHEN c.bids_received = 1 AND t.procedure_type IN (
+        'Открита процедура', 'Ограничена процедура', 'Ограничена процедура по ДСП',
+        'Ограничена процедура по КС', 'Публично състезание', 'Състезателна процедура с договаряне',
+        'Събиране на оферти с обява') THEN 1 ELSE 0 END AS single_bid,
+      CASE WHEN t.procedure_type IN (
+        'Договаряне без предварително обявление', 'Пряко договаряне',
+        'Договаряне без предварителна покана за участие',
+        'Договаряне без публикуване на обявление за поръчка') THEN 1 ELSE 0 END AS no_notice
+    FROM contracts c
+    JOIN tenders t ON t.id = c.tender_id
+    LEFT JOIN lots l ON l.id = c.lot_id
+    LEFT JOIN cpv_price_stats ps ON ps.cpv_code = t.cpv_code
+    LEFT JOIN (SELECT tender_id, COUNT(*) AS n FROM contracts
+               WHERE tender_id IN (SELECT tender_id FROM contracts WHERE id IN (SELECT id FROM refresh_touched_contracts))
+               GROUP BY tender_id) aw
+      ON aw.tender_id = c.tender_id
+    WHERE c.value_flag = 'ok' AND c.amount_eur > 0
+      AND c.id IN (SELECT id FROM refresh_touched_contracts)
+  ) x
+)
+WHERE flag_over = 1 OR flag_annex = 1 OR flag_outlier = 1;
+
 -- @refresh-batch entity-search-index
 DELETE FROM search_index WHERE kind = 'company';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)

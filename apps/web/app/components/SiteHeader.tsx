@@ -15,6 +15,7 @@ const NAV: NavItem[] = [
   { to: '/authorities', label: 'Институции' },
   { to: '/companies', label: 'Компании' },
   { to: '/contracts', label: 'Договори' },
+  { to: '/anomalies', label: 'Аномалии' },
   { to: '/analytics', label: 'Анализи', activePaths: [...ANALYTICS_NAV_PATHS] },
   { to: '/methodology', label: 'Методология' },
 ];

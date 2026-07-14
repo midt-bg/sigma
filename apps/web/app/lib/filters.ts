@@ -8,7 +8,7 @@ import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } f
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 
-export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
+export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25, anomalies: 15 } as const;
 export const MAX_MULTI_VALUES = 50;
 
 const KNOWN_SECTORS = new Set(CPV_SECTORS.map((s) => s.code));
@@ -181,6 +181,7 @@ const PARAM_ORDER = [
   'q',
   'type',
   'kind',
+  'signal',
   'sector',
   'year',
   'procedure',

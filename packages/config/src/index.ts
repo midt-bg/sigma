@@ -407,3 +407,74 @@ export function regionByName(name: string | null | undefined): BgRegion | null {
   if (!name) return null;
   return BG_REGION_BY_NAME.get(name.trim()) ?? null;
 }
+
+// ── Anomaly signals (contract_anomalies flag_* → display metadata) ──────────────────────────────
+//
+// The automated red-flag checks precomputed into `contract_anomalies` (scripts/precompute.sql §7).
+// Deterministic rules over source figures — thresholds live in the SQL; this is the display
+// taxonomy (filter facet labels, badge captions, methodology copy). `qualifying`: true = the signal
+// alone puts a contract on the anomaly screen; false = context-only (adds score, never creates a
+// row). Signals are indicators for public scrutiny, never verdicts of wrongdoing.
+
+export type AnomalySignalKey =
+  | 'over_estimate'
+  | 'annex_growth'
+  | 'price_outlier'
+  | 'single_bid'
+  | 'no_notice';
+
+export interface AnomalySignal {
+  key: AnomalySignalKey;
+  /** Short Bulgarian label for the filter facet / badge. */
+  label: string;
+  /** One-line Bulgarian explanation (title/tooltip + methodology row). */
+  description: string;
+  /** true = fires a row on the anomaly screen; false = context that only adds to the score. */
+  qualifying: boolean;
+}
+
+export const ANOMALY_SIGNALS: readonly AnomalySignal[] = [
+  {
+    key: 'over_estimate',
+    label: 'Над прогнозата',
+    description:
+      'Договорът е подписан на стойност поне 10% над прогнозната стойност, обявена от самия възложител.',
+    qualifying: true,
+  },
+  {
+    key: 'annex_growth',
+    label: 'Ръст чрез анекси',
+    description:
+      'Стойността е нараснала с поне 20% след подписването чрез изменения (анекси) по договора.',
+    qualifying: true,
+  },
+  {
+    key: 'price_outlier',
+    label: 'Далеч над типичното',
+    description:
+      'Стойността е поне 5 пъти над медианата на съпоставимите договори със същия CPV код (при поне 10 такива).',
+    qualifying: true,
+  },
+  {
+    key: 'single_bid',
+    label: 'Единствена оферта',
+    description: 'Само една оферта в състезателна процедура — липса на реална конкуренция.',
+    qualifying: false,
+  },
+  {
+    key: 'no_notice',
+    label: 'Без обявление',
+    description: 'Възложено чрез пряко договаряне или процедура без предварително обявление.',
+    qualifying: false,
+  },
+];
+
+const ANOMALY_SIGNAL_BY_KEY = new Map<string, AnomalySignal>(
+  ANOMALY_SIGNALS.map((s) => [s.key, s]),
+);
+
+/** Resolve an anomaly-signal key to its display metadata, or null for an unknown key. */
+export function anomalySignal(key: string | null | undefined): AnomalySignal | null {
+  if (!key) return null;
+  return ANOMALY_SIGNAL_BY_KEY.get(key) ?? null;
+}
