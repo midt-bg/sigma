@@ -100,7 +100,7 @@ interface CompanyTotalsFull {
   high_markup_value_share: number | null;
 }
 
-// Map the raw #229 rollup columns (shared by company_totals/authority_totals) to the DTO aggregate; the
+// Map the raw subject-risk rollup columns (shared by company_totals/authority_totals) to the DTO aggregate; the
 // read layer's subjectRisk.ts derives the composite/band/reportability from these.
 function subjectRiskAggregate(row: {
   single_offer_k: number | null;

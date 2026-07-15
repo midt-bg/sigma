@@ -1259,7 +1259,7 @@ WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NUL
     WHERE bidder_key IS NOT NULL
   );
 
--- Per-contract risk flags (#229) for the touched contracts, before the rollups aggregate them. Same
+-- Per-contract risk flags for the touched contracts, before the rollups aggregate them. Same
 -- derivation as precompute.sql section 0b; runs after the recalc UPDATE above refreshed signing/current
 -- EUR, so is_high_markup reads current figures.
 UPDATE contracts SET
@@ -1286,7 +1286,7 @@ UPDATE company_totals SET primary_sector = (
   WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders);
--- Per-subject risk aggregates (#229) for the touched bidders (see precompute.sql for rationale).
+-- Per-subject risk aggregates for the touched bidders (see precompute.sql for rationale).
 UPDATE company_totals SET
   single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
   high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare
@@ -1320,7 +1320,7 @@ UPDATE authority_totals SET primary_sector = (
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
--- Per-subject risk aggregates (#229) for the touched authorities (see precompute.sql for rationale).
+-- Per-subject risk aggregates for the touched authorities (see precompute.sql for rationale).
 UPDATE authority_totals SET
   single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
   high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare

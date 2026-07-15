@@ -1,6 +1,6 @@
 import type { SubjectRiskAggregate } from '@sigma/api-contract';
 
-// #229 presentation thresholds — server-side constants, NEVER query params (ADR-0007). Band cutoffs are
+// Presentation thresholds — server-side constants, NEVER query params (ADR-0007). Band cutoffs are
 // provisional, to be calibrated against the real distribution. Pure logic: keys + numbers only — the
 // Bulgarian band/component labels live in the SubjectRiskIndicator component, not here.
 export const MIN_ELIGIBLE = 5; // a component needs ≥ this many assessable contracts to be reportable (M3)

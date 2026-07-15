@@ -130,8 +130,8 @@ CREATE TABLE contracts (
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
   current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
-  is_single_offer  INTEGER,                -- #229 canonical flag: 1/0 = bids_received = 1; NULL = bid count unknown (never counted as 0 by the rollup shares). Populated by scripts/precompute.sql + refresh-slice.sql
-  is_high_markup   INTEGER,                -- #229 canonical flag: 1/0 = (current_value_eur − signing_value_eur)/signing_value_eur > 0.2; NULL = signing/current EUR absent (suspect rows)
+  is_single_offer  INTEGER,                -- canonical single-offer flag: 1/0 = bids_received = 1; NULL = bid count unknown (never counted as 0 by the rollup shares). Populated by scripts/precompute.sql + refresh-slice.sql
+  is_high_markup   INTEGER,                -- canonical high-markup flag: 1/0 = (current_value_eur − signing_value_eur)/signing_value_eur > 0.2 on trustworthy (value_flag='ok') rows; NULL = ineligible (suspect / signing≤0 / EUR absent)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на
@@ -227,7 +227,7 @@ CREATE TABLE company_totals (
   eu_eur         REAL NOT NULL DEFAULT 0,  -- won € on EU-funded contracts
   first_date     TEXT,
   last_date      TEXT,
-  -- #229 subject-risk aggregates. Filled by the risk-aggregate UPDATE in precompute.sql / refresh-slice.sql
+  -- Subject-risk aggregates. Filled by the risk-aggregate UPDATE in precompute.sql / refresh-slice.sql
   -- over ALL the bidder's contracts (no amount_eur filter — so the count denominators match competition.ts).
   -- Composite score + band are derived in the read layer (details.ts) from these; NULL = no assessable contract.
   single_offer_k           INTEGER,        -- # contracts flagged single-offer (is_single_offer = 1)
@@ -253,7 +253,7 @@ CREATE TABLE authority_totals (
   eu_eur         REAL NOT NULL DEFAULT 0,
   first_date     TEXT,
   last_date      TEXT,
-  -- #229 subject-risk aggregates (see company_totals). Over ALL the authority's contracts (no amount_eur filter);
+  -- Subject-risk aggregates (see company_totals). Over ALL the authority's contracts (no amount_eur filter);
   -- single_offer_n matches getAuthoritySingleOffer; composite + band derived in the read layer. NULL = no assessable contract.
   single_offer_k           INTEGER,
   single_offer_n           INTEGER,

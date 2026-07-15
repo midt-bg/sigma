@@ -86,7 +86,7 @@ UPDATE company_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
--- Per-subject risk aggregates (#229): count denominators span ALL the bidder's contracts (no amount_eur
+-- Per-subject risk aggregates: count denominators span ALL the bidder's contracts (no amount_eur
 -- filter) so single_offer_n matches competition.ts / getAuthoritySingleOffer; value shares weight by
 -- POSITIVE amount_eur only — a value_low ≤0 row (normalize-raw.sql) would otherwise push a share out of
 -- [0,1]. A NULL/zero eligible denominator → NULL share.
@@ -130,7 +130,7 @@ UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
--- Per-subject risk aggregates (#229) — authority side (see the company_totals pass above for rationale).
+-- Per-subject risk aggregates — authority side (see the company_totals pass above for rationale).
 UPDATE authority_totals SET
   single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
   high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare

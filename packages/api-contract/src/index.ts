@@ -335,7 +335,7 @@ export interface ContractDetail {
   euProgramme: string | null;
   durationDays: number | null;
   value: ContractValueTimeline;
-  /** #229 materialized risk flags (scripts/precompute.sql — the canonical single source the subject-risk
+  /** Materialized risk flags (scripts/precompute.sql — the canonical single source the subject-risk
    *  rollups aggregate). null = not assessable: single-offer needs a known bid count (`bids_received = 1`
    *  basis), high-markup needs both signing and current EUR figures (suspect rows excluded). */
   isSingleOffer: boolean | null;
