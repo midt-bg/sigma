@@ -21,6 +21,7 @@ import {
   checkNoNegativeValues,
   checkRollupReconciliation,
   checkStagingReconciliation,
+  checkSubjectRiskBounds,
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -122,6 +123,7 @@ describe('reconciliation gate — clean corpus', () => {
       'date-sanity',
       'staging-reconciliation',
       'amendment-twin-dedup',
+      'subject-risk-bounds',
     ])
       expect(results.find((r) => r.name === nm)?.skipped, `${nm} must not skip`).toBe(false);
   });
@@ -141,6 +143,13 @@ describe('reconciliation gate — clean corpus', () => {
   it('rollup reconciliation self-skips before precompute (empty rollups)', async () => {
     const db = track(freshDb()); // no precompute → home_totals empty
     const result = await checkRollupReconciliation(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it('subject-risk-bounds self-skips before precompute (empty rollups)', async () => {
+    const db = track(freshDb());
+    const result = await checkSubjectRiskBounds(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
@@ -401,6 +410,30 @@ describe('reconciliation gate — injected violations', () => {
     const result = await checkStagingReconciliation(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
+  });
+
+  it('subject-risk-bounds catches a value_share above 1 (the Finding-1 200% bug)', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(
+      db,
+      "UPDATE company_totals SET single_offer_value_share = 2.0 WHERE bidder_id = 'eik:131071587';",
+    );
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/single_offer_value_share outside \[0,1\]/);
+  });
+
+  it('subject-risk-bounds catches a flagged count exceeding its denominator (k > n)', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(
+      db,
+      "UPDATE company_totals SET single_offer_k = single_offer_n + 1 WHERE bidder_id = 'eik:131071587';",
+    );
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/single_offer_k > single_offer_n/);
   });
 
   it('assertIntegrity throws non-zero on a sign-flipped amount_eur (the import would exit 1)', async () => {

@@ -401,6 +401,50 @@ export async function checkAmendmentTwins(runner) {
       n === 0
         ? 'no (unp, contract_number) carries both an EOP and an OCDS amendment (prefer-EOP dedup intact)'
         : `${n} (unp, contract_number) carry both an EOP and an OCDS amendment — prefer-EOP dedup regressed and annex_count double-counts (#286)`,
+// 8) Subject-risk aggregate bounds (#229). The per-subject shares are ratios that MUST stay in [0,1],
+//    and each flagged count must not exceed its eligible denominator (single_offer_k ⊆ single_offer_n by
+//    construction — bids=1 ⇒ bids≥1; likewise high-markup). A value_share outside [0,1] is a computation
+//    bug — the exact class fixed pre-merge, where a negative value_low amount_eur leaked into the value
+//    weighting and produced a 200% share. NULL is allowed (unassessable component). Self-skips until
+//    precompute has written the rollups (home_totals row present).
+export async function checkSubjectRiskBounds(runner) {
+  const name = 'subject-risk-bounds';
+  if (
+    !(await tableExists(runner, 'home_totals')) ||
+    num(await scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
+  ) {
+    return {
+      name,
+      ok: true,
+      skipped: true,
+      detail: 'precompute rollups absent (home_totals empty)',
+    };
+  }
+  const fails = [];
+  for (const table of ['company_totals', 'authority_totals']) {
+    const r =
+      (
+        await rows(
+          runner,
+          'SELECT' +
+            ` (SELECT COUNT(*) FROM ${table} WHERE single_offer_value_share IS NOT NULL AND (single_offer_value_share < 0 OR single_offer_value_share > 1)) AS so_vs,` +
+            ` (SELECT COUNT(*) FROM ${table} WHERE high_markup_value_share IS NOT NULL AND (high_markup_value_share < 0 OR high_markup_value_share > 1)) AS hm_vs,` +
+            ` (SELECT COUNT(*) FROM ${table} WHERE single_offer_k > single_offer_n) AS so_kn,` +
+            ` (SELECT COUNT(*) FROM ${table} WHERE high_markup_k > high_markup_n) AS hm_kn`,
+        )
+      )[0] || {};
+    if (num(r.so_vs) !== 0)
+      fails.push(`${num(r.so_vs)} ${table} single_offer_value_share outside [0,1]`);
+    if (num(r.hm_vs) !== 0)
+      fails.push(`${num(r.hm_vs)} ${table} high_markup_value_share outside [0,1]`);
+    if (num(r.so_kn) !== 0) fails.push(`${num(r.so_kn)} ${table} single_offer_k > single_offer_n`);
+    if (num(r.hm_kn) !== 0) fails.push(`${num(r.hm_kn)} ${table} high_markup_k > high_markup_n`);
+  }
+  return {
+    name,
+    ok: fails.length === 0,
+    skipped: false,
+    detail: fails.length ? fails.join('; ') : 'subject-risk shares in [0,1], k <= n',
   };
 }
 
@@ -413,6 +457,7 @@ export const CHECKS = [
   checkDateSanity,
   checkStagingReconciliation,
   checkAmendmentTwins,
+  checkSubjectRiskBounds,
 ];
 
 export async function runIntegrityChecks(runner) {
