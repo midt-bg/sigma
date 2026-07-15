@@ -46,6 +46,13 @@ function tableExists(runner, name) {
   );
 }
 
+function columnExists(runner, table, column) {
+  return (
+    rows(runner, `SELECT name FROM pragma_table_info('${table}') WHERE name = '${column}'`).length >
+    0
+  );
+}
+
 // 0) Non-empty corpus — UNCONDITIONAL hard guard. A catastrophic upstream failure (0 candidates) or
 //    a botched derive can leave 0 contracts. On the served D1 the staging check self-skips (no
 //    pipeline_stats) and every rollup sum is 0 == 0, so without this an empty database would pass the
@@ -328,15 +335,20 @@ export function checkStagingReconciliation(runner) {
 //    precompute has written the rollups (home_totals row present).
 export function checkSubjectRiskBounds(runner) {
   const name = 'subject-risk-bounds';
+  // Gate on the risk columns EXISTING (structural), not just home_totals presence: home_totals predates
+  // these columns, so a drifted DB with a populated home_totals but no risk columns would otherwise throw
+  // 'no such column' instead of skipping. Skip cleanly on any DB that hasn't got them yet.
   if (
     !tableExists(runner, 'home_totals') ||
-    num(scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
+    num(scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0 ||
+    !columnExists(runner, 'company_totals', 'single_offer_k') ||
+    !columnExists(runner, 'contracts', 'is_high_markup')
   ) {
     return {
       name,
       ok: true,
       skipped: true,
-      detail: 'precompute rollups absent (home_totals empty)',
+      detail: 'subject-risk columns absent (schema without them, or rollups not built)',
     };
   }
   const fails = [];

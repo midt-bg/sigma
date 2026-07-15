@@ -125,6 +125,17 @@ describe('reconciliation gate — clean corpus', () => {
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
+
+  // home_totals predates the risk columns, so it is not proof they exist; a DB with a populated
+  // home_totals but no risk column must skip, not throw 'no such column'.
+  it('subject-risk-bounds self-skips (not throws) when a risk column is missing but home_totals exists', () => {
+    const db = track(freshDb());
+    precompute(db); // populates home_totals AND the risk columns
+    sqlite(db, 'ALTER TABLE contracts DROP COLUMN is_high_markup;'); // drift: column gone
+    const result = checkSubjectRiskBounds(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe('reconciliation gate — injected violations', () => {
