@@ -26,6 +26,7 @@ export function checkNoNegativeValues(runner: IntegrityRunner): IntegrityResult;
 export function checkEikValidity(runner: IntegrityRunner): IntegrityResult;
 export function checkDateSanity(runner: IntegrityRunner): IntegrityResult;
 export function checkStagingReconciliation(runner: IntegrityRunner): IntegrityResult;
+export function checkSubjectRiskBounds(runner: IntegrityRunner): IntegrityResult;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => IntegrityResult>;
 export function runIntegrityChecks(runner: IntegrityRunner): IntegrityResult[];
