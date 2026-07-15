@@ -54,7 +54,9 @@ VALUES
   ('c:hmB', 't:1', 'eik:1', 1000, 'EUR', 1000, 1200, 'ok', 2),
   ('c:hm1', 't:1', 'eik:1', 1000, 'EUR', 1000, 1210, 'ok', 2),
   ('c:hmS', 't:1', 'eik:1', 1000, 'EUR', 1000, 5000, 'value_suspect', 2),
-  ('c:hm0', 't:1', 'eik:1', 1000, 'EUR', 1000, 1000, 'ok', 2);`,
+  ('c:hm0', 't:1', 'eik:1', 1000, 'EUR', 1000, 1000, 'ok', 2),
+  ('c:hmR', 't:1', 'eik:1', 1000, 'EUR', 1000, 1400, 'review', 2),
+  ('c:hmL', 't:1', 'eik:1', 1000, 'EUR', 1000, 1400, 'value_low', 2);`,
   );
   readScript(dbPath, precomputePath);
 });
@@ -98,5 +100,15 @@ describe('per-contract risk flags (#229, precompute)', () => {
 
   it('does not flag high-markup with no markup', () => {
     expect(flag('c:hm0', 'is_high_markup')).toBe(0);
+  });
+
+  // The contract page marks review/value_low rows as suspect and hides the badge; the flag must match
+  // (else the rollup counts a markup the page won't show). #229 review finding.
+  it('leaves high-markup NULL for a review row despite a >20% markup', () => {
+    expect(flag('c:hmR', 'is_high_markup')).toBe(null);
+  });
+
+  it('leaves high-markup NULL for a value_low row despite a >20% markup', () => {
+    expect(flag('c:hmL', 'is_high_markup')).toBe(null);
   });
 });
