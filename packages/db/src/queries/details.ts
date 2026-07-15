@@ -390,6 +390,8 @@ interface ContractDetailRow {
   bids_rejected: number | null;
   bids_sme: number | null;
   bids_non_eea: number | null;
+  is_single_offer: number | null;
+  is_high_markup: number | null;
   subcontractor_eik: string | null;
   subcontractor_name: string | null;
   subcontract_value: number | null;
@@ -473,6 +475,7 @@ export async function getContract(
               c.amount_eur, c.signing_value, c.current_value, c.fx_rate,
               c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag,
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
+              c.is_single_offer, c.is_high_markup,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
               c.ordering_unit_name AS source_authority_name,
               c.current_value_currency,
@@ -728,6 +731,8 @@ export async function getContract(
     bidsSme: r.bids_sme,
     bidsNonEea: r.bids_non_eea,
     euFunded: r.eu_funded == null ? null : r.eu_funded === 1,
+    isSingleOffer: r.is_single_offer == null ? null : r.is_single_offer === 1,
+    isHighMarkup: r.is_high_markup == null ? null : r.is_high_markup === 1,
     euProgramme: r.eu_programme,
     durationDays: r.duration_days,
     value,
