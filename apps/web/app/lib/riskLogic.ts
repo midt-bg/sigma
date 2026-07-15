@@ -9,7 +9,7 @@ export interface RiskIndicatorResult {
 
 /** The fields evaluateRiskIndicators actually reads — a ContractDetail satisfies this structurally.
  *  isSingleOffer/isHighMarkup are the materialized flags (scripts/precompute.sql), so the per-contract
- *  display and the subject-risk rollups share ONE definition (#229), unified on `bids_received = 1`. */
+ *  display and the subject-risk rollups share ONE definition, unified on `bids_received = 1`. */
 export type RiskFlagInput = Pick<
   ContractDetail,
   'isSingleOffer' | 'isHighMarkup' | 'euFunded' | 'dateSuspect'

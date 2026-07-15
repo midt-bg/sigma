@@ -15,7 +15,7 @@ const COMPONENT_LABEL: Record<RiskComponentKey, string> = {
   high_markup: 'Високо оскъпяване',
 };
 
-// #229 subject-level risk. Rendered ONLY when buildSubjectRisk returned a view (natural persons and thin
+// Subject-level risk. Rendered ONLY when buildSubjectRisk returned a view (natural persons and thin
 // samples are already suppressed upstream). The framing, the band, the counts and the drill-down are one
 // atomic block (M8) — the disclaimer never renders apart from the number, and the caller keeps this out
 // of <meta>/OG so it can't become a search snippet.

@@ -408,7 +408,10 @@ export async function checkAmendmentTwins(runner) {
       n === 0
         ? 'no (unp, contract_number) carries both an EOP and an OCDS amendment (prefer-EOP dedup intact)'
         : `${n} (unp, contract_number) carry both an EOP and an OCDS amendment — prefer-EOP dedup regressed and annex_count double-counts (#286)`,
-// 8) Subject-risk aggregate bounds (#229). The per-subject shares are ratios that MUST stay in [0,1],
+  };
+}
+
+// 8) Subject-risk aggregate bounds. The per-subject shares are ratios that MUST stay in [0,1],
 //    and each flagged count must not exceed its eligible denominator (single_offer_k ⊆ single_offer_n by
 //    construction — bids=1 ⇒ bids≥1; likewise high-markup). A value_share outside [0,1] is a computation
 //    bug — the exact class fixed pre-merge, where a negative value_low amount_eur leaked into the value
@@ -454,7 +457,7 @@ export async function checkSubjectRiskBounds(runner) {
   }
   // is_high_markup must match the contract page's suspect rule: only value_flag='ok' rows are eligible
   // (review/value_low/*_suspect hide the badge on the contract page). A flag set on a non-'ok' row would
-  // inflate the composite band above what any contract actually displays (#229 review finding).
+  // inflate the composite band above what any contract actually displays.
   const suspectMarkup = num(
     await scalar(
       runner,
