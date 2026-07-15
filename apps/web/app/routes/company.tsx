@@ -18,7 +18,9 @@ import { DataTable } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
+import { SubjectRiskIndicator } from '../components/SubjectRiskIndicator';
 import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
+import { buildSubjectRisk } from '../lib/subjectRisk';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
@@ -85,6 +87,9 @@ export default function Company({ loaderData }: Route.ComponentProps) {
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
   const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
+  const isNaturalPerson =
+    isSingleNaturalPersonProfile(c.kind, c.legalForm) || isNaturalPersonProfileName(c.displayName);
+  const risk = buildSubjectRisk(c.risk, { isNaturalPerson });
   return (
     <>
       <Breadcrumbs
@@ -163,6 +168,12 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        {risk ? (
+          <Section id="risk" title="Обобщени индикатори">
+            <SubjectRiskIndicator risk={risk} contractsBase={`/contracts?bidder=${c.slug}`} />
+          </Section>
+        ) : null}
 
         <Section
           id="trend"
