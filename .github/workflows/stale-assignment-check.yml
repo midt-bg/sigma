@@ -81,10 +81,18 @@ jobs:
                   { owner, repo, issue_number, per_page: 100 },
                 );
 
-                // If an open PR is already linked, work is in flight — skip (O3).
-                if (hasOpenLinkedPr(timeline)) continue;
+                // If the CLAIMER has an open PR linked, work is in flight — skip (O3). Only their
+                // own PR counts, so a stranger's fork PR can't lock the claim indefinitely.
+                if (hasOpenLinkedPr(timeline, claim.user)) continue;
 
-                const idle = computeIdleDays({ timeline, createdAt: issue.created_at, nowMs });
+                // Idle is measured from the claimer's own activity, not any human's, so other
+                // people commenting on the issue can't keep an abandoned claim alive.
+                const idle = computeIdleDays({
+                  timeline,
+                  createdAt: issue.created_at,
+                  nowMs,
+                  claimedUser: claim.user,
+                });
 
                 if (idle >= RELEASE_DAYS) {
                   // ── Release path ─────────────────────────────────────────────

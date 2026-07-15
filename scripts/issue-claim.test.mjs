@@ -92,6 +92,15 @@ describe('parseCommand', () => {
     assert.equal(parseCommand('/ASSIGNEE'), null);
   });
 
+  it('returns null when the command is preceded by text (not the first token)', () => {
+    assert.equal(parseCommand('yes /assign'), null);
+  });
+
+  it('returns null for a quoted reply — GitHub quotes lines with a leading >', () => {
+    assert.equal(parseCommand('> /assign'), null);
+    assert.equal(parseCommand('> /unassign'), null);
+  });
+
   it('returns null for undefined', () => {
     assert.equal(parseCommand(undefined), null);
   });
@@ -136,9 +145,10 @@ describe('parseClaimMarker', () => {
     assert.equal(parseClaimMarker(body), null);
   });
 
-  it('uses first marker when duplicates are present', () => {
+  it('returns null when duplicate markers are present — tamper fail-safe', () => {
+    // A planted second marker must not shadow the legitimate one; >1 marker = treat as no claim.
     const body = '<!-- sigma-claim: {"user":"alice"} -->\n<!-- sigma-claim: {"user":"bob"} -->';
-    assert.deepEqual(parseClaimMarker(body), { user: 'alice' });
+    assert.equal(parseClaimMarker(body), null);
   });
 });
 
@@ -334,6 +344,57 @@ describe('computeIdleDays', () => {
     const idle = computeIdleDays({ timeline: null, createdAt: daysAgo(5), nowMs: NOW });
     assert.ok(Math.abs(idle - 5) < 0.01, `expected ~5, got ${idle}`);
   });
+
+  it('when claimedUser is set, non-claimer activity does NOT reset the clock — review finding', () => {
+    // Claimer went quiet 20 days ago; someone else commented 1 day ago. The claim is abandoned,
+    // so idle must be measured from the claimer's last activity (~20), not the other person's.
+    const timeline = [
+      { event: 'commented', created_at: daysAgo(20), actor: { type: 'User', login: 'claimer' } },
+      {
+        event: 'commented',
+        created_at: daysAgo(1),
+        actor: { type: 'User', login: 'someone-else' },
+      },
+    ];
+    const idle = computeIdleDays({
+      timeline,
+      createdAt: daysAgo(30),
+      nowMs: NOW,
+      claimedUser: 'claimer',
+    });
+    assert.ok(Math.abs(idle - 20) < 0.01, `expected ~20 (claimer's clock), got ${idle}`);
+  });
+
+  it("when claimedUser is set, the claimer's own recent activity resets the clock", () => {
+    const timeline = [
+      { event: 'commented', created_at: daysAgo(20), actor: { type: 'User', login: 'claimer' } },
+      { event: 'commented', created_at: daysAgo(3), actor: { type: 'User', login: 'claimer' } },
+    ];
+    const idle = computeIdleDays({
+      timeline,
+      createdAt: daysAgo(30),
+      nowMs: NOW,
+      claimedUser: 'claimer',
+    });
+    assert.ok(Math.abs(idle - 3) < 0.01, `expected ~3, got ${idle}`);
+  });
+
+  it('when claimedUser has no events, falls back to createdAt', () => {
+    const timeline = [
+      {
+        event: 'commented',
+        created_at: daysAgo(2),
+        actor: { type: 'User', login: 'someone-else' },
+      },
+    ];
+    const idle = computeIdleDays({
+      timeline,
+      createdAt: daysAgo(18),
+      nowMs: NOW,
+      claimedUser: 'claimer',
+    });
+    assert.ok(Math.abs(idle - 18) < 0.01, `expected ~18 (fallback), got ${idle}`);
+  });
 });
 
 // ── hasOpenLinkedPr ────────────────────────────────────────────────────────────
@@ -379,9 +440,10 @@ describe('hasOpenLinkedPr', () => {
     assert.equal(hasOpenLinkedPr(timeline), false);
   });
 
-  it('returns true for a fork-source PR that is still open — O3', () => {
+  it("returns true for the claimer's own open fork PR — O3 (state read off the event)", () => {
     // Fork-source: source.issue.repository differs from the base repo — state is read off the
-    // event directly, so fork-source PRs are handled correctly without re-fetching.
+    // event directly, so fork-source PRs are handled without re-fetching. Authored by the claimer,
+    // so it legitimately keeps the claim alive (the normal drive-by flow works from a fork).
     const timeline = [
       {
         event: 'cross-referenced',
@@ -389,9 +451,39 @@ describe('hasOpenLinkedPr', () => {
           issue: {
             pull_request: {},
             state: 'open',
-            repository: { full_name: 'fork-user/sigma' },
+            user: { login: 'claimer' },
+            repository: { full_name: 'claimer/sigma' },
           },
         },
+      },
+    ];
+    assert.equal(hasOpenLinkedPr(timeline, 'claimer'), true);
+  });
+
+  it("returns false for a stranger's open PR referencing the issue — griefing guard (review finding)", () => {
+    // An external user opens a PR from their fork that references an idle issue. It must NOT lock
+    // the claim: only the claimer's own PR counts.
+    const timeline = [
+      {
+        event: 'cross-referenced',
+        source: {
+          issue: {
+            pull_request: {},
+            state: 'open',
+            user: { login: 'griefer' },
+            repository: { full_name: 'griefer/sigma' },
+          },
+        },
+      },
+    ];
+    assert.equal(hasOpenLinkedPr(timeline, 'claimer'), false);
+  });
+
+  it('without claimedUser, any open linked PR counts (back-compat)', () => {
+    const timeline = [
+      {
+        event: 'cross-referenced',
+        source: { issue: { pull_request: {}, state: 'open', user: { login: 'anyone' } } },
       },
     ];
     assert.equal(hasOpenLinkedPr(timeline), true);
@@ -455,6 +547,23 @@ describe('shouldNudge', () => {
         event: 'commented',
         body: 'This issue will auto-release if idle',
         actor: { type: 'User' },
+        created_at: daysAgo(2),
+      },
+    ];
+    assert.equal(
+      shouldNudge({ idleDays: 16, nudgeDays: NUDGE_DAYS, timeline, nudgeMarker: NUDGE_MARKER }),
+      true,
+    );
+  });
+
+  it('a HUMAN comment with an injected nudge marker does NOT suppress — anti-spoof (review finding)', () => {
+    // A user plants the invisible marker to try to block nudges/auto-release forever. Only a
+    // bot-authored comment counts, so the nudge still fires.
+    const timeline = [
+      {
+        event: 'commented',
+        body: `sneaky ${NUDGE_MARKER}`,
+        actor: { type: 'User', login: 'griefer' },
         created_at: daysAgo(2),
       },
     ];

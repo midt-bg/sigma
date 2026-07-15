@@ -60,13 +60,15 @@ export function parseCommand(body) {
  */
 export function parseClaimMarker(body) {
   if (!body) return null;
-  // Reset lastIndex before exec (MARKER_RE is global; reset avoids stale state).
-  MARKER_RE.lastIndex = 0;
-  const match = MARKER_RE.exec(body);
-  MARKER_RE.lastIndex = 0;
-  if (!match) return null;
+  // MARKER_RE is global; String.match returns every marker (or null).
+  const matches = body.match(MARKER_RE);
+  if (!matches) return null;
+  // More than one claim marker means the body was tampered with — the normal flow (writeClaim)
+  // always leaves exactly one. Fail safe: treat as no valid claim rather than trusting whichever
+  // marker happens to come first (a planted marker could otherwise shadow the legitimate one).
+  if (matches.length > 1) return null;
   // Extract the JSON payload between the first ':' and the closing '-->'.
-  const raw = match[0].replace(/^<!--\s*sigma-claim:\s*/, '').replace(/\s*-->$/, '');
+  const raw = matches[0].replace(/^<!--\s*sigma-claim:\s*/, '').replace(/\s*-->$/, '');
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -145,18 +147,23 @@ export function canUnassign({ actor, claimedUser, privileged }) {
  * @param {{ timeline: object[] | null, createdAt: string, nowMs: number }} opts
  * @returns {number}
  */
-export function computeIdleDays({ timeline, createdAt, nowMs }) {
+export function computeIdleDays({ timeline, createdAt, nowMs, claimedUser }) {
   const events = timeline ?? [];
-  let lastHumanMs = NaN;
+  let lastMs = NaN;
   for (const e of events) {
-    if (e?.actor?.type === 'Bot') continue;
+    // Measure inactivity from the CLAIMER's own activity only. Other people commenting or
+    // triaging the issue must not keep an abandoned claim alive — that would defeat the sweep's
+    // purpose ("contributors who picked up an issue and went quiet don't block others"). When
+    // claimedUser is unset, fall back to any non-bot activity (the bot's own nudge never counts).
+    const isClaimerEvent = claimedUser ? e?.actor?.login === claimedUser : e?.actor?.type !== 'Bot';
+    if (!isClaimerEvent) continue;
     const ts = Date.parse(e?.created_at || e?.submitted_at);
     if (!Number.isFinite(ts)) continue;
-    if (Number.isNaN(lastHumanMs) || ts > lastHumanMs) {
-      lastHumanMs = ts;
+    if (Number.isNaN(lastMs) || ts > lastMs) {
+      lastMs = ts;
     }
   }
-  const baseline = Number.isFinite(lastHumanMs) ? lastHumanMs : Date.parse(createdAt);
+  const baseline = Number.isFinite(lastMs) ? lastMs : Date.parse(createdAt);
   return (nowMs - baseline) / 86_400_000;
 }
 
@@ -171,13 +178,18 @@ export function computeIdleDays({ timeline, createdAt, nowMs }) {
  * @param {object[] | null} timeline
  * @returns {boolean}
  */
-export function hasOpenLinkedPr(timeline) {
+export function hasOpenLinkedPr(timeline, claimedUser) {
   if (!timeline) return false;
   return timeline.some(
     (e) =>
       e?.event === 'cross-referenced' &&
       e?.source?.issue?.pull_request != null &&
-      e?.source?.issue?.state === 'open',
+      e?.source?.issue?.state === 'open' &&
+      // Only the CLAIMER's own open PR keeps their claim alive. A stranger opening a PR from their
+      // fork that references an idle issue must not be able to lock the claim indefinitely
+      // (griefing). Author matching supports the normal drive-by flow (contributors work from
+      // their own forks). When claimedUser is unset, any open linked PR counts (back-compat).
+      (!claimedUser || e?.source?.issue?.user?.login === claimedUser),
   );
 }
 
@@ -198,8 +210,15 @@ export function hasOpenLinkedPr(timeline) {
 export function shouldNudge({ idleDays, nudgeDays, timeline, nudgeMarker }) {
   if (idleDays < nudgeDays) return false;
   const events = timeline ?? [];
+  // Only a BOT-authored comment carrying the marker counts as a prior nudge. Checking the author
+  // type stops a human from planting <!-- sigma-nudge --> in a comment to suppress nudges forever
+  // (anti-spoof, sibling to the claim-marker hardening).
   const alreadyNudged = events.some(
-    (e) => e?.event === 'commented' && typeof e?.body === 'string' && e.body.includes(nudgeMarker),
+    (e) =>
+      e?.event === 'commented' &&
+      e?.actor?.type === 'Bot' &&
+      typeof e?.body === 'string' &&
+      e.body.includes(nudgeMarker),
   );
   return !alreadyNudged;
 }
