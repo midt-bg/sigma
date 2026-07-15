@@ -7,6 +7,7 @@ import type {
   AuthorityShare,
   BidDistribution,
   CompanyDetail,
+  SubjectRiskAggregate,
   CompanyShare,
   ConsortiumParticipant,
   ContractDetail,
@@ -91,6 +92,40 @@ interface CompanyTotalsFull {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
+}
+
+// Map the raw #229 rollup columns (shared by company_totals/authority_totals) to the DTO aggregate; the
+// read layer's subjectRisk.ts derives the composite/band/reportability from these.
+function subjectRiskAggregate(row: {
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
+}): SubjectRiskAggregate {
+  const {
+    single_offer_k,
+    single_offer_n,
+    single_offer_value_share,
+    high_markup_k,
+    high_markup_n,
+    high_markup_value_share,
+  } = row;
+  return {
+    singleOfferK: single_offer_k,
+    singleOfferN: single_offer_n,
+    singleOfferValueShare: single_offer_value_share,
+    highMarkupK: high_markup_k,
+    highMarkupN: high_markup_n,
+    highMarkupValueShare: high_markup_value_share,
+  };
 }
 
 export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
@@ -212,6 +247,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     recentContracts: recent.items,
     participants,
     membershipNote,
+    risk: subjectRiskAggregate(row),
   };
 }
 
@@ -231,6 +267,12 @@ interface AuthorityTotalsFull {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
 }
 
 export async function getAuthority(
@@ -357,6 +399,7 @@ export async function getAuthority(
     procedureMix: toProcedureMix(procRows.results),
     recentContracts: recent.items,
     topContracts: top.items,
+    risk: subjectRiskAggregate(row),
   };
 }
 
