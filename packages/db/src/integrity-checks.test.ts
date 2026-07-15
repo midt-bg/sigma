@@ -292,6 +292,15 @@ describe('reconciliation gate — injected violations', () => {
     expect(result.detail).toMatch(/single_offer_k > single_offer_n/);
   });
 
+  it('subject-risk-bounds catches is_high_markup set on a non-ok (suspect) contract', () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(db, "UPDATE contracts SET is_high_markup = 1, value_flag = 'review' WHERE id = 'c:1';");
+    const result = checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/is_high_markup set on a non-'ok' value_flag/);
+  });
+
   it('assertIntegrity throws non-zero on a sign-flipped amount_eur (the import would exit 1)', () => {
     const db = track(freshDb());
     precompute(db);

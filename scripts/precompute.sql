@@ -43,13 +43,16 @@ UPDATE contracts SET
 -- Canonical single source for the two elementary flags the subject-risk rollups aggregate, and the
 -- flags riskLogic.ts reads on the contract page. NULL = "unknown/ineligible" (the rollup shares drop
 -- NULL from BOTH numerator and denominator — never count it as 0). single-offer basis is
--- bids_received = 1, the same basis as competition.ts / describe-schema (ADR-0007); high-markup reads
--- the EUR timeline set just above, so suspect rows (NULL'd there) are ineligible by construction.
+-- bids_received = 1, the same basis as competition.ts / describe-schema (ADR-0007). high-markup requires
+-- value_flag = 'ok' AND a positive signing EUR, matching the contract page's suspect rule exactly
+-- (details.ts treats review/value_low/*_suspect as suspect and hides the badge), so the rollup never
+-- counts a markup the page won't show, and a negative signing baseline can't invert the ratio's sign.
 -- Unconditional UPDATE (no WHERE) so a re-run recomputes every row and clears stale values.
 UPDATE contracts SET
   is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,
-  is_high_markup  = CASE WHEN signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
-                          AND signing_value_eur <> 0
+  is_high_markup  = CASE WHEN value_flag = 'ok'
+                          AND signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
+                          AND signing_value_eur > 0
                      THEN ((current_value_eur - signing_value_eur) / signing_value_eur > 0.2) END;
 
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────

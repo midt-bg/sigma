@@ -357,11 +357,25 @@ export function checkSubjectRiskBounds(runner) {
     if (num(r.so_kn) !== 0) fails.push(`${num(r.so_kn)} ${table} single_offer_k > single_offer_n`);
     if (num(r.hm_kn) !== 0) fails.push(`${num(r.hm_kn)} ${table} high_markup_k > high_markup_n`);
   }
+  // is_high_markup must match the contract page's suspect rule: only value_flag='ok' rows are eligible
+  // (review/value_low/*_suspect hide the badge on the contract page). A flag set on a non-'ok' row would
+  // inflate the composite band above what any contract actually displays (#229 review finding).
+  const suspectMarkup = num(
+    scalar(
+      runner,
+      "SELECT COUNT(*) AS n FROM contracts WHERE is_high_markup IS NOT NULL AND value_flag <> 'ok'",
+      'n',
+    ),
+  );
+  if (suspectMarkup !== 0)
+    fails.push(`${suspectMarkup} contracts have is_high_markup set on a non-'ok' value_flag`);
   return {
     name,
     ok: fails.length === 0,
     skipped: false,
-    detail: fails.length ? fails.join('; ') : 'subject-risk shares in [0,1], k <= n',
+    detail: fails.length
+      ? fails.join('; ')
+      : "subject-risk shares in [0,1], k <= n, high-markup only on 'ok' rows",
   };
 }
 

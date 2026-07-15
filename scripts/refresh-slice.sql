@@ -1264,8 +1264,9 @@ WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NUL
 -- EUR, so is_high_markup reads current figures.
 UPDATE contracts SET
   is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,
-  is_high_markup  = CASE WHEN signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
-                          AND signing_value_eur <> 0
+  is_high_markup  = CASE WHEN value_flag = 'ok'
+                          AND signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
+                          AND signing_value_eur > 0
                      THEN ((current_value_eur - signing_value_eur) / signing_value_eur > 0.2) END
 WHERE id IN (SELECT id FROM refresh_touched_contracts);
 
