@@ -133,6 +133,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
 
   const response = await requestHandler(request, { cloudflare: { env, ctx } });
+  // `response.ok` is load-bearing for cache correctness beyond "don't cache errors": cache-key.ts decodes
+  // the path (collapsing `%2F` → `/`), so an encoded contract URL (200) and a bogus raw-slash form (404)
+  // share ONE key. Because a non-ok response is never put, the 404 form can't poison the encoded entry
+  // (#221/#213). Don't drop this gate without re-keying on the raw pathname — the „never caches a non-ok
+  // response" test in app.cache.test.ts guards it.
   const cacheable =
     key !== null &&
     response.ok &&
