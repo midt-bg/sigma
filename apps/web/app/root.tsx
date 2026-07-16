@@ -26,6 +26,7 @@ const AssistantDock = lazy(() =>
   import('./lib/assistant-dock/AssistantDock').then((m) => ({ default: m.AssistantDock })),
 );
 import { assistantEnabled } from './lib/assistant/enabled';
+import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { withDbRetry } from './lib/retry';
@@ -218,6 +219,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         refreshedAt={loaderData.refreshedAt}
         endYear={loaderData.coverageEndYear}
       />
+      <ScrollToTop />
       <AccessibilityWidget />
       {loaderData.assistantEnabled && (
         <AssistantBoundary>
