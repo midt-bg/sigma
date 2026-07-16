@@ -1,11 +1,13 @@
 -- Sigma — consolidated schema (D1 / SQLite). Single source of truth for the database.
 --
--- Sigma is pre-production and every import starts from a FRESH database (no deployed data to
--- preserve), so the schema is ONE file rather than an incremental migration chain — re-introduce
--- incremental migrations only once there is deployed data you cannot drop. Applied by
--- `wrangler d1 migrations apply sigma [--local|--remote]`; the full import is `node scripts/import.mjs`
--- (work DB: load-eop → derive-amendments → load-fx → load-nuts → normalize-raw → promote-amendments,
--- then ship-domain copies the served tables into the served D1 and runs precompute on it).
+-- The WORK DB is rebuilt from scratch every import (import.mjs loads THIS file, then load/transform), so
+-- 0000_init is its single source of truth. The SERVED D1 (prod) is PERSISTENT: ship-domain runs
+-- `wrangler d1 migrations apply`, which is filename-tracked — once applied, 0000_init is frozen there.
+-- So add NEW schema objects in a new numbered migration (ALTER TABLE …), NEVER by editing 0000_init: an
+-- edit reaches the work DB (and green local CI) but never prod — the applied-migration trap. Touch
+-- 0000_init only on a full rebuild that regenerates the whole chain. The full import is
+-- `node scripts/import.mjs` (work DB: load-eop → derive-amendments → load-fx → load-nuts → normalize-raw
+-- → promote-amendments, then ship-domain copies the served tables into the served D1 + runs precompute).
 --
 -- Modelling rationale (cleaning policy, value_flag, consortium model, canonical EUR + FX, the
 -- synthetic-tender rule) lives in docs/etl.md and docs/core-scope.md.
@@ -130,8 +132,6 @@ CREATE TABLE contracts (
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
   current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
-  is_single_offer  INTEGER,                -- canonical single-offer flag: 1/0 = bids_received = 1; NULL = bid count unknown (never counted as 0 by the rollup shares). Populated by scripts/precompute.sql + refresh-slice.sql
-  is_high_markup   INTEGER,                -- canonical high-markup flag: 1/0 = (current_value_eur − signing_value_eur)/signing_value_eur > 0.2 on trustworthy (value_flag='ok') rows; NULL = ineligible (suspect / signing≤0 / EUR absent)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на
@@ -226,16 +226,7 @@ CREATE TABLE company_totals (
   primary_sector TEXT,                      -- CPV division carrying the most won €
   eu_eur         REAL NOT NULL DEFAULT 0,  -- won € on EU-funded contracts
   first_date     TEXT,
-  last_date      TEXT,
-  -- Subject-risk aggregates. Filled by the risk-aggregate UPDATE in precompute.sql / refresh-slice.sql
-  -- over ALL the bidder's contracts (no amount_eur filter — so the count denominators match competition.ts).
-  -- Composite score + band are derived in the read layer (details.ts) from these; NULL = no assessable contract.
-  single_offer_k           INTEGER,        -- # contracts flagged single-offer (is_single_offer = 1)
-  single_offer_n           INTEGER,        -- # eligible (bids_received >= 1) — count-share denominator
-  single_offer_value_share REAL,           -- Σ flagged amount_eur / Σ eligible amount_eur; NULL if no eligible value
-  high_markup_k            INTEGER,        -- # contracts flagged high-markup (is_high_markup = 1)
-  high_markup_n            INTEGER,        -- # eligible (is_high_markup IS NOT NULL)
-  high_markup_value_share  REAL            -- Σ flagged amount_eur / Σ eligible amount_eur; NULL if no eligible value
+  last_date      TEXT
 );
 
 -- Per authority. Authorities leaderboard (default sort) + authority headline + home slices.
@@ -252,15 +243,7 @@ CREATE TABLE authority_totals (
   primary_sector TEXT,
   eu_eur         REAL NOT NULL DEFAULT 0,
   first_date     TEXT,
-  last_date      TEXT,
-  -- Subject-risk aggregates (see company_totals). Over ALL the authority's contracts (no amount_eur filter);
-  -- single_offer_n matches getAuthoritySingleOffer; composite + band derived in the read layer. NULL = no assessable contract.
-  single_offer_k           INTEGER,
-  single_offer_n           INTEGER,
-  single_offer_value_share REAL,
-  high_markup_k            INTEGER,
-  high_markup_n            INTEGER,
-  high_markup_value_share  REAL
+  last_date      TEXT
 );
 
 -- Per CPV division. Sector facet + filter counts on the list pages.

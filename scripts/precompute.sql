@@ -44,9 +44,11 @@ UPDATE contracts SET
 -- flags riskLogic.ts reads on the contract page. NULL = "unknown/ineligible" (the rollup shares drop
 -- NULL from BOTH numerator and denominator — never count it as 0). single-offer basis is
 -- bids_received = 1, the same basis as competition.ts / describe-schema (ADR-0007). high-markup requires
--- value_flag = 'ok' AND a positive signing EUR, matching the contract page's suspect rule exactly
--- (details.ts treats review/value_low/*_suspect as suspect and hides the badge), so the rollup never
--- counts a markup the page won't show, and a negative signing baseline can't invert the ratio's sign.
+-- value_flag = 'ok' AND a positive signing EUR, matching the contract page's suspect rule exactly:
+-- value_flag='ok' is the EXACT complement of the suspect set {review, value_low, value_suspect,
+-- annex_suspect} that details.ts hides — so the rollup never counts a markup the page won't show, and a
+-- negative signing baseline can't invert the ratio's sign. Adding a new value_flag variant? Re-check this
+-- gate — 'ok' must stay the not-suspect complement or the rollup and the page silently drift apart.
 -- Unconditional UPDATE (no WHERE) so a re-run recomputes every row and clears stale values.
 UPDATE contracts SET
   is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,

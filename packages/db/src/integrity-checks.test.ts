@@ -22,6 +22,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0006_subject_risk_columns.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -62,6 +63,7 @@ function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
   readScript(dbPath, schemaPath);
+  readScript(dbPath, riskColumnsPath);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }

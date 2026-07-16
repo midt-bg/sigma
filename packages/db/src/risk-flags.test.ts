@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0006_subject_risk_columns.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -37,6 +38,7 @@ beforeAll(() => {
   dir = mkdtempSync(resolve(tmpdir(), 'sigma-risk-flags-'));
   dbPath = resolve(dir, 'test.sqlite');
   readScript(dbPath, schemaPath);
+  readScript(dbPath, riskColumnsPath);
   sqlite(
     dbPath,
     `PRAGMA foreign_keys=ON;
