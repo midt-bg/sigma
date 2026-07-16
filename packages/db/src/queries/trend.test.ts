@@ -174,3 +174,40 @@ describe('getSpendingTrend', () => {
     expect(series.args).toEqual(['2020-01-01', 'eik:222']);
   });
 });
+
+describe('getSpendingTrend — zero-spend prior year and empty coverage', () => {
+  function customDb(series: unknown[], coverage: { dated: number; total: number }): D1Database {
+    return {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: series as T[] };
+          },
+          async first<T>() {
+            if (sql.includes('as_of')) return { as_of: null } as T;
+            return coverage as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+  }
+
+  it('nulls YoY against a zero prior year and reports zero coverage when nothing is dated', async () => {
+    // 2023 is fully zero-filled between the two endpoints → 2024 YoY is measured against 0 → null.
+    const series = [
+      { period: '2022-01', value_eur: 1000, contracts: 10 },
+      { period: '2024-01', value_eur: 2000, contracts: 20 },
+    ];
+    const { years, coverage } = await getSpendingTrend(
+      customDb(series, { dated: 0, total: 0 }),
+      {},
+    );
+    const byYear = new Map(years.map((y) => [y.year, y]));
+    expect(byYear.get('2023')).toMatchObject({ valueEur: 0, yoyPct: -1 }); // (0 - 1000)/1000
+    expect(byYear.get('2024')!.yoyPct).toBeNull(); // prev year is 0 → guarded
+    expect(coverage).toEqual({ dated: 0, total: 0, pct: 0 }); // total 0 → pct 0, no divide-by-zero
+  });
+});

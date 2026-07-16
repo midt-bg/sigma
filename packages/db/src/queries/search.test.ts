@@ -146,3 +146,15 @@ describe('search', () => {
     });
   });
 });
+
+describe('search — empty query and href fallback', () => {
+  it('returns the empty shape for a blank or punctuation-only query', async () => {
+    expect(await search(searchDb(), '')).toEqual({ query: '', groups: [], empty: true });
+    expect(await search(searchDb(), '   ""   ')).toMatchObject({ empty: true, groups: [] });
+  });
+
+  it('searchMoreHref falls back to /search for an unrecognised kind', () => {
+    const href = searchMoreHref('nope' as unknown as Parameters<typeof searchMoreHref>[0], 'q');
+    expect(href.startsWith('/search?q=')).toBe(true);
+  });
+});
