@@ -20,7 +20,12 @@ import type {
   SectorSpend,
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import {
+  cleanName,
+  entityName,
+  isNaturalPersonSubject,
+  parseConsortiumMembers,
+} from '@sigma/shared';
 import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
@@ -215,6 +220,14 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
       : [];
   const membershipNote = membership?.kind === 'prose' ? membership.raw : null;
   const hasEik = row.eik_valid === 1 && Boolean(row.eik);
+  // Suppress the risk aggregate at the source for single natural persons (M9), so the raw K/N counts
+  // for a named individual never reach the client — the route-level guard is then a second layer, not
+  // the only one. Authorities are institutions, so getAuthority needs no such gate.
+  const isNaturalPerson = isNaturalPersonSubject({
+    kind: row.kind,
+    legalForm: bidderMeta?.legal_form ?? null,
+    displayName: entityName(cleanName(row.name), row.kind),
+  });
 
   return {
     slug: companySlug(bidderId),
@@ -248,7 +261,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     recentContracts: recent.items,
     participants,
     membershipNote,
-    risk: subjectRiskAggregate(row),
+    risk: isNaturalPerson ? null : subjectRiskAggregate(row),
   };
 }
 
