@@ -366,9 +366,8 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 <dd>
                   <p>
                     Обобщава на ниво субект (възложител или изпълнител) колко от договорите му имат{' '}
-                    <strong>рискови признаци</strong> — една оферта и високо оскъпяване — по
-                    методологията CRI на Government Transparency Institute; изчислява се и по брой,
-                    и по стойност.
+                    <strong>рискови признаци</strong> — една оферта и високо оскъпяване — по подхода
+                    CRI на Government Transparency Institute; изчислява се и по брой, и по стойност.
                   </p>
                   <p>
                     Показва се само при поне <strong>5</strong> договора с достатъчно данни за
