@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,8 +76,13 @@ INSERT INTO interest_links
   ('il:dfam','person:ДВОЕН ТЕСТ|666|family','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published');
 `;
 
-// Search-index population — mirrors scripts/precompute.sql (company + officials). Kept here so the test
-// exercises the same INSERT shape the ship runs; keep in sync with precompute.sql / refresh-slice.sql.
+// Search-index population — a STRUCTURAL proxy for scripts/precompute.sql's officials block: it exercises
+// the publish/interest_class filter, the per-person GROUP BY, and the NOT_REDUNDANT_FAMILY dedup — the parts
+// this suite asserts. The `amount` here is the pre-summed il.contract_value_eur, NOT production's
+// contemporaneous windowed subquery (which needs a contracts/tenders/authorities fixture); that per-link
+// contemporaneous formula is exercised on the read side by related-persons-sql.test.ts (LINK_SELECT), and
+// the "precompute ≡ refresh-slice" invariant is enforced by the drift-guard test below — so a divergence in
+// the real €-formula fails a test rather than silently overstating the public figure.
 const POPULATE_INDEX = `
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
@@ -177,5 +182,30 @@ describe('search свързани-лица SQL', () => {
       expect(dvoen[0]!.ref).toBe('person:ДВОЕН ТЕСТ');
       expect(dvoen[0]!.amount).toBe(50000); // NOT 100000 — the winner is not double-counted
     });
+  });
+
+  // The officials €-figure is libel-critical: it must be defined identically on both ETL paths (the full
+  // precompute and the incremental refresh-slice), else a refresh silently changes the published number.
+  // Enforce it — extract each file's `SELECT 'official' … GROUP BY il.person_id, p.name;` block and require
+  // byte-equality. This is the machine-checked form of the "identical signed_at/amount_eur semantics"
+  // review ask; drift in either file (a changed window, a dropped filter) now fails here.
+  it('officials search-index block is byte-identical between precompute.sql and refresh-slice.sql', () => {
+    const officialsBlock = (file: string): string => {
+      const sql = readFileSync(resolve(root, file), 'utf8');
+      const start = sql.indexOf("SELECT 'official'");
+      const end = sql.indexOf('GROUP BY il.person_id, p.name;', start);
+      expect(start, `no officials SELECT in ${file}`).toBeGreaterThanOrEqual(0);
+      expect(end, `no officials GROUP BY in ${file}`).toBeGreaterThanOrEqual(0);
+      return sql.slice(start, end + 'GROUP BY il.person_id, p.name;'.length);
+    };
+    // SQL whitespace is insignificant (the two files format the subtitle subquery differently) — compare
+    // on collapsed whitespace so only a SEMANTIC divergence (a changed window, filter, or amount column) fails.
+    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+    const pc = officialsBlock('scripts/precompute.sql');
+    const rs = officialsBlock('scripts/refresh-slice.sql');
+    // Sanity: the block really is the contemporaneous windowed sum, not a lifetime column.
+    expect(pc).toContain('BETWEEN CAST(il.first_declared_year AS INTEGER)');
+    expect(pc).not.toContain('SUM(il.contract_value_eur)');
+    expect(norm(rs)).toBe(norm(pc));
   });
 });
