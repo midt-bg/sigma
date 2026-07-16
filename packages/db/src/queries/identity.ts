@@ -66,14 +66,18 @@ export function bareContractId(contractId: string): string {
  *  `contract_number` like `ОП 20-42` (review #221; a literal space in `<loc>` violates the sitemap spec).
  *  `\p{Cc}` is used rather than a raw code-point range so the class can't be misread as caret notation
  *  (`^@-^_`) in a diff viewer. Readable chars (incl. Cyrillic) and the structural `:` separators stay
- *  literal. React Router decodes these back in params, so `contractIdFromSlug` needs no change. */
+ *  literal. React Router decodes these back in params, so `contractIdFromSlug` needs no change.
+ *  The output is URL-path-safe but NOT HTML/XML-safe (`"` `<` `>` `'` `&` stay literal) — every
+ *  consumer embedding it in markup must escape it (React JSX does; sitemaps use `xmlEscape`). */
 export function contractSlug(contractId: string): string {
   return bareContractId(contractId)
     .replace(/%/g, '%25')
     .replace(/[/?#\s\p{Cc}]/gu, encodeURIComponent);
 }
 
-/** `/contracts/:id` segment → contract id. */
+/** `/contracts/:id` segment → contract id. The segment must already be percent-DECODED — pass React
+ *  Router's `params.id` (RR decodes path params); never feed a raw URL segment straight off the wire,
+ *  or an encoded `%2F` survives as literal `%2F` text inside the id. */
 export function contractIdFromSlug(slug: string): string {
   return 'c:' + slug;
 }
