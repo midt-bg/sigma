@@ -42,6 +42,7 @@ function toReportable(
   valueShare: number | null,
 ): SubjectRiskComponent | null {
   if (n == null || n < MIN_ELIGIBLE) return null;
+  // null k (flag unmaterialized) → 0 flagged: missing data under-reports risk, never invents it.
   const flagged = k ?? 0;
   return { key, k: flagged, n, countShare: flagged / n, valueShare };
 }

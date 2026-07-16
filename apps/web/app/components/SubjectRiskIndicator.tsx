@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { count, pct } from '@sigma/shared';
+import { count, plural, pct } from '@sigma/shared';
 import { Callout } from './ui';
 import type { RiskBandKey, RiskComponentKey, SubjectRiskView } from '../lib/subjectRisk';
 
@@ -45,7 +45,8 @@ export function SubjectRiskIndicator({
       <ul className="subject-risk-list">
         {risk.components.map((c) => (
           <li key={c.key}>
-            <strong>{COMPONENT_LABEL[c.key]}:</strong> {count(c.k)} от {count(c.n)} договора
+            <strong>{COMPONENT_LABEL[c.key]}:</strong> {count(c.k)} от {count(c.n)}{' '}
+            {plural(c.n, 'договор', 'договора')}
             {c.valueShare != null ? <> · {pct(c.valueShare)} от стойността</> : null} ·{' '}
             <Link to={`${contractsBase}&${COMPONENT_FILTER[c.key]}`}>виж договорите</Link>
           </li>
