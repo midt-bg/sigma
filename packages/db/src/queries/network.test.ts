@@ -283,4 +283,53 @@ describe('getEntityNetwork — company centre sample fallback', () => {
     const { center } = await getEntityNetwork(db, { kind: 'company', id: 'eik:C' });
     expect(center).toMatchObject({ id: 'eik:C', label: 'Център ООД', valueEur: 0 });
   });
+
+  it('returns an empty network when a company centre resolves to no name at all', async () => {
+    // company_totals row missing AND no hop-1 sample → name is null → loadCenter returns null.
+    const db = netDb({ centerComp: null, hop1: [] });
+    const { center, nodes } = await getEntityNetwork(db, { kind: 'company', id: 'eik:gone' });
+    expect(center).toBeNull();
+    expect(nodes).toEqual([]);
+  });
+
+  it('defaults a company centre kind to „company" when neither the rollup nor the sample carries one', async () => {
+    // Sample supplies the name but no bidder_kind → row?.kind ?? sample?.bidder_kind ?? 'company'.
+    const sample = [
+      {
+        authority_id: 'auth:A',
+        bidder_id: 'eik:C',
+        authority_name: 'Инст',
+        bidder_name: 'Безвидна ООД',
+        bidder_kind: null,
+        won_eur: 100,
+        contracts: 1,
+      },
+    ];
+    const db = netDb({ centerComp: null, hop1: sample, hop2: [] });
+    const { center } = await getEntityNetwork(db, { kind: 'company', id: 'eik:C' });
+    expect(center).toMatchObject({ id: 'eik:C', kind: 'company' });
+  });
+});
+
+describe('getEntityNetwork — includeCenterOptions and neighbour dedup', () => {
+  it('skips the picker on the empty-default path when includeCenterOptions is false', async () => {
+    const { center, centerOptions } = await getEntityNetwork(netDb({ topAuthority: null }), null, {
+      includeCenterOptions: false,
+    });
+    expect(center).toBeNull();
+    expect(centerOptions).toEqual({ authorities: [], companies: [] }); // emptyCenterOptions, no query
+  });
+
+  it('does not duplicate a hop-1 neighbour that appears twice in flow_pairs', async () => {
+    // Two flow rows to the same bidder → one node, but an edge each (the `!nodes.has` guard skips the
+    // second set() while still recording the edge).
+    const dupHop1 = [
+      HOP1[0]!,
+      { ...HOP1[0]!, won_eur: 1000, contracts: 1 }, // same bidder_id 'eik:A'
+    ];
+    const db = netDb({ centerAuth: { name: 'Ц', spent_eur: 1 }, hop1: dupHop1, hop2: [] });
+    const { nodes, edges } = await getEntityNetwork(db, { kind: 'authority', id: 'auth:C' });
+    expect(nodes.filter((n) => n.id === 'eik:A')).toHaveLength(1); // deduped node
+    expect(edges.filter((e) => e.to === 'eik:A')).toHaveLength(2); // one edge per row
+  });
 });
