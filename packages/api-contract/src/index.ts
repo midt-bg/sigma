@@ -510,7 +510,7 @@ export interface CompetitionTotals {
   contracts: number; // contracts with a known offer count (the denominator)
   singleOffer: number; // of those, awarded on a single offer (bids_received = 1)
   singleOfferShare: number; // 0 to 1, by contract count
-  valueEur: number; // value over known-offer contracts (amount_eur IS NOT NULL, the site-wide basis)
+  valueEur: number; // value over known-offer contracts (positive amount_eur only, the value-share basis)
   singleOfferValueEur: number; // value of the single-offer subset (same basis)
   singleOfferValueShare: number; // 0 to 1, by value
 }
@@ -537,6 +537,35 @@ export interface CompetitionConcentration {
   hhi: number; // 0 to 1 (1 = one supplier takes everything)
 }
 
+/** Competitive vs non-competitive procedure mix over the scope — the direct-award indicator.
+ *  „Direct award" = a contract awarded without a call for bids (a non-competitive procedure). The
+ *  share denominator counts only contracts whose procedure is classified as competitive OR
+ *  non-competitive; neutral and synthetic („Неизвестна") procedures are reported separately, never
+ *  folded into the share. */
+export interface ProcedureCompetition {
+  classifiedContracts: number; // competitive + non-competitive (the share denominator)
+  nonCompetitiveContracts: number; // awarded without a call for bids
+  nonCompetitiveShare: number; // 0 to 1, by contract count
+  classifiedValueEur: number; // value over classified contracts (positive amount_eur only)
+  nonCompetitiveValueEur: number;
+  nonCompetitiveValueShare: number; // 0 to 1, by value
+  competitiveContracts: number;
+  neutralContracts: number; // negotiated-with-invitation / other — competitiveness not asserted
+  unknownContracts: number; // synthetic, contract-only tenders („Неизвестна")
+  totalContracts: number; // every contract in scope (the four buckets above sum to this)
+}
+
+/** One authority on the direct-award (non-competitive procedure) leaderboard. */
+export interface CompetitionDirectAward {
+  slug: string;
+  name: string;
+  typeLabel: string | null;
+  classified: number; // contracts with a classified procedure (the denominator)
+  nonCompetitive: number;
+  nonCompetitiveShare: number; // 0 to 1
+  valueEur: number;
+}
+
 /** A recurring authority/company pairing (many separate contracts between the same two parties). */
 export interface CompetitionPair {
   rank: number;
@@ -553,8 +582,10 @@ export interface CompetitionPair {
 
 export interface CompetitionData {
   totals: CompetitionTotals;
+  procedure: ProcedureCompetition; // direct-award (non-competitive procedure) mix over the scope
   bySingleOffer: CompetitionAuthority[];
   byConcentration: CompetitionConcentration[];
+  byDirectAward: CompetitionDirectAward[]; // authorities ranked by direct-award share
   topPairs: CompetitionPair[];
   sectors: SectorRef[]; // options for the sector select
   scope: {
