@@ -86,6 +86,15 @@ describe('authority / contract slugs', () => {
     expect(slugWithSpace).toContain('%20');
     expect(contractIdFromSlug(decodeURIComponent(slugWithSpace))).toBe(idWithSpace);
 
+    // A backslash must be encoded: the WHATWG URL parser treats `\` as `/` in special-scheme paths,
+    // so browsers would split the segment on a raw backslash exactly like on a raw slash — including
+    // `..\` traversal shapes normalizing to `../` (review #221).
+    const idWithBackslash = 'c:e:UNP:ОП20-42\\22:_:eik:123456789:1';
+    const slugWithBackslash = contractSlug(idWithBackslash);
+    expect(slugWithBackslash).not.toContain('\\');
+    expect(slugWithBackslash).toContain('%5C');
+    expect(contractIdFromSlug(decodeURIComponent(slugWithBackslash))).toBe(idWithBackslash);
+
     // C0 control chars (U+0000–U+001F) and DEL (U+007F) must be encoded too, so an exotic id can never
     // leave a raw control byte in the SSR href / sitemap <loc> (review #221). Built via fromCharCode so
     // no literal control byte lives in this source file.

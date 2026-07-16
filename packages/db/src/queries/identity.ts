@@ -60,7 +60,9 @@ export function bareContractId(contractId: string): string {
 
 /** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). Path-unsafe
  *  characters are percent-encoded: `%` first (to avoid mangling later replacements), then the URL
- *  structural chars `/`, `?`, `#`, plus whitespace and every Unicode control char via the `\p{Cc}`
+ *  structural chars `/`, `?`, `#`, and `\` — the WHATWG URL parser treats `\` as `/` in special-scheme
+ *  paths, so an unencoded backslash would split the segment exactly like a raw slash (review #221) —
+ *  plus whitespace and every Unicode control char via the `\p{Cc}`
  *  property (C0 U+0000–U+001F, DEL U+007F, C1 U+0080–U+009F). Encoding whitespace keeps the SSR-emitted
  *  href / sitemap `<loc>` a technically-valid URL when a domain id carries a space — e.g. a
  *  `contract_number` like `ОП 20-42` (review #221; a literal space in `<loc>` violates the sitemap spec).
@@ -72,7 +74,7 @@ export function bareContractId(contractId: string): string {
 export function contractSlug(contractId: string): string {
   return bareContractId(contractId)
     .replace(/%/g, '%25')
-    .replace(/[/?#\s\p{Cc}]/gu, encodeURIComponent);
+    .replace(/[/\\?#\s\p{Cc}]/gu, encodeURIComponent);
 }
 
 /** `/contracts/:id` segment → contract id. The segment must already be percent-DECODED — pass React
