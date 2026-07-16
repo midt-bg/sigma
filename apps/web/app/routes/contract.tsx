@@ -1,5 +1,14 @@
 import { Link } from 'react-router';
-import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
+import {
+  count,
+  isNaturalPersonProfileName,
+  longDate,
+  money,
+  moneyBare,
+  plural,
+  signedMoney,
+  signedPct,
+} from '@sigma/shared';
 import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
@@ -71,7 +80,7 @@ function AnnexDescription({ text }: { text: string | null }) {
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const c = data?.contract;
-  return seoMeta({
+  const tags = seoMeta({
     matches,
     path: `/contracts/${contractSlug(contractIdFromSlug(params.id))}`,
     title: `${c?.subject ?? 'Договор'} — СИГМА`,
@@ -79,6 +88,15 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
       ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
       : '',
   });
+  // GDPR/ЗЗЛД (#219 review): when the bidder is a sole-trader (ЕТ) / natural person, keep this contract
+  // page — which carries the „Сигнали за риск" box — out of search indexes, mirroring the noindex on
+  // sole-trader company profiles (company.tsx) and their exclusion from the sitemap. The contract stays
+  // fully public on the site; only search-engine amplification of a named individual + risk label is
+  // avoided.
+  if (c && isNaturalPersonProfileName(c.bidder.displayName)) {
+    tags.push({ name: 'robots', content: 'noindex' });
+  }
+  return tags;
 }
 
 export function headers() {

@@ -102,6 +102,15 @@
 .risk-list li:last-child {
   margin-bottom: 0;
 }
+/* Non-accusatory disclaimer that travels with the per-contract flags (#219). */
+.risk-note {
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--warning);
+}
+.risk-note a {
+  color: var(--warning-strong);
+}
 
 /* Value-history strip + current lot row */
 .value-history {
