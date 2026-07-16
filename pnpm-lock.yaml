@@ -23,7 +23,7 @@ importers:
         specifier: ^25.9.1
         version: 25.9.1
       fast-xml-parser:
-        specifier: ^5.9.3
+        specifier: 5.9.3
         version: 5.9.3
       prettier:
         specifier: ^3.8.3
