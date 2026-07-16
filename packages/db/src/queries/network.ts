@@ -193,7 +193,7 @@ export async function getEntityNetwork(
   const counterpartyTotal = totalRow ? totalRow.n : null;
 
   const center = await loadCenter(db, p, hop1[0]);
-  if (!center) return { center: null, nodes: [], edges: [], counterpartyTotal: 0, centerOptions };
+  if (!center) return { center: null, nodes: [], edges: [], counterpartyTotal, centerOptions };
 
   const nodes = new Map<string, NetworkNode>([[center.id, { ...center, hop: 0 }]]);
   const edges: NetworkEdge[] = [];

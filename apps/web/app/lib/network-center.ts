@@ -11,8 +11,19 @@ import type { NetworkData, NetworkEdge } from '@sigma/api-contract';
 // can never drift apart (a drift would break re-centring silently). See routes/network.tsx (loader)
 // and components/NetworkGraph.tsx (re-centre).
 
-export function centerToken(n: { kind: string; slug: string }): string {
-  return `${n.kind === 'authority' ? 'a' : 'c'}:${encodeURIComponent(n.slug)}`;
+export function centerToken(n: { kind: 'authority' | 'company'; slug: string }): string {
+  let prefix: 'a' | 'c';
+  switch (n.kind) {
+    case 'authority':
+      prefix = 'a';
+      break;
+    case 'company':
+      prefix = 'c';
+      break;
+    default:
+      throw new Error(`centerToken: unknown node kind ${JSON.stringify(n.kind)}`);
+  }
+  return `${prefix}:${encodeURIComponent(n.slug)}`;
 }
 
 export function parseCenter(token: string | null): NetworkParams | null {

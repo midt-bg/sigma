@@ -44,6 +44,20 @@ type SimLink = SimulationLinkDatum<SimNode> & {
   target: string | SimNode;
 };
 
+// Reduced-motion preference, extracted as plain functions so the subscription logic is unit-testable
+// without mounting the hook. Shares the matchMedia-listener shape used by SiteHeader's nav-close effect.
+export function initialReducedMotion(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+export function subscribeReducedMotion(onChange: (matches: boolean) => void): () => void {
+  if (typeof matchMedia !== 'function') return () => {};
+  const mq = matchMedia('(prefers-reduced-motion: reduce)');
+  const onMqChange = (e: MediaQueryListEvent) => onChange(e.matches);
+  mq.addEventListener('change', onMqChange);
+  return () => mq.removeEventListener('change', onMqChange);
+}
+
 // `edges` isn't normalised by direction (centre→periphery) — the authority→company normalisation in
 // `networkRows` creates new node objects without touching edge direction, so an edge's `target` isn't
 // guaranteed to be the more-peripheral end. Pure so it's unit-testable without mounting the sim.
@@ -92,6 +106,11 @@ export function useForceGraph({
     setPositions(seed);
     setTransform(undefined);
   }
+
+  // Tracked live (not read once) so a user flipping the OS/browser preference mid-session is honoured
+  // without a full re-mount — see subscribeReducedMotion above.
+  const [reduceMotion, setReduceMotion] = useState(initialReducedMotion);
+  useEffect(() => subscribeReducedMotion(setReduceMotion), []);
 
   const draggedRef = useRef(false);
   // Gate the client-only zoom controls: false on SSR + first render (so hydration matches), true after
@@ -174,8 +193,6 @@ export function useForceGraph({
     // restarts the sim) still updates the DOM. `tick()` called manually below does NOT dispatch this
     // event, so the reduced-motion settle stays animation-free; only the timer (drag/restart) fires it.
     sim.on('tick', writePositions);
-    const reduceMotion =
-      typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion) {
       // Respect reduced-motion: settle synchronously, paint once, and stop the auto-animation timer.
       for (let i = 0; i < 400 && sim.alpha() > cfg.alphaMin; i++) sim.tick();
@@ -249,7 +266,7 @@ export function useForceGraph({
       zoomRef.current = null;
     };
     // radiusOf is memoised by the caller per `current`; seed is derived from `current`.
-  }, [current, seed, geom, radiusOf, svgRef, layerRef]);
+  }, [current, seed, geom, radiusOf, svgRef, layerRef, reduceMotion]);
 
   return { positions, transform, draggedRef, interactive, zoomIn, zoomOut, resetView };
 }

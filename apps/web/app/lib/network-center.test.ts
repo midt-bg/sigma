@@ -33,6 +33,14 @@ describe('centerToken ↔ parseCenter round-trip', () => {
   });
 });
 
+describe('centerToken rejects an unknown node kind (no silent company fallback)', () => {
+  it('throws instead of minting a `c:` token for a third kind', () => {
+    expect(() =>
+      centerToken({ kind: 'consortium' as unknown as 'authority' | 'company', slug: 'x' }),
+    ).toThrow();
+  });
+});
+
 describe('parseCenter rejects malformed tokens (no silent mis-parse)', () => {
   it.each([null, '', 'x', 'a:', ':abc', 'z:abc', 'c:!!!', 'c:n@@@'])('returns null for %p', (t) => {
     expect(parseCenter(t)).toBeNull();

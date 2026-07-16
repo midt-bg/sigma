@@ -134,6 +134,52 @@ function fakeDb(): D1Database {
   } as unknown as D1Database;
 }
 
+// The centre-load fails (no name in authority_totals AND no HOP1 sample to fall back to) while
+// COUNT(*) still succeeds with a real, non-zero total — used to assert the early-exit at the
+// `!center` branch preserves that already-computed total instead of fabricating 0.
+function fakeDbCenterLoadFails(): D1Database {
+  return {
+    prepare(sql: string) {
+      return {
+        bind() {
+          return this;
+        },
+        async all<T>() {
+          if (sql.includes('ORDER BY spent_eur')) return { results: PICKER_AUTH as T[] };
+          if (sql.includes('FROM company_totals')) return { results: PICKER_COMP as T[] };
+          if (sql.includes('FROM flow_pairs WHERE authority_id = ?')) return { results: [] as T[] };
+          return { results: [] as T[] };
+        },
+        async first<T>() {
+          if (sql.includes('FROM authority_totals WHERE authority_id')) return null as T;
+          if (sql.includes('COUNT(*)')) return { n: 7 } as T;
+          return null as T;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+// No authority has any flows at all: the `!top` early-exit before a centre is even chosen. This is
+// a real, known zero (not a centre-load failure) and must stay the literal `0`.
+function fakeDbNoAuthorities(): D1Database {
+  return {
+    prepare(sql: string) {
+      return {
+        bind() {
+          return this;
+        },
+        async all<T>() {
+          return { results: [] as T[] };
+        },
+        async first<T>() {
+          return null as T;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
 describe('getEntityNetwork', () => {
   it('builds the centre, hop-1 neighbours and a deduped hop-2 ring', async () => {
     const { center, nodes, edges } = await getEntityNetwork(fakeDb(), {
@@ -180,6 +226,21 @@ describe('getEntityNetwork', () => {
       id: 'auth:C',
     });
     expect(counterpartyTotal).toBeNull(); // must stay "unknown", never fabricated as hop1.length (2)
+  });
+
+  it('preserves the already-computed counterpartyTotal (not a fabricated 0) when the centre fails to load', async () => {
+    const result = await getEntityNetwork(fakeDbCenterLoadFails(), {
+      kind: 'authority',
+      id: 'auth:GHOST',
+    });
+    expect(result.center).toBeNull();
+    expect(result.counterpartyTotal).toBe(7); // the real COUNT(*), not the literal 0
+  });
+
+  it('still returns a real 0 when no authority has any flows at all (the legitimate !top zero)', async () => {
+    const result = await getEntityNetwork(fakeDbNoAuthorities(), null);
+    expect(result.center).toBeNull();
+    expect(result.counterpartyTotal).toBe(0);
   });
 });
 
