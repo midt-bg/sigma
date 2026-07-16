@@ -2,8 +2,10 @@ import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-rou
 import type {
   CompetitionAuthority,
   CompetitionConcentration,
+  CompetitionDirectAward,
   CompetitionPair,
 } from '@sigma/api-contract';
+import { EU_SCOREBOARD } from '@sigma/config';
 import { count, money, pct } from '@sigma/shared';
 import { getCompetition } from '@sigma/db';
 import type { Route } from './+types/competition';
@@ -22,7 +24,7 @@ export function meta(_: Route.MetaArgs) {
     {
       name: 'description',
       content:
-        'Къде конкуренцията при обществените поръчки е най-слаба: дял на договорите с една оферта по възложител и концентрация на доставчиците. Неутрални показатели, всеки проследим до договорите.',
+        'Къде конкуренцията при обществените поръчки е най-слаба: дял на договорите с една оферта, дял пряко възлагане (без обявление) и концентрация на доставчиците, спрямо праговете на ЕС. Неутрални показатели, всеки проследим до договорите.',
     },
   ];
 }
@@ -105,6 +107,42 @@ const concentrationColumns: Column<CompetitionConcentration>[] = [
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
 ];
 
+const directAwardColumns: Column<CompetitionDirectAward>[] = [
+  { key: 'rank', header: '#', isRank: true, cell: (_r, i) => i + 1 },
+  {
+    key: 'name',
+    header: 'Възложител',
+    isTitle: true,
+    cell: (r) => <Link to={`/authorities/${r.slug}`}>{r.name}</Link>,
+  },
+  {
+    key: 'type',
+    header: 'Вид',
+    secondary: true,
+    cell: (r) => (r.typeLabel ? <Chip>{r.typeLabel}</Chip> : null),
+  },
+  {
+    key: 'share',
+    header: 'Дял пряко възлагане',
+    align: 'num',
+    cell: (r) => (
+      <ShareBar
+        ratio={r.nonCompetitiveShare}
+        warn={r.nonCompetitiveShare >= EU_SCOREBOARD.directAward.bad}
+      />
+    ),
+  },
+  {
+    key: 'direct',
+    header: 'Без обявление',
+    align: 'num',
+    secondary: true,
+    cell: (r) => count(r.nonCompetitive),
+  },
+  { key: 'classified', header: 'Договори', align: 'num', cell: (r) => count(r.classified) },
+  { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
+];
+
 const pairColumns: Column<CompetitionPair>[] = [
   { key: 'rank', header: '#', isRank: true, cell: (r) => r.rank },
   {
@@ -132,6 +170,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
 
   const totals: Total[] = [
     { num: pct(data.totals.singleOfferShare), label: 'дял договори с една оферта' },
+    { num: pct(data.procedure.nonCompetitiveShare), label: 'дял пряко възлагане (без обявление)' },
     { num: count(data.totals.singleOffer), label: 'договора с една оферта' },
     { num: pct(data.totals.singleOfferValueShare), label: 'дял от стойността с една оферта' },
   ];
@@ -143,7 +182,7 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker="Анализ"
           title="Конкуренция при обществените поръчки"
-          lede="Къде конкуренцията е най-слаба: дял на договорите с една-единствена оферта по възложител и колко концентрирани са доставчиците. Това са неутрални показатели: висок дял е сигнал за слаба конкуренция, не доказателство за нарушение. Зад всяко число стоят конкретните договори."
+          lede="Къде конкуренцията е най-слаба: дял на договорите с една-единствена оферта, дял на пряко възложените (без обявление) и колко концентрирани са доставчиците по възложител — съпоставени с праговете на ЕС. Това са неутрални показатели: висок дял е сигнал за слаба конкуренция, не доказателство за нарушение. Зад всяко число стоят конкретните договори."
         />
 
         <Form
@@ -226,6 +265,27 @@ export default function Competition({ loaderData }: Route.ComponentProps) {
               rows={data.bySingleOffer}
               getKey={(r) => r.slug}
               caption="Възложители, подредени по дял на договорите с една оферта"
+            />
+          ) : (
+            <p className="muted">Няма достатъчно данни за избраните филтри.</p>
+          )}
+        </Section>
+
+        <Section
+          id="direct-award"
+          title={
+            <>
+              Възложители с най-висок дял <em>пряко възлагане</em>
+            </>
+          }
+          hint={`Дял на договорите, възложени без обявление (пряко договаряне), от тези с класифицирана процедура. Само възложители с поне ${data.scope.minContracts} такива договора.`}
+        >
+          {data.byDirectAward.length ? (
+            <DataTable
+              columns={directAwardColumns}
+              rows={data.byDirectAward}
+              getKey={(r) => r.slug}
+              caption="Възложители, подредени по дял на пряко възложените договори"
             />
           ) : (
             <p className="muted">Няма достатъчно данни за избраните филтри.</p>

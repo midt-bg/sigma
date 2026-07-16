@@ -760,3 +760,73 @@ main.narrow {
     margin: -11px 0;
   }
 }
+
+/* Scroll to top button */
+/* Pinned bottom-left (not bottom-right) so it never shares a corner with the
+   third-party accessibility launcher, which anchors `right: 0` at every
+   breakpoint (see layout.css's .a11y-tools__button note) — its vertical
+   position is unreliable third-party CSS, so we separate horizontally
+   instead of trying to stack above it. */
+.scroll-to-top {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  z-index: 50;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(16px);
+  transition:
+    opacity 0.3s ease,
+    visibility 0.3s ease,
+    transform 0.3s ease,
+    background 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.scroll-to-top.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.scroll-to-top:hover,
+.scroll-to-top:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+.scroll-to-top:focus-visible {
+  box-shadow:
+    0 0 0 3px var(--paper),
+    0 0 0 5px var(--accent),
+    0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.scroll-to-top svg {
+  width: 24px;
+  height: 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-to-top {
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .scroll-to-top {
+    bottom: 16px;
+    left: 16px;
+    width: 44px;
+    height: 44px;
+  }
+}
