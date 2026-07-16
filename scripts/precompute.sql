@@ -86,10 +86,10 @@ UPDATE company_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
--- Per-subject risk aggregates: count denominators span ALL the bidder's contracts (no amount_eur
--- filter) so single_offer_n matches competition.ts / getAuthoritySingleOffer; value shares weight by
--- POSITIVE amount_eur only — a value_low ≤0 row (normalize-raw.sql) would otherwise push a share out of
--- [0,1]. A NULL/zero eligible denominator → NULL share.
+-- Per-subject risk aggregates. Each component's denominator is its own eligible universe (by design):
+-- single_offer_n = ≥1-bid contracts (excludes 0-bid/failed; matches competition.ts); high_markup_n =
+-- value-assessable contracts (is_high_markup IS NOT NULL). Value shares weight POSITIVE amount_eur only,
+-- so a value_low ≤0 row can't push a share out of [0,1]. A NULL/zero eligible denominator → NULL share.
 UPDATE company_totals SET
   single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
   high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare

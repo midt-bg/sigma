@@ -198,6 +198,36 @@ export function isNaturalPersonProfileName(name: string): boolean {
   return normalized.startsWith('ЕТ ') || normalized.startsWith('ET ');
 }
 
+/** True when a sole-trader legal form marks the profile as one natural person (ЕТ / едноличен търговец). */
+function isSoleTraderLegalForm(kind: string, legalForm: string | null): boolean {
+  if (kind === 'consortium' || !legalForm) return false;
+  const normalized = legalForm.trim().toUpperCase();
+  return (
+    normalized === 'ЕТ' ||
+    normalized === 'ET' ||
+    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
+    normalized.includes('SOLE TRADER') ||
+    normalized.includes('INDIVIDUAL')
+  );
+}
+
+/**
+ * True when a bidder profile denotes a single natural person — by sole-trader legal form or by name.
+ * Risk indicators and search indexing are suppressed for these so the platform never profiles a named
+ * individual (the natural-person control, M9). The single home for that determination, shared by the
+ * company route and the DB read layer, so the suppression can never drift between them.
+ */
+export function isNaturalPersonSubject(subject: {
+  kind: string;
+  legalForm: string | null;
+  displayName: string;
+}): boolean {
+  return (
+    isSoleTraderLegalForm(subject.kind, subject.legalForm) ||
+    isNaturalPersonProfileName(subject.displayName)
+  );
+}
+
 /**
  * Display name for a winning entity. A consortium row holds a `;`-joined member list → show the
  * first member + „и др." (the **Обединение** badge is rendered separately by the caller). Companies
