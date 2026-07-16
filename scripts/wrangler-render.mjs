@@ -88,9 +88,9 @@ if (ext === '.json' || ext === '.jsonc') {
     // "development" stays, so local `wrangler dev` (no render step) is fail-open by construction.
     environment: process.env.SIGMA_ENVIRONMENT || '',
     // AI-Gateway account id (account-scoped). The committed AI_GATEWAY_BASE_URL / BGGPT_STT_BASE_URL
-    // embed one account's id; a target on a DIFFERENT Cloudflare account (e.g. the dev/preview account,
-    // see docs/dev-preview-account-split.md) stamps its own id here. Unset → the committed URLs are left
-    // byte-identical, so production/staging on the original account are unchanged.
+    // embed one account's id; a target on a DIFFERENT Cloudflare account (e.g. the dev/preview account)
+    // stamps its own id here. Unset → the committed URLs are left byte-identical, so production/staging
+    // on the original account are unchanged.
     aiGatewayAccount: process.env.SIGMA_AI_GATEWAY_ACCOUNT || '',
     // Public Turnstile site key. Account-bound (the widget lives in one Cloudflare account), so a target
     // on a different account (dev/preview → b2abee…) stamps its own widget's key here. Unset → committed
