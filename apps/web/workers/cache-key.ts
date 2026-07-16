@@ -1,54 +1,24 @@
-// Response-affecting query params: every param a route loader (or the SSR render it feeds) reads off
-// the URL must be in this set, or two URLs that yield different responses collapse to one cache entry
-// (CWE-349, see issue #56). Keep it in sync with what apps/web/app/{routes,lib/filters.ts} consume.
-// The drift guard in cache-key.test.ts statically scans those sources and fails CI if a consumed
-// param is missing here (or from INTENTIONALLY_UNKEYED below), so the common case — a literal-key
-// read — can't drift unnoticed. It is not absolute: cache-key.test.ts documents the blind spots it
-// can't see (dynamic keys like sel(k), and workers/** is out of scope).
-export const CACHE_QUERY_PARAMS = new Set([
-  'authority',
-  'bidder',
-  'bids', // /contracts: c.bids_received = 1 — changes the result set and headline totals
-  'center',
-  'count',
-  'cursor',
-  'eu',
-  'funding',
-  'g',
-  'kind',
-  'p',
-  'page', // pageNav: rank offset + "page N of M" in the HTML, but only when cursor is set. Keyed
-  // unconditionally — without cursor it's a harmless over-key (never a wrong body); simpler than
-  // coupling the key to cursor presence, and q/cursor already make key cardinality client-unbounded.
-  'procedure',
-  'q',
-  'sector',
-  'sort',
-  'top', // singleSelectFilters: top-20 vs top-50 on /flows and /competition
-  'type',
-  'value',
-  'year',
-]);
-
-// Params a loader reads but that intentionally do NOT change the response (so they're safe to omit
-// from the cache key). None exist today — every consumed param affects output. This constant is not
-// dead: the drift guard treats `consumed ⊆ CACHE_QUERY_PARAMS ∪ INTENTIONALLY_UNKEYED` as the
-// invariant, so any future read-but-ignored param must be listed here with a justification rather
-// than silently absent.
-export const INTENTIONALLY_UNKEYED = new Set<string>([]);
+// The cache key is built from the response-affecting query params only (CWE-349, issue #56); the set is
+// the shared source of truth in app/lib/query-params.ts (also used by withParams for links).
+import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
 
 export function cacheKey(request: Request, deployTag: string): Request {
   const url = new URL(request.url);
   const params = new URLSearchParams();
 
   try {
+    // Decoding collapses `%2F` → `/`, so the encoded 200-form of a contract URL (percent-encoded slug,
+    // review #221/#213) and a bogus raw-slash 404-form share ONE cache key. This is safe only because
+    // app.ts gates cache-put on `response.ok` — the 404 form is never stored, so it can't poison the
+    // encoded entry. If that `response.ok` gate is ever removed, this collision brings back the #213
+    // cache-poison 404 regression; key on the raw (still-encoded) pathname then instead.
     url.pathname = decodeURIComponent(url.pathname);
   } catch {
     // Malformed percent-encoding should not break cache lookup; keep the raw path as the fallback.
   }
 
   for (const [key, value] of url.searchParams) {
-    if (CACHE_QUERY_PARAMS.has(key)) params.append(key, value);
+    if (CANONICAL_QUERY_PARAMS.has(key)) params.append(key, value);
   }
 
   params.sort();

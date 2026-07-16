@@ -39,6 +39,24 @@ const FLOW_PAIRS = [
     contracts: 9,
   },
 ];
+// Procedure mix for the direct-award headline: 6 competitive + 2 non-competitive (classified = 8),
+// 1 neutral, 1 synthetic. Uses the real @sigma/config procedure_type strings so procedureGroup folds.
+const PROCEDURE_ROWS = [
+  { procedure_type: 'Открита процедура', contracts: 6, value_eur: 6000 }, // competitive
+  { procedure_type: 'Пряко договаряне', contracts: 2, value_eur: 2000 }, // non-competitive
+  { procedure_type: 'Покана до определени лица', contracts: 1, value_eur: 500 }, // neutral
+  { procedure_type: 'неизвестна', contracts: 1, value_eur: 0 }, // synthetic
+];
+const DIRECT_AWARD_ROWS = [
+  {
+    authority_id: 'auth:555',
+    name: 'Агенция Тест',
+    type_group: 'агенция',
+    classified: 20,
+    non_competitive: 12,
+    value_eur: 8000,
+  },
+];
 
 interface QueryCall {
   sql: string;
@@ -58,6 +76,9 @@ function fakeDb(capture?: string[]): D1Database {
           if (sql.includes('FROM flow_pairs')) return { results: FLOW_PAIRS as T[] };
           if (sql.includes('JOIN bidders b')) return { results: FLOW_PAIRS as T[] }; // filtered pairs
           if (sql.includes('WITH pair AS')) return { results: CONCENTRATION_ROWS as T[] };
+          if (sql.includes('GROUP BY t.procedure_type')) return { results: PROCEDURE_ROWS as T[] };
+          if (sql.includes('TRIM(t.procedure_type) IN ('))
+            return { results: DIRECT_AWARD_ROWS as T[] };
           return { results: SINGLE_OFFER_ROWS as T[] }; // single-offer leaderboard
         },
         async first<T>() {
@@ -114,6 +135,9 @@ function scopedFakeDb(calls: QueryCall[]): D1Database {
         },
         async all<T>() {
           if (sql.includes('FROM sector_totals')) return { results: [{ division: '45' }] as T[] };
+          if (sql.includes('GROUP BY t.procedure_type')) return { results: PROCEDURE_ROWS as T[] };
+          if (sql.includes('TRIM(t.procedure_type) IN ('))
+            return { results: DIRECT_AWARD_ROWS as T[] };
           if (!this.args.includes('auth:111')) {
             if (sql.includes('FROM flow_pairs')) return { results: FLOW_PAIRS as T[] };
             if (sql.includes('WITH pair AS')) return { results: CONCENTRATION_ROWS as T[] };
@@ -151,6 +175,26 @@ describe('getCompetition', () => {
   it('passes the HHI through on the concentration leaderboard', async () => {
     const { byConcentration } = await getCompetition(fakeDb(), {});
     expect(byConcentration[0]).toMatchObject({ slug: '222', suppliers: 3, hhi: 0.7 });
+  });
+
+  it('folds the procedure mix into the direct-award headline', async () => {
+    const { procedure } = await getCompetition(fakeDb(), {});
+    expect(procedure).toMatchObject({
+      competitiveContracts: 6,
+      nonCompetitiveContracts: 2,
+      classifiedContracts: 8, // competitive + non-competitive (neutral/synthetic excluded)
+      neutralContracts: 1,
+      unknownContracts: 1,
+      totalContracts: 10,
+    });
+    expect(procedure.nonCompetitiveShare).toBeCloseTo(0.25); // 2 / 8
+    expect(procedure.nonCompetitiveValueShare).toBeCloseTo(0.25); // 2000 / 8000
+  });
+
+  it('maps the direct-award leaderboard with per-row share', async () => {
+    const { byDirectAward } = await getCompetition(fakeDb(), {});
+    expect(byDirectAward[0]).toMatchObject({ slug: '555', classified: 20, nonCompetitive: 12 });
+    expect(byDirectAward[0]?.nonCompetitiveShare ?? 0).toBeCloseTo(0.6); // 12 / 20
   });
 
   it('ranks recurring pairs and resolves the company display name', async () => {
@@ -230,6 +274,7 @@ describe('getCompetition', () => {
 
     expect(calls.some((c) => c.sql.includes('FROM flow_pairs'))).toBe(false);
     expect(calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
-    expect(calls.filter((c) => c.args.includes('auth:111'))).toHaveLength(4);
+    // totals, procedure-mix, single-offer, concentration, direct-award, recurring-pairs all scope to it
+    expect(calls.filter((c) => c.args.includes('auth:111'))).toHaveLength(6);
   });
 });

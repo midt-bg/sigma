@@ -2,7 +2,7 @@
 // unit-tested in the node vitest environment (the component itself is native-form + uncontrolled
 // inputs, so its behaviour is the browser's; only these derivations carry logic worth asserting).
 
-import { CACHE_QUERY_PARAMS } from '../../workers/cache-key';
+import { CANONICAL_QUERY_PARAMS } from '../lib/query-params';
 
 /** Selection state of a category's options against the group's currently-selected values. Drives the
  *  "select all" checkbox: `allSelected` → checked, `someSelected && !allSelected` → indeterminate. An
@@ -30,7 +30,7 @@ export function categorySelectionState(
  *  resets to page 1). Repeated values are preserved.
  *
  *  SECURITY (CWE-349, #197/#228 review): only carry params on the cache allow-list. A hidden input is
- *  rendered into the SSR body, but `cache-key.ts` keys the cached response on `CACHE_QUERY_PARAMS`
+ *  rendered into the SSR body, but `cache-key.ts` keys the cached response on `CANONICAL_QUERY_PARAMS`
  *  ONLY. Carrying an arbitrary `?zzz=<payload>` would inject unkeyed content into the body of a
  *  `publicCache`d list route — the poisoned render would be stored under the clean URL and served to
  *  everyone. Restricting to the allow-list guarantees every preserved param is part of the cache key,
@@ -43,7 +43,7 @@ export function preservedParamInputs(
   const owned = new Set<string>([...groupKeys, 'sort', 'cursor', 'page']);
   const out: { key: string; value: string }[] = [];
   for (const [key, value] of sp.entries()) {
-    if (CACHE_QUERY_PARAMS.has(key) && !owned.has(key)) out.push({ key, value });
+    if (CANONICAL_QUERY_PARAMS.has(key) && !owned.has(key)) out.push({ key, value });
   }
   return out;
 }

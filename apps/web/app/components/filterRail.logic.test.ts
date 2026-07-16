@@ -89,7 +89,7 @@ describe('preservedParamInputs', () => {
 
   it('drops params outside the cache allow-list (cache-poisoning guard, CWE-349 #197/#228)', () => {
     // An unknown param must NOT be re-emitted as a hidden input: it would inject unkeyed content into
-    // the SSR body of a publicCache'd list route, and cache-key.ts keys only on CACHE_QUERY_PARAMS.
+    // the SSR body of a publicCache'd list route, and cache-key.ts keys only on CANONICAL_QUERY_PARAMS.
     const sp = new URLSearchParams('zzz=<script>&q=keep&sector=45');
     expect(preservedParamInputs(sp, groupKeys)).toEqual([{ key: 'q', value: 'keep' }]);
   });
