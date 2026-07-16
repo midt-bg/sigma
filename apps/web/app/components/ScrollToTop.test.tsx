@@ -88,6 +88,29 @@ describe('ScrollToTop', () => {
     expect(getButton().className).not.toContain('is-visible');
   });
 
+  it('coalesces a burst of scroll events into a single frame (ignores events while one is pending)', () => {
+    // Hold the rAF callback instead of running it synchronously so a second scroll lands while a
+    // frame is still pending — exercising the `if (ticking) return` early-out.
+    let pending: FrameRequestCallback | null = null;
+    window.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      pending = cb;
+      return 1;
+    };
+    act(() => {
+      root.render(<ScrollToTop />);
+    });
+    act(() => {
+      scrollTo(500); // schedules a frame (ticking = true)
+    });
+    act(() => {
+      scrollTo(600); // frame still pending → coalesced, no new frame
+    });
+    act(() => {
+      pending?.(0); // flush the single frame
+    });
+    expect(getButton().className).toContain('is-visible');
+  });
+
   it('calls window.scrollTo with smooth behavior on click by default', () => {
     act(() => {
       root.render(<ScrollToTop />);

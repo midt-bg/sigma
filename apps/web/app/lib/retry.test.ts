@@ -41,4 +41,21 @@ describe('withDbRetry', () => {
     await expect(withDbRetry(fn, 0)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('logs a non-Error rejection verbatim and uses the default backoff once past the table', async () => {
+    // A non-Error thrown value exercises the `: error` log branch, and a 4th attempt indexes past
+    // the two-entry BACKOFF_MS table, exercising the `?? 150` fallback.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce('string fault')
+      .mockRejectedValueOnce('string fault')
+      .mockRejectedValueOnce('string fault')
+      .mockResolvedValue('ok');
+
+    await expect(withDbRetry(fn, 4)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('read failed'), 'string fault');
+    warn.mockRestore();
+  });
 });
