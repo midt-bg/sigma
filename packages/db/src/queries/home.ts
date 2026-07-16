@@ -90,10 +90,12 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     // Flagged-value summary (#218) — live aggregate over existing columns, under the 1h edge cache.
     getFlaggedValue(db),
     // Top flagged contracts by value, for the homepage table (same shape as the single-offer list).
-    // Over-fetch so we can drop natural-person (sole-trader ЕТ) bidders below and still fill 10 rows:
-    // an identifiable individual must never appear under a „сигнали за риск" label on this indexed,
-    // edge-cached page (GDPR/ЗЗЛД — mirrors the noindex on sole-trader company profiles, #218 review).
-    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 40 }),
+    // Over-fetch a wide cushion so we can drop natural-person (sole-trader ЕТ) bidders below and still
+    // fill 10 rows even on a value-desc page heavy with sole traders (#236 review — reduces the chance the
+    // table under-fills; 0 rows still degrades to the table's empty-state). An identifiable individual must
+    // never appear under a „сигнали за риск" label on this indexed, edge-cached page (GDPR/ЗЗЛД — mirrors
+    // the noindex on sole-trader company profiles, #218 review).
+    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 60 }),
   ]);
 
   return {

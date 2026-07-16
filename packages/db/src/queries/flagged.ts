@@ -26,9 +26,13 @@ export const FLAG_SQL = {
     'AND c.eu_funded = 1',
   // Current value grew > 20% over the signing value (annex-driven cost growth); non-suspect only, so a
   // value anomaly isn't double-counted here (mirrors details.ts deltaPct, which is null when suspect).
+  // Guard `signing_value_eur > 0` (not just `<> 0`): riskLogic's badge fires on deltaPct = (current −
+  // signing)/signing > 0.2, which for a NEGATIVE base is NOT algebraically equal to
+  // (current − signing) > 0.2·signing — so `<> 0` would count a negative-base row here that the contract
+  // page never badges. `> 0` makes the aggregate and the per-contract badge provably identical (#236 review).
   high_markup:
     `c.value_flag NOT IN ${SUSPECT_VALUE_FLAGS} AND c.signing_value_eur IS NOT NULL ` +
-    'AND c.signing_value_eur <> 0 AND (c.current_value_eur - c.signing_value_eur) > 0.2 * c.signing_value_eur',
+    'AND c.signing_value_eur > 0 AND (c.current_value_eur - c.signing_value_eur) > 0.2 * c.signing_value_eur',
   // Value or date anomaly.
   anomalies: `c.date_flag = 'signed_after_publication' OR c.value_flag IN ${SUSPECT_VALUE_FLAGS}`,
 } as const;

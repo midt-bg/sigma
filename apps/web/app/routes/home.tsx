@@ -3,6 +3,7 @@ import { count, date, moneyBare } from '@sigma/shared';
 import { getHomeData } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
+import type { RiskFlagType } from '../lib/riskLogic';
 import { PageHeader } from '../components/PageHeader';
 import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
@@ -87,13 +88,15 @@ function SingleOfferTable({
   );
 }
 
-// Bulgarian labels for the risk-signal types (keys mirror flagged.ts FLAG_TYPES / riskLogic.ts).
-const FLAG_LABELS: Record<string, string> = {
+// Bulgarian labels for the risk-signal types. `satisfies Record<RiskFlagType, string>` makes TypeScript
+// enforce that every signal type has a label (and none is misspelled) — a renamed/added RiskFlagType now
+// fails the build here instead of silently falling through to the raw key at runtime (#236 review).
+const FLAG_LABELS = {
   no_competition: 'Липса на конкуренция',
   eu_no_competition: 'Липса на конкуренция (със средства от ЕС)',
   high_markup: 'Ръст на стойността чрез анекси',
   anomalies: 'Стойностна или времева аномалия',
-};
+} satisfies Record<RiskFlagType, string>;
 
 export default function Home({ loaderData }: Route.ComponentProps) {
   const {
@@ -174,7 +177,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 .map((r) => (
                   <li key={r.type}>
                     <Link to={`/contracts?flag=${r.type}&sort=value-desc`}>
-                      <span>{FLAG_LABELS[r.type] ?? r.type}</span>
+                      <span>{FLAG_LABELS[r.type as RiskFlagType] ?? r.type}</span>
                       <span className="flagged-val">
                         {moneyBare(r.eur)} € · {count(r.contracts)}
                       </span>

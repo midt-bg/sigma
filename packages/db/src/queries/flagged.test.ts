@@ -41,7 +41,11 @@ INSERT INTO contracts
   ('c6', 't:m72', 'eik:200000001', 5000, 'EUR', '2024-01-06', 3, 0, 0, 'ok', 'ok', 5000, 5000, 5000),
   -- c7: flagged (no_competition) but on a tender with NULL cpv + authority with NULL type_group,
   -- so it lands in the total/count but in NEITHER the bySector nor byAuthorityType breakdown.
-  ('c7', 't:nocpv', 'eik:200000001', 500, 'EUR', '2024-01-07', 1, 0, 0, 'ok', 'ok', 500, 500, 500);
+  ('c7', 't:nocpv', 'eik:200000001', 500, 'EUR', '2024-01-07', 1, 0, 0, 'ok', 'ok', 500, 500, 500),
+  -- c8: NEGATIVE signing base. Under the old (signing <> 0) guard the markup test passes, so it would
+  -- wrongly count as high_markup; riskLogic (deltaPct = -1) never badges it. With (signing > 0) it is
+  -- UNflagged (bids=3 → no single-offer, value_flag ok → no anomaly), so it stays out of every slice (#236).
+  ('c8', 't:o45', 'eik:200000001', 800, 'EUR', '2024-01-08', 3, 0, 0, 'ok', 'ok', -1000, 0, 800);
 `;
 
 function d1(db: DatabaseSync): D1Database {
@@ -87,6 +91,15 @@ describe('getFlaggedValue', () => {
     // c1..c5 + c7 flagged (c6 clean). c4 is value_suspect → NULL amount_eur → counted, €0.
     expect(f.contracts).toBe(6);
     expect(f.totalEur).toBe(7000); // 1000 + 2000 + 1500 + 0 + 2000 + 500
+  });
+
+  it('excludes a negative signing-value base from high_markup (parity with riskLogic > 0)', async () => {
+    const f = await getFlaggedValue(realDb());
+    // c8 (signing -1000) would satisfy the old `<> 0` guard but riskLogic shows no badge for a negative
+    // base, so it must be excluded here too — high_markup stays c3 + c5 only.
+    expect(byType(f, 'high_markup')).toMatchObject({ eur: 3500, contracts: 2 });
+    const r = await listContracts(realDb(), { flags: ['high_markup'], pageSize: 10 });
+    expect(r.total).toBe(2); // c3, c5 — not c8
   });
 
   it('reports overlapping by-type slices (their sum exceeds the de-duplicated total)', async () => {
