@@ -9,7 +9,16 @@ const ARRAY_FILTERS = ['years', 'sectors', 'procedureGroups', 'kinds', 'types'] 
 // was misclassified as unfiltered and served from / written to the shared unfiltered cache object —
 // a cache-poisoning variant of #56/#122 on top of the wrong-data bug (#138). hasScalarFilter treats
 // 'one' as set and null as absent, so it slots in cleanly. Other routes simply never carry the key.
-const SCALAR_FILTERS = ['valueBucket', 'eu', 'authority', 'bidder', 'countBucket', 'bids'] as const;
+// `markup` ('high' | null) is response-affecting exactly like `bids` — same #138 cache-poisoning class.
+const SCALAR_FILTERS = [
+  'valueBucket',
+  'eu',
+  'authority',
+  'bidder',
+  'countBucket',
+  'bids',
+  'markup',
+] as const;
 const FILENAMES = {
   contracts: 'sigma-contracts.csv',
   companies: 'sigma-companies.csv',

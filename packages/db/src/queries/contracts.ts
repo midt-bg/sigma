@@ -30,6 +30,7 @@ export interface ContractListParams {
   bidder?: string | null; // bidder slug
   q?: string | null;
   bids?: 'one' | null;
+  markup?: 'high' | null;
   cursor?: string | null;
   pageSize?: number;
 }
@@ -44,6 +45,7 @@ export const CONTRACT_FILTER_KEYS = [
   'bidder',
   'q',
   'bids',
+  'markup',
 ] as const satisfies readonly (keyof ContractListParams)[];
 
 // Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
@@ -157,6 +159,7 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
   if (p.eu === 'eu') where.push(`c.eu_funded = 1`);
   else if (p.eu === 'national') where.push(`(c.eu_funded IS NULL OR c.eu_funded = 0)`);
   if (p.bids === 'one') where.push(`c.bids_received = 1`);
+  if (p.markup === 'high') where.push(`c.is_high_markup = 1`);
   if (p.authority) {
     where.push(`t.authority_id = ?`);
     params.push('auth:' + p.authority);
@@ -192,6 +195,7 @@ function contractFilterSignature(p: ContractListParams): string {
     bidder,
     q: searchMatchQuery(p.q ?? ''),
     bids: p.bids ?? null,
+    markup: p.markup ?? null,
   } satisfies Record<(typeof CONTRACT_FILTER_KEYS)[number], unknown>;
   return filterSignature(filters);
 }

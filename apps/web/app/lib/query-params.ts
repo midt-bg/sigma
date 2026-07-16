@@ -6,6 +6,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
   'center',
+  'markup', // /contracts: c.is_high_markup = 1 — changes the result set + totals (must stay keyed so the risk drill-down link survives withParams)
   'count',
   'cursor',
   'eu',

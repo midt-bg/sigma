@@ -15,6 +15,14 @@ const COMPONENT_LABEL: Record<RiskComponentKey, string> = {
   high_markup: 'Високо оскъпяване',
 };
 
+// Each component's „виж договорите" links to exactly the contracts it counts, so every number on the
+// page is traceable (the drill-down control, M7). The value is the same predicate the rollup
+// materializes: bids=1 ⇒ c.bids_received = 1, markup=high ⇒ c.is_high_markup = 1 (@sigma/db filters).
+const COMPONENT_FILTER: Record<RiskComponentKey, string> = {
+  single_offer: 'bids=1',
+  high_markup: 'markup=high',
+};
+
 // Subject-level risk. Rendered ONLY when buildSubjectRisk returned a view (natural persons and thin
 // samples are already suppressed upstream). The framing, the band, the counts and the drill-down are one
 // atomic block (M8) — the disclaimer never renders apart from the number, and the caller keeps this out
@@ -39,9 +47,7 @@ export function SubjectRiskIndicator({
           <li key={c.key}>
             <strong>{COMPONENT_LABEL[c.key]}:</strong> {count(c.k)} от {count(c.n)} договора
             {c.valueShare != null ? <> · {pct(c.valueShare)} от стойността</> : null} ·{' '}
-            <Link to={c.key === 'single_offer' ? `${contractsBase}&bids=1` : contractsBase}>
-              виж договорите
-            </Link>
+            <Link to={`${contractsBase}&${COMPONENT_FILTER[c.key]}`}>виж договорите</Link>
           </li>
         ))}
       </ul>
