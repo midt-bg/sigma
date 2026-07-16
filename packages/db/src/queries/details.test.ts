@@ -56,6 +56,7 @@ function fakeDb(
   contractRow: typeof baseContractRow,
   lotRows: unknown[],
   amendmentRows: unknown[] = [],
+  cohortStatsRow: unknown = null,
 ): D1Database {
   return {
     prepare(sql: string) {
@@ -68,6 +69,8 @@ function fakeDb(
         async first<T>() {
           if (sql.includes('WHERE c.id = ?')) return contractRow as T;
           if (sql.includes('authority_totals') || sql.includes('company_totals')) return null as T;
+          // The „Подобни договори" cohort lookup — null unless the test supplies a stats row.
+          if (sql.includes('cpv_division_stats')) return cohortStatsRow as T;
           throw new Error(`unexpected first query: ${sql}`);
         },
         async all<T>() {
@@ -193,6 +196,58 @@ describe('getContract', () => {
       expect(detail?.value.signingEur).toBe(256.49);
       expect(detail?.value.currentEur).toBe(flag === 'annex_suspect' ? 1025.96 : 256.49);
     }
+  });
+
+  // Exercises the real cohort path end-to-end (baseContractRow is clean-value, CPV '72', amount 5000).
+  // Guards the argument order into contractCohort: swapping value_flag ↔ division would make it return
+  // null and this would fail.
+  it('populates the cohort from a real cpv_division_stats row', async () => {
+    const statsRow = {
+      division: '72',
+      priced_contracts: 200,
+      p25_eur: 1000,
+      median_eur: 4000,
+      p75_eur: 10_000,
+      p90_eur: 40_000,
+      p95_eur: 90_000,
+      p99_eur: 400_000,
+    };
+    const detail = await getContract(fakeDb(baseContractRow, [], [], statsRow), 'c:1');
+
+    expect(detail?.cohort).not.toBeNull();
+    expect(detail?.cohort?.amountEur).toBe(5000); // the contract's own amount_eur, not a stats field
+    expect(detail?.cohort?.stats.division).toBe('72');
+    expect(detail?.cohort?.stats.pricedContracts).toBe(200);
+    expect(detail?.cohort?.band).toBe('above-median'); // 5000 > median 4000, < p75 10000
+  });
+
+  // The read is gated on a clean value: a suspect contract must NOT even query cpv_division_stats.
+  it('skips the cohort read (and returns no cohort) for a non-clean value', async () => {
+    let cohortQueried = false;
+    const db = {
+      prepare(sql: string) {
+        if (sql.includes('cpv_division_stats')) cohortQueried = true;
+        const statement = {
+          bind() {
+            return statement;
+          },
+          async first<T>() {
+            if (sql.includes('WHERE c.id = ?'))
+              return { ...baseContractRow, value_flag: 'value_suspect' } as T;
+            return null as T;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+
+    const detail = await getContract(db, 'c:1');
+
+    expect(detail?.cohort).toBeNull();
+    expect(cohortQueried).toBe(false);
   });
 
   it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {

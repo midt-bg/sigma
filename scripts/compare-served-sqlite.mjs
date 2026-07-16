@@ -16,6 +16,7 @@ const TABLES = [
   'home_totals',
   'sector_totals',
   'facet_counts',
+  'cpv_division_stats',
   'flow_pairs',
   'search_index',
   'data_freshness',

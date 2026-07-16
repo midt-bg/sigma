@@ -20,6 +20,7 @@ import type {
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -485,7 +486,14 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  const [authTotals, compTotals, lotRows, amendmentRows] = await Promise.all([
+  // The cohort benchmark only exists for a clean, comparable value (the same gate contractCohort
+  // applies). Test that gate HERE too, from the row we already read, so a suspect/valueless contract
+  // skips the cpv_division_stats PK read entirely instead of paying for it and discarding the result
+  // (the PR's own „one extra rollup read, not a second scan" goal). The division is known
+  // synchronously, so when it IS read, it loads in parallel with the other detail reads.
+  const hasCleanValue = r.value_flag === 'ok' && r.amount_eur != null && r.amount_eur > 0;
+  const cohortDivision = hasCleanValue && r.cpv_code ? r.cpv_code.slice(0, 2) : '';
+  const [authTotals, compTotals, lotRows, cohortStats, amendmentRows] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -519,6 +527,7 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
+    cohortDivision ? getCpvCohortStats(db, cohortDivision) : Promise.resolve(null),
     db.prepare(AMENDMENTS_SQL).bind(r.unp, r.contract_number).all<AmendmentRow>(),
   ]);
 
@@ -693,6 +702,7 @@ export async function getContract(
     bidder,
     lots,
     subcontractor,
+    cohort: contractCohort(r.amount_eur, r.value_flag, cohortDivision, cohortStats),
     amendments,
   };
 
