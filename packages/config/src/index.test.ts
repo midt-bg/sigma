@@ -204,7 +204,11 @@ describe('taxonomy integrity', () => {
     for (const sector of CPV_SECTORS.filter((s) => s.curated)) {
       expect(sector.short, `curated ${sector.code} needs a short name`).toBeTruthy();
     }
-    expect(CPV_SECTORS.filter((s) => s.curated).map((s) => s.code).sort()).toEqual(['15', '45']);
+    expect(
+      CPV_SECTORS.filter((s) => s.curated)
+        .map((s) => s.code)
+        .sort(),
+    ).toEqual(['15', '45']);
   });
 
   it('CPV_CATEGORIES keys are unique and every division is a known sector', () => {
