@@ -61,6 +61,8 @@ export function buildSubjectRisk(
 
   if (components.length === 0) return null;
 
+  // Mean over the REPORTABLE components only — a thin (< MIN_ELIGIBLE) component is dropped, not scored
+  // as zero (M3 small-sample conservatism). Subjects stand alone (no cross-subject ranking).
   const composite = components.reduce((sum, c) => sum + c.countShare, 0) / components.length;
   return { composite, band: bandFor(composite), components };
 }

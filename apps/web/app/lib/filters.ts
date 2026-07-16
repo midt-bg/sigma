@@ -51,6 +51,7 @@ export function contractListFilters(sp: URLSearchParams) {
     bidder: sp.get('bidder'),
     q: sp.get('q'),
     bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+    markup: (sp.get('markup') === 'high' ? 'high' : null) as 'high' | null,
   };
 }
 
@@ -190,6 +191,7 @@ export const PARAM_ORDER = [
   'funding',
   'eu',
   'bids', // /contracts single-bid filter
+  'markup', // /contracts high-markup filter (risk drill-down)
   'value',
   'authority',
   'bidder',
