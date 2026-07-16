@@ -22,12 +22,12 @@ band, a component breakdown, the underlying counts, and a drill-down to the exac
 | # | Decision | Choice | Owner |
 |---|---|---|---|
 | A | The `methodology.tsx` promise „не маркира фирми като рискови" contradicts a risk band | **Keep the promise; reframe the feature as a neutral aggregate indicator** and reword the sentence | The reword is **maintainer-sign-off-gated** (isolated in commit 6) |
-| B | Two single-offer definitions exist (`bids_received=1` vs `admitted===1`) | **`bids_received=1`, unified site-wide** — matches the 3 shipped sites; refactor `riskLogic` per-contract flag to match | Us (documented in ADR-0039) |
-| C | Composite math for a subject with a missing/thin component | **Mean of *reportable* components** (each with ≥ min-N eligible); band derives from the **count-weighted** composite (robust to one dominant contract); value-weighted shown as context | Us (ADR-0039) |
+| B | Two single-offer definitions exist (`bids_received=1` vs `admitted===1`) | **`bids_received=1`, unified site-wide** — matches the 3 shipped sites; refactor `riskLogic` per-contract flag to match | Us (documented in ADR-0043) |
+| C | Composite math for a subject with a missing/thin component | **Mean of *reportable* components** (each with ≥ min-N eligible); band derives from the **count-weighted** composite (robust to one dominant contract); value-weighted shown as context | Us (ADR-0043) |
 
 Consequence of B to record explicitly: the per-contract `no_competition` flag stops subtracting
 rejected bids, so a `3-bid / 2-rejected` contract no longer flags. The "many bids, most rejected"
-pattern is **deliberately deferred as its own future flag**, not silently dropped (noted in ADR-0039).
+pattern is **deliberately deferred as its own future flag**, not silently dropped (noted in ADR-0043).
 
 ## 3. Current state (verified against code)
 
@@ -106,7 +106,7 @@ calibration against the real distribution**, not presented as science:
 
 ## 7. Commit plan (ONE PR — dependency order; each commit compiles & its tests pass)
 
-1. `docs(adr): ADR-0039 subject risk composite` — decisions (grain, 2 components, `bids_received=1`
+1. `docs(adr): ADR-0043 subject risk composite` — decisions (grain, 2 components, `bids_received=1`
    + the per-contract behavior change, equal weights, count+value, min-N, band cutoffs, neutral
    framing, deferred "disqualification-heavy" signal). Pure docs; the design gate.
 2. `feat(db): materialize is_single_offer/is_high_markup on contracts` — columns in `0000_init.sql`

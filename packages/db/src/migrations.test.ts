@@ -13,6 +13,9 @@ const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_curr
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
+// precompute writes the subject-risk columns (#229), which live in 0011 — only the backfill test
+// below runs precompute, so 0011 is applied there and nowhere else in this file.
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -134,6 +137,7 @@ describe('served migrations', () => {
       readScript(dbPath, migration2);
       readScript(dbPath, migration3);
       readScript(dbPath, migration9);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);
 

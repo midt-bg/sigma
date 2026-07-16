@@ -24,6 +24,8 @@ const migration7 = resolve(root, 'packages/db/migrations/0007_amendment_value_su
 const migration8 = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 // #279/ADR-0033: refresh-slice.sql + normalize-raw.sql read interest_link_evidence, so 0009 must be applied too.
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0011, not 0000_init.
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -77,6 +79,7 @@ function withDb<T>(fn: (dbPath: string) => T): T {
     readScript(dbPath, migration7);
     readScript(dbPath, migration8);
     readScript(dbPath, migration9);
+    readScript(dbPath, riskColumnsPath);
     return fn(dbPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });

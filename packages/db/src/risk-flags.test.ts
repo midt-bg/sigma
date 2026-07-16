@@ -8,6 +8,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+// precompute's value + officials blocks read 0002 (current_value_currency), 0003
+// (interest_links) and 0009 (Trade Register evidence) — apply them before it runs.
+const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
+const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -37,6 +43,10 @@ beforeAll(() => {
   dir = mkdtempSync(resolve(tmpdir(), 'sigma-risk-flags-'));
   dbPath = resolve(dir, 'test.sqlite');
   readScript(dbPath, schemaPath);
+  readScript(dbPath, migration2Path);
+  readScript(dbPath, migration3Path);
+  readScript(dbPath, migration9Path);
+  readScript(dbPath, riskColumnsPath);
   sqlite(
     dbPath,
     `PRAGMA foreign_keys=ON;

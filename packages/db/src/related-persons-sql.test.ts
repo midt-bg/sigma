@@ -28,6 +28,8 @@ const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006: SURFACED_OWNERSHIP now requires a Trade Register evidence seal (#279, ADR-0033).
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0011, not 0000_init.
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();
@@ -145,6 +147,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
       readScript(dbPath, migration0);
       readScript(dbPath, migration2);
       readScript(dbPath, migration9);
+      readScript(dbPath, riskColumnsPath);
       sqlite(dbPath, FIXTURE);
       return fn(dbPath);
     } finally {

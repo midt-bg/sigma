@@ -21,6 +21,7 @@ const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_rest
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
 // #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
 const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
@@ -197,6 +198,7 @@ function initWorkDb(dbPath: string): void {
   readScript(dbPath, migration6Path);
   readScript(dbPath, migration7Path);
   readScript(dbPath, migration8Path);
+  readScript(dbPath, riskColumnsPath);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -592,6 +594,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -680,6 +683,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
@@ -867,6 +871,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -922,6 +927,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -977,6 +983,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1118,6 +1125,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, riskColumnsPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
