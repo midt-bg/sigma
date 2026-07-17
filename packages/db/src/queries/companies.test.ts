@@ -4,11 +4,11 @@ import type { CompanyTotalsRow } from './rows';
 
 const filteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
   {
-    bidder_id: 'eik:111111111',
+    bidder_id: 'eik:111111113',
     name: 'Филтрирана фирма',
     kind: 'company',
     ownership_kind: null,
-    eik: '111111111',
+    eik: '111111113',
     eik_valid: 1,
     settlement: 'София',
     won_eur: 1000,
@@ -25,11 +25,11 @@ const filteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
 const unfilteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
   ...filteredRows,
   {
-    bidder_id: 'eik:999999999',
+    bidder_id: 'eik:999999995',
     name: 'Нефилтрирана фирма',
     kind: 'company',
     ownership_kind: null,
-    eik: '999999999',
+    eik: '999999995',
     eik_valid: 1,
     settlement: 'Пловдив',
     won_eur: 900,
@@ -93,7 +93,7 @@ describe('streamCompaniesCsv', () => {
       .map((line) => line.split(',')[0]);
 
     expect(csvEiks).toEqual(list.items.map((item) => item.eik));
-    expect(csvEiks).toEqual(['111111111']);
+    expect(csvEiks).toEqual(['111111113']);
   });
 
   it('exports fewer rows for a sector filter than for the unfiltered corpus', async () => {
