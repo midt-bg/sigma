@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import {
   isRouteErrorResponse,
   Link,
@@ -19,6 +19,13 @@ import { useNonce } from './nonce';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
+// Lazy so the AI SDK + dock tree stay out of every page's critical bundle — the dock is mount-gated
+// (renders null on the server and first client render) so a client-only chunk causes no hydration
+// mismatch, and it only loads when the launch gate is on.
+const AssistantDock = lazy(() =>
+  import('./lib/assistant-dock/AssistantDock').then((m) => ({ default: m.AssistantDock })),
+);
+import { assistantEnabled } from './lib/assistant/enabled';
 import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
@@ -50,7 +57,13 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
   const coverage = await withDbRetry(() => getCoverageMeta(context.cloudflare.env.DB));
-  return { ...coverage, origin: url.origin };
+  // Master launch gate (#83): expose it to the client so the dock launcher is hidden on a dark deploy —
+  // no launcher that would only 503 on click. The route enforces the same gate server-side (defence in depth).
+  const assistantOn = assistantEnabled(context.cloudflare.env.ASSISTANT_ENABLED);
+  // Public Turnstile site key (H3): the dock renders the invisible bot-gate widget with it. Empty ⇒
+  // no widget, no token — the server gate is a no-op in that state too.
+  const turnstileSiteKey = context.cloudflare.env.TURNSTILE_SITE_KEY || null;
+  return { ...coverage, origin: url.origin, assistantEnabled: assistantOn, turnstileSiteKey };
 }
 
 // Scroll-restoration key for list pages. Filters and sort live in the query string under a stable
@@ -149,6 +162,23 @@ function RouteProgress() {
   return <div className="route-progress" aria-hidden="true" data-busy={busy} />;
 }
 
+// Isolate the assistant dock: a render throw inside it must not take down the whole page chrome.
+// The dock is a supplementary tool, so the fallback is simply nothing.
+class AssistantBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: unknown, info: { componentStack?: string }) {
+    // The dock is an AI-SDK + streaming + Turnstile surface; a silent disappearance would hide real
+    // regressions. Log so a crash is at least visible in the browser console / error reporting.
+    console.error('[assistant] dock crashed and was suppressed', error, info?.componentStack);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 export default function App({ loaderData }: Route.ComponentProps) {
   // After a client-side navigation, move focus to the main region so keyboard and
   // screen-reader users aren't stranded on <body> mid-page (and the skip link stays
@@ -191,6 +221,13 @@ export default function App({ loaderData }: Route.ComponentProps) {
       />
       <ScrollToTop />
       <AccessibilityWidget />
+      {loaderData.assistantEnabled && (
+        <AssistantBoundary>
+          <Suspense fallback={null}>
+            <AssistantDock turnstileSiteKey={loaderData.turnstileSiteKey} />
+          </Suspense>
+        </AssistantBoundary>
+      )}
     </>
   );
 }

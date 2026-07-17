@@ -1,7 +1,15 @@
+// Cloudflare Turnstile (assistant bot gate, H3): the widget loads api.js, embeds an iframe, and calls
+// home — so its origin must be allowed for script/frame/connect. Harmless when the widget isn't mounted
+// (no TURNSTILE_SITE_KEY) — it only widens the allowlist, nothing loads from it.
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+
 function csp(scriptSrc: string[]): string {
   return [
     "default-src 'self'",
-    `script-src 'self' ${scriptSrc.join(' ')}`.trim(),
+    `script-src 'self' ${TURNSTILE_ORIGIN} ${scriptSrc.join(' ')}`.trim(),
+    // Keep 'self': CSP does NOT fall back to default-src once frame-src is present, so omitting 'self'
+    // here would block every same-origin <iframe> on the site, not just widen it to the Turnstile origin.
+    `frame-src 'self' ${TURNSTILE_ORIGIN}`,
     // `style-src` keeps 'unsafe-inline': the only remaining inline `style=` attributes carry
     // genuinely dynamic, per-row values that cannot be enumerated as classes — chart-bar widths
     // (StackedBar, RankedBars, ShareBar, SingleOfferPortion) and the procedure-mix segment colours
@@ -13,7 +21,7 @@ function csp(scriptSrc: string[]): string {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data:",
-    "connect-src 'self'",
+    `connect-src 'self' ${TURNSTILE_ORIGIN}`,
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
@@ -30,7 +38,9 @@ export function baseSecurityHeaders(isProd: boolean): Headers {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
-    'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+    // microphone=(self): the assistant's voice input needs getUserMedia same-origin. Camera +
+    // geolocation stay fully denied. Site-wide broadening compensated by the strict CSP (no inline script).
+    'Permissions-Policy': 'geolocation=(), microphone=(self), camera=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
   });

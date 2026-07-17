@@ -170,8 +170,25 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // disables it, but block defensively); `randomblob`/`zeroblob` build arbitrarily large blobs; and
   // `printf`/`format` with a width specifier (`printf('%1000000d', x)`) build arbitrarily large STRINGS.
   // All materialise in Worker memory before capRows can measure the row — a single row can OOM the
-  // isolate. No analytics query needs any of them (review #80, red-team R2; printf/format f/u).
-  if (/\b(?:load_extension|randomblob|zeroblob|printf|format)\s*\(/i.test(sql)) {
+  // isolate. `string_agg` (the SQLite 3.44 alias of group_concat) and the json_* builders are the same
+  // family: an aggregate collapses a whole table into one giant string that no LIMIT bounds (`json_pretty`,
+  // 3.46, expands JSON similarly); the per-row json_object/json_array/json_quote/json_set/json_insert/
+  // json_replace/json_patch/json_remove are denied for symmetry. No analytics query needs any of them
+  // (review #80, red-team R2; printf/format + json_* + string_agg f/u). The bare form is caught here; a
+  // double-quoted name slips this word-boundary regex and is caught by the AST guard. `group_concat`,
+  // `quote`, `hex` are L2-only (not in this regex) — and NB: L2 also enforces a positive ALLOWED_FUNCTIONS
+  // allowlist, so any function not listed there fails closed regardless. This regex is just the cheap
+  // early-reject for the known-dangerous bare forms.
+  //
+  // NOTE: `replace` is deliberately NOT here — single-level replace is a legitimate read-only string
+  // function (Cyrillic↔Latin transliteration). Only a COMPOUNDING replace (one re-expanding an already-
+  // amplified argument) or an amplifier chained across scopes is a string-bomb, and that needs the AST to
+  // detect (a text regex can't tell one replace from two); it is caught at L2 (denyAmplifyingStringChain).
+  if (
+    /\b(?:load_extension|randomblob|zeroblob|printf|format|string_agg|json_group_array|json_group_object|json_object|json_array|json_quote|json_pretty|json_set|json_insert|json_replace|json_patch|json_remove)\s*\(/i.test(
+      sql,
+    )
+  ) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };

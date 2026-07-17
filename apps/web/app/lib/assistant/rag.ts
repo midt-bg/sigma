@@ -1,8 +1,10 @@
 // RAG layer (Vectorize + Workers AI embeddings).
 //
-// WHY THIS EXISTS / DEVIATION FROM THE SPEC: the design in §1–§9 is a text→SQL tool-calling agent
-// with NO vector retrieval. RAG is added here deliberately (per the implementation request) where it
-// pays off most for a weak 27B model:
+// WHY THIS EXISTS: an ADOPTED layer of the assistant, not a deviation. The base spec §1–§9 describes a
+// text→SQL tool-calling agent; the agent-team addendum (spec/ai-assistant-agent-team.md, Phase 1) and
+// §9 point 2 adopt retrieval as canonical — this is the retrieval-augmented realisation of §9 point 2
+// (feed the MOST RELEVANT dictionary chunks, not the whole thing). See docs/adr/0008. It pays off most
+// for a weak 27B model:
 //
 //   1. Schema/cookbook grounding (primary). Embed the data-dictionary trap-rules + canonical queries
 //      (describe-schema.ts) and retrieve the few MOST RELEVANT chunks for the user's question, to
@@ -27,7 +29,25 @@ export const EMBED_DIM = 1024;
 export const MAX_EMBED_CHARS = 2048;
 
 export interface EmbeddingRunner {
-  run(model: string, inputs: { text: string[] }): Promise<{ data: number[][] }>;
+  run(
+    model: string,
+    inputs: { text: string[] },
+    // Workers AI binding option: route this inference through a Cloudflare AI Gateway. The real `Ai`
+    // binding accepts it; `gatewayRunner` below injects it so RAG embeddings transit the gateway too.
+    options?: { gateway?: { id: string } },
+  ): Promise<{ data: number[][] }>;
+}
+
+/**
+ * Wrap the raw Workers AI binding so every embedding inference is routed through the given AI Gateway
+ * (id = the gateway slug). Returns the runner unchanged when no gateway id is configured — the caller
+ * (chat route) enforces the fail-closed policy before any model traffic, so in the live path an id is
+ * always present. Keeping the passthrough here lets operator/seed paths degrade gracefully.
+ */
+export function gatewayRunner(ai: EmbeddingRunner, gatewayId: string | undefined): EmbeddingRunner {
+  const id = gatewayId?.trim();
+  if (!id) return ai;
+  return { run: (model, inputs) => ai.run(model, inputs, { gateway: { id } }) };
 }
 export interface VectorRecord {
   id: string;

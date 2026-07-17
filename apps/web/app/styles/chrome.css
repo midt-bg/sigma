@@ -28,14 +28,11 @@
 .site-header-inner {
   max-width: var(--max);
   margin: 0 auto;
-  padding: 24px var(--gutter) 16px;
+  padding: 0 var(--gutter);
+  height: 52px;
   display: flex;
   align-items: center;
-  gap: var(--s-4) var(--s-5);
-  flex-wrap: wrap;
-}
-.site-header-inner > .brand {
-  margin-right: auto;
+  gap: var(--s-5);
 }
 .brand {
   text-decoration: none;
@@ -69,16 +66,21 @@
   align-items: center;
   gap: var(--s-5);
   flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .site-nav {
   display: flex;
-  gap: var(--s-6);
-  font: 11px/1.3 var(--font-mono);
-  letter-spacing: 0.14em;
+  gap: var(--s-3);
+  font: 11px/1 var(--font-mono);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-mid);
   align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: center;
 }
 .site-nav a {
   display: inline-flex;
@@ -86,8 +88,8 @@
   min-block-size: 24px;
   text-decoration: none;
   color: var(--ink-mid);
-  padding: 4px 0;
-  border-bottom: 2px solid transparent;
+  padding: 2px 0;
+  border-bottom: 1px solid transparent;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -195,12 +197,17 @@
   transform: rotate(-45deg);
 }
 
-/* ≤960px — six mono nav items get tight, so the inline bar gives way to a menu button that opens a
-   right-side drawer over a dimmed backdrop. The slide is a compositor-friendly transform (not the
-   old layout-bound max-height), and `visibility` takes the panel out of the tab order when closed. */
-@media (max-width: 960px) {
+/* ≤1100px — eleven mono nav items can't fit the inline bar below this width, so give way to a menu
+   button that opens a right-side drawer over a dimmed backdrop. The slide is a compositor-friendly
+   transform (not the old layout-bound max-height), and `visibility` takes the panel out of the tab
+   order when closed. */
+@media (max-width: 1100px) {
   .site-header-inner {
-    padding: 18px var(--gutter) 16px;
+    padding: 0 var(--gutter);
+    height: 56px;
+  }
+  .site-actions {
+    margin-left: auto;
   }
   .nav-toggle {
     display: inline-flex;

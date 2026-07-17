@@ -25,10 +25,31 @@ export function toQueryResult(
   return { handle, columns, rows: capped.rows, truncated: capped.truncated };
 }
 
-/** Compact, capped representation of a result for the model's context (never the full payload twice). */
-export function forModel(r: QueryResult): string {
-  const head = `${r.handle} (колони: ${r.columns.join(', ')}) — ${r.rows.length} ред(а)${
-    r.truncated ? ', отрязани' : ''
-  }`;
-  return `${head}\n${JSON.stringify(r.rows)}`;
+// The model only needs a result's SHAPE + a small sample to author the report; the FULL result (up to
+// RESULT_BYTE_CAP, in ctx.results) is bound SERVER-SIDE into the report — a `table` block binds by
+// resultId, so it always renders every stored row regardless of what the model saw. Serialising the whole
+// payload into the model's context is what overflowed the 65 536-TOKEN window on list queries: a 64 KB
+// Cyrillic result ≈ 47k tokens; + the ~10k system prompt + the forced emit_report 8k output reservation
+// tipped the request past the window → provider 500 "maximum context length" (see DEEPDIVE-postfix.md §1).
+// So cap what the MODEL sees to a small preview, independent of what the report renders. Previewing shrinks
+// only the model's view of the tail rows (its prose), never the rendered report.
+export const MODEL_PREVIEW_BYTE_CAP = 8 * 1024;
+
+/**
+ * Compact, capped representation of a result for the model's context (never the full payload twice). Rows
+ * are previewed to `previewCap` bytes; the head always reports the TRUE row count and flags both DB-side
+ * truncation (`отрязани от базата`, from RESULT_BYTE_CAP) and preview truncation (`показани първите N`).
+ */
+export function forModel(r: QueryResult, previewCap = MODEL_PREVIEW_BYTE_CAP): string {
+  const preview = capRows(r.rows, previewCap);
+  const shown = preview.rows.length;
+  const total = r.rows.length;
+  const flags = [
+    r.truncated ? 'отрязани от базата' : '',
+    shown < total ? `показани първите ${shown}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const head = `${r.handle} (колони: ${r.columns.join(', ')}) — ${total} ред(а)${flags ? `, ${flags}` : ''}`;
+  return `${head}\n${JSON.stringify(preview.rows)}`;
 }

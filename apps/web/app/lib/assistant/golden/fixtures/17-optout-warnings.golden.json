@@ -1,0 +1,38 @@
+{
+  "id": "17-optout-warnings",
+  "prompt": "Покажи разхода по сектор, но включи и непотвърдените стойности",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT s.division AS division, s.value_eur AS value_eur FROM sector_totals s ORDER BY s.value_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "division": "45",
+            "value_eur": 3000000
+          },
+          {
+            "division": "72",
+            "value_eur": 2000000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по сектор (с опции)",
+    "question": "Покажи разхода по сектор, но включи и непотвърдените стойности",
+    "blocks": [
+      {
+        "type": "bar",
+        "resultId": "R1",
+        "labelCol": "division",
+        "valueCol": "value_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false,
+    "optOuts": ["includeUnsummable", "includeSynthetic", "publishedAt"]
+  }
+}

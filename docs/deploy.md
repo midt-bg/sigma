@@ -119,6 +119,57 @@ Custom token-ът се нуждае само от тези **Account**-ниво 
 не е нужно отделно **Workflows** право — то се покрива от Workers Scripts: Edit; някои dashboard-и не
 изброяват самостоятелен Workflows scope.)
 
+> **Expiry + ротация.** Cloudflare token-ите по подразбиране **не изтичат**. Задайте `expires_on` ~90
+> дни напред при създаване и сложете напомняне за тримесечна ротация: регенерирайте token-а и обновете
+> GitHub секрета `CLOUDFLARE_API_TOKEN`. IP филтриране е непрактично за GitHub-hosted runner-ите
+> (голям, променлив egress диапазон) — пропуснете го, освен ако не минете на self-hosted runner с
+> фиксиран изходящ IP.
+>
+> **Защо все още дълголетен token, а не OIDC?** Към юни 2026 Cloudflare **няма** OIDC / workload
+> identity federation за Wrangler (за разлика от AWS `configure-aws-credentials` / GCP WIF) — няма
+> token-exchange endpoint, който да размени GitHub OIDC token за краткотраен Cloudflare credential.
+> Отвореното искане ([workers-sdk#11434](https://github.com/cloudflare/workers-sdk/discussions/11434))
+> няма отговор от Cloudflare. Затова смекчаването е **минимални scope-ове + expiry + ротация**, не
+> keyless auth. Преразгледайте, ако Cloudflare пусне OIDC.
+
+### Секрети на асистента (за всяка среда)
+
+Асистентът чете няколко secret-а от Worker binding-и (никога от `wrangler.jsonc` — те се задават с
+`wrangler secret put <ИМЕ> --env <target>` или като GitHub Environment secret, source of truth е
+секретът):
+
+- `ASSISTANT_API_KEY` — ключът към BgGPT провайдъра (през AI Gateway). Без него ендпойнтът връща 503.
+- `TURNSTILE_SECRET` — двойка на публичния `TURNSTILE_SITE_KEY`; докато не е зададен, edge gate-ът е
+  no-op (dev/preview/staging). Виж §7/§8.
+- `ASSISTANT_HMAC_KEY` — ключ за подписване на транскрипта (§9.3, [ADR-0011](adr/0011-transcript-hmac-signing.md)
+  / [ADR-0012](adr/0012-transcript-hmac-enforcement.md)). ≥256-битов случаен низ. Сървърът подписва всяко
+  свое съобщение и отхвърля всяко неавтентично при следващия ход. Това е **чисто вътрешен** ключ (никога не
+  напуска Cloudflare, няма човешка стойност), затова се провизира **автоматично от CI**, точно като
+  `LOG_IP_KEY`: `scripts/ensure-worker-secret.mjs` го генерира **само ако липсва** и го оставя непроменен при
+  redeploy (ротирането му при всеки deploy би обезсилило наведнъж всеки in-flight клиентски транскрипт).
+  Wire-нат е в `deploy.yml` (production/staging) и `preview.yml` (previews), така че на всяка среда, на която
+  асистентът е включен, ключът присъства без ръчна намеса. **Fail-closed на стабилните публични среди
+  (`production` + `staging`):** ако `ENVIRONMENT` е `production` или `staging` и ключът все пак липсва (напр.
+  CI стъпката е прескочена), ендпойнтът връща 503 — отказва да работи с непроверим транскрипт. **Ephemeral
+  preview-ите остават fail-open** (може да вървят само-UI без ключа), както и локалният dev.
+  - **Локален dev:** генерирай веднъж в `.dev.vars` (не се committ-ва):
+    ```sh
+    echo "ASSISTANT_HMAC_KEY=$(openssl rand -hex 32)" >> apps/web/.dev.vars
+    ```
+  - **Ръчен override / ротация** (иначе не е нужно — CI поема): `openssl rand -hex 32 | pnpm exec wrangler
+    secret put ASSISTANT_HMAC_KEY --env production`.
+- `ASSISTANT_HMAC_KEY_PREVIOUS` — задава се **само по време на ротация**. Verify приема и стария, и
+  новия ключ; подписва се само с текущия. Извежда се (unset) щом всички стари подписани съобщения са
+  изтекли от клиентската история (прозорец от порядъка на дни).
+
+> **`ENVIRONMENT` binding.** Fail-closed gate-ът се управлява от runtime променливата `ENVIRONMENT`
+> (не от build-константата `import.meta.env.PROD`, която е `true` и за staging). Deploy слоят
+> (`scripts/wrangler-render.mjs`) я stamp-ва per-target от GitHub Environment променливата
+> `SIGMA_ENVIRONMENT`: `production` / `staging` → fail-closed; `preview` (hard-coded в `preview.yml`) /
+> `development` (committнат default) / unset → fail-open. Т.е. на публичните среди задай `SIGMA_ENVIRONMENT`
+> = `production`/`staging`; CI stamp-ва `ENVIRONMENT` **и** провизира `ASSISTANT_HMAC_KEY` в един и същ
+> deploy, така че gate-ът е активен без ръчни стъпки.
+
 ## 1. Provisioning на D1 (за всяка среда, локално)
 
 Всяка среда получава **собствена** база. `SIGMA_D1_NAME` избира името (по подразбиране `sigma`):
@@ -187,12 +238,54 @@ domain таблиците и преизчислява rollup-ите + FTS.
 - променливи `SIGMA_WEB_NAME` = `sigma-stage`, `SIGMA_ETL_NAME` = `sigma-etl-stage`,
   `SIGMA_WORKFLOW_NAME` = `sigma-refresh-stage`, `SIGMA_D1_NAME` = `sigma-stage`
 
-> Средата `production` е **неблокираща** за създаване: дори с `environment: production` зададено на
-> job-а, GitHub все още излага repo-ниво секретите, така че production продължава да се деплойва с
-> днешните repo секрети, докато не решите да ги преместите в средата.
+> **Approval gate се прилага** след като `provision-environments.sh` е изпълнен — всеки production
+> деплой изисква ръчно одобрение преди да достигне runner. Средата `production` е **неблокираща само
+> за създаването** на самата среда в Settings: дори с `environment: production` зададено на job-а,
+> GitHub излага repo-ниво секретите, така че production продължава да се деплойва с днешните repo
+> секрети, докато не ги преместите в средата — но одобрението се прилага независимо от това.
 
-> Опционално подсилване: дайте на `production` **required reviewers**, за да изчака prod деплой ръчен
-> клик "Review deployments".
+### Approval gate за production (задължително)
+
+Production деплой **изисква човешко одобрение**. Един `v*` таг сам по себе си повече **не** пуска прод
+автоматично — job-ът спира на „Review deployments“ преди да стигне runner (т.е. преди Cloudflare
+автентикацията изобщо да се изпълни). Това е protection rule на средата, не YAML — затова го кодираме
+в скрипт, за да е възпроизводимо и одитируемо вместо невидим клик в UI-я:
+
+```bash
+REVIEWER_USERS="lyubomir-bozhinov" ./scripts/provision-environments.sh   # required reviewers + v* tag policy
+# или с екип:
+REVIEWER_TEAMS="midt-bg/maintainers" ./scripts/provision-environments.sh
+```
+
+Скриптът ([scripts/provision-environments.sh](../scripts/provision-environments.sh)) задава на
+`production`:
+1. **Required reviewers** (+ `prevent_self_review`) — поне един човек трябва да одобри прод деплоя.
+2. **Deployment tag policy `v*`** — GitHub сам отказва прод деплой, ако ref-ът не е release таг, дори
+   ако `detect` логиката в [deploy.yml](../.github/workflows/deploy.yml) някога сгреши (defense in
+   depth). Job-ът има и изричен `timeout-minutes: 10` вместо 360-мин default.
+
+> **⚠ Four-eyes уговорка.** `prevent_self_review` пречи *само* на инициатора на деплоя да одобри
+> собствения си run. **Един** reviewer не е четири-очен контрол — инициаторът и одобряващият могат да са
+> двама различни души, но без допълнителна политика нищо не пречи на един човек да пусне и одобри
+> последователно. За истинско four-eyes задайте **≥2 индивидуални reviewer-а** (напр.
+> `REVIEWER_USERS="alice,bob"`) или екип с ≥2 членове, така че нито един човек да не може сам да
+> инициира *и* одобри production деплой.
+
+> **`wait_timer`.** PUT-ът на скрипта заменя целия protection-rule set и нулира `wait_timer` на 0,
+> ако не подадете `WAIT_TIMER=<минути>`. Стойност, зададена в GitHub UI, не се запазва при повторно
+> изпълнение без тази променлива.
+
+> Изчакването за одобрение **не** влиза в `timeout-minutes` — таймерът тръгва чак щом job-ът хване
+> runner, след одобрението.
+
+> **`workflow_dispatch` и tag policy.** След като скриптът е изпълнен, ръчното стартиране на деплой
+> към `production` чрез `workflow_dispatch` успява **само от `v*` таг ref**, например:
+> ```bash
+> gh workflow run deploy.yml --ref v1.0.1 -f environment=production
+> ```
+> Стартиране от branch ref (напр. `main`) се отказва автоматично от GitHub на ниво protection rule — не
+> достига до runner-а. Администратори могат да заобиколят това при спешни случаи чрез настройката
+> `admins_can_bypass` (Settings → Environments → production).
 
 ## 4. Деплой
 

@@ -21,6 +21,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const migration0002Path = resolve(root, 'packages/db/migrations/0002_contracts_is_synthetic.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -61,6 +62,7 @@ function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
   readScript(dbPath, schemaPath);
+  readScript(dbPath, migration0002Path);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }

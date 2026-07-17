@@ -7,7 +7,14 @@ import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { rateLimitTranscribeRoute } from './transcribe-rate-limit';
 import { withRequestLog } from './request-log';
+
+// Durable Objects for the AI assistant. Both must be named exports of the worker entry so their
+// wrangler.jsonc bindings + migrations resolve the classes: ReportSingleFlight (Lane F report dedup) and
+// BgGptCircuitBreaker (#135 account-wide RPM cap in front of the paid model call).
+export { ReportSingleFlight } from './assistant/report-single-flight';
+export { BgGptCircuitBreaker } from './assistant/bggpt-circuit-breaker';
 
 declare module 'react-router' {
   export interface AppLoadContext {
@@ -131,6 +138,13 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     import.meta.env.PROD,
   );
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
+
+  const transcribeRateLimitResponse = await rateLimitTranscribeRoute(
+    request,
+    env,
+    import.meta.env.PROD,
+  );
+  if (transcribeRateLimitResponse) return transcribeRateLimitResponse;
 
   const response = await requestHandler(request, { cloudflare: { env, ctx } });
   // `response.ok` is load-bearing for cache correctness beyond "don't cache errors": cache-key.ts decodes

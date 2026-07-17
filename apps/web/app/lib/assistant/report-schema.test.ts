@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   bindReport,
   findProseNumbers,
+  sanitizeCell,
   sanitizeProse,
+  stripEntityIdPrefix,
   type EmitReportInput,
   type QueryResult,
 } from './report-schema';
@@ -48,6 +50,78 @@ describe('bindReport — server owns the values', () => {
         items: [{ label: 'Общо', value: 2124567, format: 'money' }],
       });
     }
+  });
+
+  it('rejects a percent totals item bound to a value that cannot be a 0..1 ratio (Q8 mistag)', () => {
+    // The weak model bound a raw euro sum (R2.total_eur) into a percent slot → „…%" garbage. The binder
+    // must reject so the model retries with a real share column.
+    const out = bindReport(
+      emit([
+        {
+          type: 'totals',
+          items: [
+            {
+              label: 'Дял по стойност',
+              ref: { resultId: 'R2', row: 0, col: 'total_eur' },
+              format: 'percent',
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.some((e) => /not a 0\.\.1 ratio/.test(e))).toBe(true);
+  });
+
+  it('accepts a percent totals item bound to a genuine 0..1 ratio', () => {
+    const withShare: QueryResult[] = [
+      { handle: 'R3', columns: ['single_offer_share'], rows: [[0.318]] },
+    ];
+    const out = bindReport(
+      emit([
+        {
+          type: 'totals',
+          items: [
+            {
+              label: 'Дял по стойност',
+              ref: { resultId: 'R3', row: 0, col: 'single_offer_share' },
+              format: 'percent',
+            },
+          ],
+        },
+      ]),
+      withShare,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok)
+      expect(out.report.blocks[0]).toEqual({
+        type: 'totals',
+        items: [{ label: 'Дял по стойност', value: 0.318, format: 'percent' }],
+      });
+  });
+
+  it('rejects a totals item bound to a row of a MULTI-row result (the „762 млн." year-series mislabel)', () => {
+    // R1 has 2 rows; binding a „total" to its row 0 presents ONE row as the grand total — the live
+    // „Разход по години" bug where „Общ разход 2020–2026" showed only the 2020 row, ~61× below the sum.
+    // A totals figure must come from a single-row aggregate (SELECT SUM/COUNT); the model must retry.
+    const out = bindReport(
+      emit([
+        {
+          type: 'totals',
+          items: [
+            {
+              label: 'Общ разход',
+              ref: { resultId: 'R1', row: 0, col: 'spent_eur' },
+              format: 'money',
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.some((e) => /single-row aggregate/.test(e))).toBe(true);
   });
 
   it('takes table rows wholesale from the referenced result (model cannot inject rows)', () => {
@@ -180,6 +254,35 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
     }
   });
 
+  it('drops an entity link whose id domain contradicts the declared kind (nedda review guard)', () => {
+    // `authority_id` holds `auth:` ids, but this column declares kind `company`. Emitting the id under a
+    // `company` link would render /companies/<authority-id> — a wrong citation on a transparency report.
+    // The binder drops the link (null) instead of trusting the model's kind.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              format: 'text',
+              link: { kind: 'company', idCol: 'authority_id' },
+            },
+            { key: 'spent_eur', header: 'Похарчено (€)', align: 'right', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      expect(out.report.blocks[0].rows[0]!.links).toEqual([null, null]);
+      expect(out.report.blocks[0].rows[1]!.links).toEqual([null, null]);
+    }
+  });
+
   it('rejects a table whose link idCol is absent from the result', () => {
     const out = bindReport(
       emit([
@@ -229,6 +332,31 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
     }
   });
 
+  it('degrades a missing table display column to null cells and records a warning', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            { key: 'authority', header: 'Институция', format: 'text' },
+            { key: 'nonexistent_col', header: 'Липсваща', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.warnings.join(' ')).toMatch(/no column "nonexistent_col"/);
+      const table = out.report.blocks[0];
+      if (table?.type === 'table') {
+        expect(table.rows[0]!.cells[1]).toBeNull();
+        expect(table.rows[1]!.cells[1]).toBeNull();
+      }
+    }
+  });
+
   it('gates material numbers in prose (guardrail E2)', () => {
     const out = bindReport(
       emit([{ type: 'text', md: 'Похарчени са 1 234 567 €, тоест над 12 млрд.' }]),
@@ -246,6 +374,68 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
       results,
     );
     expect(out.ok).toBe(true);
+  });
+});
+
+describe('entity-id scheme never leaks as a display cell (Q17/Q46 follow-up)', () => {
+  it('strips each whole-cell id prefix down to its real-world value', () => {
+    expect(stripEntityIdPrefix('auth:000695089')).toBe('000695089'); // authority → bare ЕИК
+    expect(stripEntityIdPrefix('eik:831915840')).toBe('831915840'); // company → bare ЕИК
+    expect(stripEntityIdPrefix('name:СОФАРМА АД')).toBe('СОФАРМА АД'); // company fallback → name
+    expect(stripEntityIdPrefix('name:ACME: LTD')).toBe('ACME: LTD'); // name is free text — colon kept intact
+  });
+
+  it('collapses a composite contract id to its head УНП/ocid, dropping the embedded bidder token', () => {
+    // The composite embeds the bidder id mid-string; anchoring the strip at `^` would leave `…:eik:ЕИК:…`.
+    expect(stripEntityIdPrefix('c:e:00042-2025-0016:237236:1:eik:175405647:1')).toBe(
+      '00042-2025-0016',
+    );
+    expect(stripEntityIdPrefix('c:o:UNP-1:CONTRACT-1:2026-06-13')).toBe('UNP-1');
+    // The `c:e:` prefix may already be gone (a prior strip) — the embedded token alone still marks it composite.
+    expect(stripEntityIdPrefix('00080-2023-0001:84818:_:name:LEONARDO S.P.A.:1')).toBe(
+      '00080-2023-0001',
+    );
+    // Simple (no embedded token) contract id → head is the whole УНП/ocid.
+    expect(stripEntityIdPrefix('c:e:00123-2024-0001')).toBe('00123-2024-0001');
+    expect(stripEntityIdPrefix('c:o:ocds-abc-123')).toBe('ocds-abc-123');
+  });
+
+  it('leaves ordinary values, colon-bearing text, NUTS codes and numbers untouched', () => {
+    expect(sanitizeCell('СОФАРМА АД')).toBe('СОФАРМА АД');
+    expect(sanitizeCell('Доставка: канцеларски материали')).toBe('Доставка: канцеларски материали');
+    expect(sanitizeCell('BG411')).toBe('BG411'); // NUTS3 code is not our scheme — must survive
+    expect(sanitizeCell('2024')).toBe('2024');
+    expect(sanitizeCell(1234567)).toBe(1234567);
+    expect(sanitizeCell(null)).toBe(null);
+  });
+
+  it('cleans a raw id shown as a visible column while the entity link keeps the full id', () => {
+    // The model put `authority_id` (an `auth:…` column) as a DISPLAY key — the Q17/Q46 defect. The cell must
+    // render the bare ЕИК, yet a link declared on the same id column must still bind the FULL id for /authorities/<id>.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority_id',
+              header: 'Възложител',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id' },
+            },
+            { key: 'spent_eur', header: 'Похарчено (€)', align: 'right', format: 'money' },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const row0 = out.report.blocks[0].rows[0]!;
+      expect(row0.cells).toEqual(['000695089', 1234567]); // prefix stripped from the visible cell
+      expect(row0.links).toEqual(['auth:000695089', null]); // link still carries the full, prefixed id
+    }
   });
 });
 
@@ -412,6 +602,15 @@ describe('null values in chart blocks (review #80)', () => {
     }
   });
 
+  it('hard-errors a bar block with a missing column so the model retries rather than charting nulls', () => {
+    const out = bindReport(
+      emit([{ type: 'bar', resultId: 'R1', labelCol: 'authority', valueCol: 'nonexistent_col' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/no column "nonexistent_col"/);
+  });
+
   it('drops timeseries points with a null value', () => {
     const r: QueryResult[] = [
       {
@@ -433,6 +632,69 @@ describe('null values in chart blocks (review #80)', () => {
       expect(out.report.blocks[0].points[0]!.period).toBe('2024-01');
     }
   });
+
+  it('hard-errors a timeseries block with a missing value column', () => {
+    const r: QueryResult[] = [
+      { handle: 'R1', columns: ['month', 'total'], rows: [['2024-01', 5]] },
+    ];
+    const out = bindReport(
+      emit([
+        { type: 'timeseries', resultId: 'R1', periodCol: 'month', valueCol: 'nonexistent_col' },
+      ]),
+      r,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/no column "nonexistent_col"/);
+  });
+
+  it('resolves a flows block into edges, dropping null-valued rows', () => {
+    const r: QueryResult[] = [
+      {
+        handle: 'R1',
+        columns: ['payer', 'payee', 'amount_eur'],
+        rows: [
+          ['Министерство на финансите', 'Фирма ЕООД', 5000],
+          ['Община Пловдив', 'Друга фирма', null], // value_suspect — dropped, not charted as zero
+        ],
+      },
+    ];
+    const out = bindReport(
+      emit([
+        { type: 'flows', resultId: 'R1', fromCol: 'payer', toCol: 'payee', valueCol: 'amount_eur' },
+      ]),
+      r,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'flows') {
+      const edges = out.report.blocks[0].edges;
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toEqual({
+        from: 'Министерство на финансите',
+        to: 'Фирма ЕООД',
+        valueEur: 5000,
+      });
+    }
+  });
+
+  it('hard-errors a flows block with a missing value column so the model retries', () => {
+    const r: QueryResult[] = [
+      { handle: 'R1', columns: ['payer', 'payee', 'amount_eur'], rows: [['A', 'B', 5]] },
+    ];
+    const out = bindReport(
+      emit([
+        {
+          type: 'flows',
+          resultId: 'R1',
+          fromCol: 'payer',
+          toCol: 'payee',
+          valueCol: 'nonexistent_col',
+        },
+      ]),
+      r,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toMatch(/no column "nonexistent_col"/);
+  });
 });
 
 describe('findProseNumbers', () => {
@@ -443,8 +705,35 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('сумата 1234567')).not.toHaveLength(0);
   });
 
+  it('flags трилион/билион spelled magnitudes above милиард (nedda review guard)', () => {
+    // The spelled-magnitude stem list stopped at милиард, so "3 трилиона лева" matched no pattern and an
+    // unbound trillion-scale figure could land on a public report.
+    expect(findProseNumbers('усвоени 3 трилиона лева')).not.toHaveLength(0);
+    expect(findProseNumbers('оборот от 2 билиона евро')).not.toHaveLength(0);
+    expect(findProseNumbers('усвоиха квадрилион лева')).not.toHaveLength(0);
+  });
+
   it('ignores years, small counts and ordinals', () => {
     expect(findProseNumbers('през 2023 г., топ 5, 3-ти по ред, към 2026-06-18')).toHaveLength(0);
+  });
+
+  it('ignores MM.YYYY / DD.MM.YYYY date notation (not a material number)', () => {
+    // The grouped-thousands pattern used to read "01.2026" as "01.202" (the year's first three digits),
+    // so a freshness/period callout echoing the resolved dates was wrongly rejected.
+    expect(findProseNumbers('данните са до 01.2026')).toHaveLength(0);
+    expect(findProseNumbers('период 01.2023 – 12.2023')).toHaveLength(0);
+    expect(findProseNumbers('към 01.02.2026 г.')).toHaveLength(0);
+  });
+
+  it('ignores the "сто" word-family but still flags the "на сто" percent idiom', () => {
+    // The percent idiom "на сто" (= per hundred) must not swallow the whole "сто" word-family — those are
+    // ordinary procurement prose, not percentages.
+    expect(findProseNumbers('Договор на стойност 5 обособени позиции')).toHaveLength(0);
+    expect(findProseNumbers('Разходи на Столична община за 2023 г.')).toHaveLength(0);
+    expect(findProseNumbers('поръчки на стотици възложители')).toHaveLength(0);
+    // the genuine percentage idiom is still caught
+    expect(findProseNumbers('50 на сто от договорите')).not.toHaveLength(0);
+    expect(findProseNumbers('ръст от 95%')).not.toHaveLength(0);
   });
 
   it('catches markup-split and alternative number forms (review #80)', () => {

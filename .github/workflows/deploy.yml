@@ -8,11 +8,17 @@ name: Deploy (web + etl → Cloudflare)
 # Event → target mapping (see the `detect` job):
 #   - push to `main`     → staging      (continuous staging on every merge to main, so staging leads prod)
 #   - version TAG (v*)   → production    (cut a release: git tag v1.0.1 && git push origin v1.0.1)
-#   - workflow_dispatch  → the chosen environment
-# midt-bg/sigma is the single repo carrying both the `staging` and `production` Environments (the former
+#   - workflow_dispatch  → the chosen environment (incl. `dev`)
+# midt-bg/sigma is the single repo carrying the `dev`, `staging` and `production` Environments (the former
 # midt-bg/sigma-stage mirror was consolidated into it). Production is cut deliberately as a tag; staging
 # tracks `main`. (To deploy on GitHub *Releases* instead of tags, swap the tag trigger for
 # `release: { types: [published] }`.)
+#
+# `dev` is a long-lived, manual-only target: deploy ANY branch to it on demand from the Actions tab or
+#   gh workflow run deploy.yml --ref <branch> -f environment=dev
+# It reuses the same render/guard machinery — it just needs a `dev` GitHub Environment provisioned with
+# its own SIGMA_* names + a dev D1 id. Ephemeral per-PR previews are a separate workflow (preview.yml).
+# Setup runbook: docs/dev-environments.md.
 
 on:
   push:
@@ -24,7 +30,14 @@ on:
         description: Deploy target
         type: choice
         options:
+          - dev
           - staging
+          # Once provision-environments.sh has been applied, selecting `production` here only
+          # works when the workflow is dispatched from a `v*` tag ref, e.g.:
+          #   gh workflow run deploy.yml --ref v1.0.1 -f environment=production
+          # Dispatching from a branch ref (e.g. main) is refused by the environment tag policy.
+          # Admins may bypass this via the `admins_can_bypass` setting (Settings → Environments
+          # → production) for emergency situations.
           - production
         default: staging
 
@@ -44,12 +57,19 @@ jobs:
         #   workflow_dispatch  -> the chosen environment
         #   tag v*             -> production
         #   push to main       -> staging      (continuous staging — main always leads prod)
+        # Pass the GitHub expressions through `env:` and reference the quoted shell vars, rather than
+        # interpolating `${{ github.ref }}` (attacker-influenceable via a crafted tag/branch name)
+        # directly into the script body — that would let a ref like `v"; <cmd>; "` break out of the test.
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ENV: ${{ inputs.environment }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "env=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "env=$INPUT_ENV" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "env=production" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
             echo "env=staging" >> "$GITHUB_OUTPUT"
           else
             echo "env=" >> "$GITHUB_OUTPUT"
@@ -59,6 +79,11 @@ jobs:
     needs: detect
     if: needs.detect.outputs.env != ''
     runs-on: ubuntu-latest
+    # Explicit cap instead of the 360-min GitHub default: a full build + two-Worker wrangler deploy
+    # runs in single-digit minutes, so a job past 10 min is hung (stalled network I/O, wedged
+    # wrangler) — fail fast rather than burn a 6-hour slot. The required-reviewers wait on
+    # `production` does NOT count against this; the timer starts only once the job hits a runner.
+    timeout-minutes: 10
     environment: ${{ needs.detect.outputs.env }}
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
@@ -76,6 +101,20 @@ jobs:
       SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
       SIGMA_REPORTS_NAME: ${{ vars.SIGMA_REPORTS_NAME }}
       SIGMA_VECTORIZE_NAME: ${{ vars.SIGMA_VECTORIZE_NAME }}
+      # Per-build dedup freshness `c` — wrangler-render stamps this over the committed "dev" so a code-only
+      # deploy (report shape / FX / CPV logic) busts the report cache, and each env's build keys stay distinct.
+      SIGMA_BUILD_ID: ${{ github.sha }}
+      # Master kill-switch override (#83), per-environment: set the SIGMA_ASSISTANT_ENABLED *variable* to
+      # "true" on the environments that should serve the assistant (dev now; staging at go-live). Unset →
+      # wrangler-render leaves the committed fail-dark "false", so production stays dark until deliberately
+      # flipped. Killing a live assistant is then just clearing this var + redeploy (or the runtime flag).
+      SIGMA_ASSISTANT_ENABLED: ${{ vars.SIGMA_ASSISTANT_ENABLED }}
+      # Runtime deploy-env for the §9.3 HMAC gate (ADR-0012). Set the SIGMA_ENVIRONMENT *variable* per
+      # GitHub Environment: "production" and "staging" are public/unauthenticated → the gate REQUIRES the
+      # signing key (fail-closed 503 without it); any other value (or unset → committed "development")
+      # fails open. wrangler-render stamps this into ENVIRONMENT. Not derived from import.meta.env.PROD,
+      # which Vite inlines true for the staging build too (it would misclassify staging as production).
+      SIGMA_ENVIRONMENT: ${{ vars.SIGMA_ENVIRONMENT }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -121,17 +160,43 @@ jobs:
           check "$SIGMA_VECTORIZE_NAME" sigma-assistant SIGMA_VECTORIZE_NAME
           [ "$fail" = 0 ] || { echo "Refusing to deploy '${{ needs.detect.outputs.env }}' with production resource names."; exit 1; }
 
+      # GitOps: enforce this environment's report-dedup KV namespace from git (idempotent create-if-absent)
+      # and hand its id to wrangler-render via SIGMA_DEDUP_KV_ID. One namespace per real env — dev (shared
+      # with the ephemeral previews), staging, prod — kept distinct by title so no env can touch another's
+      # cache. `production` maps to the short `prod` suffix; dev/staging use the env name verbatim.
+      - name: Ensure DEDUP_KV namespace
+        if: steps.guard.outputs.ok == 'true' && success()
+        run: |
+          case "${{ needs.detect.outputs.env }}" in
+            production) title=sigma-dedup-prod ;;
+            *)          title="sigma-dedup-${{ needs.detect.outputs.env }}" ;;
+          esac
+          id="$(node scripts/ensure-kv-namespace.mjs "$title")"
+          echo "::add-mask::$id"
+          echo "SIGMA_DEDUP_KV_ID=$id" >> "$GITHUB_ENV"
+
+      # GitOps: ensure the account-scoped `bggpt-voice` custom provider (+ the shared `sigma-assistant`
+      # gateway) the VOICE lane calls directly. Provider-only — the assistant hits the gateway's provider
+      # endpoints for transcription, NOT a dynamic route (dynamic routing can't carry audio; see ADR-0011).
+      # Idempotent: a no-op when the provider already exists. VOICE_ASSISTANT_API_KEY is used only to
+      # first-create the provider; absent ⇒ the existing provider is reused as-is.
+      - name: Ensure voice AI-Gateway provider
+        if: steps.guard.outputs.ok == 'true' && success()
+        env:
+          VOICE_ASSISTANT_API_KEY: ${{ secrets.VOICE_ASSISTANT_API_KEY }}
+        run: node scripts/ensure-voice-provider.mjs --apply
+
       - name: Typecheck
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && success()
         run: pnpm typecheck
 
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && success()
         run: pnpm --filter @sigma/web run deploy
 
       - name: Initialize LOG_IP_KEY secret if absent
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && success()
         run: |
           # LOG_IP_KEY is long-lived so IP HMAC tokens remain stable for same-client correlation.
           # Never overwrite it; a new blue-green worker name starts without a key and correlation
@@ -169,8 +234,22 @@ jobs:
           fi
 
           key="$(openssl rand -hex 32)"
+          # Register the value as a secret with the runner BEFORE it is used anywhere else, so an
+          # accidental echo / set -x trace in a later edit can never leak it. Masking is not
+          # retroactive within a line, hence add-mask on the line right after generation.
+          echo "::add-mask::$key"
           printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "$SIGMA_WEB_NAME"
 
+      # The §9.3 transcript-signing key (ADR-0011/0012). Same generate-if-absent story as LOG_IP_KEY above:
+      # a purely internal HMAC key with no human value, generated once per worker and left stable across
+      # redeploys (rotating it would invalidate every in-flight client transcript at once). On production +
+      # staging the runtime gate fails CLOSED without it, so this step must run on every deploy to keep the
+      # required key present. The key is generated in-process and streamed to wrangler over stdin — it never
+      # appears in a log line, so no ::add-mask:: is needed. Runs after the deploy: the worker must exist first.
+      - name: Initialize ASSISTANT_HMAC_KEY secret if absent
+        if: steps.guard.outputs.ok == 'true' && success()
+        run: node scripts/ensure-worker-secret.mjs ASSISTANT_HMAC_KEY
+
       - name: Deploy refresh Workflow (sigma-etl)
-        if: steps.guard.outputs.ok == 'true'
+        if: steps.guard.outputs.ok == 'true' && success()
         run: pnpm --filter @sigma/etl run deploy

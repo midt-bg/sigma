@@ -88,17 +88,19 @@ export function checkRollupReconciliation(runner) {
   // One combined query, not a dozen round-trips: on D1/wrangler each runner call is a process spawn,
   // so fold every reconciliation number into a single SELECT of scalar subqueries. The join clauses
   // mirror precompute's own rollups exactly (authority_totals = tenders→authorities; company_totals =
-  // bidders AND tenders; flow_pairs = tenders→authorities AND bidders); the two orphan counts are the
-  // exact structural exclusions, asserted to be 0 (normalize gives every contract a parent tender —
-  // synthetic if needed — with a non-null authority, and a bidder row).
+  // bidders AND tenders; flow_pairs = tenders→authorities AND bidders). authority_totals/company_totals
+  // exclude synthetic 'неизвестна' orphan headers (is_synthetic != 1), so their attributed sums match;
+  // flow_pairs + home_totals stay synthetic-inclusive and reconcile against inclusive sums. The two
+  // orphan counts are the exact structural exclusions, asserted to be 0 (normalize gives every contract
+  // a parent tender — synthetic if needed — with a non-null authority, and a bidder row).
   const r =
     rows(
       runner,
       'SELECT' +
         ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
+        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1) AS auth_attr,' +
         ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
+        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1) AS bidder_attr,' +
         ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
         ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
         ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +

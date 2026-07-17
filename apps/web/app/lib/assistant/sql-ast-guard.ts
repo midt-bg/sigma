@@ -31,22 +31,335 @@ const parser = new Parser();
 /** Tables run_sql may read — the documented data dictionary (describe-schema.ts). */
 export const ALLOWED_TABLES: ReadonlySet<string> = new Set(TABLES.map((t) => t.name.toLowerCase()));
 
+// Personal-contact columns (GDPR). The table allowlist is table-level, so these are reachable via
+// run_sql even though describe-schema.ts never advertises them — a natural-person-data exposure the
+// public site itself suppresses (company.tsx). Deny any reference; keep public identifiers
+// (bulstat / eik) queryable. Contact-fields-only policy (PRIV-1).
+export const DENIED_COLUMNS: ReadonlySet<string> = new Set([
+  'address',
+  'street_address',
+  'contact_email',
+  'contact_phone',
+]);
+
+// Tables that carry a DENIED_COLUMNS field. A `*` / `table.*` over any of these expands to a denied
+// column, so a star is rejected while one is in scope — forcing explicit, non-personal columns.
+const PII_TABLES: ReadonlySet<string> = new Set(['authorities', 'bidders', 'parties']);
+
 const deny = (reason: string): GuardResult => ({ ok: false, reason });
+
+// Function policy, enforced at the AST level by NORMALISED name (quoting-proof: node-sql-parser maps
+// both `fn(…)` and `"fn"(…)` to the same name, so a double-quoted identifier — `"randomblob"(…)`, which
+// slips the L1 word-boundary regex because the `"` breaks `\b` — is still caught here). TWO complementary
+// checks (denyForbiddenFunction), primary first:
+//
+//   1. ALLOWED_FUNCTIONS — a POSITIVE allowlist and the FAIL-CLOSED DEFAULT. Any function whose name is
+//      not listed is rejected, so a NEW SQLite aggregate/builder — the next `string_agg` (a 3.44 alias of
+//      group_concat) or `json_pretty` (3.46) — is denied the moment D1's SQLite gains it, with NO code
+//      change. This inverts the old denylist-only posture (review follow-up, ydimitrof/DiyanaDimitrova:
+//      "every new aggregate is one release away from re-opening this hole"). The set is the documented
+//      SQLite built-in scalar/aggregate/date/math/window functions that a read-only analytics query can
+//      legitimately use; extend it here when a new legitimate need appears.
+//   2. DANGEROUS_FUNCTIONS — a denylist retained as an EXPLICIT, tested record of the specifically-
+//      dangerous names (memory-amplification aggregates/string-bombs, exfil encoders, load_extension) and
+//      WHY, and as a backstop should one ever be mistakenly added to the allowlist. Redundant with (1) by
+//      design (belt + suspenders); checked first so its specific reason wins.
+//
+// Classes of the dangerous set: memory-amplification DoW (materialise an unbounded value before capRows /
+// RESULT_BYTE_CAP can measure it) — per-row string-bombs (randomblob/zeroblob/printf/format) and table-
+// collapsing aggregates (group_concat/string_agg/json_group_array/json_group_object/json_pretty, which
+// fold a whole table into one giant value that LIMIT caps by ROWS, not cell width); data exfil/encoding
+// (quote/hex); RCE where extensions can load (load_extension). The per-row json builders/mutators are
+// bounded but denied for family symmetry. `replace` is ALLOWED (single transliteration) and `||` is a
+// legitimate single concatenation — but CHAINING either (inline or across a CTE graph) is a string-length
+// bomb, bounded to one amplifying op per query by denyAmplifyingStringChain. `concat`/`concat_ws` are
+// left OFF the allowlist for the same reason (they fail closed here).
+const DANGEROUS_FUNCTIONS: ReadonlySet<string> = new Set([
+  'load_extension',
+  'randomblob',
+  'zeroblob',
+  'printf',
+  'format',
+  'group_concat',
+  'string_agg',
+  'quote',
+  'hex',
+  'json_group_array',
+  'json_group_object',
+  'json_object',
+  'json_array',
+  'json_quote',
+  'json_pretty',
+  'json_set',
+  'json_insert',
+  'json_replace',
+  'json_patch',
+  'json_remove',
+]);
+
+// Positive allowlist — the fail-closed default (see above). Documented SQLite built-ins a read-only
+// analytics query legitimately uses. Grouped for maintenance; a name absent here is rejected.
+const ALLOWED_FUNCTIONS: ReadonlySet<string> = new Set([
+  // aggregates that reduce to ONE scalar (not a table-collapsing string) — safe
+  'count',
+  'sum',
+  'total',
+  'avg',
+  'min',
+  'max',
+  // core scalar
+  'abs',
+  'coalesce',
+  'ifnull',
+  'nullif',
+  'iif',
+  'length',
+  'octet_length',
+  'instr',
+  'substr',
+  'substring',
+  'upper',
+  'lower',
+  'trim',
+  'ltrim',
+  'rtrim',
+  'replace', // single op only — chaining (inline or cross-CTE) rejected by denyAmplifyingStringChain
+  'char',
+  'unicode',
+  'unhex',
+  'typeof',
+  'sign',
+  'round',
+  'like',
+  'glob',
+  'likelihood',
+  'likely',
+  'unlikely',
+  // NB: concat / concat_ws are deliberately NOT allowlisted — they are string-length AMPLIFIERS (a
+  // CTE chain of `concat(v,v,…,v)` multiplies ×N/level, unbounded by LIMIT). No canonical query uses
+  // them; a bare `||` is the only concatenation a read-only analytics query needs, and even that is
+  // chain-bounded by denyAmplifyingStringChain. Leaving them off the allowlist fails them closed.
+  'random',
+  'changes',
+  'total_changes',
+  // date / time
+  'date',
+  'time',
+  'datetime',
+  'julianday',
+  'unixepoch',
+  'strftime',
+  'timediff',
+  // math (SQLite math extension, 3.35+)
+  'acos',
+  'acosh',
+  'asin',
+  'asinh',
+  'atan',
+  'atan2',
+  'atanh',
+  'ceil',
+  'ceiling',
+  'cos',
+  'cosh',
+  'degrees',
+  'exp',
+  'floor',
+  'ln',
+  'log',
+  'log10',
+  'log2',
+  'mod',
+  'pi',
+  'pow',
+  'power',
+  'radians',
+  'sin',
+  'sinh',
+  'sqrt',
+  'tan',
+  'tanh',
+  'trunc',
+  // window functions (ranking / offset) — do not collapse tables; safe
+  'row_number',
+  'rank',
+  'dense_rank',
+  'ntile',
+  'lag',
+  'lead',
+  'first_value',
+  'last_value',
+  'nth_value',
+  'percent_rank',
+  'cume_dist',
+]);
+
+// The normalised, lowercased name of a function-call node, or null if `obj` is not one. A scalar call is
+// `{ type:'function', name:{ name:[{ value }] } }` (quoted or not — same value); an aggregate is
+// `{ type:'aggr_func', name:'GROUP_CONCAT' }` (a bare UPPERCASE string). A schema-qualified name is
+// multi-part; the function is the last part.
+function functionName(obj: Record<string, unknown>): string | null {
+  if (obj.type === 'aggr_func' && typeof obj.name === 'string') return obj.name.toLowerCase();
+  if (obj.type === 'function') {
+    const parts = (obj.name as { name?: Array<{ value?: unknown }> } | null)?.name;
+    if (Array.isArray(parts) && parts.length > 0) {
+      const last = parts[parts.length - 1]?.value;
+      if (typeof last === 'string') return last.toLowerCase();
+    }
+  }
+  return null;
+}
+
+// Walk the AST and reject the first call to a forbidden function anywhere — SELECT list, WHERE, HAVING,
+// a nested sub-query, a function argument. A name in DANGEROUS_FUNCTIONS is rejected with its specific
+// reason; any other name NOT in ALLOWED_FUNCTIONS is rejected as the fail-closed default. The AST is a
+// finite tree, so the walk terminates.
+function denyForbiddenFunction(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyForbiddenFunction(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!node || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  const fn = functionName(obj);
+  if (fn) {
+    if (DANGEROUS_FUNCTIONS.has(fn)) return `function not allowed: ${fn}`;
+    if (!ALLOWED_FUNCTIONS.has(fn)) return `function not allowed: ${fn} (not in allowlist)`;
+  }
+  for (const key of Object.keys(obj)) {
+    const r = denyForbiddenFunction(obj[key]);
+    if (r) return r;
+  }
+  return null;
+}
+
+// String-length AMPLIFICATION guard. `replace(x, a, b)` and `||` concatenation are legitimate read-only
+// string ops (Cyrillic↔Latin transliteration, joining a couple of columns), each bounded by the row size
+// × the byte-capped literals. The DoW risk is not their COUNT but their COMPOUNDING — feeding an already-
+// amplified value back into another amplifier grows length GEOMETRICALLY (×k per level), and `capRows` /
+// `RESULT_BYTE_CAP` measure only AFTER the value materialises in-engine → Worker OOM via run_sql. Two
+// shapes compound; everything else is bounded and must PASS (a flat `a || ' ' || b` sums a few byte-capped
+// cells ONCE — not a bomb, and the old whole-query op-count over-blocked it):
+//
+//   (A) INLINE — a `replace()` fed an already-amplified argument: another `replace` nested in its args
+//       (`replace(replace('A','A','AAAAAAAAAA')…)` → ×10 per level) OR a `||`/concat inside its args
+//       (`replace(v,'x', v||v||…)`). `replace` re-scans and expands whatever it is given, so an amplified
+//       input multiplies. A `||` whose operands are themselves amplifiers is NOT compounding — `||` is
+//       associative, so `(a||b)||c` is just the bounded sum a+b+c; only `replace` re-expands its input.
+//   (B) CROSS-SCOPE — amplifying ops (`replace` or `||`) appearing in ≥2 distinct SELECT scopes (a CTE
+//       chain `WITH l1 AS (SELECT v||v||… FROM l0), l2 AS (… FROM l1)`, or a subquery feeding an outer
+//       amplifier), where each scope reads the prior scope's single already-amplified cell and amplifies
+//       again. A single scope's flat `v||v||…||v` is bounded (×N, N capped by the query length); the
+//       geometric blow-up needs the value to survive a scope boundary and be re-amplified.
+//
+// Quoting-proof (functionName normalises `fn`/`"fn"`). `concat`/`concat_ws` never reach here — they are
+// off ALLOWED_FUNCTIONS, so denyForbiddenFunction rejects them first.
+
+// Does this subtree contain any string-length amplifier — a `replace()` call or a `||` operator?
+function containsAmplifyingOp(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(containsAmplifyingOp);
+  if (!node || typeof node !== 'object') return false;
+  const obj = node as Record<string, unknown>;
+  if (functionName(obj) === 'replace') return true;
+  if (obj.type === 'binary_expr' && obj.operator === '||') return true;
+  return Object.keys(obj).some((key) => containsAmplifyingOp(obj[key]));
+}
+
+// (A) A `replace()` whose ARGUMENTS transitively contain another amplifier (nested replace, or a `||`/
+// concat feeding it) — the multiplicative inline bomb. The function-name identifier subtree is skipped so
+// the replace never counts itself.
+function denyCompoundingReplace(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyCompoundingReplace(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!node || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  if (functionName(obj) === 'replace') {
+    for (const key of Object.keys(obj)) {
+      if (key === 'name') continue; // the identifier of THIS replace, not an argument
+      if (containsAmplifyingOp(obj[key]))
+        return 'function not allowed: nested/compounding replace() string-bomb';
+    }
+  }
+  for (const key of Object.keys(obj)) {
+    const r = denyCompoundingReplace(obj[key]);
+    if (r) return r;
+  }
+  return null;
+}
+
+// Every SELECT node in the tree (main query, CTEs, sub-queries) — each is its own amplification scope.
+function collectSelectNodes(node: unknown, out: Record<string, unknown>[]): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectSelectNodes(item, out);
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  if (obj.type === 'select') out.push(obj);
+  for (const key of Object.keys(obj)) collectSelectNodes(obj[key], out);
+}
+
+// Does THIS select scope contain an amplifier in its OWN expressions — not counting deeper nested selects
+// (each is its own scope, counted separately by the caller)?
+function scopeHasLocalAmplify(selectRoot: Record<string, unknown>): boolean {
+  let found = false;
+  const walk = (node: unknown, isRoot: boolean): void => {
+    if (found || node == null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, false);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (!isRoot && obj.type === 'select') return; // a nested scope — attributed to its own count
+    if (functionName(obj) === 'replace' || (obj.type === 'binary_expr' && obj.operator === '||')) {
+      found = true;
+      return;
+    }
+    for (const key of Object.keys(obj)) walk(obj[key], false);
+  };
+  walk(selectRoot, true);
+  return found;
+}
+
+function denyAmplifyingStringChain(ast: unknown): string | null {
+  // (A) inline compounding — a replace re-expanding an already-amplified argument.
+  const compounding = denyCompoundingReplace(ast);
+  if (compounding) return compounding;
+  // (B) cross-scope chaining — amplifying ops in ≥2 SELECT scopes feed level-to-level.
+  const selects: Record<string, unknown>[] = [];
+  collectSelectNodes(ast, selects);
+  let amplifyingScopes = 0;
+  for (const select of selects) if (scopeHasLocalAmplify(select)) amplifyingScopes++;
+  return amplifyingScopes >= 2
+    ? 'function not allowed: amplifying string chain (replace/|| across scopes — bomb)'
+    : null;
+}
 
 // Loose view over the parsed statement — node-sql-parser's union types are awkward to narrow, and we
 // only read a few discriminant fields.
 type LimitNode = { seperator?: string; value?: unknown[] } | null | undefined;
 type FromEntry = {
   table?: string | null; // a plain table reference
+  as?: string | null; // its alias, if any (`contracts c` → as: 'c')
   join?: unknown; // join kind for entries after the first ('INNER JOIN', …)
   on?: unknown; // join condition; null for an (explicit) cross-join
   using?: unknown; // USING(...) join condition — the other bounded form
   expr?: { type?: string; ast?: unknown } | null; // sub-query ({ ast }) or table-valued fn ({ type:'function' })
 } | null;
-type LooseSelect = {
+export type LooseSelect = {
   type?: string;
   columns?: Array<{ as?: string | null; expr?: { column?: string } | null } | null> | null;
   from?: FromEntry[] | null;
+  where?: unknown; // WHERE expression tree (binary_expr/column_ref/…) — read by the default-filters gate
   with?: Array<{ name?: { value?: string } } | null> | null;
   limit?: LimitNode;
   _next?: LooseSelect | null; // compound (UNION/INTERSECT/EXCEPT) continuation
@@ -286,6 +599,144 @@ function limitCount(v: unknown): number {
   return NaN;
 }
 
+// Collect every FROM/JOIN table name at any nesting depth (used to decide whether a personal-data table
+// is in scope for the `*`-star rule below).
+function collectFromTables(node: unknown, acc: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const x of node) collectFromTables(x, acc);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  if (Array.isArray(obj.from)) {
+    for (const f of obj.from as FromEntry[]) {
+      if (f && typeof f.table === 'string') acc.add(f.table.toLowerCase());
+    }
+  }
+  for (const k of Object.keys(obj)) collectFromTables(obj[k], acc);
+}
+
+// Map every FROM/JOIN alias (or bare table name when unaliased) to its base table, at any depth — used to
+// resolve which table a `alias.*` star actually expands, so the star rule can reject only a star over a
+// personal-data table (`a.*` on authorities) while letting a safe one through (`c.*` on contracts, even
+// when a name table is joined for the label columns).
+function collectAliasMap(node: unknown, acc: Map<string, string>): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const x of node) collectAliasMap(x, acc);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  if (Array.isArray(obj.from)) {
+    for (const f of obj.from as FromEntry[]) {
+      if (f && typeof f.table === 'string' && f.table.length > 0) {
+        const base = f.table.toLowerCase();
+        const alias = typeof f.as === 'string' && f.as.length > 0 ? f.as.toLowerCase() : base;
+        acc.set(alias, base);
+      }
+    }
+  }
+  for (const k of Object.keys(obj)) collectAliasMap(obj[k], acc);
+}
+
+// The lowercased identifier a node names, or null if it is not one. A bare/qualified reference is a
+// `column_ref` (`.column`); a DOUBLE-QUOTED identifier — `"contact_email"` — parses as a
+// `double_quote_string` (`.value`), NOT a column_ref (node-sql-parser). Both must be recognised so the
+// personal-data denylist is quoting-proof — mirroring functionName's fn/"fn" normalisation (a column
+// check that inspected only column_ref nodes let `SELECT "contact_email" …` slip the denylist — PRIV-1).
+function identifierName(obj: Record<string, unknown>): string | null {
+  if (obj.type === 'column_ref' && typeof obj.column === 'string') return obj.column.toLowerCase();
+  if (obj.type === 'double_quote_string' && typeof obj.value === 'string')
+    return obj.value.toLowerCase();
+  return null;
+}
+
+// Reject any reference to a personal-contact column (SELECT list, WHERE, ORDER BY, JOIN ON, sub-query —
+// identifiers appear everywhere and this walks the whole AST), and reject a `*` / `table.*` while a
+// personal-data table is in scope (a star would expand to a denied column). Recognises both bare and
+// double-quoted names via identifierName (Layer 2 of the quoting-proof column guard). Fail-closed (PRIV-1).
+function denyDeniedColumn(ast: unknown): string | null {
+  const fromTables = new Set<string>();
+  collectFromTables(ast, fromTables);
+  const aliasMap = new Map<string, string>();
+  collectAliasMap(ast, aliasMap);
+  let piiInScope = false;
+  for (const t of fromTables) {
+    if (PII_TABLES.has(t)) {
+      piiInScope = true;
+      break;
+    }
+  }
+  let offender: string | null = null;
+  const walk = (node: unknown): void => {
+    if (offender || !node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const x of node) walk(x);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    const col = identifierName(obj); // bare/qualified column_ref OR a double-quoted identifier
+    if (col !== null) {
+      if (DENIED_COLUMNS.has(col)) {
+        offender = `column not allowed: ${col} (personal data)`;
+        return;
+      }
+      if (col === '*') {
+        // Resolve which table the star expands. A QUALIFIED star (`c.*`) is rejected only when its base
+        // table is a personal-data table — so `c.*` on contracts passes even when authorities/bidders are
+        // joined for label columns. A BARE `*` can pull in any joined table's columns, so it is rejected
+        // whenever a personal-data table is in scope. (Fixes the contract-list over-block; PRIV-1.)
+        const qualifier =
+          obj.type === 'column_ref' && typeof obj.table === 'string' && obj.table.length > 0
+            ? obj.table.toLowerCase()
+            : null;
+        if (qualifier) {
+          const base = aliasMap.get(qualifier) ?? qualifier;
+          if (PII_TABLES.has(base)) {
+            offender = `${qualifier}.* is not allowed — it expands a table with personal-data columns; list explicit columns`;
+            return;
+          }
+        } else if (piiInScope) {
+          offender =
+            'SELECT * is not allowed while a table with personal-data columns is in scope; list explicit columns';
+          return;
+        }
+      }
+    }
+    for (const k of Object.keys(obj)) walk(obj[k]);
+  };
+  walk(ast);
+  return offender;
+}
+
+// Reject every DOUBLE-QUOTED identifier anywhere in the statement (Layer 1 of the quoting-proof guard).
+// `"col"` is the SQL-standard identifier quote, so D1/SQLite resolves it to a real column regardless of
+// the DQS (double-quoted-string) setting — SQLite's DQS misfeature only widens this. That is exactly how a
+// double-quoted name evades a check that inspects only column_ref nodes. No canonical/curated analytics
+// query uses double-quoted identifiers (all use bare identifiers with single-quoted literals), so refuse
+// the whole class fail-closed — the same posture already applied to FUNCTIONS (functionName normalises
+// `fn`/`"fn"`). denyDeniedColumn runs FIRST, so a double-quoted PII column still surfaces its specific
+// "(personal data)" reason; any other double-quoted identifier is caught here. The AST is a finite tree.
+function denyQuotedIdentifier(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyQuotedIdentifier(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!node || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  if (obj.type === 'double_quote_string') {
+    return 'double-quoted identifiers are not allowed; use bare identifiers';
+  }
+  for (const key of Object.keys(obj)) {
+    const r = denyQuotedIdentifier(obj[key]);
+    if (r) return r;
+  }
+  return null;
+}
+
 /**
  * Parse-verify and scope `sql`: assert a single read-only SELECT over allowlisted tables (plain tables
  * / sub-queries only — no table-valued functions), no comma or ON-less cross-join, no recursion, and a
@@ -318,6 +769,19 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   const dupCol = denyDuplicateColumns(ast);
   if (dupCol) return deny(dupCol);
 
+  // Enforce the function policy by AST name (quoting-proof): reject the dangerous denylist AND anything
+  // outside the positive allowlist (fail-closed default — the next new aggregate is denied without a code
+  // change). See ALLOWED_FUNCTIONS / DANGEROUS_FUNCTIONS.
+  const badFn = denyForbiddenFunction(ast);
+  if (badFn) return deny(badFn);
+
+  // String-length amplification is a memory-amplification bomb when it COMPOUNDS — a replace re-expanding
+  // an already-amplified argument (inline) or amplifying ops chained across ≥2 SELECT scopes (a CTE
+  // graph). A single op and flat `a || ' ' || b` concatenation are bounded and pass — see
+  // denyAmplifyingStringChain (concat/concat_ws already fail the allowlist above).
+  const amplify = denyAmplifyingStringChain(ast);
+  if (amplify) return deny(amplify);
+
   // Every FROM source must be a plain table or a sub-query, at ANY nesting depth — fail closed on
   // anything else. This blocks table-valued functions (`pragma_table_info(…)`, `json_each(…)`,
   // `json_tree(…)`, `generate_series(…)`) — invisible to parser.tableList() (it returns [] for the
@@ -330,6 +794,19 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
   // table cannot be smuggled past the check by an out-of-scope CTE of the same name (review #80).
   const badTable = denyDisallowedTable(ast, new Set<string>());
   if (badTable) return deny(badTable);
+
+  // Personal-contact columns are reachable because the allowlist is table-level; deny them (and a
+  // `*` over a personal-data table) so run_sql cannot surface a natural person's email/phone/address.
+  // Recognises bare AND double-quoted names (Layer 2) so a double-quoted PII column gets its specific
+  // reason before the blanket double-quote rejection below.
+  const badColumn = denyDeniedColumn(ast);
+  if (badColumn) return deny(badColumn);
+
+  // Refuse any remaining double-quoted identifier (Layer 1). Double quotes are the SQL-standard identifier
+  // quote — `"contact_email"` resolves to the real column, which is how it slipped a column_ref-only check
+  // (PRIV-1). No legitimate query needs them; fail closed, matching the function guard's quoting-proof posture.
+  const quotedIdent = denyQuotedIdentifier(ast);
+  if (quotedIdent) return deny(quotedIdent);
 
   // Bound the OUTER result with an AST-authoritative LIMIT. The SQLite `LIMIT offset, count` COMMA form
   // fools the regex-based enforceLimit — it captures the offset (the first number), not the count, so a
@@ -364,4 +841,23 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
     ? enforceLimit(sql, maxRows)
     : `${sql.replace(/;?\s*$/u, '')} LIMIT ${maxRows}`;
   return { ok: true, sql: limited };
+}
+
+/**
+ * Parse `sql` to a single SELECT AST for downstream structural checks (e.g. the default-filters gate),
+ * or null if it is not exactly one parseable SELECT. Fail-soft by design: this is NOT a security gate —
+ * `assertReadOnlySelect`/`guardSelect` run first in run_sql and already reject anything unparseable or
+ * non-SELECT. Reuses the module parser so callers need not depend on node-sql-parser directly.
+ */
+export function parseSingleSelect(sql: string): LooseSelect | null {
+  let parsed: AST | AST[];
+  try {
+    parsed = parser.astify(sql);
+  } catch {
+    return null;
+  }
+  const statements = Array.isArray(parsed) ? parsed : [parsed];
+  if (statements.length !== 1) return null;
+  const ast = statements[0] as unknown as LooseSelect;
+  return ast.type === 'select' ? ast : null;
 }

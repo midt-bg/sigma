@@ -21,6 +21,15 @@ describe('formatCell', () => {
     expect(formatCell('42', 'number')).toBe(count(42)); // a plain decimal still formats
   });
 
+  it('renders an em-dash for a percent value that cannot be a 0..1 ratio (mistagged sum/count)', () => {
+    // The Q8 bug: a raw euro sum bound into a percent slot rendered as „1342360573264,6%".
+    expect(formatCell(1342360573264.6, 'percent')).toBe('—');
+    expect(formatCell(194874, 'percent')).toBe('—'); // a count mistagged as percent
+    // Genuine ratios (incl. a large percentage change up to the threshold) still format normally.
+    expect(formatCell(0.318, 'percent')).toBe(pct(0.318));
+    expect(formatCell(1.5, 'percent')).toBe(pct(1.5)); // +150% change is plausible
+  });
+
   it('renders text as-is and absent/blank values as the em-dash', () => {
     expect(formatCell('Министерство на финансите', 'text')).toBe('Министерство на финансите');
     expect(formatCell(null, 'text')).toBe('—');

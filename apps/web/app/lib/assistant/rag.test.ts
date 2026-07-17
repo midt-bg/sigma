@@ -3,6 +3,7 @@ import {
   buildSchemaChunks,
   embed,
   EMBED_DIM,
+  gatewayRunner,
   indexSchemaCorpus,
   MAX_EMBED_CHARS,
   retrieveSchemaContext,
@@ -34,6 +35,37 @@ function fakeIndex(matches: Match[] = []) {
     query: vi.fn(async () => ({ matches })),
   } satisfies VectorIndex & { upserted: unknown[] };
 }
+
+describe('gatewayRunner', () => {
+  it('routes embedding inference through the AI Gateway when a slug is given', async () => {
+    const options: unknown[] = [];
+    const ai = {
+      run: vi.fn(async (_m: string, _i: { text: string[] }, opts?: unknown) => {
+        options.push(opts);
+        return { data: [vec()] };
+      }),
+    } satisfies EmbeddingRunner;
+
+    await gatewayRunner(ai, 'sigma-assistant').run('@cf/baai/bge-m3', { text: ['x'] });
+
+    expect(options).toEqual([{ gateway: { id: 'sigma-assistant' } }]);
+  });
+
+  it('returns the runner unchanged (no gateway option) when the slug is missing or blank', async () => {
+    const options: unknown[] = [];
+    const ai = {
+      run: vi.fn(async (_m: string, _i: { text: string[] }, opts?: unknown) => {
+        options.push(opts);
+        return { data: [vec()] };
+      }),
+    } satisfies EmbeddingRunner;
+
+    expect(gatewayRunner(ai, undefined)).toBe(ai);
+    expect(gatewayRunner(ai, '  ')).toBe(ai);
+    await gatewayRunner(ai, undefined).run('@cf/baai/bge-m3', { text: ['x'] });
+    expect(options).toEqual([undefined]);
+  });
+});
 
 describe('buildSchemaChunks', () => {
   it('includes traps, queries and tables', () => {

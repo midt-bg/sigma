@@ -1,0 +1,37 @@
+{
+  "id": "24-spend-last-month",
+  "prompt": "Разход за предходния месец",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT SUM(c.amount_eur) AS total_eur, COUNT(*) AS contracts FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' AND c.signed_at >= '2026-06-01' AND c.signed_at < '2026-07-01' LIMIT 1",
+      "result": {
+        "rows": [{ "total_eur": 640000, "contracts": 11 }]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход за юни 2026",
+    "question": "Разход за предходния месец",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Похарчено",
+            "ref": { "resultId": "R1", "row": 0, "col": "total_eur" },
+            "format": "money"
+          },
+          {
+            "label": "Договори",
+            "ref": { "resultId": "R1", "row": 0, "col": "contracts" },
+            "format": "number"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

@@ -12,10 +12,20 @@
 - [`integrity-gate.md`](integrity-gate.md) — reconciliation gate-ът: hard asserts върху тоталите при import/CI.
 - [`anomaly-report.md`](anomaly-report.md) — cross-row аномалии при опресняване: какво `value_flag` не хваща на ниво отделен договор.
 - [`deploy.md`](deploy.md) — деплой към Cloudflare: двата Worker-а (`sigma`, `sigma-etl`) и споделеният D1 per environment.
+- [`deploy-assistant.md`](deploy-assistant.md) — пускане на AI асистента: Vectorize/R2/KV/AI Gateway ресурсите, тайните и променливите, seed-ът и `ASSISTANT_ENABLED` над базовия деплой.
+- [`dev-environments.md`](dev-environments.md) — дълготрайната **dev** среда и ephemeral preview-та за всеки PR: как се деплойва произволен branch.
+- [`dev-environments-setup.md`](dev-environments-setup.md) — точните стъпки за provisioning на dev + preview (wrangler auth, D1/R2, secrets).
 - [`api.md`](api.md) — публичните данни и машинно четими endpoint-и (CSV/JSON/sitemap), query грамата на филтрите и лицензът — за разработчици, които строят върху данните.
 - [`accessibility.md`](accessibility.md) — достъпност (WCAG 2.1 AA / EN 301 549): какво покрива платформата и наблюденията за вградената приставка за достъпност.
 - [`spec/ai-assistant.md`](spec/ai-assistant.md) — спецификация на разговорния аналитичен слой над СИГМА (BgGPT, текст и глас).
 - [`spec/assistant-contracts.md`](spec/assistant-contracts.md) — контрактите BE↔FE за AI асистента (Фаза 1 → Фаза 2).
+- [`spec/ai-assistant-dedup.md`](spec/ai-assistant-dedup.md) — дедупликацията на справките (Lane F): freshness token, слоеве L0–L2.5, само за приключени периоди.
+- [`spec/ai-assistant-agent-team.md`](spec/ai-assistant-agent-team.md) — многоагентният модел на асистента: роли ①–④ и оркестрацията им.
+- [`spec/assistant-starter-prompts.md`](spec/assistant-starter-prompts.md) — примерните начални въпроси, показвани в дока на асистента.
+- [`implementation-plans/assistant-stream-phases.md`](implementation-plans/assistant-stream-phases.md) — план: фазите на стрийминг на отговора на асистента.
+- [`implementation-plans/assistant-large-data-summary.md`](implementation-plans/assistant-large-data-summary.md) — план: обобщаване на голям резултатен набор преди отговор.
+- [`implementation-plans/assistant-voice-transcribe.md`](implementation-plans/assistant-voice-transcribe.md) — план: гласов вход (`/assistant/transcribe`) — запис, транскрипция, тишина/халюцинации и достъпност.
+- [`ai-assistant-chat-testing-2026-07-02.md`](ai-assistant-chat-testing-2026-07-02.md) — запис от Playwright обхода на чат-дока (2026-07-02): prose-таблици vs `emit_report`.
 
 ## Стандарти за ревю
 

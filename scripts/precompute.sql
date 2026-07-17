@@ -61,12 +61,12 @@ SELECT b.id, b.name, b.kind, b.ownership_kind, b.eik_normalized, b.eik_valid, b.
   SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END),
   MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1
 GROUP BY b.id;
 -- primary sector = CPV division carrying the most won € for the bidder (tiebreak by code for determinism)
 UPDATE company_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+  WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
 
 -- ── 3) authority_totals (per authority) ───────────────────────────────────────────────────────────
@@ -83,11 +83,11 @@ SELECT a.id, a.name, a.type_group, a.settlement, a.region,
   SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END),
   MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
-WHERE c.amount_eur IS NOT NULL
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1
 GROUP BY a.id;
 UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
-  WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+  WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
 
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
@@ -112,7 +112,7 @@ DELETE FROM sector_totals;
 INSERT INTO sector_totals (division, contracts, value_eur)
 SELECT substr(t.cpv_code, 1, 2), COUNT(*), COALESCE(SUM(c.amount_eur), 0)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id
-WHERE c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
+WHERE c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
 GROUP BY substr(t.cpv_code, 1, 2);
 
 -- ── 4b) facet_counts (procedure_type / EU; year is recomputed live by getContractFacets) ───────────

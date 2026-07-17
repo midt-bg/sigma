@@ -1,0 +1,80 @@
+{
+  "id": "22-sector-year-reconcile",
+  "prompt": "Разход по сектор 45 за 2023",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT substr(t.cpv_code, 1, 2) AS division, substr(c.signed_at, 1, 4) AS year, COUNT(*) AS contracts, SUM(c.amount_eur) AS value_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND substr(t.cpv_code, 1, 2) = '45' AND substr(c.signed_at, 1, 4) = '2023' GROUP BY division, year",
+      "result": {
+        "rows": [
+          {
+            "division": "45",
+            "year": "2023",
+            "contracts": 25,
+            "value_eur": 1200000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по сектор 45 за 2023",
+    "question": "Разход по сектор 45 за 2023",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Брой договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            },
+            "format": "number"
+          },
+          {
+            "label": "Стойност (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "value_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true,
+    "reconcile": {
+      "target": "sector_totals",
+      "grain": {
+        "division": "45",
+        "year": "2023"
+      },
+      "rollupQuery": "SELECT contracts, value_eur FROM sector_totals WHERE division = '45' AND year = '2023'",
+      "rollupResult": {
+        "rows": [
+          {
+            "contracts": 25,
+            "value_eur": 1200000
+          }
+        ]
+      },
+      "aggregate": {
+        "resultId": "R1",
+        "row": 0,
+        "countCol": "contracts",
+        "sumCol": "value_eur"
+      },
+      "rollup": {
+        "resultId": "R2",
+        "row": 0,
+        "countCol": "contracts",
+        "sumCol": "value_eur"
+      }
+    }
+  }
+}
