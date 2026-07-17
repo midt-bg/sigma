@@ -126,9 +126,17 @@ describe('computeWorkerCatchupPlan', () => {
   });
 
   it('defaults today to the current UTC date when no override is given', async () => {
-    // Exercises the `opts.today ?? new Date()...` default; the window still ends on a real ISO date.
-    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-01'), {});
-    expect(plan.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Pin the clock so the `opts.today ?? new Date()...` default resolves to a known date: the window
+    // must end exactly on that date, not merely be date-shaped (a shape check would survive a mutation
+    // to any hard-coded ISO string).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T09:30:00Z'));
+    try {
+      const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-01'), {});
+      expect(plan.to).toBe('2026-06-10');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
