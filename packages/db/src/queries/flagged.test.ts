@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getFlaggedValue } from './flagged';
 import { listContracts } from './contracts';
+import { AUTHORITY_TYPE_GROUPS } from './rows';
 
 // Integration test against a REAL SQLite built from the production migrations (node:sqlite), so the
 // flag predicates and aggregate are proven to narrow/sum actual rows — the fake-D1 unit tests ignore
@@ -176,5 +177,90 @@ describe('/contracts flag filter', () => {
       pageSize: 10,
     });
     expect(r.total).toBe(2); // министерство ∩ flagged = c2, c4
+  });
+});
+
+// PII (#236 review): the flagged homepage table must never surface an identifiable individual (sole trader
+// / ЕТ) under a „сигнали за риск" label. `excludeNaturalPersons` drops them in SQL, on two signals — the
+// „ЕТ " name convention (the only populated signal in current data) and the registry `legal_form` — so the
+// suppression does not hinge on the winner's name spelling alone.
+describe('excludeNaturalPersons — sole-trader (ЕТ) suppression', () => {
+  it('drops ЕТ bidders by name prefix and by legal_form, keeps ordinary companies', async () => {
+    const db = realDb();
+    open!.exec(`
+      INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind, legal_form) VALUES
+        ('eik:300000001', 'ЕТ ИВАН ПЕТРОВ', '300000001', '300000001', 1, 'company', NULL),
+        ('eik:300000002', 'ИВАН ГЕОРГИЕВ', '300000002', '300000002', 1, 'company', 'ЕДНОЛИЧЕН ТЪРГОВЕЦ');
+      INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+        ('t:np1', 'UNP-NP1', 'Строеж', 'auth:obshtina', '45000000', 'открита процедура', 'awarded'),
+        ('t:np2', 'UNP-NP2', 'Строеж', 'auth:obshtina', '45000000', 'открита процедура', 'awarded');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, bids_rejected, eu_funded,
+         value_flag, date_flag, signing_value_eur, current_value_eur, amount_eur) VALUES
+        ('cnp1', 't:np1', 'eik:300000001', 9999, 'EUR', '2024-02-01', 1, 0, 0, 'ok', 'ok', 9999, 9999, 9999),
+        ('cnp2', 't:np2', 'eik:300000002', 9998, 'EUR', '2024-02-02', 1, 0, 0, 'ok', 'ok', 9998, 9998, 9998);
+    `);
+    // Both natural-person contracts are single-offer (flagged) and top-value → they would head a value-desc
+    // list; without the flag they show, with it they are gone while the ordinary company stays.
+    const withNP = await listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 20 });
+    const withNPNames = withNP.items.map((c) => c.bidderName);
+    expect(withNPNames).toContain('ЕТ ИВАН ПЕТРОВ');
+    expect(withNPNames).toContain('ИВАН ГЕОРГИЕВ');
+
+    const clean = await listContracts(db, {
+      flags: ['all'],
+      sort: 'value-desc',
+      pageSize: 20,
+      excludeNaturalPersons: true,
+    });
+    const names = clean.items.map((c) => c.bidderName);
+    expect(names).not.toContain('ЕТ ИВАН ПЕТРОВ'); // dropped via the "ЕТ " name prefix
+    expect(names).not.toContain('ИВАН ГЕОРГИЕВ'); // dropped via the ЕДНОЛИЧЕН ТЪРГОВЕЦ legal_form
+    expect(names).toContain('Фирма'); // ordinary company still present
+  });
+
+  it('never drops a consortium (a consortium is not a single natural person)', async () => {
+    const db = realDb();
+    open!.exec(`
+      INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind, legal_form) VALUES
+        ('eik:300000003', 'ЕТ-ГРУП КОНСОРЦИУМ', '300000003', '300000003', 1, 'consortium', NULL);
+      INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+        ('t:np3', 'UNP-NP3', 'Строеж', 'auth:obshtina', '45000000', 'открита процедура', 'awarded');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, bids_rejected, eu_funded,
+         value_flag, date_flag, signing_value_eur, current_value_eur, amount_eur) VALUES
+        ('cnp3', 't:np3', 'eik:300000003', 9997, 'EUR', '2024-02-03', 1, 0, 0, 'ok', 'ok', 9997, 9997, 9997);
+    `);
+    const clean = await listContracts(db, {
+      flags: ['all'],
+      sort: 'value-desc',
+      pageSize: 20,
+      excludeNaturalPersons: true,
+    });
+    // Its name starts with "ЕТ" but the kind guard keeps it — consortiums are legal entities, not people.
+    expect(clean.items.some((c) => c.bidderKind === 'consortium')).toBe(true);
+  });
+});
+
+// #236 review note: the homepage builds a `?type=<typeGroup>` link per byAuthorityType row, and /contracts
+// only honours canonical `type=` buckets. Guard the breakdown so a drifted DB type_group can never emit a
+// link the allow-list silently swallows (which would show ALL flagged contracts under a specific label).
+describe('byAuthorityType canonical-bucket guard', () => {
+  it('drops a drifted (non-canonical) type_group from the breakdown', async () => {
+    const db = realDb();
+    open!.exec(`
+      INSERT INTO authorities (id, name, bulstat, type_group) VALUES
+        ('auth:drift', 'Странна', '100000009', 'странна-кофа');
+      INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+        ('t:drift', 'UNP-D', 'Строеж', 'auth:drift', '45000000', 'открита процедура', 'awarded');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, bids_rejected, eu_funded,
+         value_flag, date_flag, signing_value_eur, current_value_eur, amount_eur) VALUES
+        ('cdrift', 't:drift', 'eik:200000001', 7000, 'EUR', '2024-03-01', 1, 0, 0, 'ok', 'ok', 7000, 7000, 7000);
+    `);
+    const f = await getFlaggedValue(db);
+    // Every emitted bucket is one the /contracts ?type= allow-list will honour.
+    expect(f.byAuthorityType.every((a) => AUTHORITY_TYPE_GROUPS.includes(a.typeGroup))).toBe(true);
+    expect(f.byAuthorityType.map((a) => a.typeGroup)).not.toContain('странна-кофа');
   });
 });

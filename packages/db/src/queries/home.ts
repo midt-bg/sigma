@@ -1,5 +1,4 @@
 import type { HomeData, HomeTotals } from '@sigma/api-contract';
-import { isNaturalPersonProfileName } from '@sigma/shared';
 import {
   toAuthorityListItem,
   toCompanyListItem,
@@ -90,20 +89,24 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
     // Flagged-value summary (#218) — live aggregate over existing columns, under the 1h edge cache.
     getFlaggedValue(db),
     // Top flagged contracts by value, for the homepage table (same shape as the single-offer list).
-    // Over-fetch a wide cushion so we can drop natural-person (sole-trader ЕТ) bidders below and still
-    // fill 10 rows even on a value-desc page heavy with sole traders (#236 review — reduces the chance the
-    // table under-fills; 0 rows still degrades to the table's empty-state). An identifiable individual must
-    // never appear under a „сигнали за риск" label on this indexed, edge-cached page (GDPR/ЗЗЛД — mirrors
-    // the noindex on sole-trader company profiles, #218 review).
-    listContracts(db, { flags: ['all'], sort: 'value-desc', pageSize: 60 }),
+    // `excludeNaturalPersons` drops sole-trader (ЕТ) bidders in SQL, before the LIMIT — so an identifiable
+    // individual never appears under a „сигнали за риск" label on this indexed, edge-cached page (GDPR/ЗЗЛД
+    // — mirrors the noindex on sole-trader company profiles, #236 review), and the table still fills 10 rows
+    // (the exclusion no longer eats into the page as a post-hoc filter would). 0 rows degrades to the empty
+    // state. The exclusion keys on both the "ЕТ " name convention and the registry `legal_form`, so it does
+    // not depend on the winner's name spelling alone.
+    listContracts(db, {
+      flags: ['all'],
+      sort: 'value-desc',
+      pageSize: 10,
+      excludeNaturalPersons: true,
+    }),
   ]);
 
   return {
     totals,
     flagged,
-    topFlagged: topFlaggedPage.items
-      .filter((c) => !isNaturalPersonProfileName(c.bidderDisplayName))
-      .slice(0, 10),
+    topFlagged: topFlaggedPage.items,
     topCompanies: companies.results.map(toCompanyListItem),
     topMinistries: ministries.results.map(toAuthorityListItem),
     topMunicipalities: municipalities.results.map(toAuthorityListItem),

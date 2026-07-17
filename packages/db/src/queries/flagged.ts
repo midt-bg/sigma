@@ -8,6 +8,14 @@
 
 import { CPV_SECTORS } from '@sigma/config';
 import type { FlaggedValue } from '@sigma/api-contract';
+import { AUTHORITY_TYPE_GROUPS } from './rows';
+
+// The homepage builds a `?type=<typeGroup>` drill-down link from each byAuthorityType row, and /contracts
+// only honours a `type=` token that is one of these canonical buckets (the same allow-list). Guard the
+// breakdown against the same set so a drifted DB `type_group` (outside the canonical buckets) can never
+// emit a link the allow-list silently swallows — which would show ALL flagged contracts under a specific
+// type label (a label↔result mismatch, #236 review note).
+const CANONICAL_TYPE_GROUPS = new Set(AUTHORITY_TYPE_GROUPS);
 
 // The "unconfirmed value" flags (mirrors details.ts value.suspect: value_suspect | annex_suspect |
 // review | value_low). Kept as a SQL list literal so the fragments read cleanly.
@@ -78,7 +86,8 @@ interface AuthTypeRow {
  * tally counts every flagged row, so a value-suspect contract is counted but contributes €0. The `byType`
  * slices OVERLAP (a contract can be both single-offer and cost-growth), so they sum to more than the
  * de-duplicated total. `bySector` (top 6) and `byAuthorityType` are TOP slices that need not sum to the
- * total: flagged rows with a NULL `cpv_code`/`type_group` are excluded, and `bySector` is capped at 6.
+ * total: flagged rows with a NULL `cpv_code`/`type_group` are excluded, `bySector` is capped at 6, and
+ * `byAuthorityType` keeps only canonical buckets (see CANONICAL_TYPE_GROUPS).
  */
 export async function getFlaggedValue(db: D1Database): Promise<FlaggedValue> {
   const typeCols = FLAG_TYPES.flatMap((t) => [
@@ -135,7 +144,10 @@ export async function getFlaggedValue(db: D1Database): Promise<FlaggedValue> {
         contracts: r.contracts,
       })),
     byAuthorityType: authTypes.results
-      .filter((r): r is AuthTypeRow & { type_group: string } => r.type_group != null)
+      .filter(
+        (r): r is AuthTypeRow & { type_group: string } =>
+          r.type_group != null && CANONICAL_TYPE_GROUPS.has(r.type_group),
+      )
       .map((r) => ({ typeGroup: r.type_group, eur: r.eur, contracts: r.contracts })),
   };
 }
