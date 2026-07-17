@@ -249,7 +249,7 @@ describe('taxonomy integrity', () => {
     expect([...NON_COMPETITIVE_PROCEDURE_TYPES].sort()).toEqual([...nonCompetitive].sort());
   });
 
-  it('BG_REGIONS has 28 областти with unique NUTS3 ids and names', () => {
+  it('BG_REGIONS has 28 области with unique NUTS3 ids and names', () => {
     expect(BG_REGIONS).toHaveLength(28);
     expect(new Set(BG_REGIONS.map((r) => r.nuts3)).size).toBe(28);
     expect(new Set(BG_REGIONS.map((r) => r.name)).size).toBe(28);

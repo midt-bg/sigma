@@ -75,7 +75,13 @@ afterEach(() => {
 
 function fakeDbFromFreshness(maxLoadedDate: string | null): D1Database {
   return {
-    prepare() {
+    prepare(sql: string) {
+      // Data-integrity invariant: the catch-up planner must derive the max-loaded date from served
+      // freshness (data_freshness), never from raw staging (raw_*). Throw on anything else so a
+      // regression that reads raw staging for planning fails loudly instead of passing silently.
+      if (!sql.includes('data_freshness')) {
+        throw new Error(`planning must read data_freshness, not: ${sql}`);
+      }
       return {
         async first() {
           return { max_loaded_date: maxLoadedDate };
