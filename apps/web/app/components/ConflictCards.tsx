@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Link, useFetcher } from 'react-router';
 import { count, money, pct, plural } from '@sigma/shared';
 import type { ConflictContract, ConflictLink, LinkContracts } from '@sigma/api-contract';
@@ -80,13 +80,22 @@ function ConflictCard({
   const loaded = fetcher.data != null;
   // Guards a double-fetch from a rapid re-toggle before React commits (fetcher.state is a stale closure read).
   const requested = useRef(false);
+  // A load that failed (network/5xx/loader throw) settles back to idle with no data. Clear the guard so a
+  // re-open RETRIES rather than leaving the panel permanently empty; without this the ref stays set forever.
+  useEffect(() => {
+    if (fetcher.state === 'idle' && requested.current && fetcher.data == null) {
+      requested.current = false;
+    }
+  }, [fetcher.state, fetcher.data]);
 
   function toggle() {
     const next = !open;
     setOpen(next);
-    if (next && !requested.current) {
+    // Load on first open, and again on re-open after a failed load (still no data). The ref + idle check
+    // keep a rapid re-toggle from firing two loads before React commits fetcher.state.
+    if (next && !loaded && !requested.current && fetcher.state === 'idle') {
       requested.current = true;
-      fetcher.load(linkContractsHref(l)); // lazy-load once; cached by the card thereafter
+      fetcher.load(linkContractsHref(l)); // lazy-load; cached by the card once it succeeds
     }
   }
 
