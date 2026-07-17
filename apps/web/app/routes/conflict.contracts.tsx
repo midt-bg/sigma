@@ -14,7 +14,10 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const personId = personIdFromSlug(params.slug ?? '');
   const eik = params.eik ?? '';
   const scope = params.scope ?? '';
-  if (!personId || !eik || (scope !== 'self' && scope !== 'family')) {
+  // eik is a raw path segment slotted into link_key with '|' delimiters. %7C decodes to '|' before we see
+  // it, so an unvalidated eik like '123|family' would build the FAMILY key for eik=123 under scope=self —
+  // collapsing the self- and family-link lists (a libel leak). A БГ ЕИК is always numeric, so require digits.
+  if (!personId || !/^\d+$/.test(eik) || (scope !== 'self' && scope !== 'family')) {
     throw new Response('Not Found', { status: 404 });
   }
   const linkKey = scope === 'family' ? `${personId}|${eik}|family` : `${personId}|${eik}`;

@@ -30,7 +30,9 @@ export function headers() {
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
-  if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
+  // A БГ ЕИК is 9 or 13 digits — always numeric. Require digits (not just non-blank) so a garbage/probe
+  // :eik 404s before any DB read and before it reaches meta/URL — uniform with the sibling conflict loaders.
+  if (!/^\d+$/.test(params.eik ?? '')) throw new Response('Not Found', { status: 404 });
   const db = context.cloudflare.env.DB;
   const data = await withDbRetry(() => getCompanyConflicts(db, params.eik));
   if (!data) throw new Response('Not Found', { status: 404 });

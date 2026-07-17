@@ -98,6 +98,17 @@ describe('company loader (/conflicts/company/:eik)', () => {
     await expectStatus(call(companyLoader, { eik: '123456789' }), 404);
   });
 
+  // A БГ ЕИК is 9 or 13 digits — always numeric. A non-numeric :eik can only be a probe/garbage; 404 it
+  // before any DB read, and before it reaches meta/URL. Guards uniformly with the sibling loaders.
+  it.each([
+    { eik: 'abc', why: 'non-numeric' },
+    { eik: '123|family', why: 'a decoded key-delimiter (%7C)' },
+    { eik: '12 34', why: 'embedded whitespace' },
+  ])('404s a $why eik before any DB read', async ({ eik }) => {
+    await expectStatus(call(companyLoader, { eik }), 404);
+    expect(q.getCompanyConflicts).not.toHaveBeenCalled();
+  });
+
   it('returns the conflict payload for a valid company', async () => {
     q.getCompanyConflicts.mockResolvedValue({ company: 'АЛФА ООД', eik: '123456789', links: [] });
     const res = (await call(companyLoader, { eik: '123456789' })) as { company: string };
@@ -110,9 +121,16 @@ describe('contracts resource loader (/conflicts/link/:scope/:slug/:eik/contracts
     { params: { scope: 'self', slug: '', eik: '1' }, why: 'blank slug' },
     { params: { scope: 'self', slug: 'ivan', eik: '' }, why: 'blank eik' },
     { params: { scope: 'sideways', slug: 'ivan', eik: '1' }, why: 'unknown scope' },
+    // %7C decodes to '|' before the loader sees it. Without an eik format guard, scope=self + eik='123|family'
+    // builds `person:1|123|family` — byte-identical to the FAMILY key for eik=123, collapsing the self- and
+    // family-link contract lists into one (a libel-critical leak: the relative's contracts shown as the
+    // official's own). A numeric-only :eik makes the collision unrepresentable.
+    { params: { scope: 'self', slug: 'ivan', eik: '123|family' }, why: 'a key-delimiter in eik' },
+    { params: { scope: 'self', slug: 'ivan', eik: 'abc' }, why: 'a non-numeric eik' },
   ])('404s on $why', async ({ params }) => {
     q.personIdFromSlug.mockReturnValue(params.slug ? 'person:1' : null);
     await expectStatus(call(contractsLoader, params), 404);
+    expect(q.getLinkContracts).not.toHaveBeenCalled();
   });
 
   it('builds a SELF link_key (personId|eik) — never collapses with the family key', async () => {
