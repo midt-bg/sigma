@@ -167,6 +167,35 @@ function capDb(): { db: D1Database; sql: string[] } {
   return { db, sql };
 }
 
+describe('listCompanies — backward pagination', () => {
+  it('reverses the page rows when walking backward through a before-cursor', async () => {
+    const rows = [
+      { ...filteredRows[0]!, bidder_id: 'eik:1', sort_value: 200 },
+      { ...filteredRows[0]!, bidder_id: 'eik:2', sort_value: 100 },
+    ];
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: rows as T[] };
+          },
+          async first<T>() {
+            return { n: 2 } as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const p1 = await listCompanies(db, { pageSize: 1 });
+    const p2 = await listCompanies(db, { pageSize: 1, cursor: p1.nextCursor! });
+    expect(p2.prevCursor).toBeTruthy();
+    const back = await listCompanies(db, { pageSize: 1, cursor: p2.prevCursor! });
+    expect(back.items).toHaveLength(1); // reverse branch ran
+  });
+});
+
 describe('normalizeCompanySort', () => {
   it('passes through known keys and collapses everything else to „won"', () => {
     expect(normalizeCompanySort('count')).toBe('count');
@@ -188,6 +217,16 @@ describe('listCompanies — source and entity-where branches', () => {
     expect(base).toContain('substr(c.signed_at, 1, 4) IN');
     expect(base).toContain('c.eu_funded = 1');
     expect(base).toContain('? AS primary_sector'); // single sector → bound value
+  });
+
+  it('builds the base aggregation from a non-sector filter, omitting the CPV predicate', async () => {
+    // needsBase is triggered by the year filter alone; with no sectors the `if (p.sectors?.length)`
+    // else-branch runs → no CPV predicate is emitted, but the year predicate still is.
+    const { db, sql } = capDb();
+    await listCompanies(db, { years: ['2024'], pageSize: 10 });
+    const base = sql.find((s) => s.includes('FROM ('))!;
+    expect(base).toContain('substr(c.signed_at, 1, 4) IN');
+    expect(base).not.toContain('substr(t.cpv_code, 1, 2) IN');
   });
 
   it('uses NULL primary_sector for a multi-sector filter and the national funding predicate', async () => {

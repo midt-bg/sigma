@@ -234,6 +234,33 @@ describe('buildFilters (via listContracts)', () => {
     const page = await listContracts(db, {}); // no pageSize → default of 15
     expect(page.items[0]!.sectorCode).toBeNull(); // r.cpv_code ? … : null
   });
+
+  it('reverses the page rows when walking backward through a before-cursor', async () => {
+    const rows = [
+      { ...contractRow, id: 'c:1', sort_value: 200 },
+      { ...contractRow, id: 'c:2', sort_value: 100 },
+    ];
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: rows as T[] };
+          },
+          async first<T>() {
+            return { total: 2, eur: 1000, suspect: 0 } as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const p1 = await listContracts(db, { pageSize: 1 });
+    const p2 = await listContracts(db, { pageSize: 1, cursor: p1.nextCursor! });
+    expect(p2.prevCursor).toBeTruthy();
+    const back = await listContracts(db, { pageSize: 1, cursor: p2.prevCursor! });
+    expect(back.items).toHaveLength(1); // reverse branch ran
+  });
 });
 
 describe('contractsSummary', () => {
@@ -461,5 +488,33 @@ describe('getContractFacets', () => {
       label: 'Неизвестна',
       count: 3,
     });
+  });
+
+  it('always sinks the „Неизвестна" bucket below real years, whatever the row order', async () => {
+    // Multiple buckets with „unknown" NOT last force the comparator to evaluate `a.key === YEAR_UNKNOWN`
+    // (its first arm) as well as the `b` arm — real years descend, unknown always sorts to the bottom.
+    const db = {
+      prepare(sql: string) {
+        return {
+          async all<T>() {
+            if (sql.includes('facet_counts')) return { results: [] as T[] };
+            if (sql.includes('substr(t.cpv_code, 1, 2)')) return { results: [] as T[] };
+            return {
+              results: [
+                { key: '2020', contracts: 1 },
+                { key: 'unknown', contracts: 2 },
+                { key: '2024', contracts: 3 },
+                { key: '2022', contracts: 4 },
+              ] as T[],
+            };
+          },
+        };
+      },
+    } as D1Database;
+
+    const facets = await getContractFacets(db);
+    const values = facets.years.map((y) => y.value);
+    expect(values[values.length - 1]).toBe('unknown'); // unknown always last
+    expect(values.slice(0, -1)).toEqual(['2024', '2022', '2020']); // real years descend
   });
 });

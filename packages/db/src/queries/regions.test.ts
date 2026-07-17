@@ -73,6 +73,28 @@ describe('getRegionalSpending', () => {
   });
 });
 
+describe('getRegionalSpending — empty dataset', () => {
+  it('reports zero coverage without dividing by zero when no authorities exist', async () => {
+    // No region rows at all → withRegion 0 and unattributed 0 → total 0 → the `total > 0 ? … : 0`
+    // else-branch owns pct (guards against 0/0 = NaN).
+    const emptyDb = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const { coverage } = await getRegionalSpending(emptyDb, {});
+    expect(coverage.total).toBe(0);
+    expect(coverage.pct).toBe(0);
+  });
+});
+
 describe('getRegionalSpending — filter predicates', () => {
   it('applies the year filter via base aggregation, not the rollup', async () => {
     const cap: string[] = [];

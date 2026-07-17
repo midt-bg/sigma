@@ -250,6 +250,38 @@ describe('listAuthorities — base-source and entity-where branches', () => {
   });
 });
 
+describe('listAuthorities — backward pagination', () => {
+  it('reverses the page rows when walking backward through a before-cursor', async () => {
+    // Two rows, pageSize 1 → hasMore. Page forward for a nextCursor, page again for a prevCursor
+    // (a real before-cursor minted with the internal sort token), then feed that back: keyset decodes
+    // dir='before' → reverse=true → the `if (ks.reverse) rows.reverse()` branch runs.
+    const rows = [
+      { ...authorityRow, authority_id: 'auth:1', sort_value: 200 },
+      { ...authorityRow, authority_id: 'auth:2', sort_value: 100 },
+    ];
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: rows as T[] };
+          },
+          async first<T>() {
+            return { n: 2 } as T;
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const page1 = await listAuthorities(db, { pageSize: 1 });
+    const page2 = await listAuthorities(db, { pageSize: 1, cursor: page1.nextCursor! });
+    expect(page2.prevCursor).toBeTruthy();
+    const back = await listAuthorities(db, { pageSize: 1, cursor: page2.prevCursor! });
+    expect(back.items).toHaveLength(1); // the reverse branch produced a valid page
+  });
+});
+
 describe('normalizeAuthoritySort', () => {
   it('passes through a known sort key and collapses everything else to „spent"', () => {
     expect(normalizeAuthoritySort('count')).toBe('count');

@@ -174,6 +174,21 @@ describe('getFlows — funding scope and label truncation', () => {
 });
 
 describe('getFlows — sankey ordering', () => {
+  it('orders the authority column by descending node total across two authorities', async () => {
+    // Two DISTINCT authorities are needed for the authority-column `.sort()` comparator to run at all
+    // (a single authority key never invokes it). The higher-total authority ranks to the top (index 0).
+    const pairs = [
+      { ...pairRow, authority_id: 'auth:small', authority_name: 'Малко ведомство', won_eur: 100000, bidder_id: 'eik:a' },
+      { ...pairRow, authority_id: 'auth:big', authority_name: 'Голямо ведомство', won_eur: 900000, bidder_id: 'eik:b' },
+    ];
+    const data = await getFlows(fakeDb(pairs), {});
+    const auth = data.sankey.nodes.filter((n) => n.side === 'authority');
+    expect(auth).toHaveLength(2);
+    const big = auth.find((n) => n.label.startsWith('Голямо'))!;
+    const small = auth.find((n) => n.label.startsWith('Малко'))!;
+    expect(big.y).toBeLessThan(small.y); // bigger total sits higher in the column
+  });
+
   it('orders ribbons by company rank when two pairs share an authority (sort tiebreak)', async () => {
     const pairs = [
       { ...pairRow, bidder_id: 'eik:111', bidder_name: 'Алфа ООД', won_eur: 300000, contracts: 5 },

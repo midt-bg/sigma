@@ -172,6 +172,21 @@ describe('keyset clause', () => {
     expect(k.orderSql).toBe('ORDER BY won_eur ASC, bidder_id ASC');
     expect(k.reverse).toBe(true);
   });
+  it('rejects an unsafe sort direction (guards a non-TS/hostile caller)', () => {
+    expect(() =>
+      keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'sideways' as 'asc' }),
+    ).toThrow(/Unsafe keyset dir/);
+  });
+  it('inverts an ascending sort for a backward (before) cursor', () => {
+    // dir='asc' + before ⇒ effectiveDir flips to desc: the `opts.dir === 'desc' ? 'asc' : 'desc'`
+    // else-branch. Walks backward through an ascending list.
+    const firstPage = keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'asc' });
+    const cursor = encodeCursor('before', 1000, 'x', firstPage.cursorToken);
+    const k = keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'asc', cursor });
+    expect(k.whereSql).toContain('won_eur < ?');
+    expect(k.orderSql).toBe('ORDER BY won_eur DESC, bidder_id DESC');
+    expect(k.reverse).toBe(true);
+  });
   it('rejects unsafe sort fragments unless explicitly allowlisted', () => {
     expect(() =>
       keyset({ sortCol: 'won_eur; DROP TABLE contracts', idCol: 'bidder_id', dir: 'desc' }),
@@ -205,6 +220,18 @@ describe('pageCursors', () => {
       incomingCursor: incoming,
     });
     expect(decodeCursor(prevCursor)).toMatchObject({ dir: 'before', value: 900, id: 'a' });
+    expect(nextCursor).toBeNull();
+  });
+  it('before page with no rows: both cursors null (empty prev-page)', () => {
+    // Walking backward off the top: the query returns zero rows, so there is neither a first nor a
+    // last row → the `last ? … : null` and `hasMore && first ? … : null` else-branches both yield null.
+    const incoming = encodeCursor('before', 700, 'c');
+    const { prevCursor, nextCursor } = pageCursors({
+      rows: [],
+      hasMore: false,
+      incomingCursor: incoming,
+    });
+    expect(prevCursor).toBeNull();
     expect(nextCursor).toBeNull();
   });
   it('before page: next always returns toward the page we came from, prev only when more', () => {
