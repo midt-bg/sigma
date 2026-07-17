@@ -46,14 +46,82 @@ DELETE FROM authorities;
 
 -- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
 --    canonical display name and the authority type (Вид на възложителя).
-INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
+--    Names use the mode per ЕИК, with deterministic presentation-quality tiebreaks.
+DROP TABLE IF EXISTS authority_canonical_name;
+CREATE TABLE authority_canonical_name (authority_eik TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO authority_canonical_name (authority_eik, canonical_name)
+SELECT authority_eik, authority_name
 FROM (
-  SELECT authority_eik, authority_name, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
-  UNION ALL
-  SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
+  SELECT
+    authority_eik,
+    authority_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY
+        cnt DESC,
+        CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(authority_name) DESC,
+        authority_name
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_name, COUNT(*) AS cnt
+    FROM (
+      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL
+      UNION ALL
+      SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL
+    )
+    WHERE authority_name IS NOT NULL AND TRIM(authority_name) <> ''
+    GROUP BY authority_eik, authority_name
+  )
 )
-GROUP BY authority_eik;
+WHERE rn = 1;
+
+-- Keep the type modal within rows carrying the winning name, so the two canonical fields describe
+-- the same entity when an ЕИК has been shared or reused under multiple labels.
+DROP TABLE IF EXISTS authority_canonical_type;
+CREATE TABLE authority_canonical_type (authority_eik TEXT PRIMARY KEY, canonical_type TEXT);
+INSERT INTO authority_canonical_type (authority_eik, canonical_type)
+SELECT authority_eik, authority_type
+FROM (
+  SELECT
+    authority_eik,
+    authority_type,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY cnt DESC, authority_type
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_type, COUNT(*) AS cnt
+    FROM (
+      SELECT c.authority_eik, c.authority_type
+      FROM raw_contracts c
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = c.authority_eik AND acn.canonical_name = c.authority_name
+      UNION ALL
+      SELECT t.authority_eik, t.authority_type
+      FROM raw_tenders t
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = t.authority_eik AND acn.canonical_name = t.authority_name
+    )
+    WHERE authority_type IS NOT NULL AND TRIM(authority_type) <> ''
+    GROUP BY authority_eik, authority_type
+  )
+)
+WHERE rn = 1;
+
+INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
+SELECT
+  'auth:' || s.authority_eik,
+  COALESCE(acn.canonical_name, s.authority_eik),
+  s.authority_eik,
+  act.canonical_type
+FROM (
+  SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
+  UNION
+  SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
+) s
+LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
+LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
 --     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
@@ -63,7 +131,19 @@ UPDATE authorities SET type_group = CASE
   WHEN name LIKE '%болница%' OR name LIKE '%БОЛНИЦА%' OR name LIKE 'МБАЛ%' OR name LIKE '%МБАЛ%' OR name LIKE '%СБАЛ%' OR name LIKE '%ДКЦ%' OR name LIKE '%лечебно заведение%' THEN 'болница'
   WHEN name LIKE '%университет%' OR name LIKE '%УНИВЕРСИТЕТ%' OR name LIKE '%училище%' OR name LIKE '%УЧИЛИЩЕ%' OR name LIKE '%гимназия%' OR name LIKE '%ГИМНАЗИЯ%' OR name LIKE '%детска градина%' OR name LIKE '%ДЕТСКА ГРАДИНА%' OR name LIKE '%академия%' THEN 'образование'
   WHEN name LIKE '%агенция%' OR name LIKE '%Агенция%' OR name LIKE '%АГЕНЦИЯ%' THEN 'агенция'
-  WHEN type LIKE 'Публично предприятие%' OR type LIKE 'Комунални услуги%' THEN 'държавна компания'
+  WHEN EXISTS (
+    SELECT 1
+    FROM (
+      SELECT authority_eik, authority_type FROM raw_contracts
+      UNION ALL
+      SELECT authority_eik, authority_type FROM raw_tenders
+    ) raw_authority_types
+    WHERE raw_authority_types.authority_eik = authorities.bulstat
+      AND (
+        raw_authority_types.authority_type LIKE 'Публично предприятие%'
+        OR raw_authority_types.authority_type LIKE 'Комунални услуги%'
+      )
+  ) THEN 'държавна компания'
   ELSE 'друго'
 END;
 
@@ -238,10 +318,50 @@ WHERE t.lot_id IS NOT NULL
 --    which keeps the bulstat UNIQUE happy). is_consortium describes the ENTITY (a JV), so it is
 --    name-based — a semicolon member list or ДЗЗД / ОБЕДИНЕНИЕ / КОНСОРЦИУМ in the name; the
 --    per-contract awarded_to_group flag lives on contracts, not here.
+DROP TABLE IF EXISTS bidder_canonical_name;
+CREATE TABLE bidder_canonical_name (bidder_key TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO bidder_canonical_name (bidder_key, canonical_name)
+SELECT bidder_key, contractor_name
+FROM (
+  SELECT
+    bidder_key,
+    contractor_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY bidder_key
+      ORDER BY
+        cnt DESC,
+        CASE WHEN contractor_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(contractor_name) DESC,
+        contractor_name
+    ) AS rn
+  FROM (
+    SELECT bidder_key, contractor_name, COUNT(*) AS cnt
+    FROM (
+      SELECT
+        contractor_name,
+        CASE
+          WHEN eik_clean NOT GLOB '*[^0-9]*' AND LENGTH(eik_clean) IN (9, 13) THEN 'eik:' || eik_clean
+          WHEN contractor_name IS NOT NULL AND TRIM(contractor_name) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(contractor_name, '  ', ' '), '  ', ' ')))
+          ELSE NULL
+        END AS bidder_key
+      FROM (
+        SELECT
+          contractor_name,
+          TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
+        FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+      )
+    )
+    WHERE bidder_key IS NOT NULL
+      AND contractor_name IS NOT NULL AND TRIM(contractor_name) <> ''
+    GROUP BY bidder_key, contractor_name
+  )
+)
+WHERE rn = 1;
+
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, is_consortium, kind)
 SELECT
-  bidder_key,
-  MIN(contractor_name),
+  b.bidder_key,
+  COALESCE(bcn.canonical_name, b.bidder_key),
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MAX(eik_valid),
@@ -270,9 +390,10 @@ FROM (
       TRIM(CASE WHEN contractor_eik LIKE 'ЕИК %' THEN SUBSTR(contractor_eik, 5) ELSE contractor_eik END) AS eik_clean
     FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
   )
-)
-WHERE bidder_key IS NOT NULL
-GROUP BY bidder_key;
+) b
+LEFT JOIN bidder_canonical_name bcn ON bcn.bidder_key = b.bidder_key
+WHERE b.bidder_key IS NOT NULL
+GROUP BY b.bidder_key;
 
 -- 4b) Curated public-owned winner classification. Exact EIK matches cover the allowlist; a small
 -- branch list handles valid 13-digit branch EIKs used by AПИ/ОПУ, ЕСО/МЕР, БНР and Информационно
