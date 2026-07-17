@@ -451,6 +451,49 @@ describe('releaseToAmendments — early exits', () => {
   });
 });
 
+describe('branch completion — absent/sparse optional OCDS fields', () => {
+  it('releaseToContracts returns [] when the tag or contracts key is entirely absent', () => {
+    expect(releaseToContracts({}, meta)).toEqual([]); // rel.tag ?? [] right side
+    expect(releaseToContracts({ tag: ['contract'] }, meta)).toEqual([]); // rel.contracts ?? [] right side
+  });
+
+  it('releaseToContracts nulls ocid/number/value and reads the id-less + identifier-less party branches', () => {
+    const rows = releaseToContracts(
+      {
+        tag: ['contract'],
+        // no ocid, no id, no date, no bids, no awards
+        parties: [
+          { id: 'X' }, // id present but identifier & name absent → both `?? null` right sides
+          { name: 'без ид' }, // no id → the `if (p.id)` false branch
+        ],
+        tender: { items: [{ classification: { id: 'x' } }] }, // classification without a scheme → `c.scheme ?? ''`
+        contracts: [{ value: { amount: '', currency: 'EUR' }, dateSigned: '   ' }], // idless; '' amount; blank date
+      },
+      meta,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      unp: null, // rel.ocid ?? null
+      contract_number: null, // c.id ?? null
+      cpv_code: null, // no CPV-schemed classification matched
+      signing_value: null, // finiteNum('') → empty-string branch
+      contract_date: null, // clean('   ') → '' → null
+      authority_eik: null,
+      authority_name: null,
+    });
+  });
+
+  it('releaseToAmendments returns [] when the tag or contracts key is entirely absent', () => {
+    expect(releaseToAmendments({ contracts: [{ id: 'c' }] }, meta)).toEqual([]); // rel.tag ?? [] right side
+    expect(releaseToAmendments({ tag: ['contractAmendment'] }, meta)).toEqual([]); // rel.contracts ?? [] right side
+  });
+
+  it('releaseToLots nulls ocid and tender id when both are absent', () => {
+    const [row] = releaseToLots({ tender: { lots: [{ id: 'L' }] } }, meta); // no ocid, no tender id
+    expect(row).toMatchObject({ ocid: null, tender_id: null, lot_id: 'L' });
+  });
+});
+
 describe('computeCatchupWindow / daysInWindow — day validation', () => {
   it('rejects a today that is not strictly YYYY-MM-DD', () => {
     expect(() =>
