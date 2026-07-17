@@ -31,13 +31,18 @@
 --     every contract has a parent. bids stays empty (the data has a bid COUNT, not bids).
 
 -- Full clear in child→parent order (D1 enforces FKs).
+DROP TABLE IF EXISTS joint_tender_leads;
+DROP TABLE IF EXISTS joint_authority_members;
+DROP TABLE IF EXISTS joint_tender_sources;
 DELETE FROM search_index;
 DELETE FROM flow_pairs;
 DELETE FROM company_totals;
+DELETE FROM authority_joint_participation;
 DELETE FROM authority_totals;
 DELETE FROM sector_totals;
 DELETE FROM facet_counts;
 DELETE FROM home_totals;
+DELETE FROM contract_co_authorities;
 DELETE FROM contracts;
 DELETE FROM lots;
 DELETE FROM tenders;
@@ -49,11 +54,160 @@ DELETE FROM authorities;
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
 FROM (
-  SELECT authority_eik, authority_name, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
+  SELECT authority_eik, authority_name, authority_type FROM raw_contracts
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
   UNION ALL
-  SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
+  SELECT authority_eik, authority_name, authority_type FROM raw_tenders
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
 )
 GROUP BY authority_eik;
+
+-- 1a) Joint procurements — split the parallel EIK/name lists once and reuse the mapping for tender
+-- ownership and the contract bridge. The modal raw row per UNP wins when cumulative source buckets
+-- repeat a tender; ties are deterministic. Existing standalone authority names stay untouched.
+CREATE TABLE joint_tender_sources (
+  unp TEXT PRIMARY KEY,
+  authority_eiks TEXT NOT NULL,
+  authority_name TEXT,
+  authority_type TEXT
+);
+WITH observations AS (
+  SELECT unp, authority_eik, authority_name, authority_type
+  FROM raw_tenders
+  WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
+  UNION ALL
+  SELECT unp, authority_eik, authority_name, authority_type
+  FROM raw_contracts
+  WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
+), ranked AS (
+  SELECT unp, authority_eik, authority_name, authority_type,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp
+      ORDER BY COUNT(*) DESC,
+        CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(COALESCE(authority_name, '')) DESC,
+        authority_eik, COALESCE(authority_name, ''), COALESCE(authority_type, '')
+    ) AS rn
+  FROM observations
+  GROUP BY unp, authority_eik, authority_name, authority_type
+)
+INSERT INTO joint_tender_sources (unp, authority_eiks, authority_name, authority_type)
+SELECT unp, authority_eik, authority_name, authority_type
+FROM ranked
+WHERE rn = 1;
+
+CREATE TABLE joint_authority_members (
+  unp TEXT NOT NULL,
+  authority_id TEXT NOT NULL,
+  member_name TEXT,
+  authority_type TEXT,
+  source_ordinal INTEGER NOT NULL,
+  PRIMARY KEY (unp, authority_id)
+);
+WITH RECURSIVE split (
+  unp, authority_eik, member_name, authority_type, source_ordinal, eik_rest, name_rest
+) AS (
+  SELECT
+    unp,
+    TRIM(CASE WHEN INSTR(authority_eiks, ';') > 0
+      THEN SUBSTR(authority_eiks, 1, INSTR(authority_eiks, ';') - 1) ELSE authority_eiks END),
+    TRIM(CASE WHEN INSTR(COALESCE(authority_name, ''), ';') > 0
+      THEN SUBSTR(authority_name, 1, INSTR(authority_name, ';') - 1) ELSE authority_name END),
+    authority_type,
+    0,
+    CASE WHEN INSTR(authority_eiks, ';') > 0
+      THEN SUBSTR(authority_eiks, INSTR(authority_eiks, ';') + 1) ELSE '' END,
+    CASE WHEN INSTR(COALESCE(authority_name, ''), ';') > 0
+      THEN SUBSTR(authority_name, INSTR(authority_name, ';') + 1) ELSE '' END
+  FROM joint_tender_sources
+  UNION ALL
+  SELECT
+    unp,
+    TRIM(CASE WHEN INSTR(eik_rest, ';') > 0
+      THEN SUBSTR(eik_rest, 1, INSTR(eik_rest, ';') - 1) ELSE eik_rest END),
+    TRIM(CASE WHEN INSTR(name_rest, ';') > 0
+      THEN SUBSTR(name_rest, 1, INSTR(name_rest, ';') - 1) ELSE name_rest END),
+    authority_type,
+    source_ordinal + 1,
+    CASE WHEN INSTR(eik_rest, ';') > 0
+      THEN SUBSTR(eik_rest, INSTR(eik_rest, ';') + 1) ELSE '' END,
+    CASE WHEN INSTR(name_rest, ';') > 0
+      THEN SUBSTR(name_rest, INSTR(name_rest, ';') + 1) ELSE '' END
+  FROM split
+  WHERE TRIM(eik_rest) <> ''
+)
+INSERT OR IGNORE INTO joint_authority_members
+  (unp, authority_id, member_name, authority_type, source_ordinal)
+SELECT unp, 'auth:' || authority_eik, NULLIF(member_name, ''), authority_type, source_ordinal
+FROM split
+WHERE authority_eik <> '';
+
+-- A minority of co-authorities never occur standalone. Mint those real EIK identities from the
+-- positionally corresponding name component; INSERT OR IGNORE preserves every standalone row.
+WITH name_counts AS (
+  SELECT authority_id, member_name, COUNT(*) AS uses,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_id
+      ORDER BY COUNT(*) DESC,
+        CASE WHEN member_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(member_name) DESC, member_name
+    ) AS rn
+  FROM joint_authority_members
+  WHERE member_name IS NOT NULL
+  GROUP BY authority_id, member_name
+), member_defaults AS (
+  SELECT m.authority_id,
+    COALESCE(n.member_name, SUBSTR(m.authority_id, 6)) AS authority_name,
+    MIN(SUBSTR(m.authority_id, 6)) AS authority_eik,
+    MAX(m.authority_type) AS authority_type
+  FROM joint_authority_members m
+  LEFT JOIN name_counts n ON n.authority_id = m.authority_id AND n.rn = 1
+  GROUP BY m.authority_id
+)
+INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
+SELECT authority_id, authority_name, authority_eik, authority_type
+FROM member_defaults;
+
+-- Lead default: match the tender's modal raw authority name to a co-authority's modal standalone
+-- name. Joined/unmatched names fall back to the first EIK. This scratch-only mode does not alter
+-- displayed canonical names (that remains the separate #194 concern).
+CREATE TABLE joint_tender_leads (
+  unp TEXT PRIMARY KEY,
+  authority_id TEXT NOT NULL REFERENCES authorities(id)
+);
+WITH standalone_observations AS (
+  SELECT authority_eik, authority_name FROM raw_contracts
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%' AND authority_name IS NOT NULL
+  UNION ALL
+  SELECT authority_eik, authority_name FROM raw_tenders
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%' AND authority_name IS NOT NULL
+), canonical_names AS (
+  SELECT authority_eik, authority_name
+  FROM (
+    SELECT authority_eik, authority_name,
+      ROW_NUMBER() OVER (
+        PARTITION BY authority_eik
+        ORDER BY COUNT(*) DESC,
+          CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+          LENGTH(authority_name) DESC, authority_name
+      ) AS rn
+    FROM standalone_observations
+    GROUP BY authority_eik, authority_name
+  )
+  WHERE rn = 1
+), ranked AS (
+  SELECT m.unp, m.authority_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY m.unp
+      ORDER BY CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
+        m.source_ordinal, m.authority_id
+    ) AS rn
+  FROM joint_authority_members m
+  JOIN joint_tender_sources s ON s.unp = m.unp
+  LEFT JOIN canonical_names c ON c.authority_eik = SUBSTR(m.authority_id, 6)
+)
+INSERT INTO joint_tender_leads (unp, authority_id)
+SELECT unp, authority_id FROM ranked WHERE rn = 1;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
 --     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
@@ -79,7 +233,8 @@ SELECT
   't:' || t.unp,
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
-  'auth:' || t.authority_eik,
+  COALESCE((SELECT j.authority_id FROM joint_tender_leads j WHERE j.unp = t.unp),
+    'auth:' || t.authority_eik),
   t.cpv_code,
   t.cpv_description,
   t.estimated_value,
@@ -108,7 +263,13 @@ SELECT
   NULLIF(t.tender_id, '')                 -- raw EOP numeric tenderId from the header row
 FROM raw_tenders t
 WHERE t.lot_id IS NULL
-  AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || t.authority_eik);
+  AND EXISTS (
+    SELECT 1 FROM authorities a
+    WHERE a.id = COALESCE(
+      (SELECT j.authority_id FROM joint_tender_leads j WHERE j.unp = t.unp),
+      'auth:' || t.authority_eik
+    )
+  );
 
 -- 2b) Synthetic tenders — УНП that appear only in contracts (no tenders-export row), so
 --     every contract has a parent. Procedure type is unknown ('неизвестна'); subject/CPV/
@@ -117,7 +278,10 @@ WITH folded AS (
   SELECT
     c.unp,
     MIN(c.procurement_subject) AS raw_title,
-    'auth:' || MIN(c.authority_eik) AS authority_id,
+    COALESCE(
+      (SELECT j.authority_id FROM joint_tender_leads j WHERE j.unp = c.unp),
+      'auth:' || MIN(c.authority_eik)
+    ) AS authority_id,
     MIN(c.cpv_code) AS cpv_code,
     MIN(c.estimated_value) AS estimated_value,
     MIN(c.currency) AS raw_currency,
@@ -129,7 +293,6 @@ WITH folded AS (
   WHERE 1 = 1
     AND c.unp IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
-    AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || c.authority_eik)
   GROUP BY c.unp
 )
 INSERT INTO tenders
@@ -150,7 +313,7 @@ SELECT
   award_criteria,
   eop_tender_id
 FROM folded
-WHERE true
+WHERE EXISTS (SELECT 1 FROM authorities a WHERE a.id = folded.authority_id)
 ON CONFLICT(id) DO UPDATE SET
   title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN
     CASE
@@ -560,6 +723,22 @@ WHERE x.bidder_key IS NOT NULL
   AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || x.unp)
   AND EXISTS (SELECT 1 FROM bidders  b  WHERE b.id  = x.bidder_key);
 
+-- Every joint contract is linked to every real co-authority. Lead is forced to ordinal 0; the
+-- remaining members retain their relative source-list order. This bridge never drives money sums.
+INSERT OR IGNORE INTO contract_co_authorities (contract_id, authority_id, ordinal)
+SELECT contract_id, authority_id, bridge_ordinal
+FROM (
+  SELECT c.id AS contract_id, m.authority_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY c.id
+      ORDER BY CASE WHEN m.authority_id = l.authority_id THEN 0 ELSE 1 END,
+        m.source_ordinal, m.authority_id
+    ) - 1 AS bridge_ordinal
+  FROM contracts c
+  JOIN joint_authority_members m ON c.tender_id = 't:' || m.unp
+  JOIN joint_tender_leads l ON l.unp = m.unp
+);
+
 -- Reconciliation guard: the final summary reports the contracts inserted alongside the surviving
 -- staging candidates, so a future NOT NULL/foreign-key mismatch is visible instead of hidden by
 -- INSERT OR IGNORE.
@@ -818,6 +997,10 @@ SELECT 1,
   (SELECT COUNT(*) FROM contracts),
   datetime('now');
 
+DROP TABLE joint_tender_leads;
+DROP TABLE joint_authority_members;
+DROP TABLE joint_tender_sources;
+
 -- Summary (last result set printed by `wrangler d1 execute`)
 SELECT
   (SELECT COUNT(*) FROM authorities)                              AS authorities,
@@ -827,6 +1010,7 @@ SELECT
   (SELECT COUNT(*) FROM bidders WHERE eik_valid = 0)              AS bidders_name_keyed,
   (SELECT COUNT(*) FROM bidders WHERE kind = 'consortium')        AS consortia,
   (SELECT COUNT(*) FROM contracts)                                AS contracts,
+  (SELECT COUNT(*) FROM contract_co_authorities)                   AS joint_participations,
   (SELECT contract_candidates FROM pipeline_stats)                AS contract_candidates,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'value_suspect') AS value_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'annex_suspect') AS annex_suspect,
