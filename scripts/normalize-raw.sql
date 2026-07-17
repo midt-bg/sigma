@@ -150,7 +150,7 @@ END;
 -- 2a) Tenders — the header row of each procurement (lot_id IS NULL): one per УНП, carrying
 --     procedure type, CPV, the procurement-level estimated value, lot count and authority.
 INSERT OR IGNORE INTO tenders
-  (id, source_id, title, authority_id, cpv_code, cpv_description, estimated_value, currency,
+  (id, source_id, title, authority_id, ordering_unit_name, cpv_code, cpv_description, estimated_value, currency,
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
@@ -160,6 +160,7 @@ SELECT
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
   'auth:' || t.authority_eik,
+  NULLIF(TRIM(t.authority_name), ''),
   t.cpv_code,
   t.cpv_description,
   t.estimated_value,
@@ -443,7 +444,7 @@ SET ownership_kind = (
 --    fx_rate carries the applied rate on the row (amount * fx_rate = amount_eur), so the original value,
 --    the rate, and the EUR value are all auditable without joining fx_rates.
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at,
    contract_number, signing_value, current_value, annex_count, eu_funded, bids_received,
    contract_kind, awarded_to_group, value_flag, date_flag, amount_eur, fx_converted, fx_rate,
    lot_id, document_number, published_at, contract_subject,
@@ -461,6 +462,7 @@ SELECT
   END,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -619,6 +621,7 @@ FROM (
         END AS bidder_key
       FROM (
         SELECT c.*,
+          c.authority_name AS authority_name_raw,
           CASE
             WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
             WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583

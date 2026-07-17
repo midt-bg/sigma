@@ -269,6 +269,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="figure-amount">
                 <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>
               </p>
+              {c.authority.orderingUnit && (
+                <p className="small muted figure-sub">
+                  Възложител по документа: {c.authority.orderingUnit}
+                </p>
+              )}
               <p className="small muted figure-sub">
                 {c.authority.typeLabel && <Chip>{c.authority.typeLabel}</Chip>}
                 {c.authority.settlement && <> {c.authority.settlement}</>}

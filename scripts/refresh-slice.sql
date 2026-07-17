@@ -258,7 +258,7 @@ WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
 -- @refresh-batch tenders
 -- EOP tender headers and lots loaded since the last full normalize.
 INSERT INTO tenders
-  (id, source_id, title, authority_id, cpv_code, cpv_description, estimated_value, currency,
+  (id, source_id, title, authority_id, ordering_unit_name, cpv_code, cpv_description, estimated_value, currency,
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
@@ -268,6 +268,7 @@ SELECT
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
   'auth:' || t.authority_eik,
+  NULLIF(TRIM(t.authority_name), ''),
   t.cpv_code,
   t.cpv_description,
   t.estimated_value,
@@ -301,6 +302,7 @@ ON CONFLICT(id) DO UPDATE SET
   source_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.source_id ELSE tenders.source_id END,
   title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.title ELSE tenders.title END,
   authority_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.authority_id ELSE tenders.authority_id END,
+  ordering_unit_name = excluded.ordering_unit_name,
   cpv_code = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_code, tenders.cpv_code) ELSE tenders.cpv_code END,
   cpv_description = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_description, tenders.cpv_description) ELSE tenders.cpv_description END,
   estimated_value = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.estimated_value, tenders.estimated_value) ELSE tenders.estimated_value END,
@@ -635,7 +637,7 @@ WHERE id IN (
     )
 );
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value, current_value,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    annex_count, eu_funded, bids_received, contract_kind, awarded_to_group, value_flag, date_flag, amount_eur,
    fx_converted, fx_rate, signing_value_eur, current_value_eur,
    lot_id, document_number, published_at, contract_subject,
@@ -648,6 +650,7 @@ SELECT
     COALESCE(NULLIF(x.lot_id, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -808,6 +811,7 @@ FROM (
           END AS bidder_key
         FROM (
           SELECT c.*,
+            c.authority_name AS authority_name_raw,
             CASE
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
@@ -879,7 +883,7 @@ WHERE id IN (
 );
 
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value, current_value,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    annex_count, eu_funded, bids_received, contract_kind, awarded_to_group, value_flag, date_flag, amount_eur,
    fx_converted, fx_rate, signing_value_eur, current_value_eur,
    lot_id, document_number, published_at, contract_subject,
@@ -892,6 +896,7 @@ SELECT
     COALESCE(NULLIF(x.lot_norm, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -1056,6 +1061,7 @@ FROM (
           END AS bidder_key
         FROM (
           SELECT c.*,
+            c.authority_name AS authority_name_raw,
             CASE
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
