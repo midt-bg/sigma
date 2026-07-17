@@ -53,13 +53,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.contracts,
   };
   const { env } = context.cloudflare;
+  const db = getDb(env);
   // Page `Cache-Control` (publicCache(1800)) memoises full responses at the edge — no per-query cache.
   return withDbRetry(async () => {
     const [summary, facets] = await Promise.all([
-      contractsSummary(getDb(env), params),
-      getContractFacets(getDb(env)),
+      contractsSummary(db, params),
+      getContractFacets(db),
     ]);
-    const result = await listContracts(getDb(env), params, summary);
+    const result = await listContracts(db, params, summary);
     return { result, facets };
   });
 }

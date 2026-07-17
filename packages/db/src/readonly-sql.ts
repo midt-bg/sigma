@@ -10,6 +10,10 @@
 // Statement-level write verbs, matched whole-word OUTSIDE any quoted region. REPLACE is intentionally
 // absent — it collides with the read-only scalar replace(); its write form `REPLACE INTO` is matched
 // separately, and a leading REPLACE is already rejected by the SELECT/WITH/EXPLAIN allow-list.
+// Deliberately broad: some entries aren't standalone SQLite statements (MERGE/UPSERT/GRANT/REVOKE/
+// TRUNCATE, and RENAME/TRIGGER which only occur inside ALTER/CREATE) — kept as forward-proofing. The
+// cost is a theoretical false-reject if a *column/alias* is named after one (e.g. `SELECT trigger …`);
+// the read-loader corpus test rules that out for every real query, so it stays a non-issue in practice.
 const WRITE_VERBS = [
   'INSERT',
   'UPDATE',
