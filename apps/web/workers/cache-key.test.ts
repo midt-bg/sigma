@@ -136,9 +136,7 @@ describe('cacheKey', () => {
     // The `cpv` values are canonicalized (sorted) before the key is built, so any two orderings of
     // the identical logical set collapse to one cache entry — behavior change: previously
     // `?cpv=33600&cpv=45233` and `?cpv=45233&cpv=33600` fragmented into two distinct entries.
-    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(
-      two.search,
-    );
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(two.search);
   });
 
   it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {

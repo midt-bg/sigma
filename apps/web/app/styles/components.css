@@ -733,8 +733,7 @@ tbody td,
 }
 
 .trend-step {
-  font:
-    500 10px/1 var(--font-mono-plex);
+  font: 500 10px/1 var(--font-mono-plex);
   letter-spacing: 0.08em;
   padding: 7px 11px;
   cursor: pointer;
@@ -785,8 +784,7 @@ tbody td,
   display: flex;
   align-items: center;
   gap: 6px;
-  font:
-    500 10px/1 var(--font-mono-plex);
+  font: 500 10px/1 var(--font-mono-plex);
   padding: 7px 10px;
   background: var(--ink);
   color: var(--paper);
@@ -797,8 +795,7 @@ tbody td,
 
 .trend-total {
   margin-left: auto;
-  font:
-    400 11px/1 var(--font-mono-plex);
+  font: 400 11px/1 var(--font-mono-plex);
   color: var(--ink-mid);
 }
 
@@ -828,8 +825,7 @@ tbody td,
 }
 
 .trend-hint {
-  font:
-    400 10px/1 var(--font-mono-plex);
+  font: 400 10px/1 var(--font-mono-plex);
   color: var(--ink-soft);
 }
 
@@ -837,8 +833,7 @@ tbody td,
   display: flex;
   align-items: center;
   gap: 11px;
-  font:
-    400 9.5px/1 var(--font-mono-plex);
+  font: 400 9.5px/1 var(--font-mono-plex);
   color: var(--ink-soft);
   flex-wrap: wrap;
 }
@@ -901,8 +896,7 @@ tbody td,
 }
 
 .trend-years thead tr {
-  font:
-    500 8.5px/1 var(--font-mono-plex);
+  font: 500 8.5px/1 var(--font-mono-plex);
   letter-spacing: 0.1em;
   color: var(--ink-soft);
 }
@@ -931,8 +925,7 @@ tbody td,
 }
 
 .trend-year-btn {
-  font:
-    600 12px/1 var(--font-mono-plex);
+  font: 600 12px/1 var(--font-mono-plex);
   color: var(--accent);
   background: none;
   border: none;
@@ -943,23 +936,20 @@ tbody td,
 .trend-years td.c-value {
   text-align: right;
   padding: 6px 8px;
-  font:
-    600 12px/1 var(--font-mono-plex);
+  font: 600 12px/1 var(--font-mono-plex);
 }
 
 .trend-years td.c-num {
   text-align: right;
   padding: 6px 8px;
-  font:
-    400 11px/1 var(--font-mono-plex);
+  font: 400 11px/1 var(--font-mono-plex);
   color: var(--ink-mid);
 }
 
 .trend-years td.c-share {
   text-align: right;
   padding: 6px 8px;
-  font:
-    400 11px/1 var(--font-mono-plex);
+  font: 400 11px/1 var(--font-mono-plex);
   color: var(--ink-soft);
 }
 
@@ -980,8 +970,7 @@ tbody td,
 }
 
 .trend-yoy-pct {
-  font:
-    500 10.5px/1 var(--font-mono-plex);
+  font: 500 10.5px/1 var(--font-mono-plex);
   min-width: 52px;
   text-align: right;
 }
@@ -1000,16 +989,14 @@ tbody td,
 }
 
 .trend-rail-rss {
-  font:
-    500 9px/1 var(--font-mono-plex);
+  font: 500 9px/1 var(--font-mono-plex);
   letter-spacing: 0.1em;
   color: var(--accent);
 }
 
 .trend-rail-submeta {
   padding: 6px 16px 8px;
-  font:
-    400 10px/1.4 var(--font-mono-plex);
+  font: 400 10px/1.4 var(--font-mono-plex);
   color: var(--ink-soft);
 }
 
@@ -1037,14 +1024,12 @@ tbody td,
 }
 
 .trend-rail-date {
-  font:
-    500 9.5px/1 var(--font-mono-plex);
+  font: 500 9.5px/1 var(--font-mono-plex);
   color: var(--ink-soft);
 }
 
 .trend-rail-val {
-  font:
-    600 11px/1 var(--font-mono-plex);
+  font: 600 11px/1 var(--font-mono-plex);
   color: var(--ink);
   white-space: nowrap;
 }
@@ -1104,8 +1089,7 @@ tbody td,
 .trend-rail-end {
   grid-column: 1 / -1;
   padding: 12px 16px 16px;
-  font:
-    400 10px/1 var(--font-mono-plex);
+  font: 400 10px/1 var(--font-mono-plex);
   color: var(--ink-soft);
   text-align: center;
 }
@@ -1397,8 +1381,7 @@ tbody td,
 }
 
 .metric-info-title {
-  font:
-    600 9.5px/1 var(--font-mono-plex);
+  font: 600 9.5px/1 var(--font-mono-plex);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: color-mix(in oklch, var(--paper) 70%, var(--ink));
@@ -1414,8 +1397,7 @@ tbody td,
   margin-top: 1px;
   padding-top: 7px;
   border-top: 1px solid color-mix(in oklch, var(--paper) 22%, var(--ink));
-  font:
-    500 11px/1.45 var(--font-mono-plex);
+  font: 500 11px/1.45 var(--font-mono-plex);
   color: color-mix(in oklch, var(--accent) 70%, var(--paper));
 }
 
