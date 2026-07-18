@@ -10,6 +10,20 @@ permissions:
   contents: read
 
 jobs:
+  # SAST scan, parallel to `check` so it never lengthens the lint/typecheck/test critical path.
+  # The official image is pinned by digest — same supply-chain discipline as the sha256-pinned
+  # gitleaks and osv-scanner binaries below. Explicit registry rulesets (not `--config auto`,
+  # which refuses to run with metrics off) + `--metrics=off` so nothing about the repo is
+  # reported to semgrep.dev; `--error` makes any finding fail the build.
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Static analysis (semgrep)
+        run: semgrep scan --config p/security-audit --config p/secrets --config p/typescript --metrics=off --error
+
   check:
     runs-on: ubuntu-latest
     steps:
