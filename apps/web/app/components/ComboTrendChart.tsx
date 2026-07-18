@@ -96,6 +96,7 @@ export function ComboTrendChart({
             y={yC(p.contracts).toFixed(1)}
             width={bw.toFixed(1)}
             height={(BOT - yC(p.contracts)).toFixed(1)}
+            tabIndex={interactive ? 0 : undefined}
             onMouseEnter={interactive ? () => setHover(i) : undefined}
             onFocus={interactive ? () => setHover(i) : undefined}
           />

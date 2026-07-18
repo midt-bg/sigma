@@ -4,4 +4,9 @@
 -- index each one full-scans ~190k contracts. The annex_count > 0 partial keeps the index to the small
 -- minority of contracts that carry annexes (the only rows that can ever be overruns), so every overrun
 -- aggregate starts from that narrow set instead of the whole table.
+-- Considered a wider composite, e.g. contracts(signing_value_eur) WHERE annex_count > 0, to also cover
+-- the current_value_eur > signing_value_eur and signing_value_eur >= 1000 conjuncts. Deferred: the
+-- annex_count > 0 partial already narrows ~190k contracts to the small overrun-eligible minority, and the
+-- remaining conjuncts are cheap post-filters over that narrow set. Revisit only if /overruns or /analytics
+-- aggregates become a measured bottleneck.
 CREATE INDEX IF NOT EXISTS idx_contracts_overrun ON contracts(annex_count) WHERE annex_count > 0;

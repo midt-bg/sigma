@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CPV_BUCKET_SERVICES,
+  CPV_BUCKET_WORKS,
   CPV_CATEGORIES,
+  CPV_DIVISION_SET,
   CPV_SECTORS,
   categoryForDivision,
   cpvBucket,
@@ -77,6 +80,16 @@ describe('cpvBucket', () => {
     // would land on „other". Every catalogued code MUST resolve to a real bucket, never the fallback.
     for (const sector of CPV_SECTORS) {
       expect(cpvBucket(sector.code)).not.toBe('other');
+    }
+  });
+
+  it('keeps CPV_BUCKET_WORKS/SERVICES a subset of CPV_DIVISION_SET (data-hygiene guard)', () => {
+    // cpvBucket checks CPV_DIVISION_SET membership before the bucket sets, so a code present in
+    // CPV_BUCKET_WORKS/SERVICES but missing from CPV_DIVISION_SET is already routed to „other" today
+    // — safe, but silently unreachable and a sign the bucket/division tables have drifted apart. Fail
+    // loudly here instead of leaving a real works/services division miscategorized as „other".
+    for (const code of [...CPV_BUCKET_WORKS, ...CPV_BUCKET_SERVICES]) {
+      expect(CPV_DIVISION_SET.has(code)).toBe(true);
     }
   });
 });

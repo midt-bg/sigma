@@ -43,6 +43,7 @@ export const MAX_CPV_GROUP_SELECTION = 10;
 export function cpvGroupSelection(sp: URLSearchParams): string[] {
   const all = sp
     .getAll('cpv')
+    .slice(0, MAX_CPV_GROUP_SELECTION)
     .flatMap((v) => v.split(','))
     .map((v) => v.trim());
   return Array.from(new Set(all))

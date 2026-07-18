@@ -245,8 +245,8 @@ export function categoryForDivision(division: string | null | undefined): CpvCat
 
 export type CpvBucket = 'works' | 'goods' | 'services' | 'other';
 
-const CPV_BUCKET_WORKS: ReadonlySet<string> = new Set(['45']);
-const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
+export const CPV_BUCKET_WORKS: ReadonlySet<string> = new Set(['45']);
+export const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
   '50',
   '51',
   '55',
@@ -270,7 +270,7 @@ const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
   '98',
 ]);
 
-const CPV_DIVISION_SET: ReadonlySet<string> = new Set(CPV_SECTORS.map((s) => s.code));
+export const CPV_DIVISION_SET: ReadonlySet<string> = new Set(CPV_SECTORS.map((s) => s.code));
 
 /** Classify a CPV division/full code into its works/goods/services bucket. Unknown or missing codes
  *  fall to `other` (never silently coerced into a real bucket). Deterministic. */
