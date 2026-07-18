@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
-import { contractIdFromSlug, getContract } from '@sigma/db';
+import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -73,7 +73,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   const c = data?.contract;
   return seoMeta({
     matches,
-    path: `/contracts/${params.id}`,
+    path: `/contracts/${contractSlug(contractIdFromSlug(params.id))}`,
     title: `${c?.subject ?? 'Договор'} — СИГМА`,
     description: c
       ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
@@ -549,7 +549,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               {/* Plain <a>, not React Router <Link>. The .json endpoint is a resource route
                   (returns application/json, no HTML), so client-side navigation can't render it —
                   React Router would treat the JSON as a route module and crash. target=_blank
-                  opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
+                  opens the raw record in a new tab so the visitor doesn't lose the contract page.
+                  `c.id` is already the percent-encoded slug (contractSlug output), so the href is
+                  path-safe as-is — do not re-encode. The sub-line shows the same encoded path
+                  verbatim so copying the visible text yields a working URL — a decoded literal „/"
+                  would 404, the exact bug this PR fixes (review #221). */}
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в СИГМА
               </a>

@@ -332,11 +332,64 @@ const PROCEDURE_GROUP_BY_TYPE = new Map<string, ProcedureGroup>(
 
 const PROCEDURE_UNKNOWN = PROCEDURE_GROUPS.find((g) => g.key === 'unknown')!;
 
+/** The group key procedureGroup() falls back to for unrecognised/missing procedure_type values.
+ *  Consumers must compare against this constant, not the string literal, so a key rename breaks
+ *  compilation instead of silently mis-classifying synthetic contracts. */
+export const PROCEDURE_UNKNOWN_KEY: ProcedureGroupKey = PROCEDURE_UNKNOWN.key;
+
 /** Map a raw `procedure_type` to its display group. Unrecognised values fall to the „Неизвестна"
  *  bucket (never silently dropped). Deterministic. */
 export function procedureGroup(procedureType: string | null | undefined): ProcedureGroup {
   if (!procedureType) return PROCEDURE_UNKNOWN;
   return PROCEDURE_GROUP_BY_TYPE.get(procedureType.trim()) ?? PROCEDURE_UNKNOWN;
+}
+
+/** The `procedure_type` values whose group is asserted non-competitive (a direct award — awarded
+ *  without a call for bids). Sourced from the taxonomy so the SQL layer stays free of literals. */
+export const NON_COMPETITIVE_PROCEDURE_TYPES: readonly string[] = PROCEDURE_GROUPS.filter(
+  (g) => g.competitive === false,
+).flatMap((g) => g.types);
+
+/** The `procedure_type` values classified as either competitive or non-competitive — the denominator
+ *  for the direct-award share. Excludes the neutral groups („Договаряне с покана" / „Друго") and the
+ *  synthetic „Неизвестна" bucket, whose competitiveness the taxonomy does not assert. */
+export const CLASSIFIED_PROCEDURE_TYPES: readonly string[] = PROCEDURE_GROUPS.filter(
+  (g) => g.competitive === true || g.competitive === false,
+).flatMap((g) => g.types);
+
+// ── EU Single Market Scoreboard benchmarks ───────────────────────────────────────────────────────
+//
+// The European Commission's Single Market Scoreboard scores national public procurement against fixed
+// thresholds. СИГМА reuses the two that are computable from this corpus, purely to label its own
+// neutral indicators with an external, citable reference point — never as a verdict on an authority:
+//   • single bidder — share of awards that drew a single offer: good ≤ 10%, bad > 20%.
+//   • direct award  — share awarded without a call for bids (non-competitive procedure): good ≤ 5%,
+//     bad ≥ 10%.
+// Lower is better for both. Source:
+// https://single-market-scoreboard.ec.europa.eu/business-framework-conditions/public-procurement_en
+export type IndicatorRating = 'good' | 'mid' | 'bad';
+
+export interface IndicatorThresholds {
+  /** A share in [0, 1]. value ≤ good → 'good'. */
+  good: number;
+  /** value ≥ bad → 'bad'. Anything between the two bands is 'mid'. */
+  bad: number;
+}
+
+export const EU_SCOREBOARD: {
+  singleBidder: IndicatorThresholds;
+  directAward: IndicatorThresholds;
+} = {
+  singleBidder: { good: 0.1, bad: 0.2 },
+  directAward: { good: 0.05, bad: 0.1 },
+};
+
+/** Rate a share (0..1) where lower is better against a good/bad band. Deterministic; values strictly
+ *  inside the band are 'mid'. */
+export function rateLowerIsBetter(value: number, t: IndicatorThresholds): IndicatorRating {
+  if (value <= t.good) return 'good';
+  if (value >= t.bad) return 'bad';
+  return 'mid';
 }
 
 // ── Entity types (bidders.kind → label) ──────────────────────────────────────────────────────────
