@@ -626,6 +626,17 @@
 }
 
 /* Regional choropleth (/map): static styling only; the per-region tier fill is computed inline. */
+/* Map + Information Card side by side; the card wraps under the map on narrow screens. */
+.map-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.map-layout .map-wrap {
+  flex: 1 1 460px;
+  min-width: 0;
+}
 .map-wrap svg {
   width: 100%;
   height: auto;
@@ -636,6 +647,159 @@
 .map-wrap path {
   stroke: #f7f7f4;
   stroke-width: 1;
+}
+/* Hover highlight for the focused region (mouse-driven; the table is the keyboard/AT path). */
+.map-wrap path.region {
+  transition: fill 0.1s ease;
+}
+.map-wrap path.is-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+/* The Information Card beside the map. */
+.map-card {
+  position: relative;
+  flex: 0 0 250px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+/* Dismiss control for a pinned region — only rendered once something is selected. */
+.map-card-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  /* A tap pins a region on mobile too, but the card sits below the map in the flex-wrap layout — a
+     visitor has to scroll down to see it filled in. `.map-card` is the last item in `.map-layout`
+     with no room below it to detach into, so `position: sticky` here would be a no-op; pin it to
+     the viewport instead (a bottom sheet), which stays visible regardless of scroll position. Give
+     the dismiss control a full 44px touch target (review #141's floor for map controls). */
+  .map-card--pinned {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 20;
+    max-height: 60vh;
+    overflow-y: auto;
+    box-shadow: 0 2px 10px color-mix(in oklch, var(--ink) 18%, transparent);
+  }
+  .map-card-dismiss {
+    top: 2px;
+    right: 2px;
+    width: 44px;
+    height: 44px;
+  }
+}
+/* Grouping toggle, kept inside the card so all map controls sit together. */
+.map-toggle {
+  display: flex;
+  gap: 0;
+  margin: 0 0 14px;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.map-toggle button {
+  flex: 1;
+  padding: 6px 8px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  background: var(--paper, #fff);
+  border: 0;
+  cursor: pointer;
+}
+.map-toggle button + button {
+  border-left: 1px solid var(--rule, #d8d6cf);
+}
+.map-toggle button.is-on {
+  color: var(--paper);
+  background: var(--accent);
+}
+@media (hover: none) and (pointer: coarse) {
+  /* review #141: buttons were ~28px tall — below the 44px touch-target floor used elsewhere
+     (.pa-seg/.ov-seg/.q-grains). Grow the hit area directly; .map-toggle's overflow:hidden rules
+     out the invisible negative-margin trick used for .nav-search/.nav-toggle. */
+  .map-toggle button {
+    padding: 15px 10px;
+  }
+}
+.map-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.map-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.map-card-stats {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.map-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.map-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.map-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.map-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.map-card-top {
+  margin-top: 14px;
+}
+.map-card-top-title {
+  margin: 0 0 8px;
+  font: 12px var(--font-mono, monospace);
+}
+.map-card-top ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.map-card-top li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+.map-card-top-name {
+  overflow-wrap: anywhere;
+}
+.map-card-top-share {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft, #555);
 }
 .map-legend {
   display: flex;

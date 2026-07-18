@@ -10,12 +10,12 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { computeBbox, makeProjector } from './geo-projection.mjs';
 
 const SRC =
   'https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_20M_2021_4326_LEVL_3.geojson';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'apps/web/app/lib/bg-region-geometry.ts');
-const SCALE = 219; // degrees -> user units; ~1000 wide viewBox for clean rounding
 
 const res = await fetch(SRC, { signal: AbortSignal.timeout(30_000) });
 if (!res.ok) throw new Error(`GISCO fetch failed: ${res.status}`);
@@ -23,35 +23,7 @@ const gj = await res.json();
 const bg = gj.features.filter((f) => String(f.properties.NUTS_ID || '').startsWith('BG'));
 if (bg.length !== 28) throw new Error(`expected 28 BG NUTS3 features, got ${bg.length}`);
 
-const eachCoord = (c, cb) =>
-  typeof c[0] === 'number' ? cb(c) : c.forEach((x) => eachCoord(x, cb));
-let lonMin = Infinity,
-  lonMax = -Infinity,
-  latMin = Infinity,
-  latMax = -Infinity;
-for (const f of bg)
-  eachCoord(f.geometry.coordinates, ([lon, lat]) => {
-    lonMin = Math.min(lonMin, lon);
-    lonMax = Math.max(lonMax, lon);
-    latMin = Math.min(latMin, lat);
-    latMax = Math.max(latMax, lat);
-  });
-const k = Math.cos((((latMin + latMax) / 2) * Math.PI) / 180);
-const px = (lon) => +((lon - lonMin) * k * SCALE).toFixed(1);
-const py = (lat) => +((latMax - lat) * SCALE).toFixed(1); // flip Y for SVG
-const W = Math.round((lonMax - lonMin) * k * SCALE);
-const H = Math.round((latMax - latMin) * SCALE);
-
-const polysOf = (g) => (g.type === 'Polygon' ? [g.coordinates] : g.coordinates);
-function pathD(geom) {
-  let d = '';
-  for (const poly of polysOf(geom))
-    for (const ring of poly) {
-      ring.forEach(([lon, lat], i) => (d += `${i ? 'L' : 'M'}${px(lon)},${py(lat)}`));
-      d += 'Z';
-    }
-  return d;
-}
+const { W, H, pathD } = makeProjector(computeBbox(bg));
 
 const regions = bg
   .map((f) => ({ nuts3: f.properties.NUTS_ID, d: pathD(f.geometry) }))

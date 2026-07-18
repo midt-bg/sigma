@@ -1,7 +1,7 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
-import { getRegionalSpending } from '@sigma/db';
+import { getRegionalSpending, getRegionTopBeneficiaries } from '@sigma/db';
 import type { Route } from './+types/map';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -36,12 +36,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     new URL(request.url).searchParams,
     years,
   );
-  const data = await getRegionalSpending(db, { sector, year, funding });
-  return { data, coverage, years, unknownSector, unknownYear };
+  const [data, topBeneficiariesByRegion] = await Promise.all([
+    getRegionalSpending(db, { sector, year, funding }),
+    getRegionTopBeneficiaries(db, { sector, year, funding }),
+  ]);
+  // Maps don't survive the loader's JSON serialization to the client — flatten to a plain
+  // object keyed by NUTS3 before it reaches the component.
+  const topBeneficiaries = Object.fromEntries(topBeneficiariesByRegion);
+  return { data, topBeneficiaries, coverage, years, unknownSector, unknownYear };
 }
 
 export default function MapRoute({ loaderData }: Route.ComponentProps) {
-  const { data, coverage, years, unknownSector, unknownYear } = loaderData;
+  const { data, topBeneficiaries, coverage, years, unknownSector, unknownYear } = loaderData;
   const range = coverageRange(coverage.coverageEndYear);
   const [sp] = useSearchParams();
   const submit = useSubmit();
@@ -168,7 +174,12 @@ export default function MapRoute({ loaderData }: Route.ComponentProps) {
         <TotalsStrip totals={totals} label="Обобщение по области" />
 
         <Section id="map" title="Разходи по области">
-          <Choropleth regions={data.regions} />
+          <Choropleth
+            regions={data.regions}
+            macroRegions={data.macroRegions}
+            total={total}
+            topBeneficiaries={topBeneficiaries}
+          />
         </Section>
 
         <Section
