@@ -51,7 +51,6 @@ describe('citation builders', () => {
       wonEur: 5000000,
       contracts: 42,
       slug: 'techno-ood',
-      hasEik: true,
     };
 
     const citation = buildCompanyCitation(c, 'https://sigma.test');
@@ -94,7 +93,6 @@ describe('citation builders', () => {
       wonEur: 0,
       contracts: 1,
       slug: 'foreign-corp',
-      hasEik: false,
     };
 
     const citation = buildCompanyCitation(c, 'https://sigma.test');
