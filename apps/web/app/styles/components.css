@@ -1133,7 +1133,9 @@ tbody td,
      the forecast/peak/hover are accent. Kept as scoped custom props so the SVG (whose fill/stroke can't
      take a class) inherits them. Slate is decorative here: every series is also shape- and legend-coded. */
   --trend-count: 94 124 139; /* slate (rgb channels) — count bars + band */
-  --trend-count-ink: #5e7c8b; /* darker slate — count axis text + ПРОГНОЗА */
+  /* same slate as --trend-count above, as a hex string for contexts that can't use rgb()/channels
+     — not darker, and not yet consumed by any call site; darken here if one needs more contrast. */
+  --trend-count-ink: #5e7c8b;
   --trend-line: #c4b79c; /* tan — actual/forecast € line */
   --trend-grid: #e7dfcd; /* warm gridlines */
   --trend-xtick-fc: #9aa7ae; /* forecast x-tick label */

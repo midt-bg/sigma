@@ -78,6 +78,16 @@ describe('served migrations', () => {
         ).trim(),
       ).toBe('1');
 
+      // Guard the index's actual definition, not just its presence: the partial predicate and the
+      // (signing_value_eur, current_value_eur) column order are both load-bearing for the covering
+      // scan OVERRUN_WHERE relies on — a silent regression in either must fail CI, not eyeballing.
+      const overrunIndexSql = sqlite(
+        dbPath,
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun';",
+      );
+      expect(overrunIndexSql).toContain('annex_count > 0');
+      expect(overrunIndexSql).toContain('contracts(signing_value_eur, current_value_eur)');
+
       // The served schema must never carry raw_* staging tables.
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'raw_%';").trim(),

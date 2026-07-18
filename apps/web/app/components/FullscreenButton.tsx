@@ -1,35 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-/**
- * Toggle the native Fullscreen API on a container ref. SSR-safe: the listener and the
- * `document` reads only run in the browser effect. `requestFullscreen` is feature-detected,
- * so the button no-ops gracefully where the API is unavailable.
- */
-export function useFullscreen<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(document.fullscreenElement === ref.current);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-
-  const toggle = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      el.requestFullscreen?.().catch((err) =>
-        console.debug('[fullscreen] requestFullscreen failed', err),
-      );
-    }
-  }, []);
-
-  return { ref, isFullscreen, toggle };
-}
-
+// Purely presentational — no consumer wires the native Fullscreen API to this button yet, so no
+// `useFullscreen` hook lives here either (a prior version did, but with zero call sites — dead
+// code). A future caller supplies `active`/`onToggle` however fits its own fullscreen strategy;
+// no webkit-prefix fallback is needed until that caller and its target browser matrix exist.
 export function FullscreenButton({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
     <button

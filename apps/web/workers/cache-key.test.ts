@@ -116,6 +116,14 @@ describe('cacheKey', () => {
       cacheUrl('http://local/contracts?cursor=c5&page=5').search,
     );
   });
+
+  it('keys repeated cohort values distinctly instead of collapsing to one (CWE-349, #56)', () => {
+    // cacheKey() iterates every [key, value] pair off url.searchParams via `for...of`, not
+    // `.get()`, so a repeated allow-listed param keeps every occurrence rather than only the first.
+    expect(cacheUrl('http://local/price-anomaly?cohort=a&cohort=b').search).not.toBe(
+      cacheUrl('http://local/price-anomaly?cohort=a').search,
+    );
+  });
 });
 
 describe('CACHE_QUERY_PARAMS drift guard', () => {
@@ -139,6 +147,9 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
   // Informational only — a hard failure here was removed because allow-list entries legitimately
   // sit ahead of their route for stacked-later work. `console.info` still surfaces stale entries in
   // CI output so they don't go unnoticed forever, without blocking merges on unrelated PRs.
+  // Intentionally unbounded (no count threshold): a threshold would itself start failing unrelated
+  // PRs once enough routes are stacked ahead of their allow-list entries, which is the exact
+  // merge-blocking this check exists to avoid — visibility via CI log, not a gate, is the point.
   it('info: flags (without failing) allow-list entries nothing currently reads', () => {
     const consumed = consumedQueryParams();
     const stale = [...CACHE_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
