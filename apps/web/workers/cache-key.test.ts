@@ -132,9 +132,7 @@ describe('cacheKey', () => {
     // cacheKey() sorts `cpv` values by value (not just by URLSearchParams.sort()'s per-key
     // stability), so a differently-ordered request for the same set collapses to one cache entry
     // instead of fragmenting the edge cache.
-    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(
-      two.search,
-    );
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(two.search);
   });
 
   it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {
