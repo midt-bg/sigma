@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  cacheKey,
-  CACHE_QUERY_PARAMS,
-  INTENTIONALLY_UNKEYED,
-  RESERVED_CACHE_PARAMS,
-} from './cache-key';
+import { cacheKey, RESERVED_CACHE_PARAMS } from './cache-key';
+import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from '../app/lib/query-params';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
@@ -26,8 +22,8 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - a var named sp/searchParams/base, the inline `.searchParams` chain, an inline
 //     `new URLSearchParams(...).get(...)` (e.g. root.tsx), and the getMulti() helper.
 // Known, accepted blind spots (guard-completeness, not live leaks today):
-//   - Dynamic keys: `sp.get(someVar)` can't be resolved statically. All current dynamic reads use
-//     a fixed key set already covered here; a future one would slip past — keep keys literal.
+//   - Dynamic keys: the common `sel('key')` indirection is scanned, but a fully runtime-computed key
+//     (`sp.get(someVar)`) can't be resolved statically — keep keys literal so the guard sees them.
 //   - Scope: only app/** is scanned. workers/** is excluded because its param reads are
 //     infrastructure that does NOT shape the cached body — e.g. request-log.ts reads `q` purely for
 //     telemetry (q_present/q_len), and cacheKey itself does the keying. Widening to workers/** would
@@ -38,6 +34,8 @@ function consumedQueryParams(): Set<string> {
   const patterns = [
     /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\s*\.\s*(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
+    // The `const sel = (k) => sp.get(k)` helper in the dashboard routes (map/competition/flows/trends).
+    /\bsel\(\s*['"]([A-Za-z_]\w*)['"]/g,
   ];
 
   const found = new Set<string>();
@@ -150,7 +148,7 @@ describe('cacheKey', () => {
   });
 });
 
-describe('CACHE_QUERY_PARAMS drift guard', () => {
+describe('CANONICAL_QUERY_PARAMS drift guard', () => {
   it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
     // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
@@ -161,7 +159,7 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
     // Security direction: every param a route loader / SSR render consumes must be keyed (in the
     // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
     // cache entry and the wrong data gets served.
-    const allowed = new Set([...CACHE_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
+    const allowed = new Set([...CANONICAL_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
   });
@@ -172,7 +170,7 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
     // of their reader, but only via the documented RESERVED_CACHE_PARAMS set (each entry names its
     // owning PR) — never silently.
     const consumed = consumedQueryParams();
-    const stale = [...CACHE_QUERY_PARAMS]
+    const stale = [...CANONICAL_QUERY_PARAMS]
       .filter((p) => !consumed.has(p) && !RESERVED_CACHE_PARAMS.has(p))
       .sort();
     expect(stale).toEqual([]);
@@ -181,7 +179,7 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
   it('keeps RESERVED_CACHE_PARAMS honest: subset of the allow-list, and no entry has a reader yet', () => {
     const consumed = consumedQueryParams();
     for (const p of RESERVED_CACHE_PARAMS) {
-      expect(CACHE_QUERY_PARAMS.has(p)).toBe(true); // a reservation outside the allow-list keys nothing
+      expect(CANONICAL_QUERY_PARAMS.has(p)).toBe(true); // a reservation outside the allow-list keys nothing
       expect(consumed.has(p)).toBe(false); // reader merged => drop the reservation, keep the key
     }
   });

@@ -9,7 +9,18 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // must be in the cache key. The import thunk is never invoked, so no real build is loaded.
 vi.mock('react-router', () => ({
   createRequestHandler: () => async (request: Request) => {
-    const bids = new URL(request.url).searchParams.get('bids');
+    const url = new URL(request.url);
+    // A designated path returns 404, to exercise the response.ok cache-put gate (see the „non-ok" test).
+    if (url.pathname === '/contracts/missing') {
+      return new Response('Not Found', {
+        status: 404,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, s-maxage=1800',
+        },
+      });
+    }
+    const bids = url.searchParams.get('bids');
     const body = bids === '1' ? 'ROWS: single-bid only (2)' : 'ROWS: all contracts (5)';
     return new Response(body, {
       status: 200,
@@ -103,5 +114,15 @@ describe('app.ts edge cache middleware', () => {
     expect(broad.edge).toBe('MISS');
     expect(broad.body).toContain('all contracts');
     expect(broad.body).not.toContain('single-bid only'); // the poisoning the fix prevents
+  });
+
+  it('never caches a non-ok (404) response — the invariant cache-key.ts relies on (#221/#213)', async () => {
+    // cache-key.ts collapses `%2F` → `/`, so an encoded contract URL (200) and a raw-slash form (404)
+    // share one cache key. That is safe ONLY because a non-ok response is never stored — so the 404
+    // form can't poison the encoded entry. This test pins that gate: a 404 stays BYPASS, never HIT.
+    const first = await get('https://x/contracts/missing');
+    expect(first.edge).toBe('BYPASS');
+    const second = await get('https://x/contracts/missing');
+    expect(second.edge).toBe('BYPASS');
   });
 });
