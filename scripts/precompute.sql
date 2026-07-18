@@ -47,12 +47,13 @@ UPDATE tenders SET
   estimated_value_eur = CASE
     WHEN currency = 'EUR' THEN estimated_value
     WHEN COALESCE(currency, 'BGN') = 'BGN' THEN estimated_value / 1.95583
+    WHEN tenders.published_at IS NULL THEN NULL
     ELSE (
       SELECT estimated_value * f.eur_per_unit
       FROM fx_rates f
       WHERE f.base_currency = tenders.currency
-        AND f.rate_date <= COALESCE(tenders.published_at, date('now'))
-        AND f.rate_date >= date(COALESCE(tenders.published_at, date('now')), '-10 days')
+        AND f.rate_date <= tenders.published_at
+        AND f.rate_date >= date(tenders.published_at, '-10 days')
       ORDER BY f.rate_date DESC
       LIMIT 1
     ) END

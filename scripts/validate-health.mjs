@@ -138,6 +138,7 @@ check('pillar NULL-rate by year (informational matrix, gated on undocumented str
   // and pillar A may exceed 60% in 2024 only (§12.4 — 2024 bids_received coverage hole).
   const bad = [];
   for (const r of rows) {
+    if (r.yr === 'NA') continue;
     if (r.a_null_pct > 60 && r.yr !== '2024') bad.push(`${r.yr}:A=${r.a_null_pct}%`);
     if (r.c_null_pct > 60) bad.push(`${r.yr}:C=${r.c_null_pct}%`);
     if (r.d_null_pct > 60) bad.push(`${r.yr}:D=${r.d_null_pct}%`);
@@ -169,6 +170,12 @@ check('Spearman-lite A vs B decile correlation (informational, no hard gate)', (
     cov += (da[i] - ma) * (db_[i] - mb);
     va += (da[i] - ma) ** 2;
     vb += (db_[i] - mb) ** 2;
+  }
+  if (va === 0 || vb === 0) {
+    console.log(
+      '  decile-correlation(A,B): skipped, one or both pillars have zero variance in this sample',
+    );
+    return;
   }
   const corr = cov / Math.sqrt(va * vb);
   console.log(

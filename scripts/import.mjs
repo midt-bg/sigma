@@ -19,7 +19,7 @@ import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
-import { assertIntegrity } from './integrity-checks.mjs';
+import { assertIntegrity, checkContractFeaturesIntegrity, CHECKS } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
 
 // Per-refresh anomaly report (#100): cross-row outliers the per-row value_flag can't see. OBSERVES
@@ -265,7 +265,10 @@ function runFullDerive() {
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
   runHealthDerive();
-  assertIntegrity(d1, { label: 'full derive (D1)' });
+  assertIntegrity(d1, {
+    label: 'full derive (D1)',
+    checks: [...CHECKS, checkContractFeaturesIntegrity],
+  });
   reportAnomalies(d1, 'full derive (D1)');
 }
 
@@ -286,7 +289,10 @@ function runSliceDerive() {
   // ids — correct-over-incremental for now; a scoped refresh (design spec §8) is a documented
   // future optimization once the full recompute cost is measured on prod D1.
   runHealthDerive();
-  assertIntegrity(d1, { label: 'slice derive (D1)' });
+  assertIntegrity(d1, {
+    label: 'slice derive (D1)',
+    checks: [...CHECKS, checkContractFeaturesIntegrity],
+  });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
