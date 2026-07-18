@@ -6,7 +6,13 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
-import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
+import {
+  authoritySlug,
+  bareContractId,
+  bidderIdFromSlug,
+  companySlug,
+  contractSlug,
+} from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { searchMatchQuery } from './search';
@@ -446,7 +452,10 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            contractSlug(r.id),
+            // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
+            // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
+            // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
+            bareContractId(r.id),
             r.unp,
             r.subject,
             cleanName(r.authority_name),
