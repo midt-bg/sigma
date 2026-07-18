@@ -289,6 +289,67 @@ a.flag:hover {
 .list-controls p {
   margin: 0;
 }
+
+/* In-table search — a quiet utility field on its own row above the count/sort strip. Deliberately
+   lighter than the hero/header .smart-search; it filters the list in place via the `q` URL param. */
+.list-controls-bar {
+  margin: 0 0 var(--s-3);
+}
+.table-search {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin: 0 0 var(--s-3);
+}
+/* The „no searchable terms" hint sits on its own row under the field (full-width flex item). */
+.table-search-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+.table-search input[type='search'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  padding: 8px var(--s-3);
+}
+.table-search input[type='search']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.table-search input[type='search']::placeholder {
+  color: var(--ink-soft);
+  font-style: italic;
+}
+/* Style the input's native clear button to match the quiet ink palette instead of the browser
+   default. The X is drawn as a mask so its colour comes from background-color (CSP allows the data:
+   URI via `img-src 'self' data:`). WebKit/Blink only — Firefox renders no clear button for search. */
+.table-search input[type='search']::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-start: var(--s-2);
+  cursor: pointer;
+  background-color: var(--ink-soft);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+.table-search input[type='search']::-webkit-search-cancel-button:hover {
+  background-color: var(--ink);
+}
+@media (max-width: 760px) {
+  /* body is 15px (base.css); iOS Safari auto-zooms on focus below 16px. .smart-search-input
+     already forces 16px on mobile for the same reason — match it here. */
+  .table-search input[type='search'] {
+    font-size: 16px;
+  }
+}
 .paging .ctrl a {
   display: inline-flex;
   align-items: center;
@@ -545,4 +606,79 @@ tbody td,
   transition:
     transform 1.2s ease-out,
     opacity 0.1s ease;
+}
+/* EU-benchmark indicator block (authority page „Конкуренция"): identical shape for both
+   indicators - hero share, meter with the two EU thresholds as hairline ticks, verdict and
+   counts in text. The meter is decorative; the fill wears the accent only over the „high"
+   threshold (same convention as .share-bar.warn). */
+.ebs + .ebs {
+  margin-top: var(--s-4);
+}
+.ebs-title {
+  margin-bottom: var(--s-1);
+}
+.ebs-head {
+  margin: 0;
+}
+.ebs-pct {
+  font: 600 28px/1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.ebs-meter {
+  position: relative;
+  height: 12px;
+  background: var(--rule-soft);
+  margin: var(--s-2) 0 24px;
+}
+/* Threshold zones: the EU bands are visible across the whole track, not just as ticks -
+   under target (lightest), between target and high (a gray step up), over high (accent wash). */
+.ebs-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+}
+.ebs-zone-good {
+  background: var(--rule-soft);
+}
+.ebs-zone-mid {
+  background: var(--rule);
+}
+.ebs-zone-high {
+  background: var(--accent-bg);
+}
+.ebs-meter > i {
+  position: absolute;
+  inset: 3px auto 3px 0;
+  display: block;
+  background: var(--ink-mid);
+  border-radius: 0 3px 3px 0;
+}
+.ebs-meter > i.warn {
+  background: var(--accent);
+}
+.ebs-tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--ink);
+}
+.ebs-tick-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.ebs-thresholds,
+.ebs-detail {
+  margin: 0;
 }
