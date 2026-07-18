@@ -13,6 +13,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "prettier --check .",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:docs:test": "node --test scripts/check-docs.test.mjs",
     "format": "prettier --write .",
     "generate:sql": "node scripts/generate-sql.mjs",
     "setup": "node scripts/setup.mjs",
@@ -20,7 +22,8 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "bootstrap:apply": "node scripts/bootstrap.mjs --apply",
     "deploy": "turbo run deploy",
-    "teardown": "node scripts/teardown.mjs"
+    "teardown": "node scripts/teardown.mjs",
+    "smoke:slug": "node scripts/smoke-encoded-slug.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",

@@ -8,7 +8,11 @@ import {
   leaderboardRankOffset,
   MAX_MULTI_VALUES,
   pageNav,
+  PARAM_ORDER,
+  searchHref,
+  withParams,
 } from './filters';
+import { CANONICAL_QUERY_PARAMS } from './query-params';
 
 const sp = (q: string) => new URLSearchParams(q);
 
@@ -111,6 +115,48 @@ describe('getMulti', () => {
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
     });
+  });
+});
+
+describe('searchHref', () => {
+  it('sets q and resets cursor/page while preserving filters and sort', () => {
+    const sp = new URLSearchParams('sort=name&year=2024&cursor=abc&page=3&sector=45');
+    const out = new URLSearchParams(searchHref(sp, 'mostove'));
+
+    expect(out.get('q')).toBe('mostove');
+    expect(out.get('sort')).toBe('name');
+    expect(out.getAll('year')).toEqual(['2024']);
+    expect(out.get('sector')).toBe('45');
+    expect(out.has('cursor')).toBe(false);
+    expect(out.has('page')).toBe(false);
+  });
+
+  it('drops q when the query is empty or whitespace-only', () => {
+    const sp = new URLSearchParams('q=old&sort=won');
+    expect(new URLSearchParams(searchHref(sp, '')).has('q')).toBe(false);
+    expect(new URLSearchParams(searchHref(sp, '   ')).has('q')).toBe(false);
+  });
+
+  it('trims surrounding whitespace from q', () => {
+    expect(new URLSearchParams(searchHref(new URLSearchParams(), '  foo  ')).get('q')).toBe('foo');
+  });
+
+  it('emits q first in canonical order', () => {
+    expect(searchHref(new URLSearchParams('sort=name'), 'x')).toBe('?q=x&sort=name');
+  });
+
+  it('preserves repeated multi-value params', () => {
+    const sp = new URLSearchParams();
+    sp.append('year', '2024');
+    sp.append('year', '2023');
+    sp.set('sector', '45');
+
+    expect(new URLSearchParams(searchHref(sp, 'q')).getAll('year')).toEqual(['2024', '2023']);
+  });
+
+  it('preserves unknown keys not in PARAM_ORDER (e.g. contracts bids)', () => {
+    const sp = new URLSearchParams('bids=1&sort=value-desc');
+    expect(new URLSearchParams(searchHref(sp, 'q')).get('bids')).toBe('1');
   });
 });
 
@@ -295,5 +341,34 @@ describe('pageNav', () => {
       prevCursor: 'before:c',
     });
     expect(mid.nextHref).not.toBeNull();
+  });
+});
+
+describe('withParams', () => {
+  it('drops unknown params — including repeated ones — so none can ride a link into the edge cache (#197)', () => {
+    expect(withParams(sp('sort=value-desc&x=poison'), {})).toBe('?sort=value-desc');
+    expect(withParams(sp('sector=45&x=1&x=2&sort=value-desc&utm_source=ad'), {})).toBe(
+      '?sector=45&sort=value-desc',
+    );
+  });
+
+  it('preserves and canonically orders known params regardless of input order', () => {
+    expect(withParams(sp('sort=value-desc&year=2024&q=test'), {})).toBe(
+      '?q=test&year=2024&sort=value-desc',
+    );
+  });
+
+  it('applies overrides and drops keys set to null or empty', () => {
+    expect(withParams(sp('sort=value-desc&cursor=c5&page=3'), { cursor: null, page: null })).toBe(
+      '?sort=value-desc',
+    );
+    expect(withParams(sp('q=old'), { q: 'new' })).toBe('?q=new');
+    expect(withParams(sp('q=test&sort=value-desc'), { q: '' })).toBe('?sort=value-desc');
+  });
+
+  it('orders only known params — every PARAM_ORDER key is canonical', () => {
+    // The invariant behind the filter: a key ordered but not in the allow-list would be silently
+    // dropped from every generated link.
+    expect(PARAM_ORDER.filter((key) => !CANONICAL_QUERY_PARAMS.has(key))).toEqual([]);
   });
 });
