@@ -59,10 +59,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const yearRaw = sp.get('year');
   const year = yearRaw && /^20\d\d$/.test(yearRaw) ? yearRaw : null;
   // Repeatable ?cpv — the multi-select CPV facet. Validated + bounded by cpvGroupSelection so
-  // hostile input can neither poison the SQL scope nor mint unbounded cache-key variants (CWE-349).
+  // hostile input (malformed codes, an unbounded selection) can neither poison the SQL scope nor
+  // render incorrect group breakdowns; the edge cache still keys on the raw request URL, so this
+  // does not bound cache-key cardinality (CWE-349 does not apply here).
   const cpvSel = cpvGroupSelection(sp);
   // „вкл. текущия месец": the current (incomplete) period is excluded from the chart by default;
-  // ?cur=1 opts back in (validated to exactly '1' so the edge-cache key space stays two-valued).
+  // ?cur=1 opts back in (validated to exactly '1' so only two content values are ever rendered —
+  // this does not affect the edge cache-key space, which keys on the raw request URL).
   const cur = sp.get('cur') === '1';
 
   // The cross lens always shows the compact quarterly picker; the time lens follows the step toggle.
@@ -124,7 +127,8 @@ function logMax(groups: CpvGroupStat[]): number {
 }
 
 function axisLabel(v: number): string {
-  return v >= 1e6 ? `${v / 1e6}М` : `${v / 1e3}к`;
+  if (v >= 1e6) return `${(v / 1e6).toString().replace('.', ',')}М`;
+  return `${v / 1e3}к`;
 }
 
 /** log-€ → x in the 320-wide distribution strip. */

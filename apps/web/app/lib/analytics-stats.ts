@@ -156,6 +156,18 @@ const GROWTH_TRAILING_YEARS = 3;
  * years → flat.
  */
 export function estimateYoyGrowth(points: TrendPoint[]): GrowthFactors {
+  // Precondition: a monthly (`YYYY-MM`) series — completeness below is judged by "12 months seen
+  // per year", which is only meaningful at month granularity. `TrendGranularity` also allows
+  // 'quarter' ('YYYY-Qn') and 'year' ('YYYY'); feeding either here would silently fail the
+  // months===12 check for every year and fall through to a flat {value:1,count:1} that reads as
+  // "no growth" instead of "wrong input" — assert instead so a future non-month caller fails loud.
+  for (const p of points) {
+    if (!/^\d{4}-\d{2}$/.test(p.period)) {
+      throw new Error(
+        `estimateYoyGrowth: expected a monthly (YYYY-MM) series, got period "${p.period}" — quarter/year granularity is not supported`,
+      );
+    }
+  }
   const byYear = new Map<
     number,
     { value: number; count: number; months: number; partial: boolean }

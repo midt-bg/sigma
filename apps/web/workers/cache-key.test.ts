@@ -130,10 +130,11 @@ describe('cacheKey', () => {
 
     expect(one.search).not.toBe(base.search);
     expect(two.search).not.toBe(one.search);
-    expect(two.searchParams.getAll('cpv')).toEqual(['45233', '33600']); // both values keyed
-    // URLSearchParams.sort() is stable per key, so value order is NOT canonicalized here; the UI
-    // writes the selection pre-sorted (hrefToggleCpv) so equal sets share one canonical URL.
-    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).not.toBe(
+    expect(two.searchParams.getAll('cpv')).toEqual(['33600', '45233']); // canonicalized (sorted)
+    // The `cpv` values are canonicalized (sorted) before the key is built, so any two orderings of
+    // the identical logical set collapse to one cache entry — behavior change: previously
+    // `?cpv=33600&cpv=45233` and `?cpv=45233&cpv=33600` fragmented into two distinct entries.
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(
       two.search,
     );
   });

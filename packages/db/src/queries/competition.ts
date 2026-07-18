@@ -325,6 +325,9 @@ export async function getOpaqueShareByYear(db: D1Database): Promise<OpaqueYearRo
          AND c.bids_received IS NOT NULL AND c.bids_received >= 1
          AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'
          AND c.signed_at >= '2020-01-01'
+         -- strftime('%Y', 'now') resolves in UTC, so right around New Year's this can differ from a
+         -- caller's local calendar year by one day; negligible here since the clause only excludes the
+         -- current (incomplete) year, which is already excluded regardless of the exact boundary.
          AND substr(c.signed_at, 1, 4) < strftime('%Y', 'now')
        GROUP BY year ORDER BY year`,
     )

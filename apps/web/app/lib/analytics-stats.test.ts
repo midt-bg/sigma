@@ -149,6 +149,20 @@ describe('estimateYoyGrowth', () => {
     expect(g.value).toBeLessThan(1.25);
   });
 
+  it('throws on a non-monthly (quarter/year granularity) series instead of silently returning flat', () => {
+    const quarterly: TrendPoint[] = [
+      { period: '2022-Q1', valueEur: 100, contracts: 50, partial: false },
+      { period: '2022-Q2', valueEur: 100, contracts: 50, partial: false },
+    ];
+    expect(() => estimateYoyGrowth(quarterly)).toThrow(/monthly/i);
+
+    const yearly: TrendPoint[] = [
+      { period: '2022', valueEur: 100, contracts: 50, partial: false },
+      { period: '2023', valueEur: 120, contracts: 55, partial: false },
+    ];
+    expect(() => estimateYoyGrowth(yearly)).toThrow(/monthly/i);
+  });
+
   it('groups monthly points into full calendar years before computing ratios (/analytics granularity)', () => {
     // /analytics feeds this with `granularity: 'month'` series (365-ish rows/yr, not one row/yr). A
     // naive "recent N points" implementation would treat 24 monthly points as 2 short years; the
