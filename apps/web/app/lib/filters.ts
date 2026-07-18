@@ -205,7 +205,8 @@ export const PARAM_ORDER = [
   'type',
   'kind',
   'sector',
-  'g', // trends granularity (month/year)
+  'angle', // /trends: time | cpv | cross lens
+  'step', // /trends: series granularity (m|q|y)
   'year',
   'procedure',
   'funding',
@@ -215,9 +216,12 @@ export const PARAM_ORDER = [
   'authority',
   'bidder',
   'center', // /network focus entity
+  'by', // /overruns sort dimension
   'top',
   'count',
   'sort',
+  'cpvSort', // /trends CPV list ordering
+  'cur', // /trends include current partial period
   'cursor',
   'page',
   'p', // sitemap-contracts page
