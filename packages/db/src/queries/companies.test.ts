@@ -105,6 +105,26 @@ describe('streamCompaniesCsv', () => {
     expect(countRows(filtered)).toBeLessThan(countRows(unfiltered));
     expect(countRows(filtered)).toBe(1);
   });
+
+  it('excludes the unknown identity bucket from the list and CSV', async () => {
+    const db = fakeDb();
+    const sql: string[] = [];
+    const real = db.prepare.bind(db);
+    db.prepare = ((query: string) => {
+      sql.push(query);
+      return real(query);
+    }) as typeof db.prepare;
+
+    await listCompanies(db, {});
+    await streamCompaniesCsv(db, {}).text();
+
+    expect(sql.filter((query) => query.includes('company_totals'))).not.toHaveLength(0);
+    expect(
+      sql.filter((query) => query.includes('company_totals')).every((query) =>
+        query.includes("kind <> 'unknown'"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('prototype-key params (untrusted query values)', () => {

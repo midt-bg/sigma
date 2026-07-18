@@ -61,9 +61,10 @@ const totalsRow = {
   refreshed_at: '2024-06-02T10:00:00Z',
 };
 
-function fakeDb(totals: typeof totalsRow | null): D1Database {
+function fakeDb(totals: typeof totalsRow | null, capture?: string[]): D1Database {
   return {
     prepare(sql: string) {
+      capture?.push(sql);
       return {
         bind() {
           return this;
@@ -119,6 +120,15 @@ describe('getHomeData', () => {
     expect(data.topMinistries[0]!.slug).toBe('000695089');
 
     expect(data.topMunicipalities).toHaveLength(1);
+  });
+
+  it('excludes the unknown identity bucket from top companies', async () => {
+    const sql: string[] = [];
+    await getHomeData(fakeDb(totalsRow, sql));
+
+    expect(sql.find((query) => query.includes('FROM company_totals'))).toContain(
+      "WHERE kind <> 'unknown'",
+    );
   });
 
   it('includes single-offer contract lists', async () => {
