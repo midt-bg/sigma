@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cacheKey, CACHE_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './cache-key';
+import {
+  cacheKey,
+  CACHE_QUERY_PARAMS,
+  INTENTIONALLY_UNKEYED,
+  PLANNED_QUERY_PARAMS,
+} from './cache-key';
 
 function cacheUrl(input: string): URL {
   return new URL(cacheKey(new Request(input), 'deploy-test').url);
@@ -31,7 +36,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
 function consumedQueryParams(): Set<string> {
   const patterns = [
-    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\s*\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
   ];
 
@@ -125,10 +130,11 @@ describe('cacheKey', () => {
 
     expect(one.search).not.toBe(base.search);
     expect(two.search).not.toBe(one.search);
-    expect(two.searchParams.getAll('cpv')).toEqual(['45233', '33600']); // both values keyed
-    // URLSearchParams.sort() is stable per key, so value order is NOT canonicalized here; the UI
-    // writes the selection pre-sorted (hrefToggleCpv) so equal sets share one canonical URL.
-    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).not.toBe(
+    expect(two.searchParams.getAll('cpv')).toEqual(['33600', '45233']); // sorted, both values keyed
+    // cacheKey() sorts `cpv` values by value (not just by URLSearchParams.sort()'s per-key
+    // stability), so a differently-ordered request for the same set collapses to one cache entry
+    // instead of fragmenting the edge cache.
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(
       two.search,
     );
   });
@@ -163,14 +169,15 @@ describe('CACHE_QUERY_PARAMS drift guard', () => {
     expect(undeclared).toEqual([]);
   });
 
-  // Informational only — a hard failure here was removed because allow-list entries legitimately
-  // sit ahead of their route for stacked-later work. `console.info` still surfaces stale entries in
-  // CI output so they don't go unnoticed forever, without blocking merges on unrelated PRs.
-  it('info: flags (without failing) allow-list entries nothing currently reads', () => {
+  // Soft-fails (doesn't block unrelated PRs) rather than a hard failure, because allow-list entries
+  // legitimately sit ahead of their route for stacked-later work — but `expect.soft` still reports the
+  // stale entries as a visible failure in CI output, unlike a bare `console.info`, so a real drift
+  // (e.g. a typo like `bidz` instead of `bids`) is caught rather than silently going unnoticed forever.
+  it('flags (without hard-failing) allow-list entries nothing currently reads', () => {
     const consumed = consumedQueryParams();
-    const stale = [...CACHE_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
-    if (stale.length > 0) {
-      console.info(`[cache-key] allow-list entries nothing reads yet: ${stale.join(', ')}`);
-    }
+    const stale = [...CACHE_QUERY_PARAMS]
+      .filter((p) => !consumed.has(p) && !PLANNED_QUERY_PARAMS.has(p))
+      .sort();
+    expect.soft(stale).toEqual([]);
   });
 });

@@ -44,6 +44,12 @@ export function ComboTrendChart({
   // "no partial period" — if a partial period ever ends up first, this silently renders the whole
   // line solid instead of catching the regression.
   const hasPartial = partialIdx > 0;
+  if (import.meta.env.DEV && partialIdx > 0 && partialIdx !== n - 1) {
+    console.warn(
+      `ComboTrendChart: partial period at index ${partialIdx} of ${n} is not last — the ` +
+        'partial-is-always-last invariant is broken upstream; the chart will render as if there is no partial period.',
+    );
+  }
   const solidEnd = hasPartial ? partialIdx - 1 : n - 1;
   const xy = (i: number) => `${x(i).toFixed(1)} ${yV(points[i]!.valueEur).toFixed(1)}`;
   const line = points

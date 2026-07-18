@@ -59,6 +59,9 @@ export type TrendStep = (typeof TREND_STEPS)[number];
 export const TREND_SORTS = ['date', 'value'] as const;
 export type TrendSort = (typeof TREND_SORTS)[number];
 
+export const TREND_CPV_SORTS = ['n', 'med', 'code'] as const;
+export type TrendCpvSort = (typeof TREND_CPV_SORTS)[number];
+
 function pickEnum<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
   return raw != null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
 }
@@ -80,6 +83,11 @@ export function trendStep(sp: URLSearchParams): TrendStep {
 /** The /trends contract-list sort (`?sort=`), validated the same way as {@link trendAngle}. */
 export function trendSort(sp: URLSearchParams): TrendSort {
   return pickEnum(sp.get('sort'), TREND_SORTS, 'date');
+}
+
+/** The /trends CPV-lens sort (`?cpvSort=`), validated the same way as {@link trendAngle}. */
+export function trendCpvSort(sp: URLSearchParams): TrendCpvSort {
+  return pickEnum(sp.get('cpvSort'), TREND_CPV_SORTS, 'n');
 }
 
 /**

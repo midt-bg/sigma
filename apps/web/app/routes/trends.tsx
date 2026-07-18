@@ -17,6 +17,7 @@ import { publicCache } from '../lib/cache';
 import {
   cpvGroupSelection,
   trendAngle,
+  trendCpvSort,
   trendSort,
   trendStep,
   type TrendAngle,
@@ -45,10 +46,6 @@ export function headers() {
 type Angle = TrendAngle;
 type Step = TrendStep;
 
-function pick<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
-  return raw != null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
-}
-
 const STEP_GRANULARITY: Record<Step, TrendGranularity> = {
   m: 'month',
   q: 'quarter',
@@ -64,7 +61,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const angle = trendAngle(sp);
   const step = trendStep(sp);
   const sort = trendSort(sp);
-  const cpvSort = pick(sp.get('cpvSort'), ['n', 'med', 'code'] as const, 'n');
+  const cpvSort = trendCpvSort(sp);
   const yearRaw = sp.get('year');
   const year = yearRaw && /^20\d\d$/.test(yearRaw) ? yearRaw : null;
   // Repeatable ?cpv — the multi-select CPV facet. Validated + bounded by cpvGroupSelection so
