@@ -29,7 +29,28 @@ VALUES
    '103267195', ''),
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-NULL', 'C-NULL', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Липсваща самоличност', 400, 400, 'EUR',
-   NULL, NULL);
+   NULL, NULL),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-1', 'C-FOLD-1', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Кавички и регистър 1', 10, 10, 'EUR',
+   '', '„Строй Инвест" ЕООД'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-2', 'C-FOLD-2', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Кавички и регистър 2', 10, 10, 'EUR',
+   '', '"СТРОЙ ИНВЕСТ" ЕООД'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-3', 'C-FOLD-3', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Кавички и интервали', 10, 10, 'EUR',
+   '', '«строй   инвест» ЕООД'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-DASH-EN', 'C-DASH-EN', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Тире 1', 10, 10, 'EUR',
+   '', '„Марица–Изток"'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-DASH-ASCII', 'C-DASH-ASCII', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Тире 2', 10, 10, 'EUR',
+   '', '„Марица-Изток"'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-GUARD-HYPHEN', 'C-GUARD-HYPHEN', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Пази тирето', 10, 10, 'EUR',
+   '', '„Марица-Изток"'),
+  ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-GUARD-SPACE', 'C-GUARD-SPACE', '2026-07-01',
+   '2026-07-02', '123456786', 'Тестов възложител', 'Пази интервала', 10, 10, 'EUR',
+   '', '„Марица Изток"');
 `;
 
 function build(path: 'normalize' | 'refresh'): DatabaseSync {
@@ -55,7 +76,14 @@ describe.each(['normalize', 'refresh'] as const)('%s contractor identity', (path
         .all() as { contract_number: string; bidder_id: string }[];
 
       expect(contracts).toEqual([
+        { contract_number: 'C-DASH-ASCII', bidder_id: 'name:МАРИЦА-ИЗТОК' },
+        { contract_number: 'C-DASH-EN', bidder_id: 'name:МАРИЦА-ИЗТОК' },
         { contract_number: 'C-EMPTY', bidder_id: 'unknown:анонимен' },
+        { contract_number: 'C-FOLD-1', bidder_id: 'name:СТРОЙ ИНВЕСТ ЕООД' },
+        { contract_number: 'C-FOLD-2', bidder_id: 'name:СТРОЙ ИНВЕСТ ЕООД' },
+        { contract_number: 'C-FOLD-3', bidder_id: 'name:СТРОЙ ИНВЕСТ ЕООД' },
+        { contract_number: 'C-GUARD-HYPHEN', bidder_id: 'name:МАРИЦА-ИЗТОК' },
+        { contract_number: 'C-GUARD-SPACE', bidder_id: 'name:МАРИЦА ИЗТОК' },
         { contract_number: 'C-NULL', bidder_id: 'unknown:анонимен' },
         { contract_number: 'C-TYPO', bidder_id: 'name:ТИПО ООД' },
         { contract_number: 'C-VALID', bidder_id: 'eik:103267194' },
@@ -87,7 +115,7 @@ describe.each(['normalize', 'refresh'] as const)('%s contractor identity', (path
              (SELECT SUM(won_eur) FROM company_totals) AS company_total`,
         )
         .get() as { raw_total: number; contract_total: number; company_total: number };
-      expect(sums).toEqual({ raw_total: 1000, contract_total: 1000, company_total: 1000 });
+      expect(sums).toEqual({ raw_total: 1070, contract_total: 1070, company_total: 1070 });
 
       expect(
         db

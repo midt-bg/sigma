@@ -50,22 +50,23 @@ DROP TABLE IF EXISTS contractor_identity;
 CREATE TABLE contractor_identity (
   eik_raw    TEXT,
   name_raw   TEXT,
+  name_norm  TEXT,
   eik_clean  TEXT,
   eik_valid  INTEGER NOT NULL,
   bidder_key TEXT NOT NULL,
   PRIMARY KEY (eik_raw, name_raw)
 );
 
-INSERT INTO contractor_identity (eik_raw, name_raw, eik_clean, eik_valid, bidder_key)
+INSERT INTO contractor_identity (eik_raw, name_raw, name_norm, eik_clean, eik_valid, bidder_key)
 SELECT
   eik_raw,
+  name_raw,
   name_raw,
   eik_clean,
   eik_valid,
   CASE
     WHEN eik_valid = 1 THEN 'eik:' || eik_clean
-    WHEN name_raw IS NOT NULL AND TRIM(name_raw) <> '' THEN 'name:' || UPPER(TRIM(REPLACE(REPLACE(name_raw, '  ', ' '), '  ', ' ')))
-    ELSE 'unknown:анонимен'
+    ELSE 'pending'
   END
 FROM (
   SELECT
@@ -109,6 +110,31 @@ FROM (
     FROM (SELECT DISTINCT contractor_eik, contractor_name FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%')
   )
 );
+
+UPDATE contractor_identity
+SET name_norm = TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, char(160), ' '), char(9), ' '), char(10), ' '), char(13), ' '), '  ', ' '), '  ', ' '), '  ', ' '));
+
+UPDATE contractor_identity
+SET name_norm = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, '"', ''), '''', ''), '`', ''), '„', ''), '“', ''), '”', ''), '‚', ''), '‘', ''), '’', ''), '«', ''), '»', ''), '′', ''), '″', '');
+
+UPDATE contractor_identity
+SET name_norm = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, '‐', '-'), '‑', '-'), '‒', '-'), '–', '-'), '—', '-'), '―', '-'), '−', '-'), char(173), ''), char(8203), '');
+
+UPDATE contractor_identity
+SET name_norm = TRIM(REPLACE(REPLACE(REPLACE(name_norm, '  ', ' '), '  ', ' '), '  ', ' '));
+
+UPDATE contractor_identity
+SET name_norm = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, 'а', 'А'), 'б', 'Б'), 'в', 'В'), 'г', 'Г'), 'д', 'Д'), 'е', 'Е'), 'ж', 'Ж'), 'з', 'З'), 'и', 'И'), 'й', 'Й'), 'к', 'К'), 'л', 'Л'), 'м', 'М'), 'н', 'Н'), 'о', 'О');
+
+UPDATE contractor_identity
+SET name_norm = UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name_norm, 'п', 'П'), 'р', 'Р'), 'с', 'С'), 'т', 'Т'), 'у', 'У'), 'ф', 'Ф'), 'х', 'Х'), 'ц', 'Ц'), 'ч', 'Ч'), 'ш', 'Ш'), 'щ', 'Щ'), 'ъ', 'Ъ'), 'ь', 'Ь'), 'ю', 'Ю'), 'я', 'Я'));
+
+UPDATE contractor_identity
+SET bidder_key = CASE
+  WHEN eik_valid = 1 THEN bidder_key
+  WHEN name_raw IS NOT NULL AND TRIM(name_raw) <> '' THEN 'name:' || name_norm
+  ELSE 'unknown:анонимен'
+END;
 
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, is_consortium, kind)
 SELECT
