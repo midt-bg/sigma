@@ -9,6 +9,8 @@ import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
@@ -175,6 +177,8 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 
 function initWorkDb(dbPath: string): void {
   readScript(dbPath, schemaPath);
+  readScript(dbPath, migration1Path);
+  readScript(dbPath, migration2Path);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -358,6 +362,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -437,6 +443,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -485,6 +493,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -528,11 +538,68 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('converts current_value_eur from the amendment currency, not the contract signing currency (#245)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
+      readScript(dbPath, workStagingSchemaPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:523456789', 'Authority Eur', '523456789', 'public');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:877777777', 'Bidder Eur', '877777777', '877777777', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, estimated_value, currency, procedure_type, status)
+           VALUES ('t:UNP-EUR', 'UNP-EUR', 'Eur tender', 'auth:523456789', 5000, 'BGN', 'open', 'awarded');
+         INSERT INTO contracts
+           (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value,
+            current_value, current_value_currency, annex_count, value_flag, amount_eur, signing_value_eur, current_value_eur)
+           VALUES
+           ('c:e:eurannex', 't:UNP-EUR', 'eik:877777777', 500, 'BGN', '2025-06-02',
+            'CONTRACT-EUR', 1000, 500, 'BGN', 1, 'ok', 500 / 1.95583, 1000 / 1.95583, 500 / 1.95583);
+         INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('eop:annexes:2026-06-02', 2026, 'eop', '2026-06-08T00:00:00Z', '2', 'AMD-EUR-2',
+            'CONTRACT-EUR', '2026-06-02', '2026-06-03', 'UNP-EUR', '523456789', 'Authority Eur',
+            'Eur tender', 'works', 500, 2000, 1500, 'EUR', 'Post-switch EUR annex');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+      const row = sqliteJson<{
+        value_flag: string;
+        current_value: number;
+        current_value_currency: string;
+        current_value_eur: number;
+        signing_value_eur: number;
+      }>(
+        dbPath,
+        `SELECT value_flag, current_value, current_value_currency, current_value_eur, signing_value_eur
+         FROM contracts WHERE id = 'c:e:eurannex'`,
+      )[0];
+      expect(row?.value_flag).toBe('ok');
+      expect(row?.current_value).toBe(2000);
+      expect(row?.current_value_currency).toBe('EUR');
+      // The amendment's own EUR value, unconverted — NOT divided by the BGN peg a second time.
+      expect(row?.current_value_eur).toBeCloseTo(2000, 6);
+      // signing_value stays denominated in the contract's own (BGN) signing currency — unaffected.
+      expect(row?.signing_value_eur).toBeCloseTo(1000 / 1.95583, 6);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('classifies amendment rollups from the contract-row estimated value', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
