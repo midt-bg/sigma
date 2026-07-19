@@ -323,13 +323,44 @@ SET ownership_kind = (
 --    the rate, and the EUR value are all auditable without joining fx_rates.
 INSERT OR IGNORE INTO contracts
   (id, tender_id, bidder_id, amount, currency, signed_at,
-   contract_number, signing_value, current_value, annex_count, eu_funded, bids_received,
+   contract_number, signing_value, current_value, current_value_currency, annex_count, eu_funded, bids_received,
    contract_kind, awarded_to_group, value_flag, date_flag, amount_eur, fx_converted, fx_rate,
    lot_id, document_number, published_at, contract_subject,
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
    eauction, framework, accelerated, strategic)
+-- amendment_winner: the currency of whichever raw_amendments row supplied contract_number's
+-- current_value (derive-amendments.sql's own rollup, mirrored here so the winning currency
+-- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
+WITH amendment_dedup AS (
+  SELECT *,
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+      COALESCE(
+        NULLIF(document_number, ''),
+        NULLIF(correction_number, ''),
+        NULLIF(seq_no, ''),
+        'content:' || COALESCE(published_at, '') || ':' ||
+          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
+          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
+          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
+          COALESCE(currency, '') || ':' ||
+          COALESCE(description, '')
+      ) AS natural_key
+  FROM raw_amendments
+), amendment_rn AS (
+  SELECT *,
+    ROW_NUMBER() OVER (PARTITION BY natural_key ORDER BY source DESC, id DESC) AS rn
+  FROM amendment_dedup
+), amendment_winner AS (
+  SELECT unp, contract_number, currency,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp, contract_number
+      ORDER BY published_at DESC, natural_key DESC
+    ) AS win_rn
+  FROM amendment_rn
+  WHERE rn = 1 AND value_after IS NOT NULL
+)
 SELECT
   CASE
     WHEN x.source LIKE 'eop:%' THEN 'c:e:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
@@ -346,6 +377,7 @@ SELECT
   x.contract_number,
   x.signing_value,
   x.current_value,
+  x.current_value_currency,
   COALESCE(x.annex_count, 0),
   x.eu_funded,
   x.bids_received,
@@ -398,6 +430,10 @@ FROM (
       WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
       ELSE COALESCE(y.current_value, y.signing_value)
     END AS trusted_native,
+    -- current_value can be denominated in a DIFFERENT currency than the contract's own (when the
+    -- winning amendment_winner row recorded one) — precompute.sql's later current_value_eur pass
+    -- uses this column instead of `currency` so that amendment isn't re-converted a second time.
+    COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN') AS current_value_currency,
     -- ECB rates are published on business days only; carry the latest prior rate forward for
     -- weekend/holiday signings, never future-dated, and cap the fallback at 10 calendar days.
     CASE WHEN COALESCE(y.currency, 'BGN') NOT IN ('BGN', 'EUR')
@@ -525,9 +561,12 @@ FROM (
               LIMIT 1
             )
           END AS proc_est_eur,
-          t.estimated_value AS proc_est_native
+          t.estimated_value AS proc_est_native,
+          aw.currency AS amendment_currency
         FROM raw_contracts c
         LEFT JOIN tenders t ON t.id = 't:' || c.unp
+        LEFT JOIN amendment_winner aw
+          ON aw.unp = c.unp AND aw.contract_number = c.contract_number AND aw.win_rn = 1
       ) c
       -- EOP always; an OCDS row only when no EOP row shares its contract_number - EOP wins.
       -- Key is contract_number (the public-procurement contract document number, common to both feeds), NOT unp:

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -27,6 +28,7 @@ describe('served migrations', () => {
     try {
       readScript(dbPath, migration0);
       readScript(dbPath, migration1);
+      readScript(dbPath, migration2);
 
       expect(
         sqlite(
@@ -72,6 +74,13 @@ describe('served migrations', () => {
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'raw_%';").trim(),
       ).toBe('0');
+
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('contracts') WHERE name='current_value_currency';",
+        ).trim(),
+      ).toBe('1');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
