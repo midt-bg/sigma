@@ -37,9 +37,10 @@ export const MAX_CPV_GROUP_SELECTION = 10;
 
 /**
  * The обзор lenses' CPV multi-select (`?cpv=45233&cpv=33600` or `?cpv=45233,33600` on /trends):
- * validated 5-digit group codes only, deduped, order-preserving, capped at MAX_CPV_GROUP_SELECTION.
- * Malformed or excess codes are dropped before they reach a filter or mint an edge-cache key
- * variant (CWE-349).
+ * validated 5-digit group codes only, deduped, sorted into a canonical order, capped at
+ * MAX_CPV_GROUP_SELECTION. The sort makes `?cpv=a&cpv=b` and `?cpv=b&cpv=a` yield an identical
+ * array, so the same logical selection never mints divergent edge-cache key variants (CWE-349).
+ * Malformed or excess codes are dropped before they reach a filter or a cache key.
  */
 export function cpvGroupSelection(sp: URLSearchParams): string[] {
   const all = sp
@@ -48,6 +49,7 @@ export function cpvGroupSelection(sp: URLSearchParams): string[] {
     .map((v) => v.trim());
   return Array.from(new Set(all))
     .filter((v) => /^\d{5}$/.test(v))
+    .sort()
     .slice(0, MAX_CPV_GROUP_SELECTION);
 }
 

@@ -1376,6 +1376,7 @@ tbody td,
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .metric-info-title {

@@ -124,11 +124,18 @@ describe('getMulti', () => {
 });
 
 describe('cpvGroupSelection', () => {
-  it('parses repeatable and CSV ?cpv values into a deduped, order-preserving set', () => {
-    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
-    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['45233', '33600']);
-    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
+  it('parses repeatable and CSV ?cpv values into a deduped, canonically sorted set', () => {
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
     expect(cpvGroupSelection(sp(''))).toEqual([]);
+  });
+
+  it('returns an identical sorted array regardless of ?cpv arrival order (edge-cache key stability)', () => {
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(
+      cpvGroupSelection(sp('cpv=45233&cpv=33600')),
+    );
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(['33600', '45233']);
   });
 
   it('drops anything that is not exactly a 5-digit group code (CWE-349 key hygiene)', () => {
