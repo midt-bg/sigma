@@ -32,7 +32,7 @@ export function SubjectRiskIndicator({
   contractsBase,
 }: {
   risk: SubjectRiskView;
-  contractsBase: string; // e.g. '/contracts?bidder=eik:123' — already carries a query string
+  contractsBase: string; // e.g. '/contracts?bidder=103267194' (companySlug: EIK w/o prefix) or '?authority=<eik>' — already carries a query string
 }) {
   return (
     <Callout variant="neutral">
