@@ -60,7 +60,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const year = yearRaw && /^20\d\d$/.test(yearRaw) ? yearRaw : null;
   // Repeatable ?cpv — the multi-select CPV facet. Validated + bounded by cpvGroupSelection so
   // hostile input can neither poison the SQL scope nor mint unbounded cache-key variants (CWE-349).
-  const cpvSel = cpvGroupSelection(sp);
+  // Sorted so a reordered ?cpv= URL (same selection, different param order) collapses onto one
+  // canonical edge-cache key, matching how hrefToggleCpv writes the set back out sorted.
+  const cpvSel = cpvGroupSelection(sp).sort();
   // „вкл. текущия месец": the current (incomplete) period is excluded from the chart by default;
   // ?cur=1 opts back in (validated to exactly '1' so the edge-cache key space stays two-valued).
   const cur = sp.get('cur') === '1';

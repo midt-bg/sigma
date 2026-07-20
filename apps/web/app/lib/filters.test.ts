@@ -141,6 +141,18 @@ describe('cpvGroupSelection', () => {
     expect(out[0]).toBe('10000');
     expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
   });
+
+  it('caps AFTER validation so leading invalid params cannot crowd out valid codes', () => {
+    const invalid = Array.from({ length: MAX_CPV_GROUP_SELECTION }, () => 'cpv=abc').join('&');
+    const valid = Array.from(
+      { length: MAX_CPV_GROUP_SELECTION },
+      (_, i) => `cpv=${10000 + i}`,
+    ).join('&');
+    const out = cpvGroupSelection(sp(`${invalid}&${valid}`));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
+  });
 });
 
 describe('searchHref', () => {
