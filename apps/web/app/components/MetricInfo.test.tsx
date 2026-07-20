@@ -21,15 +21,14 @@ describe('MetricInfo', () => {
   });
 
   it('closes a hover-opened popover on Escape', () => {
-    const { container, getByRole } = render(<MetricInfo title="Title" summary="Summary" />);
+    const { container } = render(<MetricInfo title="Title" summary="Summary" />);
     const root = container.querySelector('.metric-info') as HTMLElement;
-    const button = getByRole('button');
 
     fireEvent.mouseEnter(root);
-    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(root.className).not.toContain('is-dismissed');
 
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(root.className).toContain('is-dismissed');
   });
 
   it('removes resize/scroll listeners on unmount that were added while visible', () => {

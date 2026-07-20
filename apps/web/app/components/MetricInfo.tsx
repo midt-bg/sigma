@@ -36,7 +36,7 @@ export function MetricInfo({
   // DOM right now, not a stale render closure — see the idempotency note in `recompute` below.
   const shiftRef = useRef(0);
   // Keyboard focus (no click) also reveals the popover via CSS `:focus-within`; track it so
-  // `aria-expanded` matches what's actually visible, not just the click-toggled `open` state.
+  // Esc can dismiss a keyboard-opened popover the same as a click- or hover-opened one.
   const [focused, setFocused] = useState(false);
   // Mouse hover also reveals the popover via CSS `:hover` — track it for the same reason, and so
   // Esc can dismiss a hover-only-opened popover (ARIA tooltip pattern: Esc closes it regardless
@@ -86,11 +86,11 @@ export function MetricInfo({
       });
     };
     window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
+    window.addEventListener('scroll', onViewportChange, { passive: true, capture: true });
     return () => {
       if (raf) cancelAnimationFrame(raf);
       window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
+      window.removeEventListener('scroll', onViewportChange, { passive: true, capture: true });
     };
   }, [visible]);
 
@@ -139,7 +139,6 @@ export function MetricInfo({
         type="button"
         className="metric-info-btn"
         aria-label={aria}
-        aria-expanded={visible}
         onClick={() => setOpen((v) => !v)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
