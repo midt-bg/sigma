@@ -152,9 +152,10 @@ describe('reconciliation gate — injected violations', () => {
 
   it('current-amount-parity catches a detail/rollup EUR disagreement over one cent', () => {
     const db = track(freshDb());
+    precompute(db); // populates home_totals so the check runs (it gates on precompute like rollup-recon)
     sqlite(
       db,
-      "UPDATE contracts SET current_value = 100000, current_value_eur = 100000.02 WHERE id = 'c:1';",
+      "UPDATE contracts SET current_value = 100000, amount_eur = 100000, current_value_eur = 100000.02 WHERE id = 'c:1';",
     );
     const result = checkCurrentAmountParity(runner(db));
     expect(result.ok).toBe(false);
@@ -163,9 +164,10 @@ describe('reconciliation gate — injected violations', () => {
 
   it('current-amount-parity accepts sub-cent floating-point drift', () => {
     const db = track(freshDb());
+    precompute(db);
     sqlite(
       db,
-      "UPDATE contracts SET current_value = 100000, current_value_eur = 100000.009 WHERE id = 'c:1';",
+      "UPDATE contracts SET current_value = 100000, amount_eur = 100000, current_value_eur = 100000.009 WHERE id = 'c:1';",
     );
     expect(checkCurrentAmountParity(runner(db)).ok).toBe(true);
   });
