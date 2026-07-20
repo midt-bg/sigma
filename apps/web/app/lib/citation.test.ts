@@ -107,23 +107,23 @@ describe('citation builders', () => {
     );
   });
 
-  it('shows the EIK when hasEik is absent from loaderData but eik is present', () => {
+  it('leaves the EIK line blank for an empty string, since ?? only catches null', () => {
     const c = {
-      displayName: 'Техно ООД',
-      eik: '123456789',
-      wonEur: 5000000,
-      contracts: 42,
-      slug: 'techno-ood',
+      displayName: 'Празен ЕИК ЕООД',
+      eik: '',
+      wonEur: 250000,
+      contracts: 3,
+      slug: 'prazen-eik-eood',
     };
 
     const citation = buildCompanyCitation(c, 'https://sigma.test');
     expect(citation).toBe(
       [
-        'Компания: Техно ООД',
-        'ЕИК: 123456789',
-        'Общо спечелено: 5 млн. €',
-        'Брой договори: 42',
-        'Връзка: https://sigma.test/companies/techno-ood',
+        'Компания: Празен ЕИК ЕООД',
+        'ЕИК: ',
+        'Общо спечелено: 250 хил. €',
+        'Брой договори: 3',
+        'Връзка: https://sigma.test/companies/prazen-eik-eood',
       ].join('\n'),
     );
   });

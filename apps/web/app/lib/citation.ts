@@ -15,6 +15,8 @@ export function buildContractCitation(
     `Възложител: ${c.authority.name}`,
     `Изпълнител: ${c.bidder ? c.bidder.displayName : '—'}`,
     `Стойност: ${money(c.value.currentEur)}`,
+    // `c.id` is already the percent-encoded slug (contractSlug output, see
+    // routes/contract.tsx), so the path-safe URL below needs no `slug` field of its own.
     `Връзка: ${origin}/contracts/${c.id}`,
   ].join('\n');
 }
