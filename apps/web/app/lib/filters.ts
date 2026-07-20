@@ -9,6 +9,10 @@ import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './query-params';
 
+// `network` must stay equal to `COUNTERPARTY_PAGE_SIZE` in packages/db/src/queries/network.ts —
+// the route always passes this value as the query's explicit `pageSize`, but that query also
+// defines its own default which cannot import this constant (packages/db cannot import from
+// apps/web without inverting the package dependency direction).
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25, network: 25 } as const;
 export const MAX_MULTI_VALUES = 50;
 

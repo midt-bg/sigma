@@ -27,7 +27,11 @@ export interface NetworkQueryOptions {
 const HOP1 = 6; // direct counterparties drawn in the graph (readability cap, not the real degree)
 const HOP2_SCAN = HOP1 * 10; // rows scanned for hop 2 before the top-1-per-neighbour reduction
 const PICKER_LIMIT = 12; // entities offered in the centre picker
-const COUNTERPARTY_PAGE_SIZE = 25; // rows per page in the exhaustive relations table
+// Default rows per page in the exhaustive relations table when no `pageSize` is passed. In
+// practice the /network route always passes `PAGE_SIZE.network` from apps/web/app/lib/filters.ts
+// explicitly — keep the two values equal (currently 25) since packages/db cannot import from
+// apps/web without inverting the package dependency direction.
+const COUNTERPARTY_PAGE_SIZE = 25;
 
 interface PairRow {
   authority_id: string;
