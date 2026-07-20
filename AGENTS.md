@@ -30,7 +30,7 @@ No `develop`, no `staging`. Maintainers with write access work on short-lived fe
 ## Pull requests
 
 - Feature branch → PR into `main` on `midt-bg/sigma` → review → merge → delete the branch.
-- Push the branch *before* opening the PR. Keep each PR scoped to one logical change so it stays reviewable.
+- Push the branch _before_ opening the PR. Keep each PR scoped to one logical change so it stays reviewable.
 - Use the `gh` CLI for PR operations. Only push or open a PR when asked.
 
 ## Working directory and environment

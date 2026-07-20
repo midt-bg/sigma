@@ -1,7 +1,6 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
-import { CPV_SECTORS } from '@sigma/config';
 import { getRegionalSpending } from '@sigma/db';
 import type { Route } from './+types/map';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -12,6 +11,7 @@ import { Choropleth } from '../components/Choropleth';
 import { Callout, Section, ShareBar } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta, yearOptions } from '../lib/coverage';
+import { singleSelectFilters } from '../lib/filters';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -29,20 +29,14 @@ export function headers() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const sp = new URL(request.url).searchParams;
-  const sector = sp.get('sector');
-  const year = sp.get('year');
   const db = context.cloudflare.env.DB;
   const coverage = await getCoverageMeta(db);
   const years = yearOptions(coverage.coverageEndYear);
-  // A bogus ?sector / ?year would silently filter everything out; flag it and ignore it instead.
-  const unknownSector = Boolean(sector) && !CPV_SECTORS.some((s) => s.code === sector);
-  const unknownYear = Boolean(year) && !years.includes(year!);
-  const data = await getRegionalSpending(db, {
-    sector: unknownSector ? null : sector,
-    year: unknownYear ? null : year,
-    funding: (sp.get('funding') as 'eu' | 'national' | null) || 'all',
-  });
+  const { sector, year, funding, unknownSector, unknownYear } = singleSelectFilters(
+    new URL(request.url).searchParams,
+    years,
+  );
+  const data = await getRegionalSpending(db, { sector, year, funding });
   return { data, coverage, years, unknownSector, unknownYear };
 }
 

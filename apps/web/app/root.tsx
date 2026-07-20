@@ -19,6 +19,7 @@ import { useNonce } from './nonce';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
+import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { withDbRetry } from './lib/retry';
@@ -89,7 +90,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             publisher: { '@id': `${origin}/#organization` },
             potentialAction: {
               '@type': 'SearchAction',
-              target: { '@type': 'EntryPoint', urlTemplate: `${origin}/search?q={search_term_string}` },
+              target: {
+                '@type': 'EntryPoint',
+                urlTemplate: `${origin}/search?q={search_term_string}`,
+              },
               'query-input': 'required name=search_term_string',
             },
           },
@@ -121,10 +125,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
         {schemaOrg && (
-          <script
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{ __html: schemaOrg }}
-          />
+          <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: schemaOrg }} />
         )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>
@@ -188,6 +189,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         refreshedAt={loaderData.refreshedAt}
         endYear={loaderData.coverageEndYear}
       />
+      <ScrollToTop />
       <AccessibilityWidget />
     </>
   );

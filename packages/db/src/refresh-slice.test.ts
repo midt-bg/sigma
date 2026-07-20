@@ -369,9 +369,9 @@ describe('refresh-slice EOP base derivation', () => {
       );
       expect(firstContracts.length).toBeGreaterThan(0);
       expect(firstContracts[0]?.amount_eur).toBeCloseTo(1200 / 1.95583, 6);
-      expect(
-        sqliteJson<{ n: number }>(dbPath, 'SELECT COUNT(*) AS n FROM amendments')[0]?.n,
-      ).toBe(2);
+      expect(sqliteJson<{ n: number }>(dbPath, 'SELECT COUNT(*) AS n FROM amendments')[0]?.n).toBe(
+        2,
+      );
       expect(
         sqliteJson<{ annex_count: number; current_value: number }>(
           dbPath,
@@ -633,9 +633,9 @@ describe('refresh-slice EOP base derivation', () => {
       );
       expect(sliceRows.every((row) => row.id !== null && row.id.length > 0)).toBe(true);
       expect(sliceRows.filter((row) => row.contract_number === 'CONTRACT-ID')).toHaveLength(1);
-      expect(sliceRows.some((row) => row.id.startsWith('c:o:') && row.contract_number === 'CONTRACT-ID')).toBe(
-        false,
-      );
+      expect(
+        sliceRows.some((row) => row.id.startsWith('c:o:') && row.contract_number === 'CONTRACT-ID'),
+      ).toBe(false);
       expect(sqlite(sliceDb, 'PRAGMA foreign_key_check;').trim()).toBe('');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -722,9 +722,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(fullDb, normalizePath);
       readScript(sliceDb, refreshSlicePath);
 
-      expect(
-        sqliteJson<{ id: string }>(fullDb, 'SELECT id FROM contracts ORDER BY id'),
-      ).toEqual(sqliteJson<{ id: string }>(sliceDb, 'SELECT id FROM contracts ORDER BY id'));
+      expect(sqliteJson<{ id: string }>(fullDb, 'SELECT id FROM contracts ORDER BY id')).toEqual(
+        sqliteJson<{ id: string }>(sliceDb, 'SELECT id FROM contracts ORDER BY id'),
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -895,7 +895,9 @@ describe('refresh-slice EOP base derivation', () => {
       const bidderAfterWindow2 = sqliteJson(sliceDb, bidderSql);
 
       readScript(sliceDb, refreshSlicePath);
-      expect(sqliteJson(sliceDb, 'SELECT * FROM parties ORDER BY party_key')).toEqual(partiesAfterWindow2);
+      expect(sqliteJson(sliceDb, 'SELECT * FROM parties ORDER BY party_key')).toEqual(
+        partiesAfterWindow2,
+      );
       expect(sqliteJson(sliceDb, authoritySql)).toEqual(authorityAfterWindow2);
       expect(sqliteJson(sliceDb, bidderSql)).toEqual(bidderAfterWindow2);
       expect(sqlite(sliceDb, 'PRAGMA foreign_key_check;').trim()).toBe('');
@@ -923,12 +925,32 @@ describe('refresh-slice EOP base derivation', () => {
         "SELECT eik_normalized AS eik, settlement, address, contact_email FROM bidders WHERE eik_normalized IN ('111111111','222222222') ORDER BY eik_normalized";
       // Each company must be enriched from its OWN party row, not the latest slot occupant's.
       const expectedParties = [
-        { eik: '111111111', locality: 'City A', street_address: 'Addr A 1', contact_email: 'a@example.test' },
-        { eik: '222222222', locality: 'City B', street_address: 'Addr B 2', contact_email: 'b@example.test' },
+        {
+          eik: '111111111',
+          locality: 'City A',
+          street_address: 'Addr A 1',
+          contact_email: 'a@example.test',
+        },
+        {
+          eik: '222222222',
+          locality: 'City B',
+          street_address: 'Addr B 2',
+          contact_email: 'b@example.test',
+        },
       ];
       const expectedBidders = [
-        { eik: '111111111', settlement: 'City A', address: 'Addr A 1', contact_email: 'a@example.test' },
-        { eik: '222222222', settlement: 'City B', address: 'Addr B 2', contact_email: 'b@example.test' },
+        {
+          eik: '111111111',
+          settlement: 'City A',
+          address: 'Addr A 1',
+          contact_email: 'a@example.test',
+        },
+        {
+          eik: '222222222',
+          settlement: 'City B',
+          address: 'Addr B 2',
+          contact_email: 'b@example.test',
+        },
       ];
 
       for (const [db, script] of [

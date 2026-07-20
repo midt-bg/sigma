@@ -1,12 +1,14 @@
 import { Link } from 'react-router';
-import { count, longDate, money, moneyBare, plural, signedPct } from '@sigma/shared';
-import { contractIdFromSlug, getContract } from '@sigma/db';
+import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
+import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
+import { RiskIndicators } from '../components/RiskIndicators';
+import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
@@ -42,11 +44,36 @@ function bidsBreakdown(c: ContractDetail): string | null {
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
+/**
+ * Annex „Основание" cell. ЦАИС ЕОП ships the amendment clause as one run-on legal block (median
+ * ~800 chars, up to ~6k) — too long for a table cell. Long texts collapse to a word-boundary
+ * preview with a native <details> expander (works without JS) and open into clause paragraphs;
+ * the wording itself is shown verbatim.
+ */
+function AnnexDescription({ text }: { text: string | null }) {
+  if (!text) return <>—</>;
+  if (!annexNeedsExpand(text)) return <>{annexPreview(text)}</>;
+  return (
+    <details className="annex-desc">
+      <summary>
+        <span className="annex-desc-preview">{annexPreview(text)} </span>
+        <span className="annex-desc-toggle">покажи целия текст</span>
+        <span className="annex-desc-collapse">свий</span>
+      </summary>
+      {annexParagraphs(text).map((p, i) => (
+        <p key={i} className="annex-desc-para">
+          {p}
+        </p>
+      ))}
+    </details>
+  );
+}
+
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const c = data?.contract;
   return seoMeta({
     matches,
-    path: `/contracts/${params.id}`,
+    path: `/contracts/${contractSlug(contractIdFromSlug(params.id))}`,
     title: `${c?.subject ?? 'Договор'} — СИГМА`,
     description: c
       ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
@@ -183,6 +210,58 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           )}
         </Section>
 
+        {c.amendments.length > 0 && (
+          <Section
+            id="amendments"
+            title="История на измененията"
+            hint="Публикуваните анекси към договора, в хронологичен ред — как се е променяла стойността и на какво основание. Всички суми в евро."
+          >
+            <div className="table-wrap">
+              <table className="lot-table">
+                <caption className="sr-only">Анекси към договора в хронологичен ред</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Дата</th>
+                    <th scope="col" className="num">
+                      Стойност след (€)
+                    </th>
+                    <th scope="col" className="num">
+                      Промяна (€)
+                    </th>
+                    <th scope="col">Основание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.amendments.map((a, i) => (
+                    <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
+                      <td>{a.date ? longDate(a.date) : '—'}</td>
+                      <td className="money">
+                        {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
+                      </td>
+                      <td className="money">
+                        {a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
+                      </td>
+                      <td className="annex-desc-cell">
+                        <AnnexDescription text={a.description} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="small muted mt-8">
+              {count(c.amendments.length)} {plural(c.amendments.length, 'анекс', 'анекса')} ·
+              източник: ЦАИС ЕОП.
+            </p>
+            {v.suspect && (
+              <p className="small muted">
+                За този договор стойностите по анексите се показват както са в източника — СИГМА не
+                ги потвърждава за тоталите (виж <Link to="/methodology">методология</Link>).
+              </p>
+            )}
+          </Section>
+        )}
+
         <Section id="who" title="Възложител и изпълнител">
           <div className="two-col">
             <div>
@@ -270,6 +349,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           </div>
         </Section>
 
+        <RiskIndicators contract={c} />
+
         <Section id="facts" title="Подробности">
           <FactsList
             rows={[
@@ -303,7 +384,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                     <span className="muted">не е посочен в данните</span>
                   ),
                 // Break the gross count down by status/category — surfaces what „Брой оферти" actually
-                // means (it's the gross submitted count, including rejections — see docs/etl-pipeline.md
+                // means (it's the gross submitted count, including rejections — see docs/etl.md
                 // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
                 // only appears when the source published a non-zero value, so contracts without any
                 // rejection/SME data fall back to the original „самите оферти…" footnote.
@@ -468,7 +549,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               {/* Plain <a>, not React Router <Link>. The .json endpoint is a resource route
                   (returns application/json, no HTML), so client-side navigation can't render it —
                   React Router would treat the JSON as a route module and crash. target=_blank
-                  opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
+                  opens the raw record in a new tab so the visitor doesn't lose the contract page.
+                  `c.id` is already the percent-encoded slug (contractSlug output), so the href is
+                  path-safe as-is — do not re-encode. The sub-line shows the same encoded path
+                  verbatim so copying the visible text yields a working URL — a decoded literal „/"
+                  would 404, the exact bug this PR fixes (review #221). */}
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в СИГМА
               </a>

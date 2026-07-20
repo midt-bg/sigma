@@ -5,7 +5,14 @@ import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
-import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
+import { assertCovers } from './filter-guard';
+import {
+  authoritySlug,
+  bareContractId,
+  bidderIdFromSlug,
+  companySlug,
+  contractSlug,
+} from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { searchMatchQuery } from './search';
@@ -38,6 +45,10 @@ export const CONTRACT_FILTER_KEYS = [
   'q',
   'bids',
 ] as const satisfies readonly (keyof ContractListParams)[];
+
+// Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
+// errors, add the new filter key to CONTRACT_FILTER_KEYS.
+assertCovers<ContractListParams, typeof CONTRACT_FILTER_KEYS>();
 
 const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = lookup({
   'value-desc': { expr: 'COALESCE(c.amount_eur, -1)', dir: 'desc' },
@@ -441,7 +452,10 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            contractSlug(r.id),
+            // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
+            // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
+            // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
+            bareContractId(r.id),
             r.unp,
             r.subject,
             cleanName(r.authority_name),

@@ -139,8 +139,12 @@ describe('streamAuthoritiesCsv', () => {
     const db = {
       prepare(_sql: string) {
         return {
-          bind() { return this; },
-          async all<T>() { return { results: [] as T[] }; },
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
         };
       },
     } as D1Database;

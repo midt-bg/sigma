@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { assertSameHost, deleteSqlForEopSources, isWithinMissingSettleWindow } from './load-eop.mjs';
+import {
+  assertSameHost,
+  deleteSqlForEopSources,
+  isWithinMissingSettleWindow,
+} from './load-eop.mjs';
 
 describe('assertSameHost', () => {
   it('accepts same-host final URLs and responses without a final URL', () => {
@@ -35,10 +39,7 @@ describe('deleteSqlForEopSources', () => {
   });
 
   it('scopes multi-day wipes to the requested window', () => {
-    const sql = deleteSqlForEopSources('raw_contracts', 'contracts', [
-      '2024-01-02',
-      '2024-01-03',
-    ]);
+    const sql = deleteSqlForEopSources('raw_contracts', 'contracts', ['2024-01-02', '2024-01-03']);
 
     assert.equal(
       sql,

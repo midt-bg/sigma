@@ -18,7 +18,35 @@
       "migrations_dir": "../../packages/db/migrations",
     },
   ],
-  "r2_buckets": [{ "binding": "CSV_CACHE", "bucket_name": "sigma-csv-cache" }],
+  "r2_buckets": [
+    { "binding": "CSV_CACHE", "bucket_name": "sigma-csv-cache" },
+    // AI assistant: immutable report snapshots (see docs/spec/ai-assistant.md §5).
+    { "binding": "REPORTS", "bucket_name": "sigma-reports" },
+  ],
+  // AI assistant (docs/spec/ai-assistant.md): Workers AI for RAG embeddings + a Vectorize index for
+  // schema-grounding and semantic search. The BgGPT API key is a SECRET — set with
+  // `wrangler secret put BGGPT_API_KEY`, never committed.
+  //
+  // ⚠️ DEPLOY GATE (review #80): these bindings reference resources that must EXIST before
+  // `wrangler deploy` — the Vectorize index `sigma-assistant`, the R2 bucket `sigma-reports`, and the
+  // BGGPT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
+  // CD. Provision first (see app/lib/assistant/README.md → „Provisioning gate"); until then the
+  // assistant route degrades to a 503 rather than crashing.
+  "ai": { "binding": "AI" },
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "sigma-assistant" }],
+  // Public config for the assistant. AI_GATEWAY_BASE_URL routes BgGPT through the Cloudflare AI
+  // Gateway (spec §9.5); empty string falls back to api.bggpt.ai.
+  "vars": {
+    "AI_GATEWAY_BASE_URL": "",
+    "BGGPT_MODEL": "bggpt-gemma-3-27b-fp8",
+    "MAX_STEPS": "6",
+    // Reserved for the launch-gate global circuit-breaker — declared but NOT yet read by any code.
+    "BGGPT_RATE_LIMIT_RPM": "120",
+    // Per-turn D1 rows-read budget — Denial-of-Wallet guard (issue #122). D1 bills on rows READ, not
+    // returned, and LIMIT caps only returned rows; once a chat turn's cumulative rows_read crosses
+    // this, further run_sql calls are refused. Tune to a few × the largest scannable table.
+    "D1_ROWS_READ_BUDGET": "5000000",
+  },
   "unsafe": {
     "bindings": [
       {
@@ -42,6 +70,19 @@
         // practice (an attacker varies ?q to force a miss every time), so it needs its own limit.
         "namespace_id": "1003",
         "simple": { "limit": 20, "period": 60 },
+      },
+      {
+        // Per-IP throttle for POST /assistant/chat — each call runs embeddings + the BgGPT agent loop
+        // (review #80). Tight, since it is far costlier than a page view. A global (account-wide) budget
+        // / circuit-breaker is a launch-gate TODO: BGGPT_RATE_LIMIT_RPM (below) is declared for it but
+        // not yet read — only this per-IP limiter is active today.
+        "name": "ASSISTANT_RATE_LIMITER",
+        "type": "ratelimit",
+        // namespace_id must be unique per limiter — a duplicate silently disables one (no deploy error).
+        // 1001–1003 are the csv/search/aggregation limiters; 1004 is claimed by the /health limiter (#118),
+        // so the assistant takes 1005.
+        "namespace_id": "1005",
+        "simple": { "limit": 10, "period": 60 },
       },
     ],
   },

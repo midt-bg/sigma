@@ -102,57 +102,57 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
 
   const [bidderMeta, extra, topAuth, procRows, bidsRow, suspectRow, top, recent] =
     await Promise.all([
-    db
-      .prepare(
-        `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
+      db
+        .prepare(
+          `SELECT b.legal_form, n.nuts3_name AS region FROM bidders b
          LEFT JOIN nuts_regions n ON n.nuts3 = b.nuts WHERE b.id = ?`,
-      )
-      .bind(bidderId)
-      .first<{ legal_form: string | null; region: string | null }>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
+        )
+        .bind(bidderId)
+        .first<{ legal_form: string | null; region: string | null }>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN substr(t.cpv_code,1,2) = ? THEN c.amount_eur ELSE 0 END) AS primary_eur,
                 AVG(c.bids_received) AS avg_bids
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL`,
-      )
-      .bind(row.primary_sector ?? '', bidderId)
-      .first<{ primary_eur: number | null; avg_bids: number | null }>(),
-    db
-      .prepare(
-        `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
+        )
+        .bind(row.primary_sector ?? '', bidderId)
+        .first<{ primary_eur: number | null; avg_bids: number | null }>(),
+      db
+        .prepare(
+          `SELECT t.authority_id, a.name, SUM(c.amount_eur) AS paid, COUNT(*) AS n
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL
          GROUP BY t.authority_id ORDER BY paid DESC LIMIT 6`,
-      )
-      .bind(bidderId)
-      .all<{ authority_id: string; name: string; paid: number; n: number }>(),
-    db
-      .prepare(
-        `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
+        )
+        .bind(bidderId)
+        .all<{ authority_id: string; name: string; paid: number; n: number }>(),
+      db
+        .prepare(
+          `SELECT t.procedure_type, COUNT(*) AS n, SUM(c.amount_eur) AS eur
          FROM contracts c JOIN tenders t ON t.id = c.tender_id
          WHERE c.bidder_id = ? AND c.amount_eur IS NOT NULL GROUP BY t.procedure_type`,
-      )
-      .bind(bidderId)
-      .all<ProcRow>(),
-    db
-      .prepare(
-        `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
+        )
+        .bind(bidderId)
+        .all<ProcRow>(),
+      db
+        .prepare(
+          `SELECT SUM(CASE WHEN bids_received = 1 THEN 1 ELSE 0 END) AS one,
                 SUM(CASE WHEN bids_received = 2 THEN 1 ELSE 0 END) AS two,
                 SUM(CASE WHEN bids_received = 3 THEN 1 ELSE 0 END) AS three,
                 SUM(CASE WHEN bids_received >= 4 THEN 1 ELSE 0 END) AS four_plus,
                 SUM(CASE WHEN bids_received IS NULL THEN 1 ELSE 0 END) AS unknown
          FROM contracts WHERE bidder_id = ? AND amount_eur IS NOT NULL`,
-      )
-      .bind(bidderId)
-      .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
-      .bind(bidderId)
-      .first<{ n: number }>(),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
-    listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
-  ]);
+        )
+        .bind(bidderId)
+        .first<{ one: number; two: number; three: number; four_plus: number; unknown: number }>(),
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM contracts WHERE bidder_id = ? AND amount_eur IS NULL`)
+        .bind(bidderId)
+        .first<{ n: number }>(),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'value-desc', pageSize: 7 }),
+      listContracts(db, { bidder: companySlug(bidderId), sort: 'date-desc', pageSize: 7 }),
+    ]);
 
   const topAuthorities: AuthorityShare[] = topAuth.results.map((a) => ({
     slug: authoritySlug(a.authority_id),
@@ -418,6 +418,42 @@ interface ContractDetailRow {
   bidder_settlement: string | null;
 }
 
+interface AmendmentRow {
+  value_before: number | null;
+  value_after: number | null;
+  value_delta: number | null;
+  currency: string | null;
+  published_at: string | null;
+  document_number: string | null;
+  description: string | null;
+  fx_rate: number | null;
+}
+
+// The contract's published amendments (annexes) from the served `amendments` table. Exported so the
+// real-SQLite test runs this EXACT query (ordering + FX subquery), not a hand-copied mirror.
+//
+// Ordered by (published_at, id) ASC — the SAME keys `refresh-slice.sql` (≈L1059-1065) derives the
+// served `current_value` by: `ORDER BY published_at DESC, a.id DESC` among `value_after IS NOT NULL`
+// (the promote step ≈L1037-1038 sets `id = natural_key`). So the timeline's last VALUE-bearing row
+// reconciles with the headline „Текуща стойност"; a trailing description-only annex (NULL value_after)
+// honestly shows „—" (no value change) — the headline's `value_after IS NOT NULL` filter skips it too.
+// NULL dates sort FIRST in SQLite ASC, matching the ETL treating an undated annex as never-latest
+// (DESC puts NULL last), so it never displaces the value at the end. FX mirrors the same ≤10-day
+// lookback as `normalize-raw.sql`'s current_value_eur (exact-date would null out a weekend/holiday
+// annex while the headline converts fine). Each annex converts with ITS OWN currency + date — a
+// conscious choice (more correct than the contract's single rate, but can differ from the headline €
+// for a cross-currency annex).
+export const AMENDMENTS_SQL = `SELECT am.value_before, am.value_after, am.value_delta, am.currency, am.published_at,
+        am.document_number, am.description,
+        (SELECT f.eur_per_unit FROM fx_rates f
+           WHERE f.base_currency = am.currency
+             AND f.rate_date <= am.published_at
+             AND f.rate_date >= date(am.published_at, '-10 days')
+           ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate
+ FROM amendments am
+ WHERE am.unp = ? AND am.contract_number = ?
+ ORDER BY am.published_at, am.id`;
+
 export async function getContract(
   db: D1Database,
   contractId: string,
@@ -449,7 +485,7 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  const [authTotals, compTotals, lotRows] = await Promise.all([
+  const [authTotals, compTotals, lotRows, amendmentRows] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -483,6 +519,7 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
+    db.prepare(AMENDMENTS_SQL).bind(r.unp, r.contract_number).all<AmendmentRow>(),
   ]);
 
   // value_low values ARE populated (counted in sums) but stay labelled, so include them here so the
@@ -605,8 +642,25 @@ export async function getContract(
   // more awarded contracts than lots, the extra awards are call-offs against one framework / DSP
   // procedure rather than one-contract-per-lot — so the procedure-level estimate is the whole
   // framework ceiling, not this single award. `frameworkAwards` carries the award count when so, else null.
-  const frameworkAwards =
-    r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
+  const frameworkAwards = r.tender_awards > Math.max(r.num_lots ?? 0, 1) ? r.tender_awards : null;
+
+  // Amendment (annex) history — the recorded sequence behind signing → current. Native annex values
+  // are normalised to EUR (peg / FX by the annex's own date) to match the rest of the page. Oldest first.
+  const amendments: ContractDetail['amendments'] = amendmentRows.results.map((am) => {
+    const beforeEur = eurFromNative(am.value_before, am.currency, am.fx_rate);
+    const afterEur = eurFromNative(am.value_after, am.currency, am.fx_rate);
+    return {
+      date: am.published_at,
+      documentNumber: am.document_number,
+      description: am.description?.trim() || null,
+      valueAfterEur: afterEur,
+      // Compute delta from the SAME before/after we display, so the row is self-consistent (after −
+      // before == delta) even when the source's recorded value_delta disagrees with them. When only
+      // one of before/after is known, the recorded delta can't be reconciled against valueAfterEur —
+      // show „—" rather than a figure that might not add up.
+      deltaEur: beforeEur != null && afterEur != null ? afterEur - beforeEur : null,
+    };
+  });
 
   const detail: ContractDetail = {
     id: contractSlug(r.id),
@@ -639,6 +693,7 @@ export async function getContract(
     bidder,
     lots,
     subcontractor,
+    amendments,
   };
 
   return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };

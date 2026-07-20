@@ -21,9 +21,9 @@ jobs:
       # works on the personal main repo and the org mirror alike, with no license.
       - name: Secret scan (gitleaks)
         env:
-          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_VERSION: '8.30.1'
           # sha256 of gitleaks_8.30.1_linux_x64.tar.gz from the upstream release checksums.txt
-          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
         run: |
           curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -38,11 +38,38 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Dependency audit
-        run: pnpm audit --audit-level=high
+        # `pnpm audit` is broken upstream: npm retired its audit endpoints (HTTP 410 as of
+        # 2026-07-15) and pnpm - including 11.x - still calls them. Scan the lockfile against
+        # OSV.dev instead (covers GHSA, which includes the npm advisory database). Stricter than
+        # the previous `--audit-level=high`: ANY known vulnerability fails the build; intentional
+        # exceptions are recorded in an osv-scanner.toml config, per the OSV-Scanner docs.
+        env:
+          # https://github.com/google/osv-scanner/releases/tag/v2.4.0
+          OSV_SCANNER_VERSION: '2.4.0'
+          # sha256 of osv-scanner_linux_amd64 from the upstream release osv-scanner_SHA256SUMS
+          OSV_SCANNER_SHA256: '15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          "$RUNNER_TEMP/osv-scanner" scan source -L pnpm-lock.yaml
       - name: Lint
-        continue-on-error: true
-        # TODO: flip to blocking after a dedicated repo-wide `pnpm format` clears the
-        # pre-existing prettier debt (mocks/, legacy scripts, root docs).
+        # Blocking: the repo-wide `pnpm format` pass cleared the pre-existing prettier debt, so
+        # `pnpm lint` (prettier --check .) now gates merges and keeps the tree formatted (#88).
         run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+      # Run regardless of a Lint failure so a formatting nit doesn't mask the type/test signal — all
+      # three checks report in one run. `!cancelled()` still skips them if the run is cancelled.
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm typecheck
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: pnpm test
+      # Docs integrity (#102): fail on a dangling docs reference in source or an
+      # unindexed doc. The checker self-tests first, so the gate is itself gated.
+      - name: Docs integrity
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm check:docs:test
+          pnpm check:docs

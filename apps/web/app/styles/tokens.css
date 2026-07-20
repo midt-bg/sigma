@@ -1,0 +1,83 @@
+/* Design tokens — OKLch colour palette, type stack, 8-pt spacing scale.
+   @theme exposes these to Tailwind (bg-paper, text-ink…) AND as CSS vars;
+   :root aliases let component CSS keep using var(--ink), var(--accent), etc.
+   The mock uses a system serif/mono stack — no webfont request. */
+
+@theme {
+  --color-paper: oklch(98.5% 0.008 80);
+  --color-paper-warm: oklch(96% 0.012 78);
+  --color-paper-deep: oklch(94% 0.014 78);
+  --color-ink: oklch(18% 0.012 70);
+  --color-ink-mid: oklch(38% 0.01 70);
+  --color-ink-soft: oklch(
+    50% 0.008 70
+  ); /* ≥4.5:1 on paper / paper-warm / accent-bg — WCAG 1.4.3 AA */
+  --color-rule: oklch(86% 0.008 75);
+  --color-rule-soft: oklch(91% 0.008 75);
+  --color-accent: oklch(48% 0.18 28); /* red — links/warnings */
+  --color-accent-bg: oklch(94% 0.04 28);
+  --color-pos: oklch(45% 0.1 165); /* teal — positive deltas */
+
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Charter', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+:root {
+  /* Short aliases → @theme tokens, so the ported component CSS keeps using var(--paper) etc. */
+  --paper: var(--color-paper);
+  --paper-warm: var(--color-paper-warm);
+  --paper-deep: var(--color-paper-deep);
+  --ink: var(--color-ink);
+  --ink-mid: var(--color-ink-mid);
+  --ink-soft: var(--color-ink-soft);
+  --rule: var(--color-rule);
+  --rule-soft: var(--color-rule-soft);
+  --accent: var(--color-accent);
+  --accent-bg: var(--color-accent-bg);
+  --pos: var(--color-pos);
+
+  /* Legacy token aliases — keep page-local inline styles working */
+  --bg: var(--paper);
+  --canvas: var(--paper-warm);
+  --surface: var(--paper);
+  --text: var(--ink);
+  --text-muted: var(--ink-mid);
+  --text-faint: var(--ink-soft);
+  --border: var(--rule);
+  --border-soft: var(--rule-soft);
+  --border-strong: var(--ink);
+  --link: var(--ink);
+  --link-hover: var(--accent);
+  --link-visited: var(--ink);
+  --focus: var(--accent);
+  --warning: var(--accent);
+  --warning-bg: var(--accent-bg);
+  --warning-strong: var(--accent);
+  --success: var(--pos);
+  --success-bg: oklch(94% 0.04 165);
+  --info: var(--ink-mid);
+
+  /* Strict 8-pt spacing scale */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+
+  /* Page rhythm */
+  --max: 1280px;
+  --max-narrow: 880px;
+  --gutter: 64px;
+}
+
+@media (max-width: 880px) {
+  :root {
+    --gutter: 28px;
+  }
+}

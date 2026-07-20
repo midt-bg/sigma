@@ -48,7 +48,10 @@ export function eopSourceFiles(publishedAt: string | null | undefined): EopSourc
   const bg = bgDate(day);
   const files: EopSourceFile[] = BASE_FILES.map(({ noun, label }) => ({
     label,
-    url: fileUrl(day, `Автоматично генерирани данни за ${noun}, публикувани в ЦАИС ЕОП на ${bg}.json`),
+    url: fileUrl(
+      day,
+      `Автоматично генерирани данни за ${noun}, публикувани в ЦАИС ЕОП на ${bg}.json`,
+    ),
   }));
   // The OCDS file uses a distinct key shape (trailing „ г., съгласно стандарт OCDS").
   if (day >= OCDS_AVAILABLE_FROM) {
