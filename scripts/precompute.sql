@@ -32,6 +32,12 @@ UPDATE contracts SET
     WHEN COALESCE(currency,'BGN') = 'BGN' THEN signing_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN signing_value * fx_rate
     ELSE NULL END,
+  -- KNOWN LIMITATION: fx_rate is the SIGNING-currency rate at the signing date (NULL for BGN,
+  -- which needs no lookup — it's pegged). A foreign-currency annex (current_value_currency NOT IN
+  -- ('BGN','EUR')) on a non-foreign contract therefore has no matching annex-date fx rate to fall
+  -- back on, so this ELSE leaves current_value_eur NULL rather than mis-converting at the wrong
+  -- rate. Safe (no wrong number shown), but it is data loss. Adding an annex-currency/annex-date
+  -- fx lookup is out of scope here (#245) — see #257 review thread.
   current_value_eur = CASE
     WHEN value_flag IN ('value_suspect','annex_suspect') OR current_value IS NULL THEN NULL
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value

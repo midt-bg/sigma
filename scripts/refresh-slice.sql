@@ -1061,6 +1061,18 @@ SELECT
 FROM dedup
 WHERE rn = 1;
 
+-- amendment_winner: same tie-break as normalize-raw.sql/derive-amendments.sql
+-- (published_at DESC, natural_key DESC) — value and currency are read from this ONE winning
+-- row for each contract, so they can never diverge onto different annexes on a published_at tie.
+WITH amendment_winner AS (
+  SELECT a.unp, a.contract_number, a.value_after, a.currency,
+    ROW_NUMBER() OVER (
+      PARTITION BY a.unp, a.contract_number
+      ORDER BY a.published_at DESC, a.natural_key DESC
+    ) AS win_rn
+  FROM amendments a
+  WHERE a.value_after IS NOT NULL
+)
 UPDATE contracts
 SET
   annex_count = (
@@ -1069,20 +1081,16 @@ SET
       AND a.contract_number = contracts.contract_number
   ),
   current_value = (
-    SELECT a.value_after FROM amendments a
-    WHERE a.unp = substr(contracts.tender_id, 3)
-      AND a.contract_number = contracts.contract_number
-      AND a.value_after IS NOT NULL
-    ORDER BY a.published_at DESC, a.id DESC
-    LIMIT 1
+    SELECT w.value_after FROM amendment_winner w
+    WHERE w.unp = substr(contracts.tender_id, 3)
+      AND w.contract_number = contracts.contract_number
+      AND w.win_rn = 1
   ),
   current_value_currency = (
-    SELECT COALESCE(NULLIF(a.currency, ''), contracts.currency) FROM amendments a
-    WHERE a.unp = substr(contracts.tender_id, 3)
-      AND a.contract_number = contracts.contract_number
-      AND a.value_after IS NOT NULL
-    ORDER BY a.published_at DESC, a.id DESC
-    LIMIT 1
+    SELECT COALESCE(NULLIF(w.currency, ''), contracts.currency) FROM amendment_winner w
+    WHERE w.unp = substr(contracts.tender_id, 3)
+      AND w.contract_number = contracts.contract_number
+      AND w.win_rn = 1
   )
 WHERE (id GLOB 'c:[eo]:*' AND EXISTS (
       SELECT 1 FROM raw_contracts rc
