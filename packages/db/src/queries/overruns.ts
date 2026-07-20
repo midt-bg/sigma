@@ -17,7 +17,7 @@
 
 import { cleanName, entityName } from '@sigma/shared';
 import { cpvBucket, cpvDivision, type CpvBucket } from '@sigma/config';
-import { authoritySlug, companySlug, contractSlug } from './identity';
+import { authorityEik, authoritySlug, companySlug, contractSlug } from './identity';
 import { sectorRef } from './sectors';
 
 export interface OverrunRow {
@@ -285,7 +285,7 @@ function mapOverrunRows(raw: RawRow[]): OverrunRow[] {
         subject: r.subject,
         authorityName: cleanName(r.authority_name),
         authoritySlug: authoritySlug(r.authority_id),
-        authorityEik: authoritySlug(r.authority_id),
+        authorityEik: authorityEik(r.authority_id),
         bidderName: entityName(bidderName, r.bidder_kind),
         bidderSlug: companySlug(r.bidder_id),
         bidderEik: r.bidder_eik ?? null,
