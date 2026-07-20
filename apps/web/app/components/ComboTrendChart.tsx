@@ -132,7 +132,7 @@ export function ComboTrendChart({
       {hp && hover != null && (
         <div
           className="combo-tip"
-          role="status"
+          aria-hidden="true"
           style={{
             left: `${((x(hover) / W) * 100).toFixed(1)}%`,
             top: (yV(hp.valueEur) / H) * cssHeight - 4,

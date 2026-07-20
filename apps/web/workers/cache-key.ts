@@ -29,6 +29,11 @@ export function cacheKey(request: Request, deployTag: string): Request {
     grouped.set(key, values);
   }
   for (const [key, values] of grouped) {
+    // `cpv` is the only repeatable param today whose values are order-independent and lexically
+    // sortable, so it's special-cased rather than made data-driven. Not a poisoning risk either
+    // way — an un-sorted future repeatable canonical param would only fragment the cache (extra
+    // misses), never collide two distinct requests. If a new repeatable param needs the same
+    // canonicalization, add its key here too.
     const ordered = key === 'cpv' ? [...values].sort() : values;
     for (const v of ordered) params.append(key, v);
   }

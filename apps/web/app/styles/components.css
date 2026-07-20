@@ -647,7 +647,7 @@ tbody td,
 
 .trend-header-title {
   margin: 8px 0 0;
-  font-family: var(--font-serif);
+  font-family: var(--font-serif, Georgia, serif);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -851,7 +851,7 @@ tbody td,
 .trend-sw-box {
   width: 9px;
   height: 9px;
-  background: rgb(94 124 139 / 0.55); /* slate — matches the count bars */
+  background: color-mix(in oklch, var(--slate) 55%, transparent); /* matches the count bars — same --slate token */
   display: inline-block;
   border-radius: 1px;
 }
@@ -1208,7 +1208,7 @@ tbody td,
 .trend-fs-title {
   margin-top: 9px;
   margin-bottom: 0;
-  font-family: var(--font-serif);
+  font-family: var(--font-serif, Georgia, serif);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.015em;

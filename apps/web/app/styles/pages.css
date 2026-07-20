@@ -3203,15 +3203,15 @@ a.pa-card-cpv:focus-visible {
 }
 
 .combo-bar {
-  fill: oklch(55% 0.03 240 / 0.5);
+  fill: color-mix(in oklch, var(--slate) 50%, transparent);
 }
 
 .combo-bar.is-hover {
-  fill: oklch(55% 0.03 240 / 0.9);
+  fill: color-mix(in oklch, var(--slate) 90%, transparent);
 }
 
 .combo-bar.is-partial {
-  fill: oklch(55% 0.03 240 / 0.25);
+  fill: color-mix(in oklch, var(--slate) 25%, transparent);
 }
 
 .combo-line {
