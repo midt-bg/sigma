@@ -17,6 +17,9 @@ jobs:
   # reported to semgrep.dev; `--error` makes any finding fail the build.
   semgrep:
     runs-on: ubuntu-latest
+    # Cap the job so a hung rule fetch or a runaway scan can't sit until GitHub's default runner
+    # limit. 15m is a generous ceiling — local scans complete in under a minute.
+    timeout-minutes: 15
     container:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
     steps:
