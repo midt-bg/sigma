@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
-  isNaturalPersonProfileName,
+  isNaturalPersonBidder,
   money,
   moneyBare,
   pct,
@@ -25,18 +25,6 @@ import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tab
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
-function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
-  if (kind === 'consortium' || !legalForm) return false;
-  const normalized = legalForm.trim().toUpperCase();
-  return (
-    normalized === 'ЕТ' ||
-    normalized === 'ET' ||
-    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
-    normalized.includes('SOLE TRADER') ||
-    normalized.includes('INDIVIDUAL')
-  );
-}
-
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
@@ -48,8 +36,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
   if (
     data?.company &&
-    (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||
-      isNaturalPersonProfileName(data.company.displayName) ||
+    (isNaturalPersonBidder(data.company.displayName, data.company.legalForm) ||
       (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });
@@ -57,7 +44,14 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   return metaTags;
 }
 
-export function headers() {
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response.
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    return { 'Cache-Control': publicCache(3600), 'X-Privacy-Mask': 'applied' };
+  }
   return { 'Cache-Control': publicCache(3600) };
 }
 
@@ -74,6 +68,18 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
+    // Single-fetch `.data` twin shares this loader with the HTML response, so we mask here once
+    // and signal the worker via the internal `X-Privacy-Mask` marker. The mutation clears the
+    // natural person's ЕИК on the returned object (covers `.data`); the marker is translated into
+    // `X-Robots-Tag: noindex` by `hardenResponse` in `apps/web/workers/app.ts`. Legal-entity
+    // records keep the plain-object return (no marker, no mutation).
+    if (isNaturalPersonBidder(company.displayName, company.legalForm)) {
+      company.eik = null;
+      return Response.json(
+        { company, coverage, trend, network },
+        { headers: { 'X-Privacy-Mask': 'applied' } },
+      );
+    }
     return { company, coverage, trend, network };
   });
 }

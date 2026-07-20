@@ -1,5 +1,9 @@
 import { createRequestHandler } from 'react-router';
-import { baseSecurityHeaders, nonceLessSecurityHeaders } from '../app/lib/security';
+import {
+  applyPrivacyMaskHeaders,
+  baseSecurityHeaders,
+  nonceLessSecurityHeaders,
+} from '../app/lib/security';
 import { rateLimitAggregationRoute } from './aggregation-rate-limit';
 import { rateLimitAssistantRoute } from './assistant-rate-limit';
 import { cacheKey } from './cache-key';
@@ -59,6 +63,7 @@ async function hardenResponse(response: Response, cacheable: boolean): Promise<R
   const headers = new Headers(response.headers);
   applySecurityHeaders(headers, baseSecurityHeaders(import.meta.env.PROD));
   setAllowHeader(headers, response.status);
+  applyPrivacyMaskHeaders(headers);
 
   const nonce = cacheable && isHtml(response) ? cspNonce(headers) : null;
   if (nonce !== null) {

@@ -1,4 +1,5 @@
 import { withDataSource } from './dataSource';
+import { markPrivacyMaskApplied } from './security';
 
 const CSV_CONTENT_TYPE = 'text/csv; charset=utf-8';
 const CSV_CACHE_CONTROL = 'public, max-age=3600';
@@ -55,6 +56,7 @@ function hasSearchFilter(params: object): boolean {
 function markCsvCache(response: Response, cache: CsvCacheState): Response {
   const withSource = withDataSource(response);
   withSource.headers.set('X-Csv-Cache', cache);
+  markPrivacyMaskApplied(withSource.headers);
   return withSource;
 }
 
@@ -93,10 +95,12 @@ function responseFromR2Object(
   cache: CsvCacheState,
 ) {
   if (!hasBody(obj)) {
-    return markCsvCache(
-      new Response(null, { status: 304, headers: { ETag: obj.httpEtag } }),
-      cache,
-    );
+    const response304 = new Response(null, {
+      status: 304,
+      headers: { ETag: obj.httpEtag },
+    });
+    markPrivacyMaskApplied(response304.headers);
+    return markCsvCache(response304, cache);
   }
 
   const range = rangeInfo(obj);
@@ -109,6 +113,7 @@ function responseFromR2Object(
     'Content-Length': String(range?.length ?? obj.size),
   });
   if (range) headers.set('Content-Range', `bytes ${range.start}-${range.end}/${obj.size}`);
+  markPrivacyMaskApplied(headers);
 
   return markCsvCache(new Response(obj.body, { status: range ? 206 : 200, headers }), cache);
 }

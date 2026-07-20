@@ -39,7 +39,9 @@
 
 Виж индекса в [`adr/README.md`](adr/README.md). Ключовите за v1: рендиране/сигурност (0001),
 D1 като хранилище (0002), `value_flag` стойностна база (0003), CSP `style-src` (0004), blue/green
-rollback (0005), dedup на двата източника (0006).
+rollback (0005), dedup на двата източника (0006), [`noindex` + маскиране на естествено-личностни
+идентификатори в машинно-четим изход (0007)](adr/0007-privacy-masking.md) и
+[централизирано авторство на `X-Robots-Tag: noindex` в worker-а (0008)](adr/0008-centralized-x-robots-tag-worker.md).
 
 ## Справочни документи
 
