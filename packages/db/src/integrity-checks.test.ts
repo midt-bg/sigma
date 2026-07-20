@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertIntegrity,
+  checkCurrentAmountParity,
   checkDateSanity,
   checkEikValidity,
   checkNonEmptyCorpus,
@@ -106,6 +107,7 @@ describe('reconciliation gate — clean corpus', () => {
     for (const nm of [
       'non-empty-corpus',
       'rollup-reconciliation',
+      'current-amount-parity',
       'no-negative-values',
       'eik-validity',
       'date-sanity',
@@ -146,6 +148,26 @@ describe('reconciliation gate — injected violations', () => {
     const result = checkRollupReconciliation(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/orphan|unattributed/);
+  });
+
+  it('current-amount-parity catches a detail/rollup EUR disagreement over one cent', () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      "UPDATE contracts SET current_value = 100000, current_value_eur = 100000.02 WHERE id = 'c:1';",
+    );
+    const result = checkCurrentAmountParity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/1 ok contract.*amount_eur != current_value_eur/);
+  });
+
+  it('current-amount-parity accepts sub-cent floating-point drift', () => {
+    const db = track(freshDb());
+    sqlite(
+      db,
+      "UPDATE contracts SET current_value = 100000, current_value_eur = 100000.009 WHERE id = 'c:1';",
+    );
+    expect(checkCurrentAmountParity(runner(db)).ok).toBe(true);
   });
 
   it('no-negative-values catches a negative ok amount_eur (Sigma derivation bug → hard fail)', () => {

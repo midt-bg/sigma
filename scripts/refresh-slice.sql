@@ -16,9 +16,37 @@ CREATE INDEX IF NOT EXISTS idx_contracts_tender_id ON contracts(tender_id);
 DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;
+DROP TABLE IF EXISTS refresh_amendment_winners;
 CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
+CREATE TABLE refresh_amendment_winners AS
+WITH keyed AS (
+  SELECT *,
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+      COALESCE(
+        NULLIF(document_number, ''), NULLIF(correction_number, ''), NULLIF(seq_no, ''),
+        'content:' || COALESCE(published_at, '') || ':' ||
+          COALESCE(CAST(value_before AS TEXT), '') || ':' ||
+          COALESCE(CAST(value_after AS TEXT), '') || ':' ||
+          COALESCE(CAST(value_delta AS TEXT), '') || ':' ||
+          COALESCE(currency, '') || ':' || COALESCE(description, '')
+      ) AS natural_key
+  FROM raw_amendments
+), dedup AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY natural_key ORDER BY source DESC, id DESC) AS rn
+  FROM keyed
+), winners AS (
+  SELECT unp, contract_number, currency,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp, contract_number ORDER BY published_at DESC, natural_key DESC
+    ) AS win_rn
+  FROM dedup
+  WHERE rn = 1 AND value_after IS NOT NULL
+)
+SELECT unp, contract_number, currency FROM winners WHERE win_rn = 1;
+CREATE INDEX idx_refresh_amendment_winners
+  ON refresh_amendment_winners(unp, contract_number);
 
 -- @refresh-batch authorities-bidders
 -- ── 1) Authorities referenced by OCDS staging (new ones only; INSERT OR IGNORE) ────────────────────
@@ -572,8 +600,8 @@ FROM (
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
     CASE
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
-      WHEN COALESCE(q.currency,'BGN') = 'EUR' THEN q.trusted_native
-      WHEN COALESCE(q.currency,'BGN') = 'BGN' THEN q.trusted_native / 1.95583
+      WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
+      WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
       ELSE q.trusted_native * q.fx_rate
     END AS amount_eur,
     CASE
@@ -600,10 +628,24 @@ FROM (
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS trusted_native,
-      -- current_value at insert time comes straight from raw_contracts (this contract's own
-      -- currency) — amendment-driven current_value_currency overrides only apply later, once
-      -- the amendments table promotion (below) has run.
-      COALESCE(NULLIF(y.currency, ''), 'BGN') AS current_value_currency,
+      CASE y.value_flag
+        WHEN 'value_suspect' THEN NULL
+        WHEN 'annex_suspect' THEN CASE
+          WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        END
+        ELSE CASE
+          WHEN y.current_value IS NOT NULL THEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
+        END
+      END AS trusted_currency,
+      CASE WHEN y.current_value IS NOT NULL
+        THEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+          WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
+      END AS current_value_currency,
       -- fx: EUR as-is, BGN at the peg, foreign at the signing-date ECB rate (NULL if missing)
       CASE WHEN COALESCE(y.currency,'BGN') NOT IN ('BGN','EUR')
         THEN (
@@ -694,10 +736,25 @@ FROM (
           END AS bidder_key
         FROM (
           SELECT c.*,
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
-              ELSE COALESCE(c.current_value, c.signing_value) * (
+            CASE WHEN c.current_value IS NOT NULL THEN CASE
+              WHEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.current_value
+              WHEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.current_value / 1.95583
+              ELSE c.current_value * (
+                SELECT f.eur_per_unit
+                FROM fx_rates f
+                WHERE f.base_currency = COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                    WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''))
+                  AND f.rate_date <= c.contract_date
+                  AND f.rate_date >= date(c.contract_date, '-10 days')
+                ORDER BY f.rate_date DESC
+                LIMIT 1
+              )
+            END ELSE CASE
+              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
+              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
+              ELSE c.signing_value * (
                 SELECT f.eur_per_unit
                 FROM fx_rates f
                 WHERE f.base_currency = NULLIF(c.currency, '')
@@ -706,7 +763,7 @@ FROM (
                 ORDER BY f.rate_date DESC
                 LIMIT 1
               )
-            END AS eff_eur,
+            END END AS eff_eur,
             CASE
               WHEN t.estimated_value IS NULL THEN NULL
               WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'EUR' THEN t.estimated_value
@@ -822,8 +879,8 @@ FROM (
     -- so it counts in every sum; it is merely labelled in the UI. annex_suspect uses trusted_native's signing fallback.
     CASE
       WHEN q.value_flag = 'value_suspect' THEN q.proc_est_eur
-      WHEN COALESCE(q.currency,'BGN') = 'EUR' THEN q.trusted_native
-      WHEN COALESCE(q.currency,'BGN') = 'BGN' THEN q.trusted_native / 1.95583
+      WHEN q.trusted_currency = 'EUR' THEN q.trusted_native
+      WHEN q.trusted_currency = 'BGN' THEN q.trusted_native / 1.95583
       ELSE q.trusted_native * q.fx_rate
     END AS amount_eur,
     CASE
@@ -850,10 +907,24 @@ FROM (
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS trusted_native,
-      -- current_value at insert time comes straight from raw_contracts (this contract's own
-      -- currency) — amendment-driven current_value_currency overrides only apply later, once
-      -- the amendments table promotion (below) has run.
-      COALESCE(NULLIF(y.currency, ''), 'BGN') AS current_value_currency,
+      CASE y.value_flag
+        WHEN 'value_suspect' THEN NULL
+        WHEN 'annex_suspect' THEN CASE
+          WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        END
+        ELSE CASE
+          WHEN y.current_value IS NOT NULL THEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
+        END
+      END AS trusted_currency,
+      CASE WHEN y.current_value IS NOT NULL
+        THEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+          WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(y.currency, ''), 'BGN')
+      END AS current_value_currency,
       CASE WHEN COALESCE(y.currency,'BGN') NOT IN ('BGN','EUR')
         THEN (
           SELECT f.eur_per_unit
@@ -948,10 +1019,25 @@ FROM (
           END AS bidder_key
         FROM (
           SELECT c.*,
-            CASE
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
-              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
-              ELSE COALESCE(c.current_value, c.signing_value) * (
+            CASE WHEN c.current_value IS NOT NULL THEN CASE
+              WHEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.current_value
+              WHEN COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.current_value / 1.95583
+              ELSE c.current_value * (
+                SELECT f.eur_per_unit
+                FROM fx_rates f
+                WHERE f.base_currency = COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+                    WHERE w.unp = c.unp AND w.contract_number = c.contract_number), NULLIF(c.currency, ''))
+                  AND f.rate_date <= c.contract_date
+                  AND f.rate_date >= date(c.contract_date, '-10 days')
+                ORDER BY f.rate_date DESC
+                LIMIT 1
+              )
+            END ELSE CASE
+              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.signing_value
+              WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.signing_value / 1.95583
+              ELSE c.signing_value * (
                 SELECT f.eur_per_unit
                 FROM fx_rates f
                 WHERE f.base_currency = NULLIF(c.currency, '')
@@ -960,7 +1046,7 @@ FROM (
                 ORDER BY f.rate_date DESC
                 LIMIT 1
               )
-            END AS eff_eur,
+            END END AS eff_eur,
             CASE
               WHEN t.estimated_value IS NULL THEN NULL
               WHEN COALESCE(NULLIF(t.currency, ''), 'BGN') = 'EUR' THEN t.estimated_value
@@ -1184,6 +1270,17 @@ WITH contract_base AS (
       WHEN 'annex_suspect' THEN COALESCE(signing_value, current_value)
       ELSE COALESCE(current_value, signing_value)
     END AS trusted_native,
+    CASE new_value_flag
+      WHEN 'value_suspect' THEN NULL
+      WHEN 'annex_suspect' THEN CASE
+        WHEN signing_value IS NOT NULL THEN COALESCE(NULLIF(currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
+      END
+      ELSE CASE
+        WHEN current_value IS NOT NULL THEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(currency, ''), 'BGN')
+      END
+    END AS trusted_currency,
     CASE
       WHEN new_value_flag IN ('value_suspect', 'annex_suspect') OR current_value IS NULL THEN NULL
       WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
@@ -1200,8 +1297,8 @@ WITH contract_base AS (
     CASE
       WHEN new_value_flag = 'value_suspect' THEN proc_est_eur
       WHEN trusted_native IS NULL THEN NULL
-      WHEN COALESCE(currency, 'BGN') = 'EUR' THEN trusted_native
-      WHEN COALESCE(currency, 'BGN') = 'BGN' THEN trusted_native / 1.95583
+      WHEN trusted_currency = 'EUR' THEN trusted_native
+      WHEN trusted_currency = 'BGN' THEN trusted_native / 1.95583
       WHEN fx_rate IS NOT NULL THEN trusted_native * fx_rate
       ELSE NULL
     END AS new_amount_eur,
@@ -1397,3 +1494,4 @@ FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;
+DROP TABLE IF EXISTS refresh_amendment_winners;

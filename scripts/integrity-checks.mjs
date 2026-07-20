@@ -146,7 +146,34 @@ export function checkRollupReconciliation(runner) {
   };
 }
 
-// 2) No negative values feeding the totals. Two classes, split by who controls the defect:
+// 2) A clean amended contract has one canonical EUR value. The detail-page timeline reads
+// current_value_eur while every aggregate and search result reads amount_eur, so allowing these two
+// columns to disagree makes the served database contradict itself even when each rollup reconciles
+// perfectly with amount_eur. One cent is the user-visible precision boundary.
+export function checkCurrentAmountParity(runner) {
+  const name = 'current-amount-parity';
+  if (!tableExists(runner, 'contracts'))
+    return { name, ok: true, skipped: true, detail: 'contracts table absent' };
+  const mismatches = num(
+    scalar(
+      runner,
+      "SELECT COUNT(*) AS n FROM contracts WHERE value_flag = 'ok' AND current_value IS NOT NULL " +
+        'AND (amount_eur IS NULL OR current_value_eur IS NULL OR ABS(amount_eur - current_value_eur) > 0.01)',
+      'n',
+    ),
+  );
+  return {
+    name,
+    ok: mismatches === 0,
+    skipped: false,
+    detail:
+      mismatches === 0
+        ? 'all ok current values agree with canonical amount_eur within €0.01'
+        : `${mismatches} ok contract(s) have amount_eur != current_value_eur by more than €0.01`,
+  };
+}
+
+// 3) No negative values feeding the totals. Two classes, split by who controls the defect:
 //    - value_flag='ok' AND amount_eur<0 → HARD fail. A clean row cannot be negative except via a Sigma
 //      derivation bug (e.g. a sign flip); Sigma owns and can fix it.
 //    - any other flag with amount_eur<0 → WARN. normalize keeps value_low rows (set on
@@ -204,7 +231,7 @@ export function checkNoNegativeValues(runner) {
   };
 }
 
-// 3) EIK validity (canonical home: bidders). eik_valid=1 ⇒ eik_normalized is a numeric 9/13-digit
+// 4) EIK validity (canonical home: bidders). eik_valid=1 ⇒ eik_normalized is a numeric 9/13-digit
 //    ЕИК; eik_valid<>1 ⇒ eik_normalized IS NULL. normalize-raw guarantees this (it sets
 //    eik_normalized only when eik_valid=1); the gate proves the guarantee held.
 export function checkEikValidity(runner) {
@@ -241,7 +268,7 @@ export function checkEikValidity(runner) {
   };
 }
 
-// 4) Date sanity — REPORTED, NOT GATED. Unlike the other checks, signed_at is a pass-through of the
+// 5) Date sanity — REPORTED, NOT GATED. Unlike the other checks, signed_at is a pass-through of the
 //    upstream EOP value, not something Sigma derives. An out-of-range date is an upstream record-level
 //    defect (#19–27) that Sigma consumes and cannot correct, so it must NEVER break the daily import —
 //    a single source typo (real example: signed_at='2029-05-14' in the 2024 feed) would otherwise fail
@@ -271,7 +298,7 @@ export function checkDateSanity(runner) {
   };
 }
 
-// 5) Staging → domain reconciliation. normalize-raw records, in one row of pipeline_stats, the
+// 6) Staging → domain reconciliation. normalize-raw records, in one row of pipeline_stats, the
 //    eligible-candidate count (the SAME expression the summary prints) and the resulting contracts
 //    count. The gate asserts no contract appeared without an eligible candidate (inserted ≤
 //    candidates — corroborates the orphan check from the staging side) and that a non-empty corpus
@@ -323,6 +350,7 @@ export function checkStagingReconciliation(runner) {
 export const CHECKS = [
   checkNonEmptyCorpus,
   checkRollupReconciliation,
+  checkCurrentAmountParity,
   checkNoNegativeValues,
   checkEikValidity,
   checkDateSanity,
