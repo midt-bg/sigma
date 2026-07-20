@@ -886,10 +886,6 @@ tbody td,
   min-height: 380px;
 }
 
-.trend-chart-panel--full .trend-chart-body {
-  min-height: 0;
-}
-
 .trend-chart-empty {
   padding: 24px 0;
 }
@@ -1149,7 +1145,7 @@ tbody td,
     transform 1.2s ease-out,
     opacity 0.1s ease;
 }
-/* ===== end overruns-dashboard ===== */
+/* ===== end trends-dashboard ===== */
 
 /* ===== chart-fullscreen ===== */
 .fs-btn {

@@ -1,6 +1,6 @@
 // The cache key is built from the response-affecting query params only (CWE-349, issue #56); the set is
 // the shared source of truth in app/lib/query-params.ts (also used by withParams for links).
-import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from '../app/lib/query-params';
+import { CANONICAL_QUERY_PARAMS } from '../app/lib/query-params';
 
 // Allow-list entries keyed AHEAD of their reader: params owned by another OPEN stacked/parallel PR
 // whose route lands separately. The reverse drift guard ("no stale allow-list entries") skips

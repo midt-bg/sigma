@@ -83,10 +83,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // „Спрямо типичното" baselines for card groups outside the top-N stats (bounded: distinct groups
   // on one card page, plus the selected group so its filter chip can carry a name).
   const known = new Set(stats.groups.map((g) => g.group));
-  const missing = contracts
+  const missingRaw = contracts
     .map((c) => c.cpvGroup)
     .filter((g): g is string => g != null && !known.has(g));
-  for (const g of cpvSel) if (!known.has(g)) missing.push(g);
+  for (const g of cpvSel) if (!known.has(g)) missingRaw.push(g);
+  const missing = [...new Set(missingRaw)];
   const medians = await getCpvGroupMedians(db, missing);
 
   return { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians };
@@ -101,6 +102,7 @@ function multText(mult: number): string {
 }
 
 function relLabel(valueEur: number, medianEur: number): { text: string; cls: string } {
+  if (!(medianEur > 0)) return { text: '≈ типичното', cls: 'ov-rel-mid' };
   const mult = valueEur / medianEur;
   if (mult >= 1.3) return { text: `${multText(mult)} типичното`, cls: 'ov-rel-hi' };
   if (mult <= 0.75) return { text: 'под типичното', cls: 'ov-rel-lo' };

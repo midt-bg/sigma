@@ -148,7 +148,7 @@ function inspectorFields(row: OverrunRow): { k: string; v: string }[] {
     { k: 'Сключен', v: date(row.signedAt) },
     ...(term ? [{ k: 'Срок', v: term }] : []),
     { k: 'Възложител · ЕИК', v: `${row.authorityName} · ${row.authorityEik || '—'}` },
-    { k: 'Изпълнител · ЕИК', v: `${row.bidderName} · ${row.bidderEik ?? 'непотвърден'}` },
+    { k: 'Изпълнител · ЕИК', v: `${row.bidderName} · ${row.bidderEik || 'непотвърден'}` },
   ];
 }
 

@@ -49,14 +49,14 @@ export function ComboTrendChart({
 
   // Final period is partial (still filling): dashed line tail + faded bar, like TrendChart.
   const partialIdx = points.findIndex((p) => p.partial);
-  const hasPartial = partialIdx > 0;
+  const hasPartial = partialIdx >= 0;
   const solidEnd = hasPartial ? partialIdx - 1 : n - 1;
   const xy = (i: number) => `${x(i).toFixed(1)} ${yV(points[i]!.valueEur).toFixed(1)}`;
   const line = points
     .slice(0, solidEnd + 1)
     .map((_p, i) => `${i ? 'L' : 'M'}${xy(i)}`)
     .join(' ');
-  const dashed = hasPartial ? `M${xy(solidEnd)} L${xy(partialIdx)}` : '';
+  const dashed = hasPartial && solidEnd >= 0 ? `M${xy(solidEnd)} L${xy(partialIdx)}` : '';
 
   // x-axis year labels at the first period of each year (or every point at year grain).
   const yearStart = granularity === 'year' ? null : granularity === 'quarter' ? '-Q1' : '-01';
@@ -98,7 +98,7 @@ export function ComboTrendChart({
           />
         ))}
         <path className="combo-line" d={line} vectorEffect="non-scaling-stroke" />
-        {hasPartial && (
+        {dashed && (
           <path className="combo-line-partial" d={dashed} vectorEffect="non-scaling-stroke" />
         )}
         {hp && hover != null && (
