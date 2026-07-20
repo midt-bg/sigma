@@ -32,6 +32,7 @@
 
 -- Full clear in child→parent order (D1 enforces FKs).
 DROP TABLE IF EXISTS joint_tender_leads;
+DROP TABLE IF EXISTS unp_prefix_authorities;
 DROP TABLE IF EXISTS joint_authority_members;
 DROP TABLE IF EXISTS joint_tender_sources;
 DELETE FROM search_index;
@@ -168,9 +169,35 @@ INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT authority_id, authority_name, authority_eik, authority_type
 FROM member_defaults;
 
--- Lead default: match the tender's modal raw authority name to a co-authority's modal standalone
--- name. Joined/unmatched names fall back to the first EIK. This scratch-only mode does not alter
--- displayed canonical names (that remains the separate #194 concern).
+-- Learn the modal standalone authority for each valid УНП prefix. The prefix identifies the
+-- authority that registered the procedure and therefore outranks the name/first-EIK fallbacks.
+CREATE TABLE unp_prefix_authorities (
+  prefix TEXT PRIMARY KEY,
+  authority_eik TEXT NOT NULL
+);
+WITH prefix_observations AS (
+  SELECT SUBSTR(unp, 1, 5) AS prefix, authority_eik FROM raw_contracts
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+    AND unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+  UNION ALL
+  SELECT SUBSTR(unp, 1, 5) AS prefix, authority_eik FROM raw_tenders
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+    AND unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+), ranked AS (
+  SELECT prefix, authority_eik,
+    ROW_NUMBER() OVER (
+      PARTITION BY prefix
+      ORDER BY COUNT(*) DESC, authority_eik
+    ) AS rn
+  FROM prefix_observations
+  GROUP BY prefix, authority_eik
+)
+INSERT INTO unp_prefix_authorities (prefix, authority_eik)
+SELECT prefix, authority_eik FROM ranked WHERE rn = 1;
+
+-- Lead default: prefer the УНП-prefix authority, then match the tender's modal raw authority name
+-- to a co-authority's modal standalone name. Unmatched rows fall back to the first EIK. This
+-- scratch-only mode does not alter displayed canonical names (that remains the separate #194 concern).
 CREATE TABLE joint_tender_leads (
   unp TEXT PRIMARY KEY,
   authority_id TEXT NOT NULL REFERENCES authorities(id)
@@ -199,12 +226,17 @@ WITH standalone_observations AS (
   SELECT m.unp, m.authority_id,
     ROW_NUMBER() OVER (
       PARTITION BY m.unp
-      ORDER BY CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
+      ORDER BY CASE WHEN p.authority_eik = SUBSTR(m.authority_id, 6) THEN 0 ELSE 1 END,
+        CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
         m.source_ordinal, m.authority_id
     ) AS rn
   FROM joint_authority_members m
   JOIN joint_tender_sources s ON s.unp = m.unp
   LEFT JOIN canonical_names c ON c.authority_eik = SUBSTR(m.authority_id, 6)
+  LEFT JOIN unp_prefix_authorities p
+    ON p.prefix = CASE
+      WHEN m.unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*' THEN SUBSTR(m.unp, 1, 5)
+    END
 )
 INSERT INTO joint_tender_leads (unp, authority_id)
 SELECT unp, authority_id FROM ranked WHERE rn = 1;
@@ -998,6 +1030,7 @@ SELECT 1,
   datetime('now');
 
 DROP TABLE joint_tender_leads;
+DROP TABLE unp_prefix_authorities;
 DROP TABLE joint_authority_members;
 DROP TABLE joint_tender_sources;
 

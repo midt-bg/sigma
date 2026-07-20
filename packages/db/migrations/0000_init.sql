@@ -255,11 +255,13 @@ CREATE TABLE authority_totals (
   last_date      TEXT
 );
 
--- Non-monetary joint-procurement participation rollup. It is deliberately separate from
--- authority_totals so neither spent_eur nor the ordinary lead-contract count can double-count.
+-- Joint-procurement participation rollup. joint_contract_value_eur is the total value of the joint
+-- procurements the authority took part in; it is informational only and must NEVER be summed into
+-- authority_totals.spent_eur or any national/leaderboard total.
 CREATE TABLE authority_joint_participation (
   authority_id                 TEXT PRIMARY KEY REFERENCES authorities(id),
-  joint_contract_participations INTEGER NOT NULL
+  joint_contract_participations INTEGER NOT NULL,
+  joint_contract_value_eur      REAL NOT NULL DEFAULT 0
 );
 
 -- Per CPV division. Sector facet + filter counts on the list pages.

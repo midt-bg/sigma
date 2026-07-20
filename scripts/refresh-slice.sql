@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;
 DROP TABLE IF EXISTS refresh_joint_tender_leads;
+DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
 CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);
@@ -139,6 +140,29 @@ WITH name_counts AS (
 INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
 SELECT authority_id, authority_name, authority_eik, authority_type FROM member_defaults;
 
+-- Learn the modal authority for each valid УНП prefix from the full existing tender history. Raw
+-- staging contains only the touched slice here, so it cannot provide a stable corpus-wide map.
+CREATE TABLE refresh_unp_prefix_authorities (
+  prefix TEXT PRIMARY KEY,
+  authority_eik TEXT NOT NULL
+);
+WITH prefix_observations AS (
+  SELECT SUBSTR(source_id, 1, 5) AS prefix, SUBSTR(authority_id, 6) AS authority_eik
+  FROM tenders
+  WHERE authority_id NOT LIKE '%;%'
+    AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+), ranked AS (
+  SELECT prefix, authority_eik,
+    ROW_NUMBER() OVER (
+      PARTITION BY prefix
+      ORDER BY COUNT(*) DESC, authority_eik
+    ) AS rn
+  FROM prefix_observations
+  GROUP BY prefix, authority_eik
+)
+INSERT INTO refresh_unp_prefix_authorities (prefix, authority_eik)
+SELECT prefix, authority_eik FROM ranked WHERE rn = 1;
+
 CREATE TABLE refresh_joint_tender_leads (
   unp TEXT PRIMARY KEY,
   authority_id TEXT NOT NULL REFERENCES authorities(id)
@@ -169,12 +193,17 @@ WITH standalone_observations AS (
   SELECT m.unp, m.authority_id,
     ROW_NUMBER() OVER (
       PARTITION BY m.unp
-      ORDER BY CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
+      ORDER BY CASE WHEN p.authority_eik = SUBSTR(m.authority_id, 6) THEN 0 ELSE 1 END,
+        CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
         m.source_ordinal, m.authority_id
     ) AS rn
   FROM refresh_joint_authority_members m
   JOIN refresh_joint_tender_sources s ON s.unp = m.unp
   LEFT JOIN canonical_names c ON c.authority_eik = SUBSTR(m.authority_id, 6)
+  LEFT JOIN refresh_unp_prefix_authorities p
+    ON p.prefix = CASE
+      WHEN m.unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*' THEN SUBSTR(m.unp, 1, 5)
+    END
 )
 INSERT INTO refresh_joint_tender_leads (unp, authority_id)
 SELECT unp, authority_id FROM ranked WHERE rn = 1;
@@ -1469,14 +1498,16 @@ UPDATE authority_totals SET primary_sector = (
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
 
--- Joint participation is a separate non-monetary rollup and never enters lead spend/count totals.
+-- Joint participation is separate from lead totals; its value is informational and non-summable.
 DELETE FROM authority_joint_participation
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
-INSERT INTO authority_joint_participation (authority_id, joint_contract_participations)
-SELECT authority_id, COUNT(*)
-FROM contract_co_authorities
-WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
-GROUP BY authority_id;
+INSERT INTO authority_joint_participation
+  (authority_id, joint_contract_participations, joint_contract_value_eur)
+SELECT cca.authority_id, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
+FROM contract_co_authorities cca
+JOIN contracts c ON c.id = cca.contract_id
+WHERE cca.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
+GROUP BY cca.authority_id;
 
 -- @refresh-batch flow-pairs
 DELETE FROM flow_pairs;
@@ -1552,6 +1583,7 @@ FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 
 -- @refresh-batch cleanup
 DROP TABLE IF EXISTS refresh_joint_tender_leads;
+DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
 DROP TABLE IF EXISTS refresh_touched_contracts;

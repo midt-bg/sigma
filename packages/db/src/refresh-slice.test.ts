@@ -11,6 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
+const precomputePath = resolve(root, 'scripts/precompute.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
 
 function sqlite(dbPath: string, sql: string): string {
@@ -351,6 +352,140 @@ function seedTwoCollidingBidders(dbPath: string): void {
     );
   }
 }
+
+function seedJointAuthorityFixture(dbPath: string, refresh: boolean): void {
+  if (refresh) {
+    sqlite(
+      dbPath,
+      `INSERT INTO authorities (id, name, bulstat, type)
+         VALUES ('auth:222222222', 'Second Authority', '222222222', 'public');
+       INSERT INTO tenders
+         (id, source_id, title, authority_id, currency, procedure_type, status)
+         VALUES
+         ('t:00080-2023-0001', '00080-2023-0001', 'Historical prefix observation',
+          'auth:222222222', 'EUR', 'open', 'published');`,
+    );
+  }
+
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       estimated_value, currency, authority_name, authority_eik, authority_type, lot_id, published_at)
+    VALUES
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '00080-2023-0001',
+       'TENDER-PREFIX-HISTORY', 'open', 'Historical prefix observation', 1000, 'EUR',
+       'Second Authority', '222222222', 'public', NULL, '2023-01-01'),
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '99999-2023-0001',
+       'TENDER-NAME-HISTORY', 'open', 'Historical name observation', 1000, 'EUR',
+       'First Authority', '111111111', 'public', NULL, '2023-01-01'),
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', '00080-2024-0030',
+       'TENDER-JOINT-PREFIX', 'open', 'Prefix-led joint tender', 1000, 'EUR',
+       'First Authority', '111111111;222222222', 'public', NULL, '2024-01-01'),
+      ('eop:tenders:2024-01-01', 2024, '2024-01-02T00:00:00Z', 'UNRESOLVED-2024-0001',
+       'TENDER-JOINT-FALLBACK', 'open', 'Fallback joint tender', 1000, 'EUR',
+       'Third Authority', '333333333;444444444', 'public', NULL, '2024-01-01');
+
+    INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+       published_at, unp, tender_ext_id, procedure_type, procurement_subject, estimated_value,
+       procurement_currency, authority_name, authority_eik, authority_type, contract_number,
+       contract_date, signing_value, currency, contract_subject, awarded_to_group,
+       contractor_eik, contractor_name, eu_funded, bids_received)
+    VALUES
+      ('eop:contracts:2024-01-01', 2024, 'eop', '2024-01-02T00:00:00Z', 0,
+       'DOC-JOINT-PREFIX', '2024-01-01', '00080-2024-0030', 'TENDER-JOINT-PREFIX', 'open',
+       'Prefix-led joint tender', 1000, 'EUR', 'First Authority', '111111111;222222222',
+       'public', 'CONTRACT-JOINT-PREFIX', '2024-01-02', 100, 'EUR', 'Prefix-led contract', 0,
+       '777777777', 'Joint Bidder', 0, 1),
+      ('eop:contracts:2024-01-01', 2024, 'eop', '2024-01-02T00:00:00Z', 0,
+       'DOC-JOINT-FALLBACK', '2024-01-01', 'UNRESOLVED-2024-0001',
+       'TENDER-JOINT-FALLBACK', 'open', 'Fallback joint tender', 1000, 'EUR',
+       'Third Authority', '333333333;444444444', 'public', 'CONTRACT-JOINT-FALLBACK',
+       '2024-01-02', 200, 'EUR', 'Fallback contract', 0, '777777777', 'Joint Bidder', 0, 1);`,
+  );
+}
+
+describe('joint-procurement authority attribution', () => {
+  it.each([
+    ['full normalize', false],
+    ['slice refresh', true],
+  ] as const)(
+    'uses the УНП prefix and keeps participation value non-summable on %s',
+    (_label, refresh) => {
+      const dir = mkdtempSync(resolve(tmpdir(), 'sigma-joint-authorities-'));
+      const dbPath = resolve(dir, 'test.sqlite');
+      try {
+        initWorkDb(dbPath);
+        seedJointAuthorityFixture(dbPath, refresh);
+        readScript(dbPath, refresh ? refreshSlicePath : normalizePath);
+        if (!refresh) readScript(dbPath, precomputePath);
+
+        expect(
+          sqliteJson<{ source_id: string; authority_id: string }>(
+            dbPath,
+            `SELECT source_id, authority_id FROM tenders
+             WHERE source_id IN ('00080-2024-0030', 'UNRESOLVED-2024-0001')
+             ORDER BY source_id`,
+          ),
+        ).toEqual([
+          { source_id: '00080-2024-0030', authority_id: 'auth:222222222' },
+          { source_id: 'UNRESOLVED-2024-0001', authority_id: 'auth:333333333' },
+        ]);
+
+        expect(
+          sqliteJson<{ source_id: string; authority_id: string; ordinal: number }>(
+            dbPath,
+            `SELECT t.source_id, cca.authority_id, cca.ordinal
+             FROM contract_co_authorities cca
+             JOIN contracts c ON c.id = cca.contract_id
+             JOIN tenders t ON t.id = c.tender_id
+             WHERE cca.ordinal = 0
+             ORDER BY t.source_id`,
+          ),
+        ).toEqual([
+          { source_id: '00080-2024-0030', authority_id: 'auth:222222222', ordinal: 0 },
+          { source_id: 'UNRESOLVED-2024-0001', authority_id: 'auth:333333333', ordinal: 0 },
+        ]);
+
+        expect(
+          sqliteJson<{
+            authority_id: string;
+            joint_contract_participations: number;
+            joint_contract_value_eur: number;
+          }>(
+            dbPath,
+            `SELECT authority_id, joint_contract_participations, joint_contract_value_eur
+             FROM authority_joint_participation
+             WHERE authority_id IN ('auth:111111111', 'auth:222222222')
+             ORDER BY authority_id`,
+          ),
+        ).toEqual([
+          {
+            authority_id: 'auth:111111111',
+            joint_contract_participations: 1,
+            joint_contract_value_eur: 100,
+          },
+          {
+            authority_id: 'auth:222222222',
+            joint_contract_participations: 1,
+            joint_contract_value_eur: 100,
+          },
+        ]);
+
+        expect(
+          sqliteJson<{ spent_eur: number }>(
+            dbPath,
+            `SELECT COALESCE((SELECT spent_eur FROM authority_totals
+               WHERE authority_id = 'auth:111111111'), 0) AS spent_eur`,
+          )[0]?.spent_eur,
+        ).toBe(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe('refresh-slice EOP base derivation', () => {
   it('derives new eop base rows as c:e contracts and is idempotent', () => {
