@@ -851,7 +851,11 @@ tbody td,
 .trend-sw-box {
   width: 9px;
   height: 9px;
-  background: color-mix(in oklch, var(--slate) 55%, transparent); /* matches the count bars — same --slate token */
+  background: color-mix(
+    in oklch,
+    var(--slate) 55%,
+    transparent
+  ); /* matches the count bars — same --slate token */
   display: inline-block;
   border-radius: 1px;
 }
