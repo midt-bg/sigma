@@ -36,6 +36,12 @@ describe('read-only D1 chokepoint', () => {
     expect(offenders(/\b(?:const|let|var)\s*\{[^}]*\bDB\b[^}]*\}\s*=\s*[^;]*\benv\b/)).toEqual([]);
   });
 
+  // Bracket access (`env['DB']` / `env["DB"]`) grabs the same raw binding as `env.DB`, just spelled to
+  // dodge the dot scan above. None today; keeps the guard hermetic (ydimitrof #225 review).
+  it('no web source reads DB via bracket access on the env', () => {
+    expect(offenders(/\benv\s*\[\s*['"]DB['"]\s*\]/)).toEqual([]);
+  });
+
   // getDb throws on .batch()/.withSession()/.dump(); a read-loader calling one would break at runtime and
   // no predicate/corpus test would catch it, so forbid them in web source outright (#225 review).
   it('no web source calls a getDb-blocked method (.batch/.withSession/.dump)', () => {
