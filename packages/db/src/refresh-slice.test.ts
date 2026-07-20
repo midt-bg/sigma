@@ -593,6 +593,109 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('leaves current_value_eur NULL for a foreign-currency annex over a BGN contract (known limitation, #257)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
+      readScript(dbPath, workStagingSchemaPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:523456790', 'Authority Usd', '523456790', 'public');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:877777778', 'Bidder Usd', '877777778', '877777778', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, estimated_value, currency, procedure_type, status)
+           VALUES ('t:UNP-USD', 'UNP-USD', 'Usd tender', 'auth:523456790', 5000, 'BGN', 'open', 'awarded');
+         INSERT INTO contracts
+           (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value,
+            current_value, current_value_currency, annex_count, value_flag, amount_eur, signing_value_eur, current_value_eur)
+           VALUES
+           ('c:e:usdannex', 't:UNP-USD', 'eik:877777778', 500, 'BGN', '2025-06-02',
+            'CONTRACT-USD', 1000, 500, 'BGN', 1, 'ok', 500 / 1.95583, 1000 / 1.95583, 500 / 1.95583);
+         INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('eop:annexes:2026-06-02', 2026, 'eop', '2026-06-08T00:00:00Z', '2', 'AMD-USD-2',
+            'CONTRACT-USD', '2026-06-02', '2026-06-03', 'UNP-USD', '523456790', 'Authority Usd',
+            'Usd tender', 'works', 500, 2000, 1500, 'USD', 'Post-switch USD annex');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+      const row = sqliteJson<{
+        current_value: number;
+        current_value_currency: string;
+        current_value_eur: number | null;
+      }>(
+        dbPath,
+        `SELECT current_value, current_value_currency, current_value_eur
+         FROM contracts WHERE id = 'c:e:usdannex'`,
+      )[0];
+      expect(row?.current_value).toBe(2000);
+      expect(row?.current_value_currency).toBe('USD');
+      // Known limitation (documented in precompute.sql): a foreign-currency annex on a
+      // non-foreign contract has no annex-date fx rate available, so current_value_eur is NULL
+      // (safe — no wrong number) rather than silently mis-converted.
+      expect(row?.current_value_eur).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the contract currency when an amendment has an empty-string currency (#257)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
+      readScript(dbPath, workStagingSchemaPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:523456791', 'Authority Blank', '523456791', 'public');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:877777779', 'Bidder Blank', '877777779', '877777779', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, estimated_value, currency, procedure_type, status)
+           VALUES ('t:UNP-BLANK', 'UNP-BLANK', 'Blank tender', 'auth:523456791', 5000, 'BGN', 'open', 'awarded');
+         INSERT INTO contracts
+           (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value,
+            current_value, current_value_currency, annex_count, value_flag, amount_eur, signing_value_eur, current_value_eur)
+           VALUES
+           ('c:e:blankannex', 't:UNP-BLANK', 'eik:877777779', 500, 'BGN', '2025-06-02',
+            'CONTRACT-BLANK', 1000, 500, 'BGN', 1, 'ok', 500 / 1.95583, 1000 / 1.95583, 500 / 1.95583);
+         INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('eop:annexes:2026-06-02', 2026, 'eop', '2026-06-08T00:00:00Z', '2', 'AMD-BLANK-2',
+            'CONTRACT-BLANK', '2026-06-02', '2026-06-03', 'UNP-BLANK', '523456791', 'Authority Blank',
+            'Blank tender', 'works', 500, 2000, 1500, '', 'Post-switch blank-currency annex');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+      const row = sqliteJson<{
+        current_value: number;
+        current_value_currency: string;
+        current_value_eur: number | null;
+      }>(
+        dbPath,
+        `SELECT current_value, current_value_currency, current_value_eur
+         FROM contracts WHERE id = 'c:e:blankannex'`,
+      )[0];
+      expect(row?.current_value).toBe(2000);
+      // COALESCE(NULLIF(a.currency, ''), contracts.currency) — empty string falls back to the
+      // contract's own currency, not to a literal '' or NULL.
+      expect(row?.current_value_currency).toBe('BGN');
+      expect(row?.current_value_eur).toBeCloseTo(2000 / 1.95583, 6);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('classifies amendment rollups from the contract-row estimated value', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
