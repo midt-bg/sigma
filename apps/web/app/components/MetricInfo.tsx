@@ -90,7 +90,7 @@ export function MetricInfo({
     return () => {
       if (raf) cancelAnimationFrame(raf);
       window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, { passive: true, capture: true });
+      window.removeEventListener('scroll', onViewportChange, { capture: true });
     };
   }, [visible]);
 
