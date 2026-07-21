@@ -468,3 +468,12 @@ CREATE TABLE funding_quality_totals (       -- eu_funded 0/1
   avg_overall REAL, total_contracts INTEGER NOT NULL, scored_contracts INTEGER,
   mean_coverage REAL, computed_at TEXT
 );
+
+-- ===================================================================================
+-- 1f) Pipeline diagnostics — one-row-per-metric counters populated by scripts/precompute.sql
+--     (currently: fx_rate_gap_rows) and surfaced in its run summary, so a systemic gap doesn't
+--     go silently unnoticed.
+-- ===================================================================================
+CREATE TABLE pipeline_diag (
+  metric TEXT PRIMARY KEY, value INTEGER NOT NULL, computed_at TEXT NOT NULL
+);
