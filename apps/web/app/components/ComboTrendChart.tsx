@@ -126,7 +126,9 @@ export function ComboTrendChart({
       </svg>
       <div className="combo-xlab" aria-hidden="true">
         {ticks.map((t) => (
-          <span key={t.i}>{t.year}</span>
+          <span key={t.i} style={{ left: `${((x(t.i) / W) * 100).toFixed(1)}%` }}>
+            {t.year}
+          </span>
         ))}
       </div>
       {hp && hover != null && (

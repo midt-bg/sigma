@@ -198,7 +198,10 @@ export function buildSectorGroup(
 // Canonical serialization order so the same logical state always yields the same URL string —
 // good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
 // markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
-// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts last.
+// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts
+// last — it is NOT dropped. PARAM_ORDER only covers /contracts (its filter rail); the /trends and
+// /overruns params (`step`, `angle`, `by`, `cpvSort`, `cur`) are in CANONICAL_QUERY_PARAMS so withParams
+// keeps them, they just fall after this list in the generated URL rather than at a curated position.
 export const PARAM_ORDER = [
   'q',
   'type',

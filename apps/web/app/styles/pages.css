@@ -3243,12 +3243,21 @@ a.pa-card-cpv:focus-visible {
 }
 
 .combo-xlab {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 10px;
   margin-top: 5px;
   padding: 0 2px;
   font: 400 10px/1 var(--font-mono);
   color: var(--text-faint);
+}
+
+/* Positioned at x(t.i) like TrendChart's SVG <text>, not space-between — years aren't evenly
+   spaced (e.g. leap/partial periods), so an evenly-distributed label would drift off its tick. */
+.combo-xlab span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .combo-tip {

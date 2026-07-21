@@ -9,7 +9,9 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'by', // /overruns — sort dimension (absolute | percent)
   'center',
   'count',
-  'cpv', // /contracts — exact 5-digit CPV filter; ALSO /trends: repeatable CPV group multi-select faceting the обзор chart + list
+  'cpv', // /trends: repeatable CPV group multi-select faceting the обзор chart + list, validated
+  // 5-digit by cpvGroupSelection (filters.ts). /contracts does not read this param yet — no reader
+  // to validate there until that filter lands.
   'cpvSort', // /trends: CPV list ordering
   'cur', // /trends: include the current (partial) period — changes the chart, totals and year cards
   'cursor',
