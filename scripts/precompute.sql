@@ -59,6 +59,22 @@ UPDATE tenders SET
     ) END
 WHERE estimated_value IS NOT NULL;
 
+-- Diagnostic: foreign-currency tenders (not EUR/BGN) with a published_at (so the fx_rates lookup
+-- above was attempted) that still resolved to a NULL estimated_value_eur — no fx_rate row fell
+-- inside the 10-day lookback window. A non-zero count here is a systemic fx_rates coverage gap,
+-- not a per-row anomaly; surfaced in the summary SELECT below so it isn't silently invisible.
+CREATE TABLE IF NOT EXISTS pipeline_diag (
+  metric TEXT PRIMARY KEY, value INTEGER NOT NULL, computed_at TEXT NOT NULL
+);
+DELETE FROM pipeline_diag WHERE metric = 'fx_rate_gap_rows';
+INSERT INTO pipeline_diag (metric, value, computed_at)
+SELECT 'fx_rate_gap_rows', COUNT(*), datetime('now')
+FROM tenders
+WHERE estimated_value IS NOT NULL
+  AND COALESCE(currency, 'BGN') NOT IN ('EUR', 'BGN')
+  AND published_at IS NOT NULL
+  AND estimated_value_eur IS NULL;
+
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
   id INTEGER PRIMARY KEY CHECK (id = 1), contracts INTEGER NOT NULL, value_eur REAL NOT NULL,
@@ -199,4 +215,5 @@ SELECT
   (SELECT COUNT(*) FROM sector_totals)       AS sector_rows,
   (SELECT COUNT(*) FROM flow_pairs)          AS flow_rows,
   (SELECT COUNT(*) FROM search_index)        AS search_rows,
-  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows;
+  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows,
+  (SELECT value FROM pipeline_diag WHERE metric = 'fx_rate_gap_rows') AS fx_rate_gap_rows;
