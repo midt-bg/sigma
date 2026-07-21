@@ -429,6 +429,8 @@ web app-ът го чете без повторен import. Work базата (`d
 Самостоятелно пускане: `node scripts/import.mjs --derive=health`; проверка:
 `node scripts/validate-health.mjs` (изход 0 = всички проверки минават). Дневният slice път и
 `ship-domain.mjs` пускат същите фази след precompute — пълно преизчисление, не инкрементално.
+Проверката за годишно покритие (`missingYears()`) нормализира двете страни с `String()`, така че
+остава коректна независимо дали D1 връща `year` като INTEGER или TEXT.
 
 ## Свързани документи
 
