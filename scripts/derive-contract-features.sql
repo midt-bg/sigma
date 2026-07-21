@@ -32,12 +32,12 @@
 -- UPDATE...FROM join to assign effective_peer_key/peer_n — NOT a per-row correlated COUNT(*), which
 -- would be O(n) work repeated n times.
 
--- contract_features gains score_a_bids/peer_has_multi this PRD (group 338, §12.0 [0,1] scale) — an
--- already-applied local table predates those columns, and SQLite has no "ADD COLUMN IF NOT EXISTS",
--- so DROP+CREATE (every run already DELETEs and fully re-INSERTs all rows below, so this is a no-op
--- for data, schema-only for structure) replaces the old CREATE TABLE IF NOT EXISTS.
-DROP TABLE IF EXISTS contract_features;
-CREATE TABLE contract_features (
+-- contract_features_next: the staging build target, DROP+CREATE fresh every run (it's disposable
+-- scratch, never the served name — see the atomic staging-swap note before the summary SELECT
+-- below). Built with score_a_bids/peer_has_multi from day one (group 338, §12.0 [0,1] scale), so
+-- there is no "ADD COLUMN IF NOT EXISTS" concern here the way there would be for an in-place ALTER.
+DROP TABLE IF EXISTS contract_features_next;
+CREATE TABLE contract_features_next (
   contract_id TEXT PRIMARY KEY REFERENCES contracts(id),
   -- peer + coverage
   effective_peer_key TEXT, peer_n INTEGER,
@@ -64,8 +64,9 @@ CREATE TABLE contract_features (
   -- A1 leaf, auditable (§5.5/§5.6 PERCENT_RANK floor)
   score_a_bids REAL, peer_has_multi INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_contract_features_overall ON contract_features(score_overall);
-CREATE INDEX IF NOT EXISTS idx_contract_features_peer ON contract_features(effective_peer_key);
+-- Indexes are (re)created AFTER the staging swap below, on the live `contract_features` name —
+-- not here — so their names never collide with the still-live old table's same-named indexes
+-- while contract_features_next is being built.
 
 DROP TABLE IF EXISTS contract_regime;
 DROP TABLE IF EXISTS peer_fine_counts;
@@ -81,16 +82,24 @@ DROP TABLE IF EXISTS tmp_c;
 DROP TABLE IF EXISTS tmp_d;
 DROP TABLE IF EXISTS tmp_diag;
 
-DELETE FROM contract_features;
+DELETE FROM contract_features_next;
 
 -- ── contract_regime: family (§5.4/§12.2/§12.3) + peer-key components (§5.2-5.3), computed ONCE ──
 -- is_framework_regime: procedure_type ∈ the 5-value ДСП/КС regime set OR dps_contract=1 (§12.3 —
 -- contracts.framework is 100% NULL locally, so the OR-on-framework from the original §4.B6 text is
 -- dropped; dps_contract is also 100% NULL today but the OR stays so a future re-derive picks it up).
+-- LEFT JOIN tenders (§ orphan-row robustness): contracts.tender_id/bidder_id are NOT NULL columns
+-- (schema-enforced), but SQLite never enforces the REFERENCES itself without
+-- `PRAGMA foreign_keys=ON` — so a dangling tender_id is possible in principle. An INNER JOIN here
+-- would silently drop that contract from contract_regime (and, transitively, from
+-- contract_features_next below), tripping the summary's contract_features_rows == contracts_rows
+-- parity check with no diagnosis. LEFT JOIN + explicit 'unknown'/0 defaults for the t.id IS NULL
+-- case keeps every contract represented and scored as "unknown", never silently dropped.
 CREATE TABLE contract_regime AS
 SELECT
   c.id AS contract_id,
   CASE
+    WHEN t.id IS NULL THEN 0
     WHEN t.procedure_type IN (
       'Динамична система за покупки', 'Квалификационна система',
       'Ограничена процедура по ДСП', 'Ограничена процедура по КС',
@@ -98,6 +107,7 @@ SELECT
     ) OR c.dps_contract = 1 THEN 1 ELSE 0
   END AS is_framework_regime,
   CASE
+    WHEN t.id IS NULL THEN 'unknown' -- orphan tender_id: no procedure data to classify on
     WHEN t.procedure_type IN (
       'Динамична система за покупки', 'Квалификационна система',
       'Ограничена процедура по ДСП', 'Ограничена процедура по КС',
@@ -110,7 +120,7 @@ SELECT
     WHEN t.procedure_type = 'неизвестна' THEN 'unknown'
     ELSE NULL -- completeness guard: verification asserts COUNT(*) WHERE family IS NULL = 0 (§12.2)
   END AS family,
-  CASE WHEN t.cpv_code IS NULL OR LENGTH(TRIM(t.cpv_code)) < 2 THEN 'NA' ELSE substr(t.cpv_code, 1, 2) END AS division,
+  CASE WHEN t.id IS NULL OR t.cpv_code IS NULL OR LENGTH(TRIM(t.cpv_code)) < 2 THEN 'NA' ELSE substr(t.cpv_code, 1, 2) END AS division,
   CASE
     WHEN c.amount_eur IS NULL THEN 'NA'
     WHEN c.amount_eur < 30000 THEN 'XS'
@@ -124,7 +134,7 @@ SELECT
     ELSE strftime('%Y', c.signed_at)
   END AS yr,
   c.bids_received AS bids_received_raw
-FROM contracts c JOIN tenders t ON t.id = c.tender_id;
+FROM contracts c LEFT JOIN tenders t ON t.id = c.tender_id;
 CREATE UNIQUE INDEX idx_contract_regime_id ON contract_regime(contract_id);
 
 -- ── 5a: raw leaf values + coverage flags ─────────────────────────────────────────────────────────
@@ -152,7 +162,7 @@ first_amend AS (
   )
   WHERE rn = 1
 )
-INSERT INTO contract_features (
+INSERT INTO contract_features_next (
   contract_id,
   coverage_bids, coverage_sme, coverage_estimate, coverage_overrun, coverage_ocds, score_coverage,
   bids_received, single_offer, sme_rate, disq_rate,
@@ -247,8 +257,8 @@ SELECT
   c.awarded_to_group,
   datetime('now')
 FROM contracts c
-JOIN tenders t ON t.id = c.tender_id
-JOIN bidders b ON b.id = c.bidder_id
+LEFT JOIN tenders t ON t.id = c.tender_id
+LEFT JOIN bidders b ON b.id = c.bidder_id
 JOIN contract_regime r ON r.contract_id = c.id
 LEFT JOIN authority_health_rollup ahr ON ahr.authority_id = t.authority_id
 LEFT JOIN bidder_health_rollup bhr ON bhr.bidder_id = c.bidder_id
@@ -278,7 +288,7 @@ CREATE TABLE peer_coarse_counts AS
   FROM contract_regime WHERE bids_received_raw >= 1 GROUP BY peer_key;
 CREATE UNIQUE INDEX idx_peer_coarse_key ON peer_coarse_counts(peer_key);
 
-UPDATE contract_features
+UPDATE contract_features_next
 SET effective_peer_key = x.eff_key, peer_n = x.eff_n
 FROM (
   SELECT
@@ -300,7 +310,7 @@ FROM (
   LEFT JOIN peer_mid_counts mc ON mc.peer_key = r.division || ':' || r.band || ':' || r.family
   LEFT JOIN peer_coarse_counts cc ON cc.peer_key = r.division
 ) AS x
-WHERE x.contract_id = contract_features.contract_id;
+WHERE x.contract_id = contract_features_next.contract_id;
 
 DROP TABLE contract_regime;
 DROP TABLE peer_fine_counts;
@@ -309,14 +319,17 @@ DROP TABLE peer_coarse_counts;
 
 -- ── 5c: per-pillar score UPDATEs (§3, §4, §12 — [0,1] scale, §12.0) ─────────────────────────────
 -- tmp_score_ctx: raw contract/tender columns needed for scoring but not already carried on
--- contract_features (procedure_type for B1 §12.2, cpv_division for B3, signed_at for the C1
+-- contract_features_next (procedure_type for B1 §12.2, cpv_division for B3, signed_at for the C1
 -- maturity gate, subcontractor_eik/subcontract_value for E1, exemption_legal_basis for B2).
 -- One O(n) join pass, reused by both the B- and E-pillar UPDATEs below (dropped at the very end).
+-- LEFT JOIN (orphan-row robustness, matches contract_regime above): an orphan tender_id must not
+-- drop the contract from this context table, or pillars C/E (which don't actually need tender
+-- data — only ctx.procedure_type/cpv_division do) would silently go unscored for it too.
 CREATE TABLE tmp_score_ctx AS
 SELECT c.id AS contract_id, t.procedure_type,
   CASE WHEN t.cpv_code IS NULL OR LENGTH(TRIM(t.cpv_code)) < 2 THEN NULL ELSE substr(t.cpv_code, 1, 2) END AS cpv_division,
   c.signed_at, c.subcontractor_eik, c.subcontract_value, c.exemption_legal_basis
-FROM contracts c JOIN tenders t ON t.id = c.tender_id;
+FROM contracts c LEFT JOIN tenders t ON t.id = c.tender_id;
 CREATE UNIQUE INDEX idx_tmp_score_ctx ON tmp_score_ctx(contract_id);
 
 -- A1 leaf (score_a_bids, stored — auditable §5.5/§5.6) + peer_has_multi (drives the AC's PERCENT_RANK
@@ -334,27 +347,27 @@ SELECT contract_id,
     WHEN bids_received IN (6, 7) THEN 0.90
     ELSE 1.0
   END AS a1
-FROM contract_features
+FROM contract_features_next
 WHERE bids_received >= 1;
 CREATE UNIQUE INDEX idx_tmp_a1 ON tmp_a1(contract_id);
 
-UPDATE contract_features SET score_a_bids = tmp_a1.a1
-FROM tmp_a1 WHERE tmp_a1.contract_id = contract_features.contract_id;
+UPDATE contract_features_next SET score_a_bids = tmp_a1.a1
+FROM tmp_a1 WHERE tmp_a1.contract_id = contract_features_next.contract_id;
 
 CREATE TABLE tmp_peer_multi AS
 SELECT effective_peer_key, MAX(CASE WHEN bids_received >= 2 THEN 1 ELSE 0 END) AS has_multi
-FROM contract_features WHERE bids_received IS NOT NULL GROUP BY effective_peer_key;
+FROM contract_features_next WHERE bids_received IS NOT NULL GROUP BY effective_peer_key;
 CREATE UNIQUE INDEX idx_tmp_peer_multi ON tmp_peer_multi(effective_peer_key);
 
-UPDATE contract_features SET peer_has_multi = tmp_peer_multi.has_multi
-FROM tmp_peer_multi WHERE tmp_peer_multi.effective_peer_key = contract_features.effective_peer_key;
+UPDATE contract_features_next SET peer_has_multi = tmp_peer_multi.has_multi
+FROM tmp_peer_multi WHERE tmp_peer_multi.effective_peer_key = contract_features_next.effective_peer_key;
 
 DROP TABLE tmp_a1;
 DROP TABLE tmp_peer_multi;
 
 -- ── Pillar A (Contestability, w=.30): weighted mean of A1(w3)/A3 sme-rate(w1) over non-NULL leaves;
 -- A4 disqualification modifier -0.10 when disq>0.5 & bids=1; A5 e-auction bonus +0.10; clamp [0,1].
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_a = CASE
   WHEN score_a_bids IS NULL AND sme_rate IS NULL THEN NULL
   ELSE ROUND(MAX(0.0, MIN(1.0,
@@ -409,7 +422,7 @@ SELECT cf.contract_id,
     'Покана до определени лица', 'Конкурс за проект - ограничен', 'Пряко договаряне', 'неизвестна',
     'Динамична система за покупки', 'Квалификационна система'
   ) THEN 1 ELSE 0 END AS unmapped
-FROM contract_features cf JOIN tmp_score_ctx ctx ON ctx.contract_id = cf.contract_id;
+FROM contract_features_next cf JOIN tmp_score_ctx ctx ON ctx.contract_id = cf.contract_id;
 CREATE UNIQUE INDEX idx_tmp_b1 ON tmp_b1(contract_id);
 
 -- Stashed (not SELECTed) here: local D1 runs the whole file as one batch, and a bare SELECT on
@@ -418,25 +431,25 @@ CREATE UNIQUE INDEX idx_tmp_b1 ON tmp_b1(contract_id);
 CREATE TABLE tmp_diag AS
 SELECT COUNT(*) AS unmapped_procedure_rows FROM tmp_b1 WHERE unmapped = 1;
 
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_b = CASE
   WHEN w.b1 IS NULL THEN NULL
   ELSE ROUND(MAX(0.0, MIN(1.0,
     w.b1
-    + CASE WHEN contract_features.is_outside_zop = 1 AND w.exemption_legal_basis IS NULL THEN -0.20
-           WHEN contract_features.is_outside_zop = 1 AND LENGTH(TRIM(COALESCE(w.exemption_legal_basis, ''))) < 20 THEN -0.10
+    + CASE WHEN contract_features_next.is_outside_zop = 1 AND w.exemption_legal_basis IS NULL THEN -0.20
+           WHEN contract_features_next.is_outside_zop = 1 AND LENGTH(TRIM(COALESCE(w.exemption_legal_basis, ''))) < 20 THEN -0.10
            ELSE 0 END
-    + CASE WHEN w.cpv_division IN ('71', '72', '73', '79', '80', '85') AND contract_features.is_meat = 0 THEN -0.05 ELSE 0 END
-    + CASE WHEN contract_features.is_accelerated = 1 THEN -0.15 ELSE 0 END
+    + CASE WHEN w.cpv_division IN ('71', '72', '73', '79', '80', '85') AND contract_features_next.is_meat = 0 THEN -0.05 ELSE 0 END
+    + CASE WHEN contract_features_next.is_accelerated = 1 THEN -0.15 ELSE 0 END
     -- >= 0 floor: negative windows are date errors (deadline before publication), not short windows
-    + CASE WHEN contract_features.bid_window_days >= 0 AND contract_features.bid_window_days < 15
-             AND contract_features.is_open_procedure = 1
-             AND contract_features.is_accelerated = 0 THEN -0.10 ELSE 0 END
+    + CASE WHEN contract_features_next.bid_window_days >= 0 AND contract_features_next.bid_window_days < 15
+             AND contract_features_next.is_open_procedure = 1
+             AND contract_features_next.is_accelerated = 0 THEN -0.10 ELSE 0 END
   )), 3)
 END
 FROM (SELECT b1.contract_id, b1.b1, ctx.exemption_legal_basis, ctx.cpv_division
       FROM tmp_b1 b1 JOIN tmp_score_ctx ctx ON ctx.contract_id = b1.contract_id) AS w
-WHERE w.contract_id = contract_features.contract_id;
+WHERE w.contract_id = contract_features_next.contract_id;
 
 DROP TABLE tmp_b1;
 
@@ -475,19 +488,19 @@ SELECT cf.contract_id,
     WHEN cf.estimate_dev_ratio <= 2.00 THEN 0.30 - 0.30 * (cf.estimate_dev_ratio - 1.00) / 1.00
     ELSE 0.0
   END AS c3
-FROM contract_features cf JOIN tmp_score_ctx ctx ON ctx.contract_id = cf.contract_id;
+FROM contract_features_next cf JOIN tmp_score_ctx ctx ON ctx.contract_id = cf.contract_id;
 CREATE UNIQUE INDEX idx_tmp_c ON tmp_c(contract_id);
 
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_c = CASE
-  WHEN contract_features.value_flag = 'value_suspect' THEN NULL
+  WHEN contract_features_next.value_flag = 'value_suspect' THEN NULL
   WHEN w.n_leaves = 0 THEN NULL
   ELSE ROUND(
     MAX(0.0, MIN(1.0,
       w.leaf_sum / w.n_leaves
-      + CASE WHEN contract_features.has_reason_text = 0 THEN -0.15 ELSE 0 END
-      + CASE WHEN contract_features.first_amend_shock = 1 THEN -0.10 ELSE 0 END
-    )) * (CASE WHEN contract_features.value_flag = 'review' THEN 0.90 ELSE 1.0 END)
+      + CASE WHEN contract_features_next.has_reason_text = 0 THEN -0.15 ELSE 0 END
+      + CASE WHEN contract_features_next.first_amend_shock = 1 THEN -0.10 ELSE 0 END
+    )) * (CASE WHEN contract_features_next.value_flag = 'review' THEN 0.90 ELSE 1.0 END)
   , 3)
 END
 FROM (
@@ -498,7 +511,7 @@ FROM (
       + (CASE WHEN c3 IS NOT NULL THEN 1 ELSE 0 END) AS n_leaves
   FROM tmp_c
 ) AS w
-WHERE w.contract_id = contract_features.contract_id;
+WHERE w.contract_id = contract_features_next.contract_id;
 
 DROP TABLE tmp_c;
 
@@ -525,10 +538,10 @@ SELECT cf.contract_id,
     ELSE 0.10
   END AS d4,
   CASE WHEN cf.sector_win_share IS NOT NULL THEN MAX(0.0, MIN(1.0, 1.0 - cf.sector_win_share)) END AS d5
-FROM contract_features cf;
+FROM contract_features_next cf;
 CREATE UNIQUE INDEX idx_tmp_d ON tmp_d(contract_id);
 
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_d = CASE WHEN w.wsum = 0 THEN NULL ELSE ROUND(MAX(0.0, MIN(1.0, w.wnum / w.wsum)), 3) END
 FROM (
   SELECT contract_id,
@@ -540,7 +553,7 @@ FROM (
       + COALESCE(d5, 0) * (CASE WHEN d5 IS NOT NULL THEN 0.1 ELSE 0 END) AS wnum
   FROM tmp_d
 ) AS w
-WHERE w.contract_id = contract_features.contract_id;
+WHERE w.contract_id = contract_features_next.contract_id;
 
 DROP TABLE tmp_d;
 
@@ -549,29 +562,29 @@ DROP TABLE tmp_d;
 -- subcontract -0.05; E2 date_flag -0.10; E3 pass-through -0.10/-0.15; E4 corrigenda (all-NULL
 -- locally, §12.1, expression kept); E5 lock-in -0.10/-0.15 keyed on scoring_regime (§12.3, NOT
 -- framework=0 — contracts.framework is 100% NULL locally). Floored at 0.
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_e = ROUND(MAX(0.0,
     1.0
     - CASE WHEN ctx.subcontractor_eik IS NOT NULL AND ctx.subcontract_value IS NULL THEN 0.05 ELSE 0 END
-    - CASE WHEN contract_features.date_flag = 'signed_after_publication' THEN 0.10 ELSE 0 END
-    - CASE WHEN contract_features.subcontract_passthrough >= 1.0 THEN 0.15
-           WHEN contract_features.subcontract_passthrough > 0.70 THEN 0.10 ELSE 0 END
-    - CASE WHEN contract_features.corrections_count >= 3 THEN 0.10 ELSE 0 END
-    - CASE WHEN contract_features.duration_days > 1825 AND contract_features.scoring_regime <> 'framework' THEN 0.15
-           WHEN contract_features.duration_days > 1095 AND contract_features.scoring_regime <> 'framework' THEN 0.10 ELSE 0 END
+    - CASE WHEN contract_features_next.date_flag = 'signed_after_publication' THEN 0.10 ELSE 0 END
+    - CASE WHEN contract_features_next.subcontract_passthrough >= 1.0 THEN 0.15
+           WHEN contract_features_next.subcontract_passthrough > 0.70 THEN 0.10 ELSE 0 END
+    - CASE WHEN contract_features_next.corrections_count >= 3 THEN 0.10 ELSE 0 END
+    - CASE WHEN contract_features_next.duration_days > 1825 AND contract_features_next.scoring_regime <> 'framework' THEN 0.15
+           WHEN contract_features_next.duration_days > 1095 AND contract_features_next.scoring_regime <> 'framework' THEN 0.10 ELSE 0 END
   ), 3)
 FROM tmp_score_ctx ctx
-WHERE ctx.contract_id = contract_features.contract_id;
+WHERE ctx.contract_id = contract_features_next.contract_id;
 
 DROP TABLE tmp_score_ctx;
 
 -- ── score_overall = ROUND(0.6*wmean + 0.4*worst, 3) over non-NULL pillars, renormalized (§3.3/§12.0).
 -- Withheld (NULL) for value_suspect (§3.4) and score_coverage < 0.40 (§6.2 withhold rule) — the only
 -- two NULL paths, matching the AC's >=90%-scored expectation.
-UPDATE contract_features
+UPDATE contract_features_next
 SET score_overall = CASE
-  WHEN contract_features.value_flag = 'value_suspect' THEN NULL
-  WHEN contract_features.score_coverage < 0.40 THEN NULL
+  WHEN contract_features_next.value_flag = 'value_suspect' THEN NULL
+  WHEN contract_features_next.score_coverage < 0.40 THEN NULL
   WHEN w.wsum = 0 THEN NULL
   ELSE ROUND(0.6 * w.wmean + 0.4 * w.worst, 3)
 END
@@ -587,15 +600,25 @@ FROM (
         + (CASE WHEN score_c IS NOT NULL THEN 0.25 ELSE 0 END) + (CASE WHEN score_d IS NOT NULL THEN 0.20 ELSE 0 END)
         + (CASE WHEN score_e IS NOT NULL THEN 0.10 ELSE 0 END), 0) AS wmean,
     MIN(COALESCE(score_a, 1.0), COALESCE(score_b, 1.0), COALESCE(score_c, 1.0), COALESCE(score_d, 1.0), COALESCE(score_e, 1.0)) AS worst
-  FROM contract_features
+  FROM contract_features_next
 ) AS w
-WHERE w.contract_id = contract_features.contract_id;
+WHERE w.contract_id = contract_features_next.contract_id;
+
+-- ── Atomic staging swap: contract_features_next is fully built and scored above, off the live
+-- `contract_features` name — this DROP+RENAME pair is the only moment the served name changes,
+-- and it lands back-to-back in the same `wrangler d1 execute --file` batch as everything below,
+-- so a request hitting served D1 mid-rebuild never sees `contract_features` missing/empty; it
+-- sees either the complete prior day's table or the complete new one, never a gap.
+DROP TABLE IF EXISTS contract_features;
+ALTER TABLE contract_features_next RENAME TO contract_features;
+CREATE INDEX IF NOT EXISTS idx_contract_features_overall ON contract_features(score_overall);
+CREATE INDEX IF NOT EXISTS idx_contract_features_peer ON contract_features(effective_peer_key);
 
 -- Summary (last result set printed by `wrangler d1 execute`). unmapped_family_rows must be 0 — the
 -- §12.2 completeness guard for the 21-value procedure_type vocabulary. contract_features_rows must
--- equal contracts_rows — the leaf INSERT inner-joins tenders/bidders/contract_regime, so a future
--- orphaned contracts.bidder_id/tender_id (SQLite doesn't enforce FKs unless PRAGMA foreign_keys=ON)
--- would silently drop that contract from the feature store without this check.
+-- equal contracts_rows — contract_regime/the leaf INSERT LEFT JOIN tenders/bidders (§ orphan-row
+-- robustness above), so every contract gets a row even if contracts.bidder_id/tender_id ever points
+-- at a missing row (SQLite doesn't enforce FKs unless PRAGMA foreign_keys=ON).
 SELECT
   (SELECT COUNT(*) FROM contracts) AS contracts_rows,
   (SELECT COUNT(*) FROM contract_features) AS contract_features_rows,

@@ -226,15 +226,14 @@ d1File(resolve(root, 'scripts/precompute.sql'));
 // directly on the served D1 right after precompute, same pattern as precompute itself, so the
 // daily ETL keeps authority/bidder/sector/region/year/funding_quality_totals current on prod D1.
 //
-// AVAILABILITY WINDOW: derive-contract-features.sql opens with `DROP TABLE IF EXISTS
-// contract_features; CREATE TABLE …` before re-populating it, and `wrangler d1 execute --file` is
-// not atomic — so for the few seconds between that DROP and the final INSERT completing,
-// contract_features is missing/empty on the live-served D1. /quality already tolerates this (its
-// loader catches "no such table" and renders the "still computing" empty state), but any request
-// landing mid-window sees a temporarily empty index rather than the prior day's data. A full
-// staging-table swap (build contract_features_next, then DROP+RENAME atomically) would close this
-// window but touches every one of the ~15 statements in derive-contract-features.sql that reference
-// contract_features by name — out of scope for this change; tracked as a follow-up.
+// AVAILABILITY WINDOW (closed via staging swap): derive-contract-features.sql builds the new
+// scores into a disposable `contract_features_next` staging table, then swaps it into the live
+// `contract_features` name with a back-to-back `DROP TABLE IF EXISTS contract_features; ALTER
+// TABLE contract_features_next RENAME TO contract_features;` — both statements land in the same
+// `wrangler d1 execute --file` batch, so the served table is never missing/empty mid-rebuild; a
+// request either sees the complete prior day's table or the complete new one. /quality still
+// tolerates a wholly-absent table (its loader catches "no such table" and renders the "still
+// computing" empty state) for the very first-ever derive on a fresh D1, before either name exists.
 console.log('==> health derive on served D1');
 d1File(resolve(root, 'scripts/derive-health.sql'));
 d1File(resolve(root, 'scripts/derive-contract-features.sql'));
