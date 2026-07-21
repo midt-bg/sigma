@@ -7,9 +7,13 @@
 --
 -- Composite on (signing_value_eur, current_value_eur) rather than annex_count alone: EXPLAIN QUERY
 -- PLAN against a ~190k-row fixture showed the annex_count-only index still needs a table lookup per
--- matching row to evaluate `current_value_eur > signing_value_eur`, while this composite is fully
--- covering for OVERRUN_WHERE's aggregates (both value columns are answered from the index itself) —
--- ~4x fewer ms/run in that benchmark.
+-- matching row to evaluate `current_value_eur > signing_value_eur`, while this composite answers the
+-- predicate itself straight from the index (both value columns are covered) — ~4x fewer ms/run in
+-- that benchmark. NOT fully covering for every OVERRUN_WHERE consumer: the by-authority/by-sector
+-- breakdowns and the leaderboard also JOIN on c.tender_id and select further contracts columns
+-- (c.id, c.bidder_id, c.eu_funded, ...), so those still take one table lookup per matching row; only
+-- the single-pass corpus aggregate (SUM/AVG over signing_value_eur/current_value_eur alone, no join)
+-- is fully answered from the index.
 CREATE INDEX IF NOT EXISTS idx_contracts_overrun ON contracts(signing_value_eur, current_value_eur)
   WHERE annex_count > 0;
 

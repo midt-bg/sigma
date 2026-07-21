@@ -147,17 +147,18 @@ describe('CANONICAL_QUERY_PARAMS drift guard', () => {
     expect(undeclared).toEqual([]);
   });
 
-  // Informational only — a hard failure here was removed because allow-list entries legitimately
-  // sit ahead of their route for stacked-later work. `console.info` still surfaces stale entries in
-  // CI output so they don't go unnoticed forever, without blocking merges on unrelated PRs.
+  // Informational only — deliberately NOT an `it()`: allow-list entries legitimately sit ahead of
+  // their route for stacked-later work, so a test that asserts "no stale entries" would fail on
+  // every stacked base and a test that never asserts anything would be a cheater test (always
+  // green, can never fail — CLAUDE.md "NO CHEATER TESTS"). Running this as plain code in the
+  // `describe` body still surfaces stale entries via `console.info` during the CI test run, without
+  // registering as a graded test case either way.
   // Intentionally unbounded (no count threshold): a threshold would itself start failing unrelated
   // PRs once enough routes are stacked ahead of their allow-list entries, which is the exact
   // merge-blocking this check exists to avoid — visibility via CI log, not a gate, is the point.
-  it('info: flags (without failing) allow-list entries nothing currently reads', () => {
-    const consumed = consumedQueryParams();
-    const stale = [...CANONICAL_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
-    if (stale.length > 0) {
-      console.info(`[cache-key] allow-list entries nothing reads yet: ${stale.join(', ')}`);
-    }
-  });
+  const consumedForStaleCheck = consumedQueryParams();
+  const stale = [...CANONICAL_QUERY_PARAMS].filter((p) => !consumedForStaleCheck.has(p)).sort();
+  if (stale.length > 0) {
+    console.info(`[cache-key] allow-list entries nothing reads yet: ${stale.join(', ')}`);
+  }
 });
