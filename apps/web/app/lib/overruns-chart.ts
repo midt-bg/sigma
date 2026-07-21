@@ -70,7 +70,9 @@ export interface ScatterPoint {
   x: number;
   y: number;
   r: number;
-  /** True for the heaviest overruns (top half by €) — the renderer paints these in the accent. */
+  /** True when the € overrun is at least half of the corpus's largest overrun (deltaEur >= max/2) —
+   * the renderer paints these in the accent. Not "top half of rows by €": a skewed distribution (one
+   * large outlier) can leave most rows below this threshold. */
   big: boolean;
 }
 
@@ -121,9 +123,19 @@ const DEFAULTS = {
 // as +10% / +100% / +1000% rather than arbitrary 10^x values.
 const TICK_LADDER = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000];
 
+const MAX_TICKS = 5;
+
 function chooseXTicks(loPct: number, hiPct: number): number[] {
   const inRange = TICK_LADDER.filter((t) => t >= loPct && t <= hiPct);
-  if (inRange.length >= 2) return inRange.slice(0, 5);
+  if (inRange.length >= 2) {
+    if (inRange.length <= MAX_TICKS) return inRange;
+    // Sample evenly across the ladder stops in range (always keeping the first and last) so a wide
+    // range gets labels spanning the whole axis, not just its lowest stops.
+    const last = inRange.length - 1;
+    const picked = new Set<number>();
+    for (let k = 0; k < MAX_TICKS; k++) picked.add(Math.round((k * last) / (MAX_TICKS - 1)));
+    return [...picked].sort((a, b) => a - b).map((i) => inRange[i]!);
+  }
   // Degenerate/narrow range: bracket it with the nearest ladder stops so the axis still has marks.
   const below = [...TICK_LADDER].reverse().find((t) => t <= loPct) ?? TICK_LADDER[0]!;
   const above = TICK_LADDER.find((t) => t >= hiPct) ?? TICK_LADDER[TICK_LADDER.length - 1]!;

@@ -78,7 +78,7 @@ describe('scatterGeometry', () => {
     expect(byId.b!.r).toBeGreaterThan(byId.a!.r); // 9 annexes vs 1
   });
 
-  it('flags the heaviest overruns (top half by €) as big', () => {
+  it('flags overruns at least half the corpus max € overrun as big', () => {
     const g = scatterGeometry(rows);
     const byId = Object.fromEntries(g.points.map((p) => [p.id, p]));
     expect(byId.a!.big).toBe(true);
@@ -102,5 +102,16 @@ describe('scatterGeometry', () => {
       expect(t.x).toBeGreaterThanOrEqual(g.axis.left - 0.1);
       expect(t.x).toBeLessThanOrEqual(g.axis.right + 0.1);
     }
+  });
+
+  it('samples ticks evenly across a wide range so the upper end is labeled too', () => {
+    // pct range here spans 25%..4818% — 7 ladder stops fall in range, more than the 5-tick cap, so a
+    // naive "take the lowest 5" would leave the top ~40% of the axis without a label.
+    const g = scatterGeometry(rows);
+    const percents = g.xticks.map((t) => t.pctPercent);
+    expect(Math.max(...percents)).toBeGreaterThanOrEqual(1000);
+    // The highest tick should land near the right edge of the plot, not stop partway across.
+    const rightmost = g.xticks.reduce((a, b) => (b.x > a.x ? b : a));
+    expect(rightmost.x).toBeGreaterThan(g.axis.left + 0.7 * (g.axis.right - g.axis.left));
   });
 });

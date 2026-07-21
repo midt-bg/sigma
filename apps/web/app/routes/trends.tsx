@@ -85,11 +85,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // „Спрямо типичното" baselines for card groups outside the top-N stats (bounded: distinct groups
   // on one card page, plus the selected group so its filter chip can carry a name).
   const known = new Set(stats.groups.map((g) => g.group));
-  const missing = contracts
-    .map((c) => c.cpvGroup)
-    .filter((g): g is string => g != null && !known.has(g));
-  for (const g of cpvSel) if (!known.has(g)) missing.push(g);
-  const medians = await getCpvGroupMedians(db, missing);
+  const missing = new Set(
+    contracts.map((c) => c.cpvGroup).filter((g): g is string => g != null && !known.has(g)),
+  );
+  for (const g of cpvSel) if (!known.has(g)) missing.add(g);
+  const medians = await getCpvGroupMedians(db, [...missing]);
 
   return { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians };
 }
