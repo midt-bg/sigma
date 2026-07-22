@@ -107,7 +107,7 @@ describe('citation builders', () => {
     );
   });
 
-  it('leaves the EIK line blank for an empty string, since ?? only catches null', () => {
+  it('shows "Няма" for an empty-string EIK, not a blank line', () => {
     const c = {
       displayName: 'Празен ЕИК ЕООД',
       eik: '',
@@ -120,7 +120,7 @@ describe('citation builders', () => {
     expect(citation).toBe(
       [
         'Компания: Празен ЕИК ЕООД',
-        'ЕИК: ',
+        'ЕИК: Няма',
         'Общо спечелено: 250 хил. €',
         'Брой договори: 3',
         'Връзка: https://sigma.test/companies/prazen-eik-eood',

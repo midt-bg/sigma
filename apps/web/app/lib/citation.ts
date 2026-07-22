@@ -33,7 +33,7 @@ export function buildCompanyCitation(
 ): string {
   return [
     `Компания: ${c.displayName}`,
-    `ЕИК: ${c.eik ?? 'Няма'}`,
+    `ЕИК: ${c.eik || 'Няма'}`,
     `Общо спечелено: ${money(c.wonEur)}`,
     `Брой договори: ${count(c.contracts)}`,
     `Връзка: ${origin}/companies/${c.slug}`,
