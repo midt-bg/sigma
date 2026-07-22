@@ -15,3 +15,4 @@
 | [0005](0005-blue-green-d1-rollback.md) | Blue/green D1 слотове за rollback на refresh | Прието |
 | [0006](0006-eop-wins-dedup.md) | Dedup на два източника: EOP печели по `contract_number` | Прието |
 | [0007](0007-worker-native-fx-load.md) | Worker-native FX зареждане в cron refresh-а и режим на отказ | Прието |
+| [0008](0008-legacy-fx-backfill.md) | Насочен backfill на заварените NULL `amount_eur` | Прието |

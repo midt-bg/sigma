@@ -133,7 +133,8 @@ function assertFxPopulated() {
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.\n` +
+        '   Pre-existing legacy rows (cron bug window, #158)? Repair first: node scripts/backfill-fx.mjs --apply',
     );
     process.exit(1);
   }
@@ -160,7 +161,8 @@ function assertFxPopulatedSqlite(dbPath) {
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.\n` +
+        '   Pre-existing legacy rows (cron bug window, #158)? Repair first: node scripts/backfill-fx.mjs --apply --work-db <db>',
     );
     process.exit(1);
   }
@@ -240,6 +242,8 @@ function runSliceDerive() {
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
+  // Same FX gate as the full derive (#158): a slice must never leave silent NULL amount_eur.
+  assertFxPopulated();
   assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');
 }
