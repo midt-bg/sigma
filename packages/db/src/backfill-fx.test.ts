@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
-import { backfillFx, reportFxDamage } from '../../../scripts/backfill-fx.mjs';
+import { backfillFx, repairSql, reportFxDamage } from '../../../scripts/backfill-fx.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const initSql = readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8');
@@ -285,6 +285,69 @@ describe('backfillFx', () => {
     await expect(
       backfillFx(runnerFor(db), { fetchFn, fetchedAt: FETCHED_AT, refreshSliceSql }),
     ).rejects.toThrow(/network down|fx/i);
+  });
+
+  it('resumes an interrupted run: heals stale rollups from the leftover touched tables', async () => {
+    const truth = groundTruthDb();
+    // The interrupted state: rates loaded and the row repair committed, but the process died
+    // before ANY rollup group ran — refresh_touched_* linger, rollups still hold bug-window sums.
+    const db = damagedDb();
+    insertUsdRates(db);
+    db.exec(repairSql());
+
+    const report = reportFxDamage(runnerFor(db));
+    expect(report.interrupted).toBe(true);
+    // The repaired USD rows no longer match the damage predicate — without the leftover-table
+    // heal, their rollup contribution would be unrecoverable (the HIGH from the security review).
+    expect(report.byCurrency).toEqual({ CHF: 1 });
+
+    const summary = await backfill(db);
+    expect(summary.healed).toBe(true);
+    for (const [table, sql] of Object.entries(ROLLUP_QUERIES)) {
+      expect(db.prepare(sql).all(), `table ${table}`).toEqual(truth.prepare(sql).all());
+    }
+    // Fully healed: touched tables are gone again.
+    expect(reportFxDamage(runnerFor(db)).interrupted).toBe(false);
+  });
+
+  it('heals an interrupted run even when no damaged rows remain (early-return path)', async () => {
+    // With a CHF rate present the interrupted run repaired EVERY row — the next run sees zero
+    // damage, and before the fix would have returned early leaving the rollups stale forever.
+    const chfRate = (d: DatabaseSync) =>
+      d
+        .prepare(
+          'INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run('CHF', '2026-05-19', 1.05, 'ecb:frankfurter', FETCHED_AT);
+
+    const truth = new DatabaseSync(':memory:');
+    seedCorpus(truth);
+    insertUsdRates(truth);
+    chfRate(truth);
+    derive(truth);
+
+    const db = damagedDb();
+    insertUsdRates(db);
+    chfRate(db);
+    db.exec(repairSql()); // interrupted before any rollup group
+
+    const report = reportFxDamage(runnerFor(db));
+    expect(report.total).toBe(0);
+    expect(report.interrupted).toBe(true);
+
+    const fetchFn = fxFetchMock();
+    const summary = await backfillFx(runnerFor(db), {
+      fetchFn,
+      fetchedAt: FETCHED_AT,
+      refreshSliceSql,
+    });
+    expect(summary.healed).toBe(true);
+    expect(summary.repaired).toBe(0);
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+    for (const [table, sql] of Object.entries(ROLLUP_QUERIES)) {
+      expect(db.prepare(sql).all(), `table ${table}`).toEqual(truth.prepare(sql).all());
+    }
+    expect(reportFxDamage(runnerFor(db)).interrupted).toBe(false);
   });
 
   it('leaves BGN/EUR rows and their rollup contributions untouched', async () => {

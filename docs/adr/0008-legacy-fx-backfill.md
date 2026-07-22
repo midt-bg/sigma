@@ -37,7 +37,11 @@ derive-ва един и същ корпус С курсове (еталон) и 
    (`annex_suspect` остава с потиснато `current_value_eur`).
 4. **Rollups:** поправените редове пълнят `refresh_touched_*` и се пускат собствените батчове на
    `refresh-slice.sql` (company/authority totals, flow-pairs, search index, globals, cleanup) —
-   нула дублиран rollup SQL.
+   нула дублиран rollup SQL. Поправка + rollups излизат като **един** exec (една
+   wrangler/sqlite3 инвокация), а прекъснат пуск се лекува: останалите `refresh_touched_*`
+   таблици (cleanup ги трие последен) са трайното доказателство кои редове са с изостанали
+   rollups — следващият пуск ги засича в самото начало (преди early return и преди какъвто и да е
+   fetch) и препуска rollup батчовете върху тях. Report режимът също ги отчита и излиза с код 1.
 5. **Gate parity:** `runSliceDerive` в `import.mjs` вече също минава `assertFxPopulated` (досега
    само full derive-ът). Пуснат преди backfill-а той пада шумно и сочи към скрипта — това е
    желаното: алармата, която #158 искаше, а не тих NULL.

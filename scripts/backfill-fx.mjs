@@ -73,7 +73,10 @@ const ROLLUP_GROUPS = [
   'cleanup',
 ];
 
-/** Damaged rows in the served DB: foreign currency, NULL amount_eur, not value_suspect. */
+/** Damaged rows in the served DB: foreign currency, NULL amount_eur, not value_suspect.
+ *  `interrupted` — a prior repair/refresh committed its row updates but died before finishing the
+ *  rollup refresh: the refresh_touched_* tables it left behind (cleanup drops them last) still
+ *  scope exactly the rows whose rollups are stale. */
 export function reportFxDamage(runner) {
   const rows = runner.query(
     `SELECT c.id, c.contract_number, c.currency, c.signed_at, c.amount, c.value_flag
@@ -82,7 +85,11 @@ export function reportFxDamage(runner) {
   );
   const byCurrency = {};
   for (const r of rows) byCurrency[r.currency] = (byCurrency[r.currency] ?? 0) + 1;
-  return { total: rows.length, byCurrency, rows };
+  const interrupted =
+    runner.query(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'refresh_touched_contracts'`,
+    ).length > 0;
+  return { total: rows.length, byCurrency, rows, interrupted };
 }
 
 // Rate coverage gaps for the damage set: contract currencies plus foreign tender-estimate
@@ -157,7 +164,7 @@ async function loadMissingRates(runner, { fetchFn, fetchedAt, api }) {
   return fetched;
 }
 
-function repairSql() {
+export function repairSql() {
   return [
     // 1. Price the damaged rows at their signing-date rate (NULL when no usable rate exists).
     `UPDATE contracts SET fx_rate = ${rateAt('contracts.signed_at', 'contracts.currency')}
@@ -209,22 +216,31 @@ function repairSql() {
 /**
  * Repair the served DB in place. Throws when a rate fetch fails while damage remains (fail loudly
  * rather than leave silent NULLs); currencies ECB cannot price are returned in `remaining`.
+ *
+ * Interruption-safe: the repair + rollup refresh go out as ONE exec (one wrangler/sqlite3
+ * invocation), and if a prior run died between its row updates and its rollup refresh, the
+ * refresh_touched_* tables it left behind are detected up front and its rollups are healed
+ * first — before the early return and before any network fetch, so even a failing rate fetch
+ * cannot strand them a second time.
  */
 export async function backfillFx(runner, { fetchFn = fetch, fetchedAt, refreshSliceSql, api }) {
+  const rollupSql = refreshSliceStatementGroups(refreshSliceSql)
+    .filter((g) => ROLLUP_GROUPS.includes(g.name))
+    .map((g) => g.statements.map((s) => `${s};`).join('\n'))
+    .join('\n');
+
   const before = reportFxDamage(runner);
+  let healed = false;
+  if (before.interrupted) {
+    runner.exec(rollupSql); // scoped by the leftover touched tables; its cleanup drops them
+    healed = true;
+  }
   if (before.total === 0) {
-    return { repaired: 0, remaining: [], fetched: [], before };
+    return { repaired: 0, remaining: [], fetched: [], healed, before };
   }
 
   const fetched = await loadMissingRates(runner, { fetchFn, fetchedAt, api });
-  runner.exec(repairSql());
-
-  const rollups = refreshSliceStatementGroups(refreshSliceSql).filter((g) =>
-    ROLLUP_GROUPS.includes(g.name),
-  );
-  for (const group of rollups) {
-    runner.exec(group.statements.map((s) => `${s};`).join('\n'));
-  }
+  runner.exec(`${repairSql()}\n${rollupSql}`);
 
   const after = reportFxDamage(runner);
   return {
@@ -236,6 +252,7 @@ export async function backfillFx(runner, { fetchFn = fetch, fetchedAt, refreshSl
       signed_at: r.signed_at,
     })),
     fetched,
+    healed,
     before,
   };
 }
@@ -313,16 +330,21 @@ async function main() {
     );
   }
   if (report.rows.length > 10) console.log(`  … ${report.rows.length - 10} more`);
+  if (report.interrupted) {
+    console.warn(
+      'leftover refresh_touched_* tables: an earlier refresh/repair died before its rollup refresh — rollups may be stale.',
+    );
+  }
 
   if (!process.argv.includes('--apply')) {
-    if (report.total > 0) {
+    if (report.total > 0 || report.interrupted) {
       console.log('\nrun with --apply to repair (rates + EUR columns + flags + rollups).');
       process.exit(1);
     }
     console.log('clean — nothing to do.');
     return;
   }
-  if (report.total === 0) {
+  if (report.total === 0 && !report.interrupted) {
     console.log('clean — nothing to do.');
     return;
   }
@@ -333,6 +355,7 @@ async function main() {
     refreshSliceSql,
   });
   console.log(`\nrepaired: ${summary.repaired}`);
+  if (summary.healed) console.log('healed the interrupted run’s stale rollups.');
   for (const f of summary.fetched) {
     console.log(
       `  fx ${f.currency} ${f.start ?? ''}..${f.end ?? ''} → ${f.loaded ?? 0} rates [${f.status}]`,

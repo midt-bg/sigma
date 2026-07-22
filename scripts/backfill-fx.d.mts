@@ -14,6 +14,8 @@ export interface FxDamageReport {
   total: number;
   byCurrency: Record<string, number>;
   rows: Array<Record<string, unknown>>;
+  /** leftover refresh_touched_* tables: a prior repair/refresh died before its rollup refresh */
+  interrupted: boolean;
 }
 
 export interface FxFetchOutcome {
@@ -36,10 +38,15 @@ export interface FxBackfillSummary {
     signed_at: unknown;
   }>;
   fetched: FxFetchOutcome[];
+  /** true when a prior interrupted run's stale rollups were healed first */
+  healed: boolean;
   before: FxDamageReport;
 }
 
 export function reportFxDamage(runner: FxRunner): FxDamageReport;
+
+/** The row-repair script (rates → flags → EUR columns); exported for the interruption tests. */
+export function repairSql(): string;
 
 export function backfillFx(
   runner: FxRunner,
