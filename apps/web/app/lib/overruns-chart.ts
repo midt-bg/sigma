@@ -121,9 +121,23 @@ const DEFAULTS = {
 // as +10% / +100% / +1000% rather than arbitrary 10^x values.
 const TICK_LADDER = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000];
 
+const MAX_TICKS = 5;
+
+// Evenly-spaced indices across `arr`, always keeping the first and last entries — avoids always
+// picking the lowest MAX_TICKS stops from a long ladder (which would leave the high end unlabeled).
+function sampleEvenly<T>(arr: T[], count: number): T[] {
+  if (arr.length <= count) return arr;
+  const lastIdx = arr.length - 1;
+  const picked = new Set<number>();
+  for (let i = 0; i < count; i++) {
+    picked.add(Math.round((i * lastIdx) / (count - 1)));
+  }
+  return [...picked].sort((a, b) => a - b).map((i) => arr[i]!);
+}
+
 function chooseXTicks(loPct: number, hiPct: number): number[] {
   const inRange = TICK_LADDER.filter((t) => t >= loPct && t <= hiPct);
-  if (inRange.length >= 2) return inRange.slice(0, 5);
+  if (inRange.length >= 2) return sampleEvenly(inRange, MAX_TICKS);
   // Degenerate/narrow range: bracket it with the nearest ladder stops so the axis still has marks.
   const below = [...TICK_LADDER].reverse().find((t) => t <= loPct) ?? TICK_LADDER[0]!;
   const above = TICK_LADDER.find((t) => t >= hiPct) ?? TICK_LADDER[TICK_LADDER.length - 1]!;

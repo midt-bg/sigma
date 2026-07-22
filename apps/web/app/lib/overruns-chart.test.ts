@@ -103,4 +103,17 @@ describe('scatterGeometry', () => {
       expect(t.x).toBeLessThanOrEqual(g.axis.right + 0.1);
     }
   });
+
+  it('covers the upper end of a wide log range instead of only the lowest ladder stops', () => {
+    // 25% .. ~4800% puts [25, 50, 100, 250, 500, 1000, 2500] in range — the old slice(0, 5) dropped
+    // 1000 and 2500, leaving the right ~40% of the axis without tick labels.
+    const wide: ScatterDatum[] = [
+      { id: 'a', pct: 0.25, deltaEur: 1, annexCount: 1, rank: 1 },
+      { id: 'b', pct: 48, deltaEur: 1, annexCount: 1, rank: 2 },
+    ];
+    const g = scatterGeometry(wide);
+    const pcts = g.xticks.map((t) => t.pctPercent);
+    expect(pcts[0]).toBe(25); // keeps the lowest in-range stop
+    expect(pcts[pcts.length - 1]).toBe(2500); // and the highest — not dropped by a naive slice(0, 5)
+  });
 });
