@@ -1,8 +1,7 @@
-/* Design tokens — OKLch colour palette, type stack, 8-pt spacing scale.
-   @theme exposes these to Tailwind (bg-paper, text-ink…) AND as CSS vars;
-   :root aliases let component CSS keep using var(--ink), var(--accent), etc.
-   The mock uses a system serif/mono stack — no webfont request. */
-
+/* Editorial design tokens — OKLch. @theme exposes them to Tailwind (bg-paper, text-ink…) AND as CSS
+   vars (--color-ink…); the ported component CSS below and the @sigma/config procedure colours read
+   the same vars, so the palette lives in exactly one place. The mock uses a system serif/mono stack —
+   no webfont request (Inter dropped). */
 @theme {
   --color-paper: oklch(98.5% 0.008 80);
   --color-paper-warm: oklch(96% 0.012 78);
@@ -17,6 +16,16 @@
   --color-accent: oklch(48% 0.18 28); /* red — links/warnings */
   --color-accent-bg: oklch(94% 0.04 28);
   --color-pos: oklch(45% 0.1 165); /* teal — positive deltas */
+  /* Decorative editorial accents (already the trend-dashboard chart palette: slate #5E7C8B count
+     series, tan #C4B79C € line). Promoted to shared tokens so the /analytics landing thumbnails and
+     the „парите" highlight read from the palette, not raw hexes. Never the sole carrier of meaning —
+     the slate word is also italic; the thumbnails are aria-hidden decoration. */
+  --color-slate: oklch(55% 0.035 233);
+  --color-tan: oklch(77% 0.03 90);
+  /* Warm ochre — the „услуги" (services) bucket marker on the /overruns sector treemap + ranked list.
+     Pairs with --accent (works) and --slate (goods); each bucket also carries a text label + legend,
+     so colour is never the sole differentiator (WCAG 1.4.1). */
+  --color-ochre: oklch(64% 0.12 70);
 
   --font-sans:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -28,6 +37,9 @@
   /* Short aliases → @theme tokens, so the ported component CSS keeps using var(--paper) etc. */
   --paper: var(--color-paper);
   --paper-warm: var(--color-paper-warm);
+  /* Pure-white raised surface — form chips/toggles that must read as "above" the warm panels
+     (the design renders the trend filter chips and the step toggle in #fff on the #FBF8F1 bar). */
+  --paper-raised: #ffffff;
   --paper-deep: var(--color-paper-deep);
   --ink: var(--color-ink);
   --ink-mid: var(--color-ink-mid);
@@ -37,6 +49,9 @@
   --accent: var(--color-accent);
   --accent-bg: var(--color-accent-bg);
   --pos: var(--color-pos);
+  --slate: var(--color-slate);
+  --tan: var(--color-tan);
+  --ochre: var(--color-ochre);
 
   /* Legacy token aliases — keep page-local inline styles working */
   --bg: var(--paper);

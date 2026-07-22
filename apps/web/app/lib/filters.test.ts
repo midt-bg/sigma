@@ -4,12 +4,17 @@ import {
   authorityListFilters,
   companyListFilters,
   contractListFilters,
+  cpvGroupSelection,
   getMulti,
   leaderboardRankOffset,
+  MAX_CPV_GROUP_SELECTION,
   MAX_MULTI_VALUES,
   pageNav,
   PARAM_ORDER,
   searchHref,
+  trendAngle,
+  trendSort,
+  trendStep,
   withParams,
 } from './filters';
 import { CANONICAL_QUERY_PARAMS } from './query-params';
@@ -115,6 +120,62 @@ describe('getMulti', () => {
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
     });
+  });
+});
+
+describe('cpvGroupSelection', () => {
+  it('parses repeatable and CSV ?cpv values into a deduped, canonically sorted set', () => {
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['33600', '45233']);
+    expect(cpvGroupSelection(sp(''))).toEqual([]);
+  });
+
+  it('returns an identical sorted array regardless of ?cpv arrival order (edge-cache key stability)', () => {
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(
+      cpvGroupSelection(sp('cpv=45233&cpv=33600')),
+    );
+    expect(cpvGroupSelection(sp('cpv=33600&cpv=45233'))).toEqual(['33600', '45233']);
+  });
+
+  it('drops anything that is not exactly a 5-digit group code (CWE-349 key hygiene)', () => {
+    expect(
+      cpvGroupSelection(sp('cpv=4523&cpv=452333&cpv=abcde&cpv=45 33&cpv= 45233 &cpv=%27--')),
+    ).toEqual(['45233']);
+  });
+
+  it('caps the selection at MAX_CPV_GROUP_SELECTION so hostile spam stays bounded', () => {
+    const q = Array.from({ length: 40 }, (_, i) => `cpv=${10000 + i}`).join('&');
+    const out = cpvGroupSelection(sp(q));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
+  });
+});
+
+describe('trend param validation (angle/step/sort)', () => {
+  it('trendAngle passes through known values and falls back to "time" otherwise', () => {
+    expect(trendAngle(sp('angle=cpv'))).toBe('cpv');
+    expect(trendAngle(sp('angle=cross'))).toBe('cross');
+    expect(trendAngle(sp('angle=time'))).toBe('time');
+    expect(trendAngle(sp(''))).toBe('time');
+    expect(trendAngle(sp("angle='--drop table"))).toBe('time');
+    expect(trendAngle(sp('angle=CPV'))).toBe('time');
+  });
+
+  it('trendStep passes through known values and falls back to "q" otherwise', () => {
+    expect(trendStep(sp('step=m'))).toBe('m');
+    expect(trendStep(sp('step=y'))).toBe('y');
+    expect(trendStep(sp('step=q'))).toBe('q');
+    expect(trendStep(sp(''))).toBe('q');
+    expect(trendStep(sp('step=bogus'))).toBe('q');
+  });
+
+  it('trendSort passes through known values and falls back to "date" otherwise', () => {
+    expect(trendSort(sp('sort=value'))).toBe('value');
+    expect(trendSort(sp('sort=date'))).toBe('date');
+    expect(trendSort(sp(''))).toBe('date');
+    expect(trendSort(sp('sort=name'))).toBe('date');
   });
 });
 

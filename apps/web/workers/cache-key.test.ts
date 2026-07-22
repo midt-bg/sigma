@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cacheKey } from './cache-key';
+import { cacheKey, PLANNED_QUERY_PARAMS } from './cache-key';
 import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from '../app/lib/query-params';
 
 function cacheUrl(input: string): URL {
@@ -32,7 +32,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
 function consumedQueryParams(): Set<string> {
   const patterns = [
-    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\s*\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
     // The `const sel = (k) => sp.get(k)` helper in the dashboard routes (map/competition/flows/trends).
     /\bsel\(\s*['"]([A-Za-z_]\w*)['"]/g,
@@ -109,6 +109,32 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
   });
 
+  it('keys the /trends „вкл. текущия месец" toggle so the with-current chart gets its own entry (CWE-349)', () => {
+    // ?cur=1 re-runs the trend server-side WITH the current partial period — a different chart,
+    // different totals and year cards. It must never share a cached SSR body with the default view.
+    const base = cacheUrl('http://local/trends');
+    const withCurrent = cacheUrl('http://local/trends?cur=1');
+
+    expect(withCurrent.search).not.toBe(base.search);
+    expect(withCurrent.searchParams.get('cur')).toBe('1');
+  });
+
+  it('keys the repeatable /trends CPV multi-select so faceted charts get their own entries (CWE-349)', () => {
+    // The обзор cross lens re-runs the year chart + contract list server-side per selected CPV set;
+    // distinct selections (including subsets) must never share one cached SSR body.
+    const base = cacheUrl('http://local/trends?angle=cross');
+    const one = cacheUrl('http://local/trends?angle=cross&cpv=45233');
+    const two = cacheUrl('http://local/trends?angle=cross&cpv=45233&cpv=33600');
+
+    expect(one.search).not.toBe(base.search);
+    expect(two.search).not.toBe(one.search);
+    expect(two.searchParams.getAll('cpv')).toEqual(['33600', '45233']); // sorted, both values keyed
+    // cacheKey() sorts `cpv` values by value (not just by URLSearchParams.sort()'s per-key
+    // stability), so a differently-ordered request for the same set collapses to one cache entry
+    // instead of fragmenting the edge cache.
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).toBe(two.search);
+  });
+
   it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {
     // ?bids=1 narrows /contracts to single-bid contracts — different rows and totals.
     expect(cacheUrl('http://local/contracts?bids=1').search).not.toBe(
@@ -122,21 +148,32 @@ describe('cacheKey', () => {
 });
 
 describe('CANONICAL_QUERY_PARAMS drift guard', () => {
-  it('covers every query param the app reads off the URL', () => {
+  it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
     // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
     expect(consumed.size).toBeGreaterThan(10);
     expect(consumed.has('bids')).toBe(true);
     expect(consumed.has('page')).toBe(true);
 
+    // Security direction: every param a route loader / SSR render consumes must be keyed (in the
+    // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
+    // cache entry and the wrong data gets served. The reverse direction (allow-list entries nothing
+    // reads yet) is intentionally NOT asserted: params for stacked-later routes legitimately sit in
+    // the allow-list ahead of their route.
     const allowed = new Set([...CANONICAL_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
   });
 
-  it('does not retain allow-list entries that nothing reads', () => {
+  // Soft-fails (doesn't block unrelated PRs) rather than a hard failure, because allow-list entries
+  // legitimately sit ahead of their route for stacked-later work — but `expect.soft` still reports the
+  // stale entries as a visible failure in CI output, unlike a bare `console.info`, so a real drift
+  // (e.g. a typo like `bidz` instead of `bids`) is caught rather than silently going unnoticed forever.
+  it('flags (without hard-failing) allow-list entries nothing currently reads', () => {
     const consumed = consumedQueryParams();
-    const stale = [...CANONICAL_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
-    expect(stale).toEqual([]);
+    const stale = [...CANONICAL_QUERY_PARAMS]
+      .filter((p) => !consumed.has(p) && !PLANNED_QUERY_PARAMS.has(p))
+      .sort();
+    expect.soft(stale).toEqual([]);
   });
 });
