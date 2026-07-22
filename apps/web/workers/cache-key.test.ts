@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cacheKey } from './cache-key';
+import { cacheKey, RESERVED_CACHE_PARAMS } from './cache-key';
 import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from '../app/lib/query-params';
 
 function cacheUrl(input: string): URL {
@@ -32,7 +32,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
 function consumedQueryParams(): Set<string> {
   const patterns = [
-    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\s*\.\s*(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
     // The `const sel = (k) => sp.get(k)` helper in the dashboard routes (map/competition/flows/trends).
     /\bsel\(\s*['"]([A-Za-z_]\w*)['"]/g,
@@ -109,6 +109,33 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts/%').pathname).toBe('/contracts/%');
   });
 
+  it('keys the /trends „вкл. текущия месец" toggle so the with-current chart gets its own entry (CWE-349)', () => {
+    // ?cur=1 re-runs the trend server-side WITH the current partial period — a different chart,
+    // different totals and year cards. It must never share a cached SSR body with the default view.
+    const base = cacheUrl('http://local/trends');
+    const withCurrent = cacheUrl('http://local/trends?cur=1');
+
+    expect(withCurrent.search).not.toBe(base.search);
+    expect(withCurrent.searchParams.get('cur')).toBe('1');
+  });
+
+  it('keys the repeatable /trends CPV multi-select so faceted charts get their own entries (CWE-349)', () => {
+    // The обзор cross lens re-runs the year chart + contract list server-side per selected CPV set;
+    // distinct selections (including subsets) must never share one cached SSR body.
+    const base = cacheUrl('http://local/trends?angle=cross');
+    const one = cacheUrl('http://local/trends?angle=cross&cpv=45233');
+    const two = cacheUrl('http://local/trends?angle=cross&cpv=45233&cpv=33600');
+
+    expect(one.search).not.toBe(base.search);
+    expect(two.search).not.toBe(one.search);
+    expect(two.searchParams.getAll('cpv')).toEqual(['45233', '33600']); // both values keyed
+    // URLSearchParams.sort() is stable per key, so value order is NOT canonicalized here; the UI
+    // writes the selection pre-sorted (hrefToggleCpv) so equal sets share one canonical URL.
+    expect(cacheUrl('http://local/trends?angle=cross&cpv=33600&cpv=45233').search).not.toBe(
+      two.search,
+    );
+  });
+
   it('keys response-affecting params so they cannot collapse to one cache entry (CWE-349, #56)', () => {
     // ?bids=1 narrows /contracts to single-bid contracts — different rows and totals.
     expect(cacheUrl('http://local/contracts?bids=1').search).not.toBe(
@@ -122,21 +149,38 @@ describe('cacheKey', () => {
 });
 
 describe('CANONICAL_QUERY_PARAMS drift guard', () => {
-  it('covers every query param the app reads off the URL', () => {
+  it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
     // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
     expect(consumed.size).toBeGreaterThan(10);
     expect(consumed.has('bids')).toBe(true);
     expect(consumed.has('page')).toBe(true);
 
+    // Security direction: every param a route loader / SSR render consumes must be keyed (in the
+    // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
+    // cache entry and the wrong data gets served.
     const allowed = new Set([...CANONICAL_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
   });
 
-  it('does not retain allow-list entries that nothing reads', () => {
+  it('does not retain allow-list entries that nothing reads (reverse drift guard)', () => {
+    // Hygiene direction: an allow-list entry no route consumes fragments the cache for free and
+    // hides dead keying decisions. Params owned by another OPEN PR may sit in the allow-list ahead
+    // of their reader, but only via the documented RESERVED_CACHE_PARAMS set (each entry names its
+    // owning PR) — never silently.
     const consumed = consumedQueryParams();
-    const stale = [...CANONICAL_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
+    const stale = [...CANONICAL_QUERY_PARAMS]
+      .filter((p) => !consumed.has(p) && !RESERVED_CACHE_PARAMS.has(p))
+      .sort();
     expect(stale).toEqual([]);
+  });
+
+  it('keeps RESERVED_CACHE_PARAMS honest: subset of the allow-list, and no entry has a reader yet', () => {
+    const consumed = consumedQueryParams();
+    for (const p of RESERVED_CACHE_PARAMS) {
+      expect(CANONICAL_QUERY_PARAMS.has(p)).toBe(true); // a reservation outside the allow-list keys nothing
+      expect(consumed.has(p)).toBe(false); // reader merged => drop the reservation, keep the key
+    }
   });
 });

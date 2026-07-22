@@ -24,6 +24,9 @@ overrides:
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   '@babel/core': '^7.29.6'
+  #   sharp <0.35.0 — HIGH severity (CVSS 7.0) advisory GHSA-f88m-g3jw-g9cj, via
+  #                 wrangler→miniflare. Dev/build-time only; never ships to the Worker.
+  sharp: '^0.35.0'
 
 onlyBuiltDependencies:
   - esbuild

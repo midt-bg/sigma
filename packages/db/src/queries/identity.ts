@@ -46,6 +46,10 @@ export function authoritySlug(authorityId: string): string {
   return authorityId.startsWith('auth:') ? authorityId.slice(5) : authorityId;
 }
 
+/** authority id (`auth:ЕИК`) → bare EIK digits. Alias of {@link authoritySlug} so call sites
+ * reading the EIK don't route through a function named for URL slugs. */
+export const authorityEik = authoritySlug;
+
 /** `/authorities/:eik` segment → authority id. */
 export function authorityIdFromSlug(slug: string): string {
   return 'auth:' + slug;

@@ -378,7 +378,7 @@ async function topRecurringPairs(
     const { results } = await db
       .prepare(
         `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts
-         FROM flow_pairs ORDER BY contracts DESC, won_eur DESC LIMIT ?`,
+         FROM flow_pairs ORDER BY contracts DESC, won_eur DESC, authority_id, bidder_id LIMIT ?`,
       )
       .bind(top)
       .all<PairRow>();
@@ -398,7 +398,7 @@ async function topRecurringPairs(
          JOIN bidders b ON b.id = c.bidder_id
          WHERE ${where.join(' AND ')}
          GROUP BY t.authority_id, c.bidder_id
-         ORDER BY contracts DESC, won_eur DESC LIMIT ?`,
+         ORDER BY contracts DESC, won_eur DESC, authority_id, bidder_id LIMIT ?`,
       )
       .bind(...s.params, top)
       .all<PairRow>();
@@ -453,6 +453,43 @@ export async function getCompetition(
       minContracts,
     },
   };
+}
+
+// Single-offer (one-bid) VALUE share per signing year, for the /analytics landing „Конкуренция"
+// card. Same basis as competitionTotals.singleOfferValueShare (contracts with a known offer count,
+// amount_eur IS NOT NULL, the site-wide value basis) so the landing matches the /competition
+// dashboard. ONE bounded GROUP BY over complete years (a handful of year rows out).
+//
+// The in-progress current calendar year is EXCLUDED: opaqueHeadline reports the latest year's share
+// and the pp-change off it, and a partial year (half the contracts signed so far) would understate
+// both. We cap at the year before `strftime('%Y','now')` so the headline always reads the latest
+// COMPLETE year — mirroring trend.ts dropping its partial as_of year.
+export interface OpaqueYearRow {
+  year: string;
+  valueEur: number;
+  singleOfferValueEur: number;
+}
+
+export async function getOpaqueShareByYear(db: D1Database): Promise<OpaqueYearRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT substr(c.signed_at, 1, 4) AS year,
+              COALESCE(SUM(c.amount_eur), 0) AS value_eur,
+              COALESCE(SUM(CASE WHEN c.bids_received = 1 THEN c.amount_eur ELSE 0 END), 0) AS single_value_eur
+       FROM contracts c
+       WHERE c.amount_eur IS NOT NULL
+         AND c.bids_received IS NOT NULL AND c.bids_received >= 1
+         AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'
+         AND c.signed_at >= '2020-01-01'
+         AND substr(c.signed_at, 1, 4) < strftime('%Y', 'now')
+       GROUP BY year ORDER BY year`,
+    )
+    .all<{ year: string; value_eur: number; single_value_eur: number }>();
+  return results.map((r) => ({
+    year: r.year,
+    valueEur: r.value_eur,
+    singleOfferValueEur: r.single_value_eur,
+  }));
 }
 
 export async function getCompetitionSummary(
