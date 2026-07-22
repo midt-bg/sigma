@@ -171,7 +171,7 @@ async function backfill(db: DatabaseSync) {
 
 const CONTRACT_COLS =
   'contract_number, amount, currency, value_flag, amount_eur, fx_converted, fx_rate, signing_value_eur, current_value_eur';
-const ROLLUP_QUERIES: Record<string, string> = {
+const ROLLUP_QUERIES = {
   contracts: `SELECT ${CONTRACT_COLS} FROM contracts ORDER BY contract_number`,
   company_totals:
     'SELECT bidder_id, name, won_eur, contracts, authorities, first_date, last_date FROM company_totals ORDER BY bidder_id',
@@ -240,7 +240,7 @@ describe('backfillFx', () => {
 
     const summary = await backfill(db);
     expect(summary.repaired).toBe(4);
-    expect(summary.remaining.map((r: { currency: string }) => r.currency)).toEqual(['CHF']);
+    expect(summary.remaining.map((r) => r.currency)).toEqual(['CHF']);
 
     for (const [table, sql] of Object.entries(ROLLUP_QUERIES)) {
       expect(db.prepare(sql).all(), `table ${table}`).toEqual(truth.prepare(sql).all());
