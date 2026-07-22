@@ -13,7 +13,8 @@ export function clampPopoverShift(
   viewportWidth: number,
 ): number {
   let dx = 0;
-  if (rect.right > viewportWidth - VIEWPORT_INSET_PX) dx = viewportWidth - VIEWPORT_INSET_PX - rect.right;
+  if (rect.right > viewportWidth - VIEWPORT_INSET_PX)
+    dx = viewportWidth - VIEWPORT_INSET_PX - rect.right;
   if (rect.left + dx < VIEWPORT_INSET_PX) dx = VIEWPORT_INSET_PX - rect.left;
   return Math.round(dx);
 }
