@@ -1459,7 +1459,7 @@ tbody td,
 .list-search-btn {
   flex: none;
   padding: 0 16px;
-  font: 500 12px/1 var(--font-mono, monospace);
+  font: 500 12px/1 var(--font-mono);
   letter-spacing: 0.04em;
   background: var(--ink);
   color: var(--paper);
