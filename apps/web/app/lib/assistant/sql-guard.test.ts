@@ -112,6 +112,24 @@ describe('assertReadOnlySelect', () => {
     }
   });
 
+  it('rejects string-building aggregates that collapse a full scan into one huge cell (review follow-up)', () => {
+    // group_concat / json_group_array / json_group_object aggregate an ENTIRE table scan into a single
+    // returned cell that materialises before capRows (which keeps the first row whole) can measure it —
+    // the same memory-amplification class as printf, one level up. `string_agg` is the SQLite ≥3.44
+    // synonym of group_concat and reaches the same code path on D1's modern SQLite (review, ydimitrof).
+    for (const sql of [
+      'SELECT group_concat(name) FROM bidders',
+      "SELECT string_agg(name, ',') FROM bidders",
+      'SELECT json_group_array(name) FROM contracts',
+      'SELECT hex(group_concat(description)) FROM contracts',
+      'SELECT json_group_object(id, name) FROM bidders',
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
     // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
     // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).

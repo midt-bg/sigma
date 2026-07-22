@@ -9,10 +9,13 @@
 export const DATA_TRAPS: string[] = [
   'Парични агрегати: СУМИРАЙ САМО `contracts.amount_eur` (каноничен EUR, безопасен за сумиране). ' +
     'НИКОГА не сумирай `contracts.amount` — то е „както е записано" в смесена валута (`currency`), само за показване.',
-  '`amount_eur IS NULL` означава `value_flag = value_suspect` — редът е НАРОЧНО изключен от сумите. ' +
-    'Сумите по подразбиране го пропускат; брой на „непотвърдени" = редове с NULL `amount_eur`.',
-  '`value_flag` ∈ {ok, review, annex_suspect, value_suspect} мени значението на стойността на реда; ' +
-    '`date_flag` ∈ {ok, signed_after_publication} е вердикт за датата, не за стойността.',
+  'Сумите по подразбиране пропускат редове с `amount_eur IS NULL` — това са редове БЕЗ надеждна EUR ' +
+    'стойност (чужда валута без курс, `value_suspect` без оценка, или липсва подписана/текуща стойност). ' +
+    '`amount_eur IS NULL` НЕ Е синоним на `value_suspect`: `value_suspect` редове с оценка СА поправени до ' +
+    'оценката на процедурата и се включват в сумите. Брой „непотвърдени" = редове с ' +
+    "`value_flag = 'value_suspect'` (НЕ редове с NULL `amount_eur`; готовото число е `home_totals.suspect`).",
+  '`value_flag` ∈ {ok, review, value_low, value_suspect, annex_suspect} мени значението на стойността на ' +
+    'реда; `date_flag` ∈ {ok, signed_after_publication} е вердикт за датата, не за стойността.',
   "`tenders.procedure_type = 'неизвестна'` маркира СИНТЕТИЧНИ (само-договорни) преписки — " +
     'изключи ги при анализ на разпределението по процедура, освен ако нарочно ги искаш.',
   '`lots` са на grain по обособена позиция — не ги брой едно към едно срещу `contracts`.',
@@ -60,11 +63,21 @@ export const TABLES: TableDoc[] = [
     grain: 'един възложен договор (на ниво лот)',
     columns:
       'id, tender_id→tenders, bidder_id→bidders, amount (display, в `currency`), currency, ' +
-      'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; NULL=value_suspect), value_flag, date_flag, ' +
+      'amount_eur (КАНОНИЧЕН EUR, SAFE TO SUM; NULL=няма надеждна EUR стойност), value_flag, date_flag, ' +
       'fx_converted, fx_rate, signed_at, bids_received, eu_funded',
   },
-  { name: 'amendments', grain: 'един анекс', columns: 'id, contract_id→contracts, …' },
-  { name: 'parties', grain: 'роля по OCDS преписка', columns: 'ocid (≠ УНП!), role, …' },
+  {
+    name: 'amendments',
+    grain: 'един анекс',
+    columns:
+      'id, natural_key, unp (=УНП, свързва tenders/contracts), contract_number, ' +
+      'value_before, value_after, value_delta, currency, published_at',
+  },
+  {
+    name: 'parties',
+    grain: 'една страна по OCDS преписка',
+    columns: 'party_key, eik, ocid (≠ УНП!), party_id, name, region_nuts',
+  },
   {
     name: 'authority_totals',
     grain: 'rollup на възложител',
@@ -105,7 +118,7 @@ export const TABLES: TableDoc[] = [
   },
   {
     name: 'data_freshness',
-    grain: 'view — свежест/обхват',
+    grain: 'таблица — свежест/обхват',
     columns: 'source, as_of, refreshed_at',
   },
 ];
@@ -156,14 +169,19 @@ export const CANONICAL_QUERIES: { intent: string; sql: string }[] = [
   },
 ];
 
+// Render DATA_TRAPS as a numbered list. Shared by describeSchema (full dictionary) and the RAG
+// hard-traps block (system-prompt.ts) so both paths render the traps identically and cannot drift.
+export function renderTraps(): string {
+  return DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n');
+}
+
 /** Build the schema prompt asset the agent reads before writing SQL (returned by the tool). */
 export function describeSchema(): string {
-  const traps = DATA_TRAPS.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const tables = TABLES.map((t) => `- ${t.name} — grain: ${t.grain}\n    ${t.columns}`).join('\n');
   const queries = CANONICAL_QUERIES.map((q) => `-- ${q.intent}\n${q.sql}`).join('\n\n');
   return [
     '# Речник на данните (чети преди да пишеш SQL)',
-    '\n## Задължителни правила (капани в данните)\n' + traps,
+    '\n## Задължителни правила за данните (капани — важат за всеки въпрос)\n' + renderTraps(),
     '\n## Таблици\n' + tables,
     '\n## Канонични примерни заявки\n' + queries,
   ].join('\n');

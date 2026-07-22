@@ -1,0 +1,16 @@
+# OSV-Scanner config — accepted dependency-audit exceptions.
+# The CI "Dependency audit" step (`osv-scanner scan source -L pnpm-lock.yaml`) fails on ANY known
+# vulnerability; intentional, documented exceptions live here (see .github/workflows/ci.yml).
+# Every entry MUST carry a reason and an `ignoreUntil` so the exception auto-expires and is revisited.
+
+[[IgnoredVulns]]
+id = "GHSA-f88m-g3jw-g9cj"
+ignoreUntil = 2026-10-22
+# sharp 0.34.5 inherits libvips image-decoder CVEs (CVE-2026-33327/33328/35590/35591); fixed in
+# sharp 0.35.0. sharp is a TRANSITIVE, DEV-ONLY dependency of miniflare (local dev server / test
+# runtime) — it is not part of the deployed Cloudflare Worker, and the vuln class needs decoding an
+# untrusted image, which the dev toolchain does not do. No upstream fix is reachable: miniflare pins
+# `sharp: ^0.34.5` (`>=0.34.5 <0.35.0`) and even its latest release still ships 0.34.5, so forcing
+# 0.35.0 would require a pnpm override outside miniflare's declared range. Revisit when miniflare
+# adopts sharp 0.35.0 (tracked upstream); the ignoreUntil date resurfaces this if it lingers.
+reason = "sharp<0.35.0 libvips CVEs — transitive dev-only dep (miniflare), not in the deployed Worker; no in-range upstream fix. Revisit when miniflare ships sharp>=0.35.0."
