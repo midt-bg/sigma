@@ -1,11 +1,11 @@
-import { contractSitemapPages } from '@sigma/db';
+import { contractSitemapPages, getDb } from '@sigma/db';
 import type { Route } from './+types/sitemap';
 import { withDataSource } from '../lib/dataSource';
 
 // Sitemap index: the static-pages sitemap + per-type sitemaps (contracts paginated under 50k URLs).
 export async function loader({ request, context }: Route.LoaderArgs) {
   const origin = new URL(request.url).origin;
-  const pages = await contractSitemapPages(context.cloudflare.env.DB);
+  const pages = await contractSitemapPages(getDb(context.cloudflare.env));
   const maps = [
     `${origin}/sitemap-pages.xml`,
     `${origin}/sitemap-authorities.xml`,

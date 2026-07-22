@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, date, money, pct } from '@sigma/shared';
-import { getMethodologyStats } from '@sigma/db';
+import { getMethodologyStats, getDb } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -24,7 +24,7 @@ export function headers() {
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  return getMethodologyStats(context.cloudflare.env.DB);
+  return getMethodologyStats(getDb(context.cloudflare.env));
 }
 
 const TOC = [
