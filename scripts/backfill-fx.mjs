@@ -12,7 +12,7 @@
 //   node scripts/backfill-fx.mjs --apply --remote   # repair the served D1
 //   node scripts/backfill-fx.mjs --work-db=data/work/sigma.db [--apply]
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -336,6 +336,10 @@ function cliRunner() {
   const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
   const persistArgs =
     remoteFlag === '--local' && persistTo ? ['--persist-to', String(persistTo)] : [];
+  // wrangler is a devDependency: `node scripts/backfill-fx.mjs` runs without node_modules/.bin on
+  // PATH, so resolve the workspace binary first and fall back to a global install.
+  const localWrangler = resolve(root, 'node_modules/.bin/wrangler');
+  const wrangler = existsSync(localWrangler) ? localWrangler : 'wrangler';
 
   const query = (sql) => {
     if (workDb) {
@@ -346,7 +350,7 @@ function cliRunner() {
       return out ? JSON.parse(out) : [];
     }
     const out = execFileSync(
-      'wrangler',
+      wrangler,
       ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--json', '--command', sql],
       { cwd: apiDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
     );
@@ -367,7 +371,7 @@ function cliRunner() {
       });
     } else {
       execFileSync(
-        'wrangler',
+        wrangler,
         ['d1', 'execute', d1Name, remoteFlag, ...persistArgs, '--file', file],
         {
           cwd: apiDir,
