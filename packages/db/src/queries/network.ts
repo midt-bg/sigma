@@ -31,7 +31,7 @@ const PICKER_LIMIT = 12; // entities offered in the centre picker
 // practice the /network route always passes `PAGE_SIZE.network` from apps/web/app/lib/filters.ts
 // explicitly — keep the two values equal (currently 25) since packages/db cannot import from
 // apps/web without inverting the package dependency direction.
-const COUNTERPARTY_PAGE_SIZE = 25;
+export const COUNTERPARTY_PAGE_SIZE = 25;
 
 interface PairRow {
   authority_id: string;

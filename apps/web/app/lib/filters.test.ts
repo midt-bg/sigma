@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
+import { COUNTERPARTY_PAGE_SIZE } from '@sigma/db';
 import {
   authorityListFilters,
   companyListFilters,
@@ -8,6 +9,7 @@ import {
   leaderboardRankOffset,
   MAX_MULTI_VALUES,
   pageNav,
+  PAGE_SIZE,
   PARAM_ORDER,
   searchHref,
   withParams,
@@ -15,6 +17,12 @@ import {
 import { CANONICAL_QUERY_PARAMS } from './query-params';
 
 const sp = (q: string) => new URLSearchParams(q);
+
+describe('PAGE_SIZE.network drift guard', () => {
+  it('stays equal to packages/db/src/queries/network.ts COUNTERPARTY_PAGE_SIZE', () => {
+    expect(PAGE_SIZE.network).toBe(COUNTERPARTY_PAGE_SIZE);
+  });
+});
 
 describe('contractListFilters', () => {
   it('parses the bids filter the HTML list and CSV export must share (issue #138)', () => {
