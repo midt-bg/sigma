@@ -124,7 +124,9 @@ const fakeStep: WorkflowStep = {
     maybeCallback?: () => Promise<T>,
   ): Promise<T> {
     const callback =
-      typeof configOrCallback === 'function' ? configOrCallback : (maybeCallback as () => Promise<T>);
+      typeof configOrCallback === 'function'
+        ? configOrCallback
+        : (maybeCallback as () => Promise<T>);
     return callback();
   },
 } as WorkflowStep;

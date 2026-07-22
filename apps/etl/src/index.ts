@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloud
 import {
   createTransientStaging,
   dropTransientStaging,
+  loadFxRates,
   refreshDerivedContractCount,
   refreshSliceStatementGroups,
   runRefreshSliceStatementGroup,
@@ -108,6 +109,35 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         console.warn(JSON.stringify({ level: 'warn', event: 'etl_zero_ingest', fetchedAt, plan }));
         return { ...plan, days: results.length, staged: 0, derived: 0 };
       }
+
+      // FX rates BEFORE the derive (#158): the CLI paths run scripts/load-fx.mjs first, but this
+      // cron path never did — foreign-currency contracts staged here derived with a NULL
+      // amount_eur and silently dropped out of every rollup. loadFxRates fetches only actual
+      // coverage gaps (idempotent upsert into fx_rates) and throws — failing the run loudly —
+      // when rates that plausibly exist could not be loaded.
+      await step.do('load-fx', async () => {
+        const fx = await loadFxRates(this.env.DB, { fetchedAt });
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'etl_fx_load',
+            inserted: fx.inserted,
+            fetched: fx.fetched,
+            skipped: fx.skipped,
+          }),
+        );
+        if (fx.warnings.length > 0 || fx.uncovered.length > 0) {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'etl_fx_uncovered',
+              uncovered: fx.uncovered,
+              warnings: fx.warnings,
+            }),
+          );
+        }
+        return { inserted: fx.inserted, uncovered: fx.uncovered.length };
+      });
 
       for (const group of refreshSliceStatementGroups(refreshSliceSql)) {
         await step.do(`derive-slice:${group.name}`, async () => {
