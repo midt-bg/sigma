@@ -31,6 +31,26 @@ export function getMulti(params: URLSearchParams, key: string): string[] {
     .slice(0, MAX_MULTI_VALUES);
 }
 
+// The /trends обзор multi-select is bounded to the visible top-10 CPV list; anything past the cap
+// is dropped so hostile ?cpv spam cannot fan the loader out into unbounded per-group SQL work.
+export const MAX_CPV_GROUP_SELECTION = 10;
+
+/**
+ * The обзор lenses' CPV multi-select (`?cpv=45233&cpv=33600` or `?cpv=45233,33600` on /trends):
+ * validated 5-digit group codes only, deduped, order-preserving, capped at MAX_CPV_GROUP_SELECTION.
+ * Malformed or excess codes are dropped before they reach a filter or mint an edge-cache key
+ * variant (CWE-349).
+ */
+export function cpvGroupSelection(sp: URLSearchParams): string[] {
+  const all = sp
+    .getAll('cpv')
+    .flatMap((v) => v.split(','))
+    .map((v) => v.trim());
+  return Array.from(new Set(all))
+    .filter((v) => /^\d{5}$/.test(v))
+    .slice(0, MAX_CPV_GROUP_SELECTION);
+}
+
 /**
  * The contracts list filter set read from the URL — the SINGLE source of truth shared by the HTML
  * list loader (/contracts) and the CSV export loader (/contracts.csv). They previously parsed the URL
@@ -178,13 +198,16 @@ export function buildSectorGroup(
 // Canonical serialization order so the same logical state always yields the same URL string —
 // good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
 // markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
-// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts last.
+// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts
+// last — it is NOT dropped. PARAM_ORDER only covers /contracts (its filter rail); the /trends and
+// /overruns params (`step`, `angle`, `by`, `cpvSort`, `cur`) are in CANONICAL_QUERY_PARAMS so withParams
+// keeps them, they just fall after this list in the generated URL rather than at a curated position.
 export const PARAM_ORDER = [
   'q',
   'type',
   'kind',
   'sector',
-  'g', // trends granularity (month/year)
+  'g', // RESERVED for #144 (still open): /network graph-only re-centre fetch
   'year',
   'procedure',
   'funding',

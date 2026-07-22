@@ -17,8 +17,25 @@ export function cacheKey(request: Request, deployTag: string): Request {
     // Malformed percent-encoding should not break cache lookup; keep the raw path as the fallback.
   }
 
+  // Group before appending so repeatable params can be canonicalized per-key: `?cpv=A&cpv=B` and
+  // `?cpv=B&cpv=A` select the identical logical set and must map to the same cache entry, not
+  // fragment into two (a hand-built or bot-issued URL is enough to hit this even though the app's
+  // own links always write cpv pre-sorted via hrefToggleCpv).
+  const grouped = new Map<string, string[]>();
   for (const [key, value] of url.searchParams) {
-    if (CANONICAL_QUERY_PARAMS.has(key)) params.append(key, value);
+    if (!CANONICAL_QUERY_PARAMS.has(key)) continue;
+    const values = grouped.get(key) ?? [];
+    values.push(value);
+    grouped.set(key, values);
+  }
+  for (const [key, values] of grouped) {
+    // `cpv` is the only repeatable param today whose values are order-independent and lexically
+    // sortable, so it's special-cased rather than made data-driven. Not a poisoning risk either
+    // way — an un-sorted future repeatable canonical param would only fragment the cache (extra
+    // misses), never collide two distinct requests. If a new repeatable param needs the same
+    // canonicalization, add its key here too.
+    const ordered = key === 'cpv' ? [...values].sort() : values;
+    for (const v of ordered) params.append(key, v);
   }
 
   params.sort();
