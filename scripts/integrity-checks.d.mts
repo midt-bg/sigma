@@ -26,15 +26,22 @@ export function checkNoNegativeValues(runner: IntegrityRunner): IntegrityResult;
 export function checkEikValidity(runner: IntegrityRunner): IntegrityResult;
 export function checkDateSanity(runner: IntegrityRunner): IntegrityResult;
 export function checkStagingReconciliation(runner: IntegrityRunner): IntegrityResult;
+export function checkContractFeaturesIntegrity(runner: IntegrityRunner): IntegrityResult;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => IntegrityResult>;
-export function runIntegrityChecks(runner: IntegrityRunner): IntegrityResult[];
+export function runIntegrityChecks(
+  runner: IntegrityRunner,
+  checks?: Array<(runner: IntegrityRunner) => IntegrityResult>,
+): IntegrityResult[];
 
 export interface AssertIntegrityOptions {
   /** label shown in the failure line, identifying the call site/backend */
   label?: string;
   /** true (default) → print and process.exit(1) on failure; false → throw instead (for tests) */
   exit?: boolean;
+  /** checks to run; defaults to the standard CHECKS set. Pass a narrower array (e.g.
+   *  [checkContractFeaturesIntegrity]) to gate a call-site-specific subset. */
+  checks?: Array<(runner: IntegrityRunner) => IntegrityResult>;
 }
 export function assertIntegrity(
   runner: IntegrityRunner,

@@ -356,3 +356,124 @@ CREATE INDEX idx_authority_totals_type ON authority_totals(type_group);
 CREATE INDEX idx_authority_totals_name ON authority_totals(name);
 CREATE INDEX idx_flow_pairs_won ON flow_pairs(won_eur DESC);
 CREATE INDEX idx_flow_pairs_authority ON flow_pairs(authority_id);
+
+-- ===================================================================================
+-- 1c) CONTRACT QUALITY / HEALTH INDEX — Phase 4 entity rollups (scripts/derive-health.sql).
+--     Built on the served D1 after precompute.sql; the per-contract scoring (Phase 5) joins
+--     against these. See the Contract Quality / Health Index design spec §7.2.
+-- ===================================================================================
+
+CREATE TABLE authority_health_rollup (
+  authority_id        TEXT PRIMARY KEY REFERENCES authorities(id),
+  hhi                 REAL,    -- SUM((won/total)*(won/total)) over the authority's bidders
+  single_offer_share  REAL,    -- bids_received=1 / known-bids contracts
+  direct_award_share  REAL,    -- procedure_type='Пряко договаряне' / total
+  avg_annex_count     REAL,
+  avg_cost_overrun    REAL,    -- mean current/signing where it grew
+  cancelled_share     REAL,    -- tenders.cancelled=1 / tenders (authority)
+  contracts_with_bids INTEGER,
+  total_contracts     INTEGER
+);
+CREATE TABLE bidder_health_rollup (
+  bidder_id        TEXT PRIMARY KEY REFERENCES bidders(id),
+  buyer_hhi        REAL,     -- SUM((won_from_buyer/total_won)^2) across buyers
+  buyer_count      INTEGER,
+  avg_repeat_share REAL,
+  total_contracts  INTEGER
+);
+CREATE TABLE sector_concentration (
+  cpv_division       TEXT NOT NULL,
+  bidder_id          TEXT NOT NULL REFERENCES bidders(id),
+  won_eur            REAL NOT NULL,
+  contracts          INTEGER NOT NULL,
+  division_total_eur REAL NOT NULL,
+  win_share          REAL NOT NULL,
+  PRIMARY KEY (cpv_division, bidder_id)
+);
+CREATE INDEX idx_sector_concentration_bidder ON sector_concentration(bidder_id);
+CREATE TABLE health_percentiles (         -- corpus distribution snapshot (calibration + validation)
+  signal TEXT PRIMARY KEY, p05 REAL, p25 REAL, p50 REAL, p75 REAL, p95 REAL
+);
+
+-- ===================================================================================
+-- 1d) CONTRACT QUALITY / HEALTH INDEX — Phase 5 per-contract feature store
+--     (scripts/derive-contract-features.sql). See the Contract Quality / Health Index design spec §7.3.
+--     score_a..score_e / score_overall are REALs in [0,1]; populated by the scoring UPDATEs
+--     in scripts/derive-contract-features.sql (NULL = unknown/withheld, never zero).
+-- ===================================================================================
+
+CREATE TABLE contract_features (
+  contract_id TEXT PRIMARY KEY REFERENCES contracts(id),
+  -- peer + coverage
+  effective_peer_key TEXT, peer_n INTEGER,
+  coverage_bids INTEGER, coverage_sme INTEGER, coverage_estimate INTEGER,
+  coverage_overrun INTEGER, coverage_ocds INTEGER, score_coverage REAL,
+  -- A
+  bids_received INTEGER, single_offer INTEGER, sme_rate REAL, disq_rate REAL,
+  -- B
+  is_open_procedure INTEGER, is_direct_award INTEGER, has_exemption INTEGER,
+  is_outside_zop INTEGER, is_dps INTEGER, is_meat INTEGER, is_accelerated INTEGER,
+  is_framework INTEGER, is_eauction INTEGER, bid_window_days REAL, scoring_regime TEXT,
+  -- C
+  annex_count INTEGER, cost_overrun_ratio REAL, estimate_dev_ratio REAL,
+  value_flag TEXT, has_reason_text INTEGER, first_amend_shock INTEGER,
+  -- D
+  authority_hhi REAL, bidder_buyer_hhi REAL, repeat_win_intensity REAL,
+  sector_win_share REAL, pair_first_date TEXT, edge_age_years REAL, authority_suppliers INTEGER,
+  -- E
+  date_flag TEXT, eu_funded INTEGER, subcontract_passthrough REAL, corrections_count INTEGER,
+  duration_days INTEGER, winner_size TEXT, bidder_nuts TEXT, awarded_to_group INTEGER,
+  -- sub-scores [0,1], NULL when unknown
+  score_a REAL, score_b REAL, score_c REAL, score_d REAL, score_e REAL,
+  score_overall REAL, computed_at TEXT,
+  -- A1 leaf, auditable (§5.5/§5.6 PERCENT_RANK floor)
+  score_a_bids REAL, peer_has_multi INTEGER
+);
+CREATE INDEX idx_contract_features_overall ON contract_features(score_overall);
+CREATE INDEX idx_contract_features_peer ON contract_features(effective_peer_key);
+
+-- ===================================================================================
+-- 1e) CONTRACT QUALITY / HEALTH INDEX — Phase 5e aggregate UI rollups (six *_quality_totals
+--     grains, built last by scripts/derive-contract-features.sql). See spec §7.4/§9/§12.7.
+-- ===================================================================================
+
+CREATE TABLE authority_quality_totals (
+  authority_id TEXT PRIMARY KEY REFERENCES authorities(id), name TEXT NOT NULL, type_group TEXT,
+  avg_overall REAL, avg_a REAL, avg_b REAL, avg_c REAL, avg_d REAL, avg_e REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER NOT NULL, unknown_contracts INTEGER,
+  single_offer_count INTEGER, direct_award_count INTEGER, amended_count INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE bidder_quality_totals (
+  bidder_id TEXT PRIMARY KEY REFERENCES bidders(id), name TEXT NOT NULL,
+  avg_overall REAL, avg_c REAL, avg_d REAL, buyer_hhi REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER NOT NULL, amended_count INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE sector_quality_totals (        -- CPV division
+  division TEXT PRIMARY KEY, avg_overall REAL, avg_a REAL, avg_c REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, single_offer_pct REAL,
+  direct_award_pct REAL, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE region_quality_totals (        -- NUTS of performance (tenders.place_of_performance)
+  nuts TEXT PRIMARY KEY, nuts_label TEXT, avg_overall REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE year_quality_totals (          -- count-weighted (trend comparability)
+  year TEXT PRIMARY KEY, avg_overall REAL, avg_a REAL, avg_b REAL, avg_c REAL, avg_d REAL, avg_e REAL,
+  total_contracts INTEGER NOT NULL, scored_contracts INTEGER, mean_coverage REAL, computed_at TEXT
+);
+CREATE TABLE funding_quality_totals (       -- eu_funded 0/1
+  funding_key TEXT PRIMARY KEY,             -- 'eu' | 'national'
+  avg_overall REAL, total_contracts INTEGER NOT NULL, scored_contracts INTEGER,
+  mean_coverage REAL, computed_at TEXT
+);
+
+-- ===================================================================================
+-- 1f) Pipeline diagnostics — one-row-per-metric counters populated by scripts/precompute.sql
+--     (currently: fx_rate_gap_rows) and surfaced in its run summary, so a systemic gap doesn't
+--     go silently unnoticed.
+-- ===================================================================================
+CREATE TABLE pipeline_diag (
+  metric TEXT PRIMARY KEY, value INTEGER NOT NULL, computed_at TEXT NOT NULL
+);

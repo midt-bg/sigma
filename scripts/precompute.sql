@@ -39,6 +39,42 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
+-- tenders carries no persisted fx_rate column (unlike contracts, whose rate is captured once at
+-- ETL-import time) — so foreign-currency estimates are converted via the same live fx_rates lookup
+-- the ETL uses elsewhere (scripts/normalize-raw.sql, scripts/refresh-slice.sql): nearest rate on or
+-- before the tender's published_at, within a 10-day lookback window.
+UPDATE tenders SET
+  estimated_value_eur = CASE
+    WHEN currency = 'EUR' THEN estimated_value
+    WHEN COALESCE(currency, 'BGN') = 'BGN' THEN estimated_value / 1.95583
+    WHEN tenders.published_at IS NULL THEN NULL
+    ELSE (
+      SELECT estimated_value * f.eur_per_unit
+      FROM fx_rates f
+      WHERE f.base_currency = tenders.currency
+        AND f.rate_date <= tenders.published_at
+        AND f.rate_date >= date(tenders.published_at, '-10 days')
+      ORDER BY f.rate_date DESC
+      LIMIT 1
+    ) END
+WHERE estimated_value IS NOT NULL;
+
+-- Diagnostic: foreign-currency tenders (not EUR/BGN) with a published_at (so the fx_rates lookup
+-- above was attempted) that still resolved to a NULL estimated_value_eur — no fx_rate row fell
+-- inside the 10-day lookback window. A non-zero count here is a systemic fx_rates coverage gap,
+-- not a per-row anomaly; surfaced in the summary SELECT below so it isn't silently invisible.
+CREATE TABLE IF NOT EXISTS pipeline_diag (
+  metric TEXT PRIMARY KEY, value INTEGER NOT NULL, computed_at TEXT NOT NULL
+);
+DELETE FROM pipeline_diag WHERE metric = 'fx_rate_gap_rows';
+INSERT INTO pipeline_diag (metric, value, computed_at)
+SELECT 'fx_rate_gap_rows', COUNT(*), datetime('now')
+FROM tenders
+WHERE estimated_value IS NOT NULL
+  AND COALESCE(currency, 'BGN') NOT IN ('EUR', 'BGN')
+  AND published_at IS NOT NULL
+  AND estimated_value_eur IS NULL;
+
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
   id INTEGER PRIMARY KEY CHECK (id = 1), contracts INTEGER NOT NULL, value_eur REAL NOT NULL,
@@ -133,11 +169,13 @@ FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 CREATE TABLE IF NOT EXISTS flow_pairs (
   authority_id TEXT NOT NULL REFERENCES authorities(id), bidder_id TEXT NOT NULL REFERENCES bidders(id),
   authority_name TEXT NOT NULL, bidder_name TEXT NOT NULL, bidder_kind TEXT NOT NULL,
-  won_eur REAL NOT NULL, contracts INTEGER NOT NULL, PRIMARY KEY (authority_id, bidder_id)
+  won_eur REAL NOT NULL, contracts INTEGER NOT NULL, first_date TEXT, last_date TEXT,
+  PRIMARY KEY (authority_id, bidder_id)
 );
 DELETE FROM flow_pairs;
-INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
+INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts, first_date, last_date)
+SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*),
+  MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE c.amount_eur IS NOT NULL
@@ -177,4 +215,5 @@ SELECT
   (SELECT COUNT(*) FROM sector_totals)       AS sector_rows,
   (SELECT COUNT(*) FROM flow_pairs)          AS flow_rows,
   (SELECT COUNT(*) FROM search_index)        AS search_rows,
-  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows;
+  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows,
+  (SELECT value FROM pipeline_diag WHERE metric = 'fx_rate_gap_rows') AS fx_rate_gap_rows;

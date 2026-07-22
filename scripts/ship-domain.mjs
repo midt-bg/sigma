@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertIntegrity } from './integrity-checks.mjs';
+import { assertIntegrity, checkContractFeaturesIntegrity } from './integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -221,6 +221,33 @@ for (const table of TABLES) {
 console.log('==> precompute on served D1');
 d1File(resolve(root, 'scripts/seed-state-owned.sql'));
 d1File(resolve(root, 'scripts/precompute.sql'));
+
+// Contract Quality / Health Index Phases 4-5 (design spec §8) — run
+// directly on the served D1 right after precompute, same pattern as precompute itself, so the
+// daily ETL keeps authority/bidder/sector/region/year/funding_quality_totals current on prod D1.
+//
+// AVAILABILITY WINDOW (closed via staging swap): derive-contract-features.sql builds the new
+// scores into a disposable `contract_features_next` staging table, then swaps it into the live
+// `contract_features` name with a back-to-back `DROP TABLE IF EXISTS contract_features; ALTER
+// TABLE contract_features_next RENAME TO contract_features;` — both statements land in the same
+// `wrangler d1 execute --file` batch, so the served table is never missing/empty mid-rebuild; a
+// request either sees the complete prior day's table or the complete new one. /quality still
+// tolerates a wholly-absent table (its loader catches "no such table" and renders the "still
+// computing" empty state) for the very first-ever derive on a fresh D1, before either name exists.
+console.log('==> health derive on served D1');
+d1File(resolve(root, 'scripts/derive-health.sql'));
+d1File(resolve(root, 'scripts/derive-contract-features.sql'));
+
+// Contract Quality / Health Index hard gate: derive-contract-features.sql's own summary SELECT
+// prints contracts_rows/contract_features_rows parity, unmapped_procedure_rows, and the score
+// invariants (value_suspect_leak_rows, a1_floor_violations, direct_award_b1_nonzero), but that
+// SELECT was only ever displayed by `wrangler d1 execute`, never asserted. Gate it the same way
+// as the #97 reconciliation check below, right after the derive that computes it.
+console.log('==> contract-features integrity gate on served D1');
+assertIntegrity(d1Json, {
+  label: `contract_features ${remote ? 'remote' : 'local'}`,
+  checks: [checkContractFeaturesIntegrity],
+});
 
 // Reconciliation gate (#97) on the served D1: rollups now exist (just precomputed), so the rollup
 // checks run here — this is the database users read. Staging/pipeline_stats are not shipped, so the

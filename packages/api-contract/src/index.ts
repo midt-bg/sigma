@@ -441,8 +441,10 @@ export interface NetworkData {
 // Procurement spend by period for the /trends chart. Contracts without a usable signing date are
 // excluded from the series and reported as coverage, never silently dropped.
 
+export type TrendGranularity = 'month' | 'quarter' | 'year';
+
 export interface TrendPoint {
-  period: string; // 'YYYY-MM' (month granularity) or 'YYYY' (year)
+  period: string; // 'YYYY-MM' (month), 'YYYY-Qn' (quarter) or 'YYYY' (year)
   valueEur: number;
   contracts: number;
   partial: boolean; // the final period (the as_of period) is still being filled; rendered dashed
@@ -457,7 +459,7 @@ export interface TrendYear {
 }
 
 export interface TrendData {
-  granularity: 'month' | 'year';
+  granularity: TrendGranularity;
   points: TrendPoint[]; // continuous and zero-filled, sorted by period
   years: TrendYear[]; // per-year summary with year-over-year change
   sectors: SectorRef[]; // options for the sector select
@@ -466,8 +468,40 @@ export interface TrendData {
   scope: {
     sector: string | null;
     funding: 'all' | 'eu' | 'national';
-    granularity: 'month' | 'year';
+    granularity: TrendGranularity;
   };
+}
+
+// ── Contracts overview (/trends lenses) ──────────────────────────────────────────────────────────
+// Per-CPV-group price distribution and the shared filtered contract cards for the overview surface.
+// A "group" is the 5-digit CPV class prefix — fine enough that contracts inside it are comparable,
+// coarse enough that cohorts stay populated.
+
+export interface CpvGroupStat {
+  group: string; // 5-digit CPV prefix, e.g. '33600'
+  name: string | null; // representative cpv_description within the group (most common among the sample)
+  contracts: number; // contracts with a positive EUR value in the group
+  medianEur: number;
+  p10Eur: number;
+  p90Eur: number;
+  maxEur: number;
+  sampleEur: number[]; // real contract values: a quantile ladder plus the top outliers (dot cloud)
+}
+
+export interface CpvGroupMedian {
+  group: string;
+  name: string | null;
+  contracts: number;
+  medianEur: number;
+}
+
+export interface OverviewContract {
+  id: string; // contract slug for /contracts/:id
+  signedAt: string | null;
+  valueEur: number;
+  authorityName: string;
+  bidderName: string; // display name (consortiums folded to 'X и др.')
+  cpvGroup: string | null; // 5-digit CPV prefix, null when the tender has no usable CPV
 }
 
 // ── Regions (map) ─────────────────────────────────────────────────────────────────────────────────
@@ -595,6 +629,129 @@ export interface CompetitionData {
     top: number;
     minContracts: number;
   };
+}
+
+// ── Quality index ───────────────────────────────────────────────────────────────────────────────
+// The Contract Quality / Health Index page (/quality). All scores are [0, 1] REALs from the ETL's
+// contract_features / *_quality_totals tables (Contract Quality / Health Index spec §12.0); NULL means
+// "insufficient data" — never zero. A low score is a weak-quality SIGNAL, not proof of wrongdoing.
+
+export type QualityGrain = 'authority' | 'supplier' | 'sector' | 'region' | 'year' | 'funding';
+export type QualityRankSort = 'score' | 'contracts';
+/** Ranking direction over the active sort key; default: score → 'asc' (weakest first), contracts → 'desc'. */
+export type QualityRankDir = 'asc' | 'desc';
+export type QualityContractSort = 'score' | 'value';
+/** §6.2 confidence tiers over score_coverage; 'none' = withheld („недостатъчно данни"). */
+export type QualityCoverageTier = 'high' | 'medium' | 'low' | 'none';
+
+/** Per-pillar scores/averages in [0,1]; null = not available for this row/grain. */
+export interface QualityPillars {
+  a: number | null; // Contestability
+  b: number | null; // Procedure openness
+  c: number | null; // Value integrity
+  d: number | null; // Relationship health
+  e: number | null; // Transparency / data quality
+}
+
+export interface QualityOverview {
+  totalContracts: number;
+  scoredContracts: number; // score_overall IS NOT NULL
+  suspectContracts: number; // value_flag = 'value_suspect' (unscored, excluded from averages)
+  avgOverall: number | null; // corpus mean of score_overall (scored rows only), [0,1]
+  meanCoverage: number | null; // corpus mean of score_coverage, [0,1]
+  pillars: QualityPillars; // corpus per-pillar means (non-NULL rows only)
+  histogram: { bin: number; count: number }[]; // 20 equal bins over score_overall (bin 0 = [0,.05))
+  confidence: { high: number; medium: number; low: number; none: number }; // contract counts
+}
+
+export interface QualityRankRow {
+  key: string; // raw grain key: authority_id / bidder_id / division / nuts / year / funding_key
+  href: string | null; // entity page for authority/supplier grains
+  name: string;
+  sub: string | null; // type label / NUTS code / grain caption
+  avgOverall: number; // [0,1]
+  pillars: QualityPillars; // only the pillar averages the rollup table carries
+  totalContracts: number;
+  scoredContracts: number;
+  meanCoverage: number | null;
+  coverageTier: QualityCoverageTier;
+}
+
+export interface QualityContractRow {
+  id: string;
+  slug: string; // /contracts/:slug
+  signedAt: string | null;
+  cpvDivision: string | null;
+  authorityName: string;
+  authoritySlug: string;
+  bidderDisplayName: string;
+  bidderSlug: string;
+  amountEur: number | null;
+  overall: number | null; // null = „недостатъчно данни" (never rendered as 0)
+  pillars: QualityPillars;
+  coverage: number | null;
+  coverageTier: QualityCoverageTier;
+  valueFlag: string | null; // ok | review | value_low | annex_suspect | value_suspect
+}
+
+/** Raw leaf values behind one contract's scorecard — formatted at render time, kept raw here. */
+export interface QualityLeaves {
+  bidsReceived: number | null;
+  singleOffer: boolean | null;
+  smeRate: number | null;
+  isEauction: boolean | null;
+  procedureType: string | null;
+  isAccelerated: boolean | null;
+  bidWindowDays: number | null;
+  annexCount: number | null;
+  costOverrunRatio: number | null;
+  estimateDevRatio: number | null;
+  firstAmendShock: boolean | null;
+  authorityHhi: number | null;
+  repeatWinIntensity: number | null;
+  edgeAgeYears: number | null;
+  sectorWinShare: number | null;
+  dateFlag: string | null;
+  subcontractPassthrough: number | null;
+  durationDays: number | null;
+  correctionsCount: number | null;
+}
+
+export interface QualityScorecard extends QualityContractRow {
+  known: boolean; // false → the „НЕОЦЕНЕН / недостатъчно данни" card
+  wmean: number | null; // weighted mean over non-NULL pillars, weights renormalized (§3.3)
+  worst: number | null; // weakest non-NULL pillar
+  worstPillar: keyof QualityPillars | null;
+  effectiveWeights: QualityPillars; // renormalized weight per pillar (0-weight when pillar is NULL)
+  leaves: QualityLeaves;
+  coverageFlags: { bids: boolean; sme: boolean; estimate: boolean; overrun: boolean };
+}
+
+export interface QualityData {
+  overview: QualityOverview;
+  ranking: QualityRankRow[];
+  contracts: QualityContractRow[];
+  scorecard: QualityScorecard | null;
+  scope: {
+    grain: QualityGrain;
+    sort: QualityRankSort;
+    sortDir: QualityRankDir; // effective ranking direction (defaulted per sort key)
+    contractSort: QualityContractSort;
+    sel: string | null; // selected ranking key filtering the contracts list
+    band: string | null; // histogram score band: bin index '0'–'19' (5-point bins) or 'weak'|'mid'|'good'
+    contractId: string | null; // scorecard subject (explicit ?contract or the default weakest-listed id)
+    rankFrom: number | null; // „Разбивка“ avg-index range bounds, display-scale ints 0–100 (from ≤ to)
+    rankTo: number | null;
+    top: number;
+    minScored: number; // floor applied to authority/supplier rankings (small-sample noise)
+  };
+}
+
+export interface QualitySummary {
+  totalContracts: number;
+  scoredContracts: number;
+  avgOverall: number | null;
+  meanCoverage: number | null;
 }
 
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────

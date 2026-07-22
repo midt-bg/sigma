@@ -1,14 +1,29 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migrationsDir = resolve(root, 'packages/db/migrations');
+// The FULL chain in apply order — exactly what `wrangler d1 migrations apply` runs on a fresh D1
+// and what scripts/import.mjs applies to a fresh work DB. Every migration must apply cleanly after
+// the ones before it (e.g. 0003's ADD COLUMNs must not duplicate columns already in 0000).
+// The exact expected chain, kept in sync by hand: a soft `length >= N` check would still pass if a
+// migration file were accidentally deleted (as long as N remained), silently dropping schema from
+// `wrangler d1 migrations apply` on a fresh D1. Asserting the exact file set makes a lost migration
+// fail loudly instead of passing quietly.
+const EXPECTED_MIGRATION_FILES = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0003_contract_health.sql',
+];
+const migrationFiles = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort();
+const migrations = migrationFiles.map((f) => resolve(migrationsDir, f));
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -25,8 +40,8 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, migration0);
-      readScript(dbPath, migration1);
+      expect(migrationFiles).toEqual(EXPECTED_MIGRATION_FILES);
+      for (const migration of migrations) readScript(dbPath, migration);
 
       expect(
         sqlite(
@@ -67,6 +82,41 @@ describe('served migrations', () => {
           "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_flow_pairs_bidder' AND tbl_name='flow_pairs';",
         ).trim(),
       ).toBe('1');
+
+      // 0003 adds the health-index foundation columns (contract quality spec §7.1) — additive
+      // ALTERs only, deliberately NOT folded into 0000 (SQLite has no ADD COLUMN IF NOT EXISTS,
+      // so duplicating them there would break the fresh-DB chain apply this test exercises).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('contracts') WHERE name IN ('exemption_legal_basis','outside_zop','dps_contract');",
+        ).trim(),
+      ).toBe('3');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('flow_pairs') WHERE name IN ('first_date','last_date');",
+        ).trim(),
+      ).toBe('2');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('tenders') WHERE name IN ('corrections_count','estimated_value_eur');",
+        ).trim(),
+      ).toBe('2');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name IN ('reason','circumstances');",
+        ).trim(),
+      ).toBe('2');
+      // The health rollup tables ship in the base schema (rebuilt idempotently by the ETL derive).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('authority_health_rollup','contract_features','year_quality_totals');",
+        ).trim(),
+      ).toBe('3');
 
       // The served schema must never carry raw_* staging tables.
       expect(
