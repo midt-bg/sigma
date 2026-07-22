@@ -10,7 +10,7 @@
 //   node scripts/backfill-fx.mjs                    # report damage on local D1, exit 1 if any
 //   node scripts/backfill-fx.mjs --apply            # repair local D1
 //   node scripts/backfill-fx.mjs --apply --remote   # repair the served D1
-//   node scripts/backfill-fx.mjs --work-db data/work/sigma.db [--apply]
+//   node scripts/backfill-fx.mjs --work-db=data/work/sigma.db [--apply]
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -252,6 +252,7 @@ function arg(name) {
 function cliRunner() {
   const apiDir = resolve(root, 'apps/web');
   const workDb = arg('work-db');
+  if (workDb === true) throw new Error('--work-db needs a value: --work-db=<path>');
   const remoteFlag = process.argv.includes('--remote') ? '--remote' : '--local';
   const persistTo = arg('persist-to');
   if (workDb && process.argv.includes('--remote'))
