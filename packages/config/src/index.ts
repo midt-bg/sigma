@@ -208,10 +208,79 @@ const CPV_CATEGORY_BY_DIVISION = new Map<string, CpvCategory>(
   ),
 );
 
+/**
+ * Canonical CPV-division key: strip every non-digit, then take the first two digits. This is the ONE
+ * normalization every code path (SQL-fed divisions, full 8-digit codes, dirty source values) must run
+ * through so the division a contract groups under is the same one its label/bucket resolve from. A
+ * code with a stray non-digit in its prefix (e.g. „4-5233110") still lands on its real division (45)
+ * rather than leaking into „Без код"/„other". Returns '' for a missing/digit-less code.
+ */
+export function cpvDivision(code: string | null | undefined): string {
+  if (!code) return '';
+  return code.replace(/\D/g, '').slice(0, 2);
+}
+
 /** Map a CPV division/full code to its curated top-level category, or null if missing/unknown. */
 export function categoryForDivision(division: string | null | undefined): CpvCategory | null {
-  if (!division) return null;
-  return CPV_CATEGORY_BY_DIVISION.get(division.replace(/\D/g, '').slice(0, 2)) ?? null;
+  const code = cpvDivision(division);
+  if (!code) return null;
+  return CPV_CATEGORY_BY_DIVISION.get(code) ?? null;
+}
+
+// ── CPV division → spend bucket (works / goods / services) ─────────────────────────────────────
+//
+// A coarse three-way classification of every CPV division into the kind of spend it represents —
+// строителство (works), доставки (goods) and услуги (services), plus an `other` fallback for codes
+// outside the catalogue. This mirrors the EU procurement-law tripartition (Directive 2014/24/EU
+// Art. 2(1)(6–9): public works / supply / service contracts), which CPV divisions map onto cleanly:
+//   • works    — the construction WORKS division only: 45 (Строителни и монтажни работи). Per the
+//                Directive's tripartition, works are construction/engineering activities, so 44
+//                (Строителни конструкции и материали) is a SUPPLY of materials and belongs in goods.
+//   • services — the 50-series-and-up service divisions, per the CPV catalogue's own grouping:
+//                50 51 55 60 63 64 65 66 70 71 72 73 75 76 77 79 80 85 90 92 98.
+//   • goods    — every other catalogued division (supplies of products/equipment), including 44.
+// It is a deterministic PARTITION (every division assigned to exactly one bucket), not a keyword
+// heuristic — the same discipline as CPV_CATEGORIES above. Source: Reg. (EC) 213/2008 (CPV) +
+// Directive 2014/24/EU contract-type definitions.
+
+export type CpvBucket = 'works' | 'goods' | 'services' | 'other';
+
+export const CPV_BUCKET_WORKS: ReadonlySet<string> = new Set(['45']);
+export const CPV_BUCKET_SERVICES: ReadonlySet<string> = new Set([
+  '50',
+  '51',
+  '55',
+  '60',
+  '63',
+  '64',
+  '65',
+  '66',
+  '70',
+  '71',
+  '72',
+  '73',
+  '75',
+  '76',
+  '77',
+  '79',
+  '80',
+  '85',
+  '90',
+  '92',
+  '98',
+]);
+
+export const CPV_DIVISION_SET: ReadonlySet<string> = new Set(CPV_SECTORS.map((s) => s.code));
+
+/** Classify a CPV division/full code into its works/goods/services bucket. Unknown or missing codes
+ *  fall to `other` (never silently coerced into a real bucket). Deterministic. */
+export function cpvBucket(division: string | null | undefined): CpvBucket {
+  const code = cpvDivision(division);
+  if (!code) return 'other';
+  if (!CPV_DIVISION_SET.has(code)) return 'other';
+  if (CPV_BUCKET_WORKS.has(code)) return 'works';
+  if (CPV_BUCKET_SERVICES.has(code)) return 'services';
+  return 'goods';
 }
 
 // ── Procedure groups (ЗОП procedure_type → display group) ──────────────────────────────────────

@@ -4,8 +4,10 @@ import {
   authorityListFilters,
   companyListFilters,
   contractListFilters,
+  cpvGroupSelection,
   getMulti,
   leaderboardRankOffset,
+  MAX_CPV_GROUP_SELECTION,
   MAX_MULTI_VALUES,
   pageNav,
   PARAM_ORDER,
@@ -115,6 +117,41 @@ describe('getMulti', () => {
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
     });
+  });
+});
+
+describe('cpvGroupSelection', () => {
+  it('parses repeatable and CSV ?cpv values into a deduped, order-preserving set', () => {
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp(''))).toEqual([]);
+  });
+
+  it('drops anything that is not exactly a 5-digit group code (CWE-349 key hygiene)', () => {
+    expect(
+      cpvGroupSelection(sp('cpv=4523&cpv=452333&cpv=abcde&cpv=45 33&cpv= 45233 &cpv=%27--')),
+    ).toEqual(['45233']);
+  });
+
+  it('caps the selection at MAX_CPV_GROUP_SELECTION so hostile spam stays bounded', () => {
+    const q = Array.from({ length: 40 }, (_, i) => `cpv=${10000 + i}`).join('&');
+    const out = cpvGroupSelection(sp(q));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
+  });
+
+  it('caps AFTER validation so leading invalid params cannot crowd out valid codes', () => {
+    const invalid = Array.from({ length: MAX_CPV_GROUP_SELECTION }, () => 'cpv=abc').join('&');
+    const valid = Array.from(
+      { length: MAX_CPV_GROUP_SELECTION },
+      (_, i) => `cpv=${10000 + i}`,
+    ).join('&');
+    const out = cpvGroupSelection(sp(`${invalid}&${valid}`));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
   });
 });
 
