@@ -48,6 +48,19 @@ const STEP_GRANULARITY: Record<Step, TrendGranularity> = {
   y: 'year',
 };
 
+/** Cards shown per page — must match the +1 requested from listOverviewContracts below. */
+export const CONTRACT_CARD_LIMIT = 24;
+
+// Distinguishes "exactly N rows, nothing hidden" from "N+ rows, truncated" without an off-by-one:
+// callers must query pageSize + 1 rows and pass that raw list here.
+export function paginateContracts<T>(
+  rowsPlusOne: T[],
+  pageSize: number,
+): { items: T[]; truncated: boolean } {
+  const truncated = rowsPlusOne.length > pageSize;
+  return { items: truncated ? rowsPlusOne.slice(0, pageSize) : rowsPlusOne, truncated };
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const db = context.cloudflare.env.DB;
@@ -68,7 +81,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // The cross lens always shows the compact quarterly picker; the time lens follows the step toggle.
   const granularity = angle === 'cross' ? 'quarter' : STEP_GRANULARITY[step];
 
-  const [trend, stats, contracts] = await Promise.all([
+  const [trend, stats, contractsRaw] = await Promise.all([
     // Faceted by the selected CPV groups (one aggregate scan; all groups when nothing is selected),
     // so the combo chart, year cards and totals all re-run server-side on real data.
     getSpendingTrend(
@@ -77,8 +90,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       { includeSectors: false },
     ),
     getCpvGroupStats(db, 10),
-    listOverviewContracts(db, { year, cpvGroups: cpvSel, sort, limit: 24 }),
+    // Ask for one more than the card cap so we can tell "exactly N" from "more than N" without an
+    // off-by-one — paginateContracts slices the extra row off below.
+    listOverviewContracts(db, { year, cpvGroups: cpvSel, sort, limit: CONTRACT_CARD_LIMIT + 1 }),
   ]);
+  const { items: contracts, truncated } = paginateContracts(contractsRaw, CONTRACT_CARD_LIMIT);
 
   // „Спрямо типичното" baselines for card groups outside the top-N stats (bounded: distinct groups
   // on one card page, plus the selected group so its filter chip can carry a name).
@@ -90,7 +106,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const missing = [...new Set(missingRaw)];
   const medians = await getCpvGroupMedians(db, missing);
 
-  return { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians };
+  return {
+    angle,
+    step,
+    sort,
+    cpvSort,
+    year,
+    cpvSel,
+    cur,
+    trend,
+    stats,
+    contracts,
+    truncated,
+    medians,
+  };
 }
 
 // ── Presentational helpers ────────────────────────────────────────────────────────────────────────
@@ -194,8 +223,20 @@ function DistAxis({ gMax }: { gMax: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────────
 
 export default function Trends({ loaderData }: Route.ComponentProps) {
-  const { angle, step, sort, cpvSort, year, cpvSel, cur, trend, stats, contracts, medians } =
-    loaderData;
+  const {
+    angle,
+    step,
+    sort,
+    cpvSort,
+    year,
+    cpvSel,
+    cur,
+    trend,
+    stats,
+    contracts,
+    truncated,
+    medians,
+  } = loaderData;
   const [sp] = useSearchParams();
   const navigating = useNavigation().state !== 'idle';
 
@@ -560,7 +601,7 @@ export default function Trends({ loaderData }: Route.ComponentProps) {
               </h2>
               <p className="ov-panel-hint">
                 {count(contracts.length)} {plural(contracts.length, 'договор', 'договора')}
-                {contracts.length === 24 ? ' (показани първите 24)' : ''} · {scopeText}
+                {truncated ? ' (показани първите 24)' : ''} · {scopeText}
               </p>
             </div>
             <div className="ov-panel-tools">
