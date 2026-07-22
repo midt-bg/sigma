@@ -379,7 +379,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                   label: 'СРЕДЕН РЪСТ',
                   accent: true,
                   summary: 'Типичният годишен ръст на разходите за последните 3 пълни години.',
-                  hint: 'Същата стойност като на страницата „Тренд".',
+                  hint: 'Изчислено от същите месечни данни като на страницата „Тренд" — там стойността не се показва (без прогноза за бъдещето).',
                 },
                 {
                   value: formatPeakMonth(trend.peakPeriod),
