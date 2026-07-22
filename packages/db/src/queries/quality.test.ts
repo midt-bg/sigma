@@ -149,13 +149,22 @@ INSERT INTO funding_quality_totals VALUES
  * list early), comments stripped, table-level constraints (PRIMARY/FOREIGN/UNIQUE/CHECK/CONSTRAINT)
  * excluded. Used by the schema-drift guard below to compare QUALITY_DDL against the real DDL in
  * scripts/derive-contract-features.sql without executing either.
+ *
+ * Staging-swap aware: if `table` is never CREATEd directly but is the target of an
+ * `ALTER TABLE <x> RENAME TO <table>` (the atomic staging-swap pattern derive-contract-features.sql
+ * uses for contract_features — build under `<table>_next`, then swap), the columns are read from
+ * the CREATE TABLE for `<x>` instead, since that's the DDL that actually defines the schema.
  */
 function extractTableColumns(sql: string, table: string): string[] {
   const noComments = sql.replace(/--[^\n]*/g, '');
-  const start = noComments.search(
-    new RegExp(`CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?${table}\\s*\\(`, 'i'),
+  const renameMatch = noComments.match(
+    new RegExp(`ALTER TABLE\\s+(\\S+)\\s+RENAME TO\\s+${table}\\b`, 'i'),
   );
-  if (start === -1) throw new Error(`CREATE TABLE ${table} not found`);
+  const createName = renameMatch ? renameMatch[1] : table;
+  const start = noComments.search(
+    new RegExp(`CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?${createName}\\s*\\(`, 'i'),
+  );
+  if (start === -1) throw new Error(`CREATE TABLE ${createName} not found`);
   const openParen = noComments.indexOf('(', start);
   let depth = 0;
   let end = openParen;
