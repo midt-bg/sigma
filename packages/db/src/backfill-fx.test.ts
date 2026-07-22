@@ -42,10 +42,14 @@ interface Contract {
   ccy: string;
   estimate?: number;
   estCcy?: string;
+  current?: number;
 }
 
 // One tender + one contract per row; SUSP/REV exercise the flag re-classification the bug window
 // got wrong, ANNEX exercises the amendments/current_value path, CHF stays unpricable end to end.
+// The BGN-REV/BGN-SUSP/ANNEXSUSP trio is the FLAG-ONLY damage class: the contract's own EUR
+// columns derive fine (peg / covered rate), but the TENDER estimate's currency was uncovered, so
+// the value_suspect/review branches mis-resolved — invisible to the amount_eur damage predicate.
 const CORPUS: Contract[] = [
   { unp: 'UNP-OK', num: 'C-USD-OK', value: 100000, ccy: 'USD' },
   { unp: 'UNP-BGN', num: 'C-BGN', value: 1000, ccy: 'BGN' },
@@ -60,7 +64,37 @@ const CORPUS: Contract[] = [
   },
   { unp: 'UNP-REV', num: 'C-USD-REV', value: 60000, ccy: 'USD', estimate: 5000, estCcy: 'EUR' },
   { unp: 'UNP-CHF', num: 'C-CHF-UNPRICED', value: 5000, ccy: 'CHF' },
-  { unp: 'UNP-ANNEX', num: 'C-USD-ANNEX', value: 10000, ccy: 'USD' },
+  { unp: 'UNP-ANNEX', num: 'C-USD-ANNEX', value: 10000, ccy: 'USD', current: 12000 },
+  // BGN contract, USD estimate: eff 51,129 € ≥ 10 × 1,800 € → truth 'review', window 'ok'.
+  {
+    unp: 'UNP-BGN-REV',
+    num: 'C-BGN-REV',
+    value: 100000,
+    ccy: 'BGN',
+    estimate: 2000,
+    estCcy: 'USD',
+  },
+  // BGN contract, USD estimate: eff 511,292 € > 200 × 1,800 € → truth value_suspect (amount
+  // repaired to the estimate), window 'ok' — with amount_eur populated all along.
+  {
+    unp: 'UNP-BGN-SUSP',
+    num: 'C-BGN-SUSP',
+    value: 1000000,
+    ccy: 'BGN',
+    estimate: 2000,
+    estCcy: 'USD',
+  },
+  // USD contract ballooned by annex (1,000 → 500,000): truth value_suspect (current-based eff
+  // 450,000 € > 200 × est), window annex_suspect — eff must be current-based, not amount-based.
+  {
+    unp: 'UNP-ANXS',
+    num: 'C-USD-ANNEXSUSP',
+    value: 1000,
+    ccy: 'USD',
+    estimate: 2000,
+    estCcy: 'USD',
+    current: 500000,
+  },
 ];
 
 function seedCorpus(db: DatabaseSync): void {
@@ -88,17 +122,30 @@ function seedCorpus(db: DatabaseSync): void {
                'public', ?, ?, ?, ?, 'Backfill contract', '987654321', 'Bidder BF', 'BG', 3)`,
     ).run(FETCHED_AT, `DOC-${c.num}`, c.unp, `T-${c.unp}`, c.num, SIGNED, c.value, c.ccy);
   }
-  // Annex on C-USD-ANNEX: current_value moves 10000 → 12000 in USD.
-  db.prepare(
-    `INSERT INTO raw_amendments
-      (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
-       contract_number, contract_date, published_at, unp, authority_eik, authority_name,
-       procurement_subject, contract_kind, value_before, value_after, value_delta, currency,
-       description)
-     VALUES ('eop:annexes:2026-06-01', 2026, 'eop', ?, '1', 'AMD-ANNEX-1', 'C-USD-ANNEX', ?,
-             '2026-06-01', 'UNP-ANNEX', '123456789', 'Authority BF', 'Backfill tender', 'works',
-             10000, 12000, 2000, 'USD', 'Increase')`,
-  ).run(FETCHED_AT, SIGNED);
+  // Annexes: current_value moves value → current for every row that declares one.
+  for (const c of CORPUS) {
+    if (c.current === undefined) continue;
+    db.prepare(
+      `INSERT INTO raw_amendments
+        (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+         contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+         procurement_subject, contract_kind, value_before, value_after, value_delta, currency,
+         description)
+       VALUES ('eop:annexes:2026-06-01', 2026, 'eop', ?, '1', ?, ?, ?,
+               '2026-06-01', ?, '123456789', 'Authority BF', 'Backfill tender', 'works',
+               ?, ?, ?, ?, 'Increase')`,
+    ).run(
+      FETCHED_AT,
+      `AMD-${c.num}-1`,
+      c.num,
+      SIGNED,
+      c.unp,
+      c.value,
+      c.current,
+      c.current - c.value,
+      c.ccy,
+    );
+  }
 }
 
 function insertUsdRates(db: DatabaseSync): void {
@@ -196,16 +243,26 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
         "SELECT contract_number, value_flag, amount_eur FROM contracts WHERE currency NOT IN ('BGN','EUR') ORDER BY contract_number",
       )
       .all() as { contract_number: string; value_flag: string; amount_eur: number | null }[];
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     for (const r of rows) {
       expect(r.amount_eur).toBeNull();
-      // The dangerous part: even the 300x-estimate contract classified 'ok' with no rate to price it.
-      expect(r.value_flag).toBe('ok');
+      // The dangerous part: even the 300x-estimate contract classified 'ok' with no rate to
+      // price it (the ballooned-annex row fell one branch further, to annex_suspect).
+      expect(r.value_flag).toBe(r.contract_number === 'C-USD-ANNEXSUSP' ? 'annex_suspect' : 'ok');
     }
     const bgn = db
       .prepare("SELECT amount_eur FROM contracts WHERE contract_number = 'C-BGN'")
       .get() as { amount_eur: number };
     expect(bgn.amount_eur).toBeCloseTo(1000 / PEG, 6);
+    // The flag-only damage class: BGN contracts with a USD estimate price fine via the peg but
+    // mis-classify as 'ok' — invisible to any amount_eur-based predicate.
+    for (const num of ['C-BGN-REV', 'C-BGN-SUSP']) {
+      const r = db
+        .prepare('SELECT value_flag, amount_eur FROM contracts WHERE contract_number = ?')
+        .get(num) as { value_flag: string; amount_eur: number | null };
+      expect(r.value_flag).toBe('ok');
+      expect(r.amount_eur).not.toBeNull();
+    }
   });
 
   it('ground truth: the same corpus derived with rates prices and flags correctly', () => {
@@ -223,6 +280,13 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
     expect(flag('C-USD-REV')).toEqual({ value_flag: 'review', amount_eur: 60000 * USD_RATE });
     expect(flag('C-USD-ANNEX').amount_eur).toBeCloseTo(12000 * USD_RATE, 6);
     expect(flag('C-CHF-UNPRICED').amount_eur).toBeNull();
+    // Flag-only class, priced correctly all along but classified via the USD estimate:
+    expect(flag('C-BGN-REV').value_flag).toBe('review');
+    expect(flag('C-BGN-REV').amount_eur).toBeCloseTo(100000 / PEG, 4);
+    expect(flag('C-BGN-SUSP').value_flag).toBe('value_suspect');
+    expect(flag('C-BGN-SUSP').amount_eur).toBeCloseTo(2000 * USD_RATE, 6);
+    expect(flag('C-USD-ANNEXSUSP').value_flag).toBe('value_suspect');
+    expect(flag('C-USD-ANNEXSUSP').amount_eur).toBeCloseTo(2000 * USD_RATE, 6);
   });
 });
 
@@ -230,8 +294,12 @@ describe('backfillFx', () => {
   it('reports the damage before repairing', () => {
     const db = damagedDb();
     const report = reportFxDamage(runnerFor(db));
-    expect(report.total).toBe(5);
-    expect(report.byCurrency).toEqual({ CHF: 1, USD: 4 });
+    expect(report.total).toBe(6);
+    expect(report.byCurrency).toEqual({ CHF: 1, USD: 5 });
+    // The three flag-only candidates (USD tender estimates, no rate loaded) are unverifiable
+    // offline — surfaced instead of silently ignored.
+    expect(report.flagUnverified).toBe(3);
+    expect(report.interrupted).toBe(false);
   });
 
   it('EQUIVALENCE: backfilled damaged DB matches the with-rates derive on every surface', async () => {
@@ -239,7 +307,8 @@ describe('backfillFx', () => {
     const db = damagedDb();
 
     const summary = await backfill(db);
-    expect(summary.repaired).toBe(4);
+    expect(summary.repaired).toBe(5);
+    expect(summary.reflagged).toBe(3);
     expect(summary.remaining.map((r) => r.currency)).toEqual(['CHF']);
 
     for (const [table, sql] of Object.entries(ROLLUP_QUERIES)) {
@@ -350,20 +419,12 @@ describe('backfillFx', () => {
     expect(reportFxDamage(runnerFor(db)).interrupted).toBe(false);
   });
 
-  it('leaves BGN/EUR rows and their rollup contributions untouched', async () => {
+  it('leaves flag-clean BGN/EUR rows and their rollup contributions untouched', async () => {
     const db = damagedDb();
-    const before = db
-      .prepare(
-        "SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1",
-      )
-      .all();
+    const sql =
+      "SELECT contract_number, amount_eur, value_flag FROM contracts WHERE contract_number IN ('C-BGN','C-EUR') ORDER BY 1";
+    const before = db.prepare(sql).all();
     await backfill(db);
-    expect(
-      db
-        .prepare(
-          "SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1",
-        )
-        .all(),
-    ).toEqual(before);
+    expect(db.prepare(sql).all()).toEqual(before);
   });
 });

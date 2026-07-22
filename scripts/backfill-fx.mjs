@@ -25,7 +25,10 @@ import {
   isIsoDate,
   parseFxSeries,
 } from '../packages/ingest/src/fx.ts';
-import { refreshSliceStatementGroups } from '../packages/ingest/src/refresh.ts';
+import {
+  refreshSliceStatementGroups,
+  REFRESH_SLICE_ROLLUP_GROUPS,
+} from '../packages/ingest/src/refresh.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PEG = 1.95583;
@@ -59,19 +62,41 @@ const procEstEur = `(SELECT CASE
 
 const procEstNative = `(SELECT t.estimated_value FROM tenders t WHERE t.id = contracts.tender_id)`;
 
-const EFF = `(contracts.amount * contracts.fx_rate)`;
+// The derive's own effective value (COALESCE(current, signing) in EUR — refresh-slice.sql's
+// eff_eur), NOT amount × fx_rate: for annex_suspect rows the served amount is the signing-side
+// fallback while eff is current-based, and for BGN/EUR rows fx_rate is NULL.
+const EFF = `(CASE
+    WHEN COALESCE(NULLIF(contracts.currency, ''), 'BGN') = 'EUR'
+      THEN COALESCE(contracts.current_value, contracts.signing_value)
+    WHEN COALESCE(NULLIF(contracts.currency, ''), 'BGN') = 'BGN'
+      THEN COALESCE(contracts.current_value, contracts.signing_value) / ${PEG}
+    ELSE COALESCE(contracts.current_value, contracts.signing_value)
+      * ${rateAt('contracts.signed_at', `NULLIF(contracts.currency, '')`)}
+  END)`;
+
+// The fx-dependent part of the derive's value_flag CASE (same precedence: value_suspect wins over
+// any current flag, 'review' only upgrades 'ok' — the branches between them don't depend on FX
+// and are already encoded in the current flag). Used both to DETECT flag-only damage and to
+// repair it, so the two can never disagree.
+const NEW_FLAG = `CASE
+    WHEN ${EFF} > 2000000000 OR (${procEstEur} >= 1000 AND ${EFF} > 200 * ${procEstEur}) THEN 'value_suspect'
+    WHEN contracts.value_flag = 'ok' AND ${procEstEur} > 0 AND ${EFF} >= 10 * ${procEstEur} THEN 'review'
+    ELSE contracts.value_flag END`;
+
+// Flag-only damage: the value_flag CASE also depends on the TENDER estimate's currency — a BGN/EUR
+// (or priced foreign) contract whose tender estimate is foreign got its value_suspect/review
+// branches mis-resolved when that rate was missing, with amount_eur perfectly populated. Detected
+// by recomputing the flag with rates present and comparing.
+const FLAG_CANDIDATE = `contracts.value_flag <> 'value_suspect'
+  AND contracts.signed_at IS NOT NULL
+  AND (SELECT t.estimated_value IS NOT NULL
+         AND COALESCE(NULLIF(t.currency, ''), 'BGN') NOT IN ('BGN','EUR')
+       FROM tenders t WHERE t.id = contracts.tender_id)`;
 
 // Rollup batches to re-run after the repair — refresh-slice.sql's own statements, scoped by the
-// refresh_touched_* tables we fill from the repaired set. Order matters (file order).
-const ROLLUP_GROUPS = [
-  'company-totals',
-  'authority-totals',
-  'flow-pairs',
-  'entity-search-index',
-  'contract-search-index',
-  'globals',
-  'cleanup',
-];
+// refresh_touched_* tables we fill from the repaired set. Order matters (file order); the list
+// itself lives next to the parser (packages/ingest/src/refresh.ts) and is shared with import.mjs.
+const ROLLUP_GROUPS = REFRESH_SLICE_ROLLUP_GROUPS;
 
 /** Damaged rows in the served DB: foreign currency, NULL amount_eur, not value_suspect.
  *  `interrupted` — a prior repair/refresh committed its row updates but died before finishing the
@@ -89,22 +114,35 @@ export function reportFxDamage(runner) {
     runner.query(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'refresh_touched_contracts'`,
     ).length > 0;
-  return { total: rows.length, byCurrency, rows, interrupted };
+  // Flag candidates whose tender-estimate rate is missing: their value_flag cannot be verified
+  // offline — only counted here; --apply loads the rates and recomputes.
+  const flagUnverified = Number(
+    runner.query(
+      `SELECT COUNT(*) AS n FROM contracts
+       WHERE ${FLAG_CANDIDATE}
+         AND NOT EXISTS (
+           SELECT 1 FROM fx_rates f
+           WHERE f.base_currency = (SELECT NULLIF(t.currency, '') FROM tenders t WHERE t.id = contracts.tender_id)
+             AND f.rate_date <= contracts.signed_at
+             AND f.rate_date >= date(contracts.signed_at, '-${FX_LOOKBACK_DAYS} days')
+         )`,
+    )[0]?.n ?? 0,
+  );
+  return { total: rows.length, byCurrency, rows, interrupted, flagUnverified };
 }
 
-// Rate coverage gaps for the damage set: contract currencies plus foreign tender-estimate
-// currencies (needed for the value_suspect / review re-classification), per signing date.
+// Rate coverage gaps: contract currencies for the damage set, plus foreign tender-estimate
+// currencies for EVERY flag candidate (the value_suspect / review re-classification needs them
+// whatever the contract's own currency is), per signing date.
 function coverageGaps(runner) {
   return runner.query(
     `WITH needs (currency, d) AS (
        SELECT c.currency, c.signed_at FROM contracts c
        WHERE ${damage('c.')} AND c.signed_at IS NOT NULL
        UNION
-       SELECT NULLIF(t.currency, ''), c.signed_at
-       FROM contracts c JOIN tenders t ON t.id = c.tender_id
-       WHERE ${damage('c.')} AND c.signed_at IS NOT NULL
-         AND t.estimated_value IS NOT NULL
-         AND COALESCE(NULLIF(t.currency, ''), 'BGN') NOT IN ('BGN','EUR')
+       SELECT (SELECT NULLIF(t.currency, '') FROM tenders t WHERE t.id = contracts.tender_id),
+              contracts.signed_at
+       FROM contracts WHERE ${FLAG_CANDIDATE}
      )
      SELECT currency, MIN(d) AS min_date, MAX(d) AS max_date, COUNT(DISTINCT d) AS missing_dates
      FROM needs n
@@ -164,37 +202,20 @@ async function loadMissingRates(runner, { fetchFn, fetchedAt, api }) {
   return fetched;
 }
 
-export function repairSql() {
+// The row repair over an existing refresh_touched_contracts set. Idempotent over correctly
+// derived rows (recomputing with the same inputs converges), so a resumed run can safely re-apply
+// it to a leftover touched set.
+function repairRowsSql() {
   return [
-    // 1. Price the damaged rows at their signing-date rate (NULL when no usable rate exists).
-    `UPDATE contracts SET fx_rate = ${rateAt('contracts.signed_at', 'contracts.currency')}
-     WHERE ${DAMAGE} AND signed_at IS NOT NULL;`,
-
-    // 2. Capture the rows that can actually be repaired, and their entities, for the rollup
-    //    refresh — refresh-slice.sql's own touched-table mechanism (see its setup batch).
-    `DROP TABLE IF EXISTS refresh_touched_contracts;`,
-    `DROP TABLE IF EXISTS refresh_touched_bidders;`,
-    `DROP TABLE IF EXISTS refresh_touched_authorities;`,
-    `CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);`,
-    `CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);`,
-    `CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);`,
-    `INSERT INTO refresh_touched_contracts SELECT id FROM contracts WHERE ${DAMAGE} AND fx_rate IS NOT NULL;`,
-    `INSERT INTO refresh_touched_bidders SELECT DISTINCT bidder_id FROM contracts WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
-    `INSERT INTO refresh_touched_authorities SELECT DISTINCT t.authority_id FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.id IN (SELECT id FROM refresh_touched_contracts);`,
-
-    // 3. Re-resolve the fx-dependent value_flag branches the bug window could not evaluate —
-    //    keep in sync with the value_flag CASE in scripts/refresh-slice.sql. value_suspect wins
-    //    over any current flag (same precedence as the derive); 'review' only upgrades 'ok'.
-    //    The value_low 5%-of-estimate branch needs raw-staging columns that do not survive to the
-    //    served rows — label-only residual, counted identically in every sum (ADR-0008).
-    `UPDATE contracts SET value_flag = (CASE
-       WHEN ${EFF} > 2000000000 OR (${procEstEur} >= 1000 AND ${EFF} > 200 * ${procEstEur}) THEN 'value_suspect'
-       WHEN value_flag = 'ok' AND ${procEstEur} > 0 AND ${EFF} >= 10 * ${procEstEur} THEN 'review'
-       ELSE value_flag END)
+    // Re-resolve the fx-dependent value_flag branches the bug window could not evaluate —
+    // NEW_FLAG mirrors the value_flag CASE in scripts/refresh-slice.sql. The value_low
+    // 5%-of-estimate branch needs raw-staging columns that do not survive to the served rows —
+    // label-only residual, counted identically in every sum (ADR-0008).
+    `UPDATE contracts SET value_flag = (${NEW_FLAG})
      WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
 
-    // 4. Rows re-classified value_suspect: repaired from the procedure estimate, exactly like the
-    //    derive (amount := proc_est_native, amount_eur := proc_est_eur, timeline columns NULL).
+    // Rows classified value_suspect: repaired from the procedure estimate, exactly like the
+    // derive (amount := proc_est_native, amount_eur := proc_est_eur, timeline columns NULL).
     `UPDATE contracts SET
        amount = COALESCE(${procEstNative}, amount),
        amount_eur = ${procEstEur},
@@ -202,14 +223,43 @@ export function repairSql() {
        current_value_eur = NULL
      WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag = 'value_suspect';`,
 
-    // 5. Everything else: the stored amount is already the flag-consistent native value
-    //    (display_native), so amount × fx_rate is the derive's own identity (see the contracts
-    //    schema comment on fx_rate). annex_suspect keeps current_value_eur suppressed.
+    // Remaining FOREIGN rows: the stored amount is already the flag-consistent native value
+    // (display_native), so amount × fx_rate is the derive's own identity (see the contracts
+    // schema comment on fx_rate). annex_suspect keeps current_value_eur suppressed. BGN/EUR
+    // rows in the touched set were flag-only repairs — their EUR columns are already correct
+    // and fx_rate is NULL, so they must never take this arithmetic.
     `UPDATE contracts SET
        amount_eur = amount * fx_rate,
        signing_value_eur = CASE WHEN signing_value IS NULL THEN NULL ELSE signing_value * fx_rate END,
        current_value_eur = CASE WHEN value_flag = 'annex_suspect' OR current_value IS NULL THEN NULL ELSE current_value * fx_rate END
-     WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag <> 'value_suspect';`,
+     WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag <> 'value_suspect'
+       AND COALESCE(NULLIF(currency, ''), 'BGN') NOT IN ('BGN','EUR');`,
+  ].join('\n');
+}
+
+export function repairSql() {
+  return [
+    // 1. Price the damaged rows at their signing-date rate (NULL when no usable rate exists).
+    `UPDATE contracts SET fx_rate = ${rateAt('contracts.signed_at', 'contracts.currency')}
+     WHERE ${DAMAGE} AND signed_at IS NOT NULL;`,
+
+    // 2. Capture every row that can actually be repaired — the priced damage set AND the
+    //    flag-only candidates whose recomputed flag differs — plus their entities, for the
+    //    rollup refresh (refresh-slice.sql's own touched-table mechanism, see its setup batch).
+    `DROP TABLE IF EXISTS refresh_touched_contracts;`,
+    `DROP TABLE IF EXISTS refresh_touched_bidders;`,
+    `DROP TABLE IF EXISTS refresh_touched_authorities;`,
+    `CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);`,
+    `CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);`,
+    `CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);`,
+    `INSERT INTO refresh_touched_contracts SELECT id FROM contracts WHERE ${DAMAGE} AND fx_rate IS NOT NULL;`,
+    `INSERT OR IGNORE INTO refresh_touched_contracts
+       SELECT id FROM contracts WHERE ${FLAG_CANDIDATE} AND (${NEW_FLAG}) <> contracts.value_flag;`,
+    `INSERT INTO refresh_touched_bidders SELECT DISTINCT bidder_id FROM contracts WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
+    `INSERT INTO refresh_touched_authorities SELECT DISTINCT t.authority_id FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.id IN (SELECT id FROM refresh_touched_contracts);`,
+
+    // 3–5. The row repair itself (also runs standalone when resuming an interrupted run).
+    repairRowsSql(),
   ].join('\n');
 }
 
@@ -232,19 +282,28 @@ export async function backfillFx(runner, { fetchFn = fetch, fetchedAt, refreshSl
   const before = reportFxDamage(runner);
   let healed = false;
   if (before.interrupted) {
-    runner.exec(rollupSql); // scoped by the leftover touched tables; its cleanup drops them
+    // Scoped by the leftover touched tables. Re-applying the row repair too makes a partial
+    // failure INSIDE the interrupted run's repair (not just between repair and rollups)
+    // converge on retry; its cleanup drops the tables.
+    runner.exec(`${repairRowsSql()}\n${rollupSql}`);
     healed = true;
   }
-  if (before.total === 0) {
-    return { repaired: 0, remaining: [], fetched: [], healed, before };
+  if (before.total === 0 && before.flagUnverified === 0) {
+    return { repaired: 0, reflagged: 0, remaining: [], fetched: [], healed, before };
   }
 
   const fetched = await loadMissingRates(runner, { fetchFn, fetchedAt, api });
+  const reflagged = Number(
+    runner.query(
+      `SELECT COUNT(*) AS n FROM contracts WHERE ${FLAG_CANDIDATE} AND (${NEW_FLAG}) <> contracts.value_flag`,
+    )[0]?.n ?? 0,
+  );
   runner.exec(`${repairSql()}\n${rollupSql}`);
 
   const after = reportFxDamage(runner);
   return {
     repaired: before.total - after.total,
+    reflagged,
     remaining: after.rows.map((r) => ({
       id: r.id,
       contract_number: r.contract_number,
@@ -300,8 +359,10 @@ function cliRunner() {
     const file = resolve(outDir, 'fx-backfill.sql');
     writeFileSync(file, `${sql}\n`);
     if (workDb) {
+      // One transaction per exec: -bail aborts on the first error and the process exit rolls the
+      // open transaction back, so a failed repair leaves the file exactly as it was.
       execFileSync('sqlite3', ['-bail', String(workDb)], {
-        input: readFileSync(file),
+        input: `BEGIN;\n${readFileSync(file, 'utf8')}\nCOMMIT;\n`,
         stdio: ['pipe', 'inherit', 'inherit'],
       });
     } else {
@@ -330,21 +391,27 @@ async function main() {
     );
   }
   if (report.rows.length > 10) console.log(`  … ${report.rows.length - 10} more`);
+  if (report.flagUnverified > 0) {
+    console.log(
+      `value_flag unverifiable offline (foreign tender-estimate currency without a loaded rate): ${report.flagUnverified}`,
+    );
+  }
   if (report.interrupted) {
     console.warn(
       'leftover refresh_touched_* tables: an earlier refresh/repair died before its rollup refresh — rollups may be stale.',
     );
   }
 
+  const dirty = report.total > 0 || report.flagUnverified > 0 || report.interrupted;
   if (!process.argv.includes('--apply')) {
-    if (report.total > 0 || report.interrupted) {
+    if (dirty) {
       console.log('\nrun with --apply to repair (rates + EUR columns + flags + rollups).');
       process.exit(1);
     }
     console.log('clean — nothing to do.');
     return;
   }
-  if (report.total === 0 && !report.interrupted) {
+  if (!dirty) {
     console.log('clean — nothing to do.');
     return;
   }
@@ -354,7 +421,7 @@ async function main() {
     fetchedAt: new Date().toISOString(),
     refreshSliceSql,
   });
-  console.log(`\nrepaired: ${summary.repaired}`);
+  console.log(`\nrepaired: ${summary.repaired}, reflagged: ${summary.reflagged}`);
   if (summary.healed) console.log('healed the interrupted run’s stale rollups.');
   for (const f of summary.fetched) {
     console.log(

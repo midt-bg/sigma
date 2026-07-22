@@ -18,6 +18,7 @@ import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.
 import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
+  REFRESH_SLICE_ROLLUP_GROUPS,
 } from '../packages/ingest/src/refresh.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
@@ -249,16 +250,21 @@ async function runSliceDerive() {
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
-  runRefreshSliceBatches();
-  // Same FX gate as the full derive (#158): a slice must never leave silent NULL amount_eur.
+  // Same FX gate as the full derive (#158), at the same point: after the rows are derived and
+  // BEFORE any rollup is written — a gate after the rollups would fire loudly but leave the
+  // corrupted totals already served (mirrors assertFxPopulated's slot before precompute.sql).
+  runRefreshSliceBatches((g) => !REFRESH_SLICE_ROLLUP_GROUPS.includes(g.name));
   assertFxPopulated();
+  runRefreshSliceBatches((g) => REFRESH_SLICE_ROLLUP_GROUPS.includes(g.name));
   await assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
-function runRefreshSliceBatches() {
+function runRefreshSliceBatches(include = () => true) {
   const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
-  const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8'));
+  const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8')).filter(
+    include,
+  );
   const batchDirParent = resolve(root, 'data/work');
   mkdirSync(batchDirParent, { recursive: true });
   const batchDir = mkdtempSync(resolve(batchDirParent, 'refresh-slice-'));

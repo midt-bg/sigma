@@ -16,6 +16,9 @@ export interface FxDamageReport {
   rows: Array<Record<string, unknown>>;
   /** leftover refresh_touched_* tables: a prior repair/refresh died before its rollup refresh */
   interrupted: boolean;
+  /** rows whose value_flag depends on a foreign tender-estimate rate that is not loaded — the
+   *  flag cannot be verified offline; --apply loads the rates and recomputes */
+  flagUnverified: number;
 }
 
 export interface FxFetchOutcome {
@@ -30,6 +33,8 @@ export interface FxFetchOutcome {
 
 export interface FxBackfillSummary {
   repaired: number;
+  /** flag-only repairs: rows whose recomputed value_flag differed (any contract currency) */
+  reflagged: number;
   /** rows still unpriced after the repair (no usable ECB rate) */
   remaining: Array<{
     id: unknown;

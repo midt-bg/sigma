@@ -49,6 +49,20 @@ export interface RefreshSliceStatementGroup {
   statements: string[];
 }
 
+/** refresh-slice.sql's rollup groups (file order, contiguous tail of the file): everything that
+ *  aggregates the served rows. Callers that must gate between "rows derived" and "rollups written"
+ *  (the FX gate in scripts/import.mjs, #158) or re-run only the rollups over a touched set
+ *  (scripts/backfill-fx.mjs) split on this list. */
+export const REFRESH_SLICE_ROLLUP_GROUPS = [
+  'company-totals',
+  'authority-totals',
+  'flow-pairs',
+  'entity-search-index',
+  'contract-search-index',
+  'globals',
+  'cleanup',
+] as const;
+
 const REFRESH_BATCH_MARKER = /^--\s*@refresh-batch\s+([a-z0-9][a-z0-9-]*)\s*$/i;
 
 /**
