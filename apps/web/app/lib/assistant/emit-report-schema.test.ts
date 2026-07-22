@@ -156,6 +156,29 @@ describe('validateEmitShape', () => {
     ).toBe(false);
   });
 
+  it('stops at the cap error instead of scanning the oversized array (review follow-up)', () => {
+    // Every over-cap block is ALSO individually invalid ({} has no type). Pre-fix, the per-block loop
+    // still ran and pushed 101 per-block errors; now the cap short-circuits, so exactly the one cap error
+    // is reported and the oversized structure is never walked.
+    const out = validateEmitShape({
+      title: 't',
+      question: '',
+      blocks: Array.from({ length: 101 }, () => ({})),
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors).toEqual(['blocks: at most 100']);
+
+    // Same for an over-cap items array: the per-item scan is skipped, so only the cap error surfaces
+    // (each item here is also invalid — missing label/ref/format — but none of them get walked).
+    const items = validateEmitShape({
+      title: 't',
+      question: '',
+      blocks: [{ type: 'totals', items: Array.from({ length: 51 }, () => ({})) }],
+    });
+    expect(items.ok).toBe(false);
+    if (!items.ok) expect(items.errors.some((e) => /items\[\d+\]/.test(e))).toBe(false);
+  });
+
   it('rejects a non-integer ref row (review #80)', () => {
     const out = validateEmitShape({
       title: 't',

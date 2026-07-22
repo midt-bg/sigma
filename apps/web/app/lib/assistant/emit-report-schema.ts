@@ -65,7 +65,13 @@ export function validateEmitShape(input: unknown): ShapeResult {
     errors.push('blocks must be an array');
     return { ok: false, errors };
   }
-  if (input.blocks.length > MAX_BLOCKS) errors.push(`blocks: at most ${MAX_BLOCKS}`);
+  // Return before the per-block scan: an over-cap array is exactly the unbounded structure the ceiling
+  // guards against, so validating it any further would do the scanning we mean to refuse (as for the
+  // `!Array.isArray` guard above — review follow-up).
+  if (input.blocks.length > MAX_BLOCKS) {
+    errors.push(`blocks: at most ${MAX_BLOCKS}`);
+    return { ok: false, errors };
+  }
 
   input.blocks.forEach((b, i) => {
     const at = `block[${i}]`;
@@ -87,7 +93,9 @@ export function validateEmitShape(input: unknown): ShapeResult {
       case 'totals':
         need(Array.isArray(b.items), 'items must be an array');
         need(!Array.isArray(b.items) || b.items.length <= MAX_ITEMS, `at most ${MAX_ITEMS} items`);
-        if (Array.isArray(b.items))
+        // Skip the per-item scan when over-cap — the length error is already recorded and scanning the
+        // oversized array is the work the ceiling exists to refuse (review follow-up).
+        if (Array.isArray(b.items) && b.items.length <= MAX_ITEMS)
           b.items.forEach((it, j) =>
             need(
               isObj(it) && isStr(it.label) && isCellRef(it.ref) && isFormat(it.format),
@@ -98,7 +106,7 @@ export function validateEmitShape(input: unknown): ShapeResult {
       case 'facts':
         need(Array.isArray(b.items), 'items must be an array');
         need(!Array.isArray(b.items) || b.items.length <= MAX_ITEMS, `at most ${MAX_ITEMS} items`);
-        if (Array.isArray(b.items))
+        if (Array.isArray(b.items) && b.items.length <= MAX_ITEMS)
           b.items.forEach((it, j) =>
             need(isObj(it) && isStr(it.term) && isCellRef(it.ref), `items[${j}] needs {term, ref}`),
           );
@@ -110,7 +118,7 @@ export function validateEmitShape(input: unknown): ShapeResult {
           !Array.isArray(b.columns) || b.columns.length <= MAX_COLUMNS,
           `at most ${MAX_COLUMNS} columns`,
         );
-        if (Array.isArray(b.columns))
+        if (Array.isArray(b.columns) && b.columns.length <= MAX_COLUMNS)
           b.columns.forEach((c, j) =>
             need(
               isObj(c) &&
