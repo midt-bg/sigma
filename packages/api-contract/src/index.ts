@@ -434,7 +434,36 @@ export interface NetworkData {
   } | null;
   nodes: NetworkNode[];
   edges: NetworkEdge[];
+  // Total direct counterparties the centre actually has in flow_pairs. The graph only draws the top
+  // `HOP1` of these (readability cap), so the UI labels „top N of M" instead of silently truncating.
+  // The exhaustive, paginated list lives in NetworkCounterpartyPage (the /network relations table).
+  // `null` means the COUNT itself failed/returned no row — a real "unknown", never fabricated as a
+  // small number (e.g. the HOP1 draw cap), so it must stay visually distinct from a valid total.
+  counterpartyTotal: number | null;
   centerOptions: { authorities: NetworkCenterOption[]; companies: NetworkCenterOption[] };
+}
+
+// One direct counterparty of the centre (a single flow_pairs row), for the exhaustive paginated
+// relations table on /network. Always normalised to (authority → company) regardless of centre kind.
+export interface NetworkCounterparty {
+  authorityLabel: string;
+  authoritySlug: string;
+  companyLabel: string;
+  companySlug: string;
+  valueEur: number;
+  contracts: number;
+}
+
+// A keyset page of the centre's direct counterparties, sorted by award value desc. Unlike the graph
+// (capped at HOP1), this is the full set — paginated so the hundreds of counterparties a big hub has
+// are all reachable.
+export interface NetworkCounterpartyPage {
+  rows: NetworkCounterparty[];
+  // `null` means the COUNT itself failed/returned no row — kept as "unknown" for the same reason as
+  // NetworkData.counterpartyTotal above: never fabricate a small number (e.g. 0) on a COUNT failure.
+  total: number | null;
+  nextCursor: string | null;
+  prevCursor: string | null;
 }
 
 // ── Trend (spending over time) ──────────────────────────────────────────────────────────────────

@@ -1,18 +1,17 @@
-import { Form, Link, useNavigation, useSubmit } from 'react-router';
-import { count, money } from '@sigma/shared';
-import {
-  authorityIdFromSlug,
-  bidderIdFromSlug,
-  getEntityNetwork,
-  type NetworkParams,
-} from '@sigma/db';
+import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
+import { count } from '@sigma/shared';
+import { getEntityCounterparties, getEntityNetwork } from '@sigma/db';
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { DataTable, type Column } from '../components/DataTable';
+import { DataTable } from '../components/DataTable';
+import { Pagination } from '../components/Pagination';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { PAGE_SIZE, pageNav } from '../lib/filters';
+import { centerToken, countDirectEdges, parseCenter } from '../lib/network-center';
+import { counterpartyRows, networkColumns } from '../lib/entity-tables';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -29,75 +28,54 @@ export function headers() {
   return { 'Cache-Control': publicCache(1800) };
 }
 
-// ?center=a:<eik> | c:<slug>; null falls back to the biggest authority in the query layer.
-function parseCenter(token: string | null): NetworkParams | null {
-  if (!token) return null;
-  const i = token.indexOf(':');
-  if (i < 1) return null;
-  const kind = token.slice(0, i);
-  const slug = token.slice(i + 1);
-  if (kind === 'a' && slug) return { kind: 'authority', id: authorityIdFromSlug(slug) };
-  if (kind === 'c' && slug) {
-    const id = bidderIdFromSlug(slug);
-    return id ? { kind: 'company', id } : null;
-  }
-  return null;
-}
-
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const center = parseCenter(new URL(request.url).searchParams.get('center'));
-  const data = await getEntityNetwork(context.cloudflare.env.DB, center);
+  const sp = new URL(request.url).searchParams;
+  const center = parseCenter(sp.get('center'));
+  const db = context.cloudflare.env.DB;
+  // `g=1` marks a client re-centre fetch (NetworkGraph.recentre): it consumes only the graph data, so
+  // skip the centre-picker options (unchanged) and the counterparties page (the address bar — and the
+  // table — don't change on re-centre). Avoids paying for queries the result throws away.
+  const graphOnly = sp.get('g') === '1';
+  const data = await getEntityNetwork(db, center, { includeCenterOptions: !graphOnly });
   // A well-formed but non-existent ?center should 404 like the other entity pages, not render an
   // empty 200 that then gets edge-cached. A missing or malformed ?center keeps the default centre.
   if (center && !data.center) {
     throw new Response('Not Found', { status: 404 });
   }
-  return { data };
-}
-
-interface LinkRow {
-  from: string;
-  to: string;
-  valueEur: number;
-  contracts: number;
+  // Exhaustive, paginated counterparty list for the resolved centre (`data.center` is the effective
+  // centre — the default hub when ?center is absent). The graph caps at the top few; this is the full
+  // set, so a big hub's hundreds of counterparties are all reachable below the graph.
+  const counterparties =
+    !graphOnly && data.center
+      ? await getEntityCounterparties(
+          db,
+          { kind: data.center.kind, id: data.center.id },
+          // Reuse the count getEntityNetwork already computed — no second identical COUNT(*) on /network.
+          { cursor: sp.get('cursor'), pageSize: PAGE_SIZE.network, total: data.counterpartyTotal },
+        )
+      : null;
+  return { data, counterparties };
 }
 
 export default function Network({ loaderData }: Route.ComponentProps) {
-  const { data } = loaderData;
+  const { data, counterparties } = loaderData;
+  const [sp] = useSearchParams();
   const submit = useSubmit();
   const navigating = useNavigation().state !== 'idle';
-  const centerValue = data.center
-    ? `${data.center.kind === 'authority' ? 'a' : 'c'}:${data.center.slug}`
-    : '';
-
-  const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
-  // Normalise each row to the real procurement direction (authority -> company), regardless of how the
-  // edge is oriented in the graph topology: the institution awards and pays the company, never the
-  // reverse. Every edge connects one authority and one company.
-  const rows: LinkRow[] = data.edges.map((e) => {
-    const a = nodeById.get(e.from);
-    const b = nodeById.get(e.to);
-    const authority = a?.kind === 'authority' ? a : b;
-    const company = a?.kind === 'authority' ? b : a;
-    return {
-      from: authority?.label ?? e.from,
-      to: company?.label ?? e.to,
-      valueEur: e.valueEur,
-      contracts: e.contracts,
-    };
-  });
-  const columns: Column<LinkRow>[] = [
-    { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-    { key: 'to', header: 'Към', cell: (r) => r.to },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
-    {
-      key: 'contracts',
-      header: 'Договори',
-      align: 'num',
-      secondary: true,
-      cell: (r) => count(r.contracts),
-    },
-  ];
+  const centerValue = data.center ? centerToken(data.center) : '';
+  // `total === null` means the COUNT itself failed ("unknown"), same convention as
+  // NetworkGraph's counterpartyTotal — never fabricate a page count off a failed COUNT. pageNav
+  // handles a null total by gating Next on the cursor alone instead of a fabricated page bound.
+  const cpTotal = counterparties ? counterparties.total : null;
+  const cpNav = counterparties
+    ? pageNav({
+        base: sp,
+        total: cpTotal,
+        pageSize: PAGE_SIZE.network,
+        nextCursor: counterparties.nextCursor,
+        prevCursor: counterparties.prevCursor,
+      })
+    : null;
 
   return (
     <>
@@ -155,14 +133,36 @@ export default function Network({ loaderData }: Route.ComponentProps) {
               <NetworkGraph data={data} />
             </Section>
 
-            <Section id="links" title="Връзки в графа">
-              <DataTable
-                columns={columns}
-                rows={rows}
-                getKey={(r) => `${r.from}-${r.to}`}
-                caption="Връзки в графа"
-              />
-            </Section>
+            {counterparties && counterparties.rows.length > 0 && (
+              <Section
+                id="links"
+                title={cpTotal === null ? 'Всички връзки' : `Всички връзки (${count(cpTotal)})`}
+                hint={
+                  cpTotal === null
+                    ? 'Пълният списък с връзките на избраната същност (общият им брой не е наличен в момента).'
+                    : cpTotal > countDirectEdges(data.edges, data.center?.id)
+                      ? `Графиката показва само най-големите по стойност; тук е пълният списък с ${count(
+                          cpTotal,
+                        )} връзки, по страници.`
+                      : 'Пълният списък с връзките на избраната същност.'
+                }
+              >
+                <DataTable
+                  columns={networkColumns}
+                  rows={counterpartyRows(counterparties)}
+                  // Key on the slug hrefs, not the display labels — two different entities can share a
+                  // de-branded name and would otherwise collide (React key warning).
+                  getKey={(r) => `${r.fromHref}-${r.toHref}`}
+                  caption="Всички връзки"
+                />
+                {cpNav &&
+                  (cpNav.pageCount === null
+                    ? Boolean(counterparties.nextCursor || counterparties.prevCursor)
+                    : cpNav.pageCount > 1) && (
+                    <Pagination nav={cpNav} pageSize={PAGE_SIZE.network} unit="връзки" />
+                  )}
+              </Section>
+            )}
           </>
         ) : (
           <Callout variant="warning" title="Няма достатъчно връзки">
