@@ -50,7 +50,14 @@ const CORPUS: Contract[] = [
   { unp: 'UNP-OK', num: 'C-USD-OK', value: 100000, ccy: 'USD' },
   { unp: 'UNP-BGN', num: 'C-BGN', value: 1000, ccy: 'BGN' },
   { unp: 'UNP-EUR', num: 'C-EUR', value: 2500, ccy: 'EUR' },
-  { unp: 'UNP-SUSP', num: 'C-USD-SUSP', value: 3000000, ccy: 'USD', estimate: 10000, estCcy: 'BGN' },
+  {
+    unp: 'UNP-SUSP',
+    num: 'C-USD-SUSP',
+    value: 3000000,
+    ccy: 'USD',
+    estimate: 10000,
+    estCcy: 'BGN',
+  },
   { unp: 'UNP-REV', num: 'C-USD-REV', value: 60000, ccy: 'USD', estimate: 5000, estCcy: 'EUR' },
   { unp: 'UNP-CHF', num: 'C-CHF-UNPRICED', value: 5000, ccy: 'CHF' },
   { unp: 'UNP-ANNEX', num: 'C-USD-ANNEX', value: 10000, ccy: 'USD' },
@@ -175,8 +182,7 @@ const ROLLUP_QUERIES: Record<string, string> = {
   home_totals:
     'SELECT contracts, value_eur, authorities, bidders, suspect, first_date, last_date, as_of FROM home_totals',
   sector_totals: 'SELECT division, contracts, value_eur FROM sector_totals ORDER BY division',
-  facet_counts:
-    'SELECT facet, key, contracts, value_eur FROM facet_counts ORDER BY facet, key',
+  facet_counts: 'SELECT facet, key, contracts, value_eur FROM facet_counts ORDER BY facet, key',
   search_index:
     "SELECT kind, ref, title, ident, amount FROM search_index WHERE kind IN ('contract','company','authority') ORDER BY kind, ref",
   data_freshness: 'SELECT source, as_of, rows FROM data_freshness ORDER BY source',
@@ -205,12 +211,12 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
   it('ground truth: the same corpus derived with rates prices and flags correctly', () => {
     const db = groundTruthDb();
     const flag = (num: string) =>
-      (
-        db.prepare('SELECT value_flag, amount_eur FROM contracts WHERE contract_number = ?').get(num) as {
-          value_flag: string;
-          amount_eur: number | null;
-        }
-      );
+      db
+        .prepare('SELECT value_flag, amount_eur FROM contracts WHERE contract_number = ?')
+        .get(num) as {
+        value_flag: string;
+        amount_eur: number | null;
+      };
     expect(flag('C-USD-OK')).toEqual({ value_flag: 'ok', amount_eur: 100000 * USD_RATE });
     expect(flag('C-USD-SUSP').value_flag).toBe('value_suspect');
     expect(flag('C-USD-SUSP').amount_eur).toBeCloseTo(10000 / PEG, 4);
@@ -240,9 +246,7 @@ describe('backfillFx', () => {
       expect(db.prepare(sql).all(), `table ${table}`).toEqual(truth.prepare(sql).all());
     }
     const rates = (d: DatabaseSync) =>
-      d
-        .prepare('SELECT base_currency, rate_date, eur_per_unit FROM fx_rates ORDER BY 1, 2')
-        .all();
+      d.prepare('SELECT base_currency, rate_date, eur_per_unit FROM fx_rates ORDER BY 1, 2').all();
     expect(rates(db)).toEqual(rates(truth));
   });
 
@@ -251,14 +255,18 @@ describe('backfillFx', () => {
     await backfill(db);
     const before = ROLLUP_QUERIES.contracts ? db.prepare(ROLLUP_QUERIES.contracts).all() : [];
 
-    const fetchFn = vi.fn() as unknown as typeof fetch;
+    const fetchFn = fxFetchMock();
     const summary = await backfillFx(runnerFor(db), {
       fetchFn,
       fetchedAt: FETCHED_AT,
       refreshSliceSql,
     });
-    // CHF is still damaged (unpricable) → one fetch attempt for CHF only is allowed; USD covered.
+    // CHF is still damaged (unpricable) → one retry for CHF only; USD is covered, never re-fetched.
     expect(summary.repaired).toBe(0);
+    const calls = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) =>
+      new URL(String(c[0])).searchParams.get('base'),
+    );
+    expect(calls).toEqual(['CHF']);
     expect(db.prepare(ROLLUP_QUERIES.contracts).all()).toEqual(before);
   });
 
@@ -282,12 +290,16 @@ describe('backfillFx', () => {
   it('leaves BGN/EUR rows and their rollup contributions untouched', async () => {
     const db = damagedDb();
     const before = db
-      .prepare("SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1")
+      .prepare(
+        "SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1",
+      )
       .all();
     await backfill(db);
     expect(
       db
-        .prepare("SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1")
+        .prepare(
+          "SELECT contract_number, amount_eur FROM contracts WHERE currency IN ('BGN','EUR') ORDER BY 1",
+        )
         .all(),
     ).toEqual(before);
   });
