@@ -35,6 +35,11 @@ FX стъпка (`load-fx`) в `RefreshWorkflow` — след ingest, преди
     произведе NULL `amount_eur`.
 - **Наблюдаемост:** структурирани JSON логове `etl_fx_load` (заредени редове, диапазони по валута)
   и `etl_fx_uncovered` (остатъчни дупки + предупреждения) — по канала на #139.
+- **Втвърдяване на fetch-а:** cross-host redirect на frankfurter отговора се отхвърля
+  (`assertSameFinalHost`, същият модел като EOP bucket fetch-овете в `apps/etl/src/eop.ts`) — и в
+  Worker-а, и в CLI-я; redirect-нат отговор никога не пълни `fx_rates`. Валидацията на курсовете
+  е умишлено по-строга от старата CLI проверка: освен крайност се отхвърля и курс ≤ 0 (може да е
+  само корумпиран запис).
 
 Без нова зависимост, без нов secret (frankfurter е keyless), без миграция (`fx_rates` съществува
 от 0000_init), без промяна по wrangler конфигурацията.

@@ -19,6 +19,16 @@ export function addDays(iso: string, days: number): string {
   return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
 }
 
+/** Reject cross-host redirects on an FX fetch (same hardening as the EOP bucket fetches in
+ *  apps/etl/src/eop.ts): a redirected frankfurter response must never feed rates into fx_rates. */
+export function assertSameFinalHost(requestUrl: string, responseUrl: string): void {
+  const requested = new URL(requestUrl);
+  const final = new URL(responseUrl || requestUrl);
+  if (final.host !== requested.host) {
+    throw new Error(`blocked redirected FX fetch from ${requested.host} to ${final.host}`);
+  }
+}
+
 /** Frankfurter time-series URL: all business-day rates for one currency → EUR in one request. */
 export function fxSeriesUrl(
   currency: string,
@@ -41,16 +51,19 @@ export interface FxSeriesParse {
 }
 
 /** Validate one frankfurter time-series payload into fx_rates rows; malformed entries are skipped
- *  with a warning, never thrown — one bad datum must not sink the rest of the series. */
-export function parseFxSeries(payload: unknown, currency: string): FxSeriesParse {
+ *  with a warning, never thrown — one bad datum must not sink the rest of the series. Rates must
+ *  be finite and > 0 (deliberately stricter than the pre-#158 CLI, which accepted any finite
+ *  number — a zero/negative "rate" can only be corrupt data). `range` only enriches warnings. */
+export function parseFxSeries(payload: unknown, currency: string, range?: string): FxSeriesParse {
   const rows: FxRateRow[] = [];
   const warnings: string[] = [];
+  const label = range ? `${currency} ${range}` : currency;
   const rates =
     payload !== null && typeof payload === 'object'
       ? (payload as { rates?: unknown }).rates
       : undefined;
   if (rates === null || rates === undefined || typeof rates !== 'object') {
-    warnings.push(`no rate series for ${currency}`);
+    warnings.push(`no rate series for ${label}`);
     return { rows, warnings };
   }
   for (const [rateDate, quote] of Object.entries(rates)) {
@@ -202,7 +215,9 @@ export async function loadFxRates(db: D1Database, opts: LoadFxOptions): Promise<
     const load: FxCurrencyLoad = { currency: gap.currency, start, end, loaded: 0, status: 'ok' };
     summary.fetched.push(load);
     try {
-      const res = await fetchFn(fxSeriesUrl(gap.currency, start, end, api));
+      const url = fxSeriesUrl(gap.currency, start, end, api);
+      const res = await fetchFn(url);
+      assertSameFinalHost(url, res.url);
       if (res.status === 404) {
         // Frankfurter answers 404 for a base currency it does not serve — permanent, not
         // transient: warn and move on (CLI parity), never brick the cron on one odd currency.
@@ -211,7 +226,7 @@ export async function loadFxRates(db: D1Database, opts: LoadFxOptions): Promise<
         continue;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { rows, warnings } = parseFxSeries(await res.json(), gap.currency);
+      const { rows, warnings } = parseFxSeries(await res.json(), gap.currency, `${start}..${end}`);
       summary.warnings.push(...warnings);
       await upsertFxRates(db, rows, opts.fetchedAt);
       load.loaded = rows.length;

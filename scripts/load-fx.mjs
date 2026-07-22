@@ -20,6 +20,7 @@ import {
   FX_LOOKBACK_DAYS,
   FX_SOURCE,
   addDays,
+  assertSameFinalHost,
   fxSeriesUrl,
   isCurrencyCode,
   isIsoDate,
@@ -95,13 +96,15 @@ for (const { currency, min_date, max_date, contract_dates } of ranges) {
   const end = String(max_date);
   let payload = null;
   try {
-    const res = await fetch(fxSeriesUrl(c, start, end));
+    const url = fxSeriesUrl(c, start, end);
+    const res = await fetch(url);
+    assertSameFinalHost(url, res.url);
     payload = await res.json();
   } catch (e) {
     console.warn(`  ! ${currency} ${start}..${end}: ${e.message}`);
     continue;
   }
-  const { rows: seriesRows, warnings } = parseFxSeries(payload, c);
+  const { rows: seriesRows, warnings } = parseFxSeries(payload, c, `${start}..${end}`);
   for (const warning of warnings) console.warn(`  ! ${warning}`);
   for (const r of seriesRows)
     rows.push({ currency: r.currency, rate_date: r.rateDate, rate: r.eurPerUnit });

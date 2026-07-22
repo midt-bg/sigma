@@ -12,6 +12,7 @@ import {
   FX_SOURCE,
   FxLoadError,
   addDays,
+  assertSameFinalHost,
   findFxCoverageGaps,
   fxSeriesUrl,
   isCurrencyCode,
@@ -102,6 +103,19 @@ describe('pure fx helpers', () => {
       expect(rows).toEqual([]);
       expect(warnings).toEqual(['no rate series for USD']);
     }
+    expect(parseFxSeries({}, 'USD', '2026-06-28..2026-07-08').warnings).toEqual([
+      'no rate series for USD 2026-06-28..2026-07-08',
+    ]);
+  });
+
+  it('assertSameFinalHost rejects a cross-host redirect and accepts same-host/empty', () => {
+    expect(() =>
+      assertSameFinalHost('https://api.frankfurter.app/x', 'https://evil.example/x'),
+    ).toThrow(/blocked redirected FX fetch from api\.frankfurter\.app to evil\.example/);
+    expect(() =>
+      assertSameFinalHost('https://api.frankfurter.app/x', 'https://api.frankfurter.app/y'),
+    ).not.toThrow();
+    expect(() => assertSameFinalHost('https://api.frankfurter.app/x', '')).not.toThrow();
   });
 });
 
@@ -218,6 +232,20 @@ describe('loadFxRates', () => {
     const retry = await loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn: retryFetch });
     expect(retry.fetched.map((f) => f.currency)).toEqual(['USD']);
     expect(retry.uncovered).toEqual([]);
+  });
+
+  it('refuses rates from a cross-host redirect and fails closed while the gap remains', async () => {
+    const { db, d1 } = fxDb();
+    stageContract(db, 'USD', '2026-07-08');
+    const fetchFn = vi.fn(async () => {
+      const res = seriesResponse({ '2026-07-07': { EUR: 0.01 } });
+      Object.defineProperty(res, 'url', { value: 'https://evil.example/2026-06-28..2026-07-08' });
+      return res;
+    }) as unknown as typeof fetch;
+
+    await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow(FxLoadError);
+    const count = db.prepare('SELECT COUNT(*) AS n FROM fx_rates').get() as { n: number };
+    expect(count.n).toBe(0);
   });
 
   it('warns and proceeds when frankfurter does not serve the currency (404)', async () => {
