@@ -517,6 +517,20 @@ describe('getOverrunAnnexes', () => {
     expect(bound[0]).toEqual(['c:1', 'c:2', 'c:3']);
   });
 
+  it('chunks the IN-list at the D1 bound-parameter cap (100) instead of one unbounded query', async () => {
+    const { db, sql, bound } = fakeAnnexDb([]);
+    const ids = Array.from({ length: 150 }, (_, i) => `c:${i}`);
+
+    await getOverrunAnnexes(db, ids);
+
+    expect(sql).toHaveLength(2); // 150 ids -> two chunks of <=100
+    for (const [i, args] of bound.entries()) {
+      expect(args.length).toBeLessThanOrEqual(100);
+      expect(sql[i]).toContain(`IN (${args.map(() => '?').join(', ')})`);
+    }
+    expect(bound.flat()).toEqual(ids); // every id still queried, none dropped
+  });
+
   it('orders undated amendments LAST so the „Анекс N" sequence stays chronological', async () => {
     const { db, sql } = fakeAnnexDb([]);
 
