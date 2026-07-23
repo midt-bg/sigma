@@ -19,6 +19,12 @@ in after the rollups are (re)built — mirroring how `assertFxPopulated()` is ca
 | `import.mjs` → `runSliceDerive()` | D1 | after the refresh-slice batches |
 | `import.mjs` → `runWorkBackfill()` | sqlite work DB | after `assertFxPopulatedSqlite`; rollup checks self-skip (rollups are built later, on the served D1) |
 | `ship-domain.mjs` | served D1 | after `precompute.sql` on the database users read |
+| `apps/etl` Workflow → `integrity-gate` step | served D1 (async runner) | the 6-hourly cron refresh, after each slice derive; runs `runIntegrityChecks` and fails the step on a violation. FX priced-ness is **not** gated here (the Worker loads no FX rates — see #154). |
+
+The runner the checks receive may be **synchronous** (the sqlite3/wrangler CLI orchestrators return rows
+directly) or **asynchronous** (the Workflow runs `env.DB.prepare(sql).all()`, a Promise). The checks
+`await runner(sql)` throughout, so both fit; the CLI call sites are unchanged apart from `await`ing the
+now-async `assertIntegrity`.
 
 Each check **self-skips** when it cannot apply, so the same `assertIntegrity` call is correct at every
 site with no per-site branching:
@@ -140,6 +146,9 @@ Two boundaries are deliberate, documented so the gate is not mistaken for more t
   numbers are already being served until a human intervenes — a conscious **ship-and-alert** compromise.
   The **work-backfill path gates before shipping**: `runWorkBackfill` asserts the sqlite work DB, and
   `ship-domain.mjs` refuses to ship a 0-row source, so the bulk-rebuild path is guarded pre-publish.
+  The **`apps/etl` cron refresh inherits the same ship-and-alert shape**: it gates the served D1 after
+  the slice has already been written, throwing in the `integrity-gate` step (which fails the Workflow
+  step and surfaces in Cloudflare observability) rather than un-serving the slice.
 
 ## Scope
 

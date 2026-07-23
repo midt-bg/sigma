@@ -26,6 +26,7 @@ export default defineConfig({
   resolve: {
     alias: {
       'cloudflare:workers': resolve(here, 'src/test/cloudflare-workers-stub.ts'),
+      'cloudflare:workflows': resolve(here, 'src/test/cloudflare-workflows-stub.ts'),
     },
   },
   // The refresh Workflow test runs the full refresh-slice.sql derive against a real SQLite —
