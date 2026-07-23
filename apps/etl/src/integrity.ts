@@ -32,8 +32,8 @@ const brief = (r: IntegrityResult) => ({ name: r.name, detail: r.detail });
 // the SAME reducer assertIntegrity uses — so the cron path and the CLI paths can never report a
 // different decision or message. The runner is async (D1 `.all()` is a Promise); integrity-checks
 // awaits it. On the served D1 the rollup checks run and staging-reconciliation self-skips
-// (pipeline_stats is not shipped). FX priced-ness is intentionally NOT gated (the Worker loads no FX
-// rates — see #154). index.ts converts the throw to a NonRetryableError (deterministic violation →
+// (pipeline_stats is not shipped). FX priced-ness is not yet gated — the
+// Worker DOES load FX since #263, so a follow-up check belongs in the shared roster (#154). index.ts converts the throw to a NonRetryableError (deterministic violation →
 // fail the step immediately, don't burn retries re-reading already-committed data).
 export async function runServedIntegrityGate(db: D1Database, log: GateLog): Promise<void> {
   const runner = async (sql: string) => (await db.prepare(sql).all()).results;
