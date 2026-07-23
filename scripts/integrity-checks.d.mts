@@ -46,10 +46,7 @@ export interface IntegritySummary {
 
 /** Reduce check results to the gate verdict + canonical message (shared by assertIntegrity and the
  *  apps/etl Worker gate, so the two never diverge). */
-export function summarizeIntegrity(
-  results: IntegrityResult[],
-  label?: string,
-): IntegritySummary;
+export function summarizeIntegrity(results: IntegrityResult[], label?: string): IntegritySummary;
 
 export interface AssertIntegrityOptions {
   /** label shown in the failure line, identifying the call site/backend */

@@ -100,7 +100,9 @@ describe('runServedIntegrityGate', () => {
     );
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
-    expect(violation?.event.checks).toEqual([expect.objectContaining({ name: 'non-empty-corpus' })]);
+    expect(violation?.event.checks).toEqual([
+      expect.objectContaining({ name: 'non-empty-corpus' }),
+    ]);
   });
 
   it('throws on a hard data-integrity violation (negative ok amount_eur)', async () => {

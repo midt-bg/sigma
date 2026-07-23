@@ -96,22 +96,23 @@ export async function checkRollupReconciliation(runner) {
   // bidders AND tenders; flow_pairs = tenders→authorities AND bidders); the two orphan counts are the
   // exact structural exclusions, asserted to be 0 (normalize gives every contract a parent tender —
   // synthetic if needed — with a non-null authority, and a bidder row).
-  const r = (
-    await rows(
-      runner,
-      'SELECT' +
-        ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
-        ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
-        ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
-        ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +
-        ' (SELECT value_eur FROM home_totals) AS home_value,' +
-        ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tenders t JOIN authorities a ON a.id = t.authority_id WHERE t.id = c.tender_id)) AS orphan_auth_rows,' +
-        ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_id) OR NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = c.tender_id))) AS orphan_bidder_rows',
-    )
-  )[0] || {};
+  const r =
+    (
+      await rows(
+        runner,
+        'SELECT' +
+          ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
+          ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
+          ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
+          ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +
+          ' (SELECT value_eur FROM home_totals) AS home_value,' +
+          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tenders t JOIN authorities a ON a.id = t.authority_id WHERE t.id = c.tender_id)) AS orphan_auth_rows,' +
+          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_id) OR NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = c.tender_id))) AS orphan_bidder_rows',
+      )
+    )[0] || {};
   const cleanTotal = num(r.clean_total);
   const authAttr = num(r.auth_attr);
   const authRollup = num(r.auth_rollup);
@@ -170,14 +171,15 @@ export async function checkNoNegativeValues(runner) {
   const fails = [];
   const warns = [];
   // One read for both contract classes (ok-negative is a Sigma bug; non-ok-negative is upstream).
-  const c = (
-    await rows(
-      runner,
-      'SELECT' +
-        " (SELECT COUNT(*) FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0) AS neg_ok," +
-        " (SELECT COUNT(*) FROM contracts WHERE value_flag <> 'ok' AND amount_eur < 0) AS neg_other",
-    )
-  )[0] || {};
+  const c =
+    (
+      await rows(
+        runner,
+        'SELECT' +
+          " (SELECT COUNT(*) FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0) AS neg_ok," +
+          " (SELECT COUNT(*) FROM contracts WHERE value_flag <> 'ok' AND amount_eur < 0) AS neg_other",
+      )
+    )[0] || {};
   const negOk = num(c.neg_ok);
   const negOther = num(c.neg_other);
   if (negOk !== 0) fails.push(`${negOk} contracts with value_flag='ok' have negative amount_eur`);
@@ -189,15 +191,16 @@ export async function checkNoNegativeValues(runner) {
   // The three rollups are created together by precompute, so one existence check gates all three, and
   // the three counts fold into a single SELECT (on D1 each runner call is a process spawn).
   if (await tableExists(runner, 'home_totals')) {
-    const r = (
-      await rows(
-        runner,
-        'SELECT' +
-          ' (SELECT COUNT(*) FROM authority_totals WHERE spent_eur < 0) AS a,' +
-          ' (SELECT COUNT(*) FROM company_totals WHERE won_eur < 0) AS c,' +
-          ' (SELECT COUNT(*) FROM flow_pairs WHERE won_eur < 0) AS f',
-      )
-    )[0] || {};
+    const r =
+      (
+        await rows(
+          runner,
+          'SELECT' +
+            ' (SELECT COUNT(*) FROM authority_totals WHERE spent_eur < 0) AS a,' +
+            ' (SELECT COUNT(*) FROM company_totals WHERE won_eur < 0) AS c,' +
+            ' (SELECT COUNT(*) FROM flow_pairs WHERE won_eur < 0) AS f',
+        )
+      )[0] || {};
     if (num(r.a) !== 0) fails.push(`${num(r.a)} authority_totals.spent_eur rows are negative`);
     if (num(r.c) !== 0) fails.push(`${num(r.c)} company_totals.won_eur rows are negative`);
     if (num(r.f) !== 0) fails.push(`${num(r.f)} flow_pairs.won_eur rows are negative`);
