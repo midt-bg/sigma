@@ -113,6 +113,31 @@ for (const { currency, min_date, max_date, contract_dates } of ranges) {
   );
 }
 
+// Atomicity guard: the emitted SQL leads with an unconditional
+// `DELETE FROM fx_rates`, so applying an empty result would WIPE the table. Each
+// per-currency fetch above fails soft (warn + continue), so a network outage
+// yields zero rows and a destructive DELETE-only file. assertFxPopulated only
+// runs after normalize (~20 min in), turning a transient blip into a wasted
+// rebuild. Refuse to write/apply when we had foreign currencies to price but
+// produced nothing — abort loudly here and leave the existing rates untouched.
+const pricedCurrencies = new Set(rows.map((r) => r.currency));
+if (ranges.length > 0 && rows.length === 0) {
+  console.error(
+    `\n✗ load-fx: ${ranges.length} foreign currenc${ranges.length === 1 ? 'y' : 'ies'} to price but fetched 0 rates — the FX source looks unreachable.`,
+  );
+  console.error(
+    '  Refusing to write/apply: a DELETE-only file would empty fx_rates and abort the build later at assertFxPopulated.',
+  );
+  console.error('  Existing fx_rates are left untouched. Re-run once the FX source is reachable.');
+  process.exit(1);
+}
+if (ranges.length > 0 && pricedCurrencies.size < ranges.length) {
+  const missing = ranges.map((r) => String(r.currency)).filter((c) => !pricedCurrencies.has(c));
+  console.warn(
+    `\n  ! load-fx: priced ${pricedCurrencies.size}/${ranges.length} currencies; missing ${missing.join(', ')} — proceeding, but those contracts will lack a rate.`,
+  );
+}
+
 const now = new Date().toISOString();
 const tuple = (r) =>
   `(${sqlStr(r.currency)}, ${sqlStr(r.rate_date)}, ${r.rate}, ${sqlStr(FX_SOURCE)}, ${sqlStr(now)})`;
