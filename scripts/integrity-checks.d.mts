@@ -25,6 +25,7 @@ export interface IntegrityResult {
 
 export function checkNonEmptyCorpus(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkRollupReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkCurrentAmountParity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkNoNegativeValues(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;

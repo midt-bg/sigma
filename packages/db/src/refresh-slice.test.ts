@@ -9,8 +9,12 @@ import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
+const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
+const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
+const promoteAmendmentsPath = resolve(root, 'scripts/promote-amendments.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
 
@@ -176,7 +180,80 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 
 function initWorkDb(dbPath: string): void {
   readScript(dbPath, schemaPath);
+  readScript(dbPath, migration1Path);
+  readScript(dbPath, migration2Path);
   readScript(dbPath, workStagingSchemaPath);
+}
+
+function seedCrossCurrencyAmendment(dbPath: string): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       cpv_code, cpv_description, contract_kind, estimated_value, currency, authority_name,
+       authority_eik, authority_type, published_at)
+    VALUES
+      ('eop:tenders:2025-06-01', 2025, '2026-06-08T00:00:00Z', 'UNP-CROSS-CURRENCY',
+       'TENDER-CROSS-CURRENCY', 'open', 'Cross-currency tender', '45000000', 'Construction',
+       'works', 300000000, 'EUR', 'Authority Cross Currency', '133456789', 'public',
+       '2025-06-01');
+
+    INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+       published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+       cpv_description, contract_kind, estimated_value, procurement_currency, authority_name,
+       authority_eik, authority_type, contract_number, contract_date, signing_value, currency,
+       contract_subject, awarded_to_group, contractor_eik, contractor_name)
+    VALUES
+      ('eop:contracts:2025-06-01', 2025, 'eop', '2026-06-08T00:00:00Z', 0,
+       'DOC-CROSS-CURRENCY', '2025-06-01', 'UNP-CROSS-CURRENCY', 'TENDER-CROSS-CURRENCY',
+       'open', 'Cross-currency tender', '45000000', 'Construction', 'works', 300000000,
+       'EUR', 'Authority Cross Currency', '133456789', 'public', 'CONTRACT-CROSS-CURRENCY',
+       '2025-06-02', 136580250, 'BGN', 'Cross-currency contract', 0, '997654321',
+       'Bidder Cross Currency');
+
+    INSERT INTO raw_amendments
+      (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+       contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+       procurement_subject, contract_kind, value_before, value_after, value_delta, currency,
+       description)
+    VALUES
+      ('eop:annexes:2026-06-01', 2026, 'eop', '2026-06-08T00:00:00Z', '1',
+       'AMD-CROSS-CURRENCY', 'CONTRACT-CROSS-CURRENCY', '2025-06-02', '2026-06-03',
+       'UNP-CROSS-CURRENCY', '133456789', 'Authority Cross Currency', 'Cross-currency tender',
+       'works', 136580250, 104748559.44, -31831690.56, 'EUR',
+       'Post-switch EUR amendment');`,
+  );
+}
+
+function seedCrossCurrencyFlagBoundary(dbPath: string): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       cpv_code, estimated_value, currency, authority_name, authority_eik, authority_type)
+    VALUES
+      ('eop:tenders:2025-06-01', 2025, '2026-06-08T00:00:00Z', 'UNP-FX-FLAG',
+       'TENDER-FX-FLAG', 'open', 'Currency flag tender', '45000000', 1500, 'EUR',
+       'Authority Currency Flag', '143456789', 'public');
+    INSERT INTO raw_contracts
+      (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, unp, tender_ext_id,
+       procedure_type, procurement_subject, cpv_code, estimated_value, procurement_currency,
+       authority_name, authority_eik, authority_type, contract_number, contract_date, signing_value,
+       currency, contract_subject, awarded_to_group, contractor_eik, contractor_name)
+    VALUES
+      ('eop:contracts:2025-06-01', 2025, 'eop', '2026-06-08T00:00:00Z', 0,
+       'UNP-FX-FLAG', 'TENDER-FX-FLAG', 'open', 'Currency flag tender', '45000000', 1500,
+       'EUR', 'Authority Currency Flag', '143456789', 'public', 'CONTRACT-FX-FLAG',
+       '2025-06-02', 10000, 'BGN', 'Currency flag contract', 0, '987654322',
+       'Bidder Currency Flag');
+    INSERT INTO raw_amendments
+      (source, dataset_year, dataset_variant, fetched_at, document_number, contract_number,
+       published_at, unp, value_before, value_after, value_delta, currency)
+    VALUES
+      ('eop:annexes:2026-06-01', 2026, 'eop', '2026-06-08T00:00:00Z', 'AMD-FX-FLAG',
+       'CONTRACT-FX-FLAG', '2026-06-03', 'UNP-FX-FLAG', 10000, 20000, 10000, 'EUR');`,
+  );
 }
 
 function seedContractIdFixture(dbPath: string): void {
@@ -493,6 +570,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -572,6 +651,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -620,6 +701,8 @@ describe('refresh-slice EOP base derivation', () => {
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -663,11 +746,149 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('converts current_value_eur from the amendment currency, not the contract signing currency (#245)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
+      readScript(dbPath, workStagingSchemaPath);
+      sqlite(
+        dbPath,
+        `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:523456789', 'Authority Eur', '523456789', 'public');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:877777777', 'Bidder Eur', '877777777', '877777777', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, estimated_value, currency, procedure_type, status)
+           VALUES ('t:UNP-EUR', 'UNP-EUR', 'Eur tender', 'auth:523456789', 5000, 'BGN', 'open', 'awarded');
+         INSERT INTO contracts
+           (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value,
+            current_value, current_value_currency, annex_count, value_flag, amount_eur, signing_value_eur, current_value_eur)
+           VALUES
+           ('c:e:eurannex', 't:UNP-EUR', 'eik:877777777', 500, 'BGN', '2025-06-02',
+            'CONTRACT-EUR', 1000, 500, 'BGN', 1, 'ok', 500 / 1.95583, 1000 / 1.95583, 500 / 1.95583);
+         INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('eop:annexes:2026-06-02', 2026, 'eop', '2026-06-08T00:00:00Z', '2', 'AMD-EUR-2',
+            'CONTRACT-EUR', '2026-06-02', '2026-06-03', 'UNP-EUR', '523456789', 'Authority Eur',
+            'Eur tender', 'works', 500, 2000, 1500, 'EUR', 'Post-switch EUR annex');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+      const row = sqliteJson<{
+        value_flag: string;
+        current_value: number;
+        current_value_currency: string;
+        amount_eur: number;
+        current_value_eur: number;
+        signing_value_eur: number;
+      }>(
+        dbPath,
+        `SELECT value_flag, current_value, current_value_currency, amount_eur, current_value_eur, signing_value_eur
+         FROM contracts WHERE id = 'c:e:eurannex'`,
+      )[0];
+      expect(row?.value_flag).toBe('ok');
+      expect(row?.current_value).toBe(2000);
+      expect(row?.current_value_currency).toBe('EUR');
+      // The amendment's own EUR value, unconverted — NOT divided by the BGN peg a second time.
+      expect(row?.amount_eur).toBeCloseTo(2000, 6);
+      expect(row?.current_value_eur).toBeCloseTo(2000, 6);
+      expect(
+        sqliteJson<{ won_eur: number }>(
+          dbPath,
+          "SELECT won_eur FROM company_totals WHERE bidder_id = 'eik:877777777'",
+        )[0]?.won_eur,
+      ).toBeCloseTo(2000, 6);
+      // signing_value stays denominated in the contract's own (BGN) signing currency — unaffected.
+      expect(row?.signing_value_eur).toBeCloseTo(1000 / 1.95583, 6);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes amount_eur and full rollups from a non-BGN amendment currency', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-normalize-currency-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedCrossCurrencyAmendment(dbPath);
+      readScript(dbPath, deriveAmendmentsPath);
+      readScript(dbPath, normalizePath);
+      readScript(dbPath, promoteAmendmentsPath);
+      readScript(dbPath, precomputePath);
+
+      const expected = 104748559.44;
+      const contract = sqliteJson<{
+        value_flag: string;
+        current_value_currency: string;
+        amount_eur: number;
+        current_value_eur: number;
+      }>(
+        dbPath,
+        `SELECT value_flag, current_value_currency, amount_eur, current_value_eur
+         FROM contracts WHERE contract_number = 'CONTRACT-CROSS-CURRENCY'`,
+      )[0];
+      expect(contract?.value_flag).toBe('ok');
+      expect(contract?.current_value_currency).toBe('EUR');
+      expect(contract?.amount_eur).toBeCloseTo(expected, 2);
+      expect(contract?.current_value_eur).toBeCloseTo(expected, 2);
+
+      for (const [table, column] of [
+        ['company_totals', 'won_eur'],
+        ['authority_totals', 'spent_eur'],
+        ['sector_totals', 'value_eur'],
+        ['home_totals', 'value_eur'],
+        ['flow_pairs', 'won_eur'],
+      ] as const) {
+        expect(
+          sqliteJson<{ total: number }>(dbPath, `SELECT ${column} AS total FROM ${table}`)[0]
+            ?.total,
+          `${table}.${column}`,
+        ).toBeCloseTo(expected, 2);
+      }
+      expect(
+        sqliteJson<{ amount: number }>(
+          dbPath,
+          "SELECT amount FROM search_index WHERE kind = 'contract'",
+        )[0]?.amount,
+      ).toBeCloseTo(expected, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('classifies cross-currency amendments identically in full and slice derives', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-currency-flag-parity-'));
+    const fullDb = resolve(dir, 'full.sqlite');
+    const sliceDb = resolve(dir, 'slice.sqlite');
+    try {
+      for (const dbPath of [fullDb, sliceDb]) {
+        initWorkDb(dbPath);
+        seedCrossCurrencyFlagBoundary(dbPath);
+        readScript(dbPath, deriveAmendmentsPath);
+      }
+      readScript(fullDb, normalizePath);
+      readScript(sliceDb, refreshSlicePath);
+
+      const valueSql = `SELECT value_flag, ROUND(amount_eur, 2) AS amount_eur
+        FROM contracts WHERE contract_number = 'CONTRACT-FX-FLAG'`;
+      expect(sqliteJson(fullDb, valueSql)).toEqual([{ value_flag: 'review', amount_eur: 20000 }]);
+      expect(sqliteJson(sliceDb, valueSql)).toEqual(sqliteJson(fullDb, valueSql));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('classifies amendment rollups from the contract-row estimated value', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
       readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -705,7 +926,7 @@ describe('refresh-slice EOP base derivation', () => {
         VALUES
           ('eop:annexes:2026-06-01', 2026, 'eop', '2026-06-07T00:00:00Z', '1', 'AMD-MISMATCH',
            'CONTRACT-MISMATCH', '2026-06-02', '2026-06-03', 'UNP-MISMATCH', '423456789', 'Authority Mismatch',
-           'Mismatch tender', 'works', 1000, 500000, 499000, 'BGN', 'Huge increase');`,
+           'Mismatch tender', 'works', 1000, 500000, 499000, 'EUR', 'Huge increase');`,
       );
 
       readScript(dbPath, refreshSlicePath);
@@ -713,13 +934,16 @@ describe('refresh-slice EOP base derivation', () => {
         value_flag: string;
         amount: number;
         amount_eur: number | null;
+        current_value_currency: string;
         signing_value_eur: number | null;
       }>(
         dbPath,
-        "SELECT value_flag, amount, amount_eur, signing_value_eur FROM contracts WHERE contract_number = 'CONTRACT-MISMATCH'",
+        "SELECT value_flag, amount, amount_eur, current_value_currency, signing_value_eur FROM contracts WHERE contract_number = 'CONTRACT-MISMATCH'",
       )[0];
       expect(row?.value_flag).toBe('annex_suspect');
       expect(row?.amount).toBe(1000);
+      expect(row?.current_value_currency).toBe('EUR');
+      // The suspect EUR amendment is rejected, so the selected signing_value still converts as BGN.
       expect(row?.amount_eur).toBeCloseTo(1000 / 1.95583, 6);
       expect(row?.signing_value_eur).toBeCloseTo(1000 / 1.95583, 6);
     } finally {

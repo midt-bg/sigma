@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schema = readFileSync(resolve(root, 'packages/db/migrations/0000_init.sql'), 'utf8');
+const migration2 = readFileSync(
+  resolve(root, 'packages/db/migrations/0002_current_value_currency.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -56,6 +60,7 @@ VALUES
 function build(path: 'normalize' | 'refresh'): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(schema);
+  db.exec(migration2);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {

@@ -393,6 +393,7 @@ interface ContractDetailRow {
   subcontractor_name: string | null;
   subcontract_value: number | null;
   contract_currency: string;
+  current_value_currency: string | null;
   // tender
   title: string;
   unp: string;
@@ -470,6 +471,7 @@ export async function getContract(
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
               c.ordering_unit_name AS source_authority_name,
+              c.current_value_currency,
               t.title, t.source_id AS unp, t.procedure_type, t.cpv_code, t.cpv_description, t.num_lots,
               t.eop_tender_id,
               t.estimated_value, t.currency AS tender_currency, t.start_date, t.end_date,
@@ -537,7 +539,8 @@ export async function getContract(
   const signingEur =
     r.signing_value_eur ?? eurFromNative(r.signing_value, r.contract_currency, r.fx_rate);
   const currentRaw =
-    r.current_value_eur ?? eurFromNative(r.current_value, r.contract_currency, r.fx_rate);
+    r.current_value_eur ??
+    eurFromNative(r.current_value, r.current_value_currency || r.contract_currency, r.fx_rate);
   const procedureEstimatedEur = eurFromNative(
     r.estimated_value,
     r.tender_currency,

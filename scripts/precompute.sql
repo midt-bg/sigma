@@ -34,8 +34,8 @@ UPDATE contracts SET
     ELSE NULL END,
   current_value_eur = CASE
     WHEN value_flag IN ('value_suspect','annex_suspect') OR current_value IS NULL THEN NULL
-    WHEN COALESCE(currency,'BGN') = 'EUR' THEN current_value
-    WHEN COALESCE(currency,'BGN') = 'BGN' THEN current_value / 1.95583
+    WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
+    WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
