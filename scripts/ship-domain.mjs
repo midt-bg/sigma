@@ -227,5 +227,5 @@ d1File(resolve(root, 'scripts/precompute.sql'));
 // checks run here — this is the database users read. Staging/pipeline_stats are not shipped, so the
 // staging-reconciliation check self-skips. Fails the ship with a non-zero exit on any drift.
 console.log('==> integrity gate on served D1');
-assertIntegrity(d1Json, { label: `served D1 ${remote ? 'remote' : 'local'}` });
+await assertIntegrity(d1Json, { label: `served D1 ${remote ? 'remote' : 'local'}` });
 console.log('==> ship complete');

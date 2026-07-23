@@ -235,6 +235,7 @@ export interface ContractParty {
   slug: string;
   name: string;
   displayName: string;
+  orderingUnit: string | null;
   kind?: EntityKind;
   typeLabel: string | null;
   settlement: string | null;

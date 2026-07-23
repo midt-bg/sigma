@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fetch ECB euro reference rates (via the no-auth frankfurter.app API, which serves ECB data)
+// Fetch ECB euro reference rates (via the no-auth frankfurter API, which serves ECB data)
 // for the foreign-currency contracts, into the fx_rates table — so scripts/normalize-raw.sql
 // can convert those contracts to canonical EUR at the date-of-signing rate.
 //
@@ -16,6 +16,16 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  FX_LOOKBACK_DAYS,
+  FX_SOURCE,
+  addDays,
+  assertSameFinalHost,
+  fxSeriesUrl,
+  isCurrencyCode,
+  isIsoDate,
+  parseFxSeries,
+} from '../packages/ingest/src/fx.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -33,16 +43,11 @@ const persistTo = arg('persist-to');
 if (workDb && process.argv.includes('--remote'))
   throw new Error('--work-db and --remote are mutually exclusive');
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
-const API = 'https://api.frankfurter.app';
-const FX_LOOKBACK_DAYS = 10;
+// The lookback, series URL and response validation are shared with the Worker cron path
+// (packages/ingest/src/fx.ts) so the CLI and apps/etl cannot drift (#158).
 
 const stripControls = (s) => String(s).replace(/[\x00-\x1F]/g, '');
 const sqlStr = (s) => (s == null ? 'NULL' : `'${stripControls(s).replace(/'/g, "''")}'`);
-const isIsoDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
-const addDays = (iso, days) => {
-  const [year, month, day] = iso.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
-};
 
 function queryTarget(sql) {
   if (workDb) {
@@ -77,10 +82,9 @@ const ranges = queryTarget(
 console.log(`foreign currency ranges to price: ${ranges.length}`);
 
 const rows = [];
-const seen = new Set();
 for (const { currency, min_date, max_date, contract_dates } of ranges) {
   const c = String(currency);
-  if (!/^[A-Z]{3}$/.test(c)) {
+  if (!isCurrencyCode(c)) {
     console.warn(`  ! invalid currency ${currency}`);
     continue;
   }
@@ -90,48 +94,32 @@ for (const { currency, min_date, max_date, contract_dates } of ranges) {
   }
   const start = addDays(String(min_date), -FX_LOOKBACK_DAYS);
   const end = String(max_date);
-  const url = `${API}/${encodeURIComponent(start)}..${encodeURIComponent(end)}?base=${encodeURIComponent(c)}&symbols=${encodeURIComponent('EUR')}`;
-  let rates = null;
+  let payload = null;
   try {
+    const url = fxSeriesUrl(c, start, end);
     const res = await fetch(url);
-    const j = await res.json();
-    rates = j?.rates ?? null;
+    assertSameFinalHost(url, res.url);
+    payload = await res.json();
   } catch (e) {
     console.warn(`  ! ${currency} ${start}..${end}: ${e.message}`);
-  }
-  if (!rates || typeof rates !== 'object') {
-    console.warn(`  ! no rate series for ${currency} ${start}..${end}`);
     continue;
   }
-  let loaded = 0;
-  for (const [rateDate, quote] of Object.entries(rates)) {
-    if (!isIsoDate(rateDate)) {
-      console.warn(`  ! invalid rate date for ${currency}: ${rateDate}`);
-      continue;
-    }
-    const n = Number(quote?.EUR);
-    if (!Number.isFinite(n)) {
-      console.warn(`  ! invalid rate for ${currency} ${rateDate}`);
-      continue;
-    }
-    const key = `${c}:${rateDate}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ currency: c, rate_date: rateDate, rate: n });
-    loaded += 1;
-  }
+  const { rows: seriesRows, warnings } = parseFxSeries(payload, c, `${start}..${end}`);
+  for (const warning of warnings) console.warn(`  ! ${warning}`);
+  for (const r of seriesRows)
+    rows.push({ currency: r.currency, rate_date: r.rateDate, rate: r.eurPerUnit });
   console.log(
-    `  ${currency} ${start}..${end} → ${loaded} ECB business-day rates for ${contract_dates} contract dates`,
+    `  ${currency} ${start}..${end} → ${seriesRows.length} ECB business-day rates for ${contract_dates} contract dates`,
   );
 }
 
 const now = new Date().toISOString();
 const tuple = (r) =>
-  `(${sqlStr(r.currency)}, ${sqlStr(r.rate_date)}, ${r.rate}, 'ecb:frankfurter', ${sqlStr(now)})`;
+  `(${sqlStr(r.currency)}, ${sqlStr(r.rate_date)}, ${r.rate}, ${sqlStr(FX_SOURCE)}, ${sqlStr(now)})`;
 // Chunk the INSERT: one statement with thousands of tuples trips SQLite's
 // SQLITE_TOOBIG statement-length limit under `wrangler d1 execute`, so emit batches.
 const CHUNK = 250;
-const stmts = ["DELETE FROM fx_rates WHERE source = 'ecb:frankfurter';"];
+const stmts = [`DELETE FROM fx_rates WHERE source = ${sqlStr(FX_SOURCE)};`];
 for (let i = 0; i < rows.length; i += CHUNK) {
   const batch = rows
     .slice(i, i + CHUNK)
