@@ -227,6 +227,7 @@ export interface ContractListItem {
   bidderKind: EntityKind;
   procedureLabel: string;
   signedAt: string | null;
+  publishedAt: string | null; // ordering/pubDate fallback when signedAt is absent (COALESCE order)
   bidsReceived: number | null;
   valueEur: number | null; // null = suspect / unconvertible → render the проверяват note
 }

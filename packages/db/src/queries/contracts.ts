@@ -94,6 +94,7 @@ interface ContractRow {
   bidder_kind: 'company' | 'consortium';
   procedure_type: string;
   signed_at: string | null;
+  published_at: string | null;
   bids_received: number | null;
   amount_eur: number | null;
 }
@@ -102,7 +103,7 @@ const SELECT = `
   SELECT c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title) AS subject, t.source_id AS unp,
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
          c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
-         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur`;
+         t.procedure_type, c.signed_at, c.published_at, c.bids_received, c.amount_eur`;
 const FROM = `
   FROM contracts c
   JOIN tenders t ON t.id = c.tender_id
@@ -214,6 +215,7 @@ function toItem(r: ContractRow): ContractListItem {
     bidderKind: r.bidder_kind,
     procedureLabel: procedureGroup(r.procedure_type).label,
     signedAt: r.signed_at,
+    publishedAt: r.published_at,
     bidsReceived: r.bids_received,
     valueEur: r.amount_eur,
   };
@@ -237,6 +239,30 @@ export async function listSingleOfferContracts(
       `${SELECT} ${FROM} WHERE c.bids_received = 1 AND c.value_flag = 'ok' AND c.amount_eur > 0 ${order}, c.id LIMIT ?`,
     )
     .bind(limit)
+    .all<ContractRow>();
+  return rows.results.map(toItem);
+}
+
+/**
+ * The newest contracts of one entity, for the profile RSS feeds - date-desc with the same
+ * signed/published fallback the profile "Най-нови" tab uses, id tiebreak for a stable order.
+ * Reuses the shared SELECT/FROM and row mapper so feed items match the HTML lists exactly.
+ */
+export async function listRecentEntityContracts(
+  db: D1Database,
+  entity: { kind: 'authority'; authorityId: string } | { kind: 'company'; bidderId: string },
+  limit = 50,
+): Promise<ContractListItem[]> {
+  // Scope on the contract-row columns (bidder_id, and the denormalised authority_id — migration 0006)
+  // so the ORDER BY walks idx_contracts_{bidder,authority}_recent scoped to the entity and stops at
+  // LIMIT, instead of gathering all of the entity's contracts and temp-B-tree-sorting them (DoW).
+  const scope = entity.kind === 'authority' ? 'c.authority_id = ?' : 'c.bidder_id = ?';
+  const id = entity.kind === 'authority' ? entity.authorityId : entity.bidderId;
+  const rows = await db
+    .prepare(
+      `${SELECT} ${FROM} WHERE ${scope} ORDER BY COALESCE(c.signed_at, c.published_at) DESC, c.id DESC LIMIT ?`,
+    )
+    .bind(id, limit)
     .all<ContractRow>();
   return rows.results.map(toItem);
 }
