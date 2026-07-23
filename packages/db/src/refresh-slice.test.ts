@@ -978,9 +978,17 @@ describe('refresh-slice EOP base derivation', () => {
   });
 });
 
-// Same contract_number+unp, two windows, different contractor → the slice re-attributes the contract
-// from bidder A to bidder B. Authority is held constant (same authority_eik) to isolate the bidder move.
-function seedReattrContract(dbPath: string, source: string, eik: string, name: string): void {
+// Same contract_number+unp+lot, two windows. The bidder regression changes the contractor while
+// holding authority constant; the authority regression promotes the same synthetic tender to a real
+// header with a different authority.
+function seedReattrContract(
+  dbPath: string,
+  source: string,
+  eik: string,
+  name: string,
+  authorityEik = '923456783',
+  authorityName = 'Reattr authority',
+): void {
   sqlite(
     dbPath,
     `INSERT INTO raw_contracts
@@ -994,9 +1002,31 @@ function seedReattrContract(dbPath: string, source: string, eik: string, name: s
     VALUES
       (${sqlValue(source)}, 2026, 'eop', '2026-06-08T00:00:00Z', 0, 'DOC-REATTR',
        '2026-06-02', 'UNP-REATTR', 'TENDER-REATTR', 'open', 'Reattr tender', '45000000',
-       'Construction', 'works', 1000, 'BGN', 'basis', 'lowest', 'Reattr authority', '923456783',
-       'public', 'activity', 'notice', NULL, 'CONTRACT-REATTR', '2026-06-02', 100, 'BGN',
+       'Construction', 'works', 1000, 'BGN', 'basis', 'lowest', ${sqlValue(authorityName)},
+       ${sqlValue(authorityEik)}, 'public', 'activity', 'notice', '1', 'CONTRACT-REATTR',
+       '2026-06-02', 100, 'BGN',
        'Reattr contract', 0, ${sqlValue(eik)}, ${sqlValue(name)}, 'BG', 'small', 0, 1, 1, 0, 0, 30);`,
+  );
+}
+
+function seedReattrTender(
+  dbPath: string,
+  source: string,
+  authorityEik: string,
+  authorityName: string,
+): void {
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       cpv_code, cpv_description, contract_kind, estimated_value, currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, deadline,
+       notice_type, lot_id, lot_name, num_lots, eu_funded, published_at)
+    VALUES
+      (${sqlValue(source)}, 2026, '2026-06-11T00:00:00Z', 'UNP-REATTR', 'TENDER-REATTR',
+       'open', 'Reattr tender', '45000000', 'Construction', 'works', 1000, 'BGN', 'basis',
+       'lowest', ${sqlValue(authorityName)}, ${sqlValue(authorityEik)}, 'public', 'activity',
+       '2026-06-10', 'notice', NULL, NULL, 1, 0, '2026-06-05');`,
   );
 }
 
@@ -1006,7 +1036,7 @@ describe('refresh-slice integrity gate', () => {
   // includes the OLD entity on re-attribution — otherwise the old rollup row goes stale and the gate
   // would exit 1 on the daily refresh. refresh-slice captures the old bidder/authority BEFORE the
   // delete and the new one AFTER the insert; this regression test locks that in.
-  it('stays green after a bidder re-attribution (old + new rollups both rebuilt)', () => {
+  it('stays green after a bidder re-attribution (old + new rollups both rebuilt)', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-gate-'));
     const dbPath = resolve(dir, 'test.sqlite');
     const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
@@ -1032,7 +1062,54 @@ describe('refresh-slice integrity gate', () => {
       expect(wonEur('222222226')).toBeGreaterThan(0);
 
       // …so the gate reconciles on the slice-built DB (rollup check runs; staging self-skips here).
-      const results = assertIntegrity(run, { label: 'test-slice', exit: false });
+      const results = await assertIntegrity(run, { label: 'test-slice', exit: false });
+      expect(results.every((r) => r.ok)).toBe(true);
+      expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stays green after a tender authority re-attribution (old + new rollups both rebuilt)', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-authority-gate-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
+    const spentEur = (eik: string) =>
+      sqliteJson<{ spent_eur: number }>(
+        dbPath,
+        `SELECT spent_eur FROM authority_totals WHERE authority_id = 'auth:${eik}'`,
+      )[0]?.spent_eur ?? 0;
+    try {
+      initWorkDb(dbPath);
+      // window 1: a contract-derived synthetic tender attributed to authority A
+      seedReattrContract(
+        dbPath,
+        'eop:contracts:2026-06-02',
+        '111111111',
+        'Company A',
+        '333333333',
+        'Authority A',
+      );
+      readScript(dbPath, refreshSlicePath);
+      expect(spentEur('333333333')).toBeGreaterThan(0);
+
+      // window 2: the real tender header promotes the same UNP under authority B
+      resetRawStaging(dbPath);
+      seedReattrTender(dbPath, 'eop:tenders:2026-06-05', '444444444', 'Authority B');
+      seedReattrContract(
+        dbPath,
+        'eop:contracts:2026-06-05',
+        '111111111',
+        'Company A',
+        '444444444',
+        'Authority B',
+      );
+      readScript(dbPath, refreshSlicePath);
+
+      expect(spentEur('333333333')).toBe(0);
+      expect(spentEur('444444444')).toBeGreaterThan(0);
+
+      const results = await assertIntegrity(run, { label: 'test-slice-authority', exit: false });
       expect(results.every((r) => r.ok)).toBe(true);
       expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
     } finally {

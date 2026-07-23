@@ -22,15 +22,86 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 
 -- @refresh-batch authorities-bidders
 -- ── 1) Authorities referenced by OCDS staging (new ones only; INSERT OR IGNORE) ────────────────────
-INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
+DROP TABLE IF EXISTS authority_canonical_name;
+CREATE TABLE authority_canonical_name (authority_eik TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO authority_canonical_name (authority_eik, canonical_name)
+SELECT authority_eik, authority_name
 FROM (
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_contracts
-  UNION ALL
-  SELECT source, authority_eik, authority_name, authority_type FROM raw_tenders
+  SELECT
+    authority_eik,
+    authority_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY
+        cnt DESC,
+        CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(authority_name) DESC,
+        authority_name
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_name, COUNT(*) AS cnt
+    FROM (
+      SELECT source, authority_eik, authority_name FROM raw_contracts
+      UNION ALL
+      SELECT source, authority_eik, authority_name FROM raw_tenders
+    )
+    WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%')
+      AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+      AND authority_name IS NOT NULL AND TRIM(authority_name) <> ''
+    GROUP BY authority_eik, authority_name
+  )
 )
-WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
-GROUP BY authority_eik;
+WHERE rn = 1;
+
+DROP TABLE IF EXISTS authority_canonical_type;
+CREATE TABLE authority_canonical_type (authority_eik TEXT PRIMARY KEY, canonical_type TEXT);
+INSERT INTO authority_canonical_type (authority_eik, canonical_type)
+SELECT authority_eik, authority_type
+FROM (
+  SELECT
+    authority_eik,
+    authority_type,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY cnt DESC, authority_type
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_type, COUNT(*) AS cnt
+    FROM (
+      SELECT c.authority_eik, c.authority_type
+      FROM raw_contracts c
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = c.authority_eik AND acn.canonical_name = c.authority_name
+      WHERE c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%'
+      UNION ALL
+      SELECT t.authority_eik, t.authority_type
+      FROM raw_tenders t
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = t.authority_eik AND acn.canonical_name = t.authority_name
+      WHERE t.source LIKE 'eop:%' OR t.source LIKE 'ocds:%'
+    )
+    WHERE authority_type IS NOT NULL AND TRIM(authority_type) <> ''
+    GROUP BY authority_eik, authority_type
+  )
+)
+WHERE rn = 1;
+
+INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
+SELECT
+  'auth:' || s.authority_eik,
+  COALESCE(acn.canonical_name, s.authority_eik),
+  s.authority_eik,
+  act.canonical_type
+FROM (
+  -- Composite joint EIKs must not mint standalone authorities (see normalize-raw.sql).
+  SELECT authority_eik FROM raw_contracts
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+  UNION
+  SELECT authority_eik FROM raw_tenders
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+) s
+LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
+LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;
 
 -- type_group for any authority still missing it (covers the rows just inserted) — same heuristic as
 -- normalize-raw.sql step 1b.
@@ -40,7 +111,20 @@ UPDATE authorities SET type_group = CASE
   WHEN name LIKE '%болница%' OR name LIKE '%БОЛНИЦА%' OR name LIKE 'МБАЛ%' OR name LIKE '%МБАЛ%' OR name LIKE '%СБАЛ%' OR name LIKE '%ДКЦ%' OR name LIKE '%лечебно заведение%' THEN 'болница'
   WHEN name LIKE '%университет%' OR name LIKE '%УНИВЕРСИТЕТ%' OR name LIKE '%училище%' OR name LIKE '%УЧИЛИЩЕ%' OR name LIKE '%гимназия%' OR name LIKE '%ГИМНАЗИЯ%' OR name LIKE '%детска градина%' OR name LIKE '%ДЕТСКА ГРАДИНА%' OR name LIKE '%академия%' THEN 'образование'
   WHEN name LIKE '%агенция%' OR name LIKE '%Агенция%' OR name LIKE '%АГЕНЦИЯ%' THEN 'агенция'
-  WHEN type LIKE 'Публично предприятие%' OR type LIKE 'Комунални услуги%' THEN 'държавна компания'
+  WHEN EXISTS (
+    SELECT 1
+    FROM (
+      SELECT source, authority_eik, authority_type FROM raw_contracts
+      UNION ALL
+      SELECT source, authority_eik, authority_type FROM raw_tenders
+    ) raw_authority_types
+    WHERE (raw_authority_types.source LIKE 'eop:%' OR raw_authority_types.source LIKE 'ocds:%')
+      AND raw_authority_types.authority_eik = authorities.bulstat
+      AND (
+        raw_authority_types.authority_type LIKE 'Публично предприятие%'
+        OR raw_authority_types.authority_type LIKE 'Комунални услуги%'
+      )
+  ) THEN 'държавна компания'
   ELSE 'друго'
 END
 WHERE type_group IS NULL;
@@ -136,10 +220,40 @@ SET bidder_key = CASE
   ELSE 'unknown:анонимен'
 END;
 
+-- 4a-pre) Canonical display name by frequency mode (#251), rebuilt on top of the checksum-based
+--   contractor_identity keys (#252). contractor_identity is DISTINCT-ed over (eik,name), so the
+--   occurrence counts the mode needs must be re-derived from raw_contracts.
+DROP TABLE IF EXISTS bidder_canonical_name;
+CREATE TABLE bidder_canonical_name (bidder_key TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO bidder_canonical_name (bidder_key, canonical_name)
+SELECT bidder_key, name_raw
+FROM (
+  SELECT
+    ci.bidder_key AS bidder_key,
+    ci.name_raw AS name_raw,
+    ROW_NUMBER() OVER (
+      PARTITION BY ci.bidder_key
+      ORDER BY
+        r.cnt DESC,
+        CASE WHEN ci.name_raw GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(ci.name_raw) DESC,
+        ci.name_raw
+    ) AS rn
+  FROM contractor_identity ci
+  JOIN (
+    SELECT contractor_eik, contractor_name, COUNT(*) AS cnt
+    FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+    GROUP BY contractor_eik, contractor_name
+  ) r ON r.contractor_eik IS ci.eik_raw AND r.contractor_name IS ci.name_raw
+  WHERE ci.name_raw IS NOT NULL AND TRIM(ci.name_raw) <> ''
+)
+WHERE rn = 1;
+
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, is_consortium, kind)
 SELECT
   bidder_key,
-  CASE WHEN bidder_key = 'unknown:анонимен' THEN 'Неизвестен изпълнител' ELSE MIN(name_raw) END,
+  CASE WHEN bidder_key = 'unknown:анонимен' THEN 'Неизвестен изпълнител'
+       ELSE COALESCE((SELECT bcn.canonical_name FROM bidder_canonical_name bcn WHERE bcn.bidder_key = contractor_identity.bidder_key), MIN(name_raw)) END,
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MAX(eik_valid),
@@ -164,11 +278,7 @@ SELECT
 FROM contractor_identity
 GROUP BY bidder_key
 ON CONFLICT(id) DO UPDATE SET
-  name = CASE
-    WHEN excluded.name IS NULL THEN bidders.name
-    WHEN bidders.name IS NULL THEN excluded.name
-    ELSE min(bidders.name, excluded.name)
-  END,
+  name = excluded.name,
   bulstat = COALESCE(bidders.bulstat, excluded.bulstat),
   eik_normalized = COALESCE(bidders.eik_normalized, excluded.eik_normalized),
   eik_valid = max(bidders.eik_valid, excluded.eik_valid),
@@ -223,7 +333,7 @@ WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
 -- @refresh-batch tenders
 -- EOP tender headers and lots loaded since the last full normalize.
 INSERT INTO tenders
-  (id, source_id, title, authority_id, cpv_code, cpv_description, estimated_value, currency,
+  (id, source_id, title, authority_id, ordering_unit_name, cpv_code, cpv_description, estimated_value, currency,
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
@@ -233,6 +343,7 @@ SELECT
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
   'auth:' || t.authority_eik,
+  NULLIF(TRIM(t.authority_name), ''),
   t.cpv_code,
   t.cpv_description,
   t.estimated_value,
@@ -266,6 +377,7 @@ ON CONFLICT(id) DO UPDATE SET
   source_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.source_id ELSE tenders.source_id END,
   title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.title ELSE tenders.title END,
   authority_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.authority_id ELSE tenders.authority_id END,
+  ordering_unit_name = excluded.ordering_unit_name,
   cpv_code = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_code, tenders.cpv_code) ELSE tenders.cpv_code END,
   cpv_description = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.cpv_description, tenders.cpv_description) ELSE tenders.cpv_description END,
   estimated_value = CASE WHEN tenders.procedure_type = 'неизвестна' THEN COALESCE(excluded.estimated_value, tenders.estimated_value) ELSE tenders.estimated_value END,
@@ -600,7 +712,7 @@ WHERE id IN (
     )
 );
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value, current_value,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    annex_count, eu_funded, bids_received, contract_kind, awarded_to_group, value_flag, date_flag, amount_eur,
    fx_converted, fx_rate, signing_value_eur, current_value_eur,
    lot_id, document_number, published_at, contract_subject,
@@ -613,6 +725,7 @@ SELECT
     COALESCE(NULLIF(x.lot_id, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -767,6 +880,7 @@ FROM (
           c.bidder_key
         FROM (
           SELECT c.*, ci.bidder_key,
+          c.authority_name AS authority_name_raw,
             CASE
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
@@ -839,7 +953,7 @@ WHERE id IN (
 );
 
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, signing_value, current_value,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at, contract_number, signing_value, current_value,
    annex_count, eu_funded, bids_received, contract_kind, awarded_to_group, value_flag, date_flag, amount_eur,
    fx_converted, fx_rate, signing_value_eur, current_value_eur,
    lot_id, document_number, published_at, contract_subject,
@@ -852,6 +966,7 @@ SELECT
     COALESCE(NULLIF(x.lot_norm, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -1010,6 +1125,7 @@ FROM (
           c.bidder_key
         FROM (
           SELECT c.*, ci.bidder_key,
+          c.authority_name AS authority_name_raw,
             CASE
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
               WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583

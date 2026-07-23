@@ -2,7 +2,9 @@
 // Reconciliation gate (#97) — exercises the pure check functions and assertIntegrity against a
 // small sqlite fixture: a clean corpus passes, and one injected violation per invariant is caught
 // and would exit the import non-zero. Mirrors the repo's SQL-test style (shell out to the sqlite3
-// CLI), and injects the same `(sql) => rows[]` runner the import uses on the sqlite path.
+// CLI), and injects the same `(sql) => rows[]` runner the import uses on the sqlite path. The checks
+// are async (they `await runner`), so the call sites await; a synchronous runner still works because
+// awaiting its array result is transparent.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -83,7 +85,7 @@ afterEach(() => {
 });
 
 describe('reconciliation gate — clean corpus', () => {
-  it('passes every check after precompute (rollups reconcile, no throw)', () => {
+  it('passes every check after precompute (rollups reconcile, no throw)', async () => {
     const db = track(freshDb());
     precompute(db);
     const run = runner(db);
@@ -94,7 +96,7 @@ describe('reconciliation gate — clean corpus', () => {
       `CREATE TABLE pipeline_stats (id INTEGER PRIMARY KEY CHECK (id=1), contract_candidates INTEGER NOT NULL, contracts_inserted INTEGER NOT NULL, computed_at TEXT NOT NULL);
        INSERT INTO pipeline_stats VALUES (1, ${inserted}, ${inserted}, datetime('now'));`,
     );
-    const results = assertIntegrity(run, { label: 'test-clean', exit: false });
+    const results = await assertIntegrity(run, { label: 'test-clean', exit: false });
     expect(results.every((r) => r.ok)).toBe(true);
     expect(results.every((r) => !r.warn)).toBe(true); // clean corpus warns about nothing
     // A SKIP also satisfies `ok`, so assert every check that MUST apply here actually ran — otherwise a
@@ -110,28 +112,40 @@ describe('reconciliation gate — clean corpus', () => {
       expect(results.find((r) => r.name === nm)?.skipped, `${nm} must not skip`).toBe(false);
   });
 
-  it('rollup reconciliation self-skips before precompute (empty rollups)', () => {
+  it('runs against an async runner (the apps/etl D1 path)', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    const sync = runner(db);
+    // Wrap the sync sqlite runner in a Promise-returning one, exactly like env.DB.prepare(sql).all().
+    const asyncRunner = async (sql: string) => sync(sql);
+    const results = await assertIntegrity(asyncRunner, { label: 'test-async', exit: false });
+    expect(results.every((r) => r.ok)).toBe(true);
+    // The rollup check must actually run (not silently skip) on the async path too.
+    expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
+  });
+
+  it('rollup reconciliation self-skips before precompute (empty rollups)', async () => {
     const db = track(freshDb()); // no precompute → home_totals empty
-    const result = checkRollupReconciliation(runner(db));
+    const result = await checkRollupReconciliation(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
 });
 
 describe('reconciliation gate — injected violations', () => {
-  it('rollup-reconciliation catches a drifted rollup', () => {
+  it('rollup-reconciliation catches a drifted rollup', async () => {
     const db = track(freshDb());
     precompute(db);
     sqlite(
       db,
       'UPDATE authority_totals SET spent_eur = spent_eur + 1000 WHERE authority_id = (SELECT MIN(authority_id) FROM authority_totals);',
     );
-    const result = checkRollupReconciliation(runner(db));
+    const result = await checkRollupReconciliation(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/authority_totals/);
   });
 
-  it('rollup-reconciliation catches an orphan contract (no authority)', () => {
+  it('rollup-reconciliation catches an orphan contract (no authority)', async () => {
     const db = track(freshDb());
     // a clean-valued contract whose tender_id resolves to no tender → unattributed
     sqlite(
@@ -139,85 +153,85 @@ describe('reconciliation gate — injected violations', () => {
       "INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, value_flag, amount_eur) VALUES ('c:orphan','t:nope','eik:131071587',9000,'EUR','2022-01-01','ok',9000);",
     );
     precompute(db);
-    const result = checkRollupReconciliation(runner(db));
+    const result = await checkRollupReconciliation(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/orphan|unattributed/);
   });
 
-  it('no-negative-values catches a negative ok amount_eur (Sigma derivation bug → hard fail)', () => {
+  it('no-negative-values catches a negative ok amount_eur (Sigma derivation bug → hard fail)', async () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET amount_eur = -100 WHERE id = 'c:1';");
-    const result = checkNoNegativeValues(runner(db));
+    const result = await checkNoNegativeValues(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/negative amount_eur/);
   });
 
-  it('no-negative-values WARNs (does NOT fail) on a non-ok negative amount_eur (upstream value_low)', () => {
+  it('no-negative-values WARNs (does NOT fail) on a non-ok negative amount_eur (upstream value_low)', async () => {
     const db = track(freshDb());
     // a value_low row keeps a populated, negative amount_eur that precompute still sums — upstream
     // source defect (#19–27) Sigma cannot fix, so it is surfaced loudly but must not break the import.
     sqlite(db, "UPDATE contracts SET value_flag = 'value_low', amount_eur = -5 WHERE id = 'c:1';");
-    const result = checkNoNegativeValues(runner(db));
+    const result = await checkNoNegativeValues(runner(db));
     expect(result.ok).toBe(true);
     expect(result.warn).toBe(true);
     expect(result.detail).toMatch(/non-'ok'.*negative amount_eur/);
   });
 
-  it('no-negative-values catches a negative rollup total (after precompute — exercises the rollup branch)', () => {
+  it('no-negative-values catches a negative rollup total (after precompute — exercises the rollup branch)', async () => {
     const db = track(freshDb());
     precompute(db); // build the rollups so the branch actually runs (the ok-amount test does not)
     sqlite(
       db,
       'UPDATE authority_totals SET spent_eur = -1 WHERE authority_id = (SELECT MIN(authority_id) FROM authority_totals);',
     );
-    const result = checkNoNegativeValues(runner(db));
+    const result = await checkNoNegativeValues(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/authority_totals\.spent_eur rows are negative/);
   });
 
-  it('non-empty-corpus fails on an empty corpus (a silent empty ship cannot pass green)', () => {
+  it('non-empty-corpus fails on an empty corpus (a silent empty ship cannot pass green)', async () => {
     const db = track(freshDb());
     sqlite(db, 'DELETE FROM contracts;');
-    const result = checkNonEmptyCorpus(runner(db));
+    const result = await checkNonEmptyCorpus(runner(db));
     expect(result.ok).toBe(false);
     expect(result.skipped).toBe(false);
     expect(result.detail).toMatch(/EMPTY corpus/);
   });
 
-  it('eik-validity catches eik_valid=1 with a non-numeric eik_normalized', () => {
+  it('eik-validity catches eik_valid=1 with a non-numeric eik_normalized', async () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE bidders SET eik_normalized = 'AB12' WHERE id = 'eik:131071587';");
-    const result = checkEikValidity(runner(db));
+    const result = await checkEikValidity(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/eik_valid=1/);
   });
 
-  it('eik-validity catches eik_valid<>1 with a non-null eik_normalized', () => {
+  it('eik-validity catches eik_valid<>1 with a non-null eik_normalized', async () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE bidders SET eik_normalized = '131071587' WHERE id = 'name:NAMED BIDDER';");
-    const result = checkEikValidity(runner(db));
+    const result = await checkEikValidity(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/eik_valid<>1/);
   });
 
-  it('date-sanity reports (warns, does NOT fail) a signed_at before 2007', () => {
+  it('date-sanity reports (warns, does NOT fail) a signed_at before 2007', async () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET signed_at = '1999-01-01' WHERE id = 'c:1';");
-    const result = checkDateSanity(runner(db));
+    const result = await checkDateSanity(runner(db));
     expect(result.ok).toBe(true);
     expect(result.warn).toBe(true);
     expect(result.detail).toMatch(/outside .* reported not gated/);
   });
 
-  it('date-sanity reports (warns, does NOT fail) a future signed_at', () => {
+  it('date-sanity reports (warns, does NOT fail) a future signed_at', async () => {
     const db = track(freshDb());
     sqlite(db, "UPDATE contracts SET signed_at = date('now','+5 day') WHERE id = 'c:1';");
-    const result = checkDateSanity(runner(db));
+    const result = await checkDateSanity(runner(db));
     expect(result.ok).toBe(true);
     expect(result.warn).toBe(true);
   });
 
-  it('an out-of-range upstream date alone does NOT fail the import (consumer cannot fix source #19–27)', () => {
+  it('an out-of-range upstream date alone does NOT fail the import (consumer cannot fix source #19–27)', async () => {
     const db = track(freshDb());
     precompute(db);
     const inserted = Number(runner(db)('SELECT COUNT(*) AS n FROM contracts')[0].n);
@@ -228,12 +242,12 @@ describe('reconciliation gate — injected violations', () => {
     );
     // the exact real-world defect: a future signed_at typo in the source feed
     sqlite(db, "UPDATE contracts SET signed_at = '2029-05-14' WHERE id = 'c:1';");
-    const results = assertIntegrity(runner(db), { label: 'test-baddate', exit: false });
+    const results = await assertIntegrity(runner(db), { label: 'test-baddate', exit: false });
     expect(results.every((r) => r.ok)).toBe(true); // gate passes — import is NOT broken
     expect(results.find((r) => r.name === 'date-sanity')?.warn).toBe(true);
   });
 
-  it('staging-reconciliation catches more inserted than eligible candidates', () => {
+  it('staging-reconciliation catches more inserted than eligible candidates', async () => {
     const db = track(freshDb());
     const inserted = Number(runner(db)('SELECT COUNT(*) AS n FROM contracts')[0].n);
     sqlite(
@@ -241,12 +255,12 @@ describe('reconciliation gate — injected violations', () => {
       `CREATE TABLE pipeline_stats (id INTEGER PRIMARY KEY CHECK (id=1), contract_candidates INTEGER NOT NULL, contracts_inserted INTEGER NOT NULL, computed_at TEXT NOT NULL);
        INSERT INTO pipeline_stats VALUES (1, ${inserted - 1}, ${inserted}, datetime('now'));`,
     );
-    const result = checkStagingReconciliation(runner(db));
+    const result = await checkStagingReconciliation(runner(db));
     expect(result.ok).toBe(false);
     expect(result.detail).toMatch(/exceed eligible candidates/);
   });
 
-  it('staging-reconciliation self-skips when pipeline_stats is stale', () => {
+  it('staging-reconciliation self-skips when pipeline_stats is stale', async () => {
     const db = track(freshDb());
     const inserted = Number(runner(db)('SELECT COUNT(*) AS n FROM contracts')[0].n);
     sqlite(
@@ -254,17 +268,17 @@ describe('reconciliation gate — injected violations', () => {
       `CREATE TABLE pipeline_stats (id INTEGER PRIMARY KEY CHECK (id=1), contract_candidates INTEGER NOT NULL, contracts_inserted INTEGER NOT NULL, computed_at TEXT NOT NULL);
        INSERT INTO pipeline_stats VALUES (1, ${inserted}, ${inserted + 7}, datetime('now'));`,
     );
-    const result = checkStagingReconciliation(runner(db));
+    const result = await checkStagingReconciliation(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
 
-  it('assertIntegrity throws non-zero on a sign-flipped amount_eur (the import would exit 1)', () => {
+  it('assertIntegrity throws non-zero on a sign-flipped amount_eur (the import would exit 1)', async () => {
     const db = track(freshDb());
     precompute(db);
     sqlite(db, "UPDATE contracts SET amount_eur = -amount_eur WHERE id = 'c:2';");
-    expect(() => assertIntegrity(runner(db), { label: 'test-corrupt', exit: false })).toThrow(
-      /integrity gate failed/,
-    );
+    await expect(
+      assertIntegrity(runner(db), { label: 'test-corrupt', exit: false }),
+    ).rejects.toThrow(/integrity gate failed/);
   });
 });

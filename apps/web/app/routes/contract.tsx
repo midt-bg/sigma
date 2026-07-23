@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
-import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
+import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -87,7 +87,7 @@ export function headers() {
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
-  const contract = await getContract(context.cloudflare.env.DB, contractIdFromSlug(params.id));
+  const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
   return { contract };
 }
@@ -269,6 +269,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="figure-amount">
                 <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>
               </p>
+              {c.authority.orderingUnit && (
+                <p className="small muted figure-sub">
+                  Възложител по документа: {c.authority.orderingUnit}
+                </p>
+              )}
               <p className="small muted figure-sub">
                 {c.authority.typeLabel && <Chip>{c.authority.typeLabel}</Chip>}
                 {c.authority.settlement && <> {c.authority.settlement}</>}

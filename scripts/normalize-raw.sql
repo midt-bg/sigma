@@ -46,14 +46,85 @@ DELETE FROM authorities;
 
 -- 1) Authorities — dedupe on ЕИК across both contracts and tenders staging, keep a
 --    canonical display name and the authority type (Вид на възложителя).
-INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
-SELECT 'auth:' || authority_eik, MIN(authority_name), authority_eik, MAX(authority_type)
+--    Names use the mode per ЕИК, with deterministic presentation-quality tiebreaks.
+DROP TABLE IF EXISTS authority_canonical_name;
+CREATE TABLE authority_canonical_name (authority_eik TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO authority_canonical_name (authority_eik, canonical_name)
+SELECT authority_eik, authority_name
 FROM (
-  SELECT authority_eik, authority_name, authority_type FROM raw_contracts WHERE authority_eik IS NOT NULL
-  UNION ALL
-  SELECT authority_eik, authority_name, authority_type FROM raw_tenders   WHERE authority_eik IS NOT NULL
+  SELECT
+    authority_eik,
+    authority_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY
+        cnt DESC,
+        CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(authority_name) DESC,
+        authority_name
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_name, COUNT(*) AS cnt
+    FROM (
+      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+      UNION ALL
+      SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+    )
+    WHERE authority_name IS NOT NULL AND TRIM(authority_name) <> ''
+    GROUP BY authority_eik, authority_name
+  )
 )
-GROUP BY authority_eik;
+WHERE rn = 1;
+
+-- Keep the type modal within rows carrying the winning name, so the two canonical fields describe
+-- the same entity when an ЕИК has been shared or reused under multiple labels.
+DROP TABLE IF EXISTS authority_canonical_type;
+CREATE TABLE authority_canonical_type (authority_eik TEXT PRIMARY KEY, canonical_type TEXT);
+INSERT INTO authority_canonical_type (authority_eik, canonical_type)
+SELECT authority_eik, authority_type
+FROM (
+  SELECT
+    authority_eik,
+    authority_type,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_eik
+      ORDER BY cnt DESC, authority_type
+    ) AS rn
+  FROM (
+    SELECT authority_eik, authority_type, COUNT(*) AS cnt
+    FROM (
+      SELECT c.authority_eik, c.authority_type
+      FROM raw_contracts c
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = c.authority_eik AND acn.canonical_name = c.authority_name
+      UNION ALL
+      SELECT t.authority_eik, t.authority_type
+      FROM raw_tenders t
+      JOIN authority_canonical_name acn
+        ON acn.authority_eik = t.authority_eik AND acn.canonical_name = t.authority_name
+    )
+    WHERE authority_type IS NOT NULL AND TRIM(authority_type) <> ''
+    GROUP BY authority_eik, authority_type
+  )
+)
+WHERE rn = 1;
+
+INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
+SELECT
+  'auth:' || s.authority_eik,
+  COALESCE(acn.canonical_name, s.authority_eik),
+  s.authority_eik,
+  act.canonical_type
+FROM (
+  -- Composite joint-procurement EIKs ('EIK1; EIK2') must not mint standalone authorities —
+  -- they are attributed via their individual members; an unguarded source mints orphan
+  -- 'auth:EIK1; EIK2' rows referenced by nothing (verified on a full 2020-2026 rebuild).
+  SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+  UNION
+  SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+) s
+LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
+LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;
 
 -- 1b) Friendly authority type buckets — heuristic from name + ЗОП type (non-critical display field;
 --     name patterns cover Title- and UPPER-case Cyrillic since SQLite LIKE is case-sensitive for it).
@@ -63,14 +134,26 @@ UPDATE authorities SET type_group = CASE
   WHEN name LIKE '%болница%' OR name LIKE '%БОЛНИЦА%' OR name LIKE 'МБАЛ%' OR name LIKE '%МБАЛ%' OR name LIKE '%СБАЛ%' OR name LIKE '%ДКЦ%' OR name LIKE '%лечебно заведение%' THEN 'болница'
   WHEN name LIKE '%университет%' OR name LIKE '%УНИВЕРСИТЕТ%' OR name LIKE '%училище%' OR name LIKE '%УЧИЛИЩЕ%' OR name LIKE '%гимназия%' OR name LIKE '%ГИМНАЗИЯ%' OR name LIKE '%детска градина%' OR name LIKE '%ДЕТСКА ГРАДИНА%' OR name LIKE '%академия%' THEN 'образование'
   WHEN name LIKE '%агенция%' OR name LIKE '%Агенция%' OR name LIKE '%АГЕНЦИЯ%' THEN 'агенция'
-  WHEN type LIKE 'Публично предприятие%' OR type LIKE 'Комунални услуги%' THEN 'държавна компания'
+  WHEN EXISTS (
+    SELECT 1
+    FROM (
+      SELECT authority_eik, authority_type FROM raw_contracts
+      UNION ALL
+      SELECT authority_eik, authority_type FROM raw_tenders
+    ) raw_authority_types
+    WHERE raw_authority_types.authority_eik = authorities.bulstat
+      AND (
+        raw_authority_types.authority_type LIKE 'Публично предприятие%'
+        OR raw_authority_types.authority_type LIKE 'Комунални услуги%'
+      )
+  ) THEN 'държавна компания'
   ELSE 'друго'
 END;
 
 -- 2a) Tenders — the header row of each procurement (lot_id IS NULL): one per УНП, carrying
 --     procedure type, CPV, the procurement-level estimated value, lot count and authority.
 INSERT OR IGNORE INTO tenders
-  (id, source_id, title, authority_id, cpv_code, cpv_description, estimated_value, currency,
+  (id, source_id, title, authority_id, ordering_unit_name, cpv_code, cpv_description, estimated_value, currency,
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
@@ -80,6 +163,7 @@ SELECT
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
   'auth:' || t.authority_eik,
+  NULLIF(TRIM(t.authority_name), ''),
   t.cpv_code,
   t.cpv_description,
   t.estimated_value,
@@ -323,10 +407,40 @@ END;
 
 -- 4a) Bidders — valid ЕИК first, then normalised name, then one labelled unknown bucket. The
 --      bucket keeps identity-poor contracts attached without polluting bulstat/eik_normalized.
+-- 4a-pre) Canonical display name by frequency mode (#251), rebuilt on top of the checksum-based
+--   contractor_identity keys (#252). contractor_identity is DISTINCT-ed over (eik,name), so the
+--   occurrence counts the mode needs must be re-derived from raw_contracts.
+DROP TABLE IF EXISTS bidder_canonical_name;
+CREATE TABLE bidder_canonical_name (bidder_key TEXT PRIMARY KEY, canonical_name TEXT);
+INSERT INTO bidder_canonical_name (bidder_key, canonical_name)
+SELECT bidder_key, name_raw
+FROM (
+  SELECT
+    ci.bidder_key AS bidder_key,
+    ci.name_raw AS name_raw,
+    ROW_NUMBER() OVER (
+      PARTITION BY ci.bidder_key
+      ORDER BY
+        r.cnt DESC,
+        CASE WHEN ci.name_raw GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(ci.name_raw) DESC,
+        ci.name_raw
+    ) AS rn
+  FROM contractor_identity ci
+  JOIN (
+    SELECT contractor_eik, contractor_name, COUNT(*) AS cnt
+    FROM raw_contracts WHERE source LIKE 'eop:%' OR source LIKE 'ocds:%'
+    GROUP BY contractor_eik, contractor_name
+  ) r ON r.contractor_eik IS ci.eik_raw AND r.contractor_name IS ci.name_raw
+  WHERE ci.name_raw IS NOT NULL AND TRIM(ci.name_raw) <> ''
+)
+WHERE rn = 1;
+
 INSERT OR IGNORE INTO bidders (id, name, bulstat, eik_normalized, eik_valid, is_consortium, kind)
 SELECT
   bidder_key,
-  CASE WHEN bidder_key = 'unknown:анонимен' THEN 'Неизвестен изпълнител' ELSE MIN(name_raw) END,
+  CASE WHEN bidder_key = 'unknown:анонимен' THEN 'Неизвестен изпълнител'
+       ELSE COALESCE((SELECT bcn.canonical_name FROM bidder_canonical_name bcn WHERE bcn.bidder_key = contractor_identity.bidder_key), MIN(name_raw)) END,
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MIN(CASE WHEN eik_valid = 1 THEN eik_clean END),
   MAX(eik_valid),
@@ -399,7 +513,7 @@ SET ownership_kind = (
 --    fx_rate carries the applied rate on the row (amount * fx_rate = amount_eur), so the original value,
 --    the rate, and the EUR value are all auditable without joining fx_rates.
 INSERT OR IGNORE INTO contracts
-  (id, tender_id, bidder_id, amount, currency, signed_at,
+  (id, tender_id, bidder_id, ordering_unit_name, amount, currency, signed_at,
    contract_number, signing_value, current_value, annex_count, eu_funded, bids_received,
    contract_kind, awarded_to_group, value_flag, date_flag, amount_eur, fx_converted, fx_rate,
    lot_id, document_number, published_at, contract_subject,
@@ -417,6 +531,7 @@ SELECT
   END,
   't:' || x.unp,
   x.bidder_key,
+  NULLIF(TRIM(x.authority_name_raw), ''),
   x.display_native,
   COALESCE(x.currency, 'BGN'),
   x.contract_date,
@@ -569,6 +684,7 @@ FROM (
         c.bidder_key
       FROM (
         SELECT c.*, ci.bidder_key,
+          c.authority_name AS authority_name_raw,
           CASE
             WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN COALESCE(c.current_value, c.signing_value)
             WHEN COALESCE(NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN COALESCE(c.current_value, c.signing_value) / 1.95583
