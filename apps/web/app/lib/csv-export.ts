@@ -1,4 +1,5 @@
 import { withDataSource } from './dataSource';
+import { getDb } from '@sigma/db';
 
 const CSV_CONTENT_TYPE = 'text/csv; charset=utf-8';
 const CSV_CACHE_CONTROL = 'public, max-age=3600';
@@ -202,7 +203,7 @@ export async function servedCsvExport({
     return markCsvCache(stream(), 'dynamic');
   }
 
-  const version = await freshnessVersion(env.DB);
+  const version = await freshnessVersion(getDb(env));
   // The CSV streamers order strictly by the keyset id column and ignore `sort`, so the unfiltered
   // export bytes are identical regardless of the URL's `sort`. Keying on `sort` would mint a distinct
   // R2 object per arbitrary value (storage/scan amplification) for no benefit, so it is excluded.

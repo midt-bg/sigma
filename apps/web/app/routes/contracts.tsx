@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, date, money, moneyBare } from '@sigma/shared';
-import { contractsSummary, getContractFacets, listContracts } from '@sigma/db';
+import { contractsSummary, getContractFacets, listContracts, getDb } from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -53,13 +53,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pageSize: PAGE_SIZE.contracts,
   };
   const { env } = context.cloudflare;
+  const db = getDb(env);
   // Page `Cache-Control` (publicCache(1800)) memoises full responses at the edge — no per-query cache.
   return withDbRetry(async () => {
     const [summary, facets] = await Promise.all([
-      contractsSummary(env.DB, params),
-      getContractFacets(env.DB),
+      contractsSummary(db, params),
+      getContractFacets(db),
     ]);
-    const result = await listContracts(env.DB, params, summary);
+    const result = await listContracts(db, params, summary);
     return { result, facets };
   });
 }
