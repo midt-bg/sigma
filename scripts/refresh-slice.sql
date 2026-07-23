@@ -46,7 +46,7 @@ FROM (
       SELECT source, authority_eik, authority_name FROM raw_tenders
     )
     WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%')
-      AND authority_eik IS NOT NULL
+      AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
       AND authority_name IS NOT NULL AND TRIM(authority_name) <> ''
     GROUP BY authority_eik, authority_name
   )
@@ -93,11 +93,12 @@ SELECT
   s.authority_eik,
   act.canonical_type
 FROM (
+  -- Composite joint EIKs must not mint standalone authorities (see normalize-raw.sql).
   SELECT authority_eik FROM raw_contracts
-  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
   UNION
   SELECT authority_eik FROM raw_tenders
-  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
 ) s
 LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
 LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;

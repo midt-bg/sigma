@@ -66,9 +66,9 @@ FROM (
   FROM (
     SELECT authority_eik, authority_name, COUNT(*) AS cnt
     FROM (
-      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL
+      SELECT authority_eik, authority_name FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
       UNION ALL
-      SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL
+      SELECT authority_eik, authority_name FROM raw_tenders   WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
     )
     WHERE authority_name IS NOT NULL AND TRIM(authority_name) <> ''
     GROUP BY authority_eik, authority_name
@@ -116,9 +116,12 @@ SELECT
   s.authority_eik,
   act.canonical_type
 FROM (
-  SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
+  -- Composite joint-procurement EIKs ('EIK1; EIK2') must not mint standalone authorities —
+  -- they are attributed via their individual members; an unguarded source mints orphan
+  -- 'auth:EIK1; EIK2' rows referenced by nothing (verified on a full 2020-2026 rebuild).
+  SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
   UNION
-  SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
+  SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
 ) s
 LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
 LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;
