@@ -42,6 +42,7 @@ CREATE TABLE tenders (
   source_id       TEXT NOT NULL UNIQUE,    -- УНП (ЦАИС ЕОП identifier)
   title           TEXT NOT NULL,
   authority_id    TEXT NOT NULL REFERENCES authorities(id),
+  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   cpv_code        TEXT,
   cpv_description TEXT,                     -- human-readable CPV label (no external dictionary needed)
   estimated_value REAL,
@@ -112,6 +113,7 @@ CREATE TABLE contracts (
   id               TEXT PRIMARY KEY,       -- 'c:' || staging row id
   tender_id        TEXT NOT NULL REFERENCES tenders(id),
   bidder_id        TEXT NOT NULL REFERENCES bidders(id),
+  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   amount           REAL NOT NULL,          -- as-recorded headline value in `currency` (display); signing for annex_suspect
   currency         TEXT NOT NULL DEFAULT 'BGN',
   signed_at        TEXT,

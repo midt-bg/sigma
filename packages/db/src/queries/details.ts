@@ -362,6 +362,8 @@ export async function getAuthority(
 
 // ── Contract ──────────────────────────────────────────────────────────────────────────────────
 
+const foldName = (s: string): string => s.toLocaleLowerCase('bg').replace(/\s+/g, ' ').trim();
+
 interface ContractDetailRow {
   id: string;
   tender_id: string;
@@ -408,6 +410,7 @@ interface ContractDetailRow {
   // authority
   authority_id: string;
   authority_name: string;
+  source_authority_name: string | null;
   authority_type_group: string | null;
   authority_settlement: string | null;
   // bidder
@@ -466,6 +469,7 @@ export async function getContract(
               c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag,
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
+              c.ordering_unit_name AS source_authority_name,
               t.title, t.source_id AS unp, t.procedure_type, t.cpv_code, t.cpv_description, t.num_lots,
               t.eop_tender_id,
               t.estimated_value, t.currency AS tender_currency, t.start_date, t.end_date,
@@ -602,6 +606,10 @@ export async function getContract(
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.authority_name),
     displayName: cleanName(r.authority_name),
+    orderingUnit:
+      r.source_authority_name && foldName(r.source_authority_name) !== foldName(r.authority_name)
+        ? cleanName(r.source_authority_name)
+        : null,
     typeLabel: typeLabel(r.authority_type_group),
     settlement: r.authority_settlement,
     eik: authoritySlug(r.authority_id),
@@ -613,6 +621,7 @@ export async function getContract(
     slug: companySlug(r.bidder_id),
     name: cleanName(r.bidder_name),
     displayName: entityName(cleanName(r.bidder_name), r.bidder_kind),
+    orderingUnit: null,
     kind: r.bidder_kind,
     typeLabel: null,
     settlement: r.bidder_settlement,
@@ -696,5 +705,11 @@ export async function getContract(
     amendments,
   };
 
-  return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };
+  return {
+    ...detail,
+    sourceNames: {
+      authority: r.source_authority_name ?? r.authority_name,
+      bidder: r.bidder_name,
+    },
+  };
 }
