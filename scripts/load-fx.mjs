@@ -132,9 +132,7 @@ if (ranges.length > 0 && rows.length === 0) {
   process.exit(1);
 }
 if (ranges.length > 0 && pricedCurrencies.size < ranges.length) {
-  const missing = ranges
-    .map((r) => String(r.currency))
-    .filter((c) => !pricedCurrencies.has(c));
+  const missing = ranges.map((r) => String(r.currency)).filter((c) => !pricedCurrencies.has(c));
   console.warn(
     `\n  ! load-fx: priced ${pricedCurrencies.size}/${ranges.length} currencies; missing ${missing.join(', ')} — proceeding, but those contracts will lack a rate.`,
   );
