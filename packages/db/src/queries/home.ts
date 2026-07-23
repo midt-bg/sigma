@@ -53,7 +53,9 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
   const [companies, ministries, municipalities, recentSingleOffer, topSingleOffer, singleOfferRow] =
     await Promise.all([
       db
-        .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
+        .prepare(
+          `SELECT * FROM company_totals WHERE kind <> 'unknown' ORDER BY won_eur DESC, bidder_id LIMIT 10`,
+        )
         .all<CompanyTotalsRow>(),
       db
         .prepare(

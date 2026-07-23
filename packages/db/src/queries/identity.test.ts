@@ -23,7 +23,11 @@ describe('company slug', () => {
     expect(bidderIdFromSlug(slug)).toBe(id);
   });
   it('round-trips a 13-digit ЕИК', () => {
-    expect(bidderIdFromSlug(companySlug('eik:1234567890123'))).toBe('eik:1234567890123');
+    expect(bidderIdFromSlug(companySlug('eik:8316417910124'))).toBe('eik:8316417910124');
+  });
+  it('resolves the unknown bidder linked from contract pages', () => {
+    expect(companySlug('unknown:анонимен')).toBe('unknown:анонимен');
+    expect(bidderIdFromSlug('unknown:анонимен')).toBe('unknown:анонимен');
   });
 });
 

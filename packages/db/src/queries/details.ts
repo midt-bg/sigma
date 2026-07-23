@@ -248,7 +248,7 @@ export async function getAuthority(
       .prepare(
         `SELECT c.bidder_id, b.name, b.kind, SUM(c.amount_eur) AS won, COUNT(*) AS n
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN bidders b ON b.id = c.bidder_id
-         WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL
+         WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL AND b.kind <> 'unknown'
          GROUP BY c.bidder_id ORDER BY won DESC LIMIT 7`,
       )
       .bind(authorityId)

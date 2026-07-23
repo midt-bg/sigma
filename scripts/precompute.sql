@@ -158,7 +158,8 @@ SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6
 FROM authority_totals at;
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
-FROM company_totals ct;
+FROM company_totals ct
+WHERE ct.bidder_id <> 'unknown:анонимен';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'contract', c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title),
   COALESCE(t.source_id, ''),

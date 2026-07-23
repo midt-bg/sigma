@@ -134,7 +134,7 @@ describe('ETL entity canonicalization through real SQL scripts', () => {
   });
 
   it('uses the bidder-name mode for EIK- and name-keyed bidders in both ETL paths', () => {
-    const bidderEik = '400000001';
+    const bidderEik = '400000004';
 
     for (const [label, scriptPath] of etlPaths) {
       withEtlDb(label, (dbPath) => {

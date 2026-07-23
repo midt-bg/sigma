@@ -41,14 +41,14 @@ const baseContractRow = {
   tender_fx_rate: null as number | null,
   start_date: null,
   end_date: null,
-  authority_id: 'auth:123456789',
+  authority_id: 'auth:123456786',
   authority_name: 'Authority',
   authority_type_group: 'ministry',
   authority_settlement: 'Sofia',
-  bidder_id: 'eik:111111111',
+  bidder_id: 'eik:111111113',
   bidder_name: 'Bidder',
   bidder_kind: 'company' as const,
-  bidder_eik: '111111111',
+  bidder_eik: '111111113',
   bidder_settlement: 'Sofia',
 };
 
@@ -102,7 +102,7 @@ describe('getContract', () => {
           estimated_fx_rate: null,
           bidder_name: 'Bidder',
           bidder_kind: 'company',
-          bidder_id: 'eik:111111111',
+          bidder_id: 'eik:111111113',
         },
         {
           lot_id: 'lot:UNP-1:2',
@@ -147,7 +147,7 @@ describe('getContract', () => {
           estimated_fx_rate: 0.9,
           bidder_name: 'Bidder',
           bidder_kind: 'company',
-          bidder_id: 'eik:111111111',
+          bidder_id: 'eik:111111113',
         },
         {
           lot_id: 'lot:UNP-1:2',
