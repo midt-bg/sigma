@@ -1,17 +1,19 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
 import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
 import { RiskIndicators } from '../components/RiskIndicators';
 import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
-import { seoMeta } from '../lib/meta';
+import { buildContractCitation } from '../lib/citation';
+import { seoMeta, getRootOrigin, FALLBACK_ORIGIN } from '../lib/meta';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -95,6 +97,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена достоверност';
 
 export default function Contract({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches) ?? FALLBACK_ORIGIN;
   const c = loaderData.contract;
   const v = c.value;
   const crumbId = c.unp || c.contractNumber || c.id;
@@ -135,36 +139,39 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </>
           }
         >
-          {c.eopTenderId && (
-            // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
-            // documents are published and downloadable. The portal keys this page on the numeric EOP
-            // tenderId (preserved on the parent tender as `eop_tender_id`), NOT the noticeId/document
-            // number. The portal is a client-rendered SPA, so this is a clickable deep link, not a
-            // scrapeable file list.
-            <a
-              className="source-cta"
-              href={`https://app.eop.bg/today/${c.eopTenderId}`}
-              target="_blank"
-              rel="noopener"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                aria-hidden="true"
+          <div className="header-actions">
+            <CopyCitationButton textToCopy={buildContractCitation(c, origin)} />
+            {c.eopTenderId && (
+              // Deep-link to the procedure's page on the public ЦАИС ЕОП portal, where the official
+              // documents are published and downloadable. The portal keys this page on the numeric EOP
+              // tenderId (preserved on the parent tender as `eop_tender_id`), NOT the noticeId/document
+              // number. The portal is a client-rendered SPA, so this is a clickable deep link, not a
+              // scrapeable file list.
+              <a
+                className="source-cta"
+                href={`https://app.eop.bg/today/${c.eopTenderId}`}
+                target="_blank"
+                rel="noopener"
               >
-                <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
-                <path d="M9 1.75V5.25h3.5" />
-              </svg>
-              Виж документите в ЦАИС ЕОП
-              <span className="cta-ext" aria-hidden="true">
-                ↗
-              </span>
-            </a>
-          )}
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  aria-hidden="true"
+                >
+                  <path d="M3.5 1.75H9l3.5 3.5v9h-9z" />
+                  <path d="M9 1.75V5.25h3.5" />
+                </svg>
+                Виж документите в ЦАИС ЕОП
+                <span className="cta-ext" aria-hidden="true">
+                  ↗
+                </span>
+              </a>
+            )}
+          </div>
         </PageHeader>
 
         <Section
