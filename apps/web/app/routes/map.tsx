@@ -1,7 +1,7 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { MacroRegionSpend, RegionSpend } from '@sigma/api-contract';
 import { count, money, pct } from '@sigma/shared';
-import { getRegionalSpending } from '@sigma/db';
+import { getRegionalSpending, getDb } from '@sigma/db';
 import type { Route } from './+types/map';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -29,7 +29,7 @@ export function headers() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const coverage = await getCoverageMeta(db);
   const years = yearOptions(coverage.coverageEndYear);
   const { sector, year, funding, unknownSector, unknownYear } = singleSelectFilters(

@@ -7,7 +7,7 @@ import type {
 } from '@sigma/api-contract';
 import { EU_SCOREBOARD } from '@sigma/config';
 import { count, money, pct } from '@sigma/shared';
-import { getCompetition } from '@sigma/db';
+import { getCompetition, getDb } from '@sigma/db';
 import type { Route } from './+types/competition';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -34,7 +34,7 @@ export function headers() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const coverage = await getCoverageMeta(db);
   const years = yearOptions(coverage.coverageEndYear);
   const { sector, year, funding, top, unknownSector, unknownYear } = singleSelectFilters(

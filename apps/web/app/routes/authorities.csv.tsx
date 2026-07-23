@@ -1,4 +1,4 @@
-import { streamAuthoritiesCsv } from '@sigma/db';
+import { streamAuthoritiesCsv, getDb } from '@sigma/db';
 import type { Route } from './+types/authorities.csv';
 import { servedCsvExport } from '../lib/csv-export';
 import { authorityListFilters } from '../lib/filters';
@@ -12,6 +12,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     request,
     route: 'authorities',
     params,
-    stream: () => streamAuthoritiesCsv(context.cloudflare.env.DB, params),
+    stream: () => streamAuthoritiesCsv(getDb(context.cloudflare.env), params),
   });
 }

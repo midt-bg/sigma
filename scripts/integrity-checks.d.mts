@@ -2,9 +2,12 @@
 // import.mjs / ship-domain.mjs run it directly under `node` with no build step; this declaration
 // gives the TypeScript test (and any future TS consumer) real types.
 
-/** A query runner: takes one SQL statement, returns the result rows. Backed by D1 (wrangler) in
- *  the orchestrators and by the sqlite3 CLI in tests — the same shape import.mjs already uses. */
-export type IntegrityRunner = (sql: string) => Array<Record<string, unknown>>;
+/** A query runner: takes one SQL statement, returns the result rows. May be synchronous (the
+ *  sqlite3/wrangler CLI orchestrators return rows directly) or asynchronous (the apps/etl Workflow
+ *  runs `env.DB.prepare(sql).all()`, a Promise). The checks await the result, so both fit. */
+export type IntegrityRunner = (
+  sql: string,
+) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
 
 export interface IntegrityResult {
   /** stable check id, e.g. 'rollup-reconciliation' */
@@ -20,16 +23,31 @@ export interface IntegrityResult {
   detail: string;
 }
 
-export function checkNonEmptyCorpus(runner: IntegrityRunner): IntegrityResult;
-export function checkRollupReconciliation(runner: IntegrityRunner): IntegrityResult;
-export function checkCurrentAmountParity(runner: IntegrityRunner): IntegrityResult;
-export function checkNoNegativeValues(runner: IntegrityRunner): IntegrityResult;
-export function checkEikValidity(runner: IntegrityRunner): IntegrityResult;
-export function checkDateSanity(runner: IntegrityRunner): IntegrityResult;
-export function checkStagingReconciliation(runner: IntegrityRunner): IntegrityResult;
+export function checkNonEmptyCorpus(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkRollupReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkCurrentAmountParity(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkNoNegativeValues(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkStagingReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
 
-export const CHECKS: Array<(runner: IntegrityRunner) => IntegrityResult>;
-export function runIntegrityChecks(runner: IntegrityRunner): IntegrityResult[];
+export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
+export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;
+
+export interface IntegritySummary {
+  /** true when no check is a hard failure (warnings/skips don't break the gate) */
+  ok: boolean;
+  violations: IntegrityResult[];
+  warned: IntegrityResult[];
+  ran: number;
+  skipped: number;
+  /** canonical failure message, or null when ok — the single source both callers report */
+  message: string | null;
+}
+
+/** Reduce check results to the gate verdict + canonical message (shared by assertIntegrity and the
+ *  apps/etl Worker gate, so the two never diverge). */
+export function summarizeIntegrity(results: IntegrityResult[], label?: string): IntegritySummary;
 
 export interface AssertIntegrityOptions {
   /** label shown in the failure line, identifying the call site/backend */
@@ -40,4 +58,4 @@ export interface AssertIntegrityOptions {
 export function assertIntegrity(
   runner: IntegrityRunner,
   options?: AssertIntegrityOptions,
-): IntegrityResult[];
+): Promise<IntegrityResult[]>;

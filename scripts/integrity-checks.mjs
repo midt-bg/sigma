@@ -9,6 +9,11 @@
 // returns { name, ok, skipped, detail }. assertIntegrity(runner) runs them all, prints a
 // summary, and ends the process non-zero on the first real violation (collect-all-then-fail).
 //
+// The runner may be synchronous (the sqlite3/wrangler CLI orchestrators return rows directly) OR
+// async (the apps/etl Workflow runs `env.DB.prepare(sql).all()`, which is a Promise). The checks
+// `await runner(sql)` throughout; awaiting an already-resolved array is transparent, so the sync
+// CLI runners keep working unchanged — callers just `await` the now-async checks.
+//
 // Tolerance policy: the ONLY tolerance is EPS_EUR, for float reassociation when SUM()ing the
 // REAL amount_eur column in different group orders. Every STRUCTURAL exclusion (a contract that
 // attributes to no authority/bidder) is computed EXACTLY by row count and asserted to be 0 —
@@ -29,19 +34,19 @@ function num(v) {
   return v === null || v === undefined ? 0 : Number(v);
 }
 
-function rows(runner, sql) {
-  const out = runner(sql);
+async function rows(runner, sql) {
+  const out = await runner(sql);
   return Array.isArray(out) ? out : [];
 }
 
-function scalar(runner, sql, col) {
-  const r = rows(runner, sql);
+async function scalar(runner, sql, col) {
+  const r = await rows(runner, sql);
   return r.length ? r[0][col] : null;
 }
 
-function tableExists(runner, name) {
+async function tableExists(runner, name) {
   return (
-    rows(runner, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${name}'`)
+    (await rows(runner, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${name}'`))
       .length > 0
   );
 }
@@ -50,11 +55,11 @@ function tableExists(runner, name) {
 //    a botched derive can leave 0 contracts. On the served D1 the staging check self-skips (no
 //    pipeline_stats) and every rollup sum is 0 == 0, so without this an empty database would pass the
 //    whole gate green. Asserted on every backend so a silent empty ship cannot slip through.
-export function checkNonEmptyCorpus(runner) {
+export async function checkNonEmptyCorpus(runner) {
   const name = 'non-empty-corpus';
-  if (!tableExists(runner, 'contracts'))
+  if (!(await tableExists(runner, 'contracts')))
     return { name, ok: true, skipped: true, detail: 'contracts table absent' };
-  const n = num(scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
+  const n = num(await scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
   return {
     name,
     ok: n > 0,
@@ -71,11 +76,11 @@ export function checkNonEmptyCorpus(runner) {
 //    unattributed remainder must be exactly 0 rows. Requires precompute to have run; self-skips on
 //    the pre-ship work DB, where normalize-raw has cleared the rollups and precompute runs later
 //    on the served D1 (detected via the single home_totals row precompute always writes).
-export function checkRollupReconciliation(runner) {
+export async function checkRollupReconciliation(runner) {
   const name = 'rollup-reconciliation';
   if (
-    !tableExists(runner, 'home_totals') ||
-    num(scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
+    !(await tableExists(runner, 'home_totals')) ||
+    num(await scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
   ) {
     return {
       name,
@@ -92,19 +97,21 @@ export function checkRollupReconciliation(runner) {
   // exact structural exclusions, asserted to be 0 (normalize gives every contract a parent tender —
   // synthetic if needed — with a non-null authority, and a bidder row).
   const r =
-    rows(
-      runner,
-      'SELECT' +
-        ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
-        ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
-        ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
-        ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
-        ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +
-        ' (SELECT value_eur FROM home_totals) AS home_value,' +
-        ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tenders t JOIN authorities a ON a.id = t.authority_id WHERE t.id = c.tender_id)) AS orphan_auth_rows,' +
-        ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_id) OR NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = c.tender_id))) AS orphan_bidder_rows',
+    (
+      await rows(
+        runner,
+        'SELECT' +
+          ' (SELECT COALESCE(SUM(amount_eur), 0) FROM contracts WHERE amount_eur IS NOT NULL) AS clean_total,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id WHERE c.amount_eur IS NOT NULL) AS auth_attr,' +
+          ' (SELECT COALESCE(SUM(spent_eur), 0) FROM authority_totals) AS auth_rollup,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN bidders b ON b.id = c.bidder_id JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL) AS bidder_attr,' +
+          ' (SELECT COALESCE(SUM(won_eur), 0) FROM company_totals) AS company_rollup,' +
+          ' (SELECT COALESCE(SUM(c.amount_eur), 0) FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id WHERE c.amount_eur IS NOT NULL) AS flow_attr,' +
+          ' (SELECT COALESCE(SUM(won_eur), 0) FROM flow_pairs) AS flow_rollup,' +
+          ' (SELECT value_eur FROM home_totals) AS home_value,' +
+          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND NOT EXISTS (SELECT 1 FROM tenders t JOIN authorities a ON a.id = t.authority_id WHERE t.id = c.tender_id)) AS orphan_auth_rows,' +
+          ' (SELECT COUNT(*) FROM contracts c WHERE c.amount_eur IS NOT NULL AND (NOT EXISTS (SELECT 1 FROM bidders b WHERE b.id = c.bidder_id) OR NOT EXISTS (SELECT 1 FROM tenders t WHERE t.id = c.tender_id))) AS orphan_bidder_rows',
+      )
     )[0] || {};
   const cleanTotal = num(r.clean_total);
   const authAttr = num(r.auth_attr);
@@ -197,19 +204,21 @@ export function checkCurrentAmountParity(runner) {
 //      number, so it is surfaced loudly rather than hidden. (The accuracy-correct end state is to stop
 //      summing negatives in the value basis — tracked as a follow-up; out of this gate's #97 scope.)
 //    - no rollup total may be negative → HARD fail (a whole-group negative is structural corruption).
-export function checkNoNegativeValues(runner) {
+export async function checkNoNegativeValues(runner) {
   const name = 'no-negative-values';
-  if (!tableExists(runner, 'contracts'))
+  if (!(await tableExists(runner, 'contracts')))
     return { name, ok: true, skipped: true, detail: 'contracts table absent' };
   const fails = [];
   const warns = [];
   // One read for both contract classes (ok-negative is a Sigma bug; non-ok-negative is upstream).
   const c =
-    rows(
-      runner,
-      'SELECT' +
-        " (SELECT COUNT(*) FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0) AS neg_ok," +
-        " (SELECT COUNT(*) FROM contracts WHERE value_flag <> 'ok' AND amount_eur < 0) AS neg_other",
+    (
+      await rows(
+        runner,
+        'SELECT' +
+          " (SELECT COUNT(*) FROM contracts WHERE value_flag = 'ok' AND amount_eur < 0) AS neg_ok," +
+          " (SELECT COUNT(*) FROM contracts WHERE value_flag <> 'ok' AND amount_eur < 0) AS neg_other",
+      )
     )[0] || {};
   const negOk = num(c.neg_ok);
   const negOther = num(c.neg_other);
@@ -221,14 +230,16 @@ export function checkNoNegativeValues(runner) {
     );
   // The three rollups are created together by precompute, so one existence check gates all three, and
   // the three counts fold into a single SELECT (on D1 each runner call is a process spawn).
-  if (tableExists(runner, 'home_totals')) {
+  if (await tableExists(runner, 'home_totals')) {
     const r =
-      rows(
-        runner,
-        'SELECT' +
-          ' (SELECT COUNT(*) FROM authority_totals WHERE spent_eur < 0) AS a,' +
-          ' (SELECT COUNT(*) FROM company_totals WHERE won_eur < 0) AS c,' +
-          ' (SELECT COUNT(*) FROM flow_pairs WHERE won_eur < 0) AS f',
+      (
+        await rows(
+          runner,
+          'SELECT' +
+            ' (SELECT COUNT(*) FROM authority_totals WHERE spent_eur < 0) AS a,' +
+            ' (SELECT COUNT(*) FROM company_totals WHERE won_eur < 0) AS c,' +
+            ' (SELECT COUNT(*) FROM flow_pairs WHERE won_eur < 0) AS f',
+        )
       )[0] || {};
     if (num(r.a) !== 0) fails.push(`${num(r.a)} authority_totals.spent_eur rows are negative`);
     if (num(r.c) !== 0) fails.push(`${num(r.c)} company_totals.won_eur rows are negative`);
@@ -247,13 +258,13 @@ export function checkNoNegativeValues(runner) {
 // 4) EIK validity (canonical home: bidders). eik_valid=1 ⇒ eik_normalized is a numeric 9/13-digit
 //    ЕИК; eik_valid<>1 ⇒ eik_normalized IS NULL. normalize-raw guarantees this (it sets
 //    eik_normalized only when eik_valid=1); the gate proves the guarantee held.
-export function checkEikValidity(runner) {
+export async function checkEikValidity(runner) {
   const name = 'eik-validity';
-  if (!tableExists(runner, 'bidders'))
+  if (!(await tableExists(runner, 'bidders')))
     return { name, ok: true, skipped: true, detail: 'bidders table absent' };
   const fails = [];
   const badValid = num(
-    scalar(
+    await scalar(
       runner,
       'SELECT COUNT(*) AS n FROM bidders WHERE eik_valid = 1 AND (' +
         "eik_normalized IS NULL OR eik_normalized GLOB '*[^0-9]*' OR LENGTH(eik_normalized) NOT IN (9, 13))",
@@ -265,7 +276,7 @@ export function checkEikValidity(runner) {
       `${badValid} bidders with eik_valid=1 have a non-numeric / wrong-length eik_normalized`,
     );
   const badInvalid = num(
-    scalar(
+    await scalar(
       runner,
       'SELECT COUNT(*) AS n FROM bidders WHERE eik_valid <> 1 AND eik_normalized IS NOT NULL',
       'n',
@@ -287,12 +298,12 @@ export function checkEikValidity(runner) {
 //    a single source typo (real example: signed_at='2029-05-14' in the 2024 feed) would otherwise fail
 //    every refresh forever. We surface the count as a WARN (a spike would flag a Sigma-side date-parse
 //    regression for a human to notice) but always return ok. NULL is allowed.
-export function checkDateSanity(runner) {
+export async function checkDateSanity(runner) {
   const name = 'date-sanity';
-  if (!tableExists(runner, 'contracts'))
+  if (!(await tableExists(runner, 'contracts')))
     return { name, ok: true, skipped: true, detail: 'contracts table absent' };
   const n = num(
-    scalar(
+    await scalar(
       runner,
       'SELECT COUNT(*) AS n FROM contracts WHERE signed_at IS NOT NULL AND ' +
         "(signed_at < '2007-01-01' OR signed_at > date('now'))",
@@ -317,24 +328,26 @@ export function checkDateSanity(runner) {
 //    candidates — corroborates the orphan check from the staging side) and that a non-empty corpus
 //    actually landed. The candidates−inserted gap is the cumulative-bucket dedup drop (≥0, reported).
 //    Self-skips where pipeline_stats is absent (served D1) or stale (slice path changed the count).
-export function checkStagingReconciliation(runner) {
+export async function checkStagingReconciliation(runner) {
   const name = 'staging-reconciliation';
-  if (!tableExists(runner, 'pipeline_stats'))
+  if (!(await tableExists(runner, 'pipeline_stats')))
     return {
       name,
       ok: true,
       skipped: true,
       detail: 'pipeline_stats absent (not a post-normalize DB)',
     };
-  const row = rows(
-    runner,
-    'SELECT contract_candidates, contracts_inserted, computed_at FROM pipeline_stats WHERE id = 1',
+  const row = (
+    await rows(
+      runner,
+      'SELECT contract_candidates, contracts_inserted, computed_at FROM pipeline_stats WHERE id = 1',
+    )
   )[0];
   if (!row) return { name, ok: true, skipped: true, detail: 'pipeline_stats empty' };
   const candidates = num(row.contract_candidates);
   const recorded = num(row.contracts_inserted);
   const computedAt = row.computed_at ?? 'unknown';
-  const current = num(scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
+  const current = num(await scalar(runner, 'SELECT COUNT(*) AS n FROM contracts', 'n'));
   if (recorded !== current)
     return {
       name,
@@ -370,32 +383,51 @@ export const CHECKS = [
   checkStagingReconciliation,
 ];
 
-export function runIntegrityChecks(runner) {
-  return CHECKS.map((fn) => fn(runner));
+export async function runIntegrityChecks(runner) {
+  // Sequential, not Promise.all: preserve the printed order and avoid firing every check's reads at
+  // D1 at once. Each `fn` may return a value (sync runner) or a Promise (async/D1 runner); await both.
+  const results = [];
+  for (const fn of CHECKS) results.push(await fn(runner));
+  return results;
+}
+
+// Reduce raw check results to the gate verdict + a single canonical failure message, so every caller
+// (CLI assertIntegrity, the apps/etl Worker gate) reports the SAME decision and message instead of
+// re-deriving it. `violations` are the hard failures; `warned` are the non-gating WARNs.
+export function summarizeIntegrity(results, label = 'integrity') {
+  const violations = results.filter((r) => !r.skipped && !r.ok);
+  const warned = results.filter((r) => r.warn);
+  const ran = results.filter((r) => !r.skipped).length;
+  return {
+    ok: violations.length === 0,
+    violations,
+    warned,
+    ran,
+    skipped: results.length - ran,
+    message:
+      violations.length === 0
+        ? null
+        : `integrity gate failed: ${violations.length} of ${results.length} checks broke (${label}).`,
+  };
 }
 
 // Run all checks, print a one-line summary per check, and FAIL non-zero on any real violation.
 // `exit: true` (default) mirrors assertFxPopulated — print to stderr and process.exit(1). Tests pass
 // `exit: false` to get a thrown Error instead (the assertion still fails the same way).
-export function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
-  const results = runIntegrityChecks(runner);
-  let failed = 0;
+export async function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
+  const results = await runIntegrityChecks(runner);
   for (const r of results) {
     const tag = r.skipped ? 'SKIP' : r.warn ? 'WARN' : r.ok ? ' ok ' : 'FAIL';
     console.log(`   [${tag}] ${r.name}: ${r.detail}`);
-    if (!r.skipped && !r.ok) failed += 1;
   }
-  if (failed > 0) {
-    const msg = `!! integrity gate failed: ${failed} of ${results.length} checks broke (${label}).`;
-    console.error(msg);
+  const summary = summarizeIntegrity(results, label);
+  if (!summary.ok) {
+    console.error(`!! ${summary.message}`);
     if (exit) process.exit(1);
-    throw new Error(msg);
+    throw new Error(summary.message);
   }
-  const ran = results.filter((r) => !r.skipped).length;
-  const skipped = results.length - ran;
-  const warned = results.filter((r) => r.warn).length;
   console.log(
-    `==> integrity gate passed (${ran} run, ${skipped} skipped${warned ? `, ${warned} warned` : ''}).`,
+    `==> integrity gate passed (${summary.ran} run, ${summary.skipped} skipped${summary.warned.length ? `, ${summary.warned.length} warned` : ''}).`,
   );
   return results;
 }
