@@ -10,6 +10,7 @@ import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.
 import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
+  REFRESH_SLICE_ROLLUP_GROUPS,
 } from '../packages/ingest/src/refresh.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
@@ -133,7 +134,8 @@ function assertFxPopulated() {
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.\n` +
+        '   Pre-existing legacy rows (cron bug window, #158)? Repair first: node scripts/backfill-fx.mjs --apply',
     );
     process.exit(1);
   }
@@ -160,7 +162,8 @@ function assertFxPopulatedSqlite(dbPath) {
   const missing = Number(rows[0]?.missing_fx ?? 0);
   if (missing > 0) {
     console.error(
-      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.`,
+      `!! FX assertion failed: ${missing} foreign-currency contracts have NULL amount_eur after normalize.\n` +
+        '   Pre-existing legacy rows (cron bug window, #158)? Repair first: node scripts/backfill-fx.mjs --apply --work-db <db>',
     );
     process.exit(1);
   }
@@ -239,14 +242,21 @@ function runSliceDerive() {
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
-  runRefreshSliceBatches();
+  // Same FX gate as the full derive (#158), at the same point: after the rows are derived and
+  // BEFORE any rollup is written — a gate after the rollups would fire loudly but leave the
+  // corrupted totals already served (mirrors assertFxPopulated's slot before precompute.sql).
+  runRefreshSliceBatches((g) => !REFRESH_SLICE_ROLLUP_GROUPS.includes(g.name));
+  assertFxPopulated();
+  runRefreshSliceBatches((g) => REFRESH_SLICE_ROLLUP_GROUPS.includes(g.name));
   assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
-function runRefreshSliceBatches() {
+function runRefreshSliceBatches(include = () => true) {
   const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
-  const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8'));
+  const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8')).filter(
+    include,
+  );
   const batchDirParent = resolve(root, 'data/work');
   mkdirSync(batchDirParent, { recursive: true });
   const batchDir = mkdtempSync(resolve(batchDirParent, 'refresh-slice-'));
