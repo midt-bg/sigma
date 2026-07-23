@@ -106,3 +106,61 @@ describe('semanticSearch', () => {
     );
   });
 });
+
+describe('rag — embed mismatch and metadata mapping', () => {
+  const runner = (data: unknown): EmbeddingRunner =>
+    ({ run: async () => ({ data }) }) as unknown as EmbeddingRunner;
+  const index = (
+    matches: { id: string; score: number; metadata?: Record<string, unknown> }[],
+  ): VectorIndex =>
+    ({ upsert: async () => ({}), query: async () => ({ matches }) }) as unknown as VectorIndex;
+
+  it('throws when the provider returns the wrong number of vectors', async () => {
+    // 1 vector back for 2 input texts → the index-alignment invariant is violated.
+    await expect(embed(runner([vec()]), ['a', 'b'])).rejects.toThrow(/expected 2 vectors/);
+  });
+
+  it('retrieveSchemaContext returns only non-empty chunk texts from the matches', async () => {
+    const out = await retrieveSchemaContext(
+      runner([vec()]),
+      index([
+        { id: '1', score: 0.9, metadata: { text: 'chunk A' } },
+        { id: '2', score: 0.8, metadata: {} }, // no text → filtered out
+      ]),
+      'въпрос',
+    );
+    expect(out).toEqual(['chunk A']);
+  });
+
+  it('semanticSearch maps hit metadata, defaulting missing fields to empty strings', async () => {
+    const hits = await semanticSearch(
+      runner([vec()]),
+      index([
+        { id: 'e1', score: 0.7, metadata: { kind: 'company', ref: 'eik:1', title: 'Тест' } },
+        { id: 'e2', score: 0.5 }, // no metadata → defaults
+      ]),
+      'заявка',
+    );
+    expect(hits[0]).toEqual({ kind: 'company', ref: 'eik:1', title: 'Тест', score: 0.7 });
+    expect(hits[1]).toEqual({ kind: '', ref: '', title: '', score: 0.5 });
+  });
+});
+
+describe('rag — provider-anomaly and empty-vector guards', () => {
+  const runner = (data: unknown): EmbeddingRunner =>
+    ({ run: async () => ({ data }) }) as unknown as EmbeddingRunner;
+  const emptyIndex = () =>
+    ({ upsert: async () => ({}), query: async () => ({ matches: [] }) }) as unknown as VectorIndex;
+
+  it('embed reports "none" when the provider returns a non-array', async () => {
+    await expect(embed(runner('nope'), ['a'])).rejects.toThrow(/got none/);
+  });
+
+  it('retrieveSchemaContext returns [] when the embedding vector is missing', async () => {
+    expect(await retrieveSchemaContext(runner([undefined]), emptyIndex(), 'q')).toEqual([]);
+  });
+
+  it('semanticSearch returns [] when the embedding vector is missing', async () => {
+    expect(await semanticSearch(runner([undefined]), emptyIndex(), 'q')).toEqual([]);
+  });
+});

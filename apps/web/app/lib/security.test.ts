@@ -20,6 +20,13 @@ describe('securityHeaders CSP', () => {
     expect(csp).not.toContain('nonce-');
   });
 
+  it('omits the CSP on the edge-cached variant outside production', () => {
+    // nonceLessSecurityHeaders only attaches the CSP in prod; dev keeps the base headers CSP-free.
+    const dev = nonceLessSecurityHeaders(["'sha256-abc'"], false);
+    expect(dev.get('Content-Security-Policy')).toBeNull();
+    expect(dev.get('X-Content-Type-Options')).toBe('nosniff');
+  });
+
   it('omits the CSP outside production but keeps the base hardening headers', () => {
     const dev = securityHeaders('n', false);
     expect(dev.get('Content-Security-Policy')).toBeNull();

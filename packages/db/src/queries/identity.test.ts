@@ -118,3 +118,19 @@ describe('hrefForEntity', () => {
     expect(href).toBe('/contracts/e:UNP:ОП20-42%2F22%2F');
   });
 });
+
+describe('slug decode edge cases', () => {
+  it('authoritySlug returns an unprefixed id verbatim (no auth: prefix)', () => {
+    expect(authoritySlug('000695089')).toBe('000695089');
+  });
+  it('companySlug returns an unprefixed id verbatim (neither eik: nor name:)', () => {
+    expect(companySlug('rawid-123')).toBe('rawid-123');
+  });
+  it('bidderIdFromSlug returns null for an undecodable name slug', () => {
+    // starts with 'n' but the remainder is not valid base64url → atob throws → caught → null
+    expect(bidderIdFromSlug('n@@@')).toBeNull();
+  });
+  it('bidderIdFromSlug returns null for a slug that is neither a ЕИК nor name-encoded', () => {
+    expect(bidderIdFromSlug('xyz')).toBeNull();
+  });
+});

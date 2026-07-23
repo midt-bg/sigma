@@ -93,9 +93,23 @@ class InMemoryR2 {
     }
 
     const range = this.rangeFrom(options?.range, stored.bytes.length);
-    const bytes = range
-      ? stored.bytes.slice(range.offset, range.offset + range.length)
-      : stored.bytes.slice();
+    let bytes = stored.bytes.slice();
+    if (range) {
+      // Resolve the R2-native range shape to a concrete slice (mirrors csv-export's rangeInfo).
+      let start = 0;
+      let length = stored.bytes.length;
+      if ('offset' in range && range.offset !== undefined) {
+        start = range.offset;
+        length = range.length ?? stored.bytes.length - start;
+      } else if ('suffix' in range) {
+        length = Math.min(range.suffix, stored.bytes.length);
+        start = stored.bytes.length - length;
+      } else if ('length' in range && range.length !== undefined) {
+        start = 0;
+        length = range.length;
+      }
+      bytes = stored.bytes.slice(start, start + length);
+    }
     return this.objectWithBody(key, stored, bytes, range);
   });
 
@@ -179,7 +193,7 @@ class InMemoryR2 {
     key: string,
     stored: StoredObject,
     bytes: Uint8Array,
-    range?: { offset: number; length: number },
+    range?: R2Range,
   ): R2ObjectBody {
     return {
       ...this.objectWithoutBody(key, stored),
@@ -194,16 +208,22 @@ class InMemoryR2 {
     } as unknown as R2ObjectBody;
   }
 
-  private rangeFrom(
-    range: R2GetOptions['range'] | undefined,
-    size: number,
-  ): { offset: number; length: number } | undefined {
+  private rangeFrom(range: R2GetOptions['range'] | undefined, size: number): R2Range | undefined {
     if (range === undefined) return undefined;
 
     if (range instanceof Headers) {
       const header = range.get('range');
       if (header === null) return { offset: 0, length: size };
 
+      // `bytes=-N` → an R2 suffix range; `bytes=A-` → an offset-only (open-ended) range; `bytes=A-B`
+      // → offset+length. Real R2 surfaces each shape on obj.range, so echo the native shape here.
+      const suffix = /^bytes=-(\d+)$/.exec(header);
+      if (suffix) return { suffix: Number(suffix[1]) };
+      const open = /^bytes=(\d+)-$/.exec(header);
+      if (open) {
+        const start = Number(open[1]);
+        return start >= size ? undefined : { offset: start };
+      }
       const match = /^bytes=(\d+)-(\d+)$/.exec(header);
       if (!match) return undefined;
 
@@ -502,5 +522,114 @@ describe('servedCsvExport', () => {
     expect(r2.createMultipartUpload).toHaveBeenCalledTimes(1);
     expect(r2.lastUploadPartCallCount()).toBeGreaterThanOrEqual(2);
     expect((await response.arrayBuffer()).byteLength).toBe(largeBody.byteLength);
+  });
+});
+
+describe('csv-export — remaining branches', () => {
+  it('treats a non-string q as a filter and a null q as unfiltered', () => {
+    expect(isUnfilteredCsvExport({ q: 123 })).toBe(false); // non-string, present → filtered
+    expect(isUnfilteredCsvExport({ q: null })).toBe(true); // explicit null → unfiltered
+    expect(isUnfilteredCsvExport({ q: '   ' })).toBe(true); // whitespace-only → unfiltered
+  });
+
+  it('falls back to the v0 freshness version when home_totals has no refreshed_at', async () => {
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse());
+    await (await serve(r2, stream, { refreshedAt: null })).text();
+    expect(r2.createMultipartUpload).toHaveBeenCalledWith('csv/contracts/v0', expect.anything());
+  });
+
+  it('stores an empty unfiltered export without uploading a zero-length part', async () => {
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(() => csvResponse('')); // empty body → uploadBufferedPart sees buffered 0
+    const response = await serve(r2, stream);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('');
+  });
+
+  it('skips an empty stream chunk while buffering multipart parts', async () => {
+    const r2 = new InMemoryR2();
+    const stream = vi.fn(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(new Uint8Array(0)); // empty chunk → the `!value?.byteLength` continue
+              c.enqueue(encoder.encode('data\n'));
+              c.close();
+            },
+          }),
+          { headers: { 'Content-Type': CSV_CONTENT_TYPE } },
+        ),
+    );
+    const response = await serve(r2, stream);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('data\n');
+  });
+});
+
+describe('putStreamMultipart — abort on failure', () => {
+  it('aborts the multipart upload and rethrows when a part upload fails', async () => {
+    const abort = vi.fn(async () => {});
+    const bucket = {
+      get: vi.fn(async () => null),
+      createMultipartUpload: vi.fn(async () => ({
+        uploadPart: async () => {
+          throw new Error('part failed');
+        },
+        complete: async () => {},
+        abort,
+      })),
+    } as unknown as R2Bucket;
+    await expect(
+      servedCsvExport({
+        env: { DB: fakeDb(REFRESHED_AT), CSV_CACHE: bucket },
+        request: new Request('http://local/contracts.csv'),
+        route: 'contracts',
+        params: { sort: 'value-desc' },
+        stream: () => csvResponse(),
+      }),
+    ).rejects.toThrow('part failed');
+    expect(abort).toHaveBeenCalled(); // best-effort cleanup ran before the rethrow
+  });
+});
+
+describe('servedCsvExport — R2 range shapes', () => {
+  async function prime(r2: InMemoryR2): Promise<void> {
+    await (
+      await serve(
+        r2,
+        vi.fn(() => csvResponse()),
+      )
+    ).text();
+  }
+
+  it('serves a suffix range (bytes=-N) as the trailing bytes', async () => {
+    const r2 = new InMemoryR2();
+    await prime(r2);
+    const size = encoder.encode(CSV_BODY).length;
+    const response = await serve(
+      r2,
+      vi.fn(() => csvResponse('x')),
+      { request: new Request('http://local/contracts.csv', { headers: { Range: 'bytes=-4' } }) },
+    );
+    expect(response.status).toBe(206);
+    expect(response.headers.get('Content-Range')).toBe(`bytes ${size - 4}-${size - 1}/${size}`);
+    expect(response.headers.get('Content-Length')).toBe('4');
+    expect(await response.text()).toBe(CSV_BODY.slice(-4));
+  });
+
+  it('serves an open-ended range (bytes=A-) to the end of the object', async () => {
+    const r2 = new InMemoryR2();
+    await prime(r2);
+    const size = encoder.encode(CSV_BODY).length;
+    const response = await serve(
+      r2,
+      vi.fn(() => csvResponse('x')),
+      { request: new Request('http://local/contracts.csv', { headers: { Range: 'bytes=10-' } }) },
+    );
+    expect(response.status).toBe(206);
+    expect(response.headers.get('Content-Range')).toBe(`bytes 10-${size - 1}/${size}`);
+    expect(await response.text()).toBe(CSV_BODY.slice(10));
   });
 });

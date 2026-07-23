@@ -677,3 +677,157 @@ describe('ultra review fixes (review #80)', () => {
       expect(out.report.blocks[0].points).toEqual([{ label: 'c', value: 42 }]);
   });
 });
+
+describe('bindReport — flows block', () => {
+  const flowResults: QueryResult[] = [
+    {
+      handle: 'F1',
+      columns: ['from_name', 'to_name', 'amount'],
+      rows: [
+        ['Мин. финанси', 'Алфа ООД', 500000],
+        ['Мин. финанси', 'Бета ЕООД', null], // null value → edge skipped
+      ],
+    },
+  ];
+
+  it('builds edges from the result, dropping rows with a null value', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'flows',
+          resultId: 'F1',
+          fromCol: 'from_name',
+          toCol: 'to_name',
+          valueCol: 'amount',
+        },
+      ]),
+      flowResults,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const b = out.report.blocks[0]!;
+      expect(b.type).toBe('flows');
+      if (b.type === 'flows')
+        expect(b.edges).toEqual([{ from: 'Мин. финанси', to: 'Алфа ООД', valueEur: 500000 }]);
+    }
+  });
+
+  it('renders an empty flows block for a 0-row result', () => {
+    const out = bindReport(
+      emit([{ type: 'flows', resultId: 'E', fromCol: 'a', toCol: 'b', valueCol: 'c' }]),
+      [{ handle: 'E', columns: [], rows: [] }],
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.report.blocks[0]).toMatchObject({ type: 'flows', edges: [] });
+  });
+
+  it('rejects a flows block that references a missing column', () => {
+    const out = bindReport(
+      emit([
+        { type: 'flows', resultId: 'F1', fromCol: 'nope', toCol: 'to_name', valueCol: 'amount' },
+      ]),
+      flowResults,
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it('rejects a chart block that references an unknown result handle', () => {
+    const out = bindReport(
+      emit([{ type: 'flows', resultId: 'GHOST', fromCol: 'a', toCol: 'b', valueCol: 'c' }]),
+      flowResults,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toContain('unknown result handle');
+  });
+});
+
+describe('bindReport — facts sub-line and title guards', () => {
+  it('sanitises a non-numeric facts sub-line', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'facts',
+          items: [
+            {
+              term: 'Възложител',
+              ref: { resultId: 'R1', row: 0, col: 'authority' },
+              sub: 'държавен',
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const b = out.report.blocks[0]!;
+      if (b.type === 'facts') expect(b.items[0]!.sub).toBe('държавен');
+    }
+  });
+
+  it('rejects a facts sub-line carrying a material number', () => {
+    const out = bindReport(
+      emit([
+        {
+          type: 'facts',
+          items: [
+            {
+              term: 'Х',
+              ref: { resultId: 'R1', row: 0, col: 'authority' },
+              sub: 'струва 5 млн лв',
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it('rejects an empty (whitespace-only) report title', () => {
+    const out = bindReport(
+      { title: '   ', question: 'въпрос', blocks: [{ type: 'text', md: 'нещо' }] },
+      results,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.join(' ')).toContain('title is empty');
+  });
+});
+
+describe('bindReport — chart block edges', () => {
+  it('renders empty bar and timeseries blocks for 0-row results', () => {
+    const empty: QueryResult[] = [{ handle: 'Z', columns: [], rows: [] }];
+    const bar = bindReport(
+      emit([{ type: 'bar', resultId: 'Z', labelCol: 'a', valueCol: 'b' }]),
+      empty,
+    );
+    expect(bar.ok).toBe(true);
+    if (bar.ok) expect(bar.report.blocks[0]).toMatchObject({ type: 'bar', points: [] });
+    const ts = bindReport(
+      emit([{ type: 'timeseries', resultId: 'Z', periodCol: 'a', valueCol: 'b' }]),
+      empty,
+    );
+    expect(ts.ok).toBe(true);
+    if (ts.ok) expect(ts.report.blocks[0]).toMatchObject({ type: 'timeseries', points: [] });
+  });
+
+  it('coerces null flow endpoints to "" and keeps a null timeseries period', () => {
+    const r: QueryResult[] = [
+      { handle: 'N', columns: ['f', 't', 'v', 'p'], rows: [[null, null, 100, null]] },
+    ];
+    const flows = bindReport(
+      emit([{ type: 'flows', resultId: 'N', fromCol: 'f', toCol: 't', valueCol: 'v' }]),
+      r,
+    );
+    expect(flows.ok).toBe(true);
+    if (flows.ok && flows.report.blocks[0]!.type === 'flows')
+      expect(flows.report.blocks[0]!.edges[0]).toEqual({ from: '', to: '', valueEur: 100 });
+    const ts = bindReport(
+      emit([{ type: 'timeseries', resultId: 'N', periodCol: 'p', valueCol: 'v' }]),
+      r,
+    );
+    expect(ts.ok).toBe(true);
+    if (ts.ok && ts.report.blocks[0]!.type === 'timeseries')
+      expect(ts.report.blocks[0]!.points[0]).toEqual({ period: null, value: 100 });
+  });
+});

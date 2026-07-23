@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
 import {
   authorityListFilters,
+  buildSectorGroup,
   companyListFilters,
   contractListFilters,
   getMulti,
@@ -10,8 +11,11 @@ import {
   pageNav,
   PARAM_ORDER,
   searchHref,
+  singleSelectFilters,
+  sortHref,
   withParams,
 } from './filters';
+import { categoryForDivision } from '@sigma/config';
 import { CANONICAL_QUERY_PARAMS } from './query-params';
 
 const sp = (q: string) => new URLSearchParams(q);
@@ -370,5 +374,104 @@ describe('withParams', () => {
     // The invariant behind the filter: a key ordered but not in the allow-list would be silently
     // dropped from every generated link.
     expect(PARAM_ORDER.filter((key) => !CANONICAL_QUERY_PARAMS.has(key))).toEqual([]);
+  });
+});
+
+describe('singleSelectFilters', () => {
+  const known = CPV_SECTORS[0]!.code;
+
+  it('passes through a valid sector, year, funding, and top', () => {
+    const f = singleSelectFilters(sp(`sector=${known}&year=2024&funding=eu&top=50`), [
+      '2024',
+      '2023',
+    ]);
+    expect(f).toMatchObject({
+      sector: known,
+      year: '2024',
+      funding: 'eu',
+      top: 50,
+      unknownSector: false,
+      unknownYear: false,
+    });
+  });
+
+  it('flags and drops an unknown sector', () => {
+    const f = singleSelectFilters(sp('sector=ZZ'));
+    expect(f.sector).toBeNull();
+    expect(f.unknownSector).toBe(true);
+  });
+
+  it('flags and drops a year outside the coverage window', () => {
+    const f = singleSelectFilters(sp('year=1999'), ['2024', '2023']);
+    expect(f.year).toBeNull();
+    expect(f.unknownYear).toBe(true);
+  });
+
+  it('never flags a year when no coverage window is supplied', () => {
+    const f = singleSelectFilters(sp('year=1999')); // years=[] → unknownYear always false
+    expect(f.unknownYear).toBe(false);
+    expect(f.year).toBe('1999');
+  });
+
+  it('defaults funding to „all" and top to 20, and keeps national', () => {
+    expect(singleSelectFilters(sp('')).funding).toBe('all');
+    expect(singleSelectFilters(sp('funding=bogus&top=99')).top).toBe(20);
+    expect(singleSelectFilters(sp('funding=national')).funding).toBe('national');
+  });
+});
+
+describe('buildSectorGroup', () => {
+  const withCat = CPV_SECTORS.filter((s) => categoryForDivision(s.code));
+
+  it('groups facet sectors under their CPV category and sums present counts', () => {
+    const a = withCat[0]!;
+    const group = buildSectorGroup([{ value: a.code, label: a.label, count: 3 }], [a.code]);
+    expect(group.key).toBe('sector');
+    expect(group.type).toBe('checkbox');
+    expect(group.selected).toEqual([a.code]);
+    const cat = group.categories!.find((c) => c.options.some((o) => o.value === a.code))!;
+    expect(cat.count).toBe(3); // all option counts present → category count summed
+    expect(cat.options.find((o) => o.value === a.code)).toMatchObject({ label: a.label, count: 3 });
+  });
+
+  it('omits the category count when any sector count is missing', () => {
+    const a = withCat[0]!;
+    const group = buildSectorGroup([{ value: a.code, label: a.label }], []); // no count
+    const cat = group.categories!.find((c) => c.options.some((o) => o.value === a.code))!;
+    expect(cat.count).toBeUndefined();
+    expect(cat.options.find((o) => o.value === a.code)!.count).toBeUndefined();
+  });
+
+  it('skips a facet sector with no CPV category', () => {
+    const group = buildSectorGroup([{ value: 'ZZ', label: 'Bogus', count: 1 }], []);
+    expect(group.categories!.every((c) => c.options.every((o) => o.value !== 'ZZ'))).toBe(true);
+  });
+});
+
+describe('sortHref', () => {
+  it('swaps the sort and resets the cursor/page to page one', () => {
+    expect(sortHref(sp('sort=old&cursor=abc&page=3'), 'value-asc')).toBe('?sort=value-asc');
+  });
+});
+
+describe('filters — remaining branch coverage', () => {
+  it('authorityListFilters leaves eu null when the param is absent', () => {
+    expect(authorityListFilters(sp('type=x')).eu).toBeNull();
+  });
+
+  it('withParams drops null overrides and appends array values, skipping empty elements', () => {
+    expect(withParams(sp('sort=x'), { sort: null })).toBe(''); // null override → dropped
+    expect(withParams(sp(''), { year: ['2024', '', '2023'] })).toBe('?year=2024&year=2023');
+  });
+
+  it('withParams drops an empty-valued base param and returns "" when nothing survives', () => {
+    expect(withParams(sp('year='), {})).toBe('');
+  });
+
+  it('pageNav defaults the display page when the cursor is present but page is missing or NaN', () => {
+    const nav = (q: string) =>
+      pageNav({ base: sp(q), total: 100, pageSize: 25, nextCursor: 'n', prevCursor: 'p' });
+    expect(nav('cursor=x').page).toBe(1); // page absent → ?? '1'
+    expect(nav('cursor=x&page=abc').page).toBe(1); // NaN → || 1
   });
 });

@@ -72,3 +72,44 @@ describe('getRegionalSpending', () => {
     expect(filtered.some((s) => s.includes('JOIN tenders t'))).toBe(true);
   });
 });
+
+describe('getRegionalSpending — empty dataset', () => {
+  it('reports zero coverage without dividing by zero when no authorities exist', async () => {
+    // No region rows at all → withRegion 0 and unattributed 0 → total 0 → the `total > 0 ? … : 0`
+    // else-branch owns pct (guards against 0/0 = NaN).
+    const emptyDb = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const { coverage } = await getRegionalSpending(emptyDb, {});
+    expect(coverage.total).toBe(0);
+    expect(coverage.pct).toBe(0);
+  });
+});
+
+describe('getRegionalSpending — filter predicates', () => {
+  it('applies the year filter via base aggregation, not the rollup', async () => {
+    const cap: string[] = [];
+    await getRegionalSpending(fakeDb(cap), { year: '2025' });
+    expect(cap.some((s) => s.includes('substr(c.signed_at, 1, 4) = ?'))).toBe(true);
+    expect(cap.some((s) => s.includes('FROM authority_totals'))).toBe(false);
+  });
+  it('applies the EU funding predicate', async () => {
+    const cap: string[] = [];
+    await getRegionalSpending(fakeDb(cap), { funding: 'eu' });
+    expect(cap.some((s) => s.includes('c.eu_funded = 1'))).toBe(true);
+  });
+  it('applies the national (non-EU) funding predicate', async () => {
+    const cap: string[] = [];
+    await getRegionalSpending(fakeDb(cap), { funding: 'national' });
+    expect(cap.some((s) => s.includes('c.eu_funded IS NULL OR c.eu_funded = 0'))).toBe(true);
+  });
+});

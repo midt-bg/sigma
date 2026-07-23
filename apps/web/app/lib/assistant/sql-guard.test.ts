@@ -124,6 +124,29 @@ describe('assertReadOnlySelect', () => {
     // a REAL trailing line comment is still stripped (single statement, leading SELECT preserved)
     expect(assertReadOnlySelect('SELECT id FROM contracts -- top earners').ok).toBe(true);
   });
+
+  it('rejects an empty or comment-only query', () => {
+    const empty = assertReadOnlySelect('');
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) expect(empty.reason).toMatch(/empty/);
+    expect(assertReadOnlySelect('   /* nothing */  ').ok).toBe(false);
+    expect(assertReadOnlySelect('-- only a comment').ok).toBe(false);
+  });
+
+  it('rejects a forbidden keyword hidden inside a single SELECT/WITH statement', () => {
+    // A CTE prefix keeps it a single statement that passes the leading-token check, so the cheap
+    // whole-word keyword layer (not just the AST guard) has to catch the trailing write.
+    const r = assertReadOnlySelect('WITH x AS (SELECT 1 AS n) DELETE FROM contracts');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/forbidden keyword/);
+  });
+
+  it('rejects the sqlite_master / sqlite_schema catalog tables', () => {
+    const r = assertReadOnlySelect('SELECT name FROM sqlite_master');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/catalog/);
+    expect(assertReadOnlySelect('SELECT * FROM sqlite_schema').ok).toBe(false);
+  });
 });
 
 describe('enforceLimit', () => {

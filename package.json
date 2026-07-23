@@ -15,6 +15,8 @@
     "lint": "prettier --check .",
     "check:docs": "node scripts/check-docs.mjs",
     "check:docs:test": "node --test scripts/check-docs.test.mjs",
+    "check:coverage": "node scripts/check-coverage.mjs",
+    "check:coverage:test": "node --test scripts/check-coverage.test.mjs",
     "format": "prettier --write .",
     "setup": "node scripts/setup.mjs",
     "import": "node scripts/import.mjs",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",
+    "@vitest/coverage-v8": "^4.1.7",
     "@types/node": "^25.9.1",
     "prettier": "^3.8.3",
     "turbo": "^2.9.14",

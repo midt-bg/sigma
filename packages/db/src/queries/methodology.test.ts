@@ -95,3 +95,18 @@ describe('getMethodologyStats', () => {
     expect(stats.coverage.eu).toBe(0);
   });
 });
+
+describe('getMethodologyStats — absent coverage counts with a positive total', () => {
+  it('coalesces a missing per-field count to zero (n ?? 0) when total > 0', async () => {
+    const db = fakeDb({
+      totalsRow: null,
+      coverageRow: { total: 100 }, // bids/eu/dur/lot fields absent
+      sectorsRow: null,
+    });
+    const stats = await getMethodologyStats(db);
+    expect(stats.coverage.bids).toBe(0);
+    expect(stats.coverage.eu).toBe(0);
+    expect(stats.coverage.duration).toBe(0);
+    expect(stats.coverage.lot).toBe(0);
+  });
+});

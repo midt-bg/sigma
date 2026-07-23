@@ -34,6 +34,22 @@ describe('evaluateRiskIndicators', () => {
       expect(flags).toEqual([{ type: 'eu_no_competition' }]);
     });
 
+    it('emits no competition flag when the bid count is unknown (bidsReceived null)', () => {
+      // bidsReceived null → the `!= null` guard is false, so `admitted` stays null and neither
+      // `admitted === 1` competition check can match.
+      const flags = evaluateRiskIndicators(buildContract({ bidsReceived: null, bidsRejected: 0 }));
+      expect(flags).not.toContainEqual({ type: 'no_competition' });
+      expect(flags).not.toContainEqual({ type: 'eu_no_competition' });
+    });
+
+    it('treats a missing bidsRejected as zero rejected', () => {
+      // bidsRejected null → the `|| 0` fallback: 1 received − 0 rejected = 1 admitted.
+      const flags = evaluateRiskIndicators(
+        buildContract({ bidsReceived: 1, bidsRejected: null, euFunded: false }),
+      );
+      expect(flags).toContainEqual({ type: 'no_competition' });
+    });
+
     it('does not trigger competition flags when > 1 bid is admitted', () => {
       const contract = buildContract({ bidsReceived: 2, bidsRejected: 0 });
       const flags = evaluateRiskIndicators(contract);
