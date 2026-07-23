@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, date, moneyBare } from '@sigma/shared';
-import { getHomeData } from '@sigma/db';
+import { getHomeData, getDb } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
 import { PageHeader } from '../components/PageHeader';
@@ -30,7 +30,7 @@ export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   // Identical for every visitor between refreshes — the `Cache-Control` above (publicCache(3600))
   // memoises this response at the edge; no separate data cache.
-  return getHomeData(env.DB);
+  return getHomeData(getDb(env));
 }
 
 function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHref: string }) {
