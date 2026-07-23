@@ -34,6 +34,19 @@ describe('served migrations', () => {
           "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='amendments';",
         ).trim(),
       ).toBe('1');
+
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='contract_co_authorities';",
+        ).trim(),
+      ).toBe('1');
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='authority_joint_participation';",
+        ).trim(),
+      ).toBe('1');
       expect(
         sqlite(
           dbPath,

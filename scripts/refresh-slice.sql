@@ -16,6 +16,10 @@ CREATE INDEX IF NOT EXISTS idx_contracts_tender_id ON contracts(tender_id);
 DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;
+DROP TABLE IF EXISTS refresh_joint_tender_leads;
+DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
+DROP TABLE IF EXISTS refresh_joint_authority_members;
+DROP TABLE IF EXISTS refresh_joint_tender_sources;
 CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
@@ -46,7 +50,8 @@ FROM (
       SELECT source, authority_eik, authority_name FROM raw_tenders
     )
     WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%')
-      AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+      AND authority_eik IS NOT NULL
+      AND authority_eik NOT LIKE '%;%'
       AND authority_name IS NOT NULL AND TRIM(authority_name) <> ''
     GROUP BY authority_eik, authority_name
   )
@@ -93,15 +98,188 @@ SELECT
   s.authority_eik,
   act.canonical_type
 FROM (
-  -- Composite joint EIKs must not mint standalone authorities (see normalize-raw.sql).
   SELECT authority_eik FROM raw_contracts
-  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
+    AND authority_eik NOT LIKE '%;%'
   UNION
   SELECT authority_eik FROM raw_tenders
-  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%'
+  WHERE (source LIKE 'eop:%' OR source LIKE 'ocds:%') AND authority_eik IS NOT NULL
+    AND authority_eik NOT LIKE '%;%'
 ) s
 LEFT JOIN authority_canonical_name acn ON acn.authority_eik = s.authority_eik
 LEFT JOIN authority_canonical_type act ON act.authority_eik = s.authority_eik;
+
+-- Split joint EIK/name lists once for lead selection and bridge population. This is the scoped
+-- mirror of normalize-raw.sql step 1a; it deliberately does not rewrite existing display names.
+CREATE TABLE refresh_joint_tender_sources (
+  unp TEXT PRIMARY KEY,
+  authority_eiks TEXT NOT NULL,
+  authority_name TEXT,
+  authority_type TEXT
+);
+WITH observations AS (
+  SELECT unp, authority_eik, authority_name, authority_type
+  FROM raw_tenders
+  WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
+    AND (source LIKE 'eop:%' OR source LIKE 'ocds:%')
+  UNION ALL
+  SELECT unp, authority_eik, authority_name, authority_type
+  FROM raw_contracts
+  WHERE unp IS NOT NULL AND authority_eik LIKE '%;%'
+    AND (source LIKE 'eop:%' OR source LIKE 'ocds:%')
+), ranked AS (
+  SELECT unp, authority_eik, authority_name, authority_type,
+    ROW_NUMBER() OVER (
+      PARTITION BY unp
+      ORDER BY COUNT(*) DESC,
+        CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(COALESCE(authority_name, '')) DESC,
+        authority_eik, COALESCE(authority_name, ''), COALESCE(authority_type, '')
+    ) AS rn
+  FROM observations
+  GROUP BY unp, authority_eik, authority_name, authority_type
+)
+INSERT INTO refresh_joint_tender_sources (unp, authority_eiks, authority_name, authority_type)
+SELECT unp, authority_eik, authority_name, authority_type FROM ranked WHERE rn = 1;
+
+CREATE TABLE refresh_joint_authority_members (
+  unp TEXT NOT NULL,
+  authority_id TEXT NOT NULL,
+  member_name TEXT,
+  authority_type TEXT,
+  source_ordinal INTEGER NOT NULL,
+  PRIMARY KEY (unp, authority_id)
+);
+WITH RECURSIVE split (
+  unp, authority_eik, member_name, authority_type, source_ordinal, eik_rest, name_rest
+) AS (
+  SELECT
+    unp,
+    TRIM(CASE WHEN INSTR(authority_eiks, ';') > 0
+      THEN SUBSTR(authority_eiks, 1, INSTR(authority_eiks, ';') - 1) ELSE authority_eiks END),
+    TRIM(CASE WHEN INSTR(COALESCE(authority_name, ''), ';') > 0
+      THEN SUBSTR(authority_name, 1, INSTR(authority_name, ';') - 1) ELSE authority_name END),
+    authority_type,
+    0,
+    CASE WHEN INSTR(authority_eiks, ';') > 0
+      THEN SUBSTR(authority_eiks, INSTR(authority_eiks, ';') + 1) ELSE '' END,
+    CASE WHEN INSTR(COALESCE(authority_name, ''), ';') > 0
+      THEN SUBSTR(authority_name, INSTR(authority_name, ';') + 1) ELSE '' END
+  FROM refresh_joint_tender_sources
+  UNION ALL
+  SELECT
+    unp,
+    TRIM(CASE WHEN INSTR(eik_rest, ';') > 0
+      THEN SUBSTR(eik_rest, 1, INSTR(eik_rest, ';') - 1) ELSE eik_rest END),
+    TRIM(CASE WHEN INSTR(name_rest, ';') > 0
+      THEN SUBSTR(name_rest, 1, INSTR(name_rest, ';') - 1) ELSE name_rest END),
+    authority_type,
+    source_ordinal + 1,
+    CASE WHEN INSTR(eik_rest, ';') > 0
+      THEN SUBSTR(eik_rest, INSTR(eik_rest, ';') + 1) ELSE '' END,
+    CASE WHEN INSTR(name_rest, ';') > 0
+      THEN SUBSTR(name_rest, INSTR(name_rest, ';') + 1) ELSE '' END
+  FROM split
+  WHERE TRIM(eik_rest) <> ''
+)
+INSERT OR IGNORE INTO refresh_joint_authority_members
+  (unp, authority_id, member_name, authority_type, source_ordinal)
+SELECT unp, 'auth:' || authority_eik, NULLIF(member_name, ''), authority_type, source_ordinal
+FROM split
+-- A member EIK still carrying ';' is a composite the split could not decompose - not a real
+-- single authority; it must not seed a member row or mint an orphan 'auth:EIK1; EIK2'.
+WHERE authority_eik <> '' AND authority_eik NOT LIKE '%;%';
+
+WITH name_counts AS (
+  SELECT authority_id, member_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY authority_id
+      ORDER BY COUNT(*) DESC,
+        CASE WHEN member_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+        LENGTH(member_name) DESC, member_name
+    ) AS rn
+  FROM refresh_joint_authority_members
+  WHERE member_name IS NOT NULL
+  GROUP BY authority_id, member_name
+), member_defaults AS (
+  SELECT m.authority_id,
+    COALESCE(n.member_name, SUBSTR(m.authority_id, 6)) AS authority_name,
+    MIN(SUBSTR(m.authority_id, 6)) AS authority_eik,
+    MAX(m.authority_type) AS authority_type
+  FROM refresh_joint_authority_members m
+  LEFT JOIN name_counts n ON n.authority_id = m.authority_id AND n.rn = 1
+  GROUP BY m.authority_id
+)
+INSERT OR IGNORE INTO authorities (id, name, bulstat, type)
+SELECT authority_id, authority_name, authority_eik, authority_type FROM member_defaults;
+
+-- Learn the modal authority for each valid УНП prefix from the full existing tender history. Raw
+-- staging contains only the touched slice here, so it cannot provide a stable corpus-wide map.
+CREATE TABLE refresh_unp_prefix_authorities (
+  prefix TEXT PRIMARY KEY,
+  authority_eik TEXT NOT NULL
+);
+WITH prefix_observations AS (
+  SELECT SUBSTR(source_id, 1, 5) AS prefix, SUBSTR(authority_id, 6) AS authority_eik
+  FROM tenders
+  WHERE authority_id NOT LIKE '%;%'
+    AND source_id GLOB '[0-9][0-9][0-9][0-9][0-9]-*'
+), ranked AS (
+  SELECT prefix, authority_eik,
+    ROW_NUMBER() OVER (
+      PARTITION BY prefix
+      ORDER BY COUNT(*) DESC, authority_eik
+    ) AS rn
+  FROM prefix_observations
+  GROUP BY prefix, authority_eik
+)
+INSERT INTO refresh_unp_prefix_authorities (prefix, authority_eik)
+SELECT prefix, authority_eik FROM ranked WHERE rn = 1;
+
+CREATE TABLE refresh_joint_tender_leads (
+  unp TEXT PRIMARY KEY,
+  authority_id TEXT NOT NULL REFERENCES authorities(id)
+);
+WITH standalone_observations AS (
+  SELECT authority_eik, authority_name FROM raw_contracts
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%' AND authority_name IS NOT NULL
+    AND (source LIKE 'eop:%' OR source LIKE 'ocds:%')
+  UNION ALL
+  SELECT authority_eik, authority_name FROM raw_tenders
+  WHERE authority_eik IS NOT NULL AND authority_eik NOT LIKE '%;%' AND authority_name IS NOT NULL
+    AND (source LIKE 'eop:%' OR source LIKE 'ocds:%')
+), canonical_names AS (
+  SELECT authority_eik, authority_name
+  FROM (
+    SELECT authority_eik, authority_name,
+      ROW_NUMBER() OVER (
+        PARTITION BY authority_eik
+        ORDER BY COUNT(*) DESC,
+          CASE WHEN authority_name GLOB '*[a-zа-я]*' THEN 0 ELSE 1 END,
+          LENGTH(authority_name) DESC, authority_name
+      ) AS rn
+    FROM standalone_observations
+    GROUP BY authority_eik, authority_name
+  )
+  WHERE rn = 1
+), ranked AS (
+  SELECT m.unp, m.authority_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY m.unp
+      ORDER BY CASE WHEN p.authority_eik = SUBSTR(m.authority_id, 6) THEN 0 ELSE 1 END,
+        CASE WHEN c.authority_name = s.authority_name THEN 0 ELSE 1 END,
+        m.source_ordinal, m.authority_id
+    ) AS rn
+  FROM refresh_joint_authority_members m
+  JOIN refresh_joint_tender_sources s ON s.unp = m.unp
+  LEFT JOIN canonical_names c ON c.authority_eik = SUBSTR(m.authority_id, 6)
+  LEFT JOIN refresh_unp_prefix_authorities p
+    ON p.prefix = CASE
+      WHEN m.unp GLOB '[0-9][0-9][0-9][0-9][0-9]-*' THEN SUBSTR(m.unp, 1, 5)
+    END
+)
+INSERT INTO refresh_joint_tender_leads (unp, authority_id)
+SELECT unp, authority_id FROM ranked WHERE rn = 1;
 
 -- type_group for any authority still missing it (covers the rows just inserted) — same heuristic as
 -- normalize-raw.sql step 1b.
@@ -342,7 +520,8 @@ SELECT
   't:' || t.unp,
   t.unp,
   COALESCE(t.procurement_subject, '(без предмет)'),
-  'auth:' || t.authority_eik,
+  COALESCE((SELECT j.authority_id FROM refresh_joint_tender_leads j WHERE j.unp = t.unp),
+    'auth:' || t.authority_eik),
   NULLIF(TRIM(t.authority_name), ''),
   t.cpv_code,
   t.cpv_description,
@@ -372,7 +551,13 @@ SELECT
   NULLIF(t.tender_id, '')                 -- raw EOP numeric tenderId from the header row
 FROM raw_tenders t
 WHERE t.lot_id IS NULL
-  AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || t.authority_eik)
+  AND EXISTS (
+    SELECT 1 FROM authorities a
+    WHERE a.id = COALESCE(
+      (SELECT j.authority_id FROM refresh_joint_tender_leads j WHERE j.unp = t.unp),
+      'auth:' || t.authority_eik
+    )
+  )
 ON CONFLICT(id) DO UPDATE SET
   source_id = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.source_id ELSE tenders.source_id END,
   title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN excluded.title ELSE tenders.title END,
@@ -550,7 +735,10 @@ WITH folded AS (
   SELECT
     c.unp,
     MIN(c.procurement_subject) AS raw_title,
-    'auth:' || MIN(c.authority_eik) AS authority_id,
+    COALESCE(
+      (SELECT j.authority_id FROM refresh_joint_tender_leads j WHERE j.unp = c.unp),
+      'auth:' || MIN(c.authority_eik)
+    ) AS authority_id,
     MIN(c.cpv_code) AS cpv_code,
     MIN(c.estimated_value) AS estimated_value,
     MIN(c.currency) AS raw_currency,
@@ -562,7 +750,6 @@ WITH folded AS (
   WHERE (c.source LIKE 'eop:%' OR c.source LIKE 'ocds:%')
     AND c.unp IS NOT NULL
     AND NOT EXISTS (SELECT 1 FROM raw_tenders t WHERE t.unp = c.unp)
-    AND EXISTS (SELECT 1 FROM authorities a WHERE a.id = 'auth:' || c.authority_eik)
   GROUP BY c.unp
 )
 INSERT INTO tenders
@@ -583,7 +770,7 @@ SELECT
   award_criteria,
   eop_tender_id
 FROM folded
-WHERE true
+WHERE EXISTS (SELECT 1 FROM authorities a WHERE a.id = folded.authority_id)
 ON CONFLICT(id) DO UPDATE SET
   title = CASE WHEN tenders.procedure_type = 'неизвестна' THEN
     CASE
@@ -688,6 +875,10 @@ SELECT DISTINCT t.authority_id
 FROM contracts c JOIN tenders t ON t.id = c.tender_id
 WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
   AND t.authority_id IS NOT NULL;
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT DISTINCT ca.authority_id
+FROM contract_co_authorities ca
+WHERE ca.contract_id IN (SELECT id FROM refresh_touched_contracts);
 
 DELETE FROM contracts
 WHERE id IN (
@@ -1188,6 +1379,24 @@ WHERE x.display_native IS NOT NULL
       AND c2.bidder_id = x.bidder_key
   );
 
+-- Rebuild joint-participation links for contracts represented by this window. Contract deletes
+-- cascade old bridge rows; this inserts every member again with the lead forced to ordinal 0.
+INSERT OR IGNORE INTO contract_co_authorities (contract_id, authority_id, ordinal)
+SELECT contract_id, authority_id, bridge_ordinal
+FROM (
+  SELECT c.id AS contract_id, m.authority_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY c.id
+      ORDER BY CASE WHEN m.authority_id = l.authority_id THEN 0 ELSE 1 END,
+        m.source_ordinal, m.authority_id
+    ) - 1 AS bridge_ordinal
+  FROM contracts c
+  JOIN refresh_joint_authority_members m ON c.tender_id = 't:' || m.unp
+  JOIN refresh_joint_tender_leads l ON l.unp = m.unp
+);
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT DISTINCT authority_id FROM refresh_joint_authority_members;
+
 UPDATE tenders
 SET status = 'awarded'
 WHERE status <> 'awarded'
@@ -1468,6 +1677,17 @@ UPDATE authority_totals SET primary_sector = (
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
 
+-- Joint participation is separate from lead totals; its value is informational and non-summable.
+DELETE FROM authority_joint_participation
+WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
+INSERT INTO authority_joint_participation
+  (authority_id, joint_contract_participations, joint_contract_value_eur)
+SELECT cca.authority_id, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
+FROM contract_co_authorities cca
+JOIN contracts c ON c.id = cca.contract_id
+WHERE cca.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
+GROUP BY cca.authority_id;
+
 -- @refresh-batch flow-pairs
 DELETE FROM flow_pairs;
 INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
@@ -1542,6 +1762,10 @@ SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE
 FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 
 -- @refresh-batch cleanup
+DROP TABLE IF EXISTS refresh_joint_tender_leads;
+DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
+DROP TABLE IF EXISTS refresh_joint_authority_members;
+DROP TABLE IF EXISTS refresh_joint_tender_sources;
 DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;

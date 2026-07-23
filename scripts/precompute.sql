@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS authority_totals (
   eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT
 );
 DELETE FROM authority_totals;
+-- Spend and the ordinary contract count remain lead-only, preserving the reconciliation invariant:
+-- SUM(authority_totals.spent_eur) = the tender-authority-attributed contract sum.
 INSERT INTO authority_totals (authority_id, name, type_group, settlement, region, spent_eur, contracts, suppliers, avg_eur, eu_eur, first_date, last_date)
 SELECT a.id, a.name, a.type_group, a.settlement, a.region,
   SUM(c.amount_eur), COUNT(*), COUNT(DISTINCT c.bidder_id), SUM(c.amount_eur) / COUNT(*),
@@ -89,6 +91,21 @@ UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
+
+-- Separate participation metrics. They count every joint-contract bridge association, including
+-- the lead; the value is informational only and never feeds authority_totals or any national total.
+CREATE TABLE IF NOT EXISTS authority_joint_participation (
+  authority_id TEXT PRIMARY KEY REFERENCES authorities(id),
+  joint_contract_participations INTEGER NOT NULL,
+  joint_contract_value_eur REAL NOT NULL DEFAULT 0
+);
+DELETE FROM authority_joint_participation;
+INSERT INTO authority_joint_participation
+  (authority_id, joint_contract_participations, joint_contract_value_eur)
+SELECT cca.authority_id, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
+FROM contract_co_authorities cca
+JOIN contracts c ON c.id = cca.contract_id
+GROUP BY cca.authority_id;
 
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
 -- freshness definition as refresh-slice.sql: latest in-corpus signed contract date.
