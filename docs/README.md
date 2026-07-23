@@ -14,6 +14,7 @@
 - [`deploy.md`](deploy.md) — деплой към Cloudflare: двата Worker-а (`sigma`, `sigma-etl`) и споделеният D1 per environment.
 - [`api.md`](api.md) — публичните данни и машинно четими endpoint-и (CSV/JSON/sitemap), query грамата на филтрите и лицензът — за разработчици, които строят върху данните.
 - [`accessibility.md`](accessibility.md) — достъпност (WCAG 2.1 AA / EN 301 549): какво покрива платформата и наблюденията за вградената приставка за достъпност.
+- [`spec/integration-testing.md`](spec/integration-testing.md) — ADR-0002 за интеграционната тест-лента на `apps/web`: `wrangler.getPlatformProxy` + in-memory D1 + `caches` polyfill (issue `#94`); практическото ръководство за пускане живее в [`apps/web/test/README.md`](../apps/web/test/README.md).
 - [`spec/ai-assistant.md`](spec/ai-assistant.md) — спецификация на разговорния аналитичен слой над СИГМА (BgGPT, текст и глас).
 - [`spec/assistant-contracts.md`](spec/assistant-contracts.md) — контрактите BE↔FE за AI асистента (Фаза 1 → Фаза 2).
 
