@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, moneyBare } from '@sigma/shared';
-import { getAuthorityFacets, listAuthorities } from '@sigma/db';
+import { getAuthorityFacets, listAuthorities, getDb } from '@sigma/db';
 import type { AuthorityListItem } from '@sigma/api-contract';
 import type { Route } from './+types/authorities';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -44,7 +44,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.authorities,
   };
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const [page, facets, coverage] = await Promise.all([
     listAuthorities(db, params),
     getAuthorityFacets(db),

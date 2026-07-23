@@ -200,8 +200,8 @@ CREATE INDEX idx_parties_eik ON parties(eik);
 -- One row (id = 1). Index KPIs + freshness for the home page.
 CREATE TABLE home_totals (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
-  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), NOT the clean-amount_eur count behind value_eur
-  value_eur    REAL NOT NULL,             -- SUM(amount_eur), clean rows only; paired with the (larger) corpus contracts count — the two do NOT cover one set
+  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), not the non-NULL amount_eur count behind value_eur
+  value_eur    REAL NOT NULL,             -- SUM(amount_eur): every non-NULL amount_eur regardless of value_flag; corpus contracts may cover a broader set
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
   suspect      INTEGER NOT NULL,          -- COUNT of value_suspect rows (data-quality KPI); summed via repair to the procedure estimate, except a value_suspect row with no estimate (amount_eur NULL, excluded like other NULL rows)
@@ -220,7 +220,7 @@ CREATE TABLE company_totals (
   eik            TEXT,                      -- eik_normalized (NULL when name-keyed)
   eik_valid      INTEGER NOT NULL DEFAULT 0,
   settlement     TEXT,
-  won_eur        REAL NOT NULL,            -- SUM(amount_eur) of contracts won (clean rows only)
+  won_eur        REAL NOT NULL,            -- SUM(amount_eur) where amount_eur IS NOT NULL, regardless of value_flag
   contracts      INTEGER NOT NULL,
   authorities    INTEGER NOT NULL,         -- distinct paying authorities
   primary_sector TEXT,                      -- CPV division carrying the most won €
