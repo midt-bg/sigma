@@ -5,6 +5,7 @@ import {
   date,
   entityName,
   isNaturalPersonProfileName,
+  isNaturalPersonSubject,
   longDate,
   money,
   moneyBare,
@@ -183,5 +184,31 @@ describe('isNaturalPersonProfileName', () => {
 
   it('does not flag ordinary company names', () => {
     expect(isNaturalPersonProfileName('СОФАРМА ТРЕЙДИНГ АД')).toBe(false);
+  });
+});
+
+describe('isNaturalPersonSubject', () => {
+  it('flags a sole-trader legal form', () => {
+    expect(
+      isNaturalPersonSubject({ kind: 'company', legalForm: 'ЕТ', displayName: 'ФИРМА ООД' }),
+    ).toBe(true);
+  });
+
+  it('flags a sole-trader name even when the legal form is absent', () => {
+    expect(
+      isNaturalPersonSubject({ kind: 'company', legalForm: null, displayName: 'ЕТ ДРИФТ - ИВАН' }),
+    ).toBe(true);
+  });
+
+  it('does not flag an ordinary company', () => {
+    expect(
+      isNaturalPersonSubject({ kind: 'company', legalForm: 'ООД', displayName: 'СОФАРМА АД' }),
+    ).toBe(false);
+  });
+
+  it('never flags a consortium, whatever its legal form', () => {
+    expect(
+      isNaturalPersonSubject({ kind: 'consortium', legalForm: 'ЕТ', displayName: 'ОБЕДИНЕНИЕ' }),
+    ).toBe(false);
   });
 });

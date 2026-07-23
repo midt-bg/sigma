@@ -39,6 +39,24 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
+-- ── 0b) Per-contract risk flags (#229) ─────────────────────────────────────────────────────────
+-- Canonical single source for the two elementary flags the subject-risk rollups aggregate, and the
+-- flags riskLogic.ts reads on the contract page. NULL = "unknown/ineligible" (the rollup shares drop
+-- NULL from BOTH numerator and denominator — never count it as 0). single-offer basis is
+-- bids_received = 1, the same basis as competition.ts / describe-schema (ADR-0007). high-markup requires
+-- value_flag = 'ok' AND a positive signing EUR, matching the contract page's suspect rule exactly:
+-- value_flag='ok' is the EXACT complement of the suspect set {review, value_low, value_suspect,
+-- annex_suspect} that details.ts hides — so the rollup never counts a markup the page won't show, and a
+-- negative signing baseline can't invert the ratio's sign. Adding a new value_flag variant? Re-check this
+-- gate — 'ok' must stay the not-suspect complement or the rollup and the page silently drift apart.
+-- Unconditional UPDATE (no WHERE) so a re-run recomputes every row and clears stale values.
+UPDATE contracts SET
+  is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,
+  is_high_markup  = CASE WHEN value_flag = 'ok'
+                          AND signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
+                          AND signing_value_eur > 0
+                     THEN ((current_value_eur - signing_value_eur) / signing_value_eur > 0.2) END;
+
 -- ── 1) home_totals shell (filled after company/authority rollups exist) ──────────────────────────
 CREATE TABLE IF NOT EXISTS home_totals (
   id INTEGER PRIMARY KEY CHECK (id = 1), contracts INTEGER NOT NULL, value_eur REAL NOT NULL,
@@ -52,7 +70,9 @@ CREATE TABLE IF NOT EXISTS company_totals (
   bidder_id TEXT PRIMARY KEY REFERENCES bidders(id), name TEXT NOT NULL, kind TEXT NOT NULL,
   ownership_kind TEXT, eik TEXT, eik_valid INTEGER NOT NULL DEFAULT 0, settlement TEXT, won_eur REAL NOT NULL,
   contracts INTEGER NOT NULL, authorities INTEGER NOT NULL, primary_sector TEXT,
-  eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT
+  eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT,
+  single_offer_k INTEGER, single_offer_n INTEGER, single_offer_value_share REAL,
+  high_markup_k INTEGER, high_markup_n INTEGER, high_markup_value_share REAL
 );
 DELETE FROM company_totals;
 INSERT INTO company_totals (bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, eu_eur, first_date, last_date)
@@ -68,13 +88,36 @@ UPDATE company_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
+-- Per-subject risk aggregates. Each component's denominator is its own eligible universe (by design):
+-- single_offer_n = ≥1-bid contracts (excludes 0-bid/failed; matches competition.ts); high_markup_n =
+-- value-assessable contracts (is_high_markup IS NOT NULL). Value shares weight POSITIVE amount_eur only,
+-- so a value_low ≤0 row can't push a share out of [0,1]. A NULL/zero eligible denominator → NULL share.
+UPDATE company_totals SET
+  single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
+  high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare
+FROM (
+  SELECT c.bidder_id,
+    SUM(CASE WHEN c.is_single_offer = 1 THEN 1 ELSE 0 END) AS so_k,
+    SUM(CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END) AS so_n,
+    SUM(CASE WHEN c.is_single_offer = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.bids_received >= 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS so_vshare,
+    SUM(CASE WHEN c.is_high_markup = 1 THEN 1 ELSE 0 END) AS hm_k,
+    SUM(CASE WHEN c.is_high_markup IS NOT NULL THEN 1 ELSE 0 END) AS hm_n,
+    SUM(CASE WHEN c.is_high_markup = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.is_high_markup IS NOT NULL AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS hm_vshare
+  FROM contracts c
+  GROUP BY c.bidder_id
+) AS agg
+WHERE company_totals.bidder_id = agg.bidder_id;
 
 -- ── 3) authority_totals (per authority) ───────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS authority_totals (
   authority_id TEXT PRIMARY KEY REFERENCES authorities(id), name TEXT NOT NULL, type_group TEXT,
   settlement TEXT, region TEXT, spent_eur REAL NOT NULL, contracts INTEGER NOT NULL,
   suppliers INTEGER NOT NULL, avg_eur REAL NOT NULL, primary_sector TEXT,
-  eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT
+  eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT,
+  single_offer_k INTEGER, single_offer_n INTEGER, single_offer_value_share REAL,
+  high_markup_k INTEGER, high_markup_n INTEGER, high_markup_value_share REAL
 );
 DELETE FROM authority_totals;
 INSERT INTO authority_totals (authority_id, name, type_group, settlement, region, spent_eur, contracts, suppliers, avg_eur, eu_eur, first_date, last_date)
@@ -89,6 +132,24 @@ UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
+-- Per-subject risk aggregates — authority side (see the company_totals pass above for rationale).
+UPDATE authority_totals SET
+  single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
+  high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare
+FROM (
+  SELECT t.authority_id,
+    SUM(CASE WHEN c.is_single_offer = 1 THEN 1 ELSE 0 END) AS so_k,
+    SUM(CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END) AS so_n,
+    SUM(CASE WHEN c.is_single_offer = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.bids_received >= 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS so_vshare,
+    SUM(CASE WHEN c.is_high_markup = 1 THEN 1 ELSE 0 END) AS hm_k,
+    SUM(CASE WHEN c.is_high_markup IS NOT NULL THEN 1 ELSE 0 END) AS hm_n,
+    SUM(CASE WHEN c.is_high_markup = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.is_high_markup IS NOT NULL AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS hm_vshare
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id
+  GROUP BY t.authority_id
+) AS agg
+WHERE authority_totals.authority_id = agg.authority_id;
 
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
 -- freshness definition as refresh-slice.sql: latest in-corpus signed contract date.

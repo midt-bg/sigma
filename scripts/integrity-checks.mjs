@@ -46,6 +46,13 @@ function tableExists(runner, name) {
   );
 }
 
+function columnExists(runner, table, column) {
+  return (
+    rows(runner, `SELECT name FROM pragma_table_info('${table}') WHERE name = '${column}'`).length >
+    0
+  );
+}
+
 // 0) Non-empty corpus — UNCONDITIONAL hard guard. A catastrophic upstream failure (0 candidates) or
 //    a botched derive can leave 0 contracts. On the served D1 the staging check self-skips (no
 //    pipeline_stats) and every rollup sum is 0 == 0, so without this an empty database would pass the
@@ -320,6 +327,70 @@ export function checkStagingReconciliation(runner) {
   };
 }
 
+// 6) Subject-risk aggregate bounds. The per-subject shares are ratios that MUST stay in [0,1],
+//    and each flagged count must not exceed its eligible denominator (single_offer_k ⊆ single_offer_n by
+//    construction — bids=1 ⇒ bids≥1; likewise high-markup). A value_share outside [0,1] is a computation
+//    bug — the exact class fixed pre-merge, where a negative value_low amount_eur leaked into the value
+//    weighting and produced a 200% share. NULL is allowed (unassessable component). Self-skips until
+//    precompute has written the rollups (home_totals row present).
+export function checkSubjectRiskBounds(runner) {
+  const name = 'subject-risk-bounds';
+  // Gate on the risk columns EXISTING (structural), not just home_totals presence: home_totals predates
+  // these columns, so a drifted DB with a populated home_totals but no risk columns would otherwise throw
+  // 'no such column' instead of skipping. Skip cleanly on any DB that hasn't got them yet.
+  if (
+    !tableExists(runner, 'home_totals') ||
+    num(scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0 ||
+    !columnExists(runner, 'company_totals', 'single_offer_k') ||
+    !columnExists(runner, 'contracts', 'is_high_markup')
+  ) {
+    return {
+      name,
+      ok: true,
+      skipped: true,
+      detail: 'subject-risk columns absent (schema without them, or rollups not built)',
+    };
+  }
+  const fails = [];
+  for (const table of ['company_totals', 'authority_totals']) {
+    const r =
+      rows(
+        runner,
+        'SELECT' +
+          ` (SELECT COUNT(*) FROM ${table} WHERE single_offer_value_share IS NOT NULL AND (single_offer_value_share < 0 OR single_offer_value_share > 1)) AS so_vs,` +
+          ` (SELECT COUNT(*) FROM ${table} WHERE high_markup_value_share IS NOT NULL AND (high_markup_value_share < 0 OR high_markup_value_share > 1)) AS hm_vs,` +
+          ` (SELECT COUNT(*) FROM ${table} WHERE single_offer_k > single_offer_n) AS so_kn,` +
+          ` (SELECT COUNT(*) FROM ${table} WHERE high_markup_k > high_markup_n) AS hm_kn`,
+      )[0] || {};
+    if (num(r.so_vs) !== 0)
+      fails.push(`${num(r.so_vs)} ${table} single_offer_value_share outside [0,1]`);
+    if (num(r.hm_vs) !== 0)
+      fails.push(`${num(r.hm_vs)} ${table} high_markup_value_share outside [0,1]`);
+    if (num(r.so_kn) !== 0) fails.push(`${num(r.so_kn)} ${table} single_offer_k > single_offer_n`);
+    if (num(r.hm_kn) !== 0) fails.push(`${num(r.hm_kn)} ${table} high_markup_k > high_markup_n`);
+  }
+  // is_high_markup must match the contract page's suspect rule: only value_flag='ok' rows are eligible
+  // (review/value_low/*_suspect hide the badge on the contract page). A flag set on a non-'ok' row would
+  // inflate the composite band above what any contract actually displays.
+  const suspectMarkup = num(
+    scalar(
+      runner,
+      "SELECT COUNT(*) AS n FROM contracts WHERE is_high_markup IS NOT NULL AND value_flag <> 'ok'",
+      'n',
+    ),
+  );
+  if (suspectMarkup !== 0)
+    fails.push(`${suspectMarkup} contracts have is_high_markup set on a non-'ok' value_flag`);
+  return {
+    name,
+    ok: fails.length === 0,
+    skipped: false,
+    detail: fails.length
+      ? fails.join('; ')
+      : "subject-risk shares in [0,1], k <= n, high-markup only on 'ok' rows",
+  };
+}
+
 export const CHECKS = [
   checkNonEmptyCorpus,
   checkRollupReconciliation,
@@ -327,6 +398,7 @@ export const CHECKS = [
   checkEikValidity,
   checkDateSanity,
   checkStagingReconciliation,
+  checkSubjectRiskBounds,
 ];
 
 export function runIntegrityChecks(runner) {

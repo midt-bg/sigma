@@ -83,7 +83,7 @@ export function Callout({
   children,
 }: {
   title?: ReactNode;
-  variant?: 'warning';
+  variant?: 'warning' | 'neutral';
   children: ReactNode;
 }) {
   return (

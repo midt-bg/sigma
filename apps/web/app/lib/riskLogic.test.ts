@@ -1,77 +1,85 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateRiskIndicators } from './riskLogic';
+import { evaluateRiskIndicators, type RiskFlagInput } from './riskLogic';
 
-function buildContract(overrides: any = {}): any {
+// evaluateRiskIndicators reads the materialized flags (isSingleOffer/isHighMarkup) — the same columns the
+// subject-risk rollups aggregate (#229) — and deltaPct only for the displayed %. A ContractDetail
+// satisfies RiskFlagInput structurally.
+function buildContract(overrides: Partial<RiskFlagInput> = {}): RiskFlagInput {
   return {
-    bidsReceived: 2,
-    bidsRejected: 0,
+    isSingleOffer: false,
+    isHighMarkup: false,
     euFunded: false,
     dateSuspect: false,
-    value: {
-      deltaPct: 0.1,
-      suspect: false,
-    },
+    value: { deltaPct: 0.1, suspect: false },
     ...overrides,
   };
 }
 
 describe('evaluateRiskIndicators', () => {
-  it('returns empty when no risks are present', () => {
-    const flags = evaluateRiskIndicators(buildContract());
-    expect(flags).toHaveLength(0);
+  it('returns empty when no flags are set', () => {
+    expect(evaluateRiskIndicators(buildContract())).toEqual([]);
   });
 
-  describe('Competition heuristics', () => {
-    it('triggers NO_COMPETITION when exactly 1 bid is admitted (non-EU)', () => {
-      const contract = buildContract({ bidsReceived: 3, bidsRejected: 2, euFunded: false });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).toEqual([{ type: 'no_competition' }]);
+  describe('competition', () => {
+    it('flags no_competition when single-offer and not EU funded', () => {
+      expect(
+        evaluateRiskIndicators(buildContract({ isSingleOffer: true, euFunded: false })),
+      ).toEqual([{ type: 'no_competition' }]);
     });
 
-    it('triggers EU_NO_COMPETITION when exactly 1 bid is admitted and EU funded', () => {
-      const contract = buildContract({ bidsReceived: 1, bidsRejected: 0, euFunded: true });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).toEqual([{ type: 'eu_no_competition' }]);
+    it('flags eu_no_competition when single-offer and EU funded', () => {
+      expect(
+        evaluateRiskIndicators(buildContract({ isSingleOffer: true, euFunded: true })),
+      ).toEqual([{ type: 'eu_no_competition' }]);
     });
 
-    it('does not trigger competition flags when > 1 bid is admitted', () => {
-      const contract = buildContract({ bidsReceived: 2, bidsRejected: 0 });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).not.toContainEqual({ type: 'no_competition' });
-      expect(flags).not.toContainEqual({ type: 'eu_no_competition' });
-    });
-  });
-
-  describe('Markup heuristics', () => {
-    it('triggers HIGH_MARKUP when deltaPct > 20%', () => {
-      const contract = buildContract({ value: { deltaPct: 0.21, suspect: false } });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).toContainEqual({ type: 'high_markup', deltaPct: 0.21 });
+    it('does not flag competition when not single-offer', () => {
+      expect(evaluateRiskIndicators(buildContract({ isSingleOffer: false }))).toEqual([]);
     });
 
-    it('does not trigger HIGH_MARKUP when deltaPct is exactly 20% or less', () => {
-      const contract1 = buildContract({ value: { deltaPct: 0.2, suspect: false } });
-      const contract2 = buildContract({ value: { deltaPct: 0.19, suspect: false } });
-      expect(evaluateRiskIndicators(contract1)).not.toContainEqual(
-        expect.objectContaining({ type: 'high_markup' }),
-      );
-      expect(evaluateRiskIndicators(contract2)).not.toContainEqual(
-        expect.objectContaining({ type: 'high_markup' }),
-      );
+    it('does not flag when the single-offer flag is null (unknown bid count)', () => {
+      // The flag is the sole input — unified on bids_received = 1; there is no bid-count arithmetic here.
+      expect(evaluateRiskIndicators(buildContract({ isSingleOffer: null }))).toEqual([]);
     });
   });
 
-  describe('Anomaly heuristics', () => {
-    it('triggers ANOMALIES when date is suspect', () => {
-      const contract = buildContract({ dateSuspect: true });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).toContainEqual({ type: 'anomalies' });
+  describe('markup', () => {
+    it('flags high_markup when the flag is set, carrying deltaPct for display', () => {
+      expect(
+        evaluateRiskIndicators(
+          buildContract({ isHighMarkup: true, value: { deltaPct: 0.21, suspect: false } }),
+        ),
+      ).toEqual([{ type: 'high_markup', deltaPct: 0.21 }]);
     });
 
-    it('triggers ANOMALIES when value is suspect', () => {
-      const contract = buildContract({ value: { deltaPct: 0, suspect: true } });
-      const flags = evaluateRiskIndicators(contract);
-      expect(flags).toContainEqual({ type: 'anomalies' });
+    it('does not flag high_markup when the flag is false, even with a high deltaPct', () => {
+      expect(
+        evaluateRiskIndicators(
+          buildContract({ isHighMarkup: false, value: { deltaPct: 0.5, suspect: false } }),
+        ),
+      ).toEqual([]);
+    });
+
+    it('does not flag high_markup when the flag is set but deltaPct is null (no NaN%)', () => {
+      expect(
+        evaluateRiskIndicators(
+          buildContract({ isHighMarkup: true, value: { deltaPct: null, suspect: false } }),
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  describe('anomalies', () => {
+    it('flags anomalies when the date is suspect', () => {
+      expect(evaluateRiskIndicators(buildContract({ dateSuspect: true }))).toEqual([
+        { type: 'anomalies' },
+      ]);
+    });
+
+    it('flags anomalies when the value is suspect', () => {
+      expect(
+        evaluateRiskIndicators(buildContract({ value: { deltaPct: 0, suspect: true } })),
+      ).toEqual([{ type: 'anomalies' }]);
     });
   });
 });

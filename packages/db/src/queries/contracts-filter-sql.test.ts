@@ -29,11 +29,11 @@ INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
   ('eik:200000001', 'Фирма Х', '200000001', '200000001', 1, 'company');
 INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
   ('t:A', 'UNP-A', 'Поръчка А', 'auth:100000001', '45000000', 'открита процедура', 'awarded');
-INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur) VALUES
-  ('c:NULL', 't:A', 'eik:200000001', 100, 'EUR', '2024-01-01', NULL, 'ok', 100),
-  ('c:ZERO', 't:A', 'eik:200000001', 200, 'EUR', '2024-01-02', 0,    'ok', 200),
-  ('c:ONE',  't:A', 'eik:200000001', 300, 'EUR', '2024-01-03', 1,    'ok', 300),
-  ('c:TWO',  't:A', 'eik:200000001', 400, 'EUR', '2024-01-04', 2,    'ok', 400);
+INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur, is_high_markup) VALUES
+  ('c:NULL', 't:A', 'eik:200000001', 100, 'EUR', '2024-01-01', NULL, 'ok', 100, NULL),
+  ('c:ZERO', 't:A', 'eik:200000001', 200, 'EUR', '2024-01-02', 0,    'ok', 200, 0),
+  ('c:ONE',  't:A', 'eik:200000001', 300, 'EUR', '2024-01-03', 1,    'ok', 300, 0),
+  ('c:TWO',  't:A', 'eik:200000001', 400, 'EUR', '2024-01-04', 2,    'ok', 400, 1);
 `;
 
 /** Minimal D1Database facade over node:sqlite — enough for the query layer's prepare/bind/all/first. */
@@ -112,5 +112,15 @@ describe('contract filters against a real SQLite engine (#138)', () => {
     const page = await listContracts(db, { years: ['2024'], bids: 'one', pageSize: 10 });
     expect(page.total).toBe(1);
     expect(page.items[0]!.bidsReceived).toBe(1);
+  });
+
+  it('markup=high narrows the list to exactly the flagged row', async () => {
+    const db = realDb();
+
+    // Seed flags is_high_markup on c:TWO only; NULL (unassessable) and 0 rows must be excluded.
+    const flagged = await listContracts(db, { markup: 'high', pageSize: 10 });
+    expect(flagged.total).toBe(1);
+    expect(flagged.items).toHaveLength(1);
+    expect(flagged.items[0]!.valueEur).toBe(400);
   });
 });

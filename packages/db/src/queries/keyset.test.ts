@@ -11,6 +11,7 @@ const FILTER_VALUE: Record<string, unknown> = {
   countBucket: '2-5',
   eu: 'eu',
   kinds: ['company'],
+  markup: 'high',
   procedureGroups: ['open'],
   q: 'rail',
   sectors: ['45'],
@@ -76,6 +77,7 @@ describe('route filter signatures', () => {
       'bidder',
       'q',
       'bids',
+      'markup',
     ]);
     expect([...COMPANY_FILTER_KEYS]).toEqual([
       'kinds',

@@ -7,6 +7,7 @@ import type {
   AuthorityShare,
   BidDistribution,
   CompanyDetail,
+  SubjectRiskAggregate,
   CompanyShare,
   ConsortiumParticipant,
   ContractDetail,
@@ -19,7 +20,12 @@ import type {
   SectorSpend,
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import {
+  cleanName,
+  entityName,
+  isNaturalPersonSubject,
+  parseConsortiumMembers,
+} from '@sigma/shared';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -91,6 +97,40 @@ interface CompanyTotalsFull {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
+}
+
+// Map the raw subject-risk rollup columns (shared by company_totals/authority_totals) to the DTO aggregate; the
+// read layer's subjectRisk.ts derives the composite/band/reportability from these.
+function subjectRiskAggregate(row: {
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
+}): SubjectRiskAggregate {
+  const {
+    single_offer_k,
+    single_offer_n,
+    single_offer_value_share,
+    high_markup_k,
+    high_markup_n,
+    high_markup_value_share,
+  } = row;
+  return {
+    singleOfferK: single_offer_k,
+    singleOfferN: single_offer_n,
+    singleOfferValueShare: single_offer_value_share,
+    highMarkupK: high_markup_k,
+    highMarkupN: high_markup_n,
+    highMarkupValueShare: high_markup_value_share,
+  };
 }
 
 export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
@@ -179,6 +219,14 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
       : [];
   const membershipNote = membership?.kind === 'prose' ? membership.raw : null;
   const hasEik = row.eik_valid === 1 && Boolean(row.eik);
+  // Suppress the risk aggregate at the source for single natural persons (M9), so the raw K/N counts
+  // for a named individual never reach the client — the route-level guard is then a second layer, not
+  // the only one. Authorities are institutions, so getAuthority needs no such gate.
+  const isNaturalPerson = isNaturalPersonSubject({
+    kind: row.kind,
+    legalForm: bidderMeta?.legal_form ?? null,
+    displayName: entityName(cleanName(row.name), row.kind),
+  });
 
   return {
     slug: companySlug(bidderId),
@@ -212,6 +260,7 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     recentContracts: recent.items,
     participants,
     membershipNote,
+    risk: isNaturalPerson ? null : subjectRiskAggregate(row),
   };
 }
 
@@ -231,6 +280,12 @@ interface AuthorityTotalsFull {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  single_offer_k: number | null;
+  single_offer_n: number | null;
+  single_offer_value_share: number | null;
+  high_markup_k: number | null;
+  high_markup_n: number | null;
+  high_markup_value_share: number | null;
 }
 
 export async function getAuthority(
@@ -357,6 +412,7 @@ export async function getAuthority(
     procedureMix: toProcedureMix(procRows.results),
     recentContracts: recent.items,
     topContracts: top.items,
+    risk: subjectRiskAggregate(row),
   };
 }
 
@@ -387,6 +443,8 @@ interface ContractDetailRow {
   bids_rejected: number | null;
   bids_sme: number | null;
   bids_non_eea: number | null;
+  is_single_offer: number | null;
+  is_high_markup: number | null;
   subcontractor_eik: string | null;
   subcontractor_name: string | null;
   subcontract_value: number | null;
@@ -465,6 +523,7 @@ export async function getContract(
               c.amount_eur, c.signing_value, c.current_value, c.fx_rate,
               c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag,
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
+              c.is_single_offer, c.is_high_markup,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
               t.title, t.source_id AS unp, t.procedure_type, t.cpv_code, t.cpv_description, t.num_lots,
               t.eop_tender_id,
@@ -685,6 +744,8 @@ export async function getContract(
     bidsSme: r.bids_sme,
     bidsNonEea: r.bids_non_eea,
     euFunded: r.eu_funded == null ? null : r.eu_funded === 1,
+    isSingleOffer: r.is_single_offer == null ? null : r.is_single_offer === 1,
+    isHighMarkup: r.is_high_markup == null ? null : r.is_high_markup === 1,
     euProgramme: r.eu_programme,
     durationDays: r.duration_days,
     value,

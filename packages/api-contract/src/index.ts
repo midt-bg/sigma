@@ -111,6 +111,18 @@ export interface ConsortiumParticipant {
   resolvedSlug: string | null;
 }
 
+/** #229 per-subject risk aggregate — the raw rollup columns (company_totals/authority_totals). The read
+ *  layer (apps/web `subjectRisk.ts`) derives the composite, band, and reportability (min-N) from these,
+ *  so the presentation thresholds live in one place. `*K` = flagged count, `*N` = eligible count. */
+export interface SubjectRiskAggregate {
+  singleOfferK: number | null;
+  singleOfferN: number | null;
+  singleOfferValueShare: number | null;
+  highMarkupK: number | null;
+  highMarkupN: number | null;
+  highMarkupValueShare: number | null;
+}
+
 export interface CompanyDetail {
   slug: string;
   name: string;
@@ -149,6 +161,7 @@ export interface CompanyDetail {
    *  40 %; 2. … 60 %") rather than a clean `;`-list. Rare (~4 rows in production); rendered as a
    *  quotable block so the original detail survives. */
   membershipNote: string | null;
+  risk: SubjectRiskAggregate | null;
 }
 
 // ── Authorities ─────────────────────────────────────────────────────────────────────────────────
@@ -208,6 +221,7 @@ export interface AuthorityDetail {
   recentContracts: ContractListItem[];
   /** Highest-value contracts (listContracts sort='value-desc', amount_eur DESC) — „Най-големи по стойност". */
   topContracts: ContractListItem[];
+  risk: SubjectRiskAggregate | null;
 }
 
 // ── Contracts ─────────────────────────────────────────────────────────────────────────────────
@@ -321,6 +335,11 @@ export interface ContractDetail {
   euProgramme: string | null;
   durationDays: number | null;
   value: ContractValueTimeline;
+  /** Materialized risk flags (scripts/precompute.sql — the canonical single source the subject-risk
+   *  rollups aggregate). null = not assessable: single-offer needs a known bid count (`bids_received = 1`
+   *  basis), high-markup needs both signing and current EUR figures (suspect rows excluded). */
+  isSingleOffer: boolean | null;
+  isHighMarkup: boolean | null;
   /** When this contract is one of several awards under the same procedure (more awards than lots — a
    *  framework agreement / dynamic purchasing system call-off), this is the total number of awarded
    *  contracts under the parent tender. Null for a normal single/per-lot award. The procedure-level

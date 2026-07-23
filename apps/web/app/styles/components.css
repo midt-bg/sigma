@@ -175,6 +175,35 @@ a.flag:hover {
   background: var(--accent-bg);
   color: var(--ink);
 }
+/* #229 subject-risk framing — subdued and non-alarming (never the red warning accent). */
+.callout.neutral {
+  border-left-color: var(--ink-soft);
+  background: var(--surface);
+}
+.subject-risk-band {
+  margin: var(--s-3) 0 var(--s-2);
+  font: 400 18px/1.25 var(--font-serif);
+  color: var(--ink);
+}
+.subject-risk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.subject-risk-list li {
+  padding: 3px 0;
+}
+/* Bigger touch target for „виж договорите" on mobile (WCAG 2.5.8 ≥ 24px): a little row spacing plus
+   link padding, sized so the two components' links never overlap (a mis-tap would swap the filter). */
+@media (max-width: 640px) {
+  .subject-risk-list li {
+    padding: 6px 0;
+  }
+  .subject-risk-list a {
+    display: inline-block;
+    padding: 4px 0;
+  }
+}
 .callout h2,
 .callout h3 {
   font: 400 18px/1.25 var(--font-serif);

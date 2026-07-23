@@ -1259,6 +1259,17 @@ WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NUL
     WHERE bidder_key IS NOT NULL
   );
 
+-- Per-contract risk flags for the touched contracts, before the rollups aggregate them. Same
+-- derivation as precompute.sql section 0b; runs after the recalc UPDATE above refreshed signing/current
+-- EUR, so is_high_markup reads current figures.
+UPDATE contracts SET
+  is_single_offer = CASE WHEN bids_received IS NOT NULL THEN (bids_received = 1) END,
+  is_high_markup  = CASE WHEN value_flag = 'ok'
+                          AND signing_value_eur IS NOT NULL AND current_value_eur IS NOT NULL
+                          AND signing_value_eur > 0
+                     THEN ((current_value_eur - signing_value_eur) / signing_value_eur > 0.2) END
+WHERE id IN (SELECT id FROM refresh_touched_contracts);
+
 -- 6) Refresh rollups + FTS. Only the D1-hot rollups are scoped to touched rows; cheaper rollups stay
 -- full-recomputed in isolated batches so convergence stays simple.
 -- @refresh-batch company-totals
@@ -1275,6 +1286,25 @@ UPDATE company_totals SET primary_sector = (
   WHERE c.bidder_id = company_totals.bidder_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders);
+-- Per-subject risk aggregates for the touched bidders (see precompute.sql for rationale).
+UPDATE company_totals SET
+  single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
+  high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare
+FROM (
+  SELECT c.bidder_id,
+    SUM(CASE WHEN c.is_single_offer = 1 THEN 1 ELSE 0 END) AS so_k,
+    SUM(CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END) AS so_n,
+    SUM(CASE WHEN c.is_single_offer = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.bids_received >= 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS so_vshare,
+    SUM(CASE WHEN c.is_high_markup = 1 THEN 1 ELSE 0 END) AS hm_k,
+    SUM(CASE WHEN c.is_high_markup IS NOT NULL THEN 1 ELSE 0 END) AS hm_n,
+    SUM(CASE WHEN c.is_high_markup = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.is_high_markup IS NOT NULL AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS hm_vshare
+  FROM contracts c
+  WHERE c.bidder_id IN (SELECT bidder_id FROM refresh_touched_bidders)
+  GROUP BY c.bidder_id
+) AS agg
+WHERE company_totals.bidder_id = agg.bidder_id;
 
 -- @refresh-batch authority-totals
 DELETE FROM authority_totals WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
@@ -1290,6 +1320,25 @@ UPDATE authority_totals SET primary_sector = (
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1)
 WHERE authority_id IN (SELECT authority_id FROM refresh_touched_authorities);
+-- Per-subject risk aggregates for the touched authorities (see precompute.sql for rationale).
+UPDATE authority_totals SET
+  single_offer_k = agg.so_k, single_offer_n = agg.so_n, single_offer_value_share = agg.so_vshare,
+  high_markup_k = agg.hm_k, high_markup_n = agg.hm_n, high_markup_value_share = agg.hm_vshare
+FROM (
+  SELECT t.authority_id,
+    SUM(CASE WHEN c.is_single_offer = 1 THEN 1 ELSE 0 END) AS so_k,
+    SUM(CASE WHEN c.bids_received >= 1 THEN 1 ELSE 0 END) AS so_n,
+    SUM(CASE WHEN c.is_single_offer = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.bids_received >= 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS so_vshare,
+    SUM(CASE WHEN c.is_high_markup = 1 THEN 1 ELSE 0 END) AS hm_k,
+    SUM(CASE WHEN c.is_high_markup IS NOT NULL THEN 1 ELSE 0 END) AS hm_n,
+    SUM(CASE WHEN c.is_high_markup = 1 AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END)
+      / NULLIF(SUM(CASE WHEN c.is_high_markup IS NOT NULL AND c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS hm_vshare
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id
+  WHERE t.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
+  GROUP BY t.authority_id
+) AS agg
+WHERE authority_totals.authority_id = agg.authority_id;
 
 -- @refresh-batch flow-pairs
 DELETE FROM flow_pairs;

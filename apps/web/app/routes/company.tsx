@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
-  isNaturalPersonProfileName,
+  isNaturalPersonSubject,
   money,
   moneyBare,
   pct,
@@ -18,24 +18,14 @@ import { DataTable } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
+import { SubjectRiskIndicator } from '../components/SubjectRiskIndicator';
 import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
+import { buildSubjectRisk } from '../lib/subjectRisk';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-
-function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
-  if (kind === 'consortium' || !legalForm) return false;
-  const normalized = legalForm.trim().toUpperCase();
-  return (
-    normalized === 'ЕТ' ||
-    normalized === 'ET' ||
-    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
-    normalized.includes('SOLE TRADER') ||
-    normalized.includes('INDIVIDUAL')
-  );
-}
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
@@ -48,8 +38,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
   if (
     data?.company &&
-    (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||
-      isNaturalPersonProfileName(data.company.displayName) ||
+    (isNaturalPersonSubject(data.company) ||
       (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });
@@ -85,6 +74,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
   const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
+  const risk = buildSubjectRisk(c.risk, { isNaturalPerson: isNaturalPersonSubject(c) });
   return (
     <>
       <Breadcrumbs
@@ -163,6 +153,12 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        {risk ? (
+          <Section id="risk" title="Обобщени индикатори">
+            <SubjectRiskIndicator risk={risk} contractsBase={`/contracts?bidder=${c.slug}`} />
+          </Section>
+        ) : null}
 
         <Section
           id="trend"

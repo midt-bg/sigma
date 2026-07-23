@@ -20,7 +20,9 @@ import { TrendChart } from '../components/TrendChart';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
+import { SubjectRiskIndicator } from '../components/SubjectRiskIndicator';
 import { ShareBar, Chip, Section } from '../components/ui';
+import { buildSubjectRisk } from '../lib/subjectRisk';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
@@ -78,6 +80,7 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
     procedure.nonCompetitiveShare,
     EU_SCOREBOARD.directAward,
   );
+  const risk = buildSubjectRisk(a.risk, { isNaturalPerson: false });
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const topSectors = a.sectors
     .slice(0, 3)
@@ -136,6 +139,12 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        {risk ? (
+          <Section id="risk" title="Обобщени индикатори">
+            <SubjectRiskIndicator risk={risk} contractsBase={`/contracts?authority=${a.eik}`} />
+          </Section>
+        ) : null}
 
         <div className="two-col">
           <Section
