@@ -1308,6 +1308,34 @@ DELETE FROM search_index WHERE kind = 'authority';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6), ''), COALESCE(at.settlement, ''), at.spent_eur
 FROM authority_totals at;
+-- Свързани лица: full delete+reinsert (officials are few) so a withdrawn/left-office official — one with no
+-- remaining PUBLISHED link — drops out of search, never lingering as a „current" conflict. Mirrors precompute.
+DELETE FROM search_index WHERE kind = 'official';
+INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
+SELECT 'official', il.person_id, p.name, NULL,
+  (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id ORDER BY d.declared_year DESC LIMIT 1),
+  -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), NOT the
+  -- lifetime contract_value_eur. Same per-link subquery as LINK_SELECT.contemporaneous_value_eur in
+  -- packages/db/src/queries/related-persons.ts, summed across the official's links, so the search headline
+  -- matches the /conflicts surface and never credits an award signed outside the declared window.
+  SUM((SELECT SUM(cc.amount_eur) FROM contracts cc
+         JOIN tenders tt ON tt.id = cc.tender_id
+         JOIN authorities aa ON aa.id = tt.authority_id
+         JOIN bidders bb ON bb.id = cc.bidder_id
+       WHERE bb.eik_normalized = il.eik
+         AND il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
+         AND cc.signed_at IS NOT NULL
+         AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
+             BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
+FROM interest_links il JOIN persons p ON p.id = il.person_id
+WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  -- Drop the redundant family link when a published self stake exists for the same official+winner, so an
+  -- official who declared BOTH their own and a relative's stake in one company isn't counted twice in the
+  -- „по договори" total (mirrors NOT_REDUNDANT_FAMILY in packages/db/src/queries/related-persons.ts).
+  AND NOT (il.interest_class = 'family_ownership' AND EXISTS (
+    SELECT 1 FROM interest_links s WHERE s.person_id = il.person_id AND s.eik = il.eik
+      AND s.status = 'published' AND s.interest_class = 'private_ownership'))
+GROUP BY il.person_id, p.name;
 
 -- @refresh-batch contract-search-index
 DELETE FROM search_index WHERE kind = 'contract' AND ref IN (SELECT id FROM refresh_touched_contracts);

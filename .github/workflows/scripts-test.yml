@@ -1,0 +1,50 @@
+name: Script unit tests
+
+# Unit tests for the standalone helpers in scripts/ (ship-related-persons, emit-refresh-group, load-eop,
+# check-docs, …) plus the свързани-лица CACBG pipeline. These are plain node:test files outside the
+# workspace packages, so `pnpm test` (turbo) does not cover them — they run in their own workflow here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: scripts-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+      # node:test only — the scripts under test import nothing outside node built-ins and each other,
+      # so no `pnpm install` is required.
+      - run: node --test scripts/*.test.mjs
+
+  # свързани-лица CACBG pipeline tests (parse/classify/load/audit/tr-census/extract). These use
+  # node:sqlite (DatabaseSync) and import the shared companyNameKey .ts via the register-ts resolve
+  # hook, so they need Node 24 (node:sqlite + native TS type-stripping, no experimental flag) rather
+  # than the Node 22 above. The libel-critical resolution logic gates merges here.
+  cacbg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # parse.mjs imports fast-xml-parser (a workspace dep), so this job needs node_modules — unlike
+      # the plain-node scripts above. Install before the scraper tests run.
+      - run: pnpm install --frozen-lockfile
+      - run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/*.test.mjs

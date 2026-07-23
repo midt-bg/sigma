@@ -8,7 +8,14 @@ import { describe, expect, it } from 'vitest';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+// Apply the FULL migration chain, not just 0000 — refresh-slice.sql now rebuilds search_index officials from
+// the related-persons tables (interest_links), which live in 0002. Building only 0000 fails the `.read` with
+// `no such table: interest_links`. The served D1 always has the whole chain applied; the test must too.
+const migrationPaths = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0002_related_persons_foundation.sql',
+].map((f) => resolve(root, 'packages/db/migrations', f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
@@ -33,6 +40,10 @@ function readScript(dbPath: string, path: string): void {
     input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
     stdio: 'pipe',
   });
+}
+
+function applyMigrations(dbPath: string): void {
+  for (const m of migrationPaths) readScript(dbPath, m);
 }
 
 function resetRawStaging(dbPath: string): void {
@@ -174,7 +185,7 @@ function seedOcdsOnlySharedNumber(dbPath: string): void {
 }
 
 function initWorkDb(dbPath: string): void {
-  readScript(dbPath, schemaPath);
+  applyMigrations(dbPath);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -357,7 +368,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      applyMigrations(dbPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -436,7 +447,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      applyMigrations(dbPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -484,7 +495,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      applyMigrations(dbPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -532,7 +543,7 @@ describe('refresh-slice EOP base derivation', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      readScript(dbPath, schemaPath);
+      applyMigrations(dbPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,

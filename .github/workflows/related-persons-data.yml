@@ -1,0 +1,197 @@
+name: Related-persons data foundation (build + ship)
+
+# Deliberate, manual (re)build of the свързани-лица data foundation and ship into a served D1.
+#
+# This is the heavy backfill/rebuild path — NOT the steady-state refresh. Per spec §7, ongoing
+# incremental refresh (pull only the current-year delta) runs inside the Cloudflare `sigma-etl` Worker
+# on a cron, the same operational model as the EOP ingest — deploy.yml ships that Worker. This workflow
+# exists to (re)seed D1 after a schema change, a methodology change, or a first backfill, from a chosen
+# environment, on demand only. It never runs on push (data writes are deliberate — see ci-vs-cd).
+#
+# Requires the same Cloudflare credentials as deploy.yml, scoped in the GitHub Environment (secret NAMES,
+# never values): CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID + SIGMA_D1_ID, and the SIGMA_D1_NAME var.
+# Fails loudly if they are absent.  # pragma: allowlist secret The full crawl of register.cacbg.bg is slow (a polite crawl of the
+# whole corpus); in steady state the raw XML lives in R2 (ADR-0006) so the crawl is incremental — the
+# `sigma-etl` Worker owns that. Here `full_crawl` runs the corpus crawl, which RESUMES from the cached raw
+# XML (fetch.mjs skips files already on disk) — it fills gaps, not a from-scratch rebuild unless the cache is cleared.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target D1 environment
+        type: choice
+        options: [dev, staging, production]
+        default: dev
+      full_crawl:
+        description: Crawl the CACBG corpus (slow). RESUMES from the cached raw XML — fetch.mjs skips files already on disk, so this fills gaps rather than re-fetching from scratch (clear the cache for a true rebuild). Off = extract from the existing raw cache without crawling.
+        type: boolean
+        default: false
+
+# Least-privilege: this workflow only reads the repo; it authenticates to Cloudflare with a scoped token.
+permissions:
+  contents: read
+
+concurrency:
+  # Never let two data-foundation writes to the same environment overlap; do not cancel one in flight.
+  group: related-persons-data-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-ship:
+    runs-on: ubuntu-latest
+    # A from-scratch corpus crawl of the whole register is the long pole (all year-folders, politely
+    # throttled) and must fit in ONE job with extract/resolve/audit/ship after it — 120 was too tight and
+    # timed out mid-crawl. 300 leaves headroom under GitHub's 6-hour hard cap. A run past this is wedged
+    # (stalled gov-server I/O) — fail rather than burn the slot. The raw corpus is cached (below) so a
+    # re-run resumes instead of re-crawling from scratch.
+    timeout-minutes: 300
+    environment: ${{ inputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SIGMA_D1_ID: ${{ secrets.SIGMA_D1_ID }}
+      SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24 # node:sqlite (DatabaseSync) + native TS type-stripping, no flags
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Guard — require Cloudflare credentials
+        run: |
+          missing=()
+          [ -z "${CLOUDFLARE_API_TOKEN}" ] && missing+=("CLOUDFLARE_API_TOKEN")
+          [ -z "${CLOUDFLARE_ACCOUNT_ID}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          [ -z "${SIGMA_D1_ID}" ]          && missing+=("SIGMA_D1_ID")
+          [ -z "${SIGMA_D1_NAME}" ]        && missing+=("SIGMA_D1_NAME (var)")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing repo/environment secrets: ${missing[*]} — cannot ship."
+            exit 1
+          fi
+
+      # deploy.yml refuses to deploy a non-prod env carrying the production resource name (a misconfigured
+      # Environment would target prod). This workflow is MORE destructive — it wipes+reloads the свързани-лица
+      # tables — so it needs the same floor: a dev/staging run must never carry the prod D1 name 'sigma'.
+      - name: Guard — non-prod must not reuse the production D1 name
+        if: ${{ inputs.environment != 'production' }}
+        run: |
+          if [ "${SIGMA_D1_NAME}" = "sigma" ]; then
+            echo "::error::SIGMA_D1_NAME='sigma' (the PRODUCTION database) on a '${{ inputs.environment }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
+            exit 1
+          fi
+
+      # Persist the raw XML corpus across runs. fetch.mjs writes to scratch/cacbg/raw/ and skips files
+      # already on disk (source is immutable per year), so restoring a prior snapshot lets a re-run resume
+      # instead of re-crawling from 2017 — and makes full_crawl=false ("extract from existing raw cache")
+      # meaningful. Each run saves under a unique key; restore-keys pulls the most recent snapshot.
+      # (Cross-run only — a hard mid-crawl job timeout can't save; durable incremental persistence is the
+      # sigma-etl Worker's R2 job per ADR-0006. GitHub's 10 GB repo cache is the ceiling here.)
+      - name: Restore raw CACBG corpus cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: scratch/cacbg/raw
+          key: cacbg-raw-${{ github.run_id }}
+          restore-keys: |
+            cacbg-raw-
+
+      # Crawl only on demand. The polite full crawl of register.cacbg.bg is long; steady-state refresh
+      # (incremental, R2-cached) is the sigma-etl Worker's job (spec §7), not this workflow.
+      - name: Crawl CACBG (full corpus)
+        if: ${{ inputs.full_crawl }}
+        run: node scripts/cacbg/fetch.mjs --concurrency 8
+
+      # Save the (possibly extended) corpus whenever we crawled — even if a later step fails — so the next
+      # run resumes from here. Skipped on full_crawl=false runs (nothing new was fetched).
+      - name: Save raw CACBG corpus cache
+        if: ${{ always() && inputs.full_crawl }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: scratch/cacbg/raw
+          key: cacbg-raw-${{ github.run_id }}
+
+      - name: Extract declarations → staging (dedup by ControlHash)
+        run: node scripts/cacbg/extract.mjs
+
+      # Provision the EOP winners the resolver matches against. load.mjs reads bidders + contracts/tenders/
+      # authorities from a local work DB (data/work/backfill.sqlite); CI has none. Export EXACTLY those four
+      # tables from the target D1 into a fresh work DB. This is READ-ONLY on the D1 and cannot mutate it;
+      # the only writer to the D1 in this pipeline is the ship step, whose table list is свързани-лица only
+      # (bidders/contracts/tenders/authorities are never written) — so the live EOP corpus is never touched.
+      # Parity gate: exported row counts must equal the source counts, else the export was partial → fail
+      # BEFORE the resolver runs, rather than resolve/ship against an incomplete winner set.
+      - name: Hydrate EOP winners into the work DB (read-only export from D1)
+        run: |
+          set -euo pipefail
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          work="$GITHUB_WORKSPACE/data/work"
+          mkdir -p "$work"
+          rm -f "$work/eop.sql" "$work/backfill.sqlite"
+          pnpm --filter @sigma/web exec wrangler d1 export "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote -y \
+            --table bidders --table contracts --table tenders --table authorities \
+            --output "$work/eop.sql"
+          sqlite3 "$work/backfill.sqlite" < "$work/eop.sql"
+          for t in bidders contracts tenders authorities; do
+            local_n=$(sqlite3 "$work/backfill.sqlite" "SELECT COUNT(*) FROM $t;")
+            remote_json=$(pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+              --config wrangler.deploy.jsonc --remote --json \
+              --command "SELECT COUNT(*) AS n FROM $t;")
+            remote_n=$(printf '%s' "$remote_json" | python3 -c "import json,re,sys; m=re.search(r'\[.*\]', sys.stdin.read(), re.S); print(json.loads(m.group(0))[0]['results'][0]['n'])")
+            echo "  $t: local=$local_n remote=$remote_n"
+            if [ "$local_n" != "$remote_n" ]; then
+              echo "::error::EOP export incomplete for $t (local=$local_n remote=$remote_n) — refusing to resolve/ship."
+              exit 1
+            fi
+          done
+
+      - name: Resolve → build domain in a work sqlite (libel gate must pass)
+        run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs
+
+      - name: Audit published links (fails the run on any libel-invariant violation)
+        run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/audit.mjs
+
+      - name: Apply the свързани-лица schema to the target D1
+        # The base schema is created out-of-band via `d1 execute --file` (import.mjs), so wrangler's
+        # migration tracking is empty and `d1 migrations apply` would re-run 0000 and collide. Apply 0002
+        # directly the same way; it is idempotent (CREATE … IF NOT EXISTS). Render first for the real
+        # database_id + name (committed config holds placeholders) — same as the deploy path.
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0002_related_persons_foundation.sql
+
+      - name: Ship свързани-лица tables → D1
+        # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it
+        # needs that a bare `node …` invocation lacks: (1) wrangler on PATH (the other steps get it via
+        # `pnpm … exec`), and (2) an auto-loaded config carrying the real database_id + target name — the
+        # committed apps/web/wrangler.jsonc holds a zero-UUID placeholder + base name 'sigma'. Render the
+        # real values and overwrite the auto-loaded config, then add the workspace bin to PATH. ship writes
+        # ONLY свързани-лица tables (its TABLES list), so the EOP corpus is untouched.
+        run: |
+          set -euo pipefail
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          cp apps/web/wrangler.deploy.jsonc apps/web/wrangler.jsonc
+          export PATH="$GITHUB_WORKSPACE/apps/web/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --remote --yes
+
+      - name: Reindex search projection → officials searchable (same batch the cron runs)
+        # ship writes ONLY the свързани-лица domain tables (interest_links, persons, …), NOT search_index.
+        # search_index.official is derived from interest_links by refresh-slice's `entity-search-index`
+        # batch, which in steady state only the sigma-etl cron runs (0 */6). Without this step a dispatch
+        # seeds the data but leaves officials UNSEARCHABLE until the next cron — the workflow would not
+        # actually "ship into a served D1" as titled. Emit that batch from the SAME parser the Worker uses
+        # (scripts/emit-refresh-group.mjs → packages/ingest refreshSliceStatementGroups; no SQL duplicated)
+        # and run it against the target D1. Idempotent: each kind is DELETE+reINSERT, so re-runs converge.
+        run: |
+          set -euo pipefail
+          mkdir -p data/work
+          node --import ./scripts/cacbg/register-ts.mjs scripts/emit-refresh-group.mjs entity-search-index \
+            > "$GITHUB_WORKSPACE/data/work/reindex.sql"
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file "$GITHUB_WORKSPACE/data/work/reindex.sql"

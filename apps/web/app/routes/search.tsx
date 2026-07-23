@@ -71,6 +71,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 const KIND_LABEL: Record<string, string> = {
+  official: 'свързано лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',
@@ -101,6 +102,10 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
   const badge = exceptionBadge(hit);
   const ownershipBadge =
     hit.kind === 'company' && hit.ownershipKind ? <OwnershipChip kind={hit.ownershipKind} /> : null;
+  // A company that appears in the свързани-лица surface carries a trailing flag; the card links to the
+  // company page, which links on to /conflicts/company/:eik (a nested <a> here would be invalid).
+  const conflictBadge =
+    hit.kind === 'company' && hit.hasConflict ? <Chip>свързани лица</Chip> : null;
   return (
     <>
       {badge}
@@ -108,6 +113,8 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
       {ownershipBadge}
       {ownershipBadge && ' '}
       {renderTitle(hit, re)}
+      {conflictBadge && ' '}
+      {conflictBadge}
     </>
   );
 }

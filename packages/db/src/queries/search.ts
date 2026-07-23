@@ -7,7 +7,7 @@ import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma
 import { cleanName, entityName, parseConsortiumMembers, searchTokens } from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
-export type SearchKind = 'authority' | 'company' | 'contract';
+export type SearchKind = 'official' | 'authority' | 'company' | 'contract';
 
 // The tokenizer and its caps live in @sigma/shared so the FTS query builder and the search UI agree
 // on what counts as searchable. Re-exported here for existing @sigma/db consumers.
@@ -20,6 +20,16 @@ const GROUPS: {
   limit: number;
   path: string;
 }[] = [
+  // Свързани лица (declared conflict-of-interest officials). Placed first here, but only actually LEADS the
+  // results when it's the strongest match — see the relevance gate in search(). The minister's ask: a name
+  // search must surface the person's declared-conflict profile.
+  {
+    kind: 'official',
+    label: 'Свързани лица',
+    amountLabel: 'по договори',
+    limit: 6,
+    path: '/conflicts',
+  },
   {
     kind: 'authority',
     label: 'Институции',
@@ -96,7 +106,27 @@ interface HitRow {
   entity_kind: EntityKind | null;
   ownership_kind: OwnershipKind | null;
   eik_valid: number | null;
+  has_conflict: number | null; // 1 when a company row has a published свързани-лица link (badge)
+  rank: number; // FTS bm25 score (lower = better); the group's top row gives its best rank for the gate
 }
+
+// One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
+// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published-only,
+// private/family ownership — the same gate as the /conflicts surface, so search can never flag a company the
+// surface wouldn't. Binds: kind, match, limit. Exported so search-sql.test runs the EXACT SQL (not a copy).
+export const SEARCH_HITS_SQL = `SELECT search_index.ref, search_index.title, search_index.ident,
+        search_index.subtitle, search_index.amount, rank,
+        ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
+        (cf.eik IS NOT NULL) AS has_conflict
+ FROM search_index
+ LEFT JOIN company_totals ct
+   ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
+ LEFT JOIN (
+   SELECT DISTINCT eik FROM interest_links
+   WHERE status = 'published' AND interest_class IN ('private_ownership', 'family_ownership')
+ ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident
+ WHERE search_index.kind = ? AND search_index MATCH ?
+ ORDER BY rank LIMIT ?`;
 
 export async function search(db: D1Database, rawQuery: string): Promise<SearchResults> {
   const query = (rawQuery ?? '').trim();
@@ -115,21 +145,23 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
     .all<{ kind: SearchKind; n: number }>();
   const counts = new Map(countRows.results.map((r) => [r.kind, r.n]));
 
-  const groups = await Promise.all(
+  const built = await Promise.all(
     GROUPS.map(async (g) => {
       const total = counts.get(g.kind) ?? 0;
-      if (total === 0) return { kind: g.kind, label: g.label, total: 0, hits: [], moreHref: null };
+      if (total === 0) {
+        return {
+          group: {
+            kind: g.kind,
+            label: g.label,
+            total: 0,
+            hits: [] as SearchHit[],
+            moreHref: null,
+          },
+          bestRank: Infinity,
+        };
+      }
       const { results } = await db
-        .prepare(
-          `SELECT search_index.ref, search_index.title, search_index.ident,
-                  search_index.subtitle, search_index.amount,
-                  ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid
-           FROM search_index
-           LEFT JOIN company_totals ct
-             ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
-           WHERE search_index.kind = ? AND search_index MATCH ?
-           ORDER BY rank LIMIT ?`,
-        )
+        .prepare(SEARCH_HITS_SQL)
         .bind(g.kind, match, g.limit)
         .all<HitRow>();
       const hits: SearchHit[] = results.map((r) => {
@@ -147,7 +179,13 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
           ident: r.ident || null,
           ...(isCompany
-            ? { isConsortium, hasEik, ownershipKind: r.ownership_kind, memberCount }
+            ? {
+                isConsortium,
+                hasEik,
+                ownershipKind: r.ownership_kind,
+                memberCount,
+                hasConflict: r.has_conflict === 1,
+              }
             : {}),
           subtitle: r.subtitle || null,
           amountEur: r.amount,
@@ -155,14 +193,29 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
         };
       });
       return {
-        kind: g.kind,
-        label: g.label,
-        total,
-        hits,
-        moreHref: total > hits.length ? searchMoreHref(g.kind, query) : null,
+        group: {
+          kind: g.kind,
+          label: g.label,
+          total,
+          hits,
+          moreHref: total > hits.length ? searchMoreHref(g.kind, query) : null,
+        },
+        // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
+        bestRank: results.length ? results[0]!.rank : Infinity,
       };
     }),
   );
+
+  // Placement (the minister's ask): „Свързани лица" LEADS — but only when it is genuinely the strongest
+  // match, never on an incidental prefix hit. When its best rank ties or beats every other non-empty group
+  // it goes first; otherwise it sinks to last (still shown, just not hijacking the top over a stronger
+  // company/contract match). Empty groups are hidden downstream, so „first when matched, absent otherwise"
+  // falls out for free.
+  const official = built.find((b) => b.group.kind === 'official')!;
+  const rest = built.filter((b) => b.group.kind !== 'official');
+  const bestOther = Math.min(Infinity, ...rest.map((b) => b.bestRank));
+  const officialLeads = official.group.total > 0 && official.bestRank <= bestOther;
+  const groups = (officialLeads ? [official, ...rest] : [...rest, official]).map((b) => b.group);
 
   return { query, groups, empty: groups.every((g) => g.total === 0) };
 }

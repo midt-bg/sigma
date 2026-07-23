@@ -59,6 +59,11 @@ jobs:
     needs: detect
     if: needs.detect.outputs.env != ''
     runs-on: ubuntu-latest
+    # Explicit cap instead of the 360-min GitHub default: a full build + two-Worker wrangler deploy
+    # runs in single-digit minutes, so a job past 10 min is hung (stalled network I/O, wedged
+    # wrangler) — fail fast rather than burn a 6-hour slot. The required-reviewers wait on
+    # `production` does NOT count against this; the timer starts only once the job hits a runner.
+    timeout-minutes: 10
     environment: ${{ needs.detect.outputs.env }}
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
@@ -125,6 +130,22 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: pnpm typecheck
 
+      # Schema before serving: apply the свързани-лица schema to the target env BEFORE the Worker deploys,
+      # so a release that adds those tables never serves against a stale schema. The base schema was
+      # created out-of-band via `d1 execute --file` (import.mjs), leaving wrangler's migration tracking
+      # empty — so `d1 migrations apply` would re-run 0000 and collide. Apply 0002 directly the same way;
+      # 0002 is idempotent (CREATE … IF NOT EXISTS). Render first for the real database_id+name; the guard
+      # above already refused production resource names for non-prod envs.
+      - name: Apply the свързани-лица schema
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          # prod leaves SIGMA_D1_NAME unset and uses the committed 'sigma' default (as wrangler-render does);
+          # a bare "$SIGMA_D1_NAME" would run `d1 execute ""` and fail the prod release. Mirror that default.
+          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0002_related_persons_foundation.sql
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'
@@ -169,6 +190,10 @@ jobs:
           fi
 
           key="$(openssl rand -hex 32)"
+          # Register the value as a secret with the runner BEFORE it is used anywhere else, so an
+          # accidental echo / set -x trace in a later edit can never leak it. Masking is not
+          # retroactive within a line, hence add-mask on the line right after generation.
+          echo "::add-mask::$key"
           printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "$SIGMA_WEB_NAME"
 
       - name: Deploy refresh Workflow (sigma-etl)

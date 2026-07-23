@@ -100,3 +100,50 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
     expect(rrLoader).not.toHaveBeenCalled();
   });
 });
+
+// The worker is the single source of the noindex signal for /conflicts (a personal-names surface). It must
+// stamp X-Robots-Tag on BOTH the HTML and the single-fetch `.data` twin — the twin is JSON with no <head> to
+// carry a route <meta robots>, and a resource route's loader `data(..., {headers})` doesn't propagate to it.
+// The env omits CONFLICTS_RATE_LIMITER, so the fail-open limiter lets each request reach the (mocked) loader.
+describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)', () => {
+  const noindexed = [
+    'http://local/conflicts',
+    'http://local/conflicts.data', // leaderboard twin
+    'http://local/conflicts/official/ivan-petrov-1',
+    'http://local/conflicts/company/123456789',
+    // The exact gap Playwright caught: the resource-route twin, whose loader header never propagated.
+    'http://local/conflicts/link/self/ivan-petrov-1/123456789/contracts.data',
+    // Search now surfaces свързани-лица officials by name → its HTML, its .data twin, and the
+    // /search/suggest typeahead JSON (a headless resource route) all name individuals.
+    'http://local/search?q=ivan',
+    'http://local/search.data?q=ivan',
+    'http://local/search/suggest?q=ivan',
+  ];
+  for (const url of noindexed) {
+    it(`sets X-Robots-Tag: noindex on ${url.replace('http://local', '')}`, async () => {
+      const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.50' } });
+      const res = await workerFetch(req, env(underLimit), ctx);
+      expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+    });
+  }
+
+  // Methodology is the deliberately-indexed public credibility anchor (ADR-0020/0021) — HTML and .data alike.
+  for (const url of [
+    'http://local/conflicts/methodology',
+    'http://local/conflicts/methodology.data',
+  ]) {
+    it(`does NOT noindex ${url.replace('http://local', '')} (indexed anchor)`, async () => {
+      const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.51' } });
+      const res = await workerFetch(req, env(underLimit), ctx);
+      expect(res.headers.get('X-Robots-Tag')).toBeNull();
+    });
+  }
+
+  it('does NOT noindex a non-conflicts path (/companies.data)', async () => {
+    const req = new Request('http://local/companies.data', {
+      headers: { 'CF-Connecting-IP': '203.0.113.52' },
+    });
+    const res = await workerFetch(req, env(underLimit), ctx);
+    expect(res.headers.get('X-Robots-Tag')).toBeNull();
+  });
+});
