@@ -141,7 +141,9 @@ INSERT OR IGNORE INTO joint_authority_members
   (unp, authority_id, member_name, authority_type, source_ordinal)
 SELECT unp, 'auth:' || authority_eik, NULLIF(member_name, ''), authority_type, source_ordinal
 FROM split
-WHERE authority_eik <> '';
+-- A member EIK still carrying ';' is a composite the split could not decompose - not a real
+-- single authority; it must not seed a member row or mint an orphan 'auth:EIK1; EIK2'.
+WHERE authority_eik <> '' AND authority_eik NOT LIKE '%;%';
 
 -- A minority of co-authorities never occur standalone. Mint those real EIK identities from the
 -- positionally corresponding name component; INSERT OR IGNORE preserves every standalone row.
