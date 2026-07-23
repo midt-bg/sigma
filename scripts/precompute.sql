@@ -13,10 +13,10 @@
 -- table definitions live canonically in migrations/0000_init.sql; the IF NOT EXISTS guards here let
 -- the same file also bootstrap a database created before these tables existed.
 --
--- COUNT/SUM CONSISTENCY: a paired (count, sum) covers ONE row set — contracts with a clean
--- amount_eur. NULL amount_eur rows are excluded from sums; the suspect KPI specifically counts
--- value_suspect rows, so FX-rateless foreign rows are not mislabeled as suspect. The home/list
--- CORPUS counts use COUNT(*) (a record count, not the count behind a sum) and pair that tally alongside.
+-- CANONICAL VALUE BASE: every money rollup sums rows where amount_eur IS NOT NULL, regardless of
+-- value_flag. That includes review, annex_suspect, value_low and repaired value_suspect rows. Only a
+-- row without a usable EUR value is excluded. The suspect KPI separately counts value_suspect rows;
+-- home/list CORPUS counts use COUNT(*) and may therefore cover a broader row set than their sum.
 
 -- ── 0) Per-contract EUR value timeline ────────────────────────────────────────────────────────
 -- signing/current in EUR for the contract page's estimated→signing→current strip.
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS home_totals (
 );
 DELETE FROM home_totals;
 
--- ── 2) company_totals (per bidder; clean rows only so won_eur pairs with contracts) ───────────────
+-- ── 2) company_totals (per bidder; canonical non-NULL amount_eur base) ────────────────────────────
 CREATE TABLE IF NOT EXISTS company_totals (
   bidder_id TEXT PRIMARY KEY REFERENCES bidders(id), name TEXT NOT NULL, kind TEXT NOT NULL,
   ownership_kind TEXT, eik TEXT, eik_valid INTEGER NOT NULL DEFAULT 0, settlement TEXT, won_eur REAL NOT NULL,
