@@ -29,6 +29,20 @@
 - Всеки пакет с тестове закача `"test": "vitest run"` в turbo графа — `apps/etl` (`eop.test.ts`)
   беше тихо прескачан от `turbo run test`, докато това не се поправи.
 
+## Coverage ratchet
+
+- Локално: `pnpm test -- --coverage && pnpm check:coverage`. CI пуска същото — покритието се
+  измерва с `@vitest/coverage-v8` през общия preset (`vitest.shared.ts`), по workspace.
+- Ratchet правилото: lines% и branches% на всеки workspace не може да падне под комитнатия
+  `coverage-baseline.json` с повече от 0.5pp (толерансът поглъща шум от малките пакети с 1–2
+  тестови файла). Спад ⇒ червено CI; PR-ът показва таблицата с делтите (step summary + sticky
+  коментар за същия-repo PR-и, artifact за форкове).
+- Покачване с >1pp ⇒ скриптът подканя `node scripts/check-coverage.mjs --update` — прегледайте и
+  комитнете новия baseline в същия PR. Умишлен, ревюиран спад се изразява със сваляне на числото
+  в `coverage-baseline.json`, не с изключване на проверката.
+- Нов workspace с тестове се добавя и в `coverage-baseline.json` (и получава `vitest.config.ts`
+  с `sharedCoverage(...)`); `packages/api-contract` е освободен, докато няма тестове.
+
 ## Integrity gate
 
 - Пуска се върху обслужвания D1 след `precompute` в `ship-domain.mjs` и след `runSliceDerive()` в
