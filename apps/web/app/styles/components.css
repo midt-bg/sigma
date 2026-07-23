@@ -161,6 +161,18 @@ a.flag:hover {
   color: var(--ink-soft);
 }
 
+/* Anomaly rows: the fired-signal chip strip under the contract title. The parenthesised numbers
+   inside a chip (baseline the ratio was measured against) drop the mono-uppercase shout. */
+.signal-flags {
+  display: block;
+  margin-top: 4px;
+}
+.signal-flags .flag-detail {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
 /* Methodology callout — left rule, paper-warm body, no fill on neutral */
 .callout {
   border-left: 4px solid var(--ink);

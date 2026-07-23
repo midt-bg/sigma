@@ -10,6 +10,7 @@ const PAGES: Page[] = [
   { loc: '/companies' },
   { loc: '/authorities' },
   { loc: '/contracts' },
+  { loc: '/anomalies' },
   { loc: '/analytics' },
   { loc: '/flows' },
   { loc: '/network' },

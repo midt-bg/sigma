@@ -167,6 +167,136 @@ FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
 
+-- ── 7) Anomaly screen: cpv_price_stats + contract_anomalies ─────────────────────────────────────
+-- Automated red-flag indicators over the clean corpus (value_flag = 'ok', amount_eur > 0). A row in
+-- contract_anomalies means at least one PRICE signal fired; signals are indicators for public
+-- scrutiny, never verdicts. Methodology (mirrored on /methodology):
+--   • over_estimate  — signing value ≥ +10% above the authority's OWN pre-tender estimate. Compared
+--     only when the estimate covers exactly this award: lot-level estimate for lot-scoped awards,
+--     tender estimate for single-lot tenders; framework/DPS call-offs (more awards than lots — the
+--     estimate is the whole ceiling, cf. details.ts frameworkAwards) are excluded, as are estimates
+--     under €1k and signed values under €10k (noise floors). BGN/EUR only (foreign-currency
+--     estimates have no stored rate).
+--   • annex_growth   — current (post-annex) value ≥ +20% over the signing value, annexed rows only.
+--     ЗОП чл. 116 caps most modifications at +10/50%, so ≥1.5 is scored higher.
+--   • price_outlier  — contract value ≥ 5× the median of ≥10 clean contracts sharing the same FULL
+--     CPV code, and ≥ €50k. A scope-vs-price proxy (a bigger buy is not a worse price), hence the
+--     softest weight; the median + peer count are stored so every ratio is inspectable. The peer set
+--     includes the contract itself (negligible at ≥ 10 peers). Medians are rebuilt HERE, on full
+--     import only — the daily slice re-derives touched contracts against the last computed medians.
+--   • single_bid / no_notice — competition context (one offer in a competitive procedure / a
+--     direct no-notice procedure). Context only: they add score but never create a row.
+-- Score = over_estimate 25/35/45 (≥1.1/1.5/3×) + annex_growth 20/30 (≥1.2/1.5×) +
+--         price_outlier 15/25 (≥5/10×) + single_bid 10 + no_notice 5, capped at 100.
+-- The derive/scoring block between the @anomaly-derive markers is shared verbatim with
+-- scripts/refresh-slice.sql (@refresh-batch anomalies) and guarded byte-identical by
+-- packages/db/src/anomaly-parity.test.ts — edit both files together.
+
+CREATE TABLE IF NOT EXISTS cpv_price_stats (
+  cpv_code TEXT PRIMARY KEY, peers INTEGER NOT NULL, median_eur REAL NOT NULL
+);
+DELETE FROM cpv_price_stats;
+INSERT INTO cpv_price_stats (cpv_code, peers, median_eur)
+SELECT cpv, MAX(n), AVG(eur) FROM (
+  SELECT t.cpv_code AS cpv, c.amount_eur AS eur,
+         ROW_NUMBER() OVER (PARTITION BY t.cpv_code ORDER BY c.amount_eur) AS rn,
+         COUNT(*) OVER (PARTITION BY t.cpv_code) AS n
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id
+  WHERE c.value_flag = 'ok' AND c.amount_eur > 0 AND COALESCE(t.cpv_code, '') <> ''
+)
+WHERE rn IN ((n + 1) / 2, (n + 2) / 2)
+GROUP BY cpv;
+
+CREATE TABLE IF NOT EXISTS contract_anomalies (
+  contract_id TEXT PRIMARY KEY REFERENCES contracts(id),
+  score INTEGER NOT NULL, rank_value REAL NOT NULL,
+  flag_over_estimate INTEGER NOT NULL DEFAULT 0, flag_annex_growth INTEGER NOT NULL DEFAULT 0,
+  flag_price_outlier INTEGER NOT NULL DEFAULT 0, flag_single_bid INTEGER NOT NULL DEFAULT 0,
+  flag_no_notice INTEGER NOT NULL DEFAULT 0,
+  over_estimate_ratio REAL, estimated_eur REAL, annex_growth_ratio REAL,
+  price_ratio REAL, peer_median_eur REAL, peer_count INTEGER,
+  amount_eur REAL NOT NULL, signed_at TEXT, cpv_division TEXT,
+  authority_id TEXT NOT NULL, bidder_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_anomalies_rank ON contract_anomalies(rank_value DESC);
+CREATE INDEX IF NOT EXISTS idx_anomalies_amount ON contract_anomalies(amount_eur);
+CREATE INDEX IF NOT EXISTS idx_anomalies_signed ON contract_anomalies(signed_at);
+CREATE INDEX IF NOT EXISTS idx_anomalies_authority ON contract_anomalies(authority_id);
+CREATE INDEX IF NOT EXISTS idx_anomalies_bidder ON contract_anomalies(bidder_id);
+DELETE FROM contract_anomalies;
+-- @anomaly-derive begin (byte-identical with refresh-slice.sql; see anomaly-parity.test.ts)
+INSERT INTO contract_anomalies (
+  contract_id, score, rank_value,
+  flag_over_estimate, flag_annex_growth, flag_price_outlier, flag_single_bid, flag_no_notice,
+  over_estimate_ratio, estimated_eur, annex_growth_ratio, price_ratio, peer_median_eur, peer_count,
+  amount_eur, signed_at, cpv_division, authority_id, bidder_id)
+SELECT
+  id, score, score * 1e12 + amount_eur AS rank_value,
+  flag_over, flag_annex, flag_outlier, single_bid, no_notice,
+  over_ratio, est_eur, growth, ratio, median_eur, peers,
+  amount_eur, signed_at, cpv_division, authority_id, bidder_id
+FROM (
+  SELECT
+    id,
+    MIN(100,
+        CASE WHEN flag_over = 1 THEN CASE WHEN over_ratio >= 3 THEN 45 WHEN over_ratio >= 1.5 THEN 35 ELSE 25 END ELSE 0 END
+      + CASE WHEN flag_annex = 1 THEN CASE WHEN growth >= 1.5 THEN 30 ELSE 20 END ELSE 0 END
+      + CASE WHEN flag_outlier = 1 THEN CASE WHEN ratio >= 10 THEN 25 ELSE 15 END ELSE 0 END
+      + CASE WHEN single_bid = 1 THEN 10 ELSE 0 END
+      + CASE WHEN no_notice = 1 THEN 5 ELSE 0 END) AS score,
+    flag_over, flag_annex, flag_outlier, single_bid, no_notice,
+    over_ratio, est_eur, growth, ratio, median_eur, peers,
+    amount_eur, signed_at, cpv_division, authority_id, bidder_id
+  FROM (
+    SELECT x.*,
+      CASE WHEN x.est_eur >= 1000 AND x.paid_eur >= 10000 AND x.paid_eur / x.est_eur >= 1.10 THEN 1 ELSE 0 END AS flag_over,
+      CASE WHEN x.est_eur > 0 THEN x.paid_eur / x.est_eur END AS over_ratio,
+      CASE WHEN x.growth >= 1.20 THEN 1 ELSE 0 END AS flag_annex,
+      CASE WHEN x.ratio >= 5 AND x.amount_eur >= 50000 THEN 1 ELSE 0 END AS flag_outlier
+    FROM (
+      SELECT c.id, c.amount_eur, c.signed_at,
+        substr(t.cpv_code, 1, 2) AS cpv_division, t.authority_id, c.bidder_id,
+        COALESCE(c.signing_value_eur, c.amount_eur) AS paid_eur,
+        -- The comparable estimate: only when it covers exactly this award (see header note).
+        CASE WHEN aw.n <= MAX(COALESCE(t.num_lots, 0), 1) THEN
+          CASE
+            WHEN c.lot_id IS NOT NULL AND l.estimated_value > 0
+                 AND COALESCE(l.value_currency, t.currency, 'BGN') IN ('BGN', 'EUR')
+              THEN CASE WHEN COALESCE(l.value_currency, t.currency, 'BGN') = 'EUR'
+                        THEN l.estimated_value ELSE l.estimated_value / 1.95583 END
+            WHEN c.lot_id IS NULL AND COALESCE(t.num_lots, 1) <= 1 AND t.estimated_value > 0
+                 AND COALESCE(t.currency, 'BGN') IN ('BGN', 'EUR')
+              THEN CASE WHEN COALESCE(t.currency, 'BGN') = 'EUR'
+                        THEN t.estimated_value ELSE t.estimated_value / 1.95583 END
+          END
+        END AS est_eur,
+        CASE WHEN c.annex_count > 0 AND c.signing_value_eur > 0 AND c.current_value_eur > 0
+             THEN c.current_value_eur / c.signing_value_eur END AS growth,
+        CASE WHEN ps.peers >= 10 AND ps.median_eur > 0 THEN c.amount_eur / ps.median_eur END AS ratio,
+        ps.median_eur, ps.peers,
+        CASE WHEN c.bids_received = 1 AND t.procedure_type IN (
+          'Открита процедура', 'Ограничена процедура', 'Ограничена процедура по ДСП',
+          'Ограничена процедура по КС', 'Публично състезание', 'Състезателна процедура с договаряне',
+          'Събиране на оферти с обява') THEN 1 ELSE 0 END AS single_bid,
+        CASE WHEN t.procedure_type IN (
+          'Договаряне без предварително обявление', 'Пряко договаряне',
+          'Договаряне без предварителна покана за участие',
+          'Договаряне без публикуване на обявление за поръчка') THEN 1 ELSE 0 END AS no_notice
+      FROM contracts c
+      JOIN tenders t ON t.id = c.tender_id
+      LEFT JOIN lots l ON l.id = c.lot_id
+      LEFT JOIN cpv_price_stats ps ON ps.cpv_code = t.cpv_code
+-- @anomaly-derive end (the FROM/WHERE scoping below legitimately differs: full corpus here, touched slice there)
+    LEFT JOIN (SELECT tender_id, COUNT(*) AS n FROM contracts GROUP BY tender_id) aw
+      ON aw.tender_id = c.tender_id
+    WHERE c.value_flag = 'ok' AND c.amount_eur > 0
+-- @anomaly-derive-tail begin (byte-identical with refresh-slice.sql)
+    ) x
+    WHERE flag_over = 1 OR flag_annex = 1 OR flag_outlier = 1
+  )
+);
+-- @anomaly-derive-tail end
+
 -- Summary (last result set printed by `wrangler d1 execute`)
 SELECT
   (SELECT contracts FROM home_totals)        AS home_contracts,
@@ -177,4 +307,6 @@ SELECT
   (SELECT COUNT(*) FROM sector_totals)       AS sector_rows,
   (SELECT COUNT(*) FROM flow_pairs)          AS flow_rows,
   (SELECT COUNT(*) FROM search_index)        AS search_rows,
-  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows;
+  (SELECT COUNT(*) FROM contracts WHERE signing_value_eur IS NOT NULL) AS signing_eur_rows,
+  (SELECT COUNT(*) FROM cpv_price_stats)     AS cpv_stat_rows,
+  (SELECT COUNT(*) FROM contract_anomalies)  AS anomaly_rows;

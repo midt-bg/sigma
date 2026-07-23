@@ -9,7 +9,7 @@ import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './query-params';
 
-export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
+export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25, anomalies: 15 } as const;
 export const MAX_MULTI_VALUES = 50;
 
 const KNOWN_SECTORS = new Set(CPV_SECTORS.map((s) => s.code));
@@ -183,6 +183,7 @@ export const PARAM_ORDER = [
   'q',
   'type',
   'kind',
+  'signal',
   'sector',
   'g', // trends granularity (month/year)
   'year',

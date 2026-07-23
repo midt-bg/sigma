@@ -13,6 +13,10 @@ export default defineConfig({
     cloudflare({
       viteEnvironment: { name: 'ssr' },
       persistState: { path: persistPath },
+      // Vectorize + AI bindings (added with the assistant feature) cannot be emulated by miniflare
+      // and would attempt a remote proxy session that requires a Cloudflare login. Disable the
+      // remote proxy so local dev stays fully offline; the assistant route falls back to a 503.
+      remoteBindings: false,
     }),
     tailwindcss(),
     reactRouter(),

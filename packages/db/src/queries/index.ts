@@ -11,6 +11,7 @@ export * from './methodology';
 export * from './companies';
 export * from './authorities';
 export * from './contracts';
+export * from './anomalies';
 export * from './flows';
 export * from './network';
 export * from './trend';

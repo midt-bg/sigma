@@ -627,3 +627,57 @@ export interface SearchResults {
   groups: SearchGroup[];
   empty: boolean;
 }
+
+// ── Anomalies (automated red-flag screen) ───────────────────────────────────────────────────────
+
+/** The fired signals on one anomaly row. Ratio fields are populated ONLY when the corresponding
+ *  signal actually fired (the stored under-threshold ratios stay server-side), so the UI renders a
+ *  badge per non-null field without re-checking thresholds. */
+export interface AnomalySignals {
+  /** signing value ÷ the authority's own estimate (≥ 1.1 when present). */
+  overEstimateRatio: number | null;
+  /** The comparable estimate in EUR (present with overEstimateRatio). */
+  estimatedEur: number | null;
+  /** current (post-annex) ÷ signing value (≥ 1.2 when present). */
+  annexGrowthRatio: number | null;
+  /** contract value ÷ CPV-code peer median (≥ 5 when present). */
+  priceRatio: number | null;
+  peerMedianEur: number | null;
+  peerCount: number | null;
+  /** Context: one offer in a competitive procedure. */
+  singleBid: boolean;
+  /** Context: direct / no-notice procedure. */
+  noNotice: boolean;
+}
+
+export interface AnomalyListItem {
+  id: string; // /contracts/:id
+  subject: string;
+  unp: string;
+  sectorCode: string | null;
+  authoritySlug: string;
+  authorityName: string;
+  bidderSlug: string;
+  bidderName: string;
+  bidderDisplayName: string;
+  bidderKind: EntityKind;
+  isConsortium: boolean;
+  signedAt: string | null;
+  valueEur: number;
+  /** 0–100 weighted signal score (see /methodology). */
+  score: number;
+  signals: AnomalySignals;
+}
+
+/** Headline for the anomalies list under the active filter. */
+export interface AnomaliesSummary {
+  total: number;
+  valueEur: number;
+}
+
+/** Global (unfiltered) per-signal row counts for the filter rail. */
+export interface AnomalyFacets {
+  signals: FacetCount[];
+  sectors: FacetCount[];
+  years: FacetCount[];
+}
