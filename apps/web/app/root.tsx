@@ -23,6 +23,7 @@ import { AccessibilityWidget } from './components/AccessibilityWidget';
 import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
+import { serializeJsonForScript } from './lib/json-ld';
 import { withDbRetry } from './lib/retry';
 import stylesheet from './app.css?url';
 
@@ -70,7 +71,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const origin = rootData?.origin;
   const imageUrl = origin ? `${origin}/og.png` : undefined;
   const schemaOrg = origin
-    ? JSON.stringify({
+    ? serializeJsonForScript({
         '@context': 'https://schema.org',
         '@graph': [
           {
