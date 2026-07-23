@@ -1064,7 +1064,7 @@ describe('refresh-slice integrity gate', () => {
     }
   });
 
-  it('stays green after a tender authority re-attribution (old + new rollups both rebuilt)', () => {
+  it('stays green after a tender authority re-attribution (old + new rollups both rebuilt)', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-authority-gate-'));
     const dbPath = resolve(dir, 'test.sqlite');
     const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
@@ -1103,7 +1103,7 @@ describe('refresh-slice integrity gate', () => {
       expect(spentEur('333333333')).toBe(0);
       expect(spentEur('444444444')).toBeGreaterThan(0);
 
-      const results = assertIntegrity(run, { label: 'test-slice-authority', exit: false });
+      const results = await assertIntegrity(run, { label: 'test-slice-authority', exit: false });
       expect(results.every((r) => r.ok)).toBe(true);
       expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
     } finally {
