@@ -1,5 +1,11 @@
 import { Link } from 'react-router';
-import { getCompetitionSummary, getFlows, getRegionalSpending, getSpendingTrend } from '@sigma/db';
+import {
+  getCompetitionSummary,
+  getFlows,
+  getRegionalSpending,
+  getSpendingTrend,
+  getDb,
+} from '@sigma/db';
 import { count, money, pct } from '@sigma/shared';
 import type { ReactNode } from 'react';
 import type { Route } from './+types/analytics';
@@ -28,7 +34,7 @@ export function headers() {
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const [flows, regional, trend, competition] = await Promise.all([
     getFlows(db, { top: 3 }),
     getRegionalSpending(db, { funding: 'all' }),
