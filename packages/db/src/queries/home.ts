@@ -5,7 +5,8 @@ import {
   type AuthorityTotalsRow,
   type CompanyTotalsRow,
 } from './rows';
-import { listSingleOfferContracts } from './contracts';
+import { listContracts, listSingleOfferContracts } from './contracts';
+import { getFlaggedValue } from './flagged';
 
 interface HomeTotalsRow {
   contracts: number;
@@ -50,37 +51,62 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
       };
 
   const placeholders = STATE_TYPES.map(() => '?').join(', ');
-  const [companies, ministries, municipalities, recentSingleOffer, topSingleOffer, singleOfferRow] =
-    await Promise.all([
-      db
-        .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
-        .all<CompanyTotalsRow>(),
-      db
-        .prepare(
-          `SELECT * FROM authority_totals WHERE type_group IN (${placeholders}) ORDER BY spent_eur DESC, authority_id LIMIT 6`,
-        )
-        .bind(...STATE_TYPES)
-        .all<AuthorityTotalsRow>(),
-      db
-        .prepare(
-          `SELECT * FROM authority_totals WHERE type_group = 'община' ORDER BY spent_eur DESC, authority_id LIMIT 6`,
-        )
-        .all<AuthorityTotalsRow>(),
-      listSingleOfferContracts(db, 'recent', 10),
-      listSingleOfferContracts(db, 'value', 10),
-      // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
-      // denominator). Same clean-row basis as the single-offer list above: bids = 1, non-suspect,
-      // positive amount. Edge-cached for an hour, so the full scan runs rarely.
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
+  const [
+    companies,
+    ministries,
+    municipalities,
+    recentSingleOffer,
+    topSingleOffer,
+    singleOfferRow,
+    flagged,
+    topFlaggedPage,
+  ] = await Promise.all([
+    db
+      .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
+      .all<CompanyTotalsRow>(),
+    db
+      .prepare(
+        `SELECT * FROM authority_totals WHERE type_group IN (${placeholders}) ORDER BY spent_eur DESC, authority_id LIMIT 6`,
+      )
+      .bind(...STATE_TYPES)
+      .all<AuthorityTotalsRow>(),
+    db
+      .prepare(
+        `SELECT * FROM authority_totals WHERE type_group = 'община' ORDER BY spent_eur DESC, authority_id LIMIT 6`,
+      )
+      .all<AuthorityTotalsRow>(),
+    listSingleOfferContracts(db, 'recent', 10),
+    listSingleOfferContracts(db, 'value', 10),
+    // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
+    // denominator). Same clean-row basis as the single-offer list above: bids = 1, non-suspect,
+    // positive amount. Edge-cached for an hour, so the full scan runs rarely.
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
          FROM contracts WHERE bids_received = 1 AND value_flag = 'ok' AND amount_eur > 0`,
-        )
-        .first<{ value_eur: number; contracts: number }>(),
-    ]);
+      )
+      .first<{ value_eur: number; contracts: number }>(),
+    // Flagged-value summary (#218) — live aggregate over existing columns, under the 1h edge cache.
+    getFlaggedValue(db),
+    // Top flagged contracts by value, for the homepage table (same shape as the single-offer list).
+    // `excludeNaturalPersons` drops sole-trader (ЕТ) bidders in SQL, before the LIMIT — so an identifiable
+    // individual never appears under a „сигнали за риск" label on this indexed, edge-cached page (GDPR/ЗЗЛД
+    // — mirrors the noindex on sole-trader company profiles, #236 review), and the table still fills 10 rows
+    // (the exclusion no longer eats into the page as a post-hoc filter would). 0 rows degrades to the empty
+    // state. The exclusion keys on both the "ЕТ " name convention and the registry `legal_form`, so it does
+    // not depend on the winner's name spelling alone.
+    listContracts(db, {
+      flags: ['all'],
+      sort: 'value-desc',
+      pageSize: 10,
+      excludeNaturalPersons: true,
+    }),
+  ]);
 
   return {
     totals,
+    flagged,
+    topFlagged: topFlaggedPage.items,
     topCompanies: companies.results.map(toCompanyListItem),
     topMinistries: ministries.results.map(toAuthorityListItem),
     topMunicipalities: municipalities.results.map(toAuthorityListItem),

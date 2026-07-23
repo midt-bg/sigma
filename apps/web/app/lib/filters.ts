@@ -4,7 +4,13 @@
 
 import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision } from '@sigma/config';
 import type { EntityKind } from '@sigma/api-contract';
-import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
+import {
+  AUTHORITY_TYPE_GROUPS,
+  FLAG_TYPES,
+  normalizeAuthoritySort,
+  normalizeCompanySort,
+  normalizeContractSort,
+} from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
 import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './query-params';
@@ -13,6 +19,12 @@ export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as co
 export const MAX_MULTI_VALUES = 50;
 
 const KNOWN_SECTORS = new Set(CPV_SECTORS.map((s) => s.code));
+// Risk-signal tokens accepted on ?flag= (#218): each FlagType plus `all` (any signal).
+const KNOWN_FLAGS = new Set<string>([...FLAG_TYPES, 'all']);
+// Authority type_group buckets accepted on ?type=. Bounding this is a cache-cardinality / DoS guard:
+// unlike /authorities (rate-limited aggregation page), /contracts is not, so an unvalidated ?type=
+// would let each distinct value mint a fresh edge-cache key AND an uncached full-table scan (#218 review).
+const KNOWN_TYPES = new Set<string>(AUTHORITY_TYPE_GROUPS);
 
 function allowedMulti(key: string, value: string): boolean {
   if (key === 'sector') return KNOWN_SECTORS.has(value);
@@ -51,6 +63,11 @@ export function contractListFilters(sp: URLSearchParams) {
     bidder: sp.get('bidder'),
     q: sp.get('q'),
     bids: (sp.get('bids') === '1' ? 'one' : null) as 'one' | null,
+    flags: getMulti(sp, 'flag').filter((v) => KNOWN_FLAGS.has(v)),
+    // Validate against the closed bucket set: unlike /authorities (a rate-limited aggregation page),
+    // /contracts is not rate-limited, so an unvalidated ?type= would let each distinct value mint a
+    // fresh edge-cache key AND an uncached full-table scan (cache-cardinality / DoS guard, #218 review).
+    authorityTypes: getMulti(sp, 'type').filter((v) => KNOWN_TYPES.has(v)),
   };
 }
 
@@ -191,6 +208,7 @@ export const PARAM_ORDER = [
   'eu',
   'bids', // /contracts single-bid filter
   'value',
+  'flag',
   'authority',
   'bidder',
   'center', // /network focus entity

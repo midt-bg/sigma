@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CPV_SECTORS } from '@sigma/config';
+import { FLAG_TYPES } from '@sigma/db';
 import {
   authorityListFilters,
   companyListFilters,
@@ -13,8 +14,43 @@ import {
   withParams,
 } from './filters';
 import { CANONICAL_QUERY_PARAMS } from './query-params';
+import type { RiskFlagType } from './riskLogic';
 
 const sp = (q: string) => new URLSearchParams(q);
+
+describe('contract risk-signal + authority-type filters (#218)', () => {
+  it('parses valid ?flag tokens and drops unknown ones', () => {
+    const f = contractListFilters(new URLSearchParams('flag=no_competition,all&flag=bogus'));
+    expect(f.flags).toEqual(['no_competition', 'all']);
+  });
+
+  it('leaves flags empty when the param is absent', () => {
+    expect(contractListFilters(new URLSearchParams('')).flags).toEqual([]);
+  });
+
+  it('parses ?type into authorityTypes', () => {
+    const f = contractListFilters(new URLSearchParams('type=министерство&type=община'));
+    expect(f.authorityTypes).toEqual(['министерство', 'община']);
+  });
+
+  it('drops unknown ?type buckets (cache-cardinality / DoS allow-list guard, #218 review)', () => {
+    const f = contractListFilters(
+      new URLSearchParams('type=министерство&type=<script>&type=zzz-unbounded'),
+    );
+    expect(f.authorityTypes).toEqual(['министерство']);
+  });
+
+  it('the flagged.ts signal set matches riskLogic RiskFlagType (homepage ↔ contract-page parity)', () => {
+    // Compile-time: every FLAG_TYPES entry is a valid RiskFlagType. Runtime: the sets are equal.
+    const expected: RiskFlagType[] = [
+      'no_competition',
+      'eu_no_competition',
+      'high_markup',
+      'anomalies',
+    ];
+    expect(new Set<string>(FLAG_TYPES)).toEqual(new Set<string>(expected));
+  });
+});
 
 describe('contractListFilters', () => {
   it('parses the bids filter the HTML list and CSV export must share (issue #138)', () => {

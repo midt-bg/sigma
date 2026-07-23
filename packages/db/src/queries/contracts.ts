@@ -6,6 +6,7 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
+import { flagPredicate } from './flagged';
 import {
   authoritySlug,
   bareContractId,
@@ -30,6 +31,12 @@ export interface ContractListParams {
   bidder?: string | null; // bidder slug
   q?: string | null;
   bids?: 'one' | null;
+  flags?: string[]; // risk-signal tokens (#218): a FlagType or `all`; OR-combined
+  authorityTypes?: string[]; // authority `type_group` buckets (#218 breakdown drill-down, `?type=`)
+  // Server-internal (not a user-facing filter, so absent from CONTRACT_FILTER_KEYS / the cache signature):
+  // drop natural-person (sole-trader ЕТ) bidders at SQL level. Set only by the flagged homepage table so an
+  // identifiable individual never appears under a „сигнали за риск" label on that indexed page (#236 review).
+  excludeNaturalPersons?: boolean;
   cursor?: string | null;
   pageSize?: number;
 }
@@ -44,6 +51,8 @@ export const CONTRACT_FILTER_KEYS = [
   'bidder',
   'q',
   'bids',
+  'flags',
+  'authorityTypes',
 ] as const satisfies readonly (keyof ContractListParams)[];
 
 // Compile-time completeness guard (issue #138 bug class) — see filter-guard.ts. If this line
@@ -108,6 +117,27 @@ const FROM = `
   JOIN tenders t ON t.id = c.tender_id
   JOIN authorities a ON a.id = t.authority_id
   JOIN bidders b ON b.id = c.bidder_id`;
+
+// A bidder that is a natural person (sole trader / ЕТ). Two independent signals, OR-combined:
+//   • name prefix — the АОП convention records sole traders as "ЕТ <name>" (the only populated signal in
+//     the current data, where `legal_form` is largely NULL); mirrors `isNaturalPersonProfileName`.
+//   • legal form — the registry `legal_form` code where present (ЕТ / ЕДНОЛИЧЕН ТЪРГОВЕЦ / SOLE TRADER /
+//     INDIVIDUAL); mirrors `isSingleNaturalPersonProfile`. Hardens prod, where the field is populated.
+// Consortiums are never a single natural person. SQLite `LIKE` is case-insensitive for ASCII; the Cyrillic
+// tokens are matched against the registry's uppercase normalisation. Used at SQL level (pre-LIMIT) so the
+// flagged homepage never surfaces an identifiable individual under a „сигнали за риск" label (#236 review,
+// GDPR/ЗЗЛД — mirrors the noindex on sole-trader company profiles).
+const NATURAL_PERSON_BIDDER_SQL = `(
+  b.kind <> 'consortium' AND (
+    TRIM(b.name) LIKE 'ЕТ %' OR TRIM(b.name) LIKE 'ET %'
+    OR (b.legal_form IS NOT NULL AND (
+      TRIM(b.legal_form) IN ('ЕТ', 'ET')
+      OR b.legal_form LIKE '%ЕДНОЛИЧЕН ТЪРГОВЕЦ%'
+      OR b.legal_form LIKE '%SOLE TRADER%'
+      OR b.legal_form LIKE '%INDIVIDUAL%'
+    ))
+  )
+)`;
 
 /**
  * Build the WHERE fragment (with a leading ' WHERE ') + params shared by list, summary and CSV.
@@ -177,6 +207,20 @@ function buildFilters(p: ContractListParams): { sql: string; params: unknown[] }
     );
     params.push(match);
   }
+  if (p.flags?.length) {
+    // Risk-signal filter (#218): OR the requested flag predicates. An unrecognised token yields no
+    // predicate; if none are valid the filter matches nothing (rather than silently showing all).
+    const preds = p.flags
+      .map(flagPredicate)
+      .filter((x): x is string => x != null)
+      .map((x) => `(${x})`);
+    where.push(preds.length ? `(${preds.join(' OR ')})` : '1=0');
+  }
+  if (p.authorityTypes?.length) {
+    where.push(`a.type_group IN (${qs(p.authorityTypes.length)})`);
+    params.push(...p.authorityTypes);
+  }
+  if (p.excludeNaturalPersons) where.push(`NOT ${NATURAL_PERSON_BIDDER_SQL}`);
   return { sql: where.length ? ' WHERE ' + where.join(' AND ') : '', params };
 }
 
@@ -192,6 +236,8 @@ function contractFilterSignature(p: ContractListParams): string {
     bidder,
     q: searchMatchQuery(p.q ?? ''),
     bids: p.bids ?? null,
+    flags: p.flags?.length ? [...p.flags].sort() : null,
+    authorityTypes: p.authorityTypes?.length ? [...p.authorityTypes].sort() : null,
   } satisfies Record<(typeof CONTRACT_FILTER_KEYS)[number], unknown>;
   return filterSignature(filters);
 }
