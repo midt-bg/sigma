@@ -1,0 +1,25 @@
+# OSV-Scanner suppression list, read automatically by the "Dependency audit" step in
+# .github/workflows/ci.yml (`osv-scanner scan source -L pnpm-lock.yaml`).
+#
+# EVERY entry MUST document: which package + advisory, WHY it is safe to ignore (dev-only /
+# not shipped), the version that FIXES it, and an `ignoreUntil` review date so the scanner
+# re-flags it if we forget.
+#
+# AT EVERY MERGE / DEPENDENCY BUMP: re-check each entry. If the offending package has since
+# been raised to (or past) its fixed version, DELETE the entry — do not let suppressions
+# outlive the vulnerability they cover. `pnpm why <package>` shows the resolved version and
+# what pulls it in.
+
+# ── sharp 0.34.5 — GHSA-f88m-g3jw-g9cj (High, CVSS 7.0), fixed in 0.35.0 ──────────────────
+# WHY IGNORED: sharp is a DEV-ONLY, TRANSITIVE dependency pulled in only by `miniflare`
+# (Cloudflare's local Workers simulator, used by `wrangler dev` and the test suite).
+# `miniflare@4.20260520.0` pins sharp to EXACTLY 0.34.5, so it cannot be bumped without
+# upgrading miniflare/wrangler (which drags ~29 unrelated build packages). sharp is NEVER
+# bundled into the deployed Worker — Cloudflare Workers have no native image runtime — so this
+# vulnerability cannot reach production.
+# REMOVE WHEN: wrangler/miniflare ships a release that pins sharp >= 0.35.0. Check with
+# `pnpm why sharp`; if it resolves to >= 0.35.0, delete this block.
+[[IgnoredVulns]]
+id = "GHSA-f88m-g3jw-g9cj"
+ignoreUntil = 2026-10-01T00:00:00Z
+reason = "sharp is a dev-only transitive of miniflare (local Workers simulator), pinned to 0.34.5 upstream and never bundled into the deployed Worker. Remove once miniflare/wrangler pins sharp >= 0.35.0 (pnpm why sharp)."
