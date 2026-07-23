@@ -62,6 +62,10 @@ function fakeD1(seed: Seed = {}): D1Database {
     }
     if (sql.includes('spent_eur < 0')) return [{ a: 0, c: 0, f: 0 }];
     if (sql.includes('signed_at')) return [{ n: seed.badDates ?? 0 }];
+    if (sql.includes('current_value_eur')) {
+      // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
+      return [{ n: 0 }];
+    }
     if (sql.includes('FROM contracts') && sql.includes('COUNT(*) AS n')) {
       return [{ n: seed.contracts ?? 5 }];
     }
@@ -127,9 +131,9 @@ describe('runServedIntegrityGate', () => {
       const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
       return ok?.event.skipped as number;
     };
-    // With home_totals present, one fewer check self-skips than on the bare work DB — that check is
-    // rollup-reconciliation moving from skipped to actually run over the live D1.
-    expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 1);
+    // With home_totals present, two fewer checks self-skip than on the bare work DB —
+    // rollup-reconciliation and current-amount-parity (#261) both move from skipped to run.
+    expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 2);
   });
 
   it('throws when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {
