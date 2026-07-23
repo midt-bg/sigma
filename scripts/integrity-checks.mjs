@@ -157,16 +157,15 @@ export async function checkRollupReconciliation(runner) {
 // current_value_eur while every aggregate and search result reads amount_eur, so allowing these two
 // columns to disagree makes the served database contradict itself even when each rollup reconciles
 // perfectly with amount_eur. One cent is the user-visible precision boundary.
-export function checkCurrentAmountParity(runner) {
+export async function checkCurrentAmountParity(runner) {
   const name = 'current-amount-parity';
   // current_value_eur is populated by precompute.sql (served D1 / ship-domain), not by normalize on the
   // work DB. Before precompute every current_value_eur is NULL, so this parity is only meaningful once
-  // the rollups exist — gate on home_totals exactly like rollup-reconciliation, or the work-DB gate
-  // aborts the whole rebuild on every amended contract.
+  // the rollups exist — gate on home_totals exactly like rollup-reconciliation.
   if (
-    !tableExists(runner, 'contracts') ||
-    !tableExists(runner, 'home_totals') ||
-    num(scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
+    !(await tableExists(runner, 'contracts')) ||
+    !(await tableExists(runner, 'home_totals')) ||
+    num(await scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0
   )
     return {
       name,
@@ -175,7 +174,7 @@ export function checkCurrentAmountParity(runner) {
       detail: 'precompute rollups absent (current_value_eur not yet populated)',
     };
   const mismatches = num(
-    scalar(
+    await scalar(
       runner,
       "SELECT COUNT(*) AS n FROM contracts WHERE value_flag = 'ok' AND current_value IS NOT NULL " +
         'AND (amount_eur IS NULL OR current_value_eur IS NULL OR ABS(amount_eur - current_value_eur) > 0.01)',
