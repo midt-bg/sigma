@@ -120,9 +120,9 @@ describe('streamCompaniesCsv', () => {
 
     expect(sql.filter((query) => query.includes('company_totals'))).not.toHaveLength(0);
     expect(
-      sql.filter((query) => query.includes('company_totals')).every((query) =>
-        query.includes("kind <> 'unknown'"),
-      ),
+      sql
+        .filter((query) => query.includes('company_totals'))
+        .every((query) => query.includes("kind <> 'unknown'")),
     ).toBe(true);
   });
 });
