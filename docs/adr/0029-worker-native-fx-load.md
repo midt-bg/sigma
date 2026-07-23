@@ -1,4 +1,4 @@
-# ADR-0007 — Worker-native FX зареждане в cron refresh-а и режим на отказ
+# ADR-0029 — Worker-native FX зареждане в cron refresh-а и режим на отказ
 
 - **Статус:** Прието
 - **Дата:** 2026-07-22

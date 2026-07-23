@@ -179,7 +179,7 @@ export interface LoadFxOptions {
  * before the derive runs. Incremental and idempotent — only currencies with an actual coverage
  * gap are fetched (one time-series request each), and rows upsert into fx_rates.
  *
- * Fail-mode contract (see docs/adr/0007-worker-native-fx-load.md):
+ * Fail-mode contract (see docs/adr/0029-worker-native-fx-load.md):
  * - already covered → no fetch, no-op;
  * - fetch fails but existing rates cover every staged date → never reached (no gap → no fetch);
  * - currency unknown to frankfurter (HTTP 404) or range outside ECB data → warn + proceed,
