@@ -26,14 +26,14 @@ const FIXTURE = `
 INSERT INTO authorities (id, name, bulstat, type_group) VALUES
   ('auth:100000001', 'Институция А', '100000001', 'община');
 INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
-  ('eik:200000001', 'Фирма Х', '200000001', '200000001', 1, 'company');
+  ('eik:200000002', 'Фирма Х', '200000002', '200000002', 1, 'company');
 INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
   ('t:A', 'UNP-A', 'Поръчка А', 'auth:100000001', '45000000', 'открита процедура', 'awarded');
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur) VALUES
-  ('c:NULL', 't:A', 'eik:200000001', 100, 'EUR', '2024-01-01', NULL, 'ok', 100),
-  ('c:ZERO', 't:A', 'eik:200000001', 200, 'EUR', '2024-01-02', 0,    'ok', 200),
-  ('c:ONE',  't:A', 'eik:200000001', 300, 'EUR', '2024-01-03', 1,    'ok', 300),
-  ('c:TWO',  't:A', 'eik:200000001', 400, 'EUR', '2024-01-04', 2,    'ok', 400);
+  ('c:NULL', 't:A', 'eik:200000002', 100, 'EUR', '2024-01-01', NULL, 'ok', 100),
+  ('c:ZERO', 't:A', 'eik:200000002', 200, 'EUR', '2024-01-02', 0,    'ok', 200),
+  ('c:ONE',  't:A', 'eik:200000002', 300, 'EUR', '2024-01-03', 1,    'ok', 300),
+  ('c:TWO',  't:A', 'eik:200000002', 400, 'EUR', '2024-01-04', 2,    'ok', 400);
 `;
 
 /** Minimal D1Database facade over node:sqlite — enough for the query layer's prepare/bind/all/first. */

@@ -42,6 +42,7 @@ CREATE TABLE tenders (
   source_id       TEXT NOT NULL UNIQUE,    -- УНП (ЦАИС ЕОП identifier)
   title           TEXT NOT NULL,
   authority_id    TEXT NOT NULL REFERENCES authorities(id),
+  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   cpv_code        TEXT,
   cpv_description TEXT,                     -- human-readable CPV label (no external dictionary needed)
   estimated_value REAL,
@@ -112,6 +113,7 @@ CREATE TABLE contracts (
   id               TEXT PRIMARY KEY,       -- 'c:' || staging row id
   tender_id        TEXT NOT NULL REFERENCES tenders(id),
   bidder_id        TEXT NOT NULL REFERENCES bidders(id),
+  ordering_unit_name TEXT,                 -- verbatim "Възложител" (raw authority_name) on this row; preserves sub-unit identity collapsed by canonical authorities.name (mode)
   amount           REAL NOT NULL,          -- as-recorded headline value in `currency` (display); signing for annex_suspect
   currency         TEXT NOT NULL DEFAULT 'BGN',
   signed_at        TEXT,
@@ -150,6 +152,17 @@ CREATE TABLE contracts (
   strategic        INTEGER,                -- Стратегическа поръчка
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Joint procurements retain one lead authority on tenders (the only authority that receives spend),
+-- while this bridge records every participating authority. ordinal 0 is always the lead.
+CREATE TABLE contract_co_authorities (
+  contract_id  TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  authority_id TEXT NOT NULL REFERENCES authorities(id),
+  ordinal      INTEGER NOT NULL CHECK (ordinal >= 0),
+  PRIMARY KEY (contract_id, authority_id)
+);
+CREATE INDEX idx_contract_co_authorities_authority
+  ON contract_co_authorities(authority_id, contract_id);
 
 -- Domain amendment history used to roll current_value/annex_count without staging. Natural-keyed so
 -- re-imports are idempotent; built by scripts/promote-amendments.sql from the transient amendment feed.
@@ -198,8 +211,8 @@ CREATE INDEX idx_parties_eik ON parties(eik);
 -- One row (id = 1). Index KPIs + freshness for the home page.
 CREATE TABLE home_totals (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
-  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), NOT the clean-amount_eur count behind value_eur
-  value_eur    REAL NOT NULL,             -- SUM(amount_eur), clean rows only; paired with the (larger) corpus contracts count — the two do NOT cover one set
+  contracts    INTEGER NOT NULL,          -- corpus record count: COUNT(*) over ALL contracts (precompute.sql), not the non-NULL amount_eur count behind value_eur
+  value_eur    REAL NOT NULL,             -- SUM(amount_eur): every non-NULL amount_eur regardless of value_flag; corpus contracts may cover a broader set
   authorities  INTEGER NOT NULL,
   bidders      INTEGER NOT NULL,
   suspect      INTEGER NOT NULL,          -- COUNT of value_suspect rows (data-quality KPI); summed via repair to the procedure estimate, except a value_suspect row with no estimate (amount_eur NULL, excluded like other NULL rows)
@@ -218,7 +231,7 @@ CREATE TABLE company_totals (
   eik            TEXT,                      -- eik_normalized (NULL when name-keyed)
   eik_valid      INTEGER NOT NULL DEFAULT 0,
   settlement     TEXT,
-  won_eur        REAL NOT NULL,            -- SUM(amount_eur) of contracts won (clean rows only)
+  won_eur        REAL NOT NULL,            -- SUM(amount_eur) where amount_eur IS NOT NULL, regardless of value_flag
   contracts      INTEGER NOT NULL,
   authorities    INTEGER NOT NULL,         -- distinct paying authorities
   primary_sector TEXT,                      -- CPV division carrying the most won €
@@ -242,6 +255,15 @@ CREATE TABLE authority_totals (
   eu_eur         REAL NOT NULL DEFAULT 0,
   first_date     TEXT,
   last_date      TEXT
+);
+
+-- Joint-procurement participation rollup. joint_contract_value_eur is the total value of the joint
+-- procurements the authority took part in; it is informational only and must NEVER be summed into
+-- authority_totals.spent_eur or any national/leaderboard total.
+CREATE TABLE authority_joint_participation (
+  authority_id                 TEXT PRIMARY KEY REFERENCES authorities(id),
+  joint_contract_participations INTEGER NOT NULL,
+  joint_contract_value_eur      REAL NOT NULL DEFAULT 0
 );
 
 -- Per CPV division. Sector facet + filter counts on the list pages.

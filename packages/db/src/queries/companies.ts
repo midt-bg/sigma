@@ -109,7 +109,7 @@ function source(p: CompanyListParams): { from: string; params: unknown[] } {
  * Keep consumed filter keys in sync with COMPANY_FILTER_KEYS and companyFilterSignature().
  */
 function entityWhere(p: CompanyListParams): { sql: string; params: unknown[] } {
-  const where: string[] = [];
+  const where: string[] = [`kind <> 'unknown'`];
   const params: unknown[] = [];
   if (p.kinds?.length && p.kinds.length < 2) {
     where.push(`kind = ?`);
