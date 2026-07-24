@@ -25,6 +25,12 @@ on:
         type: choice
         options:
           - staging
+          # Once provision-environments.sh has been applied, selecting `production` here only
+          # works when the workflow is dispatched from a `v*` tag ref, e.g.:
+          #   gh workflow run deploy.yml --ref v1.0.1 -f environment=production
+          # Dispatching from a branch ref (e.g. main) is refused by the environment tag policy.
+          # Admins may bypass this via the `admins_can_bypass` setting (Settings → Environments
+          # → production) for emergency situations.
           - production
         default: staging
 
@@ -59,6 +65,11 @@ jobs:
     needs: detect
     if: needs.detect.outputs.env != ''
     runs-on: ubuntu-latest
+    # Explicit cap instead of the 360-min GitHub default: a full build + two-Worker wrangler deploy
+    # runs in single-digit minutes, so a job past 10 min is hung (stalled network I/O, wedged
+    # wrangler) — fail fast rather than burn a 6-hour slot. The required-reviewers wait on
+    # `production` does NOT count against this; the timer starts only once the job hits a runner.
+    timeout-minutes: 10
     environment: ${{ needs.detect.outputs.env }}
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
@@ -238,6 +249,10 @@ jobs:
           fi
 
           key="$(openssl rand -hex 32)"
+          # Register the value as a secret with the runner BEFORE it is used anywhere else, so an
+          # accidental echo / set -x trace in a later edit can never leak it. Masking is not
+          # retroactive within a line, hence add-mask on the line right after generation.
+          echo "::add-mask::$key"
           printf '%s' "$key" | pnpm --filter @sigma/web exec wrangler secret put LOG_IP_KEY --name "$SIGMA_WEB_NAME"
 
       - name: Deploy refresh Workflow (sigma-etl)
