@@ -9,6 +9,7 @@
 - [`etl-pipeline-state.md`](etl-pipeline-state.md) — анализ на текущото състояние на ETL pipeline-а.
 - [`etl-architecture.md`](etl-architecture.md) — целевата ETL архитектура (RFC): предложение за състоянието и реда на изпълнение.
 - [`v1-implementation-plan.md`](v1-implementation-plan.md) — precompute слоят и пагинацията (защо rollup-и и keyset вместо per-request GROUP BY / OFFSET).
+- [`implementation-plans/230-issue-claim-bot.md`](implementation-plans/230-issue-claim-bot.md) — план за внедряване на бота за заявяване на Issue-та (`/assign`) срещу дублирана работа (#230).
 - [`integrity-gate.md`](integrity-gate.md) — reconciliation gate-ът: hard asserts върху тоталите при import/CI.
 - [`anomaly-report.md`](anomaly-report.md) — cross-row аномалии при опресняване: какво `value_flag` не хваща на ниво отделен договор.
 - [`deploy.md`](deploy.md) — деплой към Cloudflare: двата Worker-а (`sigma`, `sigma-etl`) и споделеният D1 per environment.
