@@ -607,3 +607,78 @@ tbody td,
     transform 1.2s ease-out,
     opacity 0.1s ease;
 }
+/* EU-benchmark indicator block (authority page „Конкуренция"): identical shape for both
+   indicators - hero share, meter with the two EU thresholds as hairline ticks, verdict and
+   counts in text. The meter is decorative; the fill wears the accent only over the „high"
+   threshold (same convention as .share-bar.warn). */
+.ebs + .ebs {
+  margin-top: var(--s-4);
+}
+.ebs-title {
+  margin-bottom: var(--s-1);
+}
+.ebs-head {
+  margin: 0;
+}
+.ebs-pct {
+  font: 600 28px/1 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.ebs-meter {
+  position: relative;
+  height: 12px;
+  background: var(--rule-soft);
+  margin: var(--s-2) 0 24px;
+}
+/* Threshold zones: the EU bands are visible across the whole track, not just as ticks -
+   under target (lightest), between target and high (a gray step up), over high (accent wash). */
+.ebs-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+}
+.ebs-zone-good {
+  background: var(--rule-soft);
+}
+.ebs-zone-mid {
+  background: var(--rule);
+}
+.ebs-zone-high {
+  background: var(--accent-bg);
+}
+.ebs-meter > i {
+  position: absolute;
+  inset: 3px auto 3px 0;
+  display: block;
+  background: var(--ink-mid);
+  border-radius: 0 3px 3px 0;
+}
+.ebs-meter > i.warn {
+  background: var(--accent);
+}
+.ebs-tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--ink);
+}
+.ebs-tick-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+.ebs-thresholds,
+.ebs-detail {
+  margin: 0;
+}

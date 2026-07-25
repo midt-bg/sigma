@@ -6,7 +6,13 @@ import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
-import { authoritySlug, bidderIdFromSlug, companySlug, contractSlug } from './identity';
+import {
+  authoritySlug,
+  bareContractId,
+  bidderIdFromSlug,
+  companySlug,
+  contractSlug,
+} from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
 import { searchMatchQuery } from './search';
@@ -214,8 +220,8 @@ function toItem(r: ContractRow): ContractListItem {
 }
 
 /**
- * Single-offer contracts (`bids_received = 1`) excluding suspect values — for the homepage section.
- * `mode` picks recency vs highest value. Reuses the shared SELECT/FROM and the row mapper.
+ * Single-offer contracts (`bids_received = 1`) with a known canonical EUR value — for the homepage
+ * section. `mode` picks recency vs highest value. Reuses the shared SELECT/FROM and row mapper.
  */
 export async function listSingleOfferContracts(
   db: D1Database,
@@ -228,7 +234,7 @@ export async function listSingleOfferContracts(
       : 'ORDER BY COALESCE(c.signed_at, c.published_at) DESC';
   const rows = await db
     .prepare(
-      `${SELECT} ${FROM} WHERE c.bids_received = 1 AND c.value_flag = 'ok' AND c.amount_eur > 0 ${order}, c.id LIMIT ?`,
+      `${SELECT} ${FROM} WHERE c.bids_received = 1 AND c.amount_eur IS NOT NULL ${order}, c.id LIMIT ?`,
     )
     .bind(limit)
     .all<ContractRow>();
@@ -291,16 +297,15 @@ export async function listContracts(
   };
 }
 
-/** Total rows, clean-EUR sum and suspect tally for the current filter (the list headline). */
+/** Total rows, canonical-EUR sum and suspect tally for the current filter (the list headline). */
 export async function contractsSummary(
   db: D1Database,
   p: ContractListParams,
 ): Promise<{ total: number; valueEur: number; suspect: number }> {
   const filters = buildFilters(p);
-  // suspect badge = rows whose value is excluded from the sum (amount_eur IS NULL: value_/annex_suspect)
-  // PLUS value_low rows, which ARE summed (amount_eur populated) but stay labelled „непотвърдена стойност".
-  // The value SUM intentionally keeps value_low IN (amount_eur is non-null for it) and only drops
-  // value_/annex_suspect (their amount_eur is NULL upstream).
+  // The money sum follows the site-wide value base: every non-NULL amount_eur, regardless of flag.
+  // The badge is a separate data-quality metric: NULL values plus value_low rows, which are summed
+  // when amount_eur is populated but remain labelled „непотвърдена стойност".
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(c.amount_eur), 0) AS eur,
@@ -446,7 +451,10 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       for (const r of results) {
         block +=
           [
-            contractSlug(r.id),
+            // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
+            // path-safe slug (contractSlug), which exists only for hrefs. A data export wants the true
+            // id for joins/lookups, so this is deliberately NOT the URL form (#221 review).
+            bareContractId(r.id),
             r.unp,
             r.subject,
             cleanName(r.authority_name),

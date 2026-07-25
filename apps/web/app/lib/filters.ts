@@ -7,6 +7,7 @@ import type { EntityKind } from '@sigma/api-contract';
 import { normalizeAuthoritySort, normalizeCompanySort, normalizeContractSort } from '@sigma/db';
 import type { CpvCategory } from '@sigma/config';
 import type { FilterCategory, FilterGroup, FilterOption } from '../components/FilterRail';
+import { CANONICAL_QUERY_PARAMS, INTENTIONALLY_UNKEYED } from './query-params';
 
 export const PAGE_SIZE = { contracts: 15, companies: 25, authorities: 25 } as const;
 export const MAX_MULTI_VALUES = 50;
@@ -175,30 +176,36 @@ export function buildSectorGroup(
 }
 
 // Canonical serialization order so the same logical state always yields the same URL string —
-// good for history/bookmarks/caching. Keys not listed keep their existing relative order, appended
-// after the known ones. Filter facets first, then search/sort, then the paging cursor markers.
-const PARAM_ORDER = [
+// good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
+// markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
+// filters.test.ts); withParams drops unknown params entirely, and a known param not listed here sorts last.
+export const PARAM_ORDER = [
   'q',
   'type',
   'kind',
   'sector',
+  'g', // trends granularity (month/year)
   'year',
   'procedure',
   'funding',
   'eu',
+  'bids', // /contracts single-bid filter
   'value',
   'authority',
   'bidder',
+  'center', // /network focus entity
   'top',
   'count',
   'sort',
   'cursor',
   'page',
+  'p', // sitemap-contracts page
 ];
 
 /**
- * Build a new query string from a base, overriding/removing the given keys. Drops empty values and
- * serializes params in a fixed, stable key order regardless of which control changed.
+ * Build a query string from `base` + overrides, dropping empty values and unknown params, then
+ * serializing in a stable key order. Dropping unknown params is load-bearing: `base` is the live URL
+ * (useSearchParams), so a stray `?x=poison` must not ride a generated link into the edge cache (#197).
  */
 export function withParams(
   base: URLSearchParams,
@@ -214,12 +221,19 @@ export function withParams(
       next.set(key, String(value));
     }
   }
-  const canonical = new URLSearchParams();
   const order = (key: string) => {
     const i = PARAM_ORDER.indexOf(key);
     return i === -1 ? PARAM_ORDER.length : i;
   };
-  const keys = Array.from(new Set(Array.from(next.keys()))).sort((a, b) => order(a) - order(b));
+
+  const isKnown = (key: string) =>
+    CANONICAL_QUERY_PARAMS.has(key) || INTENTIONALLY_UNKEYED.has(key);
+
+  const keys = Array.from(new Set(next.keys()))
+    .filter(isKnown)
+    .sort((a, b) => order(a) - order(b));
+
+  const canonical = new URLSearchParams();
   for (const key of keys) {
     for (const v of next.getAll(key)) if (v !== '') canonical.append(key, v);
   }

@@ -2,6 +2,8 @@ import { Link } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
 import { contractIdFromSlug, getContract } from '@sigma/db';
 import type { CohortBand, ContractDetail } from '@sigma/api-contract';
+import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
+import type { ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -73,7 +75,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   const c = data?.contract;
   return seoMeta({
     matches,
-    path: `/contracts/${params.id}`,
+    path: `/contracts/${contractSlug(contractIdFromSlug(params.id))}`,
     title: `${c?.subject ?? 'Договор'} — СИГМА`,
     description: c
       ? `Договор по УНП ${c.unp} между ${c.authority.name} и ${c.bidder.displayName}.`
@@ -87,7 +89,7 @@ export function headers() {
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
-  const contract = await getContract(context.cloudflare.env.DB, contractIdFromSlug(params.id));
+  const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
   return { contract };
 }
@@ -283,6 +285,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="figure-amount">
                 <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>
               </p>
+              {c.authority.orderingUnit && (
+                <p className="small muted figure-sub">
+                  Възложител по документа: {c.authority.orderingUnit}
+                </p>
+              )}
               <p className="small muted figure-sub">
                 {c.authority.typeLabel && <Chip>{c.authority.typeLabel}</Chip>}
                 {c.authority.settlement && <> {c.authority.settlement}</>}
@@ -591,7 +598,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               {/* Plain <a>, not React Router <Link>. The .json endpoint is a resource route
                   (returns application/json, no HTML), so client-side navigation can't render it —
                   React Router would treat the JSON as a route module and crash. target=_blank
-                  opens the raw record in a new tab so the visitor doesn't lose the contract page. */}
+                  opens the raw record in a new tab so the visitor doesn't lose the contract page.
+                  `c.id` is already the percent-encoded slug (contractSlug output), so the href is
+                  path-safe as-is — do not re-encode. The sub-line shows the same encoded path
+                  verbatim so copying the visible text yields a working URL — a decoded literal „/"
+                  would 404, the exact bug this PR fixes (review #221). */}
               <a href={`/contracts/${c.id}.json`} target="_blank" rel="noopener">
                 JSON запис в СИГМА
               </a>
