@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CPV_CATEGORIES, CPV_SECTORS, categoryForDivision, procedureGroup } from './index';
+import {
+  CLASSIFIED_PROCEDURE_TYPES,
+  CPV_CATEGORIES,
+  CPV_SECTORS,
+  EU_SCOREBOARD,
+  NON_COMPETITIVE_PROCEDURE_TYPES,
+  categoryForDivision,
+  procedureGroup,
+  rateLowerIsBetter,
+} from './index';
 
 describe('CPV_CATEGORIES', () => {
   it('partitions exactly the configured CPV sector divisions', () => {
@@ -48,5 +57,47 @@ describe('procedureGroup', () => {
       competitive: null,
       label: 'Неизвестна',
     });
+  });
+});
+
+describe('procedure-type classification lists', () => {
+  it('lists only non-competitive (direct-award) procedure types', () => {
+    expect(NON_COMPETITIVE_PROCEDURE_TYPES).toContain('Пряко договаряне');
+    expect(NON_COMPETITIVE_PROCEDURE_TYPES).toContain('Договаряне без предварително обявление');
+    expect(NON_COMPETITIVE_PROCEDURE_TYPES).not.toContain('Открита процедура');
+    // every listed type folds back to the non-competitive group
+    for (const t of NON_COMPETITIVE_PROCEDURE_TYPES) {
+      expect(procedureGroup(t).competitive).toBe(false);
+    }
+  });
+
+  it('classified denominator excludes neutral and synthetic procedures', () => {
+    expect(CLASSIFIED_PROCEDURE_TYPES).toContain('Открита процедура'); // competitive
+    expect(CLASSIFIED_PROCEDURE_TYPES).toContain('Пряко договаряне'); // non-competitive
+    expect(CLASSIFIED_PROCEDURE_TYPES).not.toContain('неизвестна'); // synthetic
+    expect(CLASSIFIED_PROCEDURE_TYPES).not.toContain('Покана до определени лица'); // neutral
+    // never asserts null competitiveness
+    for (const t of CLASSIFIED_PROCEDURE_TYPES) {
+      expect(procedureGroup(t).competitive).not.toBeNull();
+    }
+  });
+});
+
+describe('rateLowerIsBetter (EU Single Market Scoreboard)', () => {
+  it('rates the single-bidder share against the EU band', () => {
+    expect(rateLowerIsBetter(0.08, EU_SCOREBOARD.singleBidder)).toBe('good'); // ≤ 10%
+    expect(rateLowerIsBetter(0.15, EU_SCOREBOARD.singleBidder)).toBe('mid'); // between
+    expect(rateLowerIsBetter(0.25, EU_SCOREBOARD.singleBidder)).toBe('bad'); // ≥ 20%
+  });
+
+  it('rates the direct-award share against the EU band', () => {
+    expect(rateLowerIsBetter(0.04, EU_SCOREBOARD.directAward)).toBe('good'); // ≤ 5%
+    expect(rateLowerIsBetter(0.07, EU_SCOREBOARD.directAward)).toBe('mid'); // between
+    expect(rateLowerIsBetter(0.12, EU_SCOREBOARD.directAward)).toBe('bad'); // ≥ 10%
+  });
+
+  it('treats the exact good threshold as good and the exact bad threshold as bad', () => {
+    expect(rateLowerIsBetter(0.1, EU_SCOREBOARD.singleBidder)).toBe('good');
+    expect(rateLowerIsBetter(0.2, EU_SCOREBOARD.singleBidder)).toBe('bad');
   });
 });

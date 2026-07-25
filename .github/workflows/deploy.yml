@@ -125,6 +125,75 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: pnpm typecheck
 
+      # The base schema was created out-of-band with `d1 execute --file`, so wrangler's migration
+      # ledger is empty and `d1 migrations apply` would collide on 0000. Probe the actual table
+      # instead. SQLite has no `ADD COLUMN IF NOT EXISTS`; a completion-marker table is created only
+      # after the backfill and rollup rebuild succeed, so a partially failed first deploy safely
+      # resumes without trying ALTER TABLE twice. Malformed responses and impossible states are fatal.
+      - name: Apply and backfill amendment-value currency
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes --json \
+            --command "SELECT
+              (SELECT COUNT(*) FROM pragma_table_info('contracts') WHERE name = 'current_value_currency') AS column_exists,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sigma_backfill_0002_current_value_currency') AS backfill_complete")"
+
+          set +e
+          printf '%s' "$schema_json" | node -e '
+            const fs = require("fs");
+            let payload;
+            try {
+              payload = JSON.parse(fs.readFileSync(0, "utf8"));
+            } catch {
+              process.exit(2);
+            }
+            const result = Array.isArray(payload) ? payload[0] : payload;
+            const row = result && Array.isArray(result.results) ? result.results[0] : null;
+            if (!row || !Object.hasOwn(row, "column_exists") || !Object.hasOwn(row, "backfill_complete")) process.exit(2);
+            const column = Number(row.column_exists);
+            const complete = Number(row.backfill_complete);
+            if (column === 1 && complete === 1) process.exit(0);
+            if (column === 0 && complete === 0) process.exit(1);
+            if (column === 1 && complete === 0) process.exit(3);
+            process.exit(2);
+          '
+          column_status="$?"
+          set -e
+
+          repair_currency_values() {
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --file ../../scripts/backfill-current-value-currency.sql
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --file ../../scripts/precompute.sql
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --command "CREATE TABLE sigma_backfill_0002_current_value_currency (completed_at TEXT NOT NULL DEFAULT (datetime('now')))"
+          }
+
+          case "$column_status" in
+            0)
+              echo "current_value_currency already exists; one-time migration is complete."
+              ;;
+            1)
+              pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+                --config wrangler.deploy.jsonc --remote --yes \
+                --file ../../packages/db/migrations/0002_current_value_currency.sql
+              repair_currency_values
+              ;;
+            3)
+              echo "current_value_currency exists without its completion marker; resuming backfill."
+              repair_currency_values
+              ;;
+            *)
+              echo "::error::Could not determine whether current_value_currency exists."
+              exit 1
+              ;;
+          esac
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'

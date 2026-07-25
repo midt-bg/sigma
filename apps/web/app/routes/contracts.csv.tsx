@@ -1,4 +1,4 @@
-import { streamContractsCsv } from '@sigma/db';
+import { streamContractsCsv, getDb } from '@sigma/db';
 import type { Route } from './+types/contracts.csv';
 import { servedCsvExport } from '../lib/csv-export';
 import { contractListFilters } from '../lib/filters';
@@ -14,6 +14,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     request,
     route: 'contracts',
     params,
-    stream: () => streamContractsCsv(context.cloudflare.env.DB, params),
+    stream: () => streamContractsCsv(getDb(context.cloudflare.env), params),
   });
 }

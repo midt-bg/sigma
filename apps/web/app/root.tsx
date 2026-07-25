@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { getDb } from '@sigma/db';
 import {
   isRouteErrorResponse,
   Link,
@@ -19,6 +20,7 @@ import { useNonce } from './nonce';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteFooter } from './components/SiteFooter';
 import { AccessibilityWidget } from './components/AccessibilityWidget';
+import { ScrollToTop } from './components/ScrollToTop';
 import { PageHeader } from './components/PageHeader';
 import { getCoverageMeta } from './lib/coverage';
 import { serializeJsonForScript } from './lib/json-ld';
@@ -49,7 +51,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
   }
   // Wrapped like the leaf loaders: this chrome read runs on every route, so a transient D1 fault
   // here would 500 the whole page (incl. the entity pages this PR targets) without the retry.
-  const coverage = await withDbRetry(() => getCoverageMeta(context.cloudflare.env.DB));
+  const coverage = await withDbRetry(() => getCoverageMeta(getDb(context.cloudflare.env)));
   return { ...coverage, origin: url.origin };
 }
 
@@ -189,6 +191,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         refreshedAt={loaderData.refreshedAt}
         endYear={loaderData.coverageEndYear}
       />
+      <ScrollToTop />
       <AccessibilityWidget />
     </>
   );

@@ -38,7 +38,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Dependency audit
-        run: pnpm audit --audit-level=high
+        # `pnpm audit` is broken upstream: npm retired its audit endpoints (HTTP 410 as of
+        # 2026-07-15) and pnpm - including 11.x - still calls them. Scan the lockfile against
+        # OSV.dev instead (covers GHSA, which includes the npm advisory database). Stricter than
+        # the previous `--audit-level=high`: ANY known vulnerability fails the build; intentional
+        # exceptions are recorded in an osv-scanner.toml config, per the OSV-Scanner docs.
+        env:
+          # https://github.com/google/osv-scanner/releases/tag/v2.4.0
+          OSV_SCANNER_VERSION: '2.4.0'
+          # sha256 of osv-scanner_linux_amd64 from the upstream release osv-scanner_SHA256SUMS
+          OSV_SCANNER_SHA256: '15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0'
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          "$RUNNER_TEMP/osv-scanner" scan source -L pnpm-lock.yaml
       - name: Lint
         # Blocking: the repo-wide `pnpm format` pass cleared the pre-existing prettier debt, so
         # `pnpm lint` (prettier --check .) now gates merges and keeps the tree formatted (#88).
