@@ -1,6 +1,6 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
 import { count, money, moneyBare, parseConsortiumMembers } from '@sigma/shared';
-import { getCompanyFacets, listCompanies } from '@sigma/db';
+import { getCompanyFacets, listCompanies, getDb } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -51,7 +51,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     cursor: sp.get('cursor'),
     pageSize: PAGE_SIZE.companies,
   };
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const [page, facets, coverage] = await Promise.all([
     listCompanies(db, params),
     getCompanyFacets(db),
