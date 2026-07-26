@@ -1,7 +1,7 @@
 import { Form, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import type { TrendYear } from '@sigma/api-contract';
 import { count, money, pct, signedPct } from '@sigma/shared';
-import { getSpendingTrend } from '@sigma/db';
+import { getSpendingTrend, getDb } from '@sigma/db';
 import type { Route } from './+types/trends';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -30,7 +30,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;
   const { sector, funding, unknownSector } = singleSelectFilters(sp);
   const granularity = sp.get('g') === 'year' ? 'year' : 'month';
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const data = await getSpendingTrend(db, { sector, funding, granularity });
   return { data, unknownSector };
 }

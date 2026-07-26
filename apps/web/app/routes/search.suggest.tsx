@@ -1,5 +1,5 @@
 import { data } from 'react-router';
-import { search } from '@sigma/db';
+import { search, getDb } from '@sigma/db';
 import type { SearchGroup, SearchResults } from '@sigma/api-contract';
 import type { Route } from './+types/search.suggest';
 import { publicCache } from '../lib/cache';
@@ -18,7 +18,7 @@ export function trimGroup(group: SearchGroup): SearchGroup {
 // listbox is rendered client-side from this payload; with JS off the form still posts to /search.
 export async function loader({ request, context }: Route.LoaderArgs) {
   const q = new URL(request.url).searchParams.get('q') ?? '';
-  const results = await search(context.cloudflare.env.DB, q);
+  const results = await search(getDb(context.cloudflare.env), q);
   const payload: SearchResults = { ...results, groups: results.groups.map(trimGroup) };
   return data(payload, {
     headers: {
