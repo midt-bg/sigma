@@ -27,7 +27,7 @@ import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
 const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/staging');
-const MIGRATION = path.join(ROOT, 'packages/db/migrations/0002_related_persons_foundation.sql');
+const MIGRATION = path.join(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const REPORT = path.join(STAGING, 'findings.md');
 const MATCHER_VERSION = 'cnk-1+classify-1'; // bump when the normalizer or classify logic changes
 const { companyNameKey, isMatchableKey } =

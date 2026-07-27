@@ -19,7 +19,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
   '0000_init.sql',
   '0001_flow_pairs_bidder_index.sql',
-  '0002_related_persons_foundation.sql',
+  '0003_related_persons_foundation.sql',
 ].map((f) => resolve(root, 'packages/db/migrations', f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 

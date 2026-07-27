@@ -22,8 +22,9 @@
 - Точен пин (`fast-xml-parser: 5.9.3`, без caret) в `package.json` — така дори `pnpm install`
   без `--frozen-lockfile` (напр. локално на разработчик) не може да вдигне второстепенна версия
   и да пренапише lockfile-а с непрегледан код.
-- `pnpm install --frozen-lockfile` във **всеки** CI workflow (`ci`, `deploy`, `scripts-test`,
-  `related-persons-data`) — версиите се разрешават само от заключения lockfile, никога наново.
+- `pnpm install --frozen-lockfile` във **всеки** CI workflow (`ci`, `preview`, `deploy`,
+  `scripts-test`, `related-persons-data`, `preview-reap`) — версиите се разрешават само от
+  заключения lockfile, никога наново.
 - Обновяване на парсера или дървото му минава през ревю: повторен одит (integrity,
   install-скриптове, домейн на кода) преди merge.
 

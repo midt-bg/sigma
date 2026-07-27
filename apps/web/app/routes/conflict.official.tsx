@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { getOfficialConflicts, personIdFromSlug } from '@sigma/db';
+import { getOfficialConflicts, personIdFromSlug, getDb } from '@sigma/db';
 import type { Route } from './+types/conflict.official';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -31,7 +31,7 @@ export function headers() {
 export async function loader({ params, context }: Route.LoaderArgs) {
   const personId = personIdFromSlug(params.id);
   if (!personId) throw new Response('Not Found', { status: 404 });
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const data = await withDbRetry(() => getOfficialConflicts(db, personId));
   if (!data) throw new Response('Not Found', { status: 404 });
   return data;

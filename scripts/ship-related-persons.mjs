@@ -2,7 +2,7 @@
 // Ship the свързани-лица domain (persons + declarations + declared_interests + interest_links +
 // interest_link_authorities + link_suppressions) from a sqlite work DB to the served D1. Kept SEPARATE
 // from ship-domain.mjs so the EOP deploy path is untouched; reuses the same literal-escaping + batching.
-// Migration 0002 must already be applied (the deploy applies it via `d1 execute --file`, not
+// Migration 0003 must already be applied (the deploy applies it via `d1 execute --file`, not
 // `d1 migrations apply` — 0000 was created out-of-band so wrangler's migration tracking is empty). No
 // precompute — the query layer reads interest_links directly.
 //

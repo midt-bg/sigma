@@ -78,7 +78,7 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     il.first_declared_year, il.last_declared_year, il.match_method,
     il.contract_count, il.contract_value_eur, il.first_contract_year, il.last_contract_year,
     -- The conflict-window subset of contract_count / contract_value_eur, derived at read time (no stored
-    -- column, so a correction ships without an ETL re-run). ponytail: several correlated subqueries per row
+    -- column, so a correction ships without an ETL re-run). NB: several correlated subqueries per row
     -- (the two contemporaneous splits, the source_url, and the redundant-family EXISTS); the leaderboard is
     -- ≤1000 rows and hourly-cached, so the extra scans are immaterial — revisit only if the eligible set
     -- grows or the cache TTL shrinks.
@@ -86,9 +86,19 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
       AS contemporaneous_contract_count,
     (SELECT SUM(cc.amount_eur) ${CONTRACT_JOIN} WHERE bb.eik_normalized = il.eik AND ${IN_WINDOW})
       AS contemporaneous_value_eur,
-    (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
-     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
-     ORDER BY d.declared_year DESC LIMIT 1) AS source_url
+    -- source_url is the official's OWN public declaration. For a family_ownership link that document names /
+    -- identifies the relative whose stake this is — one click de-anonymises the „свързано лице" the surface
+    -- promises never to name (invariant 2 / ADR-0023). NULL it for family links; self links keep it (the
+    -- source names the office-holder themselves — correct provenance, ConflictCards renders it as „декларация").
+    -- source_url is the official's OWN public declaration. For a family_ownership link that document names /
+    -- identifies the relative whose stake this is — one click de-anonymises the „свързано лице" the surface
+    -- promises never to name (invariant 2 / ADR-0023). NULL it for family links; self links keep it (the
+    -- source names the office-holder themselves — correct provenance, ConflictCards renders it as „декларация").
+    CASE WHEN il.interest_class = 'family_ownership' THEN NULL ELSE
+      (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
+       WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
+       ORDER BY d.declared_year DESC LIMIT 1)
+    END AS source_url
   FROM interest_links il
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id

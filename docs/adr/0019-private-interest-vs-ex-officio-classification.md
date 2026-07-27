@@ -3,7 +3,7 @@
 - Status: Accepted (display superseded by [ADR-0022](0022-public-surface-private-ownership-only.md) — the ex-officio *list* is no longer shown; the classification stands and now gates the public surface to private ownership only)
 - Date: 2026-07-06
 - Deciders: lb, Claude
-- Related: [ADR-0014](0014-match-output-layers-and-interpretation.md), [ADR-0007](0007-scope-and-certainty-bar.md); `scripts/cacbg/load.mjs`, `packages/db/migrations/0002_related_persons_foundation.sql`
+- Related: [ADR-0014](0014-match-output-layers-and-interpretation.md), [ADR-0007](0007-scope-and-certainty-bar.md); `scripts/cacbg/load.mjs`, `packages/db/migrations/0003_related_persons_foundation.sql`
 
 ## Context
 

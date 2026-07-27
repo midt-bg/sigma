@@ -163,7 +163,7 @@ jobs:
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
             --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0002_related_persons_foundation.sql
+            --file ../../packages/db/migrations/0003_related_persons_foundation.sql
 
       - name: Ship свързани-лица tables → D1
         # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it

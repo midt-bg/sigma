@@ -1,6 +1,6 @@
 import { Link, useSearchParams, data } from 'react-router';
 import { count, money, plural } from '@sigma/shared';
-import { getConflictLeaderboard } from '@sigma/db';
+import { getConflictLeaderboard, getDb } from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -35,13 +35,13 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
 }
 
 // All eligible published links (private + family). ~292 today; small enough to load whole and paginate
-// in the client, so the summary totals the full set rather than one page. ponytail: hard ceiling 1000 —
+// in the client, so the summary totals the full set rather than one page. NB: hard ceiling 1000 —
 // switch to keyset LIMIT/OFFSET (see companies.tsx) if the eligible set ever nears it.
 const LEADERBOARD_MAX = 1000;
 const PER_PAGE = 100;
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const links = await withDbRetry(() => getConflictLeaderboard(db, LEADERBOARD_MAX));
   // Never pin an empty render: just after a (re)ship the read can briefly return 0 rows while the write
   // propagates across D1; caching that for an hour + stale-while-revalidate is what made a refresh

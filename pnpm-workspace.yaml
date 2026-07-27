@@ -24,6 +24,10 @@ overrides:
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   '@babel/core': '^7.29.6'
+  #   sharp <0.35.0 — inherited libvips CVEs (GHSA-f88m-g3jw-g9cj, HIGH), via wrangler→
+  #                 miniflare (^0.34.5 cannot take 0.35.x on its own); local dev image handling
+  #                 only, never ships to the Worker. Drop once miniflare bumps its range.
+  sharp: '^0.35.3'
 
 onlyBuiltDependencies:
   - esbuild

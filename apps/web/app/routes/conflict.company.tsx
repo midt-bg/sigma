@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, plural } from '@sigma/shared';
-import { getCompanyConflicts } from '@sigma/db';
+import { getCompanyConflicts, getDb } from '@sigma/db';
 import type { Route } from './+types/conflict.company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -33,7 +33,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   // A БГ ЕИК is 9 or 13 digits — always numeric. Require digits (not just non-blank) so a garbage/probe
   // :eik 404s before any DB read and before it reaches meta/URL — uniform with the sibling conflict loaders.
   if (!/^\d+$/.test(params.eik ?? '')) throw new Response('Not Found', { status: 404 });
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const data = await withDbRetry(() => getCompanyConflicts(db, params.eik));
   if (!data) throw new Response('Not Found', { status: 404 });
   return data;

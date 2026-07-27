@@ -71,6 +71,30 @@ test('closelyHeldForm: ООД/ЕООД/ЕТ material; АД/ЕАД/АДСИЦ (li
   assert.equal(closelyHeldForm('АД СТИЛ ЕООД'), true);
 });
 
+test('closelyHeldForm: a trailing седалище after the form does not flip an АД to closely-held (libel)', () => {
+  // The declarant appended the seat to the name cell. Without stripping it, the end-anchored form test
+  // misses the АД and returns closely-held=true → a listed-АД parcel presented as a material conflict.
+  assert.equal(closelyHeldForm('ТРЕЙС ГРУП ХОЛД АД, гр. София'), false); // comma + гр. marker
+  assert.equal(closelyHeldForm('Тексим Банк АД, София'), false); // comma + bare city (no marker)
+  assert.equal(closelyHeldForm('Транспроект ЕАД гр.Пловдив'), false); // marker, no comma
+  assert.equal(closelyHeldForm('НЕС АДСИЦ, обл. Варна'), false);
+  // ...while a genuinely closely-held ООД keeps its material verdict even with a seat appended.
+  assert.equal(closelyHeldForm('Вамос ООД, гр. Русе'), true);
+  assert.equal(closelyHeldForm('ЕНЕРДЖИ СЪПЛАЙ ЕООД гр.Бургас'), true);
+  // A comma-clause that itself bears a form is the фирма tail, not a seat — kept, so the anchor still reads it.
+  assert.equal(closelyHeldForm('СТРОЙ, ИНВЕСТ АД'), false); // trailing clause has АД → joint-stock
+  assert.equal(closelyHeldForm('СТРОЙ, ИНВЕСТ ООД'), true); // trailing clause has ООД → closely-held
+});
+
+test('nameDistinctiveness: a trailing city is not counted as a content word (no premature publish)', () => {
+  // The exact over-publish case: 2 real content words + a seat token would read as 3 → distinctive.
+  assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД, СОФИЯ'), 'generic'); // was distinctive via +СОФИЯ
+  assert.equal(nameDistinctiveness('НИКАС КОМЕРС ООД гр.Пловдив'), 'generic'); // marker, no comma
+  assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД, обл. Варна'), 'generic');
+  // A genuinely distinctive (≥3 content word) name stays distinctive with or without a seat.
+  assert.equal(nameDistinctiveness('ХИДРО СТРОЙ МОНТАЖ ЕООД, гр. София'), 'distinctive');
+});
+
 test('localityToken: regional bodies yield a town; ministries yield null', () => {
   assert.equal(localityToken('Област - Русе'), 'РУСЕ');
   assert.equal(localityToken('Община Русе'), 'РУСЕ');

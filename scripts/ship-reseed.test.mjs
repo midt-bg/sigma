@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { wipeSql, TABLES } from './ship-related-persons.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIG = resolve(HERE, '..', 'packages/db/migrations/0002_related_persons_foundation.sql');
+const MIG = resolve(HERE, '..', 'packages/db/migrations/0003_related_persons_foundation.sql');
 
 // Stub only the two 0000 tables 0002's FKs reference (bidders, authorities) — a PK column is all a FK needs —
 // then apply the real 0002 and seed one row down every FK chain so a parent delete has live children.

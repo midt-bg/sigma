@@ -20,7 +20,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration2 = resolve(root, 'packages/db/migrations/0002_related_persons_foundation.sql');
+const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();
@@ -138,6 +138,29 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
+  it('a family_ownership link never exposes its declaration source_url — even when one resolves (de-anon, libel)', () => {
+    withDb((dbPath) => {
+      // nedda76 #226: the source_url subquery joins on the OFFICIAL's own declaration. For Кмет's FAMILY
+      // link that document names the relative whose stake it is; ConflictCards renders it as a clickable
+      // „декларация" → one click de-anonymises the „свързано лице". Give Кмет a real declaration that WOULD
+      // resolve (without the CASE guard this row's source_url becomes the URL — the leak). The guard NULLs
+      // it for family links while self links (Иван) keep theirs.
+      sqlite(
+        dbPath,
+        `INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, declared_year, template, category, institution, position, source_url) VALUES
+           ('decl:k','person:kmet','k.xml','H2','2021','2020','assets','','ОБЩИНА','', 'https://register.cacbg.bg/2021/k.xml');
+         INSERT INTO declared_interests (id, declaration_id, entity_raw, entity_key, kind, detail, timing, seat) VALUES
+           ('di:k','decl:k','ЕВРОСТРОЙ 21 ЕООД','ЕВРОСТРОЙ 21 ЕООД','shares','','annual','');`,
+      );
+      const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+      const kmet = board.find((r) => r.official === 'Кмет Тестов');
+      const ivan = board.find((r) => r.official === 'Иван Минев');
+      expect(kmet!.relation).toBe('related'); // family link surfaces...
+      expect(kmet!.source_url).toBeNull(); // ...but its declaration URL is withheld (relative unnamed)
+      expect(ivan!.source_url).toBe('https://register.cacbg.bg/2024/i.xml'); // self link keeps provenance
+    });
+  });
+
   it('ranks by the CONTEMPORANEOUS conflict-window value, not the lifetime total, when the nexus tier ties', () => {
     withDb((dbPath) => {
       // Two officials in the SAME nexus tier (own_institution='none', contemporaneous=1) whose lifetime and
@@ -216,6 +239,28 @@ describe('свързани-лица SQL (real SQLite)', () => {
       expect(official[0]!.relation).toBe('owns');
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.filter((r) => r.official === 'Двоен Тестов')).toHaveLength(1);
+    });
+  });
+
+  it('an ЕИК carried by >1 bidder row sums that ЕИК’s in-window contracts ONCE per (official,ЕИК) — no €-inflation (libel)', () => {
+    withDb((dbPath) => {
+      // ydimitrof #226 (related-persons.ts:87): the contemporaneous subquery joins on eik_normalized = il.eik,
+      // so if an ЕИК is carried by MORE THAN ONE bidder row it sums the company’s in-window contracts across
+      // BOTH rows — the correct company total — while the outer projection still returns exactly ONE row for
+      // (official, ЕИК). A regression that multiplied per bidder row would double this libel-sensitive €.
+      // A SECOND bidder record carries the SAME eik_normalized '111'; Иван’s window 2019–2023 captures
+      // c:1(€10M,2020) + c:2(€20M,2023) on the original row and c:1b(€4M,2021) on the duplicate = €34M / 3.
+      sqlite(
+        dbPath,
+        `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
+           ('eik:111b','ТРЕЙС ГРУП ХОЛД АД (дубликат)',NULL,'111',1,'company');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
+           ('c:1b','t:1','eik:111b',4000000,'EUR','2021-06-01','Д-1Б',4000000);`,
+      );
+      const trace = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan')).filter((r) => r.eik === '111');
+      expect(trace).toHaveLength(1); // exactly one (Иван, 111) row — not one per bidder record
+      expect(Number(trace[0]!.contemporaneous_value_eur)).toBe(34000000);
+      expect(Number(trace[0]!.contemporaneous_contract_count)).toBe(3);
     });
   });
 

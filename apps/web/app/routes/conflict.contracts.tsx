@@ -1,5 +1,5 @@
 import { data } from 'react-router';
-import { getLinkContracts, personIdFromSlug } from '@sigma/db';
+import { getLinkContracts, personIdFromSlug, getDb } from '@sigma/db';
 import type { Route } from './+types/conflict.contracts';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
@@ -21,7 +21,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     throw new Response('Not Found', { status: 404 });
   }
   const linkKey = scope === 'family' ? `${personId}|${eik}|family` : `${personId}|${eik}`;
-  const contracts = await withDbRetry(() => getLinkContracts(context.cloudflare.env.DB, linkKey));
+  const contracts = await withDbRetry(() => getLinkContracts(getDb(context.cloudflare.env), linkKey));
   // Only cache once there is data — an empty read just after a (re)ship should not be pinned for an hour
   // (mirrors the leaderboard loader). getLinkContracts returns [] for any non-surfaced/unknown key.
   // noindex is applied at the worker for every /conflicts response (HTML + this .data twin alike).

@@ -13,6 +13,9 @@ const q = vi.hoisted(() => ({
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
   personIdFromSlug: vi.fn(),
+  // #199 chokepoint: loaders wrap env with getDb(env) → returns the read-only D1. In the test the env's
+  // DB is the identity sentinel the query mocks assert on, so getDb just returns env.DB unchanged.
+  getDb: vi.fn((env: { DB: unknown }) => env.DB),
 }));
 vi.mock('@sigma/db', () => q);
 
