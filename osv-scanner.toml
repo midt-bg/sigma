@@ -1,0 +1,12 @@
+# osv-scanner exceptions (CI „Dependency audit"). Only for advisories that do NOT apply to Sigma's
+# usage or cannot be fixed without a disproportionate change; every entry carries a reason + a plan.
+# Fixable advisories are patched via pnpm `overrides` in package.json, NOT ignored here.
+
+[[IgnoredVulns]]
+id = "GHSA-qwww-vcr4-c8h2"
+# react-router CSRF in UNSTABLE RSC (React Server Components) mode only (>=7.12.0 <8.3.0). Sigma does
+# NOT use RSC — it runs standard SSR (`createRequestHandler` on Cloudflare Workers, no @vitejs/plugin-rsc
+# / react-server-dom-webpack), so the vulnerable code path is unreachable here. The only fix is
+# react-router 8.3.0, a MAJOR bump that migrates the whole app to the v8 RSC build architecture —
+# tracked as its own upgrade PR, not this consumer-render change.
+reason = "Only affects react-router unstable RSC mode, which Sigma does not use (standard SSR). Fix = v8 major RSC migration, tracked separately."
