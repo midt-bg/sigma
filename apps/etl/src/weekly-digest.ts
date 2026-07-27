@@ -793,11 +793,12 @@ export async function generateWeeklyDigest(
   const key = `weeks/${target.iso}.json`;
   // On an in-place re-issue (spec §10.4), PRESERVE the original publish time and record a separate
   // `refreshedAt` so the D1-free serve path can show „публикувано {original} · коригирано на {now}".
-  // Read it off the prior R2 artifact (the serve path can't read the D1 status row); if the prior object
-  // is unreadable, fall back to `now` (no false correction note). A first publish carries no refreshedAt.
-  // readStoredReport can THROW (R2 outage, malformed body), not just return null — an uncaught throw here
-  // would abort the whole cron and lose the week's digest. Fall back to `null` (→ createdAt = now, treated
-  // as a first publish) so a read failure degrades to "no correction note", never a lost run.
+  // Read the original off the prior R2 artifact (the serve path can't read the D1 status row). If that
+  // read fails, we lose ONLY the original publish date and fall back createdAt to `now` — `refreshedAt`
+  // is still stamped (the D1 `existing` row proves the re-issue), so the „коригирано" note still shows,
+  // just dated at `now`. readStoredReport can THROW (R2 outage, malformed body), not just return null —
+  // an uncaught throw would abort the whole cron and lose the week's digest, so catch it. A first publish
+  // (no `existing` row) never reads and carries no `refreshedAt`.
   let priorCreatedAt: string | null = null;
   if (existing) {
     try {

@@ -208,8 +208,9 @@ for (const iso of weeks) {
   writeFileSync(file, JSON.stringify(stored, null, 2));
   const key = `weeks/${iso}.json`;
   // NOTE: `wrangler r2 object put` cannot set customMetadata, so the /weeks archive lists the seeded
-  // weeks but shows „—" for the total + hides the sparkline (which needs `customMetadata.totalEur`,
-  // set by the ETL's persistReport). The per-week page /weeks/<iso> renders fully regardless.
+  // weeks but shows „—" for the total (which needs `customMetadata.totalEur`, set by the ETL's
+  // persistReport — the real ETL should stay the only source of it). The per-week page /weeks/<iso>
+  // renders fully regardless.
   putCmds.push(
     `pnpm --filter @sigma/web exec wrangler r2 object put "${BUCKET}/${key}" --file="${file}" --content-type application/json`,
   );

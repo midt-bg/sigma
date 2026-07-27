@@ -46,6 +46,14 @@ describe('reportToMarkdown — weekbars (#81)', () => {
     expect(md).toContain('—');
   });
 
+  it('omits the „Миналата седмица" column when there is no previous week', () => {
+    const md = reportToMarkdown(
+      report([{ type: 'weekbars', current: [{ label: 'Пн', value: 1000 }], previous: [] }]),
+    );
+    expect(md).toContain('Тази седмица');
+    expect(md).not.toContain('Миналата седмица');
+  });
+
   it('does not drop a prior-week day when previous is longer than current (em-dash the current side)', () => {
     const md = reportToMarkdown(
       report([

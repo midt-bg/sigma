@@ -1,48 +1,8 @@
-/* „Седмицата в пари" — weekly digest (routes /weeks, /weeks/:iso). Digest-specific classes only;
-   the digest reuses the site's .totals/.facts/.table-wrap/.callout/.page-header for everything else. */
-
-.report-blocks {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.report-prose p {
-  margin: 0 0 0.75rem;
-}
-.report-prose p:last-child {
-  margin-bottom: 0;
-}
-
-/* Generic bar block (label + value, no entity link). Fill bar sits behind the row. */
-.report-bars {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.report-bars li {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
-  border-bottom: 1px solid var(--rule-soft);
-}
-.report-bars .rb-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--accent-bg);
-  z-index: 0;
-}
-.report-bars .rb-name,
-.report-bars .rb-val {
-  position: relative;
-  z-index: 1;
-}
-.report-bars .rb-val {
-  text-align: right;
-}
+/* „Седмицата в пари" — weekly digest (routes /weeks, /weeks/:iso). Digest-specific classes ONLY —
+   nothing here may redefine a class assistant.css already owns (this file is imported last, so it would
+   win globally and leak onto /reports). The digest reuses the site's .totals/.facts/.table-wrap/.callout/
+   .page-header, the shared ReportBlockRenderer (.report-blocks, .report-bar*), and the shared
+   ReportAiWatermark (.report-watermark*) — all styled by assistant.css, not here. */
 
 /* Weekly ghost-bar chart: solid bars = this week, faint bars = the previous week (currentColor). */
 .ghost-bars-svg {
@@ -113,19 +73,6 @@
   line-height: 1.2;
   font-weight: 600;
   color: var(--ink);
-}
-
-/* AI provenance watermark (spec §7) — a bordered note, accent left rule. */
-.report-watermark {
-  margin-top: 1.5rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--accent);
-  background: var(--paper-warm);
-  font-size: 0.9rem;
-}
-.report-watermark p {
-  margin: 0.25rem 0;
 }
 
 /* Digest provenance footer. */

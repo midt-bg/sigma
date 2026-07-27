@@ -113,15 +113,21 @@ export function reportToMarkdown(report: ResolvedReport): string {
         );
         break;
       }
-      case 'weekbars':
+      case 'weekbars': {
+        // Drop the „Миналата седмица" column when there's no prior week (matches WeeklyGhostBars —
+        // otherwise the export shows an all-em-dash column). The digest always has a prior (zero-filled).
+        const hasPrev = block.previous.length > 0;
         lines.push(
           mdTable(
-            ['Ден', 'Тази седмица', 'Миналата седмица'],
-            weekbarsRows(block).map((r) => [r.label, r.current, r.previous]),
+            hasPrev ? ['Ден', 'Тази седмица', 'Миналата седмица'] : ['Ден', 'Тази седмица'],
+            weekbarsRows(block).map((r) =>
+              hasPrev ? [r.label, r.current, r.previous] : [r.label, r.current],
+            ),
           ),
           '',
         );
         break;
+      }
       default:
         // Exhaustiveness guard: a new ResolvedBlock type must add a case here (and in the docx switch)
         // rather than silently vanish from the export — this is what let `weekbars` slip before (#81).
@@ -380,13 +386,17 @@ export async function reportToDocxBlob(report: ResolvedReport): Promise<Blob> {
       }
 
       case 'weekbars': {
-        // Mirror the Markdown branch: pair by label (weekbarsRows), em-dash the missing side.
+        // Mirror the Markdown branch: pair by label, drop the „Миналата седмица" column with no prior.
+        const hasPrev = block.previous.length > 0;
+        const headers = hasPrev
+          ? ['Ден', 'Тази седмица', 'Миналата седмица']
+          : ['Ден', 'Тази седмица'];
         children.push(
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               new TableRow({
-                children: ['Ден', 'Тази седмица', 'Миналата седмица'].map(
+                children: headers.map(
                   (h) =>
                     new TableCell({
                       children: [
@@ -398,9 +408,10 @@ export async function reportToDocxBlob(report: ResolvedReport): Promise<Blob> {
               ...weekbarsRows(block).map(
                 (r) =>
                   new TableRow({
-                    children: [r.label, r.current, r.previous].map(
-                      (v) => new TableCell({ children: [new Paragraph({ text: v })] }),
-                    ),
+                    children: (hasPrev
+                      ? [r.label, r.current, r.previous]
+                      : [r.label, r.current]
+                    ).map((v) => new TableCell({ children: [new Paragraph({ text: v })] })),
                   }),
               ),
             ],

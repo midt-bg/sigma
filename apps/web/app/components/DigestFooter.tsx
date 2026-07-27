@@ -24,8 +24,9 @@ export function DigestFooter({
         {DATA_SOURCE_LICENSE}
         {asOf ? ` · данни към ${date(asOf)}` : ''}
         {' · генерирано автоматично'}
-        {refreshedAt ? ` · коригирано на ${date(refreshedAt)}` : ''}
+        {/* Chronological: the original publish date first, then the later correction date. */}
         {generatedAt ? ` · публикувано ${date(generatedAt)}` : ''}
+        {refreshedAt ? ` · коригирано на ${date(refreshedAt)}` : ''}
       </p>
       <p className="small muted">
         <Link to="/weeks">← Всички седмични обзори</Link>
