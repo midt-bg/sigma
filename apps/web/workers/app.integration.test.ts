@@ -100,3 +100,24 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
     expect(rrLoader).not.toHaveBeenCalled();
   });
 });
+
+describe('handleRequest — X-Robots-Tag on the digest detail page + its .data twin (#81 PII)', () => {
+  it('sets X-Robots-Tag: noindex on /weeks/:iso', async () => {
+    const res = await workerFetch(new Request('http://local/weeks/2026-W25'), env(underLimit), ctx);
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+  });
+
+  it('sets X-Robots-Tag: noindex on the /weeks/:iso.data twin (meta noindex cannot reach JSON)', async () => {
+    const res = await workerFetch(
+      new Request('http://local/weeks/2026-W25.data'),
+      env(underLimit),
+      ctx,
+    );
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+  });
+
+  it('does NOT noindex the archive /weeks (ranges + totals, no names) — stays discoverable', async () => {
+    const res = await workerFetch(new Request('http://local/weeks'), env(underLimit), ctx);
+    expect(res.headers.get('X-Robots-Tag')).toBeNull();
+  });
+});

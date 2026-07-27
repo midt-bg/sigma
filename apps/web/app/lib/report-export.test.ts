@@ -6,6 +6,73 @@ function report(blocks: ResolvedReport['blocks']): ResolvedReport {
   return { title: 'Test', question: 'Въпрос?', blocks, watermark: 'ai-generated' };
 }
 
+describe('reportToMarkdown — weekbars (#81)', () => {
+  it('includes the weekbars daily series (this week + last week) rather than dropping the block', () => {
+    const md = reportToMarkdown(
+      report([
+        {
+          type: 'weekbars',
+          current: [
+            { label: 'Пн', value: 1000 },
+            { label: 'Вт', value: 2000 },
+          ],
+          previous: [
+            { label: 'Пн', value: 800 },
+            { label: 'Вт', value: 900 },
+          ],
+        },
+      ]),
+    );
+    expect(md).toContain('Ден');
+    expect(md).toContain('Тази седмица');
+    expect(md).toContain('Миналата седмица');
+    expect(md).toContain('Пн'); // day labels present
+    expect(md).toContain('Вт');
+  });
+
+  it('renders an em-dash when a day has no previous-week value', () => {
+    const md = reportToMarkdown(
+      report([
+        {
+          type: 'weekbars',
+          current: [
+            { label: 'Пн', value: 1000 },
+            { label: 'Вт', value: 2000 },
+          ],
+          previous: [{ label: 'Пн', value: 800 }],
+        },
+      ]),
+    );
+    expect(md).toContain('—');
+  });
+
+  it('omits the „Миналата седмица" column when there is no previous week', () => {
+    const md = reportToMarkdown(
+      report([{ type: 'weekbars', current: [{ label: 'Пн', value: 1000 }], previous: [] }]),
+    );
+    expect(md).toContain('Тази седмица');
+    expect(md).not.toContain('Миналата седмица');
+  });
+
+  it('does not drop a prior-week day when previous is longer than current (em-dash the current side)', () => {
+    const md = reportToMarkdown(
+      report([
+        {
+          type: 'weekbars',
+          current: [{ label: 'Пн', value: 1000 }],
+          previous: [
+            { label: 'Пн', value: 800 },
+            { label: 'Вт', value: 900 },
+          ],
+        },
+      ]),
+    );
+    // The extra prior-week day (Вт=900) must survive; its current-week cell is the em-dash.
+    expect(md).toContain('| Вт | — |');
+    expect(md).toContain('900');
+  });
+});
+
 describe('reportToMarkdown', () => {
   it('opens with the title and question', () => {
     const md = reportToMarkdown(report([]));
@@ -144,6 +211,14 @@ describe('reportToDocxBlob', () => {
     { type: 'bar', points: [{ label: 'Фирма А', value: 500000 }], format: 'money' },
     { type: 'flows', edges: [{ from: 'МЗ', to: 'Фарма ООД', valueEur: 42000 }] },
     { type: 'timeseries', points: [{ period: '2024-01', value: 1000 }] },
+    {
+      type: 'weekbars',
+      current: [
+        { label: 'Пн', value: 1000 },
+        { label: 'Вт', value: 2000 },
+      ],
+      previous: [{ label: 'Пн', value: 800 }],
+    },
   ];
 
   it('produces a real, non-empty .docx (ZIP container) covering every block type', async () => {

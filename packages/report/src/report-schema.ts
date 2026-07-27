@@ -82,6 +82,16 @@ export interface EmitTimeseries {
   valueCol: string;
   format?: CellFormat;
 }
+// Two-series bar chart: one labelled value series plus a „ghost" comparison series (same labels), each
+// bound wholesale from its own result set. Used by the weekly digest's day-by-day spend chart (spec
+// §3.4). Additive — the chat pipeline never emits it.
+export interface EmitWeekbars {
+  type: 'weekbars';
+  currentId: string; // result handle for the foreground series (this week)
+  previousId: string; // result handle for the ghost series (prior week)
+  labelCol: string;
+  valueCol: string;
+}
 export type EmitBlock =
   | EmitText
   | EmitCallout
@@ -90,7 +100,8 @@ export type EmitBlock =
   | EmitTable
   | EmitBar
   | EmitFlows
-  | EmitTimeseries;
+  | EmitTimeseries
+  | EmitWeekbars;
 
 export interface EmitReportInput {
   title: string;
@@ -139,6 +150,11 @@ export type ResolvedBlock =
       points: { period: string | number | null; value: number }[];
       truncated?: boolean;
       format?: CellFormat;
+    }
+  | {
+      type: 'weekbars';
+      current: { label: string | number | null; value: number }[];
+      previous: { label: string | number | null; value: number }[];
     };
 
 export interface ResolvedReport {
@@ -672,6 +688,35 @@ export function bindReport(
             truncated: r.truncated ?? false,
             format: b.format,
           });
+        }
+        break;
+      }
+      case 'weekbars': {
+        const cur = requireResult(b.currentId, at);
+        const prev = requireResult(b.previousId, at);
+        // This series builder drops null-valued rows PER SERIES, so `current` and `previous` can come out
+        // different lengths / non-index-aligned when one week has a day the other lacks (the weekly
+        // digest never hits this — its producer zero-fills both to 7 Mon..Sun days via getWeeklyDailySpend).
+        // The binder stays a pure passthrough of the bound results; the CONSUMERS pair by LABEL, not index
+        // (WeeklyGhostBars + report-export's weekbarsRows), so a mid-series gap never mispairs a day. Emit
+        // stable, unique labels per series if you reuse `weekbars` elsewhere.
+        const series = (
+          r: QueryResult | null,
+        ): { label: string | number | null; value: number }[] => {
+          if (!r || (r.rows.length !== 0 && !requireChartCols(r, [b.labelCol, b.valueCol], at))) {
+            return [];
+          }
+          const labels = colValues(r, b.labelCol);
+          const vals = colValues(r, b.valueCol);
+          const out: { label: string | number | null; value: number }[] = [];
+          for (let i = 0; i < labels.length; i++) {
+            const value = asNumber(vals[i] ?? null);
+            if (value !== null) out.push({ label: sanitizeCell(labels[i] ?? null), value });
+          }
+          return out;
+        };
+        if (cur && prev) {
+          blocks.push({ type: 'weekbars', current: series(cur), previous: series(prev) });
         }
         break;
       }

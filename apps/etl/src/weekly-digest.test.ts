@@ -56,6 +56,8 @@ interface FakeWeekData {
   topContracts: TopContractRawRow[];
   sectors: SectorRawRow[];
   authorities: AuthorityRawRow[];
+  /** Raw daily-spend rows (§3.4). The same set answers both the current and prior week query. */
+  dailyRows?: { day: string; value_eur: number }[];
   existingDigestRow: boolean;
 }
 
@@ -110,6 +112,10 @@ function happyPathData(): FakeWeekData {
         value_eur: 45_000,
       },
     ],
+    // Answers the daily-spend query for both weeks (the query dates are 2024 Mon..Sun; the exact date
+    // key is irrelevant here — getWeeklyDailySpend zero-fills unmatched days, and one matched day is
+    // enough to prove a non-zero bar binds through the weekbars block).
+    dailyRows: [{ day: '2024-01-08', value_eur: 12_000 }],
     existingDigestRow: false,
   };
 }
@@ -146,6 +152,12 @@ function fakeWeeklyDb(data: FakeWeekData, upserts: UpsertRow[]): D1Database {
       if (sql.includes('FROM home_totals')) {
         // reconcileWeeklyTotal's plain value_eur lookup (no bind — direct .first()).
         return { first: async () => ({ value_eur: data.homeTotalEur }) };
+      }
+      if (sql.includes('GROUP BY day')) {
+        // Daily-spend series (§3.4). Empty rows → getWeeklyDailySpend zero-fills all 7 Mon..Sun slots.
+        return {
+          bind: (_iso: string) => ({ all: async () => ({ results: data.dailyRows ?? [] }) }),
+        };
       }
       if (sql.trim().endsWith('LIMIT 1')) {
         return { bind: (_iso: string) => ({ first: async () => data.largest }) };
@@ -189,6 +201,12 @@ function fakeBucket(puts: PutCall[]): R2Bucket {
     put: async (key: string, body: string, opts?: unknown) => {
       puts.push({ key, body, opts });
       return null as unknown as R2Object;
+    },
+    // The re-issue path reads the prior artifact to preserve its original createdAt; serve the newest
+    // put for the key (null when nothing has been written yet — a first publish).
+    get: async (key: string) => {
+      const prior = puts.filter((p) => p.key === key).at(-1);
+      return prior ? ({ text: async () => prior.body } as unknown as R2Object) : null;
     },
   } as unknown as R2Bucket;
 }
@@ -350,12 +368,13 @@ describe('generateWeeklyDigest — gate matrix', () => {
     expect(puts).toHaveLength(1);
     expect(puts[0]!.key).toBe(`weeks/${TARGET.iso}.json`);
     // Listing-facing R2 customMetadata: the /weeks archive index reads these without a per-week fetch.
-    // persistReport translates `immutable` into httpMetadata.cacheControl and passes customMetadata through.
+    // The object is NOT written `immutable` — it's overwritten in place on a §10.4 re-issue, so no
+    // immutable object cacheControl (the serve path sends its own headers).
     const putOpts = puts[0]!.opts as {
       httpMetadata?: { cacheControl?: string };
       customMetadata?: Record<string, string>;
     };
-    expect(putOpts.httpMetadata?.cacheControl).toMatch(/immutable/);
+    expect(putOpts.httpMetadata?.cacheControl).toBeUndefined();
     expect(putOpts.customMetadata).toMatchObject({
       totalEur: String(data.totalsByWeek[TARGET.iso]),
       monday: TARGET.mondayIso,
@@ -375,6 +394,12 @@ describe('generateWeeklyDigest — gate matrix', () => {
     const totalsBlock = stored.report.blocks.find((b: { type: string }) => b.type === 'totals');
     expect(totalsBlock).toBeTruthy();
     expect(totalsBlock.items[0].value).toBe(data.totalsByWeek[TARGET.iso]);
+    // §3.4: the daily ghost-bar chart is emitted with both series bound from the daily queries.
+    const weekbars = stored.report.blocks.find((b: { type: string }) => b.type === 'weekbars');
+    expect(weekbars).toBeTruthy();
+    expect(weekbars.current).toHaveLength(7);
+    expect(weekbars.previous).toHaveLength(7);
+    expect(weekbars.current.some((d: { value: number }) => d.value === 12_000)).toBe(true);
     // Sector bar labels the human-readable sector NAME, not the raw 2-digit CPV code: fixture division
     // '45' → curated „Строителство".
     const barBlock = stored.report.blocks.find((b: { type: string }) => b.type === 'bar');
@@ -430,11 +455,11 @@ describe('generateWeeklyDigest — gate matrix', () => {
     expect(contractsItem.value).not.toBe(data.counts.contracts); // not the 12-row volume
   });
 
-  // Prompt-v2 enrichment: the narrative call is fed the concrete week facts (direction, leading sector
-  // by NAME, leading authority, largest contract's winner) so the lead can say something specific rather
-  // than a generic number-free sentence — while the system prompt still forbids MATERIAL numbers in prose
-  // (those stay server-bound in the tables). This asserts the facts reach the model prompt.
-  it('narrative prompt: carries direction, leading sector name, top authority and largest winner', async () => {
+  // v3 narrative: the call is fed QUALITATIVE week signals (direction, sector concentration, largest-
+  // contract weight, competition, authority spread, peak day) and asked for a ≥5-paragraph „Какво се
+  // случи" analysis — no numbers (those stay server-bound in the tables/charts). This asserts the signals
+  // and the analytical task reach the model prompt.
+  it('narrative prompt: drives a ≥5-paragraph „Какво се случи" analysis from qualitative signals', async () => {
     const data = happyPathData();
     const upserts: UpsertRow[] = [];
     const puts: PutCall[] = [];
@@ -454,16 +479,15 @@ describe('generateWeeklyDigest — gate matrix', () => {
       },
     });
 
-    // Delta 100_000 vs prior 80_000 → нарастване.
-    expect(narrativePrompt).toContain('нарастване');
-    // Sector division 45 handed to the model as its human name (curated `short`), not a bare code.
-    expect(narrativePrompt).toContain('Строителство');
-    // Leading authority (data.authorities[0]) and the largest contract's winning bidder, by name.
-    expect(narrativePrompt).toContain('Община Пример');
-    expect(narrativePrompt).toContain('Изпълнител ЕООД');
-    // The system prompt permits naming sectors/authorities (v2) yet still bans material numbers in prose.
-    expect(narrativeSystem).toContain('МОЖЕШ да назоваваш');
-    expect(narrativeSystem).toContain('СЪЩЕСТВЕНИ числа');
+    // Delta 100_000 vs prior 80_000 → the week-over-week move is fed qualitatively (verb, no number).
+    expect(narrativePrompt).toContain('нарасна');
+    // The leading CPV division reaches the model (it names it via the dictionary in the system prompt).
+    expect(narrativePrompt).toContain('Водещи CPV раздели');
+    // The task itself: a ≥5-paragraph analysis, explicitly without numbers.
+    expect(narrativePrompt).toContain('най-малко 5 абзаца');
+    // The system prompt drives the analytical „Какво се случи" and still bans numbers in prose.
+    expect(narrativeSystem).toContain('НАЙ-МАЛКО 5 абзаца');
+    expect(narrativeSystem).toContain('Какво се случи');
   });
 
   // Regenerate-on-strip safety net: a verifier strip of one draft must NOT condemn the week to AI-free
@@ -531,11 +555,45 @@ describe('generateWeeklyDigest — gate matrix', () => {
     expect(upserts[0]!.status).toBe('fallback');
   });
 
-  it('reissue: a second run for an already-written week is stamped "коригирано"', async () => {
+  // The verifier runs under a hard timeout (VERIFIER_TIMEOUT_MS); a hung gateway call aborts and THROWS.
+  // verifyReport must fail-CLOSED on that throw — strip the unverified prose — never publish it because
+  // the judge never answered. Same observable outcome as an empty-verdicts strip, reached via a throw.
+  it('verifier throwing (e.g. timeout abort) fails closed: prose stripped, labelled AI-free', async () => {
+    const data = happyPathData();
+    const upserts: UpsertRow[] = [];
+    const puts: PutCall[] = [];
+
+    await generateWeeklyDigest(baseEnv(fakeWeeklyDb(data, upserts), fakeBucket(puts)), {
+      now: NOW,
+      // Narrative generates fine; the verifier call rejects with an AbortError (what AbortSignal.timeout
+      // throws when the budget elapses) on EVERY attempt.
+      generate: async ({ system }: { system: string; prompt: string }) => {
+        if (system.includes('verification critic')) {
+          throw new DOMException('The operation was aborted', 'AbortError');
+        }
+        return 'Изминалата седмица бе разнообразна за обществените поръчки в страната.';
+      },
+    });
+
+    expect(puts).toHaveLength(1);
+    const stored = JSON.parse(puts[0]!.body);
+    expect(stored.report.blocks.some((b: { type: string }) => b.type === 'text')).toBe(false);
+    expect(stored.provenance.model).toBe('none (ai-free fallback)');
+    expect(upserts[0]!.status).toBe('fallback');
+  });
+
+  it('reissue: preserves the original createdAt, stamps refreshedAt, and is „коригирано" (§10.4)', async () => {
     const data = happyPathData();
     data.existingDigestRow = true;
     const upserts: UpsertRow[] = [];
     const puts: PutCall[] = [];
+    // Seed a prior artifact with an ORIGINAL publish time so the re-issue can read + preserve it.
+    const ORIGINAL_CREATED = '2026-06-01T07:00:00.000Z';
+    puts.push({
+      key: `weeks/${TARGET.iso}.json`,
+      body: JSON.stringify({ createdAt: ORIGINAL_CREATED }),
+      opts: undefined,
+    });
 
     await generateWeeklyDigest(baseEnv(fakeWeeklyDb(data, upserts), fakeBucket(puts)), {
       now: NOW,
@@ -544,6 +602,53 @@ describe('generateWeeklyDigest — gate matrix', () => {
 
     expect(upserts).toHaveLength(1);
     expect(upserts[0]!.status).toBe('коригирано');
+    // The newest put is the re-issued artifact: original publish time kept, re-issue time recorded.
+    const reissued = JSON.parse(puts.at(-1)!.body);
+    expect(reissued.createdAt).toBe(ORIGINAL_CREATED);
+    expect(reissued.refreshedAt).toBe(NOW.toISOString());
+  });
+
+  it('reissue: a prior-artifact READ FAILURE degrades to a first-publish, never aborts the cron', async () => {
+    const data = happyPathData();
+    data.existingDigestRow = true;
+    const upserts: UpsertRow[] = [];
+    const puts: PutCall[] = [];
+    // Bucket whose get() THROWS (R2 outage) — the reissue path must catch it and fall back to createdAt=now.
+    const throwingBucket = {
+      put: async (key: string, body: string, opts?: unknown) => {
+        puts.push({ key, body, opts });
+        return null as unknown as R2Object;
+      },
+      get: async () => {
+        throw new Error('R2 unavailable');
+      },
+    } as unknown as R2Bucket;
+
+    await generateWeeklyDigest(baseEnv(fakeWeeklyDb(data, upserts), throwingBucket), {
+      now: NOW,
+      generate: mockGenerate('Кратко резюме на седмицата.'),
+    });
+
+    // The run completed (artifact written), the read failure did NOT throw out of the cron.
+    expect(puts).toHaveLength(1);
+    const stored = JSON.parse(puts[0]!.body);
+    expect(stored.createdAt).toBe(NOW.toISOString()); // fell back to now (no prior read)
+    expect(upserts[0]!.status).toBe('коригирано'); // still a re-issue per the D1 row
+  });
+
+  it('first publish carries no refreshedAt (createdAt = now)', async () => {
+    const data = happyPathData(); // no existing row → first publish
+    const upserts: UpsertRow[] = [];
+    const puts: PutCall[] = [];
+
+    await generateWeeklyDigest(baseEnv(fakeWeeklyDb(data, upserts), fakeBucket(puts)), {
+      now: NOW,
+      generate: mockGenerate('Кратко резюме на седмицата.'),
+    });
+
+    const stored = JSON.parse(puts.at(-1)!.body);
+    expect(stored.createdAt).toBe(NOW.toISOString());
+    expect(stored.refreshedAt).toBeUndefined();
   });
 
   it('narrative invalid after every regen attempt: AI-free fallback is persisted, no unbound prose numbers', async () => {

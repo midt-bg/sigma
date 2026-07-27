@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // fail-closes and strips the narrative we just produced (the drift bug this suite guards against). These
 // tests mock the model layer to capture exactly what each builder passes to `generateText`.
 
-const generateTextMock = vi.fn(async (_opts: Record<string, unknown>) => ({ text: '{}' }));
+const generateTextMock = vi.fn(
+  async (_opts: Record<string, unknown>): Promise<{ text: string; finishReason?: string }> => ({
+    text: '{}',
+  }),
+);
 const chatMock = vi.fn(() => 'FAKE_MODEL');
 const createOpenAIMock = vi.fn((_opts: Record<string, unknown>) => ({ chat: chatMock }));
 
@@ -36,13 +40,36 @@ afterEach(() => {
 });
 
 describe('weekly-digest model generation params', () => {
-  it('narrative generator: temperature 0.3, 512-token cap, no retries', async () => {
+  it('narrative generator: temperature 0.3, 1400-token cap (≥5-paragraph analysis), no retries, bounded by a timeout', async () => {
     await buildDigestGenerate(ENV)({ system: 's', prompt: 'p' });
     expect(generateTextMock).toHaveBeenCalledTimes(1);
     const opts = generateTextMock.mock.calls[0]![0];
     expect(opts.temperature).toBe(0.3);
-    expect(opts.maxOutputTokens).toBe(512);
+    expect(opts.maxOutputTokens).toBe(1400);
     expect(opts.maxRetries).toBe(0);
+    // The cron has no request signal, so the narrative call carries its own abort budget (a hung gateway
+    // call must not stall the worker — mirrors the verifier).
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('narrative generator THROWS on a truncated (finishReason=length) draft, so it never publishes a mid-sentence narrative', async () => {
+    // A token-cap hit returns partial text with finishReason 'length'. The builder must throw (the
+    // orchestrator catches it → retry → AI-free fallback) rather than return the truncated fragment,
+    // which the grounding-only verifier would pass and publish into the immutable artifact.
+    generateTextMock.mockResolvedValueOnce({
+      text: 'Изминалата седмица беше',
+      finishReason: 'length',
+    });
+    await expect(buildDigestGenerate(ENV)({ system: 's', prompt: 'p' })).rejects.toThrow(
+      /finishReason=length/,
+    );
+  });
+
+  it('narrative generator returns the text on a normal (stop) finish', async () => {
+    generateTextMock.mockResolvedValueOnce({ text: 'Пълен разказ.', finishReason: 'stop' });
+    await expect(buildDigestGenerate(ENV)({ system: 's', prompt: 'p' })).resolves.toBe(
+      'Пълен разказ.',
+    );
   });
 
   it('verifier generator: temperature 0 (deterministic JSON), 1024-token cap, bounded by a timeout', async () => {

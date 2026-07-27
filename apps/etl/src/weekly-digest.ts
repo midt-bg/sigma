@@ -16,6 +16,7 @@ import {
   MAX_RATIO_MAGNITUDE,
   persistReport,
   priorIsoWeek,
+  readStoredReport,
   verifyReport,
   type CellFormat,
   type CellRef,
@@ -56,9 +57,9 @@ export interface WeeklyDigestEnv {
    *  uses (apps/web ASSISTANT_API_KEY) so both workers share one credential name. Optional: unset →
    *  the digest still publishes AI-free. */
   ASSISTANT_API_KEY?: string;
-  /** DIAGNOSTIC (dev-only, revert before merge): when truthy, log the generated narrative text and the
-   *  verifier's raw response so a verifier-strip can be attributed to a bad narrative vs an over-eager
-   *  verdict. Fail-dark like the other flags — unset/absent → no model prose ever reaches the logs. */
+  /** DIAGNOSTIC (dev-only): when truthy, log the generated narrative text and the verifier's raw response
+   *  so a verifier-strip can be attributed to a bad narrative vs an over-eager verdict. Fail-dark like the
+   *  other flags — unset/absent → no model prose ever reaches the logs. Committed OFF (see wrangler.toml). */
   DIGEST_DEBUG?: string;
 }
 
@@ -75,11 +76,10 @@ export interface GenerateWeeklyDigestDeps {
 }
 
 const DEFAULT_MODEL = 'google/gemma-4-31b-it';
-// v2: the narrative is no longer a bare number-free one-liner — it may name the leading sector,
-// authority and the largest contract's parties and describe the week's direction (still no MATERIAL
-// numbers in prose; those stay server-bound in the tables). Bumped so the stored provenance distinguishes
-// the two prompt generations.
-const DIGEST_PROMPT_VERSION = 'weekly-digest-v2';
+// v3: a ≥5-paragraph analytical „Какво се случи" narrative (§3.3), verified by the sharpened role-④
+// verifier and regenerated-on-strip (see the orchestrator). Still no MATERIAL numbers in prose — those
+// stay server-bound in the tables/charts.
+const DIGEST_PROMPT_VERSION = 'weekly-digest-v3';
 // The fixed, server-owned "question" shown on the digest report (§4/§9.1: passing it via
 // `BindOptions.question` means bindReport does NOT gate it for material numbers — there is no
 // model-authored question here to gate).
@@ -94,6 +94,12 @@ const MAX_NARRATIVE_ATTEMPTS = 2;
 // Verifier call timeout (mirrors apps/web's `VERIFIER_TIMEOUT_MS`): a hung gateway call fail-closes the
 // verifier (stripping risk prose) rather than stalling the cron. Verdicts need only a few hundred tokens.
 const VERIFIER_TIMEOUT_MS = 20_000;
+// Narrative call timeout. The cron has no request signal to bound a hung gateway call, and the narrative
+// is the larger (1400-token) generation, so it needs its OWN abort budget — without it a stall blocks the
+// worker until the platform wall-clock kills it, twice over on the retry. A generation throw is already
+// caught and converted to a retry → AI-free fallback, so aborting fails safe. Longer than the verifier's
+// budget to fit the bigger output.
+const NARRATIVE_TIMEOUT_MS = 30_000;
 const METHODOLOGY_CALLOUT_TITLE = 'Как е изчислено';
 const METHODOLOGY_CALLOUT_MD =
   'Изчислено от чисти (amount_eur ненулеви) договори, подписани в рамките на пълна календарна ' +
@@ -178,8 +184,17 @@ export function buildDigestGenerate(env: WeeklyDigestEnv): GenerateFn {
       prompt,
       temperature: 0.3,
       maxRetries: 0,
-      maxOutputTokens: 512,
+      maxOutputTokens: 1400, // room for a ≥5 paragraph „Какво се случи" analysis (spec §3.3)
+      abortSignal: AbortSignal.timeout(NARRATIVE_TIMEOUT_MS),
     });
+    // A `length` finish means the token cap truncated the narrative mid-sentence. The role-④ verifier
+    // only checks that claims are GROUNDED, not that prose is COMPLETE, so a truncated-but-grounded draft
+    // would pass verification and get published (into the immutable R2 artifact) ending mid-word. Throw so
+    // it takes the same path as a generation failure — caught in the orchestrator → retry → AI-free
+    // fallback (MAX_NARRATIVE_ATTEMPTS); a truncated draft is exactly when a regenerate is worth spending.
+    if (result.finishReason === 'length') {
+      throw new Error('narrative truncated at the token cap (finishReason=length)');
+    }
     return result.text;
   };
 }
@@ -242,46 +257,108 @@ export function buildDigestVerifierGenerate(env: WeeklyDigestEnv): GenerateFn {
 }
 
 const DIGEST_SYSTEM_PROMPT = [
-  'Пишеш кратък въвеждащ текст (едно до две изречения) на български за автоматичен седмичен ' +
-    'обзор на обществени поръчки в България. Текстът е лидът над таблиците — направи го ' +
-    'информативен, а не общ.',
+  'Пишеш задълбочен неутрален анализ „Какво се случи" от НАЙ-МАЛКО 5 абзаца на български за ' +
+    'автоматичен седмичен обзор на обществените поръчки в България. Не просто описвай — АНАЛИЗИРАЙ: ' +
+    'какво означава движението на подписаната стойност, доколко е концентрирана в малко сектори или ' +
+    'разпределена, какво подсказва делът на поръчките с една оферта за конкуренцията, тежи ли ' +
+    'отделен голям договор върху седмицата, и концентрирана ли е активността в малко възложители ' +
+    'или в много.',
+  'ПРЕПОРЪЧИТЕЛНА СТРУКТУРА (по един абзац на тема, свържи ги гладко):',
+  'а) Обща картина — посока и сила на движението спрямо предходната седмица.',
+  'б) Сектори — кои водят, концентрирана ли е стойността в един-два раздела или е разпределена.',
+  'в) Голям договор — има ли самостоятелна поръчка, която тежи осезаемо върху седмичната стойност.',
+  'г) Конкуренция — какво подсказва делът на поръчките с една оферта (с уговорка за размера на извадката).',
+  'д) Разпределение и ритъм — концентрирани ли са поръчките в малко възложители, кой ден е бил най-активен.',
+  'е) Заключение — какво си струва да се проследи; „сигнали, не присъди".',
   'ЗАДЪЛЖИТЕЛНИ ПРАВИЛА:',
-  '1. МОЖЕШ да назоваваш: посоката на промяната спрямо предходната седмица (нарастване/спад/без ' +
-    'промяна), водещия сектор, водещия възложител и страните по най-голямата поръчка — точно както ' +
-    'са ти подадени по-долу. Използвай ги, за да кажеш нещо конкретно за седмицата.',
-  '2. НЕ пиши СЪЩЕСТВЕНИ числа в текста — суми, милиони/милиарди, проценти, групирани числа или ' +
-    'дати. Тези стойности вече са показани в таблиците на справката; изречение със сума или процент ' +
-    'ще бъде отхвърлено автоматично. Описвай качествено („нарастване", „водещ сектор"), не с цифри.',
-  '3. Тон: неутрален, описателен — „сигнали, не присъди". Не квалифицирай възложители или ' +
-    'изпълнители като виновни, корумпирани или подозрителни; описвай само какво е било подписано.',
-  '4. Обикновен текст, без markdown синтаксис (без **, #, списъци).',
-  '5. Отговори САМО с текста — без увод, без обяснение.',
+  '1. НИКОГА не пиши конкретни суми, брой договори, проценти, дати или други числа — те вече са ' +
+    'показани в таблиците и графиките на справката; абзац с число ще бъде отхвърлен автоматично. ' +
+    'Изразявай мащаб и дял с думи („нарасна", „спадна", „доминира", „значителен дял", „малка част").',
+  '2. Тон: неутрален, аналитичен — „сигнали, не присъди". Не квалифицирай възложители или ' +
+    'изпълнители като виновни, корумпирани или подозрителни; анализирай само какво е било подписано.',
+  '3. Всеки абзац е отделен, разделен с празен ред. Обикновен текст, без markdown синтаксис ' +
+    '(без **, #, списъци, заглавия).',
+  '4. Назовавай секторите с думи по речника по-долу (напр. „строителство"), не с CPV кодове.',
+  '5. Отговори САМО с анализа — без увод, без обяснение, без заглавие.',
   '\nРечник на CPV разделите за коректно назоваване на сектори:\n' + cpvReference(),
 ].join('\n');
 
+// All context fed to the model is QUALITATIVE (word buckets), never a raw figure — the prose-number
+// gate (§1) rejects any digit, so analysis depth has to come from richer signals, not numbers.
 function buildNarrativePrompt(data: WeeklyDigestData): string {
+  // a) direction + magnitude of the week-over-week move.
+  const mag = data.delta.deltaPct === null ? null : Math.abs(data.delta.deltaPct);
+  const magWord = mag === null ? '' : mag >= 0.5 ? ' рязко' : mag >= 0.2 ? ' осезаемо' : ' леко';
   const direction =
-    data.delta.deltaEur > 0 ? 'нарастване' : data.delta.deltaEur < 0 ? 'спад' : 'без промяна';
-  const topSector = data.sectors[0] ?? null;
-  const topAuthority = data.authorities[0] ?? null;
-  const lines = [
-    `Изминалата седмица (${data.isoWeek}) спрямо предходната: ${direction} на подписаната стойност.`,
-    topSector
-      ? `Водещ сектор по подписана стойност: ${sectorLabel(topSector.division)} (CPV раздел ${topSector.division}).`
-      : 'Няма ясно доминиращ сектор тази седмица.',
-    topAuthority
-      ? `Възложителят с най-много подписана стойност е „${topAuthority.authorityName}".`
-      : 'Няма ясно доминиращ възложител тази седмица.',
-    data.largest
-      ? `Най-голямата отделна поръчка е спечелена от изпълнителя „${data.largest.bidderName}".`
-      : 'Няма договор с потвърдена (value_flag=ok) стойност през седмицата.',
-    // The largest contract's subject often carries a magnitude ("Доставка на 12 000 тона…") that would
-    // trip the binder's material-number gate if the model quoted it verbatim; feed only the named parties
-    // above and steer the model off the raw subject line.
-    'Не цитирай предмета на договора дословно и не пиши никакви суми, проценти или брой — опиши седмицата качествено.',
-    'Напиши въвеждащия текст сега (едно до две изречения).',
-  ];
-  return lines.join('\n');
+    data.delta.deltaEur > 0
+      ? `подписаната стойност${magWord} нарасна спрямо предходната седмица`
+      : data.delta.deltaEur < 0
+        ? `подписаната стойност${magWord} спадна спрямо предходната седмица`
+        : 'подписаната стойност е без съществена промяна спрямо предходната седмица';
+
+  // b) sector leaders + how concentrated the value is in the top division.
+  const sectorSum = data.sectors.reduce((a, s) => a + s.valueEur, 0);
+  const topSectorShare =
+    sectorSum > 0 && data.sectors[0] ? data.sectors[0].valueEur / sectorSum : 0;
+  const topSectors = data.sectors.slice(0, 3).map((s) => s.division);
+  const sectorLine =
+    topSectors.length === 0
+      ? 'Няма ясно доминиращ сектор тази седмица.'
+      : `Водещи CPV раздели по подписана стойност, в намаляващ ред (назови ги с думи по речника, без кодове): ${topSectors.join(', ')}. ` +
+        (topSectorShare >= 0.5
+          ? 'Стойността е силно концентрирана във водещия сектор.'
+          : topSectorShare >= 0.3
+            ? 'Водещият сектор изпъква, но не доминира сам.'
+            : 'Стойността е разпределена между няколко сектора.');
+
+  // c) does a single contract carry the week?
+  const largestShare =
+    data.largest && data.total.totalEur > 0 ? data.largest.amountEur / data.total.totalEur : 0;
+  const largestLine = !data.largest
+    ? 'Няма отделен голям договор с потвърдена стойност през седмицата.'
+    : largestShare >= 0.3
+      ? 'Един голям единичен договор тежи осезаемо върху цялата седмична стойност.'
+      : 'Изпъква поне един по-голям договор, но той не определя сам седмицата.';
+
+  // d) competition — bucket the single-bid rate; never the % itself (§1 gate).
+  const rate = data.singleBidRate.rate;
+  const competition =
+    rate === null
+      ? 'Извадката с отчетени оферти е малка, затова изводът за конкуренцията е предпазлив.'
+      : rate >= 0.4
+        ? 'Голям дял от поръчките са възложени с една оферта — слаба ценова конкуренция, което е сигнал за проследяване.'
+        : rate >= 0.2
+          ? 'Умерен дял от поръчките са с една оферта.'
+          : 'Малък дял с една оферта — преобладават състезателни процедури.';
+
+  // e) authority concentration (within the top-10 slice) + the most active day.
+  const authSum = data.authorities.reduce((a, x) => a + x.valueEur, 0);
+  const topAuthShare =
+    authSum > 0 && data.authorities[0] ? data.authorities[0].valueEur / authSum : 0;
+  const authorityLine =
+    data.authorities.length === 0
+      ? ''
+      : topAuthShare >= 0.5
+        ? 'Подписаната стойност е концентрирана около един-двама възложители.'
+        : 'Подписаната стойност е разпределена между много възложители.';
+  const peak = data.dailySpend.current.reduce(
+    (best, d) => (d.valueEur > best.valueEur ? d : best),
+    data.dailySpend.current[0] ?? { label: '', valueEur: -1 },
+  );
+  const peakLine =
+    peak.valueEur > 0 ? `Най-активният ден по подписана стойност е ${peak.label}.` : '';
+
+  return [
+    `Изминалата седмица е ${data.isoWeek}. ${direction}.`,
+    sectorLine,
+    largestLine,
+    competition,
+    [authorityLine, peakLine].filter(Boolean).join(' '),
+    '',
+    'Напиши задълбочения анализ „Какво се случи" (най-малко 5 абзаца) сега, без числа.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 // ── Deterministic evidence (server-built — the model never sees or fills these rows) ────────────────
@@ -392,6 +469,34 @@ function buildQueryResults(data: WeeklyDigestData): QueryResult[] {
     ]),
   });
 
+  // R6 (this week) + R7 (prior week) — the two 7-day series behind the ghost-bar chart (§3.4).
+  results.push({
+    handle: 'R6',
+    columns: ['day', 'value_eur'],
+    rows: data.dailySpend.current.map((d) => [d.label, d.valueEur]),
+  });
+  results.push({
+    handle: 'R7',
+    columns: ['day', 'value_eur'],
+    rows: data.dailySpend.previous.map((d) => [d.label, d.valueEur]),
+  });
+
+  // R8 — competition concentration (§3.8): single-bid vs multi-bid contract counts over the reported
+  // sample. Pushed under the SAME guard as the bar block in buildEmitInput (rate !== null, i.e. the
+  // sample cleared the reporting floor), so the persisted snapshot never carries a dead result no block
+  // references (#81 review, note 1).
+  if (data.singleBidRate.rate !== null) {
+    const { singleBid, sample } = data.singleBidRate;
+    results.push({
+      handle: 'R8',
+      columns: ['label', 'count'],
+      rows: [
+        ['С една оферта', singleBid],
+        ['С няколко оферти', Math.max(0, sample - singleBid)],
+      ],
+    });
+  }
+
   return results;
 }
 
@@ -438,6 +543,16 @@ function buildEmitInput(
     });
   }
   blocks.push({ type: 'totals', items: totalsItems });
+
+  // Daily spend, this week vs the prior week's ghost bars (§3.4). Always emitted (7 zero-filled slots),
+  // so the digest carries a temporal view even on a quiet week.
+  blocks.push({
+    type: 'weekbars',
+    currentId: 'R6',
+    previousId: 'R7',
+    labelCol: 'day',
+    valueCol: 'value_eur',
+  });
 
   if (data.topContracts.length > 0) {
     blocks.push({
@@ -487,6 +602,18 @@ function buildEmitInput(
         { key: 'contracts', header: 'Договори', format: 'number' },
         { key: 'value_eur', header: 'Стойност', format: 'money' },
       ],
+    });
+  }
+
+  // Competition concentration (§3.8): single-bid vs multi-bid contract counts. Only shown when the
+  // reported-bid sample clears the floor (rate !== null) — below it the split would swing on a few rows.
+  if (data.singleBidRate.rate !== null) {
+    blocks.push({
+      type: 'bar',
+      resultId: 'R8',
+      labelCol: 'label',
+      valueCol: 'count',
+      format: 'number',
     });
   }
 
@@ -670,7 +797,29 @@ export async function generateWeeklyDigest(
     .bind(target.iso)
     .first<{ iso_week: string }>();
 
-  const refreshedAt = now.toISOString();
+  const nowIso = now.toISOString();
+  const key = `weeks/${target.iso}.json`;
+  // On an in-place re-issue (spec §10.4), PRESERVE the original publish time and record a separate
+  // `refreshedAt` so the D1-free serve path can show „публикувано {original} · коригирано на {now}".
+  // Read the original off the prior R2 artifact (the serve path can't read the D1 status row). If that
+  // read fails, we lose ONLY the original publish date and fall back createdAt to `now` — `refreshedAt`
+  // is still stamped (the D1 `existing` row proves the re-issue), so the „коригирано" note still shows,
+  // just dated at `now`. readStoredReport can THROW (R2 outage, malformed body), not just return null —
+  // an uncaught throw would abort the whole cron and lose the week's digest, so catch it. A first publish
+  // (no `existing` row) never reads and carries no `refreshedAt`.
+  let priorCreatedAt: string | null = null;
+  if (existing) {
+    try {
+      priorCreatedAt = (await readStoredReport(env.REPORTS, key))?.createdAt ?? null;
+    } catch (error) {
+      logError('etl_digest_prior_read_failed', {
+        isoWeek: target.iso,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  const createdAt = priorCreatedAt ?? nowIso;
+  const refreshedAt = existing ? nowIso : undefined;
   // A narrative that BOUND but was then fully stripped by the verifier leaves an artifact with no
   // surviving model prose — the same content class as the AI-free fallback, so it must carry the same
   // labels. Keying on `narrativeMd` alone would advertise a model-authored digest whose model text is
@@ -682,7 +831,8 @@ export async function generateWeeklyDigest(
 
   const stored = buildStoredReport({
     id: target.iso,
-    createdAt: refreshedAt,
+    createdAt,
+    ...(refreshedAt ? { refreshedAt } : {}),
     report: verified.report,
     question: DIGEST_QUESTION,
     sources: results.map((r) => ({ handle: r.handle, tool: 'weekly_digest_query' })),
@@ -698,12 +848,12 @@ export async function generateWeeklyDigest(
     },
   });
 
-  const key = `weeks/${target.iso}.json`;
-  // Stamp listing-facing fields into R2 customMetadata so the /weeks archive index renders the week's
-  // date range + total without a per-week object fetch (it lists customMetadata only). Dates are raw
-  // `YYYY-MM-DD` (the consumer formats them); totalEur is stringified (R2 metadata is string→string).
+  // NOT `immutable`: this object is OVERWRITTEN in place on a §10.4 re-issue, so an `immutable` object
+  // cacheControl would be a stale-serve trap if the R2 body were ever fronted directly over HTTP. The
+  // serve path reads the body via readStoredReport and sends its own `private, max-age=60`, so no object
+  // cacheControl is needed. Stamp listing-facing fields into customMetadata so the /weeks archive renders
+  // each week's date range + total without a per-week fetch (dates raw `YYYY-MM-DD`; totalEur stringified).
   await persistReport(env.REPORTS, key, stored, {
-    immutable: true,
     customMetadata: {
       totalEur: String(data.total.totalEur),
       monday: target.mondayIso,
@@ -721,7 +871,7 @@ export async function generateWeeklyDigest(
          status = excluded.status,
          total_eur = excluded.total_eur`,
     )
-      .bind(target.iso, asOf, refreshedAt, status, data.total.totalEur)
+      .bind(target.iso, asOf, nowIso, status, data.total.totalEur)
       .run();
   } catch (error) {
     logError('etl_digest_upsert_failed', {

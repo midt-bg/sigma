@@ -20,6 +20,8 @@ export interface BuildStoredReportInput {
   id: string;
   /** ISO-8601 UTC. Defaults to `new Date().toISOString()` — pass explicitly for deterministic tests. */
   createdAt?: string;
+  /** ISO-8601 UTC of an in-place re-issue (spec §10.4). Additive — omit on a first publish. */
+  refreshedAt?: string;
   report: ResolvedReport;
   question: string;
   sources: ProvenanceSource[];
@@ -43,6 +45,7 @@ export function buildStoredReport(input: BuildStoredReportInput): StoredReport {
     schemaVersion: STORED_REPORT_SCHEMA_VERSION,
     id: input.id,
     createdAt: input.createdAt ?? new Date().toISOString(),
+    ...(input.refreshedAt ? { refreshedAt: input.refreshedAt } : {}),
     report: input.report,
     provenance: {
       question: input.question,

@@ -40,9 +40,10 @@ DIGEST_CRON = "0 7 * * 1"
 # (`wrangler secret put DIGEST_TRIGGER_TOKEN`), never committed; without it the endpoint stays 404.
 DIGEST_TRIGGER_ENABLED = "true"
 
-# DIAGNOSTIC (dev-only, revert before merge): logs the generated narrative + the verifier's raw response
-# so a verifier-strip can be attributed. Fail-dark — absent/false → no model prose in logs.
-DIGEST_DEBUG = "true"
+# DIAGNOSTIC (dev-only): logs the generated narrative + the verifier's raw response so a verifier-strip
+# can be attributed. Fail-dark — absent/false → no model prose in logs. Kept OFF in the committed config;
+# flip to "true" locally when debugging a strip, never commit it on.
+DIGEST_DEBUG = "false"
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.

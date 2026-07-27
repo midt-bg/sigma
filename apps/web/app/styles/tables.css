@@ -78,6 +78,28 @@ tbody td a:hover {
   text-decoration-thickness: 1px;
 }
 
+/* Whole-row link (DataTable rowLink): the anchor in the row's title cell is stretched over the entire
+   row via `::after`, so a click anywhere on the row — including empty cells — follows it. The row is the
+   positioned ancestor; the anchor itself must stay unpositioned so `inset: 0` sizes to the row, not the
+   cell. Keyboard focus + the accessible name still come from the real anchor. Works on the phone card
+   reflow too (the row becomes the card). (`position: relative` on <tr> forms the containing block in all
+   current browsers; Safari <15 did not — not a concern for this audience.) */
+tr.row-link {
+  position: relative;
+  cursor: pointer;
+}
+tr.row-link .cell-title a::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+/* Keyboard focus ring on the row-sized overlay (not the small anchor box), so it isn't clipped by the
+   overlay and matches the whole clickable area (WCAG 2.4.7, site accent convention). */
+tr.row-link .cell-title a:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Rank column — small mono soft-ink */
 .rank,
 td.rank {

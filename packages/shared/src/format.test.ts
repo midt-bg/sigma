@@ -106,6 +106,9 @@ describe('dates', () => {
   it('returns a dash for missing dates', () => {
     expect(date(null)).toBe('—');
   });
+  it('formats a full ISO-8601 timestamp by its leading date (used for StoredReport.createdAt/refreshedAt)', () => {
+    expect(date('2026-06-22T07:00:00.000Z')).toBe('22.06.2026');
+  });
 });
 
 describe('entityName', () => {

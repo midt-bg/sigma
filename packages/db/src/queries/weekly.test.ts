@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getWeeklyAuthorityBreakdown,
   getWeeklyCounts,
+  getWeeklyDailySpend,
   getWeeklyDigestData,
   getWeeklyLargestContract,
   getWeeklySectorBreakdown,
@@ -125,6 +126,27 @@ describe('priorIsoWeek (#167)', () => {
 
   it('crosses a year boundary the other direction (2026-W01 -> 2025-W52)', () => {
     expect(priorIsoWeek('2026-W01')).toBe('2025-W52');
+  });
+});
+
+describe('getWeeklyDailySpend (spec §3.4)', () => {
+  it('projects clean spend onto 7 Mon..Sun slots for the week and the prior week', async () => {
+    const daily = await getWeeklyDailySpend(realDb(), TARGET_WEEK);
+    expect(daily.current).toHaveLength(7);
+    expect(daily.previous).toHaveLength(7);
+    expect(daily.current.map((d) => d.label)).toEqual(['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд']);
+    // Monday 2024-01-01 = 1000, Sunday 2024-01-07 = 2000; c:NULLAMT excluded, other days zero-filled.
+    expect(daily.current[0]).toMatchObject({ dateIso: '2024-01-01', valueEur: 1000 });
+    expect(daily.current[6]).toMatchObject({ dateIso: '2024-01-07', valueEur: 2000 });
+    expect(daily.current[1]!.valueEur).toBe(0);
+    // Prior week 2023-W52 (Mon 2023-12-25 .. Sun 2023-12-31); c:PRIOR on Thu 2023-12-28 = 500.
+    expect(daily.previous[0]!.dateIso).toBe('2023-12-25');
+    expect(daily.previous[3]).toMatchObject({ dateIso: '2023-12-28', valueEur: 500 });
+  });
+
+  it('never leaks the following week (c:NEXTWEEK 2024-01-08) into a current-week slot', async () => {
+    const daily = await getWeeklyDailySpend(realDb(), TARGET_WEEK);
+    expect(daily.current.every((d) => d.valueEur !== 5000)).toBe(true);
   });
 });
 

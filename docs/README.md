@@ -27,6 +27,7 @@
 - [`implementation-plans/assistant-voice-transcribe.md`](implementation-plans/assistant-voice-transcribe.md) — план: гласов вход (`/assistant/transcribe`) — запис, транскрипция, тишина/халюцинации и достъпност.
 - [`implementation-plans/167-weekly-digest.md`](implementation-plans/167-weekly-digest.md) — план: седмичният автоматизиран обзор „Седмицата в пари" (#167) — фази, зависимости и разбивка на задачи.
 - [`tickets/167a-weekly-digest-producer.md`](tickets/167a-weekly-digest-producer.md) — задача: producer-ът на дайджеста (`@sigma/report` пакет, DB заявки + миграция, ETL cron) (#167A).
+- [`tickets/167b-weekly-digest-consumer.md`](tickets/167b-weekly-digest-consumer.md) — задача: consumer-ът на дайджеста (рендер, `/weeks` маршрути, deep-линкове) (#167B).
 - [`ai-assistant-chat-testing-2026-07-02.md`](ai-assistant-chat-testing-2026-07-02.md) — запис от Playwright обхода на чат-дока (2026-07-02): prose-таблици vs `emit_report`.
 
 ## Стандарти за ревю

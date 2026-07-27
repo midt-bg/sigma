@@ -216,6 +216,102 @@ describe('bindReport — server owns the values', () => {
     }
   });
 
+  it('binds a weekbars block from two result handles (current + ghost series)', () => {
+    const daily: QueryResult[] = [
+      {
+        handle: 'C',
+        columns: ['day', 'v'],
+        rows: [
+          ['Пн', 1000],
+          ['Вт', 0],
+          ['Ср', 500],
+        ],
+      },
+      {
+        handle: 'P',
+        columns: ['day', 'v'],
+        rows: [
+          ['Пн', 800],
+          ['Вт', 200],
+          ['Ср', 0],
+        ],
+      },
+    ];
+    const out = bindReport(
+      emit([{ type: 'weekbars', currentId: 'C', previousId: 'P', labelCol: 'day', valueCol: 'v' }]),
+      daily,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'weekbars') {
+      expect(out.report.blocks[0].current).toEqual([
+        { label: 'Пн', value: 1000 },
+        { label: 'Вт', value: 0 },
+        { label: 'Ср', value: 500 },
+      ]);
+      expect(out.report.blocks[0].previous).toEqual([
+        { label: 'Пн', value: 800 },
+        { label: 'Вт', value: 200 },
+        { label: 'Ср', value: 0 },
+      ]);
+    }
+  });
+
+  it('hard-errors a weekbars block whose series handle is unknown', () => {
+    const out = bindReport(
+      emit([
+        { type: 'weekbars', currentId: 'R1', previousId: 'NOPE', labelCol: 'a', valueCol: 'b' },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it('drops a null-valued day from a weekbars series, so the two series can differ in length', () => {
+    // The binder's per-series filter skips rows whose value is null/non-numeric. When one series has a
+    // gap the other does not, `current` and `previous` come out different lengths — which the export +
+    // WeeklyGhostBars handle by pairing on day LABEL (not array index) and em-dashing the missing side.
+    // This test pins the binder's length-divergence output that they consume.
+    const daily: QueryResult[] = [
+      {
+        handle: 'C',
+        columns: ['day', 'v'],
+        rows: [
+          ['Пн', 1000],
+          ['Вт', null], // null → this day is dropped from `current`
+          ['Ср', 500],
+        ],
+      },
+      {
+        handle: 'P',
+        columns: ['day', 'v'],
+        rows: [
+          ['Пн', 800],
+          ['Вт', 200],
+          ['Ср', 0],
+        ],
+      },
+    ];
+    const out = bindReport(
+      emit([{ type: 'weekbars', currentId: 'C', previousId: 'P', labelCol: 'day', valueCol: 'v' }]),
+      daily,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error('expected bind to succeed'); // loud narrowing guard — never swallows
+    const block = out.report.blocks[0];
+    expect(block).toEqual({
+      type: 'weekbars',
+      current: [
+        { label: 'Пн', value: 1000 },
+        { label: 'Ср', value: 500 },
+      ],
+      previous: [
+        { label: 'Пн', value: 800 },
+        { label: 'Вт', value: 200 },
+        { label: 'Ср', value: 0 },
+      ],
+    });
+  });
+
   it('always stamps the AI-generated watermark and echoes the question', () => {
     const out = bindReport(emit([{ type: 'text', md: 'Ето резултатите.' }]), results);
     expect(out.ok).toBe(true);

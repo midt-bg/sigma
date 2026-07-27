@@ -21,12 +21,18 @@ export function DataTable<Row>({
   variant = 'cards',
   caption,
   getKey,
+  rowLink = false,
 }: {
   columns: Column<Row>[];
   rows: Row[];
   variant?: 'cards' | 'prose';
   caption?: string;
   getKey: (row: Row, index: number) => string | number;
+  // Opt in to the whole-row „stretched link" pattern: each row is marked `.row-link` and the anchor in
+  // its `isTitle` cell overlays the entire row (CSS `::after`), so a click anywhere on the row (or card,
+  // on phones) follows that link. Pure CSS — the anchor stays the accessible, keyboard-focusable target,
+  // so the title column MUST render a single <Link>/<a>. No effect on tables that don't opt in.
+  rowLink?: boolean;
 }) {
   const labelOf = (c: Column<Row>) => (typeof c.header === 'string' ? c.header : undefined);
   return (
@@ -52,7 +58,7 @@ export function DataTable<Row>({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={getKey(row, i)}>
+            <tr key={getKey(row, i)} className={rowLink ? 'row-link' : undefined}>
               {columns.map((c) => {
                 const cls = [
                   c.align,

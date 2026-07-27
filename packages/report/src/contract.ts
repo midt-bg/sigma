@@ -81,7 +81,11 @@ export const STORED_REPORT_SCHEMA_VERSION = 1 as const;
 export interface StoredReport {
   schemaVersion: typeof STORED_REPORT_SCHEMA_VERSION;
   id: string; // random, unguessable — do not treat as a privacy boundary; /reports enumerates all IDs
-  createdAt: string; // ISO-8601 UTC
+  createdAt: string; // ISO-8601 UTC — the ORIGINAL publish time, preserved across in-place re-issues
+  // ISO-8601 UTC of the last in-place re-issue (spec §10.4 „коригирано"), set only when a settled week's
+  // artifact was overwritten with corrected data. Absent on a first publish. Lets the D1-free serve path
+  // surface the correction note without reading the `weekly_digests` status row.
+  refreshedAt?: string;
   report: ResolvedReport; // contract #1 — renderable content (render md with raw-HTML disabled)
   provenance: ReportProvenance; // contract #2 — provenance the renderer also surfaces
 }

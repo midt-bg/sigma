@@ -19,6 +19,7 @@ const BLOCK_TYPES = new Set([
   'bar',
   'flows',
   'timeseries',
+  'weekbars',
 ]);
 
 const ENTITY_KINDS = new Set(['company', 'authority', 'contract']);
@@ -152,6 +153,16 @@ export function validateEmitShape(rawInput: unknown): ShapeResult {
           'periodCol and valueCol required',
         );
         if (b.format !== undefined) need(isFormat(b.format), 'format must be a valid CellFormat');
+        break;
+      case 'weekbars':
+        need(
+          isNonEmptyStr(b.currentId) && isNonEmptyStr(b.previousId),
+          'currentId and previousId required',
+        );
+        need(
+          isNonEmptyStr(b.labelCol) && isNonEmptyStr(b.valueCol),
+          'labelCol and valueCol required',
+        );
         break;
     }
   });
