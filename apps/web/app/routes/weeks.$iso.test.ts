@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StoredReport } from '@sigma/report';
-import { headers, loader } from './weeks.$iso';
+import { headers, loader, meta } from './weeks.$iso';
 
 describe('weeks.$iso headers', () => {
   it('is NOT shared-cached, so an in-place re-issued/corrected week propagates immediately (#81)', () => {
@@ -10,6 +10,22 @@ describe('weeks.$iso headers', () => {
     expect(cc).toContain('private');
     expect(cc).not.toContain('s-maxage');
     expect(cc).not.toContain('immutable');
+  });
+});
+
+describe('weeks.$iso meta', () => {
+  it('emits robots: noindex — the digest names winning bidders (possible natural persons) publicly', () => {
+    const tags = meta({
+      matches: [],
+      data: {
+        iso: '2026-W25',
+        report: { title: 'Седмицата в пари', question: '', watermark: 'ai-generated', blocks: [] },
+        asOf: null,
+        generatedAt: '2026-06-22T07:00:00.000Z',
+        refreshedAt: null,
+      },
+    } as unknown as Parameters<typeof meta>[0]);
+    expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
   });
 });
 

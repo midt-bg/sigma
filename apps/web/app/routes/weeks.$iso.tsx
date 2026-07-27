@@ -23,13 +23,19 @@ const DIGEST_CACHE = 'private, max-age=60';
 
 export function meta({ matches, data: d }: Route.MetaArgs) {
   const title = d ? `${d.report.title} — Седмицата в пари` : 'Седмичен обзор';
-  return seoMeta({
+  const metaTags = seoMeta({
     matches,
     path: d ? `/weeks/${d.iso}` : '/weeks',
     title,
     description:
       'Автоматизиран седмичен обзор на обществените поръчки: колко е законтрактувано, най-големите договори и възложители, конкуренция — с числа директно от данните.',
   });
+  // noindex: the top-contracts table names winning bidders (incl. possible sole traders / natural
+  // persons) and links them, and these names bake into the immutable R2 artifact. Mirror company.tsx's
+  // natural-person posture and keep this new public surface out of search indexes. The page still renders
+  // for direct visitors and shared links.
+  metaTags.push({ name: 'robots', content: 'noindex' });
+  return metaTags;
 }
 
 export function headers() {
