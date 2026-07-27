@@ -3,6 +3,7 @@
 // server is stateless (spec §5) — nothing per-user is persisted here.
 
 import type { UIMessage } from 'ai';
+import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import {
@@ -93,7 +94,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   // (review #80).
   const question = latestUserText(messages);
   const ctx: ToolContext = {
-    db: env.DB,
+    db: getDb(env),
     ai,
     vectorize,
     results: [],

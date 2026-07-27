@@ -1,6 +1,6 @@
 import { Form, Link, useNavigation, useSearchParams, useSubmit } from 'react-router';
 import { count, moneyBare } from '@sigma/shared';
-import { getFlows } from '@sigma/db';
+import { getFlows, getDb } from '@sigma/db';
 import type { Route } from './+types/flows';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -26,7 +26,7 @@ export function headers() {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const coverage = await getCoverageMeta(db);
   const years = yearOptions(coverage.coverageEndYear);
   const { sector, year, funding, top, unknownSector, unknownYear } = singleSelectFilters(

@@ -36,5 +36,6 @@
 | [0026](0026-person-grain-name-institution.md) | Идентичност на лицето: (име, ведомство), не голо име — без сливане на съименници, стабилно за E11 divestment | Прието |
 | [0027](0027-overmerge-gate-is-telemetry-not-a-gate.md) | Load-time гейтът за over-merge е телеметрия, не порта (strictKey беше структурна фалшива нула); доказателството е етикетираният тест | Прието |
 | [0028](0028-declared-eik-is-a-determining-identifier.md) | Деклариран ЕИК е определящ идентификатор — ниво `A_eik`, освободено от ТР-преброяването (ЕИК-ът е самоличността, не името) | Прието |
+| [0029](0029-worker-native-fx-load.md) | Worker-native FX зареждане в cron refresh-а и режим на отказ | Прието |
 
 Свързан проектен документ: [spec/related-persons-foundation.md](../spec/related-persons-foundation.md).
