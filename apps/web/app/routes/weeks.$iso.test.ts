@@ -122,4 +122,16 @@ describe('weeks.$iso loader', () => {
     expect((err as Response).status).toBe(404);
     expect(getCalls).toEqual([]);
   });
+
+  it('throws 404 (not 500) on a valid-JSON-but-wrong-shape artifact', async () => {
+    // A hand-written / corrupt upload that parses but lacks report.blocks / provenance.freshness must
+    // 404, not 500 the page on every request (the component/meta would deref missing fields otherwise).
+    const { promise } = callLoader('2026-W25', JSON.stringify({ hello: 1 }));
+    const err = await promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Response);
+    expect((err as Response).status).toBe(404);
+  });
 });

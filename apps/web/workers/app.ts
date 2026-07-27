@@ -47,6 +47,11 @@ const DEPLOY_TAG = Date.now().toString(36);
 // edge key is URL+deploy-tag not data-version, so caching serves a stale list/page after such a change.
 // Does NOT match deeper paths like `/weeks/x/y`.
 const DIGEST_PATH = /^\/weeks(?:\/[^/]+)?\/?$/;
+// The DETAIL page only (`/weeks/:iso`, incl. its React Router `/weeks/:iso.data` twin — `[^/]+` absorbs
+// the `.data` suffix). Gets `X-Robots-Tag: noindex` because it names winning bidders (possible natural
+// persons); the meta noindex on the HTML doesn't cover the `.data` JSON response, this header does. The
+// archive `/weeks` (ranges + totals, no names) is deliberately NOT matched, so it stays indexable.
+const DIGEST_DETAIL_PATH = /^\/weeks\/[^/]+\/?$/;
 
 function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
@@ -121,11 +126,10 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // path + deploy tag, not data version). Caching serves a stale page/list for the whole
   // stale-while-revalidate window. Rendering fresh is a single R2 read/list — cheap enough to always be
   // correct (#81).
-  // Only GETs are edge-cached, so skip the URL parse + digest-path test entirely for other methods.
+  const pathname = new URL(request.url).pathname;
+  // Only GETs are edge-cached, so skip the digest-path test for other methods.
   const key =
-    request.method === 'GET' && !DIGEST_PATH.test(new URL(request.url).pathname)
-      ? cacheKey(request, DEPLOY_TAG)
-      : null;
+    request.method === 'GET' && !DIGEST_PATH.test(pathname) ? cacheKey(request, DEPLOY_TAG) : null;
   if (key) {
     const cached = await edgeCache.match(key);
     if (cached) {
@@ -178,5 +182,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   const hardened = await hardenResponse(response, cacheable);
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
+  // Keep the winning-bidder names on /weeks/:iso out of search indexes at the HTTP layer — covers both
+  // the HTML page and its `.data` twin (the meta noindex reaches only the HTML). Archive stays indexable.
+  if (DIGEST_DETAIL_PATH.test(pathname)) hardened.headers.set('X-Robots-Tag', 'noindex');
   return hardened;
 }

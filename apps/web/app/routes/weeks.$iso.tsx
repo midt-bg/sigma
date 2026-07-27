@@ -51,6 +51,13 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!bucket) throw new Response('Not Found', { status: 404 });
   const stored = await readStoredReport(bucket, isoWeekKey(iso));
   if (!stored) throw new Response('Not Found', { status: 404 });
+  // readStoredReport guards absent keys + invalid JSON (→ null → 404) but does NOT validate shape — a
+  // valid-JSON-but-wrong-shape artifact (e.g. a hand-written upload) would otherwise 500 on every request
+  // when the component/meta dereference `report.title` / `provenance.freshness`. Treat a malformed artifact
+  // as absent (404), not a hard error.
+  if (!stored.report?.blocks || !stored.provenance?.freshness) {
+    throw new Response('Not Found', { status: 404 });
+  }
   // Strip provenance (SQL, model, prompt version) before it reaches the client hydration JSON — mirror
   // the /reports/:id posture. Only the non-sensitive data-freshness date is surfaced (footer).
   const asOf = stored.provenance.freshness[0]?.asOf ?? null;

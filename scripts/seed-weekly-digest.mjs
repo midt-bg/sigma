@@ -18,9 +18,15 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(ROOT, 'build/weekly-seed');
-// Target bucket for the printed upload commands. Override for the shared dev/preview bucket:
-//   SIGMA_REPORTS_NAME=sigma-reports-dev node scripts/seed-weekly-digest.mjs
-const BUCKET = process.env.SIGMA_REPORTS_NAME || 'sigma-reports';
+// Target bucket for the printed upload commands. DEFAULTS TO THE DEV BUCKET — this script fabricates
+// procurement records naming real institutions by their real ids; publishing them to the production
+// `sigma-reports` bucket would put fake digests on the public site, and the printed `--remote delete`
+// commands (for weeks recentWeeks() also generates) would nuke real cron artifacts. To target prod you
+// must BOTH name it and opt in: `SIGMA_REPORTS_NAME=sigma-reports ALLOW_PROD_SEED=1 node …` (see below).
+const PROD_BUCKET = 'sigma-reports';
+const BUCKET = process.env.SIGMA_REPORTS_NAME || 'sigma-reports-dev';
+const IS_PROD_BUCKET = BUCKET === PROD_BUCKET;
+const ALLOW_PROD_REMOTE = process.env.ALLOW_PROD_SEED === '1';
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
 
 // Deterministic pseudo-random from a string, so re-running produces stable numbers per week.
@@ -218,18 +224,40 @@ for (const iso of weeks) {
 }
 
 console.log(
-  `\n# bucket = ${BUCKET}  (override with SIGMA_REPORTS_NAME; preview/dev = sigma-reports-dev)`,
+  `\n# bucket = ${BUCKET}  (default: sigma-reports-dev; override with SIGMA_REPORTS_NAME)`,
 );
 console.log('\n# Upload to LOCAL R2 (for `pnpm --filter @sigma/web dev`):');
 for (const c of putCmds) console.log(`  ${c} --local`);
-console.log('\n# Upload to the REMOTE bucket (needs `wrangler login` to that Cloudflare account):');
-for (const c of putCmds) console.log(`  ${c} --remote`);
-console.log('\n# Then open  /weeks  and  /weeks/' + (weeks[0] ?? '<iso>'));
-console.log('# Clean up a seeded week when done:');
-for (const iso of weeks) {
-  if (/^\d{4}-W\d{2}$/.test(iso)) {
+
+// Refuse to hand over prod `--remote` commands unless the operator has BOTH named the prod bucket AND
+// set ALLOW_PROD_SEED=1. These commands publish fabricated public data / delete real artifacts, and
+// recentWeeks() collides with the live cron's weeks by default — so a copy-paste against prod is a
+// data-integrity incident, not a test.
+if (IS_PROD_BUCKET && !ALLOW_PROD_REMOTE) {
+  console.log(
+    `\n# ⚠️  REMOTE commands for the PRODUCTION bucket "${PROD_BUCKET}" are withheld. This script writes\n` +
+      '#     FAKE digests naming real institutions, and its delete commands would remove real cron\n' +
+      '#     artifacts (recentWeeks() overlaps the live cron). If you truly mean prod, re-run with:\n' +
+      `#       SIGMA_REPORTS_NAME=${PROD_BUCKET} ALLOW_PROD_SEED=1 node scripts/seed-weekly-digest.mjs …`,
+  );
+} else {
+  if (IS_PROD_BUCKET) {
     console.log(
-      `  pnpm --filter @sigma/web exec wrangler r2 object delete "${BUCKET}/weeks/${iso}.json" --remote`,
+      `\n# ⚠️  TARGETING PRODUCTION ("${PROD_BUCKET}") — these publish FAKE public digests / delete real\n` +
+        '#     artifacts. Double-check every ISO week before running.',
     );
   }
+  console.log(
+    '\n# Upload to the REMOTE bucket (needs `wrangler login` to that Cloudflare account):',
+  );
+  for (const c of putCmds) console.log(`  ${c} --remote`);
+  console.log('\n# Clean up a seeded week when done:');
+  for (const iso of weeks) {
+    if (/^\d{4}-W\d{2}$/.test(iso)) {
+      console.log(
+        `  pnpm --filter @sigma/web exec wrangler r2 object delete "${BUCKET}/weeks/${iso}.json" --remote`,
+      );
+    }
+  }
 }
+console.log('\n# Then open  /weeks  and  /weeks/' + (weeks[0] ?? '<iso>'));
