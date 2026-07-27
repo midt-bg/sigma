@@ -37,7 +37,11 @@ function stripSeatSuffix(upper) {
   // Peel trailing comma-clauses right-to-left while the clause bears no legal form (i.e. it's a seat, not
   // the фирма tail). Comma-peel runs BEFORE the marker strip so „X АД, гр. София" loses the whole „, …"
   // clause (no dangling comma left to break the terminal form anchor).
-  for (let m = s.match(/^(.*),\s*([^,]+)$/u); m && !hasFormToken(m[2]); m = s.match(/^(.*),\s*([^,]+)$/u)) {
+  for (
+    let m = s.match(/^(.*),\s*([^,]+)$/u);
+    m && !hasFormToken(m[2]);
+    m = s.match(/^(.*),\s*([^,]+)$/u)
+  ) {
     s = m[1].trim();
   }
   return s.replace(SEAT_MARKER, '').trim();
