@@ -187,6 +187,14 @@ export function buildDigestGenerate(env: WeeklyDigestEnv): GenerateFn {
       maxOutputTokens: 1400, // room for a ≥5 paragraph „Какво се случи" analysis (spec §3.3)
       abortSignal: AbortSignal.timeout(NARRATIVE_TIMEOUT_MS),
     });
+    // A `length` finish means the token cap truncated the narrative mid-sentence. The role-④ verifier
+    // only checks that claims are GROUNDED, not that prose is COMPLETE, so a truncated-but-grounded draft
+    // would pass verification and get published (into the immutable R2 artifact) ending mid-word. Throw so
+    // it takes the same path as a generation failure — caught in the orchestrator → retry → AI-free
+    // fallback (MAX_NARRATIVE_ATTEMPTS); a truncated draft is exactly when a regenerate is worth spending.
+    if (result.finishReason === 'length') {
+      throw new Error('narrative truncated at the token cap (finishReason=length)');
+    }
     return result.text;
   };
 }
