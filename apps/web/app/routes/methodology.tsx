@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, date, money, pct } from '@sigma/shared';
-import { getMethodologyStats } from '@sigma/db';
+import { getMethodologyStats, getDb } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -24,7 +24,7 @@ export function headers() {
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  return getMethodologyStats(context.cloudflare.env.DB);
+  return getMethodologyStats(getDb(context.cloudflare.env));
 }
 
 const TOC = [
@@ -371,6 +371,39 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                     конкретните договори.
                   </p>
                   <span className="src">→ сума от квадратите на дяловете на доставчиците</span>
+                </dd>
+                <dt>Дял пряко възлагане (без обявление)</dt>
+                <dd>
+                  <p>
+                    Делът на договорите, възложени <strong>без обявление за поръчка</strong> — пряко
+                    договаряне или договаряне без предварително обявление, т.е.{' '}
+                    <strong>без покана за състезание</strong>. Знаменателят са договорите с
+                    класифицирана процедура (открита/състезание/събиране на оферти или пряко);
+                    неутралните („договаряне с покана", „друго") и синтетичните процедури с
+                    неизвестен вид се отчитат отделно и не влизат в дела. Неутрален индикатор за
+                    слаба конкуренция, не оценка на процедурата.
+                  </p>
+                  <span className="src">→ tenders.procedure_type</span>
+                </dd>
+                <dt>Праг на ЕС (Single Market Scoreboard)</dt>
+                <dd>
+                  <p>
+                    Европейската комисия съпоставя обществените поръчки с фиксирани прагове. СИГМА
+                    използва два от тях само като <strong>външен ориентир</strong>: дял с една
+                    оферта — целево ≤ 10%, високо ≥ 20%; дял пряко възлагане — целево ≤ 5%, високо ≥
+                    10%. Това е сравнение спрямо обща рамка, а не оценка на конкретна процедура или
+                    възложител.
+                  </p>
+                  <span className="src">
+                    →{' '}
+                    <a
+                      href="https://single-market-scoreboard.ec.europa.eu/business-framework-conditions/public-procurement_en"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      single-market-scoreboard.ec.europa.eu
+                    </a>
+                  </span>
                 </dd>
               </dl>
             </section>

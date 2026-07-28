@@ -3,7 +3,7 @@
 // the same slugs as the routes (companySlug encodes name-keyed bidders).
 
 import { isNaturalPersonProfileName } from '@sigma/shared';
-import { companySlug } from './identity';
+import { companySlug, contractSlug } from './identity';
 
 const HEAD =
   '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
@@ -149,7 +149,7 @@ export function streamContractSitemap(db: D1Database, origin: string, page: numb
       const block = results
         .map(
           (r) =>
-            `<url><loc>${xmlEscape(origin)}/contracts/${xmlEscape(r.id.replace(/^c:/, ''))}</loc>${lastmod(r.signed_at ?? r.published_at ?? fallback)}</url>\n`,
+            `<url><loc>${xmlEscape(origin)}/contracts/${xmlEscape(contractSlug(r.id))}</loc>${lastmod(r.signed_at ?? r.published_at ?? fallback)}</url>\n`,
         )
         .join('');
       controller.enqueue(enc.encode(block));

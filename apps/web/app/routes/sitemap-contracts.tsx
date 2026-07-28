@@ -1,4 +1,4 @@
-import { streamContractSitemap } from '@sigma/db';
+import { streamContractSitemap, getDb } from '@sigma/db';
 import type { Route } from './+types/sitemap-contracts';
 import { withDataSource } from '../lib/dataSource';
 
@@ -10,5 +10,5 @@ export function loader({ request, context }: Route.LoaderArgs) {
   }
 
   const page = rawPage === null ? 1 : Number(rawPage);
-  return withDataSource(streamContractSitemap(context.cloudflare.env.DB, url.origin, page));
+  return withDataSource(streamContractSitemap(getDb(context.cloudflare.env), url.origin, page));
 }

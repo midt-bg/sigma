@@ -21,7 +21,8 @@ function b64urlDecode(s: string): string {
 
 const EIK_RE = /^\d{9}(\d{4})?$/;
 
-/** bidder id → `/companies/:slug` segment. Valid ЕИК → the digits; name-keyed → `n` + base64url(name). */
+/** bidder id → `/companies/:slug` segment. Valid ЕИК → digits; name-keyed → `n` + base64url(name);
+ * the labelled unknown bucket stays literal so contract-page links remain resolvable. */
 export function companySlug(bidderId: string): string {
   if (bidderId.startsWith('eik:')) return bidderId.slice(4);
   if (bidderId.startsWith('name:')) return 'n' + b64urlEncode(bidderId.slice(5));
@@ -31,6 +32,7 @@ export function companySlug(bidderId: string): string {
 /** `/companies/:slug` segment → bidder id, or null if it cannot be decoded. */
 export function bidderIdFromSlug(slug: string): string | null {
   if (EIK_RE.test(slug)) return 'eik:' + slug;
+  if (slug === 'unknown:анонимен') return slug;
   if (slug.startsWith('n')) {
     try {
       return 'name:' + b64urlDecode(slug.slice(1));
@@ -51,12 +53,35 @@ export function authorityIdFromSlug(slug: string): string {
   return 'auth:' + slug;
 }
 
-/** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). */
-export function contractSlug(contractId: string): string {
+/** contract id (`c:*`) → bare id without the leading `c:` prefix. This is the raw, un-encoded form
+ *  — suitable for data export (CSV) where URL escaping is undesirable. Slug/href callers must layer
+ *  `contractSlug` on top for path safety. */
+export function bareContractId(contractId: string): string {
   return contractId.startsWith('c:') ? contractId.slice(2) : contractId;
 }
 
-/** `/contracts/:id` segment → contract id. */
+/** contract id (`c:*`) → `/contracts/:id` segment (the id without the leading `c:`). Path-unsafe
+ *  characters are percent-encoded: `%` first (to avoid mangling later replacements), then the URL
+ *  structural chars `/`, `?`, `#`, and `\` — the WHATWG URL parser treats `\` as `/` in special-scheme
+ *  paths, so an unencoded backslash would split the segment exactly like a raw slash (review #221) —
+ *  plus whitespace and every Unicode control char via the `\p{Cc}`
+ *  property (C0 U+0000–U+001F, DEL U+007F, C1 U+0080–U+009F). Encoding whitespace keeps the SSR-emitted
+ *  href / sitemap `<loc>` a technically-valid URL when a domain id carries a space — e.g. a
+ *  `contract_number` like `ОП 20-42` (review #221; a literal space in `<loc>` violates the sitemap spec).
+ *  `\p{Cc}` is used rather than a raw code-point range so the class can't be misread as caret notation
+ *  (`^@-^_`) in a diff viewer. Readable chars (incl. Cyrillic) and the structural `:` separators stay
+ *  literal. React Router decodes these back in params, so `contractIdFromSlug` needs no change.
+ *  The output is URL-path-safe but NOT HTML/XML-safe (`"` `<` `>` `'` `&` stay literal) — every
+ *  consumer embedding it in markup must escape it (React JSX does; sitemaps use `xmlEscape`). */
+export function contractSlug(contractId: string): string {
+  return bareContractId(contractId)
+    .replace(/%/g, '%25')
+    .replace(/[/\\?#\s\p{Cc}]/gu, encodeURIComponent);
+}
+
+/** `/contracts/:id` segment → contract id. The segment must already be percent-DECODED — pass React
+ *  Router's `params.id` (RR decodes path params); never feed a raw URL segment straight off the wire,
+ *  or an encoded `%2F` survives as literal `%2F` text inside the id. */
 export function contractIdFromSlug(slug: string): string {
   return 'c:' + slug;
 }
