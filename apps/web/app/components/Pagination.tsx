@@ -15,7 +15,13 @@ export function Pagination({
   return (
     <nav className="paging" aria-label="Навигация по страници">
       <div>
-        Страница <strong>{fmtCount(nav.page)}</strong> от <strong>{fmtCount(nav.pageCount)}</strong>{' '}
+        Страница <strong>{fmtCount(nav.page)}</strong>
+        {nav.pageCount !== null && (
+          <>
+            {' '}
+            от <strong>{fmtCount(nav.pageCount)}</strong>
+          </>
+        )}{' '}
         · по {pageSize} на страница{unit ? ` (${unit})` : ''}
       </div>
       <div className="ctrl">

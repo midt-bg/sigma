@@ -534,6 +534,149 @@
   height: auto;
   display: block;
 }
+/* Hydrated force view: the canvas is a pan/zoom surface; nodes are draggable. */
+.net-canvas {
+  position: relative;
+}
+.network-svg.is-interactive {
+  cursor: grab;
+  touch-action: none; /* let d3-zoom own touch gestures instead of the page scrolling */
+}
+.network-svg.is-interactive:active {
+  cursor: grabbing;
+}
+.network-svg.is-interactive a[data-draggable='1'] {
+  cursor: grab;
+}
+/* Zoom controls — overlaid top-right of the canvas, client-only (rendered after hydration). */
+.net-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.net-zoom button {
+  width: 30px;
+  height: 30px;
+  font: 600 16px var(--font-mono, monospace);
+  line-height: 1;
+  color: var(--ink, #222);
+  background: var(--paper, #fff);
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.net-zoom button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+@media (hover: none) and (pointer: coarse) {
+  /* 30px is below the 44px touch floor. Grow the buttons directly rather than the invisible
+     ::after overlay used for .metric-info-btn — the two zoom buttons stack with only 4px gap, so
+     overlaid hit areas would overlap each other. */
+  .net-zoom {
+    gap: 8px;
+  }
+  .net-zoom button {
+    width: 44px;
+    height: 44px;
+  }
+}
+/* Graph + side Information Card layout (mirrors /map). Card wraps under the graph on narrow screens. */
+.net-explore {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.net-explore .net-canvas {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+/* Full-screen: the widget fills the viewport on a paper background; the graph grows to use the height,
+   the card sits beside it, and the controls/legend stay usable. */
+.net-graph:fullscreen {
+  background: var(--paper);
+  padding: 24px;
+  overflow: auto;
+}
+.net-graph:fullscreen .net-explore {
+  min-height: calc(100vh - 160px);
+}
+.net-graph:fullscreen .net-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.net-graph:fullscreen .network-svg {
+  max-height: calc(100vh - 180px);
+}
+.net-card {
+  flex: 0 0 240px;
+  align-self: stretch;
+  border: 1px solid var(--rule, #d8d6cf);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: color-mix(in oklch, var(--ink) 3%, var(--paper));
+}
+.net-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.net-card-sub {
+  margin: 2px 0 12px;
+  font: 12px var(--font-mono, monospace);
+}
+.net-card-stats {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 10px;
+}
+.net-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px dotted var(--rule, #d8d6cf);
+  padding-bottom: 6px;
+}
+.net-card-stats dt {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-card-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.net-card-actions {
+  margin: 0;
+}
+.net-card-hint {
+  margin: 0;
+  font-size: 0.9rem;
+}
+/* Hover-to-explore emphasis: dim everything but the focused node + its neighbours; lift the focus. */
+.network-svg.is-hovering .is-dim {
+  opacity: 0.18;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .network-svg .node,
+  .network-svg .edge,
+  .network-svg .node-label,
+  .network-svg .edge-label,
+  .network-svg g[class],
+  .network-svg a {
+    transition: opacity 0.12s ease;
+  }
+}
+.network-svg .is-focus .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
 .network-svg .edge {
   stroke: #d8d6cf;
 }
@@ -544,6 +687,102 @@
 .network-svg .node-label {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
+}
+/* Per-edge value label, rotated in the component to lie along the edge. A thick white halo
+   (paint-order: stroke) keeps the number readable where it crosses edges/nodes. Toggle hides it. */
+.network-svg .edge-label {
+  fill: var(--ink, #222);
+  font: 600 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3.25px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+/* Non-centre nodes are anchors to a profile page → show the click affordance and an accent ring. */
+.network-svg a {
+  cursor: pointer;
+}
+/* With JS (issue #142) nodes are also draggable; show the grab affordance. Sighted-only — the
+   connections table stays the keyboard/AT path, so this is purely a pointer cue. */
+.network-svg a[data-draggable='1'] {
+  cursor: grab;
+}
+.network-svg a[data-draggable='1']:active {
+  cursor: grabbing;
+}
+.network-svg a:hover .node,
+.network-svg a:focus-visible .node {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.network-svg a:focus-visible {
+  outline: none;
+}
+/* Edge-label toggle (pure CSS, no JS): unchecked hides every .edge-label. */
+/* Controls row above the graph: the edge-value toggle plus, once you've browsed to another node,
+   the Open / Reset actions. Wraps on narrow screens. */
+.net-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+.net-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+  cursor: pointer;
+  user-select: none;
+}
+.net-toggle input {
+  accent-color: var(--accent);
+}
+.net-graph:has(.net-toggle input:not(:checked)) .edge-label {
+  display: none;
+}
+/* Browse actions — appear only after a client-side re-centre (no JS = no recentre = hidden). */
+.net-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.net-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font: 600 12px var(--font-mono, monospace);
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.net-btn:hover {
+  filter: brightness(0.94);
+}
+.net-btn-ghost {
+  color: var(--ink, #222);
+  background: transparent;
+  border-color: var(--rule, #d8d6cf);
+}
+.net-loading {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #555);
+}
+.net-hint {
+  font: 12px var(--font-mono, monospace);
+  color: var(--ink-soft, #888);
+}
+.net-error {
+  font: 12px var(--font-mono, monospace);
+  color: var(--accent);
 }
 .net-legend {
   display: flex;
@@ -570,6 +809,11 @@
 .net-legend .key.center,
 .net-legend .key.authority {
   border-radius: 50%;
+}
+.net-caption {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
 }
 .net-legend .key.center {
   background: var(--accent);

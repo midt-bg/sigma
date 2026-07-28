@@ -5,12 +5,14 @@
 
 import type {
   NetworkCenterOption,
+  NetworkCounterpartyPage,
   NetworkData,
   NetworkEdge,
   NetworkNode,
 } from '@sigma/api-contract';
 import { cleanName, entityName } from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
+import { filterSignature, keyset, pageCursors } from './keyset';
 
 export type NetworkCenterKind = 'authority' | 'company';
 export interface NetworkParams {
@@ -22,9 +24,14 @@ export interface NetworkQueryOptions {
   includeCenterOptions?: boolean;
 }
 
-const HOP1 = 6; // direct counterparties shown
+const HOP1 = 6; // direct counterparties drawn in the graph (readability cap, not the real degree)
 const HOP2_SCAN = HOP1 * 10; // rows scanned for hop 2 before the top-1-per-neighbour reduction
 const PICKER_LIMIT = 12; // entities offered in the centre picker
+// Default rows per page in the exhaustive relations table when no `pageSize` is passed. In
+// practice the /network route always passes `PAGE_SIZE.network` from apps/web/app/lib/filters.ts
+// explicitly — keep the two values equal (currently 25) since packages/db cannot import from
+// apps/web without inverting the package dependency direction.
+export const COUNTERPARTY_PAGE_SIZE = 25;
 
 interface PairRow {
   authority_id: string;
@@ -158,6 +165,7 @@ export async function getEntityNetwork(
         center: null,
         nodes: [],
         edges: [],
+        counterpartyTotal: 0,
         centerOptions: includeCenterOptions ? await loadCenterOptions(db) : emptyCenterOptions(),
       };
     }
@@ -167,7 +175,7 @@ export async function getEntityNetwork(
   const centerCol = isAuth ? 'authority_id' : 'bidder_id';
   const neighborCol = isAuth ? 'bidder_id' : 'authority_id';
 
-  const [centerOptions, hop1res] = await Promise.all([
+  const [centerOptions, hop1res, totalRow] = await Promise.all([
     includeCenterOptions ? loadCenterOptions(db) : Promise.resolve(emptyCenterOptions()),
     db
       .prepare(
@@ -176,11 +184,20 @@ export async function getEntityNetwork(
       )
       .bind(p.id, HOP1)
       .all<PairRow>(),
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM flow_pairs WHERE ${centerCol} = ?`)
+      .bind(p.id)
+      .first<{ n: number }>(),
   ]);
   const hop1 = hop1res.results;
+  // `totalRow` is only absent if the COUNT query itself failed to return a row (D1 error, not "zero
+  // rows" — COUNT(*) always returns exactly one row). Keep that failure as `null` ("unknown") rather
+  // than substituting the HOP1 draw cap, which would silently mislabel "top N of M" with a fabricated
+  // small M.
+  const counterpartyTotal = totalRow ? totalRow.n : null;
 
   const center = await loadCenter(db, p, hop1[0]);
-  if (!center) return { center: null, nodes: [], edges: [], centerOptions };
+  if (!center) return { center: null, nodes: [], edges: [], counterpartyTotal, centerOptions };
 
   const nodes = new Map<string, NetworkNode>([[center.id, { ...center, hop: 0 }]]);
   const edges: NetworkEdge[] = [];
@@ -234,5 +251,83 @@ export async function getEntityNetwork(
     valueEur: weight.get(nd.id) ?? nd.valueEur,
   }));
 
-  return { center, nodes: nodeList, edges, centerOptions };
+  return { center, nodes: nodeList, edges, counterpartyTotal, centerOptions };
+}
+
+// Exhaustive, keyset-paginated list of the centre's direct counterparties (one flow_pairs row each),
+// sorted by award value desc. The graph caps at HOP1 for readability; this is the full set so a big
+// hub's hundreds of counterparties stay reachable on the /network relations table. Rows are always
+// normalised to (authority → company) regardless of which side is the centre.
+export async function getEntityCounterparties(
+  db: D1Database,
+  p: NetworkParams,
+  opts: { cursor?: string | null; pageSize?: number; total?: number | null } = {},
+): Promise<NetworkCounterpartyPage> {
+  const isAuth = p.kind === 'authority';
+  const centerCol = isAuth ? 'authority_id' : 'bidder_id';
+  const neighborCol = isAuth ? 'bidder_id' : 'authority_id';
+  const pageSize = opts.pageSize ?? COUNTERPARTY_PAGE_SIZE;
+
+  // Keyset on (won_eur desc, <neighbour id>) — O(1) at any depth, same scheme as the contracts list.
+  // Bind the cursor to this centre: a cursor minted for centre A is structurally valid on centre B
+  // (same idCol), so without this a shared/hand-edited `?center=B&cursor=<from A>` would mispaginate
+  // instead of resetting. The signature mismatch makes such a cursor decode to null → page 1.
+  const ks = keyset({
+    sortCol: 'won_eur',
+    idCol: neighborCol,
+    dir: 'desc',
+    cursor: opts.cursor,
+    filterSignature: filterSignature({ center: p.id }),
+    allowedIdCols: ['authority_id', 'bidder_id'],
+  });
+  const where = ks.whereSql ? `${centerCol} = ? AND ${ks.whereSql}` : `${centerCol} = ?`;
+
+  // The counterparty total is the same `COUNT(*) FROM flow_pairs WHERE <centre> = ?` getEntityNetwork
+  // already runs. On /network both run, so the caller passes the known total here and we skip a second
+  // identical scan (D1 charges per row read). Standalone callers omit it, and a caller whose own COUNT
+  // failed passes `null` (not a number) — in both of those cases we count here instead of trusting a
+  // missing/failed value, so a failure never gets masked as a reused "total".
+  const [rowsRes, totalRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts
+         FROM flow_pairs WHERE ${where} ${ks.orderSql} LIMIT ?`,
+      )
+      .bind(p.id, ...ks.params, pageSize + 1)
+      .all<PairRow>(),
+    typeof opts.total === 'number'
+      ? Promise.resolve({ n: opts.total })
+      : db
+          .prepare(`SELECT COUNT(*) AS n FROM flow_pairs WHERE ${centerCol} = ?`)
+          .bind(p.id)
+          .first<{ n: number }>(),
+  ]);
+
+  const hasMore = rowsRes.results.length > pageSize;
+  let rows = rowsRes.results.slice(0, pageSize);
+  if (ks.reverse) rows = rows.reverse();
+
+  const { nextCursor, prevCursor } = pageCursors({
+    rows: rows.map((r) => ({ sortValue: r.won_eur, id: isAuth ? r.bidder_id : r.authority_id })),
+    hasMore,
+    incomingCursor: opts.cursor,
+    cursor: ks.cursor,
+    sortToken: ks.cursorToken,
+  });
+
+  return {
+    rows: rows.map((r) => ({
+      authorityLabel: cleanName(r.authority_name),
+      authoritySlug: authoritySlug(r.authority_id),
+      companyLabel: entityName(cleanName(r.bidder_name), r.bidder_kind),
+      companySlug: companySlug(r.bidder_id),
+      valueEur: r.won_eur,
+      contracts: r.contracts,
+    })),
+    // Preserve a COUNT failure as `null` ("unknown"), same as getEntityNetwork's counterpartyTotal —
+    // coalescing to 0 would be indistinguishable from a real zero and fabricate an empty relations count.
+    total: totalRow ? totalRow.n : null,
+    nextCursor,
+    prevCursor,
+  };
 }
