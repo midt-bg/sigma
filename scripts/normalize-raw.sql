@@ -347,7 +347,8 @@ INSERT OR IGNORE INTO tenders
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
-   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id)
+   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id,
+   corrections_count)
 SELECT
   't:' || t.unp,
   t.unp,
@@ -380,7 +381,8 @@ SELECT
   t.innovation,
   t.eauction,
   t.cancelled,
-  NULLIF(t.tender_id, '')                 -- raw EOP numeric tenderId from the header row
+  NULLIF(t.tender_id, ''),                -- raw EOP numeric tenderId from the header row
+  t.corrections_count
 FROM raw_tenders t
 WHERE t.lot_id IS NULL
   AND EXISTS (
@@ -719,7 +721,8 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic,
+   exemption_legal_basis, outside_zop, dps_contract)
 -- amendment_winner: the currency of whichever raw_amendments row supplied contract_number's
 -- current_value (derive-amendments.sql's own rollup, mirrored here so the winning currency
 -- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
@@ -806,7 +809,10 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  x.exemption_legal_basis,
+  x.outside_zop,
+  x.dps_contract
 FROM (
   SELECT y.*,
     CASE y.value_flag

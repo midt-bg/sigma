@@ -6,13 +6,14 @@
 // are async (they `await runner`), so the call sites await; a synchronous runner still works because
 // awaiting its array result is transparent.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertIntegrity,
+  checkContractFeaturesIntegrity,
   checkCurrentAmountParity,
   checkDateSanity,
   checkEikValidity,
@@ -23,10 +24,16 @@ import {
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
-const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
+// The full migration chain, in apply order — the ETL scripts under test (precompute.sql) now
+// reference columns added by later migrations (e.g. 0003's health-index columns), exactly like
+// scripts/import.mjs, which also applies the whole chain to a fresh work DB.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrationPaths = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
+const deriveContractFeaturesPath = resolve(root, 'scripts/derive-contract-features.sql');
 
 function sqlite(dbPath: string, sql: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: sql, encoding: 'utf8', stdio: 'pipe' });
@@ -65,15 +72,17 @@ VALUES
 function freshDb(): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'sigma-integrity-'));
   const dbPath = resolve(dir, 'test.sqlite');
-  readScript(dbPath, schemaPath);
-  readScript(dbPath, migration1Path);
-  readScript(dbPath, migration2Path);
+  for (const migration of migrationPaths) readScript(dbPath, migration);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }
 
 function precompute(dbPath: string): void {
   readScript(dbPath, precomputePath);
+}
+
+function deriveContractFeatures(dbPath: string): void {
+  readScript(dbPath, deriveContractFeaturesPath);
 }
 
 let dirs: string[] = [];
@@ -309,4 +318,82 @@ describe('reconciliation gate — injected violations', () => {
       assertIntegrity(runner(db), { label: 'test-corrupt', exit: false }),
     ).rejects.toThrow(/integrity gate failed/);
   });
+});
+
+// Contract Quality / Health Index hard gate (PR #188 review): derive-contract-features.sql's own
+// summary SELECT computed these invariants but never asserted them. CLEAN_FIXTURE's tender
+// procedure_type is deliberately lowercase (a real-world casing variant) so it does NOT match the
+// §12.2 exact-case vocabulary map — exercising that on its own would report unmapped_procedure_rows,
+// so this fixture uses the correctly-cased 'Открита процедура' to get a genuinely clean derive.
+describe('contract-features-integrity gate', () => {
+  function deriveFixture(): string {
+    const db = freshDb();
+    sqlite(db, "UPDATE tenders SET procedure_type = 'Открита процедура';");
+    precompute(db);
+    deriveContractFeatures(db);
+    return db;
+  }
+
+  it('self-skips before derive-contract-features.sql has run', async () => {
+    const db = track(freshDb());
+    const result = await checkContractFeaturesIntegrity(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it('passes clean after a real derive-contract-features.sql run', async () => {
+    const db = track(deriveFixture());
+    const result = await checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toBe(false);
+  }, 30_000);
+
+  it('catches an orphaned/dropped contract_features row (contracts_rows mismatch)', async () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      'DELETE FROM contract_features WHERE contract_id = (SELECT MIN(contract_id) FROM contract_features);',
+    );
+    const result = await checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/contract_features_rows .* != contracts_rows/);
+  }, 30_000);
+
+  it('catches an unmapped procedure_type (§12.2 vocabulary gap)', async () => {
+    const db = track(freshDb());
+    // one tender left with the fixture's lowercase, out-of-vocabulary procedure_type
+    sqlite(db, "UPDATE tenders SET procedure_type = 'Открита процедура' WHERE id = 't:2';");
+    precompute(db);
+    deriveContractFeatures(db);
+    const result = await checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/unmapped procedure_type/);
+  }, 30_000);
+
+  it('catches a direct-award contract with a nonzero score_b', async () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      "UPDATE tenders SET procedure_type = 'Пряко договаряне' WHERE id = (SELECT tender_id FROM contracts WHERE id = 'c:1');" +
+        "UPDATE contract_features SET score_b = 0.5 WHERE contract_id = 'c:1';",
+    );
+    const result = await checkContractFeaturesIntegrity(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/direct-award .* nonzero score_b/);
+  }, 30_000);
+
+  it('assertIntegrity with the narrowed checks array gates only contract-features-integrity', async () => {
+    const db = track(deriveFixture());
+    sqlite(
+      db,
+      'DELETE FROM contract_features WHERE contract_id = (SELECT MIN(contract_id) FROM contract_features);',
+    );
+    await expect(
+      assertIntegrity(runner(db), {
+        label: 'test-contract-features',
+        exit: false,
+        checks: [checkContractFeaturesIntegrity],
+      }),
+    ).rejects.toThrow(/integrity gate failed/);
+  }, 30_000);
 });

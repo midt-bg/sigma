@@ -11,6 +11,10 @@ const migration2 = readFileSync(
   resolve(root, 'packages/db/migrations/0002_current_value_currency.sql'),
   'utf8',
 );
+const migration3 = readFileSync(
+  resolve(root, 'packages/db/migrations/0003_contract_health.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -61,6 +65,7 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(schema);
   db.exec(migration2);
+  db.exec(migration3);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {

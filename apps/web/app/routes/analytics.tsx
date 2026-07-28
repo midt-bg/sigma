@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 import {
   getCompetitionSummary,
   getFlows,
+  getQualitySummary,
   getRegionalSpending,
   getSpendingTrend,
   getDb,
@@ -17,6 +18,7 @@ import { SingleOfferPortion } from '../components/SingleOfferPortion';
 import { Section, ShareBar } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
+import { isMissingDerivedTableError } from '../lib/etl';
 import { seoMeta } from '../lib/meta';
 
 export function meta({ matches }: Route.MetaArgs) {
@@ -35,11 +37,17 @@ export function headers() {
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
-  const [flows, regional, trend, competition] = await Promise.all([
+  const [flows, regional, trend, competition, quality] = await Promise.all([
     getFlows(db, { top: 3 }),
     getRegionalSpending(db, { funding: 'all' }),
     getSpendingTrend(db, { funding: 'all', granularity: 'year' }, { includeSectors: false }),
     getCompetitionSummary(db),
+    getQualitySummary(db).catch((err) => {
+      // the quality tables land with the next full derive — anything else is unexpected
+      if (!isMissingDerivedTableError(err))
+        console.error('[analytics] getQualitySummary failed', err);
+      return null;
+    }),
   ]);
 
   return {
@@ -59,6 +67,7 @@ export async function loader({ context }: Route.LoaderArgs) {
       totals: competition.totals,
       topConcentration: competition.topConcentration,
     },
+    quality,
   };
 }
 
@@ -71,7 +80,7 @@ function LensLink({ to, children }: { to: string; children: ReactNode }) {
 }
 
 export default function Analytics({ loaderData }: Route.ComponentProps) {
-  const { flows, regions, allRegions, regionTotal, trend, competition } = loaderData;
+  const { flows, regions, allRegions, regionTotal, trend, competition, quality } = loaderData;
 
   return (
     <>
@@ -191,6 +200,31 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
                         </Link>{' '}
                         (индекс {pct(competition.topConcentration.hhi)})
                       </p>
+                    )}
+                  </div>
+                )}
+                {lens.href === '/quality' && (
+                  <div className="lens-preview">
+                    <p className="lens-preview-title">Среден индекс на корпуса</p>
+                    {quality &&
+                    quality.scoredContracts > 0 &&
+                    quality.totalContracts > 0 &&
+                    quality.avgOverall != null ? (
+                      <dl className="lens-metrics">
+                        <div>
+                          <dt>Среден индекс</dt>
+                          <dd>{Math.round(quality.avgOverall * 100)}/100</dd>
+                        </div>
+                        <div>
+                          <dt>Оценени договори</dt>
+                          <dd>
+                            {count(quality.scoredContracts)} (
+                            {pct(quality.scoredContracts / quality.totalContracts)})
+                          </dd>
+                        </div>
+                      </dl>
+                    ) : (
+                      <p className="muted">Индексът се изчислява при следващото обновяване.</p>
                     )}
                   </div>
                 )}

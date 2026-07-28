@@ -30,9 +30,13 @@ export function checkNoNegativeValues(runner: IntegrityRunner): Promise<Integrit
 export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkStagingReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkContractFeaturesIntegrity(runner: IntegrityRunner): Promise<IntegrityResult>;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
-export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;
+export function runIntegrityChecks(
+  runner: IntegrityRunner,
+  checks?: Array<(runner: IntegrityRunner) => IntegrityResult | Promise<IntegrityResult>>,
+): Promise<IntegrityResult[]>;
 
 export interface IntegritySummary {
   /** true when no check is a hard failure (warnings/skips don't break the gate) */
@@ -54,6 +58,9 @@ export interface AssertIntegrityOptions {
   label?: string;
   /** true (default) → print and process.exit(1) on failure; false → throw instead (for tests) */
   exit?: boolean;
+  /** checks to run; defaults to the standard CHECKS set. Pass a narrower array (e.g.
+   *  [checkContractFeaturesIntegrity]) to gate a call-site-specific subset. */
+  checks?: Array<(runner: IntegrityRunner) => IntegrityResult | Promise<IntegrityResult>>;
 }
 export function assertIntegrity(
   runner: IntegrityRunner,

@@ -8,7 +8,7 @@ DELETE FROM amendments;
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source
+  published_at, document_number, description, reason, circumstances, source
 )
 WITH keyed AS (
   SELECT
@@ -46,6 +46,8 @@ SELECT
   published_at,
   document_number,
   description,
+  reason,
+  circumstances,
   source
 FROM dedup
 WHERE rn = 1;
