@@ -6,6 +6,7 @@
 
 import type { MacroRegionSpend, RegionSpend, RegionalSpending } from '@sigma/api-contract';
 import { BG_REGIONS, regionByName } from '@sigma/config';
+import { cleanName } from '@sigma/shared';
 import { sectorOptions } from './sectors';
 
 export interface RegionalParams {
@@ -14,11 +15,37 @@ export interface RegionalParams {
   funding?: 'all' | 'eu' | 'national';
 }
 
+export interface RegionTopBeneficiary {
+  bidderId: string;
+  name: string;
+  valueEur: number;
+  share: number;
+}
+
 interface RegionRow {
   region: string | null;
   value_eur: number;
   contracts: number;
   authorities: number;
+}
+
+// Shared sector/year/funding WHERE-clause builder, so regionRows() and getRegionTopBeneficiaries()
+// can never drift apart on scope semantics. Site-wide value basis (amount_eur IS NOT NULL) matches
+// authority_totals (the unfiltered path) and the rest of the site.
+function scopeFilters(p: RegionalParams): { where: string[]; params: unknown[] } {
+  const where = ['c.amount_eur IS NOT NULL'];
+  const params: unknown[] = [];
+  if (p.sector) {
+    where.push('substr(t.cpv_code, 1, 2) = ?');
+    params.push(p.sector);
+  }
+  if (p.year) {
+    where.push('substr(c.signed_at, 1, 4) = ?');
+    params.push(p.year);
+  }
+  if (p.funding === 'eu') where.push('c.eu_funded = 1');
+  else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
+  return { where, params };
 }
 
 async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[]> {
@@ -33,20 +60,7 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
       .all<RegionRow>();
     return results;
   }
-  // Site-wide value basis (amount_eur IS NOT NULL), matching authority_totals (the unfiltered path)
-  // and the rest of the site, so a region's spend does not change basis when a filter is applied.
-  const where = ['c.amount_eur IS NOT NULL'];
-  const params: unknown[] = [];
-  if (p.sector) {
-    where.push('substr(t.cpv_code, 1, 2) = ?');
-    params.push(p.sector);
-  }
-  if (p.year) {
-    where.push('substr(c.signed_at, 1, 4) = ?');
-    params.push(p.year);
-  }
-  if (p.funding === 'eu') where.push('c.eu_funded = 1');
-  else if (p.funding === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
+  const { where, params } = scopeFilters(p);
   const { results } = await db
     .prepare(
       `SELECT a.region AS region, COALESCE(SUM(c.amount_eur), 0) AS value_eur, COUNT(*) AS contracts,
@@ -57,6 +71,55 @@ async function regionRows(db: D1Database, p: RegionalParams): Promise<RegionRow[
     .bind(...params)
     .all<RegionRow>();
   return results;
+}
+
+interface TopBeneficiaryRow {
+  region: string | null;
+  bidder_id: string;
+  name: string;
+  value_eur: number;
+  region_total: number;
+}
+
+// Top 3 bidder companies per NUTS3 region by awarded value, plus each one's share of that
+// region's total value. One bounded query using a window function (nested-subquery
+// ROW_NUMBER()-per-partition pattern), not N per-region round trips.
+export async function getRegionTopBeneficiaries(
+  db: D1Database,
+  p: RegionalParams,
+): Promise<Map<string, RegionTopBeneficiary[]>> {
+  const { where, params } = scopeFilters(p);
+  where.push('a.region IS NOT NULL');
+  const { results } = await db
+    .prepare(
+      `SELECT region, bidder_id, name, value_eur, region_total FROM (
+         SELECT a.region AS region, c.bidder_id AS bidder_id, b.name AS name,
+                SUM(c.amount_eur) AS value_eur,
+                SUM(SUM(c.amount_eur)) OVER (PARTITION BY a.region) AS region_total,
+                ROW_NUMBER() OVER (PARTITION BY a.region ORDER BY SUM(c.amount_eur) DESC) AS rn
+         FROM contracts c JOIN tenders t ON t.id = c.tender_id
+              JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
+         WHERE ${where.join(' AND ')}
+         GROUP BY a.region, c.bidder_id
+       ) WHERE rn <= 3`,
+    )
+    .bind(...params)
+    .all<TopBeneficiaryRow>();
+
+  const byNuts3 = new Map<string, RegionTopBeneficiary[]>();
+  for (const r of results) {
+    const region = regionByName(r.region);
+    if (!region) continue;
+    const list = byNuts3.get(region.nuts3) ?? [];
+    list.push({
+      bidderId: r.bidder_id,
+      name: cleanName(r.name),
+      valueEur: r.value_eur,
+      share: r.region_total && r.region_total > 0 ? r.value_eur / r.region_total : 0,
+    });
+    byNuts3.set(region.nuts3, list);
+  }
+  return byNuts3;
 }
 
 export async function getRegionalSpending(

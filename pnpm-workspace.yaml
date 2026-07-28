@@ -24,6 +24,21 @@ overrides:
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   '@babel/core': '^7.29.6'
+  #   postcss <8.5.18 — path traversal via sourceMappingURL auto-load
+  #                 (GHSA-r28c-9q8g-f849); patch-level fix.
+  #   valibot <1.4.2  — flatten() crashes on inherited-property keys
+  #                 (GHSA-5qjj-4xww-7phc); patch-level fix.
+  postcss: '^8.5.18'
+  valibot: '^1.4.2'
+  #   react-router <7.18.0 — 4 advisories fixed within the 7.x line (no major bump needed):
+  #                 SSR hydration constructor injection (GHSA-337j-9hxr-rhxg), unauthenticated
+  #                 DoS via inefficient route matching (GHSA-chx6-hx7r-mcp5), RSCErrorHandler
+  #                 missing protocol validation / XSS (GHSA-h8fp-f39c-q6mh), open redirect via
+  #                 backslash in Link/useNavigate (GHSA-wrjc-x8rr-h8h6). The separate
+  #                 GHSA-qwww-vcr4-c8h2 (RSC-only CSRF, needs 8.x) is NOT fixed by this pin —
+  #                 see osv-scanner.toml for why that one is suppressed instead of bumped.
+  'react-router': '^7.18.0'
+  '@react-router/dev': '^7.18.0'
 
 onlyBuiltDependencies:
   - esbuild
