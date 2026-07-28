@@ -131,7 +131,8 @@ function safeD1(sql) {
   try {
     return d1(sql);
   } catch (err) {
-    const msg = String(err?.message ?? err);
+    // wrangler writes the SQLITE error to stdout, not the exception message.
+    const msg = `${err?.message ?? err} ${err?.stdout ?? ''} ${err?.stderr ?? ''}`;
     if (/no such table|does not exist/i.test(msg)) return [];
     throw err;
   }
