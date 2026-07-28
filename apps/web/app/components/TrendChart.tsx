@@ -1,4 +1,4 @@
-import type { TrendPoint } from '@sigma/api-contract';
+import type { TrendGranularity, TrendPoint } from '@sigma/api-contract';
 
 // Server-rendered area + line of spend over time (no chart JS, like SankeyDiagram). The accessible
 // data is the per-year table beside it; this SVG is a visual summary (role="img" + aria-label) with
@@ -13,7 +13,7 @@ export function TrendChart({
   granularity,
 }: {
   points: TrendPoint[];
-  granularity: 'month' | 'year';
+  granularity: TrendGranularity;
 }) {
   if (points.length < 2) return null;
   const max = Math.max(1, ...points.map((p) => p.valueEur));
@@ -32,10 +32,11 @@ export function TrendChart({
     .join('');
   const area = `${line}L${x(solidEnd).toFixed(1)},${H - PAD_B}L0,${H - PAD_B}Z`;
   const dashed = hasPartial ? `M${xy(solidEnd)}L${xy(partialIdx)}` : '';
-  // x-axis ticks at the first month of each year (month granularity) or at every point (year).
+  // x-axis ticks at the first month/quarter of each year, or at every point (year granularity).
+  const yearStart = granularity === 'year' ? null : granularity === 'quarter' ? '-Q1' : '-01';
   const ticks = points
     .map((p, i) => ({ i, year: p.period.slice(0, 4) }))
-    .filter((t, idx) => granularity === 'year' || points[idx]!.period.endsWith('-01'));
+    .filter((_t, idx) => yearStart == null || points[idx]!.period.endsWith(yearStart));
 
   // viewBox carries 14px of horizontal bleed on each side so the first and last year labels, which are
   // centred on the edge ticks, are not clipped.
