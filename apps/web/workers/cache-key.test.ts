@@ -119,24 +119,52 @@ describe('cacheKey', () => {
       cacheUrl('http://local/contracts?cursor=c5&page=5').search,
     );
   });
+
+  it('keys repeated cohort values distinctly instead of collapsing to one (CWE-349, #56)', () => {
+    // cacheKey() iterates every [key, value] pair off url.searchParams via `for...of`, not
+    // `.get()`, so a repeated allow-listed param keeps every occurrence rather than only the first.
+    expect(cacheUrl('http://local/price-anomaly?cohort=a&cohort=b').search).not.toBe(
+      cacheUrl('http://local/price-anomaly?cohort=a').search,
+    );
+  });
 });
 
+// Allow-list entries that intentionally sit ahead of their route on this stacked-PR base (see the
+// CANONICAL_QUERY_PARAMS comment for which route each is destined for). Excluded from the stale-entry
+// assertion below so stacked-later work doesn't fail unrelated PRs; any OTHER stale entry (a typo, a
+// param whose route was removed) still fails the build.
+const EXPECTED_STALE_PLANNED_PARAMS = new Set(['a', 'b', 'by', 'cohort', 'cpv', 'metric']);
+
 describe('CANONICAL_QUERY_PARAMS drift guard', () => {
-  it('covers every query param the app reads off the URL', () => {
+  it('covers every query param the app reads off the URL (CWE-349, #56)', () => {
     const consumed = consumedQueryParams();
     // Sanity: the scanner must actually find params, else a regex/glob change silently disarms it.
     expect(consumed.size).toBeGreaterThan(10);
     expect(consumed.has('bids')).toBe(true);
     expect(consumed.has('page')).toBe(true);
 
+    // Security direction: every param a route loader / SSR render consumes must be keyed (in the
+    // allow-list) or explicitly declared response-neutral, or two distinct views collapse to one
+    // cache entry and the wrong data gets served.
     const allowed = new Set([...CANONICAL_QUERY_PARAMS, ...INTENTIONALLY_UNKEYED]);
     const undeclared = [...consumed].filter((p) => !allowed.has(p)).sort();
     expect(undeclared).toEqual([]);
   });
 
-  it('does not retain allow-list entries that nothing reads', () => {
+  // Reverse direction: allow-list entries nothing currently reads. A dead/typo'd entry here is
+  // harmless for correctness (it can only over-key, never collapse two distinct responses into one
+  // cache entry) but silently degrades the cache hit rate forever if nothing catches it. Entries
+  // legitimately ahead of their not-yet-shipped route (EXPECTED_STALE_PLANNED_PARAMS) are excluded so
+  // this stays a real, failing assertion instead of either blocking unrelated stacked-PR work or
+  // being a cheater test that can never fail.
+  it('does not retain undocumented stale allow-list entries', () => {
     const consumed = consumedQueryParams();
-    const stale = [...CANONICAL_QUERY_PARAMS].filter((p) => !consumed.has(p)).sort();
+    const stale = [...CANONICAL_QUERY_PARAMS]
+      .filter((p) => !consumed.has(p) && !EXPECTED_STALE_PLANNED_PARAMS.has(p))
+      .sort();
+    if (stale.length > 0) {
+      console.info(`[cache-key] unexpected stale allow-list entries: ${stale.join(', ')}`);
+    }
     expect(stale).toEqual([]);
   });
 });

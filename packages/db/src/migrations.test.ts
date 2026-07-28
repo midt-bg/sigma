@@ -10,6 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
+const migration3 = resolve(root, 'packages/db/migrations/0003_contracts_overrun_index.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -31,6 +32,7 @@ describe('served migrations', () => {
       readScript(dbPath, migration0);
       readScript(dbPath, migration1);
       readScript(dbPath, migration2);
+      readScript(dbPath, migration3);
 
       expect(
         sqlite(
@@ -84,6 +86,24 @@ describe('served migrations', () => {
           "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_flow_pairs_bidder' AND tbl_name='flow_pairs';",
         ).trim(),
       ).toBe('1');
+
+      // 0002 adds the partial overrun index used by /overruns + /analytics (OVERRUN_WHERE).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun' AND tbl_name='contracts';",
+        ).trim(),
+      ).toBe('1');
+
+      // Guard the index's actual definition, not just its presence: the partial predicate and the
+      // (signing_value_eur, current_value_eur) column order are both load-bearing for the covering
+      // scan OVERRUN_WHERE relies on — a silent regression in either must fail CI, not eyeballing.
+      const overrunIndexSql = sqlite(
+        dbPath,
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun';",
+      );
+      expect(overrunIndexSql).toContain('annex_count > 0');
+      expect(overrunIndexSql).toContain('contracts(signing_value_eur, current_value_eur)');
 
       // The served schema must never carry raw_* staging tables.
       expect(
