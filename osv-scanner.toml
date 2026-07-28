@@ -10,6 +10,21 @@
 # outlive the vulnerability they cover. `pnpm why <package>` shows the resolved version and
 # what pulls it in.
 
+# ── react-router 7.18.0 — GHSA-qwww-vcr4-c8h2 (High, CVSS 7.1), fixed in 8.3.0 ──────────
+# WHY IGNORED: this CVE is a CSRF flaw in react-router's UNSTABLE RSC (React Server
+# Components) code paths only — "this only affects your application if you are using the
+# unstable RSC APIs" per the advisory. Verified via `git grep` across this repo for RSC
+# usage (unstable_.*RSC, react-server, unstable_RSCPayload, unstable_routeRSCServerRequest):
+# zero hits. This app does not use RSC. No fix exists in the 7.x line (introduced in 7.12.0,
+# only patched in 8.3.0) — upgrading to react-router 8.x is a major, breaking version bump
+# out of scope for a security patch to a code path this app never exercises.
+# REMOVE WHEN: this app adopts react-router's RSC APIs (re-evaluate applicability first), or
+# a deliberate, separately-planned major-version upgrade to react-router 8.x lands.
+[[IgnoredVulns]]
+id = "GHSA-qwww-vcr4-c8h2"
+ignoreUntil = 2026-10-01T00:00:00Z
+reason = "CSRF in react-router's unstable RSC code paths only (GHSA-qwww-vcr4-c8h2) - this app does not use RSC (verified via repo-wide grep for RSC APIs). No fix in the 7.x line; upgrading to 8.x is a major breaking change out of scope for a security patch to an unused code path."
+
 # ── sharp 0.34.5 — GHSA-f88m-g3jw-g9cj (High, CVSS 7.0), fixed in 0.35.0 ──────────────────
 # WHY IGNORED: sharp is a DEV-ONLY, TRANSITIVE dependency pulled in only by `miniflare`
 # (Cloudflare's local Workers simulator, used by `wrangler dev` and the test suite).

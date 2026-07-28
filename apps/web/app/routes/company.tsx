@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useMatches } from 'react-router';
 import {
   count,
   isNaturalPersonProfileName,
@@ -12,6 +12,7 @@ import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend, getDb
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
+import { CopyCitationButton } from '../components/CopyCitationButton';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
@@ -23,7 +24,8 @@ import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
-import { seoMeta } from '../lib/meta';
+import { buildCompanyCitation } from '../lib/citation';
+import { seoMeta, getRootOrigin, FALLBACK_ORIGIN } from '../lib/meta';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -79,6 +81,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
+  const matches = useMatches();
+  const origin = getRootOrigin(matches) ?? FALLBACK_ORIGIN;
   const c = loaderData.company;
   const { trend, network } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
@@ -127,7 +131,11 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           }
           title={c.displayName}
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
-        />
+        >
+          <div className="header-actions">
+            <CopyCitationButton textToCopy={buildCompanyCitation(c, origin)} />
+          </div>
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"

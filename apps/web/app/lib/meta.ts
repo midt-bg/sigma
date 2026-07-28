@@ -7,6 +7,10 @@
 
 type MetaMatches = ReadonlyArray<{ id?: string; data?: unknown } | undefined> | undefined;
 
+// Used as the origin for absolute URLs (citations, canonical links) when the root loader's
+// origin isn't available (e.g. during error boundaries or before it has run).
+export const FALLBACK_ORIGIN = 'https://sigma.midt.bg';
+
 export function getRootOrigin(matches: MetaMatches): string | undefined {
   const data = matches?.find((m) => m?.id === 'root')?.data as { origin?: string } | undefined;
   return data?.origin || undefined;
