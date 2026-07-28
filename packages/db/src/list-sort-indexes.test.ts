@@ -21,9 +21,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 //   plans are a strong indication, not a bit-exact production proof. (The sqlite3 binary itself is a
 //   pre-existing suite-wide dependency — migrations/refresh-slice/ship-domain tests all exec it — so
 //   a missing binary fails the whole suite, not just this file.)
-// - The index-walk claim covers the UNFILTERED sort paths (the default list views). With an active
-//   filter the planner may prefer the filter's index and sort the (small) filtered set instead —
-//   that is the correct trade, but it is not what this test asserts.
+// - The index-walk claim is asserted for the UNFILTERED sort paths (the default list views) and, for
+//   contracts, with an active list filter as well (FILTERED_SORTS below): the planner keeps walking the
+//   ordering index and still drops the sort step, so a filtered page is not a full-corpus sort either.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrationsDir = resolve(root, 'packages/db/migrations');
@@ -97,6 +97,24 @@ const SORTS = [
   },
 ] as const;
 
+// The same defect/fix, but with an active list filter on top of the sort — the case a reader of the
+// unfiltered assertions above cannot infer. Filtering does NOT make the ordering index redundant: the
+// planner keeps walking it and drops the sort step, so a filtered page stops being a whole-table sort
+// too. Contracts only: it is the one list whose filters (sector via tenders.cpv_code, EU funding)
+// join out to another table, so it is the case where the planner could most plausibly switch away.
+const FILTERED_SORTS = [
+  {
+    name: 'contracts date-desc + sector filter',
+    index: 'idx_contracts_signed_desc',
+    sql: `SELECT c.id ${CONTRACTS_FROM} WHERE t.cpv_code LIKE '45%' ORDER BY COALESCE(c.signed_at, '') DESC, c.id DESC LIMIT 16`,
+  },
+  {
+    name: 'contracts date-desc + eu-funded filter',
+    index: 'idx_contracts_signed_desc',
+    sql: `SELECT c.id ${CONTRACTS_FROM} WHERE c.eu_funded = 1 ORDER BY COALESCE(c.signed_at, '') DESC, c.id DESC LIMIT 16`,
+  },
+] as const;
+
 // A modest, unanalyzed dataset — enough that the planner weighs a real table, none of ANALYZE's
 // stats (production D1 never runs ANALYZE; verified via grep over scripts/ + migrations).
 function seed(dbPath: string): void {
@@ -135,6 +153,18 @@ describe('list sort ordering indexes', () => {
   let after: string; // every migration (base + the sort-index one)
 
   beforeAll(() => {
+    // Every step below shells out to `sqlite3`. Without this probe a missing binary surfaces as an
+    // opaque ENOENT from the first execFileSync, which reads like a broken test rather than a missing
+    // tool. Fail loudly with the fix instead — deliberately NOT a skip: this file is a perf/cost gate,
+    // and silently passing it on a runner image that dropped sqlite3 would retire the gate unnoticed.
+    try {
+      execFileSync('sqlite3', ['-version'], { stdio: 'pipe' });
+    } catch {
+      throw new Error(
+        'The `sqlite3` CLI is required by this suite (the migration, refresh-slice and ship-domain ' +
+          'tests exec it too) but is not on PATH. Install it (e.g. `apt-get install -y sqlite3`) and re-run.',
+      );
+    }
     dir = mkdtempSync(resolve(tmpdir(), 'sigma-sort-idx-'));
     before = resolve(dir, 'before.sqlite');
     after = resolve(dir, 'after.sqlite');
@@ -164,4 +194,14 @@ describe('list sort ordering indexes', () => {
       }
     },
   );
+
+  it.each(FILTERED_SORTS)('$name full-scans + sorts BEFORE the fix', ({ sql }) => {
+    expect(plan(before, sql)).toContain('USE TEMP B-TREE FOR ORDER BY');
+  });
+
+  it.each(FILTERED_SORTS)('$name still walks $index AFTER the fix', ({ index, sql }) => {
+    const p = plan(after, sql);
+    expect(p).toContain(index);
+    expect(p).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+  });
 });
