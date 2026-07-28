@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyBucketKey,
   computeCatchupWindow,
+  fullDeriveIsSafe,
   releaseToAmendments,
   releaseToContracts,
   releaseToLots,
@@ -351,6 +352,27 @@ describe('bucket key and catchup helpers', () => {
     expect(
       computeCatchupWindow({ maxLoadedDate: '2026-06-01', today: '2026-06-07', lookbackDays: 3 }),
     ).toEqual({ from: '2026-05-29', to: '2026-06-07' });
+  });
+
+  it('allows a full derive only when the window reaches the start of the feed', () => {
+    // Initial backfill: nothing to lose, any window is safe.
+    expect(
+      fullDeriveIsSafe({ windowFrom: '2026-06-10', feedStart: '2020-01-01', hasCorpus: false }),
+    ).toBe(true);
+    // Whole feed reloaded into staging — the rebuild is complete.
+    expect(
+      fullDeriveIsSafe({ windowFrom: '2020-01-01', feedStart: '2020-01-01', hasCorpus: true }),
+    ).toBe(true);
+    // A catch-up window over an existing corpus would drop everything before it.
+    expect(
+      fullDeriveIsSafe({ windowFrom: '2026-06-10', feedStart: '2020-01-01', hasCorpus: true }),
+    ).toBe(false);
+  });
+
+  it('rejects malformed days rather than silently allowing a full derive', () => {
+    expect(() =>
+      fullDeriveIsSafe({ windowFrom: '10-06-2026', feedStart: '2020-01-01', hasCorpus: true }),
+    ).toThrow(/windowFrom/);
   });
 });
 

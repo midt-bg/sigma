@@ -14,7 +14,11 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.ts';
+import {
+  computeCatchupWindow,
+  daysInWindow,
+  fullDeriveIsSafe,
+} from '../packages/ingest/src/ocds.ts';
 import {
   dropTransientStagingStatements,
   refreshSliceStatementGroups,
@@ -37,7 +41,6 @@ function reportAnomalies(runner, label) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
 const DEFAULT_FROM = '2020-01-01';
-const LARGE_GAP_DAYS = 14;
 const DEFAULT_LOOKBACK_DAYS = 3;
 
 const remote = process.argv.includes('--remote');
@@ -215,18 +218,36 @@ function resolveCatchupPlan() {
   const to = String(arg('to') || window.to);
   const gapDays = daysInWindow(from, to);
   const requestedDerive = arg('derive');
-  const derive =
-    requestedDerive && requestedDerive !== true
-      ? String(requestedDerive)
-      : gapDays > LARGE_GAP_DAYS
-        ? 'full'
-        : 'slice';
+  // The catch-up window is gap-aware, so it only ever covers the tail of the feed. A full derive
+  // rebuilds `contracts` from staging (normalize-raw.sql opens with DELETE FROM contracts), which
+  // would drop every contract older than the window — so catch-up always derives a slice, however
+  // wide the gap. An operator who really has loaded the whole feed can still pass --derive=full.
+  const derive = requestedDerive && requestedDerive !== true ? String(requestedDerive) : 'slice';
   return { from, to, maxLoadedDate, gapDays, derive };
 }
 
 function validateDeriveMode(mode) {
   if (!['full', 'slice'].includes(mode))
     throw new Error(`unknown --derive=${mode}; expected full|slice`);
+}
+
+// Refuse the one combination that silently destroys data: a full derive (which rebuilds the domain
+// from staging) driven by a window that does not reach back to the start of the feed. Anything the
+// window misses is deleted and never reloaded. Checked before the load so it costs nothing.
+function assertDeriveWindowSafe(mode, from) {
+  if (mode !== 'full') return;
+  const rows = safeD1('SELECT COUNT(*) AS rows FROM contracts');
+  const hasCorpus = Number(rows[0]?.rows ?? 0) > 0;
+  if (fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus })) return;
+  console.error(
+    `!! refusing --derive=full: the load window starts ${from}, but the corpus already holds ` +
+      `${rows[0]?.rows} contracts going back to ${DEFAULT_FROM}.\n` +
+      `   A full derive rebuilds contracts from staging, so every contract before ${from} would be ` +
+      `dropped and not reloaded.\n` +
+      `   Use --derive=slice for an incremental refresh, or reload the whole feed with ` +
+      `--from=${DEFAULT_FROM}.`,
+  );
+  process.exit(1);
 }
 
 async function runFullDerive() {
@@ -374,15 +395,19 @@ execSql(resolve(root, 'scripts/work-staging-schema.sql'));
 
 let deriveMode = String(arg('derive') || 'full');
 let loadFlags = explicitRangeFlags();
+// Mirrors load-eop.mjs, which also falls back to DEFAULT_FROM when no --from is given.
+let windowFrom = String(arg('from') || DEFAULT_FROM);
 if (catchup) {
   const plan = resolveCatchupPlan();
   deriveMode = plan.derive;
   loadFlags = rangeFlags(plan.from, plan.to);
+  windowFrom = plan.from;
   console.log(
     `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${deriveMode})`,
   );
 }
 validateDeriveMode(deriveMode);
+assertDeriveWindowSafe(deriveMode, windowFrom);
 
 run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
 if (deriveMode === 'slice') await runSliceDerive();

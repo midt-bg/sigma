@@ -116,12 +116,18 @@ node scripts/load-eop.mjs --from=YYYY-MM-DD --to=YYYY-MM-DD --no-ocds
 Първоначалният backfill и ежедневният refresh ползват едни и същи staging таблици, mapper-и и
 SQL. Различават се по прозореца от дати и режима на derive:
 
-- **голямо или първоначално догонване:** CLI прозорец + пълен derive;
-- **малък steady-state refresh:** gap-aware прозорец + slice derive.
+- **първоначално зареждане или пълно презареждане:** прозорец от началото на емисията + пълен derive;
+- **догонване и steady-state refresh:** gap-aware прозорец + slice derive.
 
 `--derive=full` пуска amendment rollup, FX, NUTS, пълна нормализация и precompute. `--derive=slice`
-пуска scoped refresh SQL-а. По подразбиране catch-up логиката избира full derive за големи
-празнини и slice derive за малки.
+пуска scoped refresh SQL-а.
+
+Пълният derive **презижда** доменните таблици от staging — `normalize-raw.sql` започва с
+`DELETE FROM contracts` — тоест всичко извън заредения прозорец отпада и не се връща. Затова той е
+допустим само когато прозорецът стига до началото на емисията (или когато още няма корпус). Понеже
+gap-aware прозорецът по устройство покрива само опашката, `--catchup` **винаги** прави slice derive,
+колкото и голяма да е празнината. Ако изрично поискаш `--derive=full` с частичен прозорец върху вече
+зареден корпус, `import.mjs` отказва да продължи — преди зареждането — вместо да изтрие историята.
 
 ## Доменна нормализация (derive)
 
