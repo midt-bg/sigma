@@ -28,6 +28,12 @@ overrides:
   #                 miniflare (^0.34.5 cannot take 0.35.x on its own); local dev image handling
   #                 only, never ships to the Worker. Drop once miniflare bumps its range.
   sharp: '^0.35.3'
+  #   postcss <8.5.18 — GHSA-r28c-9q8g-f849 (HIGH); dev/build-time only (via vite→vitest),
+  #                 never ships to the Worker.
+  postcss: '^8.5.18'
+  #   valibot <1.4.2 — GHSA-5qjj-4xww-7phc (MEDIUM); transitive, build-time only, never
+  #                 ships to the Worker.
+  valibot: '^1.4.2'
 
 onlyBuiltDependencies:
   - esbuild
