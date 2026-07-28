@@ -11,10 +11,16 @@ permissions:
 
 jobs:
   # SAST scan, parallel to `check` so it never lengthens the lint/typecheck/test critical path.
-  # The official image is pinned by digest — same supply-chain discipline as the sha256-pinned
-  # gitleaks and osv-scanner binaries below. Explicit registry rulesets (not `--config auto`,
-  # which refuses to run with metrics off) + `--metrics=off` so nothing about the repo is
-  # reported to semgrep.dev; `--error` makes any finding fail the build.
+  # The official image is pinned by digest, like the sha256-pinned gitleaks and osv-scanner
+  # binaries below. The RULE PACKS are not: `p/security-audit`, `p/secrets` and `p/typescript`
+  # are fetched from the semgrep registry on every run and can change upstream without a commit
+  # here. Accepted deliberately — the failure mode is a visible, fixable red build (a new rule
+  # fires on existing code), not a silent bypass, and pinning would mean vendoring three curated
+  # packs and re-syncing them by hand, which in practice means running stale security rules.
+  # Revisit if an upstream rule change ever breaks CI on an unrelated PR.
+  # Explicit rulesets (not `--config auto`, which refuses to run with metrics off) +
+  # `--metrics=off` so nothing about the repo is reported to semgrep.dev; `--error` makes any
+  # finding fail the build.
   semgrep:
     runs-on: ubuntu-latest
     # Cap the job so a hung rule fetch or a runaway scan can't sit until GitHub's default runner
