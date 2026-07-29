@@ -22,8 +22,8 @@
 `packageManager` в `package.json`).
 
 ```bash
-pnpm setup    # еднократно: инсталиране + локален D1 + примерни данни
-pnpm dev      # ежедневно: приложението + ETL worker-а паралелно
+pnpm run setup  # еднократно: инсталиране + локален D1 + примерни данни
+pnpm dev        # ежедневно: приложението + ETL worker-а паралелно
 ```
 
 Повече в раздел „Бърз старт" на [README](README.md).

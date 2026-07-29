@@ -23,3 +23,15 @@
 id = "GHSA-f88m-g3jw-g9cj"
 ignoreUntil = 2026-10-01T00:00:00Z
 reason = "sharp is a dev-only transitive of miniflare (local Workers simulator), pinned to 0.34.5 upstream and never bundled into the deployed Worker. Remove once miniflare/wrangler pins sharp >= 0.35.0 (pnpm why sharp)."
+
+# ── react-router 7.18.0 — GHSA-qwww-vcr4-c8h2 (High, CVSS 7.1), fixed in 8.3.0 ────────────
+# WHY IGNORED: CSRF bypass in react-router's UNSTABLE RSC (React Server Components) code paths
+# only. Sigma runs plain SSR (React Router v7) and uses NO unstable_/RSC APIs — see
+# apps/web/react-router.config.ts (no unstable_ flags) — so the vulnerable path is unreachable.
+# The only fix is 8.3.0, a MAJOR upgrade requiring a planned migration (no 7.x backport exists
+# as of the advisory).
+# REMOVE WHEN: apps/web is migrated to react-router >= 8.3.0, or a 7.x patch ships.
+[[IgnoredVulns]]
+id = "GHSA-qwww-vcr4-c8h2"
+ignoreUntil = 2026-10-01T00:00:00Z
+reason = "CSRF bypass in react-router unstable RSC APIs only; sigma uses plain SSR with no RSC/unstable_ usage, so unreachable. Fix is 8.3.0 (major). Remove on the react-router 8.x migration."
