@@ -11,13 +11,15 @@ import { CPV_CATEGORIES, CPV_SECTORS } from '@sigma/config';
 export const DATA_TRAPS: string[] = [
   'Парични агрегати: СУМИРАЙ САМО `contracts.amount_eur` (каноничен EUR, безопасен за сумиране). ' +
     'НИКОГА не сумирай `contracts.amount` — то е „както е записано" в смесена валута (`currency`), само за показване.',
+  'Канонична база за всяка парична сума: `contracts.amount_eur IS NOT NULL`. НЕ филтрирай по ' +
+    '`value_flag`: включи `ok`, `review`, `annex_suspect`, `value_low` и поправените `value_suspect` редове.',
   '`amount_eur IS NULL` само когато няма надежден EUR еквивалент: (1) `value_flag = value_suspect` ' +
     'БЕЗ оценка на процедурата; (2) чуждестранна валута БЕЗ ECB обменен курс за датата на подписване; ' +
     '(3) липсват и `signing_value`, и `current_value`. ' +
     '`value_suspect` редове С оценка се ПОПРАВЯТ и НЕ са NULL — имат `amount_eur` и влизат в сумите. ' +
     'Сумите по подразбиране изключват NULL; брой на „без стойност" = `COUNT(*) WHERE amount_eur IS NULL`.',
-  '`value_flag` ∈ {ok, review, value_low, annex_suspect, value_suspect} мени значението на стойността на реда; ' +
-    '`date_flag` ∈ {ok, signed_after_publication} е вердикт за датата, не за стойността.',
+  '`value_flag` ∈ {ok, review, value_low, annex_suspect, value_suspect} мени значението на стойността на реда, ' +
+    'но не и каноничната база; `date_flag` ∈ {ok, signed_after_publication} е вердикт за датата, не за стойността.',
   "`tenders.procedure_type = 'неизвестна'` маркира СИНТЕТИЧНИ (само-договорни) преписки — " +
     'изключи ги при анализ на разпределението по процедура, освен ако нарочно ги искаш.',
   '`lots` са на grain по обособена позиция — не ги брой едно към едно срещу `contracts`.',

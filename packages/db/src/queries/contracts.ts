@@ -50,6 +50,13 @@ export const CONTRACT_FILTER_KEYS = [
 // errors, add the new filter key to CONTRACT_FILTER_KEYS.
 assertCovers<ContractListParams, typeof CONTRACT_FILTER_KEYS>();
 
+// SYNC: each expr is backed by a matching expression index so a keyset page walks it instead of
+// full-scanning + temp-B-tree-sorting the whole table (D1 bills rows scanned). The COALESCE sentinels
+// must stay byte-identical to the indexes: value → idx_contracts_value_desc/asc (migrations/0000),
+// date → idx_contracts_signed_desc/asc (migrations/0005). Changing a default here without the index
+// silently drops the index — list-sort-indexes.test.ts asserts the EXPLAIN plan to catch that.
+// Scope: the index-walk guarantee covers the UNFILTERED sort paths; with an active filter the planner
+// may prefer the filter's index and temp-sort the (much smaller) filtered set — acceptable by design.
 const SORTS: Record<ContractSort, { expr: string; dir: 'asc' | 'desc' }> = lookup({
   'value-desc': { expr: 'COALESCE(c.amount_eur, -1)', dir: 'desc' },
   'value-asc': { expr: 'COALESCE(c.amount_eur, 1e18)', dir: 'asc' },
@@ -220,8 +227,8 @@ function toItem(r: ContractRow): ContractListItem {
 }
 
 /**
- * Single-offer contracts (`bids_received = 1`) excluding suspect values — for the homepage section.
- * `mode` picks recency vs highest value. Reuses the shared SELECT/FROM and the row mapper.
+ * Single-offer contracts (`bids_received = 1`) with a known canonical EUR value — for the homepage
+ * section. `mode` picks recency vs highest value. Reuses the shared SELECT/FROM and row mapper.
  */
 export async function listSingleOfferContracts(
   db: D1Database,
@@ -234,7 +241,7 @@ export async function listSingleOfferContracts(
       : 'ORDER BY COALESCE(c.signed_at, c.published_at) DESC';
   const rows = await db
     .prepare(
-      `${SELECT} ${FROM} WHERE c.bids_received = 1 AND c.value_flag = 'ok' AND c.amount_eur > 0 ${order}, c.id LIMIT ?`,
+      `${SELECT} ${FROM} WHERE c.bids_received = 1 AND c.amount_eur IS NOT NULL ${order}, c.id LIMIT ?`,
     )
     .bind(limit)
     .all<ContractRow>();
@@ -297,16 +304,15 @@ export async function listContracts(
   };
 }
 
-/** Total rows, clean-EUR sum and suspect tally for the current filter (the list headline). */
+/** Total rows, canonical-EUR sum and suspect tally for the current filter (the list headline). */
 export async function contractsSummary(
   db: D1Database,
   p: ContractListParams,
 ): Promise<{ total: number; valueEur: number; suspect: number }> {
   const filters = buildFilters(p);
-  // suspect badge = rows whose value is excluded from the sum (amount_eur IS NULL: value_/annex_suspect)
-  // PLUS value_low rows, which ARE summed (amount_eur populated) but stay labelled „непотвърдена стойност".
-  // The value SUM intentionally keeps value_low IN (amount_eur is non-null for it) and only drops
-  // value_/annex_suspect (their amount_eur is NULL upstream).
+  // The money sum follows the site-wide value base: every non-NULL amount_eur, regardless of flag.
+  // The badge is a separate data-quality metric: NULL values plus value_low rows, which are summed
+  // when amount_eur is populated but remain labelled „непотвърдена стойност".
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS total, COALESCE(SUM(c.amount_eur), 0) AS eur,

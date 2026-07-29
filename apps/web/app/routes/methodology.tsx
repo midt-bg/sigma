@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { count, date, money, pct } from '@sigma/shared';
-import { getMethodologyStats } from '@sigma/db';
+import { getMethodologyStats, getDb } from '@sigma/db';
 import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -24,7 +24,7 @@ export function headers() {
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
-  return getMethodologyStats(context.cloudflare.env.DB);
+  return getMethodologyStats(getDb(context.cloudflare.env));
 }
 
 const TOC = [
@@ -427,6 +427,19 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
               <p>
                 Договори в чужда валута без намерен курс към датата на подписване се пазят като
                 записи, но се изключват от сумите в евро.
+              </p>
+              <p>
+                <strong>„Подобни договори" на страницата на договор.</strong> Позицията („топ 5%",
+                „над медианата"…) сравнява стойността с всички договори с чиста стойност в същия
+                двуцифрен CPV сектор в базата (без времева граница - същият обхват като секторните
+                суми), по предизчислени персентили на сектора (включващи и самия договор). Показваме
+                сравнение само при поне 12 такива договора, а по-фина лента („топ 1%/5%/10%") — само
+                когато секторът е достатъчно голям и съответните персентили реално се различават, за
+                да не се появи фалшива точност при малка или изравнена по цена кохорта. Позицията е
+                приблизителна (широки стъпала, не точен процент), контекст за мащаба, а не оценка за
+                нередност, и ползва различен метод от отчета за аномалии, затова двете числа може
+                леко да се разминават. Договори с непотвърдена стойност не участват и не получават
+                сравнение.
               </p>
             </section>
 

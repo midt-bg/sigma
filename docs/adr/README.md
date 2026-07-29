@@ -21,3 +21,4 @@
 | [0011](0011-transcript-hmac-signing.md) | Интегритет на транскрипта чрез HMAC-подпис на сървърните съобщения (§9.3) | Прието |
 | [0012](0012-transcript-hmac-enforcement.md) | Налагане на HMAC по живия път: filter-on-ingest (sanitize), ENVIRONMENT-gating, ключ и ротация | Прието |
 | [0013](0013-voice-via-ai-gateway.md) | Voice lane през AI Gateway — provider endpoints (без dynamic routes) | Прието |
+| [0029](0029-worker-native-fx-load.md) | Worker-native FX зареждане в cron refresh-а и режим на отказ | Прието |

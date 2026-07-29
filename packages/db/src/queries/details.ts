@@ -20,6 +20,7 @@ import type {
 } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
 import { cleanName, entityName, parseConsortiumMembers } from '@sigma/shared';
+import { contractCohort, getCpvCohortStats } from './cohort';
 import { listContracts } from './contracts';
 import { authoritySlug, companySlug, contractSlug } from './identity';
 import { typeLabel } from './rows';
@@ -248,7 +249,7 @@ export async function getAuthority(
       .prepare(
         `SELECT c.bidder_id, b.name, b.kind, SUM(c.amount_eur) AS won, COUNT(*) AS n
          FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN bidders b ON b.id = c.bidder_id
-         WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL
+         WHERE t.authority_id = ? AND c.amount_eur IS NOT NULL AND b.kind <> 'unknown'
          GROUP BY c.bidder_id ORDER BY won DESC LIMIT 7`,
       )
       .bind(authorityId)
@@ -362,6 +363,8 @@ export async function getAuthority(
 
 // ── Contract ──────────────────────────────────────────────────────────────────────────────────
 
+const foldName = (s: string): string => s.toLocaleLowerCase('bg').replace(/\s+/g, ' ').trim();
+
 interface ContractDetailRow {
   id: string;
   tender_id: string;
@@ -391,6 +394,7 @@ interface ContractDetailRow {
   subcontractor_name: string | null;
   subcontract_value: number | null;
   contract_currency: string;
+  current_value_currency: string | null;
   // tender
   title: string;
   unp: string;
@@ -408,6 +412,7 @@ interface ContractDetailRow {
   // authority
   authority_id: string;
   authority_name: string;
+  source_authority_name: string | null;
   authority_type_group: string | null;
   authority_settlement: string | null;
   // bidder
@@ -466,6 +471,8 @@ export async function getContract(
               c.signing_value_eur, c.current_value_eur, c.value_flag, c.date_flag,
               c.bids_received, c.bids_rejected, c.bids_sme, c.bids_non_eea,
               c.subcontractor_eik, c.subcontractor_name, c.subcontract_value, c.currency AS contract_currency,
+              c.ordering_unit_name AS source_authority_name,
+              c.current_value_currency,
               t.title, t.source_id AS unp, t.procedure_type, t.cpv_code, t.cpv_description, t.num_lots,
               t.eop_tender_id,
               t.estimated_value, t.currency AS tender_currency, t.start_date, t.end_date,
@@ -485,7 +492,14 @@ export async function getContract(
     .first<ContractDetailRow>();
   if (!r) return null;
 
-  const [authTotals, compTotals, lotRows, amendmentRows] = await Promise.all([
+  // The cohort benchmark only exists for a clean, comparable value (the same gate contractCohort
+  // applies). Test that gate HERE too, from the row we already read, so a suspect/valueless contract
+  // skips the cpv_division_stats PK read entirely instead of paying for it and discarding the result
+  // (the PR's own „one extra rollup read, not a second scan" goal). The division is known
+  // synchronously, so when it IS read, it loads in parallel with the other detail reads.
+  const hasCleanValue = r.value_flag === 'ok' && r.amount_eur != null && r.amount_eur > 0;
+  const cohortDivision = hasCleanValue && r.cpv_code ? r.cpv_code.slice(0, 2) : '';
+  const [authTotals, compTotals, lotRows, cohortStats, amendmentRows] = await Promise.all([
     db
       .prepare(`SELECT spent_eur, contracts FROM authority_totals WHERE authority_id = ?`)
       .bind(r.authority_id)
@@ -519,6 +533,7 @@ export async function getContract(
         bidder_kind: 'company' | 'consortium' | null;
         bidder_id: string | null;
       }>(),
+    cohortDivision ? getCpvCohortStats(db, cohortDivision) : Promise.resolve(null),
     db.prepare(AMENDMENTS_SQL).bind(r.unp, r.contract_number).all<AmendmentRow>(),
   ]);
 
@@ -533,7 +548,8 @@ export async function getContract(
   const signingEur =
     r.signing_value_eur ?? eurFromNative(r.signing_value, r.contract_currency, r.fx_rate);
   const currentRaw =
-    r.current_value_eur ?? eurFromNative(r.current_value, r.contract_currency, r.fx_rate);
+    r.current_value_eur ??
+    eurFromNative(r.current_value, r.current_value_currency || r.contract_currency, r.fx_rate);
   const procedureEstimatedEur = eurFromNative(
     r.estimated_value,
     r.tender_currency,
@@ -602,6 +618,10 @@ export async function getContract(
     slug: authoritySlug(r.authority_id),
     name: cleanName(r.authority_name),
     displayName: cleanName(r.authority_name),
+    orderingUnit:
+      r.source_authority_name && foldName(r.source_authority_name) !== foldName(r.authority_name)
+        ? cleanName(r.source_authority_name)
+        : null,
     typeLabel: typeLabel(r.authority_type_group),
     settlement: r.authority_settlement,
     eik: authoritySlug(r.authority_id),
@@ -613,6 +633,7 @@ export async function getContract(
     slug: companySlug(r.bidder_id),
     name: cleanName(r.bidder_name),
     displayName: entityName(cleanName(r.bidder_name), r.bidder_kind),
+    orderingUnit: null,
     kind: r.bidder_kind,
     typeLabel: null,
     settlement: r.bidder_settlement,
@@ -693,8 +714,15 @@ export async function getContract(
     bidder,
     lots,
     subcontractor,
+    cohort: contractCohort(r.amount_eur, r.value_flag, cohortDivision, cohortStats),
     amendments,
   };
 
-  return { ...detail, sourceNames: { authority: r.authority_name, bidder: r.bidder_name } };
+  return {
+    ...detail,
+    sourceNames: {
+      authority: r.source_authority_name ?? r.authority_name,
+      bidder: r.bidder_name,
+    },
+  };
 }

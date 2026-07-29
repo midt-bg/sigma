@@ -3,6 +3,7 @@
 // back. The server is stateless (spec §5) — nothing per-user is persisted here.
 
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from 'ai';
+import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import {
@@ -216,7 +217,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   // (review #80).
   const question = latestUserText(messages);
   const ctx: ToolContext = {
-    db: env.DB,
+    db: getDb(env),
     ai,
     vectorize,
     results: [],
@@ -266,7 +267,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     // still validate after the data changes but before refreshed_at updates → a stale serve (strict
     // review). So when the version is unknown we DON'T dedup: every request generates (fail toward
     // regeneration) until a real refreshed_at lands.
-    const dataVersion = await freshnessVersion(env.DB);
+    const dataVersion = await freshnessVersion(getDb(env));
     if (dataVersion !== 'v0') {
       freshness = freshnessToken({ refreshedAt: dataVersion, buildId: env.BUILD_ID ?? 'dev' });
       dedup = buildDedupRequest({

@@ -31,10 +31,10 @@ function readScript(dbPath: string, path: string): void {
 const FIXTURE = `
 INSERT INTO authorities (id, name, bulstat, type_group) VALUES
   ('auth:A', 'Институция А', '100000001', 'община'),
-  ('auth:B', 'Институция Б', '100000002', 'община');
+  ('auth:B', 'Институция Б', '100000019', 'община');
 INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
-  ('eik:X', 'Фирма Х', '200000001', '200000001', 1, 'company'),
-  ('eik:Y', 'Фирма У', '200000002', '200000002', 1, 'company');
+  ('eik:X', 'Фирма Х', '200000002', '200000002', 1, 'company'),
+  ('eik:Y', 'Фирма У', '200000015', '200000015', 1, 'company');
 INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
   ('t:A', 'UNP-A', 'Поръчка А', 'auth:A', '45', 'открита процедура', 'awarded'),
   ('t:B', 'UNP-B', 'Поръчка Б', 'auth:B', '45', 'открита процедура', 'awarded');

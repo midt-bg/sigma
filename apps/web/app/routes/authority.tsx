@@ -8,6 +8,7 @@ import {
   getAuthoritySingleOffer,
   getEntityNetwork,
   getSpendingTrend,
+  getDb,
 } from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -44,7 +45,7 @@ export function headers() {
 export async function loader({ params, context }: Route.LoaderArgs) {
   const eik = params.eik;
   if (!eik?.trim()) throw new Response('Not Found', { status: 404 });
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
     const [authority, coverage, trend, network, competition, procedure] = await Promise.all([
