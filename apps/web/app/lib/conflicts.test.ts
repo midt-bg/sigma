@@ -28,6 +28,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     linkKey: 'person:a|111',
     officialSlug: 'c2VydA',
     official: 'Иван Минев',
+    institution: 'Община Русе',
     company: 'ТРЕЙС ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',

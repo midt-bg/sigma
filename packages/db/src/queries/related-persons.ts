@@ -30,6 +30,7 @@ interface LinkRow {
   link_key: string;
   person_id: string;
   official: string;
+  institution: string | null;
   company: string;
   eik: string;
   relation: string;
@@ -95,7 +96,12 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- family-NULL CASE guard is moot and removed.
     (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
      WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
-     ORDER BY d.declared_year DESC LIMIT 1) AS source_url
+     ORDER BY d.declared_year DESC LIMIT 1) AS source_url,
+    -- The official's LATEST declared institution — disambiguates namesakes on the surface (person grain is
+    -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
+    -- leaderboard is ≤1000 rows and hourly-cached, so the extra scan is immaterial.
+    (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
+     ORDER BY d.declared_year DESC LIMIT 1) AS institution
   FROM interest_links il
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
@@ -108,6 +114,7 @@ function toLink(r: LinkRow): ConflictLink {
     linkKey: r.link_key,
     officialSlug: personSlug(r.person_id),
     official: r.official,
+    institution: r.institution,
     company: r.company,
     eik: r.eik,
     relation: r.relation as ConflictRelation,

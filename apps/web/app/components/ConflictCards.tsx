@@ -131,11 +131,19 @@ function ConflictCard({
             </>
           )}
         </h3>
+        {/* The official's institution — disambiguates namesakes (person grain is (name, institution),
+            ADR-0026). Shown only where the official is named (not on their own page, where it's the header). */}
+        {omit !== 'official' && l.institution && (
+          <p className="cc-official-inst small muted">{l.institution}</p>
+        )}
 
         <div className="cc-interest">
           <span>{relationLabel(l.relation)}</span>
           {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
-          {l.contemporaneous && <Chip tone="window">към момента на договор</Chip>}
+          {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
+              so the chip can't claim „към момента на договор" from a flag that drifted out of sync with the
+              current contract set. hasContemporaneousContracts ⇔ the card's contract split shows an in-window row. */}
+          {hasContemporaneousContracts(l) && <Chip tone="window">към момента на договор</Chip>}
           {(l.firstDeclaredYear || l.lastDeclaredYear) && (
             <span className="small muted">
               деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.

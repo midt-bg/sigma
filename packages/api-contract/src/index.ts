@@ -647,6 +647,9 @@ export interface ConflictLink {
   linkKey: string;
   officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
   official: string; // declarant (office-holder) name as declared
+  institution: string | null; // the official's latest declared institution — disambiguates namesakes
+  //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct
+  //   people, so the surface must SHOW the body rather than render two identical bare names.
   company: string; // winner company name as registered
   eik: string; // winner ЕИК
   relation: ConflictRelation; // 'related' ⇒ the stake is a close relative's (anonymized), not the official's own

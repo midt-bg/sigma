@@ -136,6 +136,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
       expect(board[0]!.first_declared_year).toBe('2019');
       expect(board[0]!.last_declared_year).toBe('2023');
       expect(board[0]!.source_url).toBe('https://register.cacbg.bg/2024/i.xml');
+      // institution carries through from the latest declaration — the namesake disambiguator (I7).
+      expect(board[0]!.institution).toBe('ТЕСТ');
     });
   });
 

@@ -472,7 +472,13 @@ for (const rec of agg.values()) {
   // reported only as a nameless aggregate (getWithheldFamilyAggregate), which reads exactly the family
   // rows this branch marks 'internal'. ex_officio_board / management_role never surface either. Non-surfaced
   // classes that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
-  const surfaces = iClass === 'private_ownership';
+  // Zero-contract gate (I5): the surface's whole premise is „a stake in a company that WON public money".
+  // A match to a bidder with no recorded contracts (cCount===0 — a winner row with every contract deduped/
+  // filtered away, or a name-only match to a non-winning entity) has no procurement conflict to show: the
+  // card would read „0 договори · 0 €". Such a link is collected but never surfaces — treat it like a
+  // non-surfaced class ('internal'), not 'published'. cValue can legitimately be 0 with cCount>0 (contracts
+  // whose amount is unknown/NULL) — that is a real conflict of unknown value, so gate on COUNT, not value.
+  const surfaces = iClass === 'private_ownership' && cCount > 0;
   const status = isSuppressed(linkKey)
     ? 'suppressed'
     : divested

@@ -18,6 +18,7 @@ function row(over: Record<string, unknown> = {}) {
     link_key: 'p1|111',
     person_id: 'person:ИВАН МИНЕВ',
     official: 'Иван Минев',
+    institution: 'Община Русе',
     company: 'ТРЕЙС ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
@@ -76,6 +77,8 @@ describe('related-persons queries', () => {
     // person_id is encoded to a URL-safe slug, never surfaced raw
     expect(links[0]!.officialSlug).toBe(personSlug('person:ИВАН МИНЕВ'));
     expect(links[0]!.officialSlug).not.toContain(' ');
+    // institution carries through — the namesake disambiguator (person grain is (name, institution))
+    expect(links[0]!.institution).toBe('Община Русе');
   });
 
   it('own-institution is false for every non-exact verdict', async () => {

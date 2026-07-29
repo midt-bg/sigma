@@ -59,7 +59,7 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={company}
-          lede={`Длъжностни лица, декларирали дял — свой или на свързано лице — в това дружество пред КПКОНПИ. ${count(links.length)} ${plural(links.length, 'връзка', 'връзки')} — всяка е точно съвпадение по фирмено име.`}
+          lede={`Длъжностни лица, декларирали собствен дял в това дружество пред КПКОНПИ. ${count(links.length)} ${plural(links.length, 'връзка', 'връзки')} — всяка е точно съвпадение по фирмено име.`}
         />
 
         <Callout titleAs="h2" title="Източник и обхват">

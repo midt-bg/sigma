@@ -75,6 +75,9 @@ before(() => {
     -- SECURITIES case: a self holding of LISTED joint-stock shares — must NOT become an ownership link
     INSERT INTO bidders VALUES ('eik:999999998','ЛИСТЕД ТЕСТ АД','999999998',1,'София');
     INSERT INTO contracts VALUES ('c10','t1','eik:999999998','2023-06-01',60000);
+    -- ZERO-CONTRACT case (I5): a distinctive winner name with NO contract rows → a name match that carries
+    -- no procurement conflict. Collected, but must NEVER publish („0 договори · 0 €").
+    INSERT INTO bidders VALUES ('eik:121212129','НУЛА ТЕХ 3 ЕООД','121212129',1,'София');
   `);
   db.close();
 
@@ -287,6 +290,25 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H12',
     },
+    // ZERO-CONTRACT (I5): Нула owns a distinctive winner that has NO contracts → tier B by name, but gated to
+    // 'internal' because there is no won public money to show on the surface.
+    {
+      folder: '2024',
+      xmlFile: 'M.xml',
+      year: '2023',
+      template: 'assets',
+      category: '',
+      institution: 'N2',
+      person: 'Нула Тестов',
+      position: '',
+      entity: 'НУЛА ТЕХ 3 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H13',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -398,6 +420,14 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // PII rail: the relative's identity is never stored — no family holder name reaches the DB.
   assert.equal(db.prepare('SELECT COUNT(*) n FROM related_persons_internal').get().n, 0);
 
+  // ZERO-CONTRACT gate (I5): a distinctive winner with NO contracts is collected but never published — the
+  // card would read „0 договори · 0 €", which is no procurement conflict. status 'internal', not 'published'.
+  const zero = link('121212129', 'Нула Тестов');
+  assert.equal(zero.contract_count, 0);
+  assert.equal(zero.interest_class, 'private_ownership'); // it IS own material ownership …
+  assert.equal(zero.publish_tier, 'B_distinctive'); // … and tier-B by name …
+  assert.equal(zero.status, 'internal'); // … but the zero-contract gate withholds it from the surface
+
   // SECURITIES/materiality: a self holding of LISTED joint-stock shares forms NO ownership link.
   assert.equal(link('999999998', 'Акционер Тестов'), undefined);
   // but it is still recorded as a declared interest (census), tagged kind securities
@@ -434,10 +464,11 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 10 links: 9 self (incl. withdrawn/held) + 1 family; Мария (quarantined) & Акционер (securities) form none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 10);
-  // 11 persons: everyone who declared a holding, incl. no-link Мария & Акционер.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 11);
+  // 11 links: 10 self (incl. withdrawn/held + the zero-contract 'internal') + 1 family; Мария (quarantined)
+  // & Акционер (securities) form none.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 11);
+  // 12 persons: everyone who declared a holding, incl. no-link Мария & Акционер and zero-contract Нула.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 12);
   db.close();
 });
 
