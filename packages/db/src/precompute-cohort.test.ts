@@ -1,17 +1,20 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const migrations = [
-  resolve(root, 'packages/db/migrations/0000_init.sql'),
-  resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql'),
-  resolve(root, 'packages/db/migrations/0004_cpv_division_stats.sql'),
-];
+// Apply EVERY migration in the directory, not a hardcoded subset: precompute.sql reads columns added
+// by later migrations (current_value_currency from 0002), so a pinned list silently drifts out of the
+// real served schema and fails on a column the production DB has. Sorted, so ordering stays by number.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 

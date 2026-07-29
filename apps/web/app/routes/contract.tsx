@@ -1,9 +1,7 @@
 import { Link } from 'react-router';
 import { count, longDate, money, moneyBare, plural, signedMoney, signedPct } from '@sigma/shared';
-import { contractIdFromSlug, getContract } from '@sigma/db';
-import type { CohortBand, ContractDetail } from '@sigma/api-contract';
 import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
-import type { ContractDetail } from '@sigma/api-contract';
+import type { CohortBand, ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
