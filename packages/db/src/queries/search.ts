@@ -116,19 +116,30 @@ interface HitRow {
 // company the surface wouldn't. A family-only winner MUST NOT badge: the badge is itself a re-identification
 // signal (it says „a related person owns this" next to the named company). Binds: kind, match, limit.
 // Exported so search-sql.test runs the EXACT SQL (not a copy).
-export const SEARCH_HITS_SQL = `SELECT search_index.ref, search_index.title, search_index.ident,
-        search_index.subtitle, search_index.amount, rank,
+// Built with or without the interest_links conflict join. The join is on the свързани-лица migration (0003);
+// on an env where it has not been applied yet the join would make the ENTIRE search 500 with „no such table:
+// interest_links". search() detects the table once per request and picks the no-conflict variant when absent,
+// so search degrades to has_conflict=0 rather than breaking (ADR-0031 robustness ask).
+const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, search_index.title,
+        search_index.ident, search_index.subtitle, search_index.amount, rank,
         ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
-        (cf.eik IS NOT NULL) AS has_conflict
+        ${withConflict ? '(cf.eik IS NOT NULL)' : '0'} AS has_conflict
  FROM search_index
  LEFT JOIN company_totals ct
    ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
- LEFT JOIN (
+ ${
+   withConflict
+     ? `LEFT JOIN (
    SELECT DISTINCT eik FROM interest_links
    WHERE status = 'published' AND interest_class = 'private_ownership'
- ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident
+ ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident`
+     : ''
+ }
  WHERE search_index.kind = ? AND search_index MATCH ?
  ORDER BY rank LIMIT ?`;
+
+export const SEARCH_HITS_SQL = hitsSql(true);
+export const SEARCH_HITS_SQL_NO_CONFLICT = hitsSql(false);
 
 export async function search(db: D1Database, rawQuery: string): Promise<SearchResults> {
   const query = (rawQuery ?? '').trim();
@@ -147,6 +158,14 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
     .all<{ kind: SearchKind; n: number }>();
   const counts = new Map(countRows.results.map((r) => [r.kind, r.n]));
 
+  // Pick the hits SQL once: on an env where the свързани-лица migration (0003) is not applied, the conflict
+  // join would 500 the whole search — fall back to the no-conflict variant (has_conflict=0) instead.
+  const hasConflictTable =
+    (await db
+      .prepare("SELECT 1 AS n FROM sqlite_master WHERE type='table' AND name='interest_links'")
+      .first<{ n: number }>()) != null;
+  const hitsSql = hasConflictTable ? SEARCH_HITS_SQL : SEARCH_HITS_SQL_NO_CONFLICT;
+
   const built = await Promise.all(
     GROUPS.map(async (g) => {
       const total = counts.get(g.kind) ?? 0;
@@ -162,10 +181,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           bestRank: Infinity,
         };
       }
-      const { results } = await db
-        .prepare(SEARCH_HITS_SQL)
-        .bind(g.kind, match, g.limit)
-        .all<HitRow>();
+      const { results } = await db.prepare(hitsSql).bind(g.kind, match, g.limit).all<HitRow>();
       const hits: SearchHit[] = results.map((r) => {
         const href = hrefForEntity(g.kind, r.ref);
         const isCompany = g.kind === 'company';

@@ -10,7 +10,7 @@ import { personSlug } from './identity';
 
 // `officialBestRank` drives the relevance gate: FTS bm25 rank is negative, lower = better. Company's best is
 // -5 below, so an official best of -6 LEADS (stronger) and -1 SINKS (weaker/incidental) — the two gate arms.
-function searchDb(officialBestRank = -6): D1Database {
+function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
   const officialRows = [
     {
       ref: 'person:ИВАН МИНЕВ',
@@ -92,6 +92,12 @@ function searchDb(officialBestRank = -6): D1Database {
         bind(...args: unknown[]) {
           bound = args;
           return this;
+        },
+        async first<T>() {
+          // The свързани-лица table probe drives which hits SQL search() runs. Report present/absent per the
+          // fixture flag so both the with-conflict path and the un-migrated fallback are exercisable.
+          if (sql.includes('sqlite_master')) return (hasConflictTable ? { n: 1 } : null) as T;
+          return null as T;
         },
         async all<T>() {
           if (sql.includes('COUNT(*) AS n')) {
@@ -226,5 +232,12 @@ describe('search', () => {
     const flagged = companies.filter((h) => h.hasConflict);
     expect(flagged).toHaveLength(1);
     expect(flagged[0]?.title).toBe('Company 0');
+  });
+
+  it('does not 500 when the свързани-лица table is absent (un-migrated env)', async () => {
+    // sqlite_master probe → table missing → search() runs the no-conflict hits SQL. It must complete and
+    // still return the other groups; the has_conflict=0 correctness of that SQL is proven in search-sql.test.
+    const results = await search(searchDb(-6, false), 'company');
+    expect(results.groups.find((g) => g.kind === 'company')?.hits.length ?? 0).toBeGreaterThan(0);
   });
 });

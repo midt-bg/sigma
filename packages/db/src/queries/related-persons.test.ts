@@ -4,6 +4,7 @@ import {
   getConflictLeaderboard,
   getLinkContracts,
   getOfficialConflicts,
+  getWithheldFamilyAggregate,
 } from './related-persons';
 import { personSlug } from './identity';
 
@@ -125,5 +126,51 @@ describe('related-persons queries', () => {
     expect(contracts[0]!.authority).toBe('Община Пловдив');
     // an unknown/non-surfaced link_key yields no contracts (the SQL WHERE gate returns nothing)
     expect(await getLinkContracts(fakeDb({}), 'person:nobody|000')).toEqual([]);
+  });
+});
+
+// A D1 whose statements throw D1's „no such table" — the свързани-лица migration (0003) not yet applied to
+// this env. Every conflict read must degrade (empty/null), never 500.
+function throwingDb(err: Error): D1Database {
+  return {
+    prepare() {
+      return {
+        bind() {
+          return this;
+        },
+        async all(): Promise<never> {
+          throw err;
+        },
+        async first(): Promise<never> {
+          throw err;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {
+  const missing = () =>
+    throwingDb(new Error('D1_ERROR: no such table: interest_links: SQLITE_ERROR'));
+
+  it('leaderboard → [], family aggregate → zeros, official/company → null, contracts → []', async () => {
+    expect(await getConflictLeaderboard(missing(), 10)).toEqual([]);
+    expect(await getWithheldFamilyAggregate(missing())).toEqual({
+      linkCount: 0,
+      officialCount: 0,
+      totalEur: 0,
+    });
+    expect(await getOfficialConflicts(missing(), 'person:x')).toBeNull();
+    expect(await getCompanyConflicts(missing(), '111')).toBeNull();
+    expect(await getLinkContracts(missing(), 'p|1')).toEqual([]);
+  });
+
+  it('a NON-missing-table error still propagates — we only swallow the migration gap', async () => {
+    const boom = throwingDb(new Error('D1_ERROR: syntax error near "FROM"'));
+    await expect(getConflictLeaderboard(boom, 10)).rejects.toThrow(/syntax error/);
+    await expect(getWithheldFamilyAggregate(boom)).rejects.toThrow(/syntax error/);
+    await expect(getOfficialConflicts(boom, 'person:x')).rejects.toThrow(/syntax error/);
+    await expect(getCompanyConflicts(boom, '111')).rejects.toThrow(/syntax error/);
+    await expect(getLinkContracts(boom, 'p|1')).rejects.toThrow(/syntax error/);
   });
 });

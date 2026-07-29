@@ -7,6 +7,13 @@ import type {
 } from '@sigma/api-contract';
 import { contractSlug, personSlug } from './identity';
 
+// True for D1's „no such table: …" — the свързани-лица migration (0003) not yet applied to this D1 (a fresh
+// or half-provisioned env). Lets every conflict read degrade to an empty/absent state (→ empty page or 404)
+// instead of a 500, so the feature's routes are safe to deploy ahead of the data-ship (ADR-0031 robustness).
+export function isMissingTableError(e: unknown): boolean {
+  return e instanceof Error && /no such table/i.test(e.message);
+}
+
 // Read-only query layer for свързани лица. The PUBLIC surface shows the official's OWN declared material
 // ownership only: private_ownership — the official declared their OWN stake (relation owns/owns+manages).
 // A CLOSE RELATIVE's declared stake (family_ownership, relation 'related') is collected and audited but
@@ -125,8 +132,13 @@ export const LEADERBOARD_SQL = `${LINK_SELECT}
 /** The leaderboard: office-holders who declared a material ownership stake (their own or a close
  *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value). */
 export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
-  const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
-  return rows.map(toLink);
+  try {
+    const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
+    return rows.map(toLink);
+  } catch (e) {
+    if (isMissingTableError(e)) return []; // un-migrated env → empty surface, not a 500
+    throw e;
+  }
 }
 
 // The nameless close-relative aggregate (ADR-0030). Officials who declared a CLOSE RELATIVE's material stake
@@ -156,14 +168,20 @@ export interface WithheldFamilyAggregate {
  *  no rows. Reported as „N длъжностни лица … в дружества, спечелили €X" so the public signal survives while
  *  no private individual is identified. */
 export async function getWithheldFamilyAggregate(db: D1Database): Promise<WithheldFamilyAggregate> {
-  const r = await db
-    .prepare(WITHHELD_FAMILY_AGGREGATE_SQL)
-    .first<{ link_count: number; official_count: number; total_eur: number }>();
-  return {
-    linkCount: r?.link_count ?? 0,
-    officialCount: r?.official_count ?? 0,
-    totalEur: r?.total_eur ?? 0,
-  };
+  const empty = { linkCount: 0, officialCount: 0, totalEur: 0 };
+  try {
+    const r = await db
+      .prepare(WITHHELD_FAMILY_AGGREGATE_SQL)
+      .first<{ link_count: number; official_count: number; total_eur: number }>();
+    return {
+      linkCount: r?.link_count ?? 0,
+      officialCount: r?.official_count ?? 0,
+      totalEur: r?.total_eur ?? 0,
+    };
+  } catch (e) {
+    if (isMissingTableError(e)) return empty; // un-migrated env → no aggregate, not a 500
+    throw e;
+  }
 }
 
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
@@ -175,10 +193,15 @@ export async function getOfficialConflicts(
   db: D1Database,
   personId: string,
 ): Promise<OfficialConflicts | null> {
-  const rows = (await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results;
-  if (rows.length === 0) return null;
-  const links = rows.map(toLink);
-  return { official: links[0]!.official, links };
+  try {
+    const rows = (await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results;
+    if (rows.length === 0) return null;
+    const links = rows.map(toLink);
+    return { official: links[0]!.official, links };
+  } catch (e) {
+    if (isMissingTableError(e)) return null; // un-migrated env → 404, not a 500
+    throw e;
+  }
 }
 
 export const COMPANY_SQL = `${LINK_SELECT} AND il.eik = ?
@@ -189,9 +212,14 @@ export async function getCompanyConflicts(
   db: D1Database,
   eik: string,
 ): Promise<CompanyConflicts | null> {
-  const rows = (await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results;
-  if (rows.length === 0) return null;
-  return { company: rows[0]!.company, eik, links: rows.map(toLink) };
+  try {
+    const rows = (await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results;
+    if (rows.length === 0) return null;
+    return { company: rows[0]!.company, eik, links: rows.map(toLink) };
+  } catch (e) {
+    if (isMissingTableError(e)) return null; // un-migrated env → 404, not a 500
+    throw e;
+  }
 }
 
 interface ContractRow {
@@ -240,7 +268,13 @@ export async function getLinkContracts(
   db: D1Database,
   linkKey: string,
 ): Promise<ConflictContract[]> {
-  const rows = (await db.prepare(LINK_CONTRACTS_SQL).bind(linkKey).all<ContractRow>()).results;
+  let rows: ContractRow[];
+  try {
+    rows = (await db.prepare(LINK_CONTRACTS_SQL).bind(linkKey).all<ContractRow>()).results;
+  } catch (e) {
+    if (isMissingTableError(e)) return []; // un-migrated env → empty contracts, not a 500
+    throw e;
+  }
   return rows.map((r) => ({
     contractSlug: contractSlug(r.id),
     signedAt: r.signed_at,

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { SEARCH_HITS_SQL } from './queries/search';
+import { SEARCH_HITS_SQL, SEARCH_HITS_SQL_NO_CONFLICT } from './queries/search';
 
 // Integration test for the search-side свързани-лица SQL. The queries/search unit tests use a fake D1 and
 // never run the real FTS + joins; this runs the EXACT exported SEARCH_HITS_SQL (which is used for EVERY kind,
@@ -158,6 +158,18 @@ describe('search свързани-лица SQL', () => {
       const epsilon = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'епсилон*', 10));
       expect(epsilon).toHaveLength(1);
       expect(epsilon[0]!.has_conflict).toBe(0);
+    });
+  });
+
+  it('the no-conflict hits variant ignores interest_links (un-migrated-env fallback)', () => {
+    // search() falls back to this variant when the свързани-лица migration (0003) is absent. It must not
+    // reference interest_links at all (so a missing table can never 500 the search) and reports
+    // has_conflict=0 for every company — even АЛФА, which has a real published own-stake conflict.
+    expect(SEARCH_HITS_SQL_NO_CONFLICT).not.toContain('interest_links');
+    withDb((dbPath) => {
+      const alfa = rows(dbPath, lit(SEARCH_HITS_SQL_NO_CONFLICT, 'company', 'алфа*', 10));
+      expect(alfa).toHaveLength(1);
+      expect(alfa[0]!.has_conflict).toBe(0);
     });
   });
 
