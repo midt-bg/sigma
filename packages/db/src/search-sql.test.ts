@@ -65,24 +65,26 @@ INSERT INTO interest_links
   ('il:ia','person:ИВАН МИНЕВ|111','person:ИВАН МИНЕВ','eik:111','111111111','АЛФА ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2023',1,1000000,'2021','2021','published'),
   ('il:ig','person:ИВАН МИНЕВ|333','person:ИВАН МИНЕВ','eik:333','333333333','ГАМА ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2023',1,200000,'2021','2021','published'),
   ('il:gb','person:ГЕОРГИ ПЕТРОВ|222','person:ГЕОРГИ ПЕТРОВ','eik:222','222222222','БЕТА ООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2020',1,500000,'2021','2021','held'),
-  -- family_ownership, published → a public-surface class → the holder official IS searchable, company IS flagged.
+  -- family_ownership, MIS-STATUSED as published → the independent interest_class gate must STILL exclude it
+  -- (ADR-0030): the holder official is NOT searchable, the company is NOT flagged. Proves family withholding
+  -- does not rely on the status='internal' coupling alone.
   ('il:df','person:ДАНА ФАМ|444','person:ДАНА ФАМ','eik:444','444444444','ДЕЛТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2023',1,300000,'2021','2021','published'),
   -- management_role, marked published (a hypothetical mis-status) → the interest_class gate must STILL exclude
   -- it: a statutory board/management role is never a declared conflict, so it can never reach search or a badge.
   ('il:bm','person:БОРИС БОРД|555','person:БОРИС БОРД','eik:555','555555555','ЕПСИЛОН ООД','exact_name_key','v1','B_distinctive','manages','management_role',0,'none',1,'2020','2023',1,700000,'2021','2021','published'),
-  -- Двоен declared BOTH his own and a relative's stake in ЗЕТА (eik 666): two published links, one winner,
-  -- €50k each. The officials index must count €50k ONCE (drop the redundant family row), not €100k.
+  -- Двоен declared BOTH his own and a relative's stake in ЗЕТА (eik 666): the own link (€50k) surfaces; the
+  -- family link is excluded by the interest_class gate. The officials index counts €50k ONCE, not €100k.
   ('il:ds','person:ДВОЕН ТЕСТ|666','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published'),
   ('il:dfam','person:ДВОЕН ТЕСТ|666|family','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published');
 `;
 
 // Search-index population — a STRUCTURAL proxy for scripts/precompute.sql's officials block: it exercises
-// the publish/interest_class filter, the per-person GROUP BY, and the NOT_REDUNDANT_FAMILY dedup — the parts
-// this suite asserts. The `amount` here is the pre-summed il.contract_value_eur, NOT production's
-// contemporaneous windowed subquery (which needs a contracts/tenders/authorities fixture); that per-link
-// contemporaneous formula is exercised on the read side by related-persons-sql.test.ts (LINK_SELECT), and
-// the "precompute ≡ refresh-slice" invariant is enforced by the drift-guard test below — so a divergence in
-// the real €-formula fails a test rather than silently overstating the public figure.
+// the publish + own-stake (private_ownership) filter and the per-person GROUP BY — the parts this suite
+// asserts. The `amount` here is the pre-summed il.contract_value_eur, NOT production's contemporaneous
+// windowed subquery (which needs a contracts/tenders/authorities fixture); that per-link contemporaneous
+// formula is exercised on the read side by related-persons-sql.test.ts (LINK_SELECT), and the "precompute ≡
+// refresh-slice" invariant is enforced by the drift-guard test below — so a divergence in the real €-formula
+// fails a test rather than silently overstating the public figure.
 const POPULATE_INDEX = `
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
@@ -93,10 +95,7 @@ SELECT 'official', il.person_id, p.name, NULL,
    ORDER BY d.declared_year DESC LIMIT 1),
   SUM(il.contract_value_eur)
 FROM interest_links il JOIN persons p ON p.id = il.person_id
-WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-  AND NOT (il.interest_class = 'family_ownership' AND EXISTS (
-    SELECT 1 FROM interest_links s WHERE s.person_id = il.person_id AND s.eik = il.eik
-      AND s.status = 'published' AND s.interest_class = 'private_ownership'))
+WHERE il.status = 'published' AND il.interest_class = 'private_ownership'
 GROUP BY il.person_id, p.name;
 `;
 
@@ -141,15 +140,16 @@ describe('search свързани-лица SQL', () => {
     });
   });
 
-  it('indexes family_ownership but NEVER management_role/ex-officio (the interest_class gate)', () => {
+  it('NEVER indexes family_ownership OR management_role/ex-officio (withheld + interest_class gate)', () => {
     withDb((dbPath) => {
-      // family_ownership is a public-surface class → the holder official IS searchable, company IS flagged.
-      const dana = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'дана*', 10));
-      expect(dana).toHaveLength(1);
-      expect(dana[0]!.ref).toBe('person:ДАНА ФАМ');
-      expect(dana[0]!.amount).toBe(300000);
+      // family_ownership is withheld from every named surface (ADR-0030): even MIS-STATUSED as published, the
+      // interest_class gate excludes it — Дана is NOT searchable, ДЕЛТА is NOT flagged. A company badge is
+      // itself a re-identification signal („a related person owns this"), so it must never light up for a
+      // family-only winner.
+      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'дана*', 10))).toHaveLength(0);
       const delta = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'делта*', 10));
-      expect(delta[0]!.has_conflict).toBe(1);
+      expect(delta).toHaveLength(1);
+      expect(delta[0]!.has_conflict).toBe(0);
 
       // management_role marked published → the interest_class gate must still exclude it, both from the
       // officials index (no name in search) and from the company badge join. A statutory board/management
@@ -174,13 +174,13 @@ describe('search свързани-лица SQL', () => {
 
   it('counts a winner ONCE for an official who declared both their own and a relative’s stake in it', () => {
     withDb((dbPath) => {
-      // Двоен has a published self AND a published family link to ЗЕТА (eik 666), €50k each. The officials
-      // index must drop the redundant family row so „по договори" is €50k — a plain SUM would say €100k, an
-      // inflated public figure inconsistent with the /conflicts page (which collapses via LINK_SELECT).
+      // Двоен has a self AND a family link to ЗЕТА (eik 666), €50k each. Only the own (private_ownership) link
+      // surfaces; the family link is excluded by the interest_class gate — so „по договори" is €50k, not the
+      // €100k a naive SUM over both would report (consistent with the /conflicts page, own-stake only).
       const dvoen = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'двоен*', 10));
       expect(dvoen).toHaveLength(1);
       expect(dvoen[0]!.ref).toBe('person:ДВОЕН ТЕСТ');
-      expect(dvoen[0]!.amount).toBe(50000); // NOT 100000 — the winner is not double-counted
+      expect(dvoen[0]!.amount).toBe(50000); // NOT 100000 — the family link never enters the sum
     });
   });
 

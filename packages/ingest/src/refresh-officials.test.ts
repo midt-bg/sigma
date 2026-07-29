@@ -37,8 +37,9 @@ function rows(dbPath: string, sql: string): Record<string, string | number | nul
   return out ? JSON.parse(out) : [];
 }
 
-// One published private-ownership official + a redundant family link on the SAME winner (to prove the
-// collapse predicate rides through the ETL path too) + a held link (must never surface).
+// One published private-ownership official + a family link on the SAME winner mis-statused as 'published'
+// (to prove the INDEPENDENT interest_class gate excludes family even when its status is wrong — ADR-0030)
+// + a held link (must never surface).
 // Иван declared his АЛФА stake for the window [2020,2023]. АЛФА's LIFETIME contract haul is €90k
 // (contract_value_eur), but only the €30k contract signed IN that window is a contemporaneous conflict;
 // the €60k one (2025) is after his declared window. The officials search headline must be the €30k
@@ -80,7 +81,7 @@ describe('ETL refresh-slice officials batch (the live parse-then-execute path)',
       );
       expect(officialInsert, 'a single officials INSERT statement').toBeDefined();
       expect(officialInsert!).toMatch(/GROUP BY il\.person_id, p\.name/);
-      expect(officialInsert!).toMatch(/NOT_REDUNDANT_FAMILY|interest_class = 'family_ownership'/); // collapse rode through
+      expect(officialInsert!).toMatch(/interest_class = 'private_ownership'/); // own-stake-only gate rode through
       expect(officialInsert!.match(/INSERT INTO search_index/g)).toHaveLength(1); // exactly one INSERT — not merged/split wrong
 
       // Execute the whole entity-search-index group in order (what db.batch does in the Worker).
@@ -90,9 +91,10 @@ describe('ETL refresh-slice officials batch (the live parse-then-execute path)',
         dbPath,
         `SELECT ref, title, amount FROM search_index WHERE kind='official' ORDER BY ref`,
       );
-      // Иван is indexed once (self+family collapsed → NOT doubled); Гео (held only) is absent. The amount
-      // is the CONTEMPORANEOUS conflict-window sum (€30k, the 2021 contract inside [2020,2023]) — NOT the
-      // €90k lifetime total, which would credit him with АЛФА's 2025 contract signed after his window.
+      // Иван is indexed once (only his own private_ownership link; the mis-statused family link is dropped
+      // by the interest_class gate, not doubled); Гео (held only) is absent. The amount is the
+      // CONTEMPORANEOUS conflict-window sum (€30k, the 2021 contract inside [2020,2023]) — NOT the €90k
+      // lifetime total, which would credit him with АЛФА's 2025 contract signed after his window.
       expect(officials).toHaveLength(1);
       expect(officials[0]!.ref).toBe('person:ИВАН');
       expect(officials[0]!.title).toBe('Иван Тестов');

@@ -382,11 +382,13 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(radka.status, 'published');
 
   // FAMILY: a close relative's declared stake in a winner that sold to the official's OWN institution.
-  // This is the strongest anonymized signal — relation 'related', class family_ownership, own_institution exact.
+  // Collected + audited but WITHHELD from every named surface in v1 (ADR-0030): stored status='internal',
+  // never 'published', so it never reaches the leaderboard/official/company/search — it feeds only the
+  // nameless aggregate. relation 'related', class family_ownership, own_institution exact.
   const family = link('888888884', 'Кмет Тестов');
   assert.equal(family.relation, 'related');
   assert.equal(family.interest_class, 'family_ownership');
-  assert.equal(family.status, 'published');
+  assert.equal(family.status, 'internal');
   assert.equal(family.own_institution, 'exact'); // relative's company sold to the official's own institution
   assert.equal(family.contemporaneous, 1);
   assert.equal(family.contract_value_eur, 250000);

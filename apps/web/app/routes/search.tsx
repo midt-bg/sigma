@@ -71,7 +71,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 const KIND_LABEL: Record<string, string> = {
-  official: 'свързано лице',
+  official: 'длъжностно лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',

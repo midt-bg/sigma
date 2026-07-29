@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // loaders sit on top of, and here we drive their return values to exercise every branch.
 const q = vi.hoisted(() => ({
   getConflictLeaderboard: vi.fn(),
+  getWithheldFamilyAggregate: vi.fn(),
   getOfficialConflicts: vi.fn(),
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
@@ -49,18 +50,28 @@ afterEach(() => {
 });
 
 describe('leaderboard loader (/conflicts)', () => {
-  it('caches for an hour when there are links', async () => {
+  const NO_FAMILY = { linkCount: 0, officialCount: 0, totalEur: 0 };
+
+  it('caches for an hour when there are links, and returns the family aggregate alongside them', async () => {
     q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
+    q.getWithheldFamilyAggregate.mockResolvedValue({
+      linkCount: 4,
+      officialCount: 3,
+      totalEur: 250000,
+    });
     const res = (await leaderboardLoader({ context } as never)) as {
-      data: unknown[];
+      data: { links: unknown[]; family: { officialCount: number } };
       init: { headers: Record<string, string> };
     };
-    expect(res.data).toHaveLength(1);
+    expect(res.data.links).toHaveLength(1);
+    // The nameless aggregate rides in the SAME payload (the public `.data` twin) — scalars only, no rows.
+    expect(res.data.family.officialCount).toBe(3);
     expect(res.init.headers['Cache-Control']).toMatch(/s-maxage=3600/);
   });
 
   it('does NOT cache an empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
     q.getConflictLeaderboard.mockResolvedValue([]);
+    q.getWithheldFamilyAggregate.mockResolvedValue(NO_FAMILY);
     const res = (await leaderboardLoader({ context } as never)) as {
       init: { headers: Record<string, string> };
     };

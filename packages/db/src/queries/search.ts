@@ -106,14 +106,16 @@ interface HitRow {
   entity_kind: EntityKind | null;
   ownership_kind: OwnershipKind | null;
   eik_valid: number | null;
-  has_conflict: number | null; // 1 when a company row has a published свързани-лица link (badge)
+  has_conflict: number | null; // 1 when a company row has a published OWN-stake свързани-лица link (badge)
   rank: number; // FTS bm25 score (lower = better); the group's top row gives its best rank for the gate
 }
 
 // One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
-// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published-only,
-// private/family ownership — the same gate as the /conflicts surface, so search can never flag a company the
-// surface wouldn't. Binds: kind, match, limit. Exported so search-sql.test runs the EXACT SQL (not a copy).
+// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published + own-stake
+// (private_ownership) ONLY — the SAME gate as the /conflicts surface (ADR-0030), so search can never flag a
+// company the surface wouldn't. A family-only winner MUST NOT badge: the badge is itself a re-identification
+// signal (it says „a related person owns this" next to the named company). Binds: kind, match, limit.
+// Exported so search-sql.test runs the EXACT SQL (not a copy).
 export const SEARCH_HITS_SQL = `SELECT search_index.ref, search_index.title, search_index.ident,
         search_index.subtitle, search_index.amount, rank,
         ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
@@ -123,7 +125,7 @@ export const SEARCH_HITS_SQL = `SELECT search_index.ref, search_index.title, sea
    ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
  LEFT JOIN (
    SELECT DISTINCT eik FROM interest_links
-   WHERE status = 'published' AND interest_class IN ('private_ownership', 'family_ownership')
+   WHERE status = 'published' AND interest_class = 'private_ownership'
  ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident
  WHERE search_index.kind = ? AND search_index MATCH ?
  ORDER BY rank LIMIT ?`;

@@ -4,25 +4,19 @@ import { count, moneyBare } from '@sigma/shared';
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
 // routes branch on lives here so the JSX stays a declarative shell (the repo does not render-test
 // components — see search.suggest.test.ts) and every decision is unit-covered. NONE of this touches
-// related_persons_internal; only PUBLISHED material-ownership links reach the DTO. 'related' links are
-// a close relative's stake declared by the official — anonymized as „свързано лице", relative never named.
+// related_persons_internal; only PUBLISHED private_ownership links reach the DTO. A close relative's stake
+// (family_ownership, relation 'related') is withheld from every named surface in v1 (ADR-0030) and reported
+// only as a nameless aggregate, so no 'related' link ever reaches this layer — hence no family label/branch.
 
 const RELATION_LABEL: Record<string, string> = {
   owns: 'притежава дял',
   manages: 'управлява',
   'owns+manages': 'притежава дял и управлява',
-  related: 'дял на свързано лице', // a close relative's stake — the relative is never named
 };
 
 /** Bulgarian label for a declared relation. Unknown values pass through — never invent a stronger claim. */
 export function relationLabel(relation: string): string {
   return RELATION_LABEL[relation] ?? relation;
-}
-
-/** A family link: the stake is a close relative's, declared by the official. Rendered anonymized —
- *  the official + company + value are shown, the relative only as „свързано лице". */
-export function isFamilyLink(link: ConflictLink): boolean {
-  return link.relation === 'related';
 }
 
 /** /conflicts/official/:slug — the office-holder's page (slug already base64url-encoded). */
@@ -85,11 +79,10 @@ export function fundsMagnitude(link: ConflictLink): number | null {
 }
 
 /** The on-demand resource URL for a link's contracts (client-fetched by the expandable row). Keyed on the
- *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. :scope (self | family)
- *  is a path segment, so it is part of the cache key and can't be cloaked away. */
+ *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. Only self links surface
+ *  (ADR-0030), so :scope is always 'self'; the route still validates the family scope defensively. */
 export function linkContractsHref(link: ConflictLink): string {
-  const scope = isFamilyLink(link) ? 'family' : 'self';
-  return `/conflicts/link/${scope}/${link.officialSlug}/${link.eik}/contracts`;
+  return `/conflicts/link/self/${link.officialSlug}/${link.eik}/contracts`;
 }
 
 // The declared YEARS are when the stake was DISCLOSED (declaration within a month of taking office, then
@@ -303,36 +296,27 @@ export function authorityShareDisplay(s: AuthorityShare): ShareDisplay {
   return { mode: 'bar', ratio: s.ratio };
 }
 
-/** Leaderboard headline: total public money to linked winners, counts, and the family (свързано лице)
- *  subset. A null contract value counts as 0 (never NaN) — the money figure must never read as fabricated. */
+/** Leaderboard headline: total public money to linked winners and counts, over the OWN-stake surface only
+ *  (family is withheld — reported separately as the nameless aggregate, ADR-0030). A null contract value
+ *  counts as 0 (never NaN) — the money figure must never read as fabricated. */
 export function privateOwnershipHeadline(links: ConflictLink[]): {
   linkCount: number;
   officialCount: number;
   totalEur: number;
   contemporaneousEur: number;
-  familyLinkCount: number;
-  familyEur: number;
 } {
   const officials = new Set<string>();
   let totalEur = 0;
   let contemporaneousEur = 0;
-  let familyLinkCount = 0;
-  let familyEur = 0;
   for (const l of links) {
     officials.add(l.officialSlug);
     totalEur += l.contractValueEur ?? 0;
     contemporaneousEur += l.contemporaneousValueEur ?? 0;
-    if (isFamilyLink(l)) {
-      familyLinkCount += 1;
-      familyEur += l.contractValueEur ?? 0;
-    }
   }
   return {
     linkCount: links.length,
     officialCount: officials.size,
     totalEur,
     contemporaneousEur,
-    familyLinkCount,
-    familyEur,
   };
 }

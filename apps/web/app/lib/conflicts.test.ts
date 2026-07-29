@@ -14,7 +14,6 @@ import {
   fundsCellLabel,
   fundsMagnitude,
   hasContemporaneousContracts,
-  isFamilyLink,
   isHttpsUrl,
   linkContractsHref,
   officialHref,
@@ -70,18 +69,12 @@ describe('relationLabel', () => {
     expect(relationLabel('owns')).toBe('притежава дял');
     expect(relationLabel('manages')).toBe('управлява');
     expect(relationLabel('owns+manages')).toBe('притежава дял и управлява');
-    expect(relationLabel('related')).toBe('дял на свързано лице'); // family — relative never named
   });
   it('passes an unknown relation through rather than inventing a claim', () => {
     expect(relationLabel('mystery')).toBe('mystery');
-  });
-});
-
-describe('isFamilyLink', () => {
-  it('is true only for a related (close-relative) stake', () => {
-    expect(isFamilyLink(link({ relation: 'related' }))).toBe(true);
-    expect(isFamilyLink(link({ relation: 'owns' }))).toBe(false);
-    expect(isFamilyLink(link({ relation: 'owns+manages' }))).toBe(false);
+    // 'related' (family) no longer has a label — family never reaches this surface (ADR-0030), so it
+    // must NOT resolve to a „свързано лице" string that could render on a card.
+    expect(relationLabel('related')).toBe('related');
   });
 });
 
@@ -104,31 +97,25 @@ describe('contractYearsLabel', () => {
 });
 
 describe('privateOwnershipHeadline', () => {
-  it('sums value, counts links, de-dupes officials, and isolates the family subset', () => {
+  // Only own-stake links reach this layer now (family is withheld — ADR-0030), so the headline is a plain
+  // sum over the surfaced set with no family subset to isolate.
+  it('sums value, counts links, and de-dupes officials', () => {
     const h = privateOwnershipHeadline([
       link({ officialSlug: 'a', contractValueEur: 100, contemporaneousValueEur: 60 }),
       link({ officialSlug: 'a', contractValueEur: 50, contemporaneousValueEur: 30 }),
-      link({
-        officialSlug: 'b',
-        contractValueEur: 25,
-        contemporaneousValueEur: 10,
-        relation: 'related',
-      }),
+      link({ officialSlug: 'b', contractValueEur: 25, contemporaneousValueEur: 10 }),
     ]);
     expect(h.linkCount).toBe(3);
     expect(h.officialCount).toBe(2); // de-duped
     expect(h.totalEur).toBe(175);
     expect(h.contemporaneousEur).toBe(100); // 60 + 30 + 10 — the conflict-window subset
-    expect(h.familyLinkCount).toBe(1);
-    expect(h.familyEur).toBe(25);
   });
   it('treats a null contract value as zero, never NaN', () => {
     const h = privateOwnershipHeadline([
-      link({ contractValueEur: null, contemporaneousValueEur: null, relation: 'related' }),
+      link({ contractValueEur: null, contemporaneousValueEur: null }),
     ]);
     expect(h.totalEur).toBe(0);
     expect(h.contemporaneousEur).toBe(0);
-    expect(h.familyEur).toBe(0);
     expect(Number.isNaN(h.contemporaneousEur)).toBe(false);
   });
   it('is empty-safe', () => {
@@ -137,8 +124,6 @@ describe('privateOwnershipHeadline', () => {
       officialCount: 0,
       totalEur: 0,
       contemporaneousEur: 0,
-      familyLinkCount: 0,
-      familyEur: 0,
     });
   });
 });
@@ -313,13 +298,15 @@ describe('contractTimeline', () => {
 });
 
 describe('linkContractsHref', () => {
-  it('keys on the URL-safe scope + slug + ЕИК; scope is a path segment, not a query param', () => {
+  it('keys on the URL-safe self scope + slug + ЕИК; scope is a path segment, not a query param', () => {
+    // Only own-stake links surface (ADR-0030), so the scope segment is always „self" — a family link never
+    // reaches the card that builds this href.
     expect(linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111' }))).toBe(
       '/conflicts/link/self/c2VydA/111/contracts',
     );
     expect(
       linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'related' })),
-    ).toBe('/conflicts/link/family/c2VydA/111/contracts');
+    ).toBe('/conflicts/link/self/c2VydA/111/contracts');
   });
 });
 

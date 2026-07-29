@@ -184,7 +184,7 @@ SELECT 'contract', c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title),
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
--- Свързани лица: one row per official with a PUBLISHED conflict link (private/family ownership), so a NAME
+-- Свързани лица: one row per official with a PUBLISHED own-stake conflict link, so a NAME
 -- search reaches their /conflicts/official profile. ref = person_id (→ personSlug at read), title = name,
 -- subtitle = latest declared institution (disambiguates homonyms), amount = total contract € of their
 -- linked winners. Published-only inherits the surface's expiry — a withdrawn/left-office official drops out.
@@ -206,13 +206,10 @@ SELECT 'official', il.person_id, p.name, NULL,
          AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
              BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
 FROM interest_links il JOIN persons p ON p.id = il.person_id
-WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-  -- Drop the redundant family link when a published self stake exists for the same official+winner, so an
-  -- official who declared BOTH their own and a relative's stake in one company isn't counted twice in the
-  -- „по договори" total (mirrors NOT_REDUNDANT_FAMILY in packages/db/src/queries/related-persons.ts).
-  AND NOT (il.interest_class = 'family_ownership' AND EXISTS (
-    SELECT 1 FROM interest_links s WHERE s.person_id = il.person_id AND s.eik = il.eik
-      AND s.status = 'published' AND s.interest_class = 'private_ownership'))
+-- Own stake only: family_ownership is withheld from every named surface (ADR-0030) and never reaches the
+-- search index. Mirrors the independent private_ownership gate in packages/db/src/queries/related-persons.ts;
+-- family is status='internal', so already excluded, but the class predicate states the surface's rule.
+WHERE il.status = 'published' AND il.interest_class = 'private_ownership'
 GROUP BY il.person_id, p.name;
 
 -- Summary (last result set printed by `wrangler d1 execute`)
