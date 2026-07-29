@@ -8,10 +8,15 @@ import { count, moneyBare } from '@sigma/shared';
 // (family_ownership, relation 'related') is withheld from every named surface in v1 (ADR-0030) and reported
 // only as a nameless aggregate, so no 'related' link ever reaches this layer — hence no family label/branch.
 
+// Tense-NEUTRAL labels: the surface never asserts CURRENT ownership (a stake declared years ago may have
+// been sold — the declared window dates it, ADR-0030's divestment blind spot). „притежава/управлява"
+// (present tense — „owns/manages") would read a possibly-terminated stake as current. „дялово участие" is
+// the КПКОНПИ declaration's OWN column term („Размер на дяловото участие"), a fact about the declaration,
+// not a present-tense claim — paired with the „деклариран … г." dating on the card.
 const RELATION_LABEL: Record<string, string> = {
-  owns: 'притежава дял',
-  manages: 'управлява',
-  'owns+manages': 'притежава дял и управлява',
+  owns: 'дялово участие',
+  manages: 'управление',
+  'owns+manages': 'дялово участие и управление',
 };
 
 /** Bulgarian label for a declared relation. Unknown values pass through — never invent a stronger claim. */

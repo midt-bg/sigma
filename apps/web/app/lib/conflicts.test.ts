@@ -67,9 +67,10 @@ function contract(over: Partial<ConflictContract> = {}): ConflictContract {
 
 describe('relationLabel', () => {
   it('renders each declared relation in Bulgarian', () => {
-    expect(relationLabel('owns')).toBe('притежава дял');
-    expect(relationLabel('manages')).toBe('управлява');
-    expect(relationLabel('owns+manages')).toBe('притежава дял и управлява');
+    // Tense-neutral (never present-tense „owns/manages") — a declared stake must not read as current.
+    expect(relationLabel('owns')).toBe('дялово участие');
+    expect(relationLabel('manages')).toBe('управление');
+    expect(relationLabel('owns+manages')).toBe('дялово участие и управление');
   });
   it('passes an unknown relation through rather than inventing a claim', () => {
     expect(relationLabel('mystery')).toBe('mystery');
