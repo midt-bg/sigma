@@ -1,0 +1,40 @@
+{
+  "id": "13-empty-result",
+  "prompt": "Договори на несъществуващ изпълнител",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT c.id AS id, c.amount_eur AS amount_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND c.bidder_id = 999999 LIMIT 50",
+      "result": {
+        "rows": []
+      }
+    }
+  ],
+  "emit": {
+    "title": "Договори (празен резултат)",
+    "question": "Договори на несъществуващ изпълнител",
+    "blocks": [
+      {
+        "type": "table",
+        "resultId": "R1",
+        "columns": [
+          {
+            "key": "id",
+            "header": "Договор",
+            "format": "number"
+          },
+          {
+            "key": "amount_eur",
+            "header": "Стойност (EUR)",
+            "align": "right",
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true,
+    "emptyOk": true
+  }
+}

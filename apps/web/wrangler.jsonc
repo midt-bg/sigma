@@ -24,28 +24,98 @@
     { "binding": "REPORTS", "bucket_name": "sigma-reports" },
   ],
   // AI assistant (docs/spec/ai-assistant.md): Workers AI for RAG embeddings + a Vectorize index for
-  // schema-grounding and semantic search. The BgGPT API key is a SECRET — set with
-  // `wrangler secret put BGGPT_API_KEY`, never committed.
+  // schema-grounding and semantic search. The provider API key is a SECRET — set with
+  // `wrangler secret put ASSISTANT_API_KEY`, never committed.
   //
   // ⚠️ DEPLOY GATE (review #80): these bindings reference resources that must EXIST before
   // `wrangler deploy` — the Vectorize index `sigma-assistant`, the R2 bucket `sigma-reports`, and the
-  // BGGPT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
+  // ASSISTANT_API_KEY secret. Deploying before provisioning them fails the deploy and blocks the team's
   // CD. Provision first (see app/lib/assistant/README.md → „Provisioning gate"); until then the
   // assistant route degrades to a 503 rather than crashing.
   "ai": { "binding": "AI" },
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "sigma-assistant" }],
-  // Public config for the assistant. AI_GATEWAY_BASE_URL routes BgGPT through the Cloudflare AI
-  // Gateway (spec §9.5); empty string falls back to api.bggpt.ai.
+  // AI assistant dedup (Lane F — docs/spec/ai-assistant-dedup.md).
+  //  • DEDUP_KV — freshness-validated report cache (L0/L1/L2/L2.5). `id` is a local-dev placeholder;
+  //    scripts/wrangler-render.mjs substitutes the real per-env id (SIGMA_DEDUP_KV_ID) at deploy (same
+  //    pattern as SIGMA_D1_ID). CI provisions the namespace idempotently before deploy —
+  //    scripts/ensure-kv-namespace.mjs, one per env (dev shared with previews, staging, prod). Locally the
+  //    placeholder is fine: miniflare keys state by it, and a missing binding just disables dedup.
+  //  • REPORT_SINGLE_FLIGHT — one coordinator per freshness-folded key so concurrent identical questions
+  //    collapse onto one generation (Option 2: the driver generates in-request, the DO brokers waiters).
+  //    SQLite-backed (uses storage alarms for driver-crash release).
+  "kv_namespaces": [{ "binding": "DEDUP_KV", "id": "00000000000000000000000000000000" }],
+  //  • BGGPT_CIRCUIT_BREAKER — one global instance (`idFromName('global')`) counting paid BgGPT turns for
+  //    the account-wide RPM cap (#135). The per-IP limiter can't stop a distributed Denial-of-Wallet; this
+  //    opens the breaker once BGGPT_RATE_LIMIT_RPM is spent for the minute. In-memory window (no storage).
+  "durable_objects": {
+    "bindings": [
+      { "name": "REPORT_SINGLE_FLIGHT", "class_name": "ReportSingleFlight" },
+      { "name": "BGGPT_CIRCUIT_BREAKER", "class_name": "BgGptCircuitBreaker" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ReportSingleFlight"] },
+    { "tag": "v2", "new_sqlite_classes": ["BgGptCircuitBreaker"] },
+  ],
+  // Public config for the assistant. All model traffic is routed through the Cloudflare AI Gateway
+  // (spec §9.5) — MANDATORY, fail closed: with AI_GATEWAY_BASE_URL empty the assistant returns 503
+  // rather than calling the provider directly. Set it per-environment to the gateway's OpenAI-compatible
+  // upstream endpoint, e.g. (account <account-id>):
+  //   https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/custom-bggpt/v1
+  // BgGPT (api.mamay.ai) is not a built-in AI Gateway provider, so it is wired as a Custom Provider
+  // (slug `bggpt`); the gateway uses only the provider base_url's ORIGIN, so the `/v1` lives in the URL.
+  // AI_GATEWAY_ID is the gateway slug (<gateway> above); it routes the Workers AI RAG embeddings
+  // through the same gateway. ASSISTANT_MODEL selects the model (provider-scoped id) — swap models by
+  // editing it alone. ASSISTANT_API_KEY is a SECRET (not here). Left empty in source so a deploy must
+  // opt in explicitly.
   "vars": {
+    // Empty in source (opt-in per deploy, fail-closed). The fork's preview environment sets the
+    // concrete gateway URL + slug on -contracts; upstream deploys configure their own per environment.
     "AI_GATEWAY_BASE_URL": "",
-    "BGGPT_MODEL": "bggpt-gemma-3-27b-fp8",
+    "AI_GATEWAY_ID": "",
+    // Voice STT (ADR-0013): the BgGPT primary routes through the sigma-assistant gateway's
+    // custom-bggpt-voice provider (the route appends `/audio/transcriptions`); every request carries
+    // cf-aig-collect-log:false so the gateway records metadata but NEVER the audio. Empty in source
+    // (opt-in per deploy, fail-closed) — the fork sets the concrete gateway URL on -contracts; upstream
+    // deploys configure their own per environment. VOICE_ASSISTANT_API_KEY is a SECRET (not here).
+    "BGGPT_STT_BASE_URL": "",
+    "ASSISTANT_MODEL": "bggpt-gemma4-31b-it-bg-gptq-w4a16",
     "MAX_STEPS": "6",
-    // Reserved for the launch-gate global circuit-breaker — declared but NOT yet read by any code.
+    // Account-wide BgGPT RPM cap enforced by the BGGPT_CIRCUIT_BREAKER DO (#135): read via
+    // resolveGlobalRpm() in workers/assistant/bggpt-circuit-breaker.ts, checked on every paid turn.
     "BGGPT_RATE_LIMIT_RPM": "120",
     // Per-turn D1 rows-read budget — Denial-of-Wallet guard (issue #122). D1 bills on rows READ, not
     // returned, and LIMIT caps only returned rows; once a chat turn's cumulative rows_read crosses
     // this, further run_sql calls are refused. Tune to a few × the largest scannable table.
     "D1_ROWS_READ_BUDGET": "5000000",
+    // Turnstile widget site key (PUBLIC — safe in source; the client reads it to render the invisible
+    // widget). Empty until provisioned. The matching TURNSTILE_SECRET is a SECRET (wrangler secret put,
+    // never here); while it is unset the edge gate (turnstile.ts) is a no-op — dev/preview/staging run
+    // without it, and it only activates once the secret is set (launch gate, spec §7/§8).
+    "TURNSTILE_SITE_KEY": "",
+    // Per-query wall-time bound (ms) for the assistant's run_sql (§9.4, launch gate #83). Races the D1
+    // await so one pathological query can't hold a turn open; clamped to [1000, 30000]. D1 can't cancel
+    // the query itself (it still bills), so this bounds worker wait, not DB cost — that's the rows-read budget.
+    "RUN_SQL_TIMEOUT_MS": "10000",
+    // Freshness `c` (code/config version) for the dedup token (Lane F) — busts the report cache when
+    // report shape / CPV taxonomy / FX logic ship without a data change. This committed "dev" is the
+    // local-dev constant; at deploy wrangler-render.mjs stamps the commit sha (SIGMA_BUILD_ID) so each build
+    // gets a distinct `c` — required for the shared sigma-dedup-dev namespace to isolate dev vs previews.
+    "BUILD_ID": "dev",
+    // ⚠️ LAUNCH GATE (#83) — master kill switch for the assistant. Default OFF (fail dark): PRODUCTION is
+    // off by default and stays off until the #83 gates clear (read-only D1 #134, global BgGPT
+    // circuit-breaker #135, per-query timeout) and someone flips it at go-live. Previews (always) and any
+    // deploy env with the SIGMA_ASSISTANT_ENABLED variable set to "true" (dev now, staging at go-live) opt
+    // IN via wrangler-render, which stamps this var at deploy. The route reads it via assistantEnabled(); an
+    // unset OR non-truthy var is OFF. Killing the live endpoint is clearing that var + redeploy.
+    "ASSISTANT_ENABLED": "false",
+    // Runtime deploy-env for the §9.3 transcript-HMAC gate (ADR-0012). The gate requires a signing key
+    // ONLY when this is "production" or "staging" (public, unauthenticated → fail-closed); "preview"/
+    // "development" fail OPEN (UI-only without the key). Committed "development" so local `wrangler dev`
+    // and any deploy that doesn't override it stay fail-open; a deployment opts a public env in by setting
+    // ENVIRONMENT to its name. Deliberately NOT derived from import.meta.env.PROD, which Vite inlines true
+    // for the staging build too.
+    "ENVIRONMENT": "development",
   },
   "unsafe": {
     "bindings": [
@@ -73,9 +143,9 @@
       },
       {
         // Per-IP throttle for POST /assistant/chat — each call runs embeddings + the BgGPT agent loop
-        // (review #80). Tight, since it is far costlier than a page view. A global (account-wide) budget
-        // / circuit-breaker is a launch-gate TODO: BGGPT_RATE_LIMIT_RPM (below) is declared for it but
-        // not yet read — only this per-IP limiter is active today.
+        // (review #80). Tight, since it is far costlier than a page view. The account-wide budget is the
+        // separate BGGPT_CIRCUIT_BREAKER DO enforcing BGGPT_RATE_LIMIT_RPM (checked on the paid path); this
+        // is the per-IP layer.
         "name": "ASSISTANT_RATE_LIMITER",
         "type": "ratelimit",
         // namespace_id must be unique per limiter — a duplicate silently disables one (no deploy error).
@@ -83,6 +153,17 @@
         // so the assistant takes 1005.
         "namespace_id": "1005",
         "simple": { "limit": 10, "period": 60 },
+      },
+      {
+        // Per-IP throttle for POST /assistant/transcribe — each call runs a paid Workers AI Whisper
+        // transcription. Separate binding from the chat limiter so voice abuse can't drain the chat
+        // budget. Tighter (5/60): one call ≈ one audio-minute of paid inference. 1001–1005 taken
+        // (csv/agg/search/health/assistant); transcribe takes 1006. Must stay unique — a duplicate
+        // silently disables one limiter with no deploy error.
+        "name": "TRANSCRIBE_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 5, "period": 60 },
       },
     ],
   },

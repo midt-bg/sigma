@@ -1,0 +1,1266 @@
+/* ── AI assistant dock (app/lib/assistant-dock) ────────────────────────────────────────────────────
+   Always-on chat dock: a docked right panel on desktop, a full-screen <dialog> sheet on mobile, and a
+   launcher tab when collapsed. House tokens only — no chart lib, no webfonts. */
+
+/* The page-wide `* { box-sizing: border-box }` reset doesn't reach this subtree in practice — every dock
+   element (like the rest of the page) computes content-box — so width:100% + padding/border would
+   overflow its container (the example-prompt cards and the composer input). Scope the reset to the dock
+   so all the width math below holds. */
+.assistant-launcher,
+.assistant-dock,
+.assistant-dock * {
+  box-sizing: border-box;
+}
+
+.assistant-launcher {
+  position: fixed;
+  right: var(--s-5);
+  bottom: var(--s-5);
+  z-index: 200;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.assistant-launcher:hover {
+  background: var(--ink);
+}
+
+/* Single source for the panel width and the content-push below. */
+:root {
+  --assistant-panel-w: 400px;
+}
+.assistant-dock--panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 200;
+  width: min(var(--assistant-panel-w), 100vw);
+  display: flex;
+  background: var(--paper);
+  border-left: 1px solid var(--rule);
+}
+
+/* Push the page out from under the open desktop panel so it never obscures focused page content
+   (WCAG 2.2 §2.4.11 Focus Not Obscured). `:has()` matches only the desktop panel — the collapsed launcher
+   and the mobile sheet don't push. `body` width is auto, so padding-right shrinks content without
+   overflow; the fixed panel fills the freed column. Transitions are armed after first paint
+   (html.assistant-ready) so the default-open dock pushes instantly on load; reduced motion is honoured
+   by the global rule. */
+body:has(.assistant-dock--panel) {
+  padding-right: min(var(--assistant-panel-w), 100vw);
+}
+html.assistant-ready body {
+  transition: padding-right 200ms ease;
+}
+html.assistant-ready .assistant-dock--panel {
+  animation: assistant-panel-in 200ms ease-out;
+}
+@keyframes assistant-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.assistant-dock--sheet {
+  /* Pin to all four viewport edges rather than sizing with 100vw/100dvh: `vw` includes the scrollbar
+     gutter and a modal <dialog>'s UA max-width/centering otherwise leaves the sheet a few px too wide,
+     which pushes the full-width children's right edge off-screen (horizontal scroll). inset:0 + 100%
+     fills the viewport exactly. max-* override the UA dialog caps. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: var(--paper);
+  color: var(--ink);
+}
+.assistant-dock--sheet::backdrop {
+  background: oklch(18% 0.012 70 / 0.4);
+}
+
+.assistant-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.assistant-panel__header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--rule);
+}
+.assistant-panel__title {
+  margin: 0;
+  font-size: 1rem;
+}
+.assistant-panel__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--ink-mid);
+  /* ≥24px target with margin to spare (WCAG 2.2 §2.5.8): 8px v-padding + 16px icon ≈ 32px. */
+  padding: var(--s-2);
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+}
+.assistant-panel__collapse svg {
+  display: block;
+}
+.assistant-panel__collapse:hover {
+  color: var(--accent);
+}
+.assistant-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.assistant-panel__new-chat {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid currentColor;
+  background: none;
+  color: var(--ink-mid);
+  padding: var(--s-1) var(--s-2);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1;
+  /* 4px padding + 13px text + borders ≈ 23px — under the 24px floor (WCAG 2.2 §2.5.8). */
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+}
+.assistant-panel__new-chat:hover {
+  background: var(--paper-warm);
+  /* box-shadow isn't force-overridden by the a11y dark theme, so the hover stays visible there too. */
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.assistant-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.assistant-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-4);
+}
+.assistant-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.assistant-transcript__phase {
+  margin: 0;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.assistant-transcript__error {
+  margin: 0;
+  color: var(--accent);
+}
+
+.assistant-message__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Markdown block forms (assistant prose via MarkdownBlock). The user echo is a bare <p> with no
+   child block elements, so these child selectors only ever match assistant messages. */
+.assistant-message__text > p {
+  margin: 0 0 var(--s-2);
+}
+.assistant-message__text > p:last-child {
+  margin-bottom: 0;
+}
+.assistant-message__text ul,
+.assistant-message__text ol {
+  margin: 0 0 var(--s-2);
+  padding-left: var(--s-4);
+}
+.assistant-message__text li {
+  margin: 0 0 var(--s-1);
+}
+.assistant-message__text hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: var(--s-2) 0;
+}
+/* Wide tables scroll horizontally rather than break the narrow dock. Styled plainly so a chat table
+   does not read as a vetted report card. */
+.assistant-message__text table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 var(--s-2);
+  font-size: 0.9em;
+}
+.assistant-message__text th,
+.assistant-message__text td {
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--rule);
+  text-align: left;
+  white-space: nowrap;
+}
+.assistant-message__text th {
+  font-weight: 600;
+  background: var(--paper-warm);
+}
+.assistant-message--user {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: var(--s-2) var(--s-3);
+  background: var(--paper-deep);
+  border-radius: 8px;
+}
+.assistant-message--assistant {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.report-chip {
+  border: 1px solid var(--rule);
+  background: var(--paper-warm);
+  padding: var(--s-3);
+}
+.report-chip__title {
+  margin: 0 0 var(--s-1);
+  font-size: 0.95rem;
+}
+.report-chip__stat {
+  margin: 0 0 var(--s-2);
+  color: var(--ink-mid);
+}
+.report-chip__open {
+  font-weight: 600;
+  /* Standalone link (not inline in a sentence), so the 2.5.8 inline exception doesn't apply —
+     give it the 24px floor. */
+  display: inline-flex;
+  align-items: center;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.assistant-empty {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-4);
+}
+.assistant-empty__greeting {
+  margin: 0 0 var(--s-4);
+  color: var(--ink-mid);
+}
+.assistant-empty__prompts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.assistant-empty__prompt {
+  width: 100%;
+  text-align: left;
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.assistant-empty__prompt:hover {
+  border-color: var(--ink);
+}
+
+.assistant-panel__error {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-4);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.assistant-panel__error-text {
+  margin: 0;
+}
+.assistant-panel__retry {
+  flex: none;
+  border: 1px solid currentColor;
+  background: none;
+  color: inherit;
+  padding: var(--s-1) var(--s-3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.assistant-composer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-top: 1px solid var(--rule);
+}
+.assistant-composer__input {
+  width: 100%;
+  min-height: 2.5rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  resize: none;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+/* Explicit AA placeholder colour — the UA-default placeholder grey is borderline on the cream paper
+   (WCAG 1.4.3). `--ink-soft` is documented ≥4.5:1; opacity:1 because some UAs dim placeholders. */
+.assistant-composer__input::placeholder {
+  color: var(--ink-soft);
+  opacity: 1;
+}
+/* Match the house focus ring (accent outline) instead of the UA default blue — text inputs aren't
+   covered by the generic :focus-visible fallback, so each one styles its own, like .hero-search input. */
+.assistant-composer__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Action row beneath the full-width input: mic on the left, the primary Send/Stop on the right. */
+.assistant-composer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.assistant-composer__mic,
+.assistant-composer__send,
+.assistant-composer__stop {
+  flex: none;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.assistant-composer__send {
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
+}
+/* Right-side control cluster: the optional Clear next to the primary Send/Stop. */
+.assistant-composer__actions-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+/* Secondary (ghost) action — quieter than Send so it never competes with the primary. */
+.assistant-composer__clear {
+  flex: none;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.assistant-composer__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.assistant-composer__mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Centre the icon; symmetric padding → a square-ish toggle (Preflight makes the svg display:block, so
+   without this the icon + anything beside it would stack and left-align). */
+.assistant-composer__mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-2);
+}
+
+.assistant-composer__mic-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Recording state: the toggle inverts; an aria-hidden pure-CSS equalizer + timer sit beside it (frozen
+   under prefers-reduced-motion via the global rule). The mic-status <p> is a separate polite live region. */
+.assistant-composer__mic[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--paper);
+}
+.assistant-composer__mic-timer {
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.assistant-composer__mic-viz {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  color: var(--accent);
+}
+.assistant-composer__mic-bar {
+  width: 3px;
+  height: 100%;
+  background: currentColor;
+  border-radius: 2px;
+  transform: scaleY(0.35);
+  transform-origin: center;
+  animation: assistant-mic-eq 900ms ease-in-out infinite;
+}
+.assistant-composer__mic-bar:nth-child(3n) {
+  animation-delay: 150ms;
+}
+.assistant-composer__mic-bar:nth-child(3n + 1) {
+  animation-delay: 300ms;
+}
+.assistant-composer__mic-bar:nth-child(4n) {
+  animation-delay: 450ms;
+}
+@keyframes assistant-mic-eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.assistant-composer__mic-status {
+  /* Inset from the composer edges + wrap long words, so the full-size a11y copy never hugs the sides. */
+  margin: 0;
+  padding: var(--s-1) var(--s-2);
+  font-size: 1em;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+/* Text-only mode hides all <svg> and linearises; the dock's icons are text-paired, so relinearise the
+   launcher + desktop panel in-flow rather than hiding the dock (the mobile --sheet stays a native <dialog>). */
+html.a11y-textonly .assistant-launcher,
+html.a11y-textonly .assistant-dock--panel {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  animation: none !important;
+}
+html.a11y-textonly .assistant-dock--panel {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  border-left: none !important;
+}
+/* The in-flow panel overlays nothing, so drop the desktop content-push (WCAG 2.4.11 is moot inline). */
+html.a11y-textonly body:has(.assistant-dock--panel) {
+  padding-right: 0 !important;
+}
+
+@media (max-width: 760px) {
+  .assistant-launcher {
+    right: var(--s-4);
+    bottom: var(--s-4);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Report page — /reports/:id
+   ══════════════════════════════════════════════════════════════════════ */
+
+.report-page {
+  max-width: 760px;
+  margin: var(--s-8) auto var(--s-9);
+  padding: 0 var(--gutter);
+}
+
+/* ── Export toolbar ─────────────────────────────────────────────────── */
+
+.report-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-6);
+}
+
+.report-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: 500 11.5px/1.4 var(--font-mono);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
+}
+
+.report-action-btn:hover:not(:disabled) {
+  background: var(--paper-warm);
+  border-color: var(--ink-mid);
+}
+
+.report-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Watermark (D5) ─────────────────────────────────────────────────── */
+
+.report-watermark {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: #fef9c3;
+  border-left: 3px solid #ca8a04;
+  margin-bottom: var(--s-6);
+}
+
+.report-watermark__badge {
+  flex: none;
+  display: inline-block;
+  padding: 2px var(--s-2);
+  background: #ca8a04;
+  /* Black on #ca8a04 ≈ 7.2:1 (WCAG 1.4.3 AA). White (#fff) was 2.94:1 — fails. */
+  color: #000;
+  font: 700 10px/1.4 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.report-watermark__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* ── Report header ──────────────────────────────────────────────────── */
+
+.report-page__header {
+  margin-bottom: var(--s-6);
+  padding-bottom: var(--s-5);
+  border-bottom: 1px solid var(--rule);
+}
+
+.report-page__title {
+  margin: 0 0 var(--s-3);
+  font: 400 clamp(1.6rem, 4vw, 2.4rem)/1.2 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.report-page__question {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* ── Block container ────────────────────────────────────────────────── */
+
+.report-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+/* ── Text / markdown block ──────────────────────────────────────────── */
+
+.report-block--text {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+.report-block--text p {
+  margin: 0 0 var(--s-3);
+}
+
+.report-block--text p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Callout block ──────────────────────────────────────────────────── */
+
+.report-block--callout {
+  display: block;
+  padding: var(--s-4) var(--s-5);
+  background: var(--paper-warm);
+  border-left: 3px solid var(--rule);
+}
+
+.report-block__callout-title {
+  display: block;
+  font: 700 11px/1.4 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: var(--s-2);
+}
+
+.report-block__callout-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.report-block__callout-body p {
+  margin: 0 0 var(--s-2);
+}
+
+.report-block__callout-body p:last-child {
+  margin: 0;
+}
+
+/* ── Table block ────────────────────────────────────────────────────── */
+
+.report-block--table .table-wrap {
+  border-radius: 0;
+}
+
+/* ── Bar chart block ────────────────────────────────────────────────── */
+
+/* Text-only mode reveals the bar block's .ts-data-table (SURVIVAL_CSS override);
+   hide the visual bar list there so the data isn't presented twice. */
+html.a11y-textonly .report-bar {
+  display: none !important;
+}
+
+.report-bar {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.report-bar__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px var(--s-3);
+  border-bottom: 1px solid var(--rule-soft);
+  min-height: 44px;
+}
+
+.report-bar__row:last-child {
+  border-bottom: 0;
+}
+
+.report-bar__row:nth-child(even) {
+  background: var(--paper-warm);
+}
+
+.report-bar__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent-bg);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.report-bar__label {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  font-size: 14px;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-bar__value {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  font: 13px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mid);
+  white-space: nowrap;
+}
+
+/* ── Flows block ────────────────────────────────────────────────────── */
+
+.report-block--flows .table-wrap {
+  border-radius: 0;
+}
+
+/* ── Timeseries block ───────────────────────────────────────────────── */
+
+.report-block--timeseries {
+  overflow: hidden;
+}
+
+.timeseries-block {
+  margin: 0;
+}
+
+.timeseries-block__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ts-gridline {
+  stroke: var(--rule-soft);
+  stroke-width: 1;
+  fill: none;
+}
+
+.ts-label {
+  font: 11px/1 var(--font-mono);
+  fill: var(--ink-soft);
+}
+
+.ts-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Series palette — AA-contrast colours + stroke-dasharray so series differ by two cues (WCAG 1.4.1). */
+.ts-s0 .ts-line {
+  stroke: #c0392b;
+}
+.ts-s0 .ts-dot {
+  fill: #c0392b;
+}
+.ts-s1 .ts-line {
+  stroke: #1e40af;
+  stroke-dasharray: 6 3;
+}
+.ts-s1 .ts-dot {
+  fill: #1e40af;
+}
+.ts-s2 .ts-line {
+  stroke: #15803d;
+  stroke-dasharray: 2 3;
+}
+.ts-s2 .ts-dot {
+  fill: #15803d;
+}
+.ts-s3 .ts-line {
+  stroke: #7c3aed;
+  stroke-dasharray: 8 3 2 3;
+}
+.ts-s3 .ts-dot {
+  fill: #7c3aed;
+}
+
+.timeseries-block__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-3);
+  font: 12px/1.4 var(--font-mono);
+  color: var(--ink-mid);
+}
+
+/* Legend swatch — coloured line-segment matching the series dash pattern (WCAG 1.4.1). */
+.ts-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.ts-legend-item::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.ts-s0.ts-legend-item::before {
+  background: #c0392b;
+}
+.ts-s1.ts-legend-item::before {
+  background: repeating-linear-gradient(90deg, #1e40af 0 6px, transparent 6px 9px);
+}
+.ts-s2.ts-legend-item::before {
+  background: repeating-linear-gradient(90deg, #15803d 0 2px, transparent 2px 5px);
+}
+.ts-s3.ts-legend-item::before {
+  background: repeating-linear-gradient(
+    90deg,
+    #7c3aed 0 8px,
+    transparent 8px 11px,
+    #7c3aed 11px 13px,
+    transparent 13px 16px
+  );
+}
+
+/* Visually-hidden data table that is the AT-accessible source (WCAG 1.1.1).
+   Exposed in text-only mode by AccessibilityWidget's SURVIVAL_CSS override. */
+.ts-data-table {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Totals & facts blocks ──────────────────────────────────────────── */
+
+.report-block--totals,
+.report-block--facts {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s-5);
+}
+
+/* ── Truncated note ─────────────────────────────────────────────────── */
+
+.report-block__truncated-note {
+  margin: var(--s-3) 0 0;
+  font: 12px/1.4 var(--font-mono);
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* ── Empty chart ────────────────────────────────────────────────────── */
+
+.chart-empty {
+  padding: var(--s-6) 0;
+  text-align: center;
+  color: var(--ink-soft);
+  font-style: italic;
+  font-size: 14px;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .report-page {
+    margin-top: var(--s-6);
+    padding: 0 var(--s-4);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Reports index — /reports
+   ══════════════════════════════════════════════════════════════════════ */
+
+.reports-index {
+  max-width: 760px;
+  margin: var(--s-8) auto var(--s-9);
+  padding: 0 var(--gutter);
+}
+
+.reports-index__header {
+  margin-bottom: var(--s-7);
+  padding-bottom: var(--s-5);
+  border-bottom: 1px solid var(--rule);
+}
+
+.reports-index__eyebrow {
+  margin: 0 0 var(--s-2);
+  font: 500 10.5px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.reports-index__title {
+  margin: 0 0 var(--s-3);
+  font: 400 2rem/1.2 var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.reports-index__description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  font-style: italic;
+  max-width: 560px;
+}
+
+.reports-index__empty {
+  padding: var(--s-7) 0;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.reports-index__empty p {
+  margin: 0 0 var(--s-2);
+}
+
+.reports-index__empty-link {
+  color: var(--accent);
+}
+
+.reports-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.reports-list__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-5);
+  padding: var(--s-4) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.reports-list__item:last-child {
+  border-bottom: 0;
+}
+
+.reports-list__item:nth-child(even) {
+  background: var(--paper-warm);
+  margin: 0 calc(-1 * var(--s-3));
+  padding-left: var(--s-3);
+  padding-right: var(--s-3);
+}
+
+.reports-list__link {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  text-decoration: none;
+  min-width: 0;
+}
+
+.reports-list__link:hover .reports-list__title {
+  color: var(--accent);
+}
+
+.reports-list__title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.4;
+  transition: color 0.1s;
+}
+
+.reports-list__lead-stat {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reports-list__question {
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-style: italic;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reports-list__date {
+  flex: none;
+  font: 12px/1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .reports-index {
+    margin-top: var(--s-6);
+    padding: 0 var(--s-4);
+  }
+
+  .reports-list__item {
+    flex-direction: column;
+    gap: var(--s-1);
+    align-items: flex-start;
+  }
+
+  .reports-list__question {
+    white-space: normal;
+  }
+}
+
+/* ── Print / PDF ─────────────────────────────────────────────────────── */
+
+@page {
+  size: A4 portrait;
+  margin: 18mm 16mm 18mm 16mm;
+}
+
+@media print {
+  /* ── Hide all chrome ── */
+  .site-header,
+  .site-footer,
+  .route-progress,
+  .skip,
+  .assistant-launcher,
+  .assistant-dock,
+  .a11y-tools,
+  .report-toolbar {
+    display: none !important;
+  }
+
+  /* ── Body reset ── */
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+    padding-right: 0 !important;
+    font-size: 10pt;
+    font-family:
+      system-ui,
+      -apple-system,
+      Arial,
+      sans-serif;
+    hyphens: auto;
+  }
+
+  a {
+    color: black !important;
+    text-decoration: none !important;
+  }
+
+  /* ── Report container ── */
+  .report-page {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* ── Watermark: compact single line in print ── */
+  .report-watermark {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6pt !important;
+    padding: 4pt 8pt !important;
+    margin-bottom: 12pt !important;
+    background: none !important;
+    border: none !important;
+    border-bottom: 1pt solid #ddd !important;
+  }
+
+  .report-watermark__badge {
+    background: #ca8a04 !important;
+    /* Black on #ca8a04 ≈ 7.2:1 (WCAG 1.4.3 AA); white was 2.94:1. */
+    color: #000 !important;
+    font-size: 7pt !important;
+    padding: 1pt 4pt !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide the verbose disclaimer paragraph — the badge label is enough */
+  .report-watermark__text {
+    font-size: 8pt !important;
+    color: #555 !important;
+  }
+
+  /* ── Header ── */
+  .report-page__header {
+    margin-bottom: 12pt !important;
+    padding-bottom: 8pt !important;
+    border-bottom: 1pt solid #333 !important;
+    page-break-after: avoid;
+  }
+
+  .report-page__title {
+    font-size: 16pt !important;
+    line-height: 1.25 !important;
+    margin-bottom: 4pt !important;
+    hyphens: auto !important;
+    word-break: break-word !important;
+  }
+
+  .report-page__question {
+    font-size: 9pt !important;
+    color: #555 !important;
+  }
+
+  /* ── Block spacing ── */
+  .report-blocks {
+    gap: 12pt !important;
+  }
+
+  .report-block--text,
+  .report-block--callout,
+  .report-block--totals,
+  .report-block--facts {
+    page-break-inside: avoid;
+  }
+
+  /* Text block */
+  .report-block--text p {
+    font-size: 10pt !important;
+    line-height: 1.5 !important;
+    margin-bottom: 6pt !important;
+  }
+
+  /* Callout block */
+  .report-block--callout {
+    background: #f5f5f5 !important;
+    border-left: 3pt solid #999 !important;
+    padding: 8pt 10pt !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .report-block__callout-title {
+    font-size: 8pt !important;
+    color: #555 !important;
+  }
+
+  .report-block__callout-body p {
+    font-size: 9.5pt !important;
+  }
+
+  /* ── Tables ── */
+  .table-wrap {
+    overflow: visible !important;
+    border-top: 1pt solid black !important;
+    border-bottom: 1pt solid black !important;
+  }
+
+  table {
+    width: 100% !important;
+    table-layout: auto !important;
+    font-size: 9pt !important;
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    page-break-inside: avoid;
+  }
+
+  thead th {
+    font-size: 8pt !important;
+    padding: 4pt 6pt 4pt 0 !important;
+    border-bottom: 1pt solid black !important;
+    background: white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  thead th:first-child {
+    padding-left: 4pt !important;
+  }
+
+  tbody td {
+    padding: 4pt 6pt 4pt 0 !important;
+    font-size: 9pt !important;
+    border-bottom: 1pt solid #ddd !important;
+  }
+
+  tbody td:first-child {
+    padding-left: 4pt !important;
+  }
+
+  /* Zebra striping for print */
+  tbody tr:nth-child(even) td {
+    background: #f8f8f8 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── Bar chart ── */
+  .report-bar {
+    border-top: 1pt solid black !important;
+    border-bottom: 1pt solid black !important;
+  }
+
+  .report-bar__fill {
+    background: #eee !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .report-bar__row {
+    page-break-inside: avoid;
+  }
+
+  /* ── SVG timeseries ── */
+  .report-block--timeseries {
+    page-break-inside: avoid;
+  }
+
+  .report-block--timeseries svg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* ── Callout ── */
+  .report-block--callout {
+    border-left: 3pt solid #999 !important;
+    background: #f8f8f8 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── Totals ── */
+  .totals .num {
+    font-size: 18pt !important;
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "id": "02-top-companies-won",
+  "prompt": "Кои фирми са спечелили най-много?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT b.name AS name, b.id AS bidder_id, t.won_eur AS won_eur FROM company_totals t JOIN bidders b ON b.id = t.bidder_id ORDER BY t.won_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "name": "Строй ЕООД",
+            "bidder_id": 10,
+            "won_eur": 2222222
+          },
+          {
+            "name": "Пътища АД",
+            "bidder_id": 11,
+            "won_eur": 1111111
+          },
+          {
+            "name": "ИТ Сервиз ООД",
+            "bidder_id": 12,
+            "won_eur": 333333
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Най-големи изпълнители по спечелено",
+    "question": "Кои фирми са спечелили най-много?",
+    "blocks": [
+      {
+        "type": "table",
+        "resultId": "R1",
+        "columns": [
+          {
+            "key": "name",
+            "header": "Изпълнител",
+            "format": "text",
+            "link": {
+              "kind": "company",
+              "idCol": "bidder_id"
+            }
+          },
+          {
+            "key": "won_eur",
+            "header": "Спечелено (EUR)",
+            "align": "right",
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

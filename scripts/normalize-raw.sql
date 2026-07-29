@@ -719,7 +719,7 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic, is_synthetic)
 -- amendment_winner: the currency of whichever raw_amendments row supplied contract_number's
 -- current_value (derive-amendments.sql's own rollup, mirrored here so the winning currency
 -- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
@@ -806,7 +806,11 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  -- Denormalized synthetic flag: 1 when the parent tender is a synthetic orphan header so
+  -- aggregate queries can filter with c.is_synthetic != 1 instead of JOIN+procedure_type check.
+  CASE WHEN (SELECT t.procedure_type FROM tenders t WHERE t.id = 't:' || x.unp) = 'неизвестна'
+       THEN 1 ELSE 0 END AS is_synthetic
 FROM (
   SELECT y.*,
     CASE y.value_flag

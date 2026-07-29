@@ -43,3 +43,6 @@ worker-configuration.d.ts
 
 # Local-only policy/regulatory source materials copied in for review (never commit)
 .policy-source/
+
+# Playwright MCP session artifacts (screenshots / a11y snapshots)
+.playwright-mcp/

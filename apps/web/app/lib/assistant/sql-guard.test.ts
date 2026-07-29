@@ -112,6 +112,29 @@ describe('assertReadOnlySelect', () => {
     }
   });
 
+  it('rejects json_* aggregate/builder string bombs (bare form, L1)', () => {
+    // json_group_array/json_object/… aggregate the whole table into one giant JSON string in the
+    // isolate before capRows can measure it — the same memory-amplification class as group_concat.
+    // The bare (unquoted) form is caught cheaply here at L1; the double-quoted form is caught by the
+    // AST guard (see sql-ast-guard.test.ts) since this word-boundary regex deliberately slips it.
+    for (const sql of [
+      'SELECT json_group_array(name) FROM authorities',
+      'SELECT json_group_object(name, id) FROM authorities',
+      "SELECT json_object('k', name) FROM authorities",
+      'SELECT json_array(name) FROM authorities',
+      'SELECT json_quote(name) FROM authorities',
+      "SELECT json_set('{}', '$.k', name) FROM authorities",
+      "SELECT json_replace('{}', '$.k', name) FROM authorities",
+      // string_agg = SQLite 3.44+ alias of group_concat; json_pretty (3.46) — same table-collapse class
+      "SELECT string_agg(subject, ',') FROM contracts",
+      "SELECT json_pretty('{}') FROM contracts",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
     // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
     // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).

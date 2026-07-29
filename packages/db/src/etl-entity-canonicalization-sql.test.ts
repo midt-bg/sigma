@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
+const migrationSyntheticPath = resolve(
+  root,
+  'packages/db/migrations/0006_contracts_is_synthetic.sql',
+);
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -37,6 +41,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   try {
     readScript(dbPath, schemaPath);
     readScript(dbPath, migration2Path);
+    readScript(dbPath, migrationSyntheticPath);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

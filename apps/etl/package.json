@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sigma/ingest": "workspace:*"
+    "@sigma/config": "workspace:*",
+    "@sigma/ingest": "workspace:*",
+    "@sigma/shared": "workspace:*"
   }
 }

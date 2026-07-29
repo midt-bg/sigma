@@ -1,0 +1,57 @@
+{
+  "id": "16-home-totals-facts",
+  "prompt": "Обобщени числа за целия портал",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT contracts AS contracts, value_eur AS value_eur, authorities AS authorities FROM home_totals LIMIT 1",
+      "result": {
+        "rows": [
+          {
+            "contracts": 150000,
+            "value_eur": 9000000000,
+            "authorities": 3000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Обобщение на портала",
+    "question": "Обобщени числа за целия портал",
+    "blocks": [
+      {
+        "type": "facts",
+        "items": [
+          {
+            "term": "Договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            }
+          },
+          {
+            "term": "Обща стойност (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "value_eur"
+            }
+          },
+          {
+            "term": "Възложители",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "authorities"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}
