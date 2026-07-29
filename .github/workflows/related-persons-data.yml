@@ -73,15 +73,23 @@ jobs:
             exit 1
           fi
 
-      # deploy.yml refuses to deploy a non-prod env carrying the production resource name (a misconfigured
-      # Environment would target prod). This workflow is MORE destructive — it wipes+reloads the свързани-лица
-      # tables — so it needs the same floor: a dev/staging run must never carry the prod D1 name 'sigma'.
-      - name: Guard — non-prod must not reuse the production D1 name
-        if: ${{ inputs.environment != 'production' }}
+      # Positive name allowlist by environment (allowlist-over-denylist, ADR-0031). This workflow wipes+reloads
+      # the свързани-лица tables, so a wrong target is destructive: production MUST use the prod D1 name 'sigma',
+      # and dev/staging MUST NOT. (The exact non-prod names live in each Environment's SIGMA_D1_NAME var; the
+      # ship step additionally PROVES the name↔SIGMA_D1_ID pair against Cloudflare before deleting anything, so
+      # a typo'd-but-real non-prod name is still caught — see assertD1TargetConsistent.)
+      - name: Guard — SIGMA_D1_NAME matches the environment
         run: |
-          if [ "${SIGMA_D1_NAME}" = "sigma" ]; then
-            echo "::error::SIGMA_D1_NAME='sigma' (the PRODUCTION database) on a '${{ inputs.environment }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
-            exit 1
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            if [ "${SIGMA_D1_NAME}" != "sigma" ]; then
+              echo "::error::production requires SIGMA_D1_NAME='sigma', got '${SIGMA_D1_NAME}' — refusing to ship."
+              exit 1
+            fi
+          else
+            if [ "${SIGMA_D1_NAME}" = "sigma" ]; then
+              echo "::error::SIGMA_D1_NAME='sigma' (the PRODUCTION database) on a '${{ inputs.environment }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
+              exit 1
+            fi
           fi
 
       # Persist the raw XML corpus across runs. fetch.mjs writes to scratch/cacbg/raw/ and skips files

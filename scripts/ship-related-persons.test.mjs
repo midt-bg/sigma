@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assertShipFloor,
+  assertD1TargetConsistent,
   parseMinLinks,
   resolveD1Name,
   insertStatements,
@@ -67,6 +68,46 @@ test('TABLES ships parents before children and covers the served related-persons
   ]) {
     assert.ok(TABLES.includes(t), `missing ${t}`);
   }
+});
+
+test('assertD1TargetConsistent proves the (name, id) pair before a remote wipe', () => {
+  const ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  // --local (remote=false) is exempt — no durable blast radius, so any/absent ids pass.
+  assert.doesNotThrow(() =>
+    assertD1TargetConsistent({ remote: false, d1Name: 'sigma', expectedId: '', resolvedId: '' }),
+  );
+  // remote with a matching (name→id) pair is allowed.
+  assert.doesNotThrow(() =>
+    assertD1TargetConsistent({ remote: true, d1Name: 'sigma', expectedId: ID, resolvedId: ID }),
+  );
+  // no expected id → cannot verify → refuse.
+  assert.throws(
+    () =>
+      assertD1TargetConsistent({ remote: true, d1Name: 'sigma', expectedId: '', resolvedId: ID }),
+    /SIGMA_D1_ID must be set/,
+  );
+  // name resolves to nothing (unknown/typo) → refuse.
+  assert.throws(
+    () =>
+      assertD1TargetConsistent({
+        remote: true,
+        d1Name: 'sigma-typo',
+        expectedId: ID,
+        resolvedId: '',
+      }),
+    /could not resolve a database id/,
+  );
+  // name resolves to a DIFFERENT id than the Environment expects → refuse (the core wrong-target guard).
+  assert.throws(
+    () =>
+      assertD1TargetConsistent({
+        remote: true,
+        d1Name: 'sigma',
+        expectedId: ID,
+        resolvedId: 'ffffffff-0000-0000-0000-000000000000',
+      }),
+    /D1 target mismatch/,
+  );
 });
 
 test('assertShipFloor refuses to wipe the live surface below the floor (empty/partial staging)', () => {

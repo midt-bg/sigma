@@ -117,6 +117,46 @@ export function resolveD1Name({ remote, envName }) {
   return envName || 'sigma';
 }
 
+/**
+ * Positive target check before the destructive wipe (allowlist-over-denylist). A --remote ship DELETEs every
+ * свързани-лица table, so the name alone is not enough — a typo'd or misconfigured SIGMA_D1_NAME could name a
+ * real-but-wrong database. We PROVE the (name, id) pair the Environment supplied refers to the same real DB:
+ * the id the name resolves to (looked up live from Cloudflare) MUST equal the Environment's SIGMA_D1_ID. Any
+ * disagreement — a stale id, a wrong name, a misconfigured Environment — refuses the wipe. Pure — unit-tested;
+ * the live lookup is injected as `resolvedId`. --local carries no durable blast radius, so it is exempt.
+ */
+export function assertD1TargetConsistent({ remote, d1Name, expectedId, resolvedId }) {
+  if (!remote) return;
+  if (!expectedId)
+    throw new Error(
+      'SIGMA_D1_ID must be set for a --remote ship — cannot verify the wipe target without the expected id.',
+    );
+  if (!resolvedId)
+    throw new Error(
+      `could not resolve a database id for D1 name '${d1Name}' — refusing to wipe an unverifiable target.`,
+    );
+  if (resolvedId !== expectedId)
+    throw new Error(
+      `D1 target mismatch: name '${d1Name}' resolves to id ${resolvedId}, but SIGMA_D1_ID is ${expectedId}. ` +
+        'The name and id disagree (misconfigured Environment or stale id) — refusing to wipe.',
+    );
+}
+
+/** Live lookup of the uuid Cloudflare maps `d1Name` to, via `wrangler d1 info --json`. Returns '' on any
+ *  failure (unknown name, network, parse) so assertD1TargetConsistent turns that into an explicit refusal. */
+function resolveD1Id(d1Name) {
+  try {
+    const out = execFileSync('wrangler', ['d1', 'info', d1Name, '--json'], {
+      cwd: resolve('apps/web'),
+      encoding: 'utf8',
+    });
+    const info = JSON.parse(out);
+    return info?.uuid ?? info?.database_id ?? '';
+  } catch {
+    return '';
+  }
+}
+
 /** Batched multi-row INSERTs for one table, bounded by D1's statement size. Pure — unit-tested. */
 export function insertStatements(table, cols, rows) {
   if (!cols.length || !rows.length) return [];
@@ -165,6 +205,14 @@ function main() {
     const published =
       sqliteJson(`SELECT COUNT(*) AS n FROM interest_links WHERE status = 'published'`)[0]?.n ?? 0;
     assertShipFloor(Number(published), minLinks);
+    // Positive target check on a real remote wipe: the (name, id) pair must refer to the same DB (ADR-0031
+    // allowlist posture). Skipped for --emit (writes SQL files, wipes nothing).
+    assertD1TargetConsistent({
+      remote,
+      d1Name,
+      expectedId: process.env.SIGMA_D1_ID,
+      resolvedId: remote ? resolveD1Id(d1Name) : '',
+    });
   }
 
   // D1 enforces foreign keys, so a re-seed cannot DELETE a parent while children still reference it. Wipe
