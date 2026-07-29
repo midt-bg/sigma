@@ -8,7 +8,7 @@ import {
   periodRange,
   plural,
 } from '@sigma/shared';
-import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend } from '@sigma/db';
+import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend, getDb } from '@sigma/db';
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -65,7 +65,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.eik?.trim()) throw new Response('Not Found', { status: 404 });
   const id = bidderIdFromSlug(params.eik);
   if (!id) throw new Response('Not Found', { status: 404 });
-  const db = context.cloudflare.env.DB;
+  const db = getDb(context.cloudflare.env);
   return withDbRetry(async () => {
     const [company, coverage, trend, network] = await Promise.all([
       getCompany(db, id),

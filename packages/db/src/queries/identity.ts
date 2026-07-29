@@ -21,7 +21,8 @@ function b64urlDecode(s: string): string {
 
 const EIK_RE = /^\d{9}(\d{4})?$/;
 
-/** bidder id → `/companies/:slug` segment. Valid ЕИК → the digits; name-keyed → `n` + base64url(name). */
+/** bidder id → `/companies/:slug` segment. Valid ЕИК → digits; name-keyed → `n` + base64url(name);
+ * the labelled unknown bucket stays literal so contract-page links remain resolvable. */
 export function companySlug(bidderId: string): string {
   if (bidderId.startsWith('eik:')) return bidderId.slice(4);
   if (bidderId.startsWith('name:')) return 'n' + b64urlEncode(bidderId.slice(5));
@@ -31,6 +32,7 @@ export function companySlug(bidderId: string): string {
 /** `/companies/:slug` segment → bidder id, or null if it cannot be decoded. */
 export function bidderIdFromSlug(slug: string): string | null {
   if (EIK_RE.test(slug)) return 'eik:' + slug;
+  if (slug === 'unknown:анонимен') return slug;
   if (slug.startsWith('n')) {
     try {
       return 'name:' + b64urlDecode(slug.slice(1));

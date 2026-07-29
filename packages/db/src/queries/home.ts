@@ -53,7 +53,9 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
   const [companies, ministries, municipalities, recentSingleOffer, topSingleOffer, singleOfferRow] =
     await Promise.all([
       db
-        .prepare(`SELECT * FROM company_totals ORDER BY won_eur DESC, bidder_id LIMIT 10`)
+        .prepare(
+          `SELECT * FROM company_totals WHERE kind <> 'unknown' ORDER BY won_eur DESC, bidder_id LIMIT 10`,
+        )
         .all<CompanyTotalsRow>(),
       db
         .prepare(
@@ -69,12 +71,12 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
       listSingleOfferContracts(db, 'recent', 10),
       listSingleOfferContracts(db, 'value', 10),
       // Money portion of single-offer contracts vs the whole corpus (totals.valueEur is the
-      // denominator). Same clean-row basis as the single-offer list above: bids = 1, non-suspect,
-      // positive amount. Edge-cached for an hour, so the full scan runs rarely.
+      // denominator). Keep the metric's bids = 1 filter, then use the same canonical value base as
+      // every rollup: all known amount_eur values, regardless of value_flag.
       db
         .prepare(
           `SELECT COALESCE(SUM(amount_eur), 0) AS value_eur, COUNT(*) AS contracts
-         FROM contracts WHERE bids_received = 1 AND value_flag = 'ok' AND amount_eur > 0`,
+         FROM contracts WHERE bids_received = 1 AND amount_eur IS NOT NULL`,
         )
         .first<{ value_eur: number; contracts: number }>(),
     ]);

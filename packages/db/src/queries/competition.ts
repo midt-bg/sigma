@@ -136,7 +136,7 @@ async function authoritiesBySingleOffer(
       `SELECT t.authority_id AS authority_id, a.name AS name, a.type_group AS type_group,
               COUNT(*) AS contracts,
               SUM(CASE WHEN c.bids_received = 1 THEN 1 ELSE 0 END) AS single_offer,
-              -- display total: full clean basis to match the authority rollups (not a share denominator)
+              -- display total: canonical value base to match authority rollups (not a share denominator)
               COALESCE(SUM(c.amount_eur), 0) AS value_eur
        FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
        WHERE ${where.join(' AND ')}
@@ -322,7 +322,7 @@ async function authoritiesByDirectAward(
       `SELECT t.authority_id AS authority_id, a.name AS name, a.type_group AS type_group,
               COUNT(*) AS classified,
               SUM(CASE WHEN TRIM(t.procedure_type) IN (${directPlaceholders}) THEN 1 ELSE 0 END) AS non_competitive,
-              -- display total: full clean basis to match the authority rollups (not a share denominator)
+              -- display total: canonical value base to match authority rollups (not a share denominator)
               COALESCE(SUM(c.amount_eur), 0) AS value_eur
        FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
        WHERE ${where.join(' AND ')}
@@ -385,7 +385,7 @@ async function topRecurringPairs(
     rows = results;
   } else {
     const s = scope(p);
-    // won_eur is a DISPLAY total (the pair's awarded spend), so it keeps the full clean basis
+    // won_eur is a DISPLAY total (the pair's awarded spend), so it keeps the canonical value base
     // (amount_eur IS NOT NULL) to reconcile with the flow_pairs rollup the unfiltered branch above
     // reads — a plain sum tolerates a small negative value_low row, unlike the HHI/share bases.
     const where = ['c.amount_eur IS NOT NULL', ...s.where];
