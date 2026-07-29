@@ -54,8 +54,10 @@ test('insertStatements yields nothing for empty columns or rows', () => {
   assert.deepEqual(insertStatements('persons', ['id'], []), []);
 });
 
-test('TABLES ships suppressions first and covers the served related-persons schema', () => {
-  assert.equal(TABLES[0], 'link_suppressions'); // contested links never briefly re-exposed
+test('TABLES ships parents before children and covers the served related-persons schema', () => {
+  // Suppressions are NOT a served table (ADR-0031) — they are applied at load, so nothing to ship here.
+  assert.ok(!TABLES.includes('link_suppressions'), 'suppressions must not ship to prod');
+  assert.equal(TABLES[0], 'persons'); // parent first, so children never reference a missing row
   for (const t of [
     'persons',
     'declarations',

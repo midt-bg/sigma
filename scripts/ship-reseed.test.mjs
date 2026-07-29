@@ -33,7 +33,6 @@ INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VAL
 INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il1','p1|1','p1','eik:1','1','e','v1','B_distinctive','owns','published');
 INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('p1|1','auth:1','A');
 INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind) VALUES('rp1','d1','X','related_person');
-INSERT INTO link_suppressions(link_key,reason,suppressed_by) VALUES('p1|9','r','me');
 `;
   execFileSync('sqlite3', ['-bail', db], { input: setup, stdio: 'pipe' });
   return { dir, db };

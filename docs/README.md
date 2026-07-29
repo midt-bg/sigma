@@ -4,6 +4,7 @@
 
 - [`architecture.md`](architecture.md) — преглед на системата (поток на данните, двата Worker-а) и карта към решенията.
 - [`adr/`](adr/README.md) — Architecture Decision Records: по едно архитектурно решение на файл, с индекс и шаблон.
+- [`runbooks/related-persons-suppression.md`](runbooks/related-persons-suppression.md) — оперативен наръчник за сваляне/поправка на връзка от свързани лица (версиониран списък с HMAC-отпечатък, спешна процедура, ротация на salt-а).
 - [`core-scope.md`](core-scope.md) — доменният модел и **речникът на данните**: таблици, rollup-и, `value_flag`/`date_flag`, семантиката на `amount_eur`.
 - [`etl.md`](etl.md) — ETL pipeline-ът и open-data емисията на ЦАИС ЕОП (`storage.eop.bg`): зареждане, опресняване и производни таблици.
 - [`etl-pipeline-state.md`](etl-pipeline-state.md) — анализ на текущото състояние на ETL pipeline-а.

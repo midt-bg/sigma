@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Ship the свързани-лица domain (persons + declarations + declared_interests + interest_links +
-// interest_link_authorities + link_suppressions) from a sqlite work DB to the served D1. Kept SEPARATE
+// interest_link_authorities) from a sqlite work DB to the served D1. Kept SEPARATE
 // from ship-domain.mjs so the EOP deploy path is untouched; reuses the same literal-escaping + batching.
 // Migration 0003 must already be applied (the deploy applies it via `d1 execute --file`, not
 // `d1 migrations apply` — 0000 was created out-of-band so wrangler's migration tracking is empty). No
@@ -18,12 +18,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// INSERT order — parents before children. link_suppressions first so a re-import can't briefly expose a
-// contested link (it is back in place before interest_links reappears). D1 DOES enforce foreign keys, so a
-// re-seed of an already-populated D1 must DELETE in the reverse (children-first) order: deleting a parent
-// while children still reference it fails with SQLITE_CONSTRAINT_FOREIGNKEY (a re-seed then dies at persons).
+// INSERT order — parents before children. Suppressions are NOT a served table (ADR-0031): they are applied
+// at load, so `interest_links` already ships with status='suppressed' and there is nothing to re-apply on
+// D1. D1 DOES enforce foreign keys, so a re-seed of an already-populated D1 must DELETE in the reverse
+// (children-first) order: deleting a parent while children still reference it fails with
+// SQLITE_CONSTRAINT_FOREIGNKEY (a re-seed then dies at persons).
 export const TABLES = [
-  'link_suppressions',
   'persons',
   'declarations',
   'declared_interests',
@@ -40,7 +40,6 @@ export const WIPE_ORDER = [
   'declared_interests',
   'declarations',
   'persons',
-  'link_suppressions',
 ];
 export function wipeSql() {
   return WIPE_ORDER.map((t) => `DELETE FROM ${sqlIdent(t)};`).join('\n') + '\n';

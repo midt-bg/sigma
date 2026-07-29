@@ -9,18 +9,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { fingerprint } from './suppressions.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
+const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING;
 
-function runLoad() {
+function runLoad(extraEnv = {}) {
   execFileSync(
     'node',
     ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
     {
       cwd: ROOT,
-      env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING },
+      env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING, ...extraEnv },
       stdio: 'pipe',
     },
   );
@@ -406,20 +408,25 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   db.close();
 });
 
-test('re-run is idempotent and honors link_suppressions (contested link stays removed)', () => {
-  // grab a published link_key, suppress it, re-load
+test('re-run is idempotent and honors the suppression list (contested link stays removed)', () => {
+  // grab a published link_key and suppress it via the version-controlled list (HMAC fingerprint + salt,
+  // ADR-0031), then re-load — the takedown must survive a full rebuild.
   let db = new DatabaseSync(DB);
   const key = db
     .prepare("SELECT link_key FROM interest_links WHERE eik='111111119'")
     .get().link_key;
-  db.prepare('INSERT INTO link_suppressions(link_key,reason,suppressed_by) VALUES(?,?,?)').run(
-    key,
-    'contested',
-    'test',
-  );
   db.close();
 
-  runLoad(); // rebuild
+  const suppFile = path.join(dir, 'supp.jsonl');
+  fs.writeFileSync(
+    suppFile,
+    JSON.stringify({
+      fp: fingerprint(key, SUPP_SALT),
+      reason: 'contested',
+      suppressed_at: '2026-07-29',
+    }) + '\n',
+  );
+  runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: SUPP_SALT }); // rebuild with the list applied
 
   db = open();
   assert.equal(
@@ -437,7 +444,7 @@ test('re-run is idempotent and honors link_suppressions (contested link stays re
 test('a FAMILY-scope suppression (…|family key) survives re-import — the takedown keys on the exact link_key', () => {
   // The self key is `pid|eik`; a family link's key carries the `|family` suffix (load.mjs). A takedown filed on
   // the family key MUST keep matching after a rebuild — else a family (defamation-sensitive) сваляне silently
-  // no-ops. Assert the key form, suppress by it, rebuild, confirm it stays removed.
+  // no-ops. Assert the key form, fingerprint it into the list, rebuild, confirm it stays removed.
   let db = new DatabaseSync(DB);
   const key = db
     .prepare("SELECT link_key FROM interest_links WHERE interest_class='family_ownership'")
@@ -447,12 +454,18 @@ test('a FAMILY-scope suppression (…|family key) survives re-import — the tak
     /\|family$/,
     'a family link_key must carry the |family suffix (asymmetric key)',
   );
-  db.prepare(
-    'INSERT OR IGNORE INTO link_suppressions(link_key,reason,suppressed_by) VALUES(?,?,?)',
-  ).run(key, 'family takedown', 'test');
   db.close();
 
-  runLoad(); // rebuild — human-curated suppressions are preserved and re-applied
+  const suppFile = path.join(dir, 'supp-family.jsonl');
+  fs.writeFileSync(
+    suppFile,
+    JSON.stringify({
+      fp: fingerprint(key, SUPP_SALT),
+      reason: 'family takedown',
+      suppressed_at: '2026-07-29',
+    }) + '\n',
+  );
+  runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: SUPP_SALT });
 
   db = open();
   assert.equal(
@@ -461,4 +474,18 @@ test('a FAMILY-scope suppression (…|family key) survives re-import — the tak
     'a family link keyed pid|eik|family must be suppressed after re-import',
   );
   db.close();
+});
+
+test('a non-empty suppression list with no salt FAILS the build (never silently un-suppresses)', () => {
+  // Fail-closed: building with suppressions present but SUPPRESSION_SALT unset would fingerprint to nothing
+  // and silently re-expose every taken-down link. load.mjs must refuse (non-zero exit) instead.
+  const suppFile = path.join(dir, 'supp-nosalt.jsonl');
+  fs.writeFileSync(
+    suppFile,
+    JSON.stringify({ fp: 'deadbeef', reason: 'x', suppressed_at: '2026-07-29' }) + '\n',
+  );
+  assert.throws(
+    () => runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: '' }),
+    (err) => /SUPPRESSION_SALT is unset/.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  );
 });

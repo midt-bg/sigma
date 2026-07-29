@@ -2,7 +2,7 @@
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
 // persists the свързани-лица domain (persons / declarations / declared_interests / interest_links /
 // related_persons_internal) into the target SQLite/D1 per migration 0002. Idempotent: it rebuilds the
-// domain tables from staging each run (link_suppressions — human-curated — persist).
+// domain tables from staging each run; suppressions are external (version-controlled list, ADR-0031).
 //
 // Certainty 1.0 comes from the resolver, not a loader gate: it publishes ONLY a key that maps to exactly
 // one valid winner ЕИК; any key spanning >1 valid ЕИК is quarantined (never published) and reported as
@@ -23,6 +23,7 @@ import {
   closelyHeldForm,
 } from './classify.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
+import { fingerprint, loadSuppressionFingerprints } from './suppressions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
@@ -55,16 +56,15 @@ const readJsonl = (f) =>
 
 const db = new DatabaseSync(DB);
 db.exec('PRAGMA foreign_keys=ON');
-// Full idempotent rebuild that also picks up schema changes: preserve human-curated suppressions,
-// drop the CACBG tables (children first — FK-safe), re-apply migration 0002, restore suppressions.
-let savedSuppressions = [];
-if (
-  db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='link_suppressions'").get()
-) {
-  savedSuppressions = db
-    .prepare('SELECT link_key,reason,suppressed_by,suppressed_at FROM link_suppressions')
-    .all();
-}
+// Suppressions live in a VERSION-CONTROLLED, HMAC-fingerprinted list (ADR-0031), NOT a DB table — so a
+// takedown survives a fresh-CI-runner rebuild and never ships the „who was taken down" signal to prod.
+// Loaded before the wipe; fail-closed if the list is non-empty but SUPPRESSION_SALT is unset.
+const SUPP_LIST =
+  process.env.CACBG_SUPP_LIST || path.join(ROOT, 'scripts/cacbg/link-suppressions.jsonl');
+const SUPP_SALT = process.env.SUPPRESSION_SALT ?? '';
+const suppressedFp = loadSuppressionFingerprints(SUPP_LIST, SUPP_SALT);
+// Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
+// FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
   'interest_link_authorities',
   'interest_links',
@@ -72,16 +72,13 @@ for (const t of [
   'related_persons_internal',
   'declarations',
   'persons',
-  'link_suppressions',
 ])
   db.exec(`DROP TABLE IF EXISTS ${t}`);
 db.exec(fs.readFileSync(MIGRATION, 'utf8'));
-const insSupp = db.prepare(
-  'INSERT INTO link_suppressions(link_key,reason,suppressed_by,suppressed_at) VALUES(?,?,?,?)',
-);
-for (const s of savedSuppressions)
-  insSupp.run(s.link_key, s.reason, s.suppressed_by, s.suppressed_at);
-const suppressed = new Set(savedSuppressions.map((s) => s.link_key));
+// A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
+// non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
+const isSuppressed = (linkKey) =>
+  suppressedFp.size > 0 && suppressedFp.has(fingerprint(linkKey, SUPP_SALT));
 
 // --- bidder index + libel gate ------------------------------------------------------------------
 const bidders = db
@@ -476,7 +473,7 @@ for (const rec of agg.values()) {
   // rows this branch marks 'internal'. ex_officio_board / management_role never surface either. Non-surfaced
   // classes that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
   const surfaces = iClass === 'private_ownership';
-  const status = suppressed.has(linkKey)
+  const status = isSuppressed(linkKey)
     ? 'suppressed'
     : divested
       ? 'withdrawn'

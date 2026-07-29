@@ -109,13 +109,9 @@ CREATE TABLE IF NOT EXISTS interest_link_authorities (
 );
 CREATE INDEX IF NOT EXISTS idx_ila_authority ON interest_link_authorities(authority_id);
 
--- Contested/corrected links that MUST stay removed across refreshes (ADR-0007 correction path).
-CREATE TABLE IF NOT EXISTS link_suppressions (
-  link_key      TEXT PRIMARY KEY,           -- matches interest_links.link_key
-  reason        TEXT NOT NULL,
-  suppressed_by TEXT NOT NULL,
-  suppressed_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+-- Contested/corrected links that MUST stay removed across refreshes (ADR-0007 correction path) live in a
+-- VERSION-CONTROLLED, HMAC-fingerprinted list (scripts/cacbg/link-suppressions.jsonl), applied at load —
+-- NOT a served table, so the „who was taken down" signal never ships to prod (ADR-0031). No DDL here.
 
 -- Declared THIRD-PARTY people (interests tables 21/22). PII → INTERNAL only (ADR-0010): never joined
 -- into published surfaces; masked on every output format. Feeds only the internal свързани-лица graph.
