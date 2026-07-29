@@ -469,11 +469,13 @@ for (const rec of agg.values()) {
     scopeOwnMax != null &&
     scopeOwnMax > recOwnMax;
   // status must be SELF-DESCRIBING in D1: 'published' means "on the public surface", not merely "passed
-  // the tier gate". Only material ownership (self/family) surfaces; ex_officio_board / management_role
-  // never do (the served query also filters by interest_class, but that's a query constant — a direct D1
-  // reader must not see a non-surfaced official+company row labelled 'published'). Non-surfaced classes
-  // that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
-  const surfaces = iClass === 'private_ownership' || iClass === 'family_ownership';
+  // the tier gate". Only the official's OWN material ownership (private_ownership) surfaces. family_ownership
+  // (a close relative's stake) is collected + audited but WITHHELD from the named surface in v1 (ADR-0030,
+  // superseding ADR-0023): it re-identifies a sole-owner relative via the card's ЕИК + ТР link. It is
+  // reported only as a nameless aggregate (getWithheldFamilyAggregate), which reads exactly the family
+  // rows this branch marks 'internal'. ex_officio_board / management_role never surface either. Non-surfaced
+  // classes that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
+  const surfaces = iClass === 'private_ownership';
   const status = suppressed.has(linkKey)
     ? 'suppressed'
     : divested

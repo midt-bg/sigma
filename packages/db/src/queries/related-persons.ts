@@ -7,15 +7,17 @@ import type {
 } from '@sigma/api-contract';
 import { contractSlug, personSlug } from './identity';
 
-// Read-only query layer for свързани лица. The PUBLIC surface shows declared material OWNERSHIP only:
-//   • private_ownership — the official declared their OWN stake (relation owns/owns+manages).
-//   • family_ownership  — the official declared a CLOSE RELATIVE's stake (relation 'related'); the
-//     relative is anonymized downstream as „свързано лице" (name never stored). Both rest on the
-//     official's own public declaration + public procurement records.
-// Management/board roles without a declared stake, and listed securities, are never surfaced (noise at
-// best, defamatory at worst). Only status='published' rows leave the pipeline; held, suppressed and
-// withdrawn (divested) links never surface. Ranking is NEXUS-first (own-institution, then contemporaneous)
-// so the strongest signals lead — never company revenue, which surfaced blue-chip noise first.
+// Read-only query layer for свързани лица. The PUBLIC surface shows the official's OWN declared material
+// ownership only: private_ownership — the official declared their OWN stake (relation owns/owns+manages).
+// A CLOSE RELATIVE's declared stake (family_ownership, relation 'related') is collected and audited but
+// NEVER surfaced by name in v1: the card's official + company + ЕИК + ТР link re-identifies a sole-owner
+// relative in one click, which GDPR (C-37/20) treats as personal data we cannot publish without legal
+// sign-off (ADR-0030, superseding ADR-0023). Family is instead reported as a NAMELESS aggregate — counts
+// only, no rows — via getWithheldFamilyAggregate. Management/board roles without a declared stake, and
+// listed securities, are never surfaced (noise at best, defamatory at worst). Only status='published' rows
+// leave the pipeline; held, suppressed, withdrawn (divested) and internal (family) links never surface.
+// Ranking is NEXUS-first (own-institution, then contemporaneous) so the strongest signals lead — never
+// company revenue, which surfaced blue-chip noise first.
 
 interface LinkRow {
   link_key: string;
@@ -63,16 +65,10 @@ const IN_WINDOW = `il.first_declared_year IS NOT NULL AND il.last_declared_year 
 export const NEXUS_ORDER = `(il.own_institution = 'exact') DESC, il.contemporaneous DESC,
     contemporaneous_value_eur DESC, il.link_key`;
 
-// The redundant-family collapse predicate (full rationale in the LINK_SELECT comment below): drop a family
-// link when the same official also holds a PUBLISHED self stake in the same winner. Shared so every surface —
-// the leaderboard/official/company projection AND the per-link contracts route — hides the EXACT same links;
-// a consumer that omitted it (LINK_CONTRACTS_SQL did) became an existence-oracle for the suppressed relative.
-// Keyed on `eik` (the company identity), NOT `bidder_id`: a self + family stake in one company share the same
-// eik but would resolve to different bidder rows if an eik ever mapped to >1 winner row — keying on eik keeps
-// this libel-critical collapse (ADR-0023) correct-by-construction, not reliant on the bidders-id scheme.
-export const NOT_REDUNDANT_FAMILY = `NOT (il.interest_class = 'family_ownership' AND EXISTS (
-    SELECT 1 FROM interest_links s WHERE s.person_id = il.person_id AND s.eik = il.eik
-      AND s.status = 'published' AND s.interest_class = 'private_ownership'))`;
+// The surface shows private_ownership only (ADR-0030): family_ownership is withheld upstream (never
+// status='published'), so the old redundant-family collapse — dropping a family link when a self stake in
+// the same winner exists — is moot and has been removed with the family surface itself. The nameless family
+// aggregate (getWithheldFamilyAggregate) applies the same anti-double-count exclusion at the count level.
 export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,
     il.first_declared_year, il.last_declared_year, il.match_method,
@@ -86,32 +82,17 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
       AS contemporaneous_contract_count,
     (SELECT SUM(cc.amount_eur) ${CONTRACT_JOIN} WHERE bb.eik_normalized = il.eik AND ${IN_WINDOW})
       AS contemporaneous_value_eur,
-    -- source_url is the official's OWN public declaration. For a family_ownership link that document names /
-    -- identifies the relative whose stake this is — one click de-anonymises the „свързано лице" the surface
-    -- promises never to name (invariant 2 / ADR-0023). NULL it for family links; self links keep it (the
-    -- source names the office-holder themselves — correct provenance, ConflictCards renders it as „декларация").
-    -- source_url is the official's OWN public declaration. For a family_ownership link that document names /
-    -- identifies the relative whose stake this is — one click de-anonymises the „свързано лице" the surface
-    -- promises never to name (invariant 2 / ADR-0023). NULL it for family links; self links keep it (the
-    -- source names the office-holder themselves — correct provenance, ConflictCards renders it as „декларация").
-    CASE WHEN il.interest_class = 'family_ownership' THEN NULL ELSE
-      (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
-       WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
-       ORDER BY d.declared_year DESC LIMIT 1)
-    END AS source_url
+    -- source_url is the office-holder's OWN public declaration. Only self (private_ownership) links surface
+    -- now, so it always names the office-holder themselves — correct provenance, never a relative's document
+    -- (ConflictCards renders it as „декларация"). ADR-0030 retired family from the surface, so the former
+    -- family-NULL CASE guard is moot and removed.
+    (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
+     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
+     ORDER BY d.declared_year DESC LIMIT 1) AS source_url
   FROM interest_links il
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
-  WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-    -- Collapse each (official, company) to ONE nexus. An official can hold BOTH their own stake and a
-    -- relative's stake in the same winner — two published links (own→private_ownership, relative→
-    -- family_ownership), identical contract value, since load.mjs keys aggregation on (person|eik|scope).
-    -- Surfacing both would (a) double-count that winner's € in the headline and (b) show the same person
-    -- twice for one company: a de-anonymisation vector (own stake + a same-surname co-owner ⇒ ТР
-    -- cross-reference names the "anonymous" relative). When an own-stake link exists, drop the redundant
-    -- family link to the same winner. Standalone family links (a relative owns a firm the official does
-    -- not) are untouched. (per (person,eik) there is at most one link per scope, so this is the only dup.)
-    AND ${NOT_REDUNDANT_FAMILY}`;
+  WHERE il.status = 'published' AND il.interest_class = 'private_ownership'`;
 
 // own_institution is a 4-value verdict; only the deterministic 'exact' surfaces as true (the
 // name_contains/locality heuristics are disclosed elsewhere, never asserted as fact).
@@ -146,6 +127,43 @@ export const LEADERBOARD_SQL = `${LINK_SELECT}
 export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
   const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
   return rows.map(toLink);
+}
+
+// The nameless close-relative aggregate (ADR-0030). Officials who declared a CLOSE RELATIVE's material stake
+// in a procurement winner are collected + audited but NEVER named on the surface; instead we report the
+// count. This SQL returns SCALARS ONLY — never a person/company row — so nothing re-identifiable ships to the
+// client (the loader payload is the public `.data` twin). It counts family_ownership links withheld ONLY by
+// the family policy (status='internal' — passed every gate, not held/withdrawn/suppressed), and EXCLUDES any
+// family link redundant with the official's OWN published stake in the same winner: that € is already in the
+// named headline and that official is already on the board, so counting them again would inflate the figure.
+export const WITHHELD_FAMILY_AGGREGATE_SQL = `SELECT
+    COUNT(*) AS link_count,
+    COUNT(DISTINCT il.person_id) AS official_count,
+    COALESCE(SUM(il.contract_value_eur), 0) AS total_eur
+  FROM interest_links il
+  WHERE il.interest_class = 'family_ownership' AND il.status = 'internal'
+    AND NOT EXISTS (SELECT 1 FROM interest_links s
+      WHERE s.person_id = il.person_id AND s.eik = il.eik
+        AND s.status = 'published' AND s.interest_class = 'private_ownership')`;
+
+export interface WithheldFamilyAggregate {
+  linkCount: number;
+  officialCount: number;
+  totalEur: number;
+}
+
+/** The nameless close-relative aggregate for the leaderboard headline (ADR-0030) — counts only, no names,
+ *  no rows. Reported as „N длъжностни лица … в дружества, спечелили €X" so the public signal survives while
+ *  no private individual is identified. */
+export async function getWithheldFamilyAggregate(db: D1Database): Promise<WithheldFamilyAggregate> {
+  const r = await db
+    .prepare(WITHHELD_FAMILY_AGGREGATE_SQL)
+    .first<{ link_count: number; official_count: number; total_eur: number }>();
+  return {
+    linkCount: r?.link_count ?? 0,
+    officialCount: r?.official_count ?? 0,
+    totalEur: r?.total_eur ?? 0,
+  };
 }
 
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
@@ -213,11 +231,7 @@ export const LINK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS author
     JOIN authorities aa ON aa.id = tt.authority_id
     LEFT JOIN authority_totals ath ON ath.authority_id = aa.id
   WHERE il.link_key = ?
-    AND il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-    -- Same collapse as LINK_SELECT: a family link the surface hides (because a published self stake exists
-    -- for the same person+winner) must return [] here too, or this route is an existence-oracle that
-    -- confirms the suppressed relative's stake — the de-anonymisation vector ADR-0023 forbids.
-    AND ${NOT_REDUNDANT_FAMILY}
+    AND il.status = 'published' AND il.interest_class = 'private_ownership'
   ORDER BY (temporal = 'contemporaneous') DESC, cc.signed_at DESC, cc.amount_eur DESC`;
 
 /** The contracts of one published link, contemporaneous-first, each flagged in/out the declared window.
