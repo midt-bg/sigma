@@ -277,6 +277,41 @@ describe('getWeeklyTopContracts (indicator f, #167)', () => {
   });
 });
 
+// A corrected-but-still-flagged row: value_flag='value_suspect' with a REAL (non-NULL) amount_eur that
+// is the HIGHEST in the week. The producer's accuracy contract is that the money rollup (indicator a)
+// sums on the clean basis `amount_eur IS NOT NULL` — flag-INDEPENDENT — while the per-contract „цена"
+// surfaces (largest c / top-10 f) additionally guard `value_flag='ok'`. The base seed only ever pairs
+// 'value_suspect' with a NULL amount, so „summed in total, excluded from price surfaces" is asserted by
+// construction there. This row discriminates the two rules with actual data: it MUST land in the total
+// yet MUST NOT surface as the week's largest/top contract.
+const SUSPECT_HI_ROW = `INSERT INTO contracts
+  (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur) VALUES
+  ('c:SUSPECT_HI', 't:A', 'eik:200000001', 9000, 'EUR', '2024-01-04', 1, 'value_suspect', 9000);`;
+
+describe('value_flag accuracy contract (indicator a sum vs c/f price surfaces, #167)', () => {
+  it('sums a non-NULL suspect amount into the week total (rollup basis is amount_eur, not the flag)', async () => {
+    const db = realDb();
+    open!.exec(SUSPECT_HI_ROW);
+    const { totalEur } = await getWeeklyTotal(db, TARGET_WEEK);
+    expect(totalEur).toBe(12000); // 1000 (c:MON) + 2000 (c:SUN) + 9000 (c:SUSPECT_HI, summed despite the flag)
+  });
+
+  it('excludes that suspect row from the largest-contract surface despite it being the highest amount', async () => {
+    const db = realDb();
+    open!.exec(SUSPECT_HI_ROW);
+    const largest = await getWeeklyLargestContract(db, TARGET_WEEK);
+    expect(largest!.contractSlug).toBe('SUN'); // c:SUSPECT_HI (9000) is filtered by the value_flag='ok' guard
+    expect(largest!.amountEur).toBe(2000);
+  });
+
+  it('excludes that suspect row from the top-contracts surface', async () => {
+    const db = realDb();
+    open!.exec(SUSPECT_HI_ROW);
+    const top = await getWeeklyTopContracts(db, TARGET_WEEK);
+    expect(top.map((c) => c.contractSlug)).toEqual(['SUN', 'MON']); // the suspect 9000 never appears
+  });
+});
+
 describe('getWeeklySectorBreakdown (indicator g, #167)', () => {
   it('groups clean-basis spend by 2-digit CPV division, desc by value', async () => {
     const db = realDb();

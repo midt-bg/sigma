@@ -184,6 +184,10 @@ importers:
       '@sigma/config':
         specifier: workspace:*
         version: link:../config
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: '*'
+        version: 4.20260521.1
 
   packages/shared: {}
 

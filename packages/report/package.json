@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "@sigma/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "*"
   }
 }
