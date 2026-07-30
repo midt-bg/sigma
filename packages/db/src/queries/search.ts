@@ -98,6 +98,38 @@ interface HitRow {
   eik_valid: number | null;
 }
 
+// FTS5's default bm25() rewards raw term frequency: a title that repeats the query terms several
+// times (e.g. a municipality's name field concatenating several child-entity names — issue #25)
+// can outscore a title that matches once, cleanly. bm25's own length normalization isn't enough to
+// offset that within-document repetition, so we dampen `rank` by title length on top of it — the
+// divisor grows by 1 per 20 chars, a soft enough curve that it reorders repeat-heavy blobs below
+// clean short matches without sinking legitimate longer (but single-match) titles disproportionately.
+const RANK_EXPR = `r / (1.0 + LENGTH(title) / 20.0)`;
+
+// Two stages, deliberately. `ORDER BY rank` is the ONLY form FTS5 optimizes: it drives the query with
+// its rank-ordering index and pushes the LIMIT down (EXPLAIN: `VIRTUAL TABLE INDEX 32:M6`). Ordering by
+// any expression OVER rank drops that (`INDEX 0:M6` + `USE TEMP B-TREE FOR ORDER BY`), so every row a
+// common term matches — tens of thousands for e.g. „община" — gets materialized and sorted before the
+// LIMIT. D1 bills rows read, so that is a real cost on the busiest query in the app.
+// So: take the top CANDIDATES by the optimized rank path, then re-rank only those. The inner slice is
+// wide enough that a repeat-heavy blob and the clean match it outranks are both inside it, and the
+// sort in the outer query is over at most CANDIDATES rows, not the whole match set.
+const CANDIDATES = 50;
+
+export const SEARCH_HITS_SQL = `SELECT h.ref, h.title, h.ident, h.subtitle, h.amount,
+       ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid
+FROM (
+  SELECT search_index.ref AS ref, search_index.title AS title, search_index.ident AS ident,
+         search_index.subtitle AS subtitle, search_index.amount AS amount,
+         search_index.kind AS kind, rank AS r
+  FROM search_index
+  WHERE search_index.kind = ? AND search_index MATCH ?
+  ORDER BY rank LIMIT ${CANDIDATES}
+) h
+LEFT JOIN company_totals ct
+  ON h.kind = 'company' AND ct.bidder_id = h.ref
+ORDER BY ${RANK_EXPR} LIMIT ?`;
+
 export async function search(db: D1Database, rawQuery: string): Promise<SearchResults> {
   const query = (rawQuery ?? '').trim();
   const match = searchMatchQuery(query);
@@ -120,16 +152,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
       const total = counts.get(g.kind) ?? 0;
       if (total === 0) return { kind: g.kind, label: g.label, total: 0, hits: [], moreHref: null };
       const { results } = await db
-        .prepare(
-          `SELECT search_index.ref, search_index.title, search_index.ident,
-                  search_index.subtitle, search_index.amount,
-                  ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid
-           FROM search_index
-           LEFT JOIN company_totals ct
-             ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
-           WHERE search_index.kind = ? AND search_index MATCH ?
-           ORDER BY rank LIMIT ?`,
-        )
+        .prepare(SEARCH_HITS_SQL)
         .bind(g.kind, match, g.limit)
         .all<HitRow>();
       const hits: SearchHit[] = results.map((r) => {
