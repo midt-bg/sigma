@@ -13,10 +13,10 @@
 -- table definitions live canonically in migrations/0000_init.sql; the IF NOT EXISTS guards here let
 -- the same file also bootstrap a database created before these tables existed.
 --
--- COUNT/SUM CONSISTENCY: a paired (count, sum) covers ONE row set — contracts with a clean
--- amount_eur. NULL amount_eur rows are excluded from sums; the suspect KPI specifically counts
--- value_suspect rows, so FX-rateless foreign rows are not mislabeled as suspect. The home/list
--- CORPUS counts use COUNT(*) (a record count, not the count behind a sum) and pair that tally alongside.
+-- CANONICAL VALUE BASE: every money rollup sums rows where amount_eur IS NOT NULL, regardless of
+-- value_flag. That includes review, annex_suspect, value_low and repaired value_suspect rows. Only a
+-- row without a usable EUR value is excluded. The suspect KPI separately counts value_suspect rows;
+-- home/list CORPUS counts use COUNT(*) and may therefore cover a broader row set than their sum.
 
 -- ── 0) Per-contract EUR value timeline ────────────────────────────────────────────────────────
 -- signing/current in EUR for the contract page's estimated→signing→current strip.
@@ -34,8 +34,8 @@ UPDATE contracts SET
     ELSE NULL END,
   current_value_eur = CASE
     WHEN value_flag IN ('value_suspect','annex_suspect') OR current_value IS NULL THEN NULL
-    WHEN COALESCE(currency,'BGN') = 'EUR' THEN current_value
-    WHEN COALESCE(currency,'BGN') = 'BGN' THEN current_value / 1.95583
+    WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
+    WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
     ELSE NULL END;
 
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS home_totals (
 );
 DELETE FROM home_totals;
 
--- ── 2) company_totals (per bidder; clean rows only so won_eur pairs with contracts) ───────────────
+-- ── 2) company_totals (per bidder; canonical non-NULL amount_eur base) ────────────────────────────
 CREATE TABLE IF NOT EXISTS company_totals (
   bidder_id TEXT PRIMARY KEY REFERENCES bidders(id), name TEXT NOT NULL, kind TEXT NOT NULL,
   ownership_kind TEXT, eik TEXT, eik_valid INTEGER NOT NULL DEFAULT 0, settlement TEXT, won_eur REAL NOT NULL,
@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS authority_totals (
   eu_eur REAL NOT NULL DEFAULT 0, first_date TEXT, last_date TEXT
 );
 DELETE FROM authority_totals;
+-- Spend and the ordinary contract count remain lead-only, preserving the reconciliation invariant:
+-- SUM(authority_totals.spent_eur) = the tender-authority-attributed contract sum.
 INSERT INTO authority_totals (authority_id, name, type_group, settlement, region, spent_eur, contracts, suppliers, avg_eur, eu_eur, first_date, last_date)
 SELECT a.id, a.name, a.type_group, a.settlement, a.region,
   SUM(c.amount_eur), COUNT(*), COUNT(DISTINCT c.bidder_id), SUM(c.amount_eur) / COUNT(*),
@@ -89,6 +91,21 @@ UPDATE authority_totals SET primary_sector = (
   SELECT substr(t.cpv_code, 1, 2) FROM contracts c JOIN tenders t ON t.id = c.tender_id
   WHERE t.authority_id = authority_totals.authority_id AND c.amount_eur IS NOT NULL AND c.is_synthetic != 1 AND COALESCE(t.cpv_code,'') <> ''
   GROUP BY substr(t.cpv_code, 1, 2) ORDER BY SUM(c.amount_eur) DESC, substr(t.cpv_code, 1, 2) LIMIT 1);
+
+-- Separate participation metrics. They count every joint-contract bridge association, including
+-- the lead; the value is informational only and never feeds authority_totals or any national total.
+CREATE TABLE IF NOT EXISTS authority_joint_participation (
+  authority_id TEXT PRIMARY KEY REFERENCES authorities(id),
+  joint_contract_participations INTEGER NOT NULL,
+  joint_contract_value_eur REAL NOT NULL DEFAULT 0
+);
+DELETE FROM authority_joint_participation;
+INSERT INTO authority_joint_participation
+  (authority_id, joint_contract_participations, joint_contract_value_eur)
+SELECT cca.authority_id, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
+FROM contract_co_authorities cca
+JOIN contracts c ON c.id = cca.contract_id
+GROUP BY cca.authority_id;
 
 -- home_totals uses the browsable leaderboard grains for authority/bidder counts, and the same
 -- freshness definition as refresh-slice.sql: latest in-corpus signed contract date.
@@ -129,6 +146,36 @@ INSERT INTO facet_counts (facet, key, contracts, value_eur)
 SELECT 'eu', CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END, COUNT(*), COALESCE(SUM(c.amount_eur), 0)
 FROM contracts c GROUP BY CASE WHEN c.eu_funded = 1 THEN '1' ELSE '0' END;
 
+-- ── 4c) cpv_division_stats (value percentiles per CPV division - „Подобни договори" benchmark) ──
+-- Nearest-rank percentiles (k = ceil(q*n), emulated as CAST(n*q + 0.9999999 AS INTEGER) because
+-- SQLite lacks ceil()) over the clean-value cohort: value_flag = 'ok', amount_eur > 0, known CPV.
+-- The contract page reads ONE row here instead of scanning its whole division per view (D1 meters
+-- rows read). The cohort includes the candidate itself - the shown band is display context and is
+-- deliberately coarse, unlike scripts/anomaly-report.mjs which needs leave-one-out p95 for flagging.
+CREATE TABLE IF NOT EXISTS cpv_division_stats (
+  division TEXT PRIMARY KEY, priced_contracts INTEGER NOT NULL,
+  p25_eur REAL NOT NULL, median_eur REAL NOT NULL, p75_eur REAL NOT NULL,
+  p90_eur REAL NOT NULL, p95_eur REAL NOT NULL, p99_eur REAL NOT NULL
+);
+DELETE FROM cpv_division_stats;
+INSERT INTO cpv_division_stats (division, priced_contracts, p25_eur, median_eur, p75_eur, p90_eur, p95_eur, p99_eur)
+SELECT division, MAX(cnt),
+       MAX(CASE WHEN rn = CAST(cnt * 0.25 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.50 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.75 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.90 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.95 + 0.9999999 AS INTEGER) THEN amount_eur END),
+       MAX(CASE WHEN rn = CAST(cnt * 0.99 + 0.9999999 AS INTEGER) THEN amount_eur END)
+FROM (
+  SELECT substr(t.cpv_code, 1, 2) AS division, c.amount_eur,
+         ROW_NUMBER() OVER (PARTITION BY substr(t.cpv_code, 1, 2) ORDER BY c.amount_eur, c.id) AS rn,
+         COUNT(*)     OVER (PARTITION BY substr(t.cpv_code, 1, 2)) AS cnt
+  FROM contracts c JOIN tenders t ON t.id = c.tender_id
+  WHERE c.amount_eur IS NOT NULL AND c.amount_eur > 0 AND c.value_flag = 'ok'
+    AND COALESCE(t.cpv_code, '') <> ''
+)
+GROUP BY division;
+
 -- ── 5) flow_pairs (per authority → bidder) ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS flow_pairs (
   authority_id TEXT NOT NULL REFERENCES authorities(id), bidder_id TEXT NOT NULL REFERENCES bidders(id),
@@ -158,7 +205,8 @@ SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6
 FROM authority_totals at;
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settlement, ''), ct.won_eur
-FROM company_totals ct;
+FROM company_totals ct
+WHERE ct.bidder_id <> 'unknown:анонимен';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'contract', c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title),
   COALESCE(t.source_id, ''),
