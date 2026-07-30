@@ -9,8 +9,8 @@ import {
   signedMoney,
   signedPct,
 } from '@sigma/shared';
-import { contractIdFromSlug, contractSlug, getContract } from '@sigma/db';
-import type { ContractDetail } from '@sigma/api-contract';
+import { contractIdFromSlug, contractSlug, getContract, getDb } from '@sigma/db';
+import type { CohortBand, ContractDetail } from '@sigma/api-contract';
 import type { Route } from './+types/contract';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -105,15 +105,29 @@ export function headers() {
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
-  const contract = await getContract(context.cloudflare.env.DB, contractIdFromSlug(params.id));
+  const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
   return { contract };
 }
+
+// Coarse cohort bands only (never a fake-precise "топ 4.7%") - @sigma/db cohortBand only claims a
+// fine band when the cohort is large enough and its percentiles are distinct (see cohort.ts).
+const COHORT_BAND_LABELS: Record<CohortBand, string> = {
+  top1: 'в най-горния 1% по стойност',
+  top5: 'в топ 5% по стойност',
+  top10: 'в топ 10% по стойност',
+  top25: 'в топ 25% по стойност',
+  'above-median': 'над медианата',
+  'at-median': 'около медианата',
+  'below-median': 'под медианата',
+  bottom25: 'сред най-ниските 25% по стойност',
+};
 
 const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена достоверност';
 
 export default function Contract({ loaderData }: Route.ComponentProps) {
   const c = loaderData.contract;
+  const cohort = c.cohort;
   const v = c.value;
   const crumbId = c.unp || c.contractNumber || c.id;
   // Direct links to the day's raw ЦАИС ЕОП open-data files (storage.eop.bg) this record was
@@ -287,6 +301,11 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               <p className="figure-amount">
                 <Link to={`/authorities/${c.authority.slug}`}>{c.authority.name}</Link>
               </p>
+              {c.authority.orderingUnit && (
+                <p className="small muted figure-sub">
+                  Възложител по документа: {c.authority.orderingUnit}
+                </p>
+              )}
               <p className="small muted figure-sub">
                 {c.authority.typeLabel && <Chip>{c.authority.typeLabel}</Chip>}
                 {c.authority.settlement && <> {c.authority.settlement}</>}
@@ -368,6 +387,34 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
         </Section>
 
         <RiskIndicators contract={c} />
+
+        {cohort && (
+          <Section
+            id="similar"
+            title="Подобни договори"
+            hint="Стойността спрямо всички договори с чиста стойност в същия CPV сектор в базата."
+          >
+            <p>
+              <strong>{money(cohort.amountEur)}</strong> е{' '}
+              <strong>{COHORT_BAND_LABELS[cohort.band]}</strong> сред{' '}
+              {count(cohort.stats.pricedContracts)}{' '}
+              {plural(cohort.stats.pricedContracts, 'договор', 'договора')} в сектор „
+              {c.sector?.short ?? `CPV ${cohort.stats.division}`}“ (CPV {cohort.stats.division}).
+              Медианата за сектора е <strong>{money(cohort.stats.medianEur)}</strong>.
+            </p>
+            <p className="small muted">
+              Приблизителна позиция по предизчислени персентили на сектора, включващи и самия този
+              договор. Сравнението дава контекст на мащаба и не е оценка за нередност - голяма
+              поръчка може да е напълно обоснована. Използва различен метод от отчета за аномалии,
+              затова числата може леко да се разминават.
+            </p>
+            <p className="small muted">
+              <Link to={`/contracts?sector=${cohort.stats.division}&sort=value-desc`}>
+                Виж договорите в сектора →
+              </Link>
+            </p>
+          </Section>
+        )}
 
         <Section id="facts" title="Подробности">
           <FactsList
