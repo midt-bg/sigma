@@ -11,10 +11,33 @@ permissions:
   contents: read
 
 jobs:
+  # SAST scan, parallel to `check` so it never lengthens the lint/typecheck/test critical path.
+  # The official image is pinned by digest, like the sha256-pinned gitleaks and osv-scanner
+  # binaries below. The RULE PACKS are not: `p/security-audit`, `p/secrets` and `p/typescript`
+  # are fetched from the semgrep registry on every run and can change upstream without a commit
+  # here. Accepted deliberately — the failure mode is a visible, fixable red build (a new rule
+  # fires on existing code), not a silent bypass, and pinning would mean vendoring three curated
+  # packs and re-syncing them by hand, which in practice means running stale security rules.
+  # Revisit if an upstream rule change ever breaks CI on an unrelated PR.
+  # Explicit rulesets (not `--config auto`, which refuses to run with metrics off) +
+  # `--metrics=off` so nothing about the repo is reported to semgrep.dev; `--error` makes any
+  # finding fail the build.
+  semgrep:
+    runs-on: ubuntu-latest
+    # Cap the job so a hung rule fetch or a runaway scan can't sit until GitHub's default runner
+    # limit. 15m is a generous ceiling — local scans complete in under a minute.
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Static analysis (semgrep)
+        run: semgrep scan --config p/security-audit --config p/secrets --config p/typescript --metrics=off --error
+
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Secret scan FIRST, on the pristine checkout (tracked files only) — before `pnpm install`
       # creates node_modules. The gitleaks *Action* requires a paid GITLEAKS_LICENSE on GitHub
@@ -33,7 +56,7 @@ jobs:
           "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm

@@ -2,28 +2,28 @@
   "tolerance": 0.5,
   "workspaces": {
     "apps/etl": {
-      "lines": 18.7,
-      "branches": 19.4
+      "lines": 74,
+      "branches": 58.2
     },
     "apps/web": {
-      "lines": 89.3,
-      "branches": 81.3
+      "lines": 89.7,
+      "branches": 81.8
     },
     "packages/config": {
-      "lines": 88.2,
-      "branches": 58.3
+      "lines": 92.8,
+      "branches": 72.2
     },
     "packages/db": {
-      "lines": 82,
-      "branches": 65.5
+      "lines": 94.2,
+      "branches": 79
     },
     "packages/ingest": {
-      "lines": 83.8,
-      "branches": 78.9
+      "lines": 85.8,
+      "branches": 80
     },
     "packages/shared": {
-      "lines": 94.8,
-      "branches": 78.1
+      "lines": 95.4,
+      "branches": 80
     }
   }
 }
