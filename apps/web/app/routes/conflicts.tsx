@@ -52,9 +52,15 @@ export async function loader({ context }: Route.LoaderArgs) {
   // Never pin an empty render: just after a (re)ship the read can briefly return 0 rows while the write
   // propagates across D1; caching that for an hour + stale-while-revalidate is what made a refresh
   // appear to "lose" the data. Only cache once there is data to cache.
+  // Cache once there is ANY signal to cache (named links OR the nameless family aggregate); an all-empty
+  // read just after a (re)ship must not pin an empty page for an hour.
   return data(
     { links, family },
-    { headers: { 'Cache-Control': links.length ? publicCache(3600) : 'no-store' } },
+    {
+      headers: {
+        'Cache-Control': links.length || family.officialCount ? publicCache(3600) : 'no-store',
+      },
+    },
   );
 }
 
@@ -104,41 +110,53 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           </p>
         </Callout>
 
-        {links.length === 0 ? (
+        {/* The nameless family aggregate must render even when there is NO published named link — it is then
+            the ONLY signal we can show (todorkolev #226 — B2). Empty state only when BOTH are empty. */}
+        {links.length === 0 && family.officialCount === 0 ? (
           <p className="muted">Все още няма публикувани връзки.</p>
         ) : (
           <>
             <FactsList
               label="Обобщение"
               rows={[
-                {
-                  term: 'Длъжностни лица с деклариран собствен дял',
-                  value: count(headline.officialCount),
-                },
-                {
-                  term: 'Връзки към изпълнители',
-                  value: `${count(headline.linkCount)} ${plural(headline.linkCount, 'връзка', 'връзки')}`,
-                },
-                {
-                  term: 'Публични средства към техните дружества',
-                  value: money(headline.totalEur),
-                  sub: `сбор от всички договори на свързаните изпълнители; в т.ч. ${money(headline.contemporaneousEur)} по договори, сключени в декларирания период`,
-                },
-                family.officialCount > 0 && {
-                  term: 'Дял на свързано лице (не се показва поименно)',
-                  value: `${count(family.officialCount)} ${plural(family.officialCount, 'лице', 'лица')}`,
-                  sub: (
-                    <>
-                      декларирали дял на близък в дружества изпълнители на стойност{' '}
-                      {money(family.totalEur)}; показва се само броят —{' '}
-                      <Link to="/conflicts/methodology#shown">защо</Link>
-                    </>
-                  ),
-                },
+                ...(links.length > 0
+                  ? [
+                      {
+                        term: 'Длъжностни лица с деклариран собствен дял',
+                        value: count(headline.officialCount),
+                      },
+                      {
+                        term: 'Връзки към изпълнители',
+                        value: `${count(headline.linkCount)} ${plural(headline.linkCount, 'връзка', 'връзки')}`,
+                      },
+                      {
+                        term: 'Публични средства към техните дружества',
+                        value: money(headline.totalEur),
+                        sub: `сбор от всички договори на свързаните изпълнители; в т.ч. ${money(headline.contemporaneousEur)} по договори, сключени в декларирания период`,
+                      },
+                    ]
+                  : []),
+                // Count only — no € (B2): an exact euro sum is a money fingerprint that re-identifies the
+                // relative. Suppressed below MIN_FAMILY_CELL officials upstream, so officialCount>0 here
+                // already means a safe, above-threshold cell.
+                ...(family.officialCount > 0
+                  ? [
+                      {
+                        term: 'Дял на свързано лице (не се показва поименно)',
+                        value: `${count(family.officialCount)} ${plural(family.officialCount, 'лице', 'лица')}`,
+                        sub: (
+                          <>
+                            декларирали дял на близък в дружества изпълнители; показва се само броят
+                            — <Link to="/conflicts/methodology#shown">защо</Link>
+                          </>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
             />
 
-            {headline.totalEur > 0 && headline.contemporaneousEur > 0 && (
+            {links.length > 0 && headline.totalEur > 0 && headline.contemporaneousEur > 0 && (
               <div className="case-mag conflict-headline-mag">
                 <span className="case-mag-label">В декларирания период</span>
                 <ShareBar ratio={headline.contemporaneousEur / headline.totalEur} warn />
@@ -149,19 +167,21 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
               </div>
             )}
 
-            <Section
-              id="list"
-              title="Деклариран дял в компании изпълнители"
-              hint="Лица, декларирали собствен дял в дружество, спечелило поръчка. Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
-            >
-              <ConflictCards
-                links={pageLinks}
-                startRank={leaderboardRankOffset(page, PER_PAGE)}
-                totalCount={links.length}
-                caption="Длъжностни лица с деклариран дял в компании изпълнители"
-              />
-              {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="връзки" />}
-            </Section>
+            {links.length > 0 && (
+              <Section
+                id="list"
+                title="Деклариран дял в компании изпълнители"
+                hint="Лица, декларирали собствен дял в дружество, спечелило поръчка. Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
+              >
+                <ConflictCards
+                  links={pageLinks}
+                  startRank={leaderboardRankOffset(page, PER_PAGE)}
+                  totalCount={links.length}
+                  caption="Длъжностни лица с деклариран дял в компании изпълнители"
+                />
+                {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="връзки" />}
+              </Section>
+            )}
           </>
         )}
       </main>

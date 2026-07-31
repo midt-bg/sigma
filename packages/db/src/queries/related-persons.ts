@@ -7,11 +7,40 @@ import type {
 } from '@sigma/api-contract';
 import { contractSlug, personSlug } from './identity';
 
-// True for D1's „no such table: …" — the свързани-лица migration (0003) not yet applied to this D1 (a fresh
-// or half-provisioned env). Lets every conflict read degrade to an empty/absent state (→ empty page or 404)
-// instead of a 500, so the feature's routes are safe to deploy ahead of the data-ship (ADR-0031 robustness).
-export function isMissingTableError(e: unknown): boolean {
-  return e instanceof Error && /no such table/i.test(e.message);
+// The tables migration 0003 (свързани-лица) creates. A „no such table" for one of THESE means 0003 is not
+// applied on this D1 yet (a fresh or half-provisioned env) — the safe, expected gap we degrade for. A
+// „no such table" for a CORE table (bidders, contracts, …) is real schema loss and must NOT be masked as
+// „0003 not applied yet": it has to propagate so the operator sees a 500, not a silently empty surface
+// (ydimitrof/todorkolev #226 — B5). Keep in sync with 0003_related_persons_foundation.sql's CREATE TABLEs.
+const CONFLICT_TABLES = [
+  'interest_links',
+  'persons',
+  'declarations',
+  'declared_interests',
+  'interest_link_authorities',
+  'related_persons_internal',
+];
+// „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
+const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;
+
+// True only when the missing table is one 0003 owns — never a core table. Exported for the read helpers and
+// their tests. A non-table error (syntax, constraint) is never matched and always propagates.
+export function isMissingConflictTableError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = MISSING_TABLE.exec(e.message);
+  return m != null && CONFLICT_TABLES.includes(m[1]!.toLowerCase());
+}
+
+// Soft-fail decision + telemetry: true (and logs ONE warning) when a conflict read hit a missing 0003 table,
+// so the caller returns the empty/absent fallback; false for every other error, which the caller rethrows.
+// The warning is the signal Todor asked for — an operator must learn the env is serving without conflict
+// data, not discover it from a silently empty leaderboard.
+function conflictSchemaAbsent(e: unknown, op: string): boolean {
+  if (!isMissingConflictTableError(e)) return false;
+  console.warn(
+    `related-persons: "${op}" degraded to an empty surface — свързани-лица schema (migration 0003) is not present on this D1: ${(e as Error).message}`,
+  );
+  return true;
 }
 
 // Read-only query layer for свързани лица. The PUBLIC surface shows the official's OWN declared material
@@ -143,24 +172,32 @@ export async function getConflictLeaderboard(db: D1Database, limit = 100): Promi
     const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
     return rows.map(toLink);
   } catch (e) {
-    if (isMissingTableError(e)) return []; // un-migrated env → empty surface, not a 500
+    if (conflictSchemaAbsent(e, 'leaderboard')) return []; // un-migrated env → empty surface, not a 500
     throw e;
   }
 }
 
+// Minimum cell size for the nameless family aggregate (todorkolev #226 — B2). Below this many DISTINCT
+// officials, the aggregate is a re-identification hazard: „1 лице" is close to naming, and any small exact
+// count can be cross-referenced. Under the threshold we publish NOTHING (the surface says nothing rather
+// than a small cell), enforced server-side so no sub-threshold count reaches the public `.data` twin.
+export const MIN_FAMILY_CELL = 5;
+
 // The nameless close-relative aggregate (ADR-0030). Officials who declared a CLOSE RELATIVE's material stake
-// in a procurement winner are collected + audited but NEVER named on the surface; instead we report the
-// count. This SQL returns SCALARS ONLY — never a person/company row — so nothing re-identifiable ships to the
-// client (the loader payload is the public `.data` twin). It counts family_ownership links withheld ONLY by
-// the family policy (status='internal' — passed every gate, not held/withdrawn/suppressed), and EXCLUDES any
-// family link redundant with the official's OWN published stake in the same winner: that € is already in the
-// named headline and that official is already on the board, so counting them again would inflate the figure.
+// in a procurement WINNER are collected + audited but NEVER named on the surface; instead we report a COUNT
+// ONLY — no € (todorkolev #226 — B2). An exact euro sum is a money fingerprint: cross-referenced with a
+// company's public contract total it re-identifies the (single-owner) relative, exactly the disclosure the
+// nameless aggregate exists to avoid. So this SQL returns two COUNTS and no monetary value.
+// It counts family_ownership links withheld ONLY by the family policy (status='internal' — passed every
+// gate, not held/withdrawn/suppressed), whose company actually WON at least one contract (contract_count>0 —
+// an official whose relative's company won nothing is not a procurement conflict), and EXCLUDES any family
+// link redundant with the official's OWN published stake in the same winner (already named on the board).
 export const WITHHELD_FAMILY_AGGREGATE_SQL = `SELECT
     COUNT(*) AS link_count,
-    COUNT(DISTINCT il.person_id) AS official_count,
-    COALESCE(SUM(il.contract_value_eur), 0) AS total_eur
+    COUNT(DISTINCT il.person_id) AS official_count
   FROM interest_links il
   WHERE il.interest_class = 'family_ownership' AND il.status = 'internal'
+    AND il.contract_count > 0
     AND NOT EXISTS (SELECT 1 FROM interest_links s
       WHERE s.person_id = il.person_id AND s.eik = il.eik
         AND s.status = 'published' AND s.interest_class = 'private_ownership')`;
@@ -168,25 +205,24 @@ export const WITHHELD_FAMILY_AGGREGATE_SQL = `SELECT
 export interface WithheldFamilyAggregate {
   linkCount: number;
   officialCount: number;
-  totalEur: number;
 }
 
-/** The nameless close-relative aggregate for the leaderboard headline (ADR-0030) — counts only, no names,
- *  no rows. Reported as „N длъжностни лица … в дружества, спечелили €X" so the public signal survives while
- *  no private individual is identified. */
+/** The nameless close-relative aggregate for the leaderboard (ADR-0030) — COUNTS ONLY, no names, no rows,
+ *  no €. Reported as „N длъжностни лица, декларирали дял на близък в дружества изпълнители" so the public
+ *  signal survives while no private individual is identified. Below MIN_FAMILY_CELL distinct officials the
+ *  aggregate is suppressed entirely (returns zeros) — a small cell is a re-identification hazard, so nothing
+ *  sub-threshold ever reaches the public payload. */
 export async function getWithheldFamilyAggregate(db: D1Database): Promise<WithheldFamilyAggregate> {
-  const empty = { linkCount: 0, officialCount: 0, totalEur: 0 };
+  const empty = { linkCount: 0, officialCount: 0 };
   try {
     const r = await db
       .prepare(WITHHELD_FAMILY_AGGREGATE_SQL)
-      .first<{ link_count: number; official_count: number; total_eur: number }>();
-    return {
-      linkCount: r?.link_count ?? 0,
-      officialCount: r?.official_count ?? 0,
-      totalEur: r?.total_eur ?? 0,
-    };
+      .first<{ link_count: number; official_count: number }>();
+    const officialCount = r?.official_count ?? 0;
+    if (officialCount < MIN_FAMILY_CELL) return empty; // min-cell: suppress a small, re-identifiable cell
+    return { linkCount: r?.link_count ?? 0, officialCount };
   } catch (e) {
-    if (isMissingTableError(e)) return empty; // un-migrated env → no aggregate, not a 500
+    if (conflictSchemaAbsent(e, 'family-aggregate')) return empty; // un-migrated env → no aggregate, not a 500
     throw e;
   }
 }
@@ -206,7 +242,7 @@ export async function getOfficialConflicts(
     const links = rows.map(toLink);
     return { official: links[0]!.official, links };
   } catch (e) {
-    if (isMissingTableError(e)) return null; // un-migrated env → 404, not a 500
+    if (conflictSchemaAbsent(e, 'official')) return null; // un-migrated env → 404, not a 500
     throw e;
   }
 }
@@ -224,7 +260,7 @@ export async function getCompanyConflicts(
     if (rows.length === 0) return null;
     return { company: rows[0]!.company, eik, links: rows.map(toLink) };
   } catch (e) {
-    if (isMissingTableError(e)) return null; // un-migrated env → 404, not a 500
+    if (conflictSchemaAbsent(e, 'company')) return null; // un-migrated env → 404, not a 500
     throw e;
   }
 }
@@ -289,7 +325,7 @@ export async function getLinkContracts(
   try {
     rows = (await db.prepare(LINK_CONTRACTS_SQL).bind(linkKey).all<ContractRow>()).results;
   } catch (e) {
-    if (isMissingTableError(e)) return []; // un-migrated env → empty contracts, not a 500
+    if (conflictSchemaAbsent(e, 'link-contracts')) return []; // un-migrated env → empty contracts, not a 500
     throw e;
   }
   return rows.map((r) => ({

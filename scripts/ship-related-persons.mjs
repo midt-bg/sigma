@@ -122,16 +122,51 @@ export function resolveD1Name({ remote, envName }) {
   return envName || 'sigma';
 }
 
+// The blue-green PRODUCTION D1 slots (deploy.md „Blue/green слотове"): the stable slot `sigma` and its partner
+// `sigma-green`. Fixed HERE, in the repo — the wipe-prod footgun the authorization check guards against.
+export const PRODUCTION_SLOTS = ['sigma', 'sigma-green'];
+
 /**
- * Positive target check before the destructive wipe (allowlist-over-denylist). A --remote ship DELETEs every
- * свързани-лица table, so the name alone is not enough — a typo'd or misconfigured SIGMA_D1_NAME could name a
- * real-but-wrong database. We PROVE the (name, id) pair the Environment supplied refers to the same real DB:
- * the id the name resolves to (looked up live from Cloudflare) MUST equal the Environment's SIGMA_D1_ID. Any
- * disagreement — a stale id, a wrong name, a misconfigured Environment — refuses the wipe. Pure — unit-tested;
- * the live lookup is injected as `resolvedId`. --local carries no durable blast radius, so it is exempt.
+ * Version-controlled ship-target policy by ENVIRONMENT (T48, todorkolev #226). production pins its exact
+ * allowed D1 names in the repo; non-production names are environment-configured (each GitHub Environment's
+ * SIGMA_D1_NAME var), so the repo rule there is the mirror-image guard: the name must NOT be a production slot.
+ * `null` means „any non-production name". Mirrors related-persons-data.yml's env→name guard.
  */
-export function assertD1TargetConsistent({ remote, d1Name, expectedId, resolvedId }) {
+export const SHIP_TARGETS = {
+  production: PRODUCTION_SLOTS,
+  staging: null,
+  dev: null,
+};
+
+/**
+ * Positive AUTHORIZATION check before the destructive wipe. A --remote ship DELETEs every свързани-лица table,
+ * so proving the (name, id) pair is self-consistent is NOT enough — two consistently-wrong values (a staging
+ * name paired with its staging id, when production was intended) would pass (todorkolev #226). Authorization
+ * needs a THIRD, independent anchor: the operator DECLARES the intended environment (SIGMA_SHIP_ENV), and the
+ * repo policy pins production's names / forbids a production name outside production. So the declared env
+ * (repo) and the id (Cloudflare-resolved vs the operator's SIGMA_D1_ID) come from different sources and can't
+ * be made consistent-but-wrong by inadvertence. Pure — unit-tested; the live id lookup is injected as
+ * `resolvedId`. --local carries no durable blast radius, so it is exempt.
+ */
+export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, resolvedId }) {
   if (!remote) return;
+  // 1. The intended environment must be DECLARED and known — the independent anchor the id/name pair can't fake.
+  if (!(shipEnv in SHIP_TARGETS))
+    throw new Error(
+      `SIGMA_SHIP_ENV must name a known environment (${Object.keys(SHIP_TARGETS).join(' | ')}) for a --remote ship — got ${JSON.stringify(shipEnv)}. Without it, a consistent-but-wrong (name, id) pair cannot be caught.`,
+    );
+  const allowed = SHIP_TARGETS[shipEnv];
+  // 2a. production: the name must be one of the repo-pinned prod slots.
+  if (allowed && !allowed.includes(d1Name))
+    throw new Error(
+      `D1 name '${d1Name}' is not an allowed target for SIGMA_SHIP_ENV='${shipEnv}' (allowed: ${allowed.join(', ')}) — refusing to wipe.`,
+    );
+  // 2b. non-production: the name must NOT be a production slot (the „meant dev, wiped prod" footgun).
+  if (!allowed && PRODUCTION_SLOTS.includes(d1Name))
+    throw new Error(
+      `D1 name '${d1Name}' is a PRODUCTION slot but SIGMA_SHIP_ENV='${shipEnv}' — refusing to wipe production from a non-production ship.`,
+    );
+  // 3. …and the name must resolve (live, at Cloudflare) to exactly the id the Environment claims (SIGMA_D1_ID).
   if (!expectedId)
     throw new Error(
       'SIGMA_D1_ID must be set for a --remote ship — cannot verify the wipe target without the expected id.',
@@ -210,22 +245,24 @@ function main() {
     }).trim();
     return out ? JSON.parse(out) : [];
   };
-  // Floor gate BEFORE any destructive write (see assertShipFloor). Only when actually applying — `--emit`
-  // just writes SQL files and wipes nothing. Counts surfaced links only: status='published' is the public
-  // surface (load.mjs assigns non-surfaced classes 'internal', not 'published').
-  if (!emit) {
-    const published =
-      sqliteJson(`SELECT COUNT(*) AS n FROM interest_links WHERE status = 'published'`)[0]?.n ?? 0;
-    assertShipFloor(Number(published), minLinks);
-    // Positive target check on a real remote wipe: the (name, id) pair must refer to the same DB (ADR-0031
-    // allowlist posture). Skipped for --emit (writes SQL files, wipes nothing).
-    assertD1TargetConsistent({
+  // Floor gate BEFORE any destructive write (assertShipFloor) — runs for --emit too: the emitted 0_wipe.sql is
+  // a hand-appliable destructive script, so it must clear the same anti-wipe floor as a live apply, not sneak
+  // an under-floor wipe past the guard by going through --emit (todorkolev #226). Counts surfaced links only:
+  // status='published' is the public surface (load.mjs assigns non-surfaced classes 'internal').
+  const published =
+    sqliteJson(`SELECT COUNT(*) AS n FROM interest_links WHERE status = 'published'`)[0]?.n ?? 0;
+  assertShipFloor(Number(published), minLinks);
+  // Positive AUTHORIZATION check on a real remote wipe: the declared env + (name, id) must name an allowlisted
+  // target (T48). Skipped for --emit (writes SQL files, touches no DB) — but the emitted wipe is stamped with a
+  // loud header below so a later manual apply is never mistaken for a guarded one.
+  if (!emit)
+    assertD1TargetAuthorized({
       remote,
+      shipEnv: process.env.SIGMA_SHIP_ENV ?? '',
       d1Name,
       expectedId: process.env.SIGMA_D1_ID,
       resolvedId: remote ? resolveD1Id(d1Name) : '',
     });
-  }
 
   // D1 enforces foreign keys, so a re-seed cannot DELETE a parent while children still reference it. Wipe
   // every table first, children-before-parents (WIPE_ORDER), as ONE batched request — `d1 execute --file`
@@ -251,8 +288,14 @@ function main() {
   };
 
   if (emit) mkdirSync(emit, { recursive: true });
-  // Children-first wipe. Emit as 0_wipe.sql so a manual apply runs it before the parent-first inserts.
-  if (emit) writeFileSync(resolve(emit, '0_wipe.sql'), wipeSql());
+  // Children-first wipe. Emit as 0_wipe.sql so a manual apply runs it before the parent-first inserts. Stamp a
+  // loud header: the emitted file bypassed the live authorization guard (it names no DB), so whoever applies it
+  // by hand owns the target check that assertD1TargetAuthorized would otherwise enforce (todorkolev #226).
+  const EMIT_WIPE_HEADER =
+    '-- ⚠ DESTRUCTIVE, UNGUARDED: this wipe was emitted with --emit and did NOT pass the live D1\n' +
+    '-- target-authorization check (SIGMA_SHIP_ENV allowlist + name↔SIGMA_D1_ID). If you apply it by hand,\n' +
+    '-- YOU are responsible for confirming the target D1 is the intended one before running it.\n';
+  if (emit) writeFileSync(resolve(emit, '0_wipe.sql'), EMIT_WIPE_HEADER + wipeSql());
   else applyFile('0_wipe', wipeSql());
 
   const summary = {};

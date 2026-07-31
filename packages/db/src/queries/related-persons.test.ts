@@ -5,8 +5,50 @@ import {
   getLinkContracts,
   getOfficialConflicts,
   getWithheldFamilyAggregate,
+  MIN_FAMILY_CELL,
 } from './related-persons';
 import { personSlug } from './identity';
+
+// A D1 whose first() returns a fixed aggregate row — for the min-cell gate on getWithheldFamilyAggregate.
+function aggDb(row: { link_count: number; official_count: number } | null): D1Database {
+  return {
+    prepare() {
+      return {
+        bind() {
+          return this;
+        },
+        async all() {
+          return { results: [] };
+        },
+        async first() {
+          return row;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+describe('family aggregate min-cell (B2)', () => {
+  it(`suppresses a cell below MIN_FAMILY_CELL (${MIN_FAMILY_CELL}) officials — nothing sub-threshold ships`, async () => {
+    expect(await getWithheldFamilyAggregate(aggDb({ link_count: 3, official_count: 1 }))).toEqual({
+      linkCount: 0,
+      officialCount: 0,
+    });
+    expect(
+      await getWithheldFamilyAggregate(
+        aggDb({ link_count: 9, official_count: MIN_FAMILY_CELL - 1 }),
+      ),
+    ).toEqual({ linkCount: 0, officialCount: 0 });
+  });
+
+  it('passes a cell at/above the threshold through as counts only (no €)', async () => {
+    const agg = await getWithheldFamilyAggregate(
+      aggDb({ link_count: 12, official_count: MIN_FAMILY_CELL }),
+    );
+    expect(agg).toEqual({ linkCount: 12, officialCount: MIN_FAMILY_CELL });
+    expect('totalEur' in agg).toBe(false); // no euro field at all
+  });
+});
 
 // Unit coverage for the TS logic the SQL can't exercise: row→DTO mapping (booleans, own-institution
 // truth only on 'exact', declared-year passthrough, URL-safe slug) and null-on-empty. The SQL itself
@@ -161,7 +203,6 @@ describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {
     expect(await getWithheldFamilyAggregate(missing())).toEqual({
       linkCount: 0,
       officialCount: 0,
-      totalEur: 0,
     });
     expect(await getOfficialConflicts(missing(), 'person:x')).toBeNull();
     expect(await getCompanyConflicts(missing(), '111')).toBeNull();
@@ -175,5 +216,33 @@ describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {
     await expect(getOfficialConflicts(boom, 'person:x')).rejects.toThrow(/syntax error/);
     await expect(getCompanyConflicts(boom, '111')).rejects.toThrow(/syntax error/);
     await expect(getLinkContracts(boom, 'p|1')).rejects.toThrow(/syntax error/);
+  });
+
+  // B5 (todorkolev #226): the soft-fail must be SPECIFIC to the 0003 tables. A missing CORE table (bidders)
+  // is real schema loss and must surface as a 500 — never be masked as „0003 not applied yet" (a silently
+  // empty surface would tell no one the env is broken).
+  it('a missing CORE table (bidders) propagates — only свързани-лица tables soft-fail', async () => {
+    const coreLoss = () => throwingDb(new Error('D1_ERROR: no such table: bidders: SQLITE_ERROR'));
+    await expect(getConflictLeaderboard(coreLoss(), 10)).rejects.toThrow(/no such table: bidders/);
+    await expect(getWithheldFamilyAggregate(coreLoss())).rejects.toThrow(/no such table: bidders/);
+    await expect(getOfficialConflicts(coreLoss(), 'person:x')).rejects.toThrow(/bidders/);
+    await expect(getCompanyConflicts(coreLoss(), '111')).rejects.toThrow(/bidders/);
+    await expect(getLinkContracts(coreLoss(), 'p|1')).rejects.toThrow(/bidders/);
+  });
+
+  // Every 0003-owned table name is recognized as the migration gap (soft-fail), so a half-applied 0003 that
+  // trips on any of them degrades rather than 500s.
+  it('each свързани-лица table missing is treated as the migration gap', async () => {
+    for (const t of [
+      'interest_links',
+      'persons',
+      'declarations',
+      'declared_interests',
+      'interest_link_authorities',
+      'related_persons_internal',
+    ]) {
+      const db = throwingDb(new Error(`D1_ERROR: no such table: ${t}: SQLITE_ERROR`));
+      expect(await getConflictLeaderboard(db, 10), t).toEqual([]);
+    }
   });
 });

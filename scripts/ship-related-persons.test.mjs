@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assertShipFloor,
-  assertD1TargetConsistent,
+  assertD1TargetAuthorized,
+  SHIP_TARGETS,
   parseMinLinks,
   resolveD1Name,
   insertStatements,
@@ -74,44 +75,66 @@ test('TABLES ships parents before children and covers the served related-persons
   }
 });
 
-test('assertD1TargetConsistent proves the (name, id) pair before a remote wipe', () => {
+test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) before a remote wipe (T48)', () => {
   const ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  // --local (remote=false) is exempt — no durable blast radius, so any/absent ids pass.
+  const ok = {
+    remote: true,
+    shipEnv: 'production',
+    d1Name: 'sigma',
+    expectedId: ID,
+    resolvedId: ID,
+  };
+  // --local (remote=false) is exempt — no durable blast radius, so any/absent env/ids pass.
   assert.doesNotThrow(() =>
-    assertD1TargetConsistent({ remote: false, d1Name: 'sigma', expectedId: '', resolvedId: '' }),
+    assertD1TargetAuthorized({
+      remote: false,
+      shipEnv: '',
+      d1Name: 'sigma',
+      expectedId: '',
+      resolvedId: '',
+    }),
   );
-  // remote with a matching (name→id) pair is allowed.
-  assert.doesNotThrow(() =>
-    assertD1TargetConsistent({ remote: true, d1Name: 'sigma', expectedId: ID, resolvedId: ID }),
+  // remote: declared env + allowlisted name + matching (name→id) pair is allowed.
+  assert.doesNotThrow(() => assertD1TargetAuthorized(ok));
+  // production is blue-green: the partner slot `sigma-green` is also allowed for env=production.
+  assert.doesNotThrow(() => assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-green' }));
+  // missing / unknown declared env → cannot anchor authorization → refuse.
+  assert.throws(() => assertD1TargetAuthorized({ ...ok, shipEnv: '' }), /SIGMA_SHIP_ENV must name/);
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, shipEnv: 'prod' }),
+    /SIGMA_SHIP_ENV must name/,
+  );
+  // THE T48 CASE: a consistent-but-wrong pair (staging name + its own id) when PRODUCTION was declared — the
+  // repo policy refuses it even though name and id agree with each other.
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-stage', resolvedId: ID }),
+    /not an allowed target for SIGMA_SHIP_ENV='production'/,
+  );
+  // THE MIRROR CASE: a production D1 name under a non-production declared env → refuse (meant dev, wiped prod).
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, shipEnv: 'dev', d1Name: 'sigma' }),
+    /is a PRODUCTION slot but SIGMA_SHIP_ENV='dev'/,
   );
   // no expected id → cannot verify → refuse.
   assert.throws(
-    () =>
-      assertD1TargetConsistent({ remote: true, d1Name: 'sigma', expectedId: '', resolvedId: ID }),
+    () => assertD1TargetAuthorized({ ...ok, expectedId: '' }),
     /SIGMA_D1_ID must be set/,
   );
-  // name resolves to nothing (unknown/typo) → refuse.
+  // name resolves to nothing (unknown/typo at Cloudflare) → refuse.
   assert.throws(
-    () =>
-      assertD1TargetConsistent({
-        remote: true,
-        d1Name: 'sigma-typo',
-        expectedId: ID,
-        resolvedId: '',
-      }),
+    () => assertD1TargetAuthorized({ ...ok, resolvedId: '' }),
     /could not resolve a database id/,
   );
   // name resolves to a DIFFERENT id than the Environment expects → refuse (the core wrong-target guard).
   assert.throws(
-    () =>
-      assertD1TargetConsistent({
-        remote: true,
-        d1Name: 'sigma',
-        expectedId: ID,
-        resolvedId: 'ffffffff-0000-0000-0000-000000000000',
-      }),
+    () => assertD1TargetAuthorized({ ...ok, resolvedId: 'ffffffff-0000-0000-0000-000000000000' }),
     /D1 target mismatch/,
   );
+  // a non-production env with its own (non-prod) name + matching id passes.
+  assert.doesNotThrow(() =>
+    assertD1TargetAuthorized({ ...ok, shipEnv: 'staging', d1Name: 'sigma-stage' }),
+  );
+  assert.ok(SHIP_TARGETS.production.includes('sigma'));
 });
 
 test('assertShipFloor refuses to wipe the live surface below the floor (empty/partial staging)', () => {

@@ -50,26 +50,34 @@ afterEach(() => {
 });
 
 describe('leaderboard loader (/conflicts)', () => {
-  const NO_FAMILY = { linkCount: 0, officialCount: 0, totalEur: 0 };
+  const NO_FAMILY = { linkCount: 0, officialCount: 0 };
 
   it('caches for an hour when there are links, and returns the family aggregate alongside them', async () => {
     q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
-    q.getWithheldFamilyAggregate.mockResolvedValue({
-      linkCount: 4,
-      officialCount: 3,
-      totalEur: 250000,
-    });
+    q.getWithheldFamilyAggregate.mockResolvedValue({ linkCount: 4, officialCount: 3 });
     const res = (await leaderboardLoader({ context } as never)) as {
       data: { links: unknown[]; family: { officialCount: number } };
       init: { headers: Record<string, string> };
     };
     expect(res.data.links).toHaveLength(1);
-    // The nameless aggregate rides in the SAME payload (the public `.data` twin) — scalars only, no rows.
+    // The nameless aggregate rides in the SAME payload (the public `.data` twin) — counts only, no rows, no €.
     expect(res.data.family.officialCount).toBe(3);
+    expect('totalEur' in res.data.family).toBe(false);
     expect(res.init.headers['Cache-Control']).toMatch(/s-maxage=3600/);
   });
 
-  it('does NOT cache an empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
+  it('caches a family-only read (no named links) — the aggregate is the only signal, still cacheable (B2)', async () => {
+    q.getConflictLeaderboard.mockResolvedValue([]);
+    q.getWithheldFamilyAggregate.mockResolvedValue({ linkCount: 12, officialCount: 6 });
+    const res = (await leaderboardLoader({ context } as never)) as {
+      data: { family: { officialCount: number } };
+      init: { headers: Record<string, string> };
+    };
+    expect(res.data.family.officialCount).toBe(6);
+    expect(res.init.headers['Cache-Control']).toMatch(/s-maxage=3600/);
+  });
+
+  it('does NOT cache a fully empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
     q.getConflictLeaderboard.mockResolvedValue([]);
     q.getWithheldFamilyAggregate.mockResolvedValue(NO_FAMILY);
     const res = (await leaderboardLoader({ context } as never)) as {

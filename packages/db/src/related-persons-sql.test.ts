@@ -161,15 +161,25 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('the nameless family aggregate counts withheld close-relative stakes, excluding those redundant with a self stake', () => {
+  it('the nameless family aggregate counts withheld close-relative stakes (COUNTS ONLY, no €), excluding redundant + zero-contract links', () => {
     withDb((dbPath) => {
-      // ADR-0030: family stakes are reported only as counts. Кмет's standalone relative stake in ЕВРОСТРОЙ
-      // (€250k, status 'internal') is the one member. Двоен's family stake is EXCLUDED — he holds a published
-      // OWN stake in the same winner (already on the board + counted), so counting it would inflate the €.
+      // ADR-0030 + B2 (todorkolev #226): family stakes are reported as COUNTS ONLY — the SQL returns no €
+      // (a euro sum is a re-identifying fingerprint). Кмет's standalone relative stake in ЕВРОСТРОЙ (status
+      // 'internal', contract_count=5) is the one member. Двоен's family stake is EXCLUDED — he holds a
+      // published OWN stake in the same winner (already on the board). A family link whose company won ZERO
+      // contracts is not a procurement conflict and must NOT be counted either.
+      sqlite(
+        dbPath,
+        `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:666','НУЛА ООД','666','666',1,'company');
+         INSERT INTO persons (id, name) VALUES ('person:zero','Нула Тестов');
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
+           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'internal');`,
+      );
       const agg = rows(dbPath, WITHHELD_FAMILY_AGGREGATE_SQL)[0]!;
-      expect(Number(agg.official_count)).toBe(1);
+      expect(Number(agg.official_count)).toBe(1); // Кмет only — zero-contract link excluded by contract_count>0
       expect(Number(agg.link_count)).toBe(1);
-      expect(Number(agg.total_eur)).toBe(250000);
+      expect(agg.total_eur).toBeUndefined(); // no € column at all — the fingerprint is gone
     });
   });
 
