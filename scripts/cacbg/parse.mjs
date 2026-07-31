@@ -28,15 +28,45 @@ const asArray = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
 // Empty XML elements (<Name/>) parse to {} — String({}) would yield '[object Object]', so collapse any
 // object/null/undefined to '' and trim the rest. The single coercion for every scalar field we persist.
 const flat = (v) => (v == null || typeof v === 'object' ? '' : String(v).trim());
-// Same-person test for the holder-name column. The source is hand-typed, so a SELF stake whose holder
-// cell repeats the declarant's own name with different casing/spacing than <Personal><Name> must NOT be
-// read as a relative's — that fabricates a family_ownership link naming a non-existent relative on a
-// libel-sensitive surface. Case-fold + collapse whitespace before comparing (ADR-0023).
-const nameKey = (v) =>
-  String(v ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+// Classify the holder-name cell against the declarant into THREE states (B4, review #226). The source is
+// hand-typed, so a SELF stake often writes the declarant's own name reordered, initialed, or abbreviated
+// („Георгиев Иван Петров", „Иван Г. Петров", „Иван Георгиев" for declarant „Иван Петров Георгиев"). The old
+// byte-equality binary read every such variant as a RELATIVE, fabricating a phantom family link — and since
+// family is now a nameless aggregate (ADR-0030), those phantoms silently inflated a PUBLISHED number.
+//   self    — every holder token is accounted for in the declarant's own name (permutation/initial/subset),
+//             with ≥2 tokens so a lone surname isn't over-claimed;
+//   related — ≥2 holder FULL tokens the declarant does not have ⇒ confidently a different person;
+//   unknown — anything else (1 foreign token, foreign initials, a lone token, garbage): counted NOWHERE.
+// Order-independent, initial-tolerant, each holder token consuming a DISTINCT declarant token so one name
+// part never satisfies two. Fail-conservative: ambiguity resolves to `unknown`, which forms no link at all.
+const holderTokens = (name) =>
+  String(name ?? '')
+    .normalize('NFC')
+    .toUpperCase()
+    .split(/[^\p{L}]+/u)
+    .filter(Boolean);
+const isInitial = (t) => [...t].length === 1;
+export function classifyHolder(holder, declarant) {
+  if (String(holder ?? '').trim() === '') return 'self'; // blank holder cell ⇒ the declarant's own stake
+  const D = holderTokens(declarant);
+  if (D.length === 0) return 'unknown'; // no declarant to compare against
+  const H = holderTokens(holder);
+  if (H.length === 0) return 'unknown'; // non-empty but bears no name letters (e.g. „—")
+  const used = new Array(D.length).fill(false);
+  const unmatched = [];
+  // Match FULL tokens (exact) before INITIALS (first-letter), so an initial can't greedily consume a
+  // declarant token that a full token needs to match.
+  for (const h of [...H].sort((a, b) => Number(isInitial(a)) - Number(isInitial(b)))) {
+    const hit = isInitial(h)
+      ? D.findIndex((d, i) => !used[i] && [...d][0] === [...h][0])
+      : D.findIndex((d, i) => !used[i] && d === h);
+    if (hit >= 0) used[hit] = true;
+    else unmatched.push(h);
+  }
+  if (unmatched.length === 0) return H.length >= 2 ? 'self' : 'unknown';
+  if (unmatched.filter((t) => !isInitial(t)).length >= 2) return 'related';
+  return 'unknown';
+}
 function cellText(cell) {
   if (cell == null) return '';
   const t = typeof cell === 'object' ? cell['#text'] : cell;
@@ -128,7 +158,7 @@ function parseAssets(pp) {
       if (!company) continue;
       if ((by[cEgn] ?? '').length > 0) egnPresent = true;
       const holder = by[cHolder] ?? '';
-      const holderRelation = !holder || nameKey(holder) === nameKey(declarant) ? 'self' : 'related';
+      const holderRelation = classifyHolder(holder, declarant);
       if (holderRelation === 'related') familyHoldingCount += 1;
       const seat = isOod ? (by[cSeat] ?? '') : '';
       interests.push({

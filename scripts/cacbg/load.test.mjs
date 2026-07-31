@@ -78,6 +78,10 @@ before(() => {
     -- ZERO-CONTRACT case (I5): a distinctive winner name with NO contract rows → a name match that carries
     -- no procurement conflict. Collected, but must NEVER publish („0 договори · 0 €").
     INSERT INTO bidders VALUES ('eik:121212129','НУЛА ТЕХ 3 ЕООД','121212129',1,'София');
+    -- B1 divest-to-ZERO: Пълен owns ДИВЕСТ ЗЕРО (2019), then files an EMPTY declaration (2023) listing NO
+    -- stake at all. The empty filing advances his horizon past 2019 → the 2019 stake is withdrawn.
+    INSERT INTO bidders VALUES ('eik:101010104','ДИВЕСТ ЗЕРО 4 ЕООД','101010104',1,'София');
+    INSERT INTO contracts VALUES ('c11','t1','eik:101010104','2019-05-01',150000);
   `);
   db.close();
 
@@ -309,12 +313,73 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H13',
     },
+    // B1 divest-to-ZERO: Пълен owns ДИВЕСТ ЗЕРО in 2019. His later EMPTY filing (below, in filings.jsonl,
+    // NO holdings row) advances his horizon to 2023 → this 2019 stake is withdrawn even though no later
+    // filing lists ANY stake. Without the filing horizon this would wrongly stay 'published'.
+    {
+      folder: '2020',
+      xmlFile: 'ZE0.xml',
+      year: '2019',
+      template: 'assets',
+      category: '',
+      institution: 'T2',
+      person: 'Пълен Дивестов',
+      position: '',
+      entity: 'ДИВЕСТ ЗЕРО 4 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H14',
+    },
+    // B4 UNKNOWN holder: the holder cell is neither confidently the declarant's own name nor a relative's
+    // (an ambiguous 1-token-different cell). classifyHolder → 'unknown' → this forms NO link (counted
+    // nowhere), so it never pollutes the leaderboard or the nameless family aggregate.
+    {
+      folder: '2024',
+      xmlFile: 'UNK.xml',
+      year: '2023',
+      template: 'assets',
+      category: '',
+      institution: 'N3',
+      person: 'Двусмислен Тестов',
+      position: '',
+      entity: 'ДИСТИНКТ ТЕХ 7 ЕООД',
+      kind: 'shares',
+      detail: '10%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'unknown',
+      controlHash: 'H15',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
     holdings.map((h) => JSON.stringify(h)).join('\n') + '\n',
   );
   fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
+  // filings.jsonl (B1): one record per DECLARATION — every holding's filing PLUS empty/no-material filings.
+  // Derive a filing from each holding, then add Пълен's later EMPTY 2023 filing (no holdings row) so his
+  // 2019 stake is caught as divest-to-zero.
+  const filings = holdings.map((h) => ({
+    folder: h.folder,
+    xmlFile: h.xmlFile,
+    year: h.year,
+    person: h.person,
+    institution: h.institution,
+  }));
+  filings.push({
+    folder: '2023',
+    xmlFile: 'ZE1.xml',
+    year: '2023',
+    person: 'Пълен Дивестов',
+    institution: 'T2',
+  });
+  fs.writeFileSync(
+    path.join(STAGING, 'filings.jsonl'),
+    filings.map((f) => JSON.stringify(f)).join('\n') + '\n',
+  );
 });
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -435,6 +500,27 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
     db.prepare("SELECT kind FROM declared_interests WHERE entity_raw='ЛИСТЕД ТЕСТ АД'").get().kind,
     'securities',
   );
+
+  // B1 divest-to-ZERO: Пълен owned ДИВЕСТ ЗЕРО in 2019, then filed an EMPTY declaration in 2023 (no holdings
+  // row — only a filings.jsonl entry). The empty filing advances his horizon to 2023, so the 2019 stake is
+  // WITHDRAWN. Without the filing horizon (pre-B1) his scope-max would be 2019 and this would stay published.
+  const divZero = link('101010104', 'Пълен Дивестов');
+  assert.equal(divZero.interest_class, 'private_ownership');
+  assert.equal(divZero.last_declared_year, '2019'); // dated to its last declaration, never asserted current
+  assert.equal(divZero.status, 'withdrawn'); // caught by the empty later filing (B1)
+
+  // B4 UNKNOWN holder: an ambiguous holder cell forms NO link at all (counted nowhere) — it must never
+  // reach the leaderboard or the nameless family aggregate. Двусмислен gets no interest_link.
+  assert.equal(link('111111119', 'Двусмислен Тестов'), undefined);
+  // but the person + declared_interest are still recorded (census), and it is neither self nor family.
+  assert.equal(
+    db
+      .prepare(
+        "SELECT COUNT(*) n FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE p.name='Двусмислен Тестов'",
+      )
+      .get().n,
+    0,
+  );
   db.close();
 });
 
@@ -464,11 +550,11 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 11 links: 10 self (incl. withdrawn/held + the zero-contract 'internal') + 1 family; Мария (quarantined)
-  // & Акционер (securities) form none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 11);
-  // 12 persons: everyone who declared a holding, incl. no-link Мария & Акционер and zero-contract Нула.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 12);
+  // 12 links: 11 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 'withdrawn') + 1 family; Мария (quarantined), Акционер (securities) & Двусмислен (unknown holder) form none.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 12);
+  // 14 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен and zero-contract Нула.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 14);
   db.close();
 });
 

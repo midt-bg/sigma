@@ -20,6 +20,9 @@ function run() {
   fs.mkdirSync(STAGING, { recursive: true });
   const holdingsOut = fs.createWriteStream(path.join(STAGING, 'holdings.jsonl'));
   const relatedOut = fs.createWriteStream(path.join(STAGING, 'related.jsonl'));
+  // filings.jsonl — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
+  // The loader builds each person's latest-filing horizon from this to catch a divest-to-ZERO (B1, #226).
+  const filingsOut = fs.createWriteStream(path.join(STAGING, 'filings.jsonl'));
   const stats = {
     decls: 0,
     assets: 0,
@@ -28,6 +31,7 @@ function run() {
     egnHits: 0,
     holdings: 0,
     related: 0,
+    filings: 0,
     dupSkipped: 0,
     byKind: {},
   };
@@ -83,6 +87,18 @@ function run() {
       if (d.egnPresent) stats.egnHits++;
       const c = ctx.get(file) ?? {};
       const person = c.person || d.declarant;
+      // Emit the filing record UNCONDITIONALLY — before the interests loop — so a declaration with zero
+      // material holdings (a divest-to-zero, an empty filing) still advances the person's horizon (B1).
+      filingsOut.write(
+        JSON.stringify({
+          folder,
+          xmlFile: file,
+          year: d.year,
+          person,
+          institution: c.institution ?? '',
+        }) + '\n',
+      );
+      stats.filings++;
       for (const it of d.interests) {
         holdingsOut.write(
           JSON.stringify({
@@ -128,6 +144,7 @@ function run() {
   }
   holdingsOut.end();
   relatedOut.end();
+  filingsOut.end();
   console.log('\n=== extract summary ===');
   console.log(JSON.stringify(stats, null, 2));
 }

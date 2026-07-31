@@ -192,7 +192,22 @@ let diN = 0,
   noMatch = 0,
   quarantined = 0,
   immaterialFamily = 0,
+  unknownHolder = 0,
   namelessPerson = 0;
+
+// B1 divest-to-zero horizon: the latest year each person filed ANY declaration — including empty /
+// no-material filings that emit no holdings row (extract → filings.jsonl). The per-scope material-ownership
+// max alone cannot see a divest-to-ZERO (selling everything and filing an empty declaration leaves no
+// ownership row to advance it), so a sold stake would keep asserting a CURRENT holding. An absent file
+// yields an empty map ⇒ the loader falls back to the old per-scope horizon (backward-compatible).
+const filingMaxByPerson = new Map();
+for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
+  if (!isMatchableKey(companyNameKey(f.person))) continue;
+  const fy = yr(f.year);
+  if (!Number.isFinite(fy)) continue;
+  const fpid = personId(f.person, f.institution);
+  filingMaxByPerson.set(fpid, Math.max(filingMaxByPerson.get(fpid) ?? fy, fy));
+}
 
 db.exec('BEGIN');
 for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
@@ -235,6 +250,14 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.timing ?? 'annual',
     h.seat ?? '',
   );
+  // Unknown holder (B4): the holder cell is neither confidently the declarant's own name nor confidently a
+  // relative's (an ambiguous 1-token-different / initials-only cell). Counted NOWHERE — it forms no link and
+  // never advances a scope's ownership horizon — so a name we cannot resolve never pollutes a published
+  // number (the nameless family aggregate or the leaderboard). Retained in declared_interests for census.
+  if (h.holderRelation === 'unknown') {
+    unknownHolder++;
+    continue;
+  }
   // scope = whose stake this is. holderRelation='related' ⇒ a CLOSE RELATIVE's stake declared by the
   // official (anonymized downstream — the relative's name never enters staging). Everything else is the
   // official's own. Materiality gate = a real financial-interest kind in a CLOSELY-HELD company; listed
@@ -296,8 +319,9 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // Per-company material ownership years (this resolved winner only) — `recOwnMax` below dates the link to
   // its last declaration. The per-scope horizon (ownMaxByScope) is advanced above, before resolution, so it
   // spans ALL material filings; comparing the two is what detects divestment (§8/E11). Material-ownership
-  // only: management filing cadence is unverified (spec §6). Blind spot (documented): a divest-to-ZERO
-  // filing produces no holdings row, so the temporal dating is the residual mitigation.
+  // only: management filing cadence is unverified (spec §6). A divest-to-ZERO (sell everything, file an
+  // empty declaration) is caught too (B1): filings.jsonl gives the person's latest-filing horizon, so a
+  // stake absent from a later even-empty filing is withdrawn — no longer a documented blind spot.
   if (material) {
     rec.hasMaterialOwn = true;
     if (Number.isFinite(y)) rec.ownYears.add(y);
@@ -459,12 +483,18 @@ for (const rec of agg.values()) {
   // ended → 'withdrawn' (excluded from the published surface, like held/suppressed). Ownership relations
   // (self owns/owns+manages, family related), compared against material-ownership years for that scope.
   const recOwnMax = rec.ownYears.size ? Math.max(...rec.ownYears) : null;
+  // Divestment horizon = the later of (a) the per-scope material-ownership max and (b) the person's
+  // latest-filing year (B1). (b) is what catches a divest-to-ZERO: selling everything and filing an empty
+  // declaration advances the filing horizon past the stake's last year, so the stale link is withdrawn
+  // instead of asserting a stake the person no longer holds. filings ⊇ ownership, so max() is safe.
   const scopeOwnMax = ownMaxByScope.get(`${rec.pid}|${rec.scope}`) ?? null;
+  const filingMax = filingMaxByPerson.get(rec.pid) ?? null;
+  const horizon = Math.max(scopeOwnMax ?? -Infinity, filingMax ?? -Infinity);
   const divested =
     (relation === 'owns' || relation === 'owns+manages' || relation === 'related') &&
     recOwnMax != null &&
-    scopeOwnMax != null &&
-    scopeOwnMax > recOwnMax;
+    Number.isFinite(horizon) &&
+    horizon > recOwnMax;
   // status must be SELF-DESCRIBING in D1: 'published' means "on the public surface", not merely "passed
   // the tier gate". Only the official's OWN material ownership (private_ownership) surfaces. family_ownership
   // (a close relative's stake) is collected + audited but WITHHELD from the named surface in v1 (ADR-0030,
@@ -595,6 +625,7 @@ const S = {
   noMatch,
   quarantined,
   immaterialFamilySkipped: immaterialFamily,
+  unknownHolderSkipped: unknownHolder,
   namelessPersonSkipped: namelessPerson,
 };
 console.log(JSON.stringify(S, null, 2));
