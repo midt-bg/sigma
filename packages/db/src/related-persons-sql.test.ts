@@ -94,12 +94,21 @@ INSERT INTO authorities (id, name) VALUES ('a:1','ОБЩИНА ТЕСТ');
 INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES
   ('t:1','unp1','Ремонт на път','a:1','открита процедура'),
   ('t:2','unp2','Доставка на софтуер','a:1','договаряне без обявление'),
-  ('t:3','unp3','Т3','a:1','открита процедура'),('t:4','unp4','Т4','a:1','неизвестна');
+  ('t:3','unp3','Т3','a:1','открита процедура'),('t:4','unp4','Т4','a:1','неизвестна'),
+  ('t:44','unp44','Обект Голям','a:1','открита процедура'),
+  ('t:55','unp55','Обект Двоен','a:1','открита процедура');
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
   ('c:1','t:1','eik:111',10000000,'EUR','2020-05-01','Д-1',10000000),
   ('c:2','t:2','eik:111',20000000,'EUR','2023-07-01','Д-2',20000000),
   ('c:3','t:3','eik:111',5000000,'EUR','2024-02-01','Д-3',5000000),
-  ('c:4','t:4','eik:111',1000000,'EUR',NULL,'Д-4',1000000);
+  ('c:4','t:4','eik:111',1000000,'EUR',NULL,'Д-4',1000000),
+  -- Голям (eik 444, declared 2020–2021) has a €50M contract signed 2021 — IN-window, so contemporaneous>0:
+  -- he ranks below Иван (own-institution) but above Двоен on the live contemporaneous tier (N8), and the
+  -- read-time zero-contract gate (N9) keeps him — his winner has real contracts.
+  ('c:44','t:44','eik:444',50000000,'EUR','2021-06-01','Д-44',50000000),
+  -- Двоен (eik 555, declared 2020–2022) has one contract signed 2023 — AFTER his window, so his live
+  -- contemporaneous count is 0 (the „no in-window contracts" example); still surfaces (N9: has contracts).
+  ('c:55','t:55','eik:555',79000,'EUR','2023-03-01','Д-55',79000);
 -- Rollup row for the awarding body — the per-authority capture-share denominator the read query LEFT JOINs.
 INSERT INTO authority_totals (authority_id, name, spent_eur, contracts, suppliers, avg_eur) VALUES
   ('a:1','ОБЩИНА ТЕСТ',50000000,10,4,5000000);
@@ -299,7 +308,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:dubl-self','person:dubl|800','person:dubl','eik:800','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published'),
-           ('il:dubl-fam','person:dubl|800|family','person:dubl','eik:800b','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published');`,
+           ('il:dubl-fam','person:dubl|800|family','person:dubl','eik:800b','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published');
+         INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:80','unp80','Обект Дубъл','a:1','открита процедура');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:80','t:80','eik:800',60000,'EUR','2021-05-01','Д-80',60000);`,
       );
       // COMPANY view for eik 800: both links match il.eik='800'; the family one must collapse → one 'owns' row.
       const company = rows(dbPath, lit(COMPANY_SQL, '800'));
@@ -323,10 +334,11 @@ describe('свързани-лица SQL (real SQLite)', () => {
       expect(Number(ivan.contemporaneous_value_eur)).toBeLessThanOrEqual(
         Number(ivan.contract_value_eur),
       );
-      // a link with no contracts in the window reports 0 / NULL, not a fabricated figure
-      const golyam = board.find((r) => r.official === 'Голям Официал')!;
-      expect(golyam.contemporaneous_contract_count).toBe(0);
-      expect(golyam.contemporaneous_value_eur).toBeNull();
+      // a link with contracts but NONE in the window reports 0 / NULL, not a fabricated figure. Двоен's one
+      // contract (2023) is after his 2020–2022 window — he has contracts (so N9 keeps him) but 0 in-window.
+      const dvoen = board.find((r) => r.official === 'Двоен Тестов')!;
+      expect(dvoen.contemporaneous_contract_count).toBe(0);
+      expect(dvoen.contemporaneous_value_eur).toBeNull();
     });
   });
 
@@ -391,13 +403,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
   it('the /contracts route never serves a family link_key (family surface withheld — de-anon oracle closed)', () => {
     withDb((dbPath) => {
       // Двоен's family link to П2АРХ (eik 555) is withheld from every surface (ADR-0030 — family is internal).
-      // Give eik 555 a real contract so the ONLY reason the family key returns [] is the class gate, not an
-      // empty contract set. A leak here would be an existence-oracle confirming the relative's stake.
-      sqlite(
-        dbPath,
-        `INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:9','unp9','П2АРХ строеж','a:1','открита процедура');
-         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:9','t:9','eik:555',79000,'EUR','2021-05-01','Д-9',79000);`,
-      );
+      // eik 555 already has a real contract (c:55, from the base fixture), so the ONLY reason the family key
+      // returns [] is the class gate, not an empty contract set. A leak here would be an existence-oracle
+      // confirming the relative's stake.
       // The surfaced self link returns its contract…
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:dual|555'))).toHaveLength(1);
       // …but the collapsed family link_key returns [] — no probe for the suppressed relative stake.
@@ -417,6 +425,26 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:8','t:8','eik:333',250000,'EUR','2019-05-01','Д-8',250000);`,
       );
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:kmet|333|family'))).toHaveLength(0);
+    });
+  });
+
+  it('read-time zero-contract gate: a published link whose winner has no live contracts drops off the surface (N9)', () => {
+    withDb((dbPath) => {
+      // A published own-stake link whose winner currently has NO contract rows (e.g. the EOP corpus was
+      // refreshed after the свързани-лица ship). The frozen contract_count says 7, but the read must gate on
+      // LIVE contract existence — the link must not linger on the leaderboard only to expand to „no contracts".
+      sqlite(
+        dbPath,
+        `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:900','ПРАЗЕН ООД','900','900',1,'company');
+         INSERT INTO persons (id, name) VALUES ('person:praz','Празен Тестов');
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
+           ('il:praz','person:praz|900','person:praz','eik:900','900','ПРАЗЕН ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2022',7,7000000,'2021','2022','published');`,
+      );
+      const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+      expect(board.some((r) => r.official === 'Празен Тестов')).toBe(false); // gated out — no live contracts
+      expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:praz'))).toHaveLength(0); // official view 404s too
+      expect(rows(dbPath, lit(COMPANY_SQL, '900'))).toHaveLength(0);
     });
   });
 

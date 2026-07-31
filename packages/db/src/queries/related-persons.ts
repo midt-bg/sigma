@@ -87,6 +87,11 @@ const CONTRACT_JOIN = `FROM contracts cc
 // Contemporaneous = signing year within [first_declared_year, last_declared_year] — the same min/max span
 // classify.temporalStatus uses for the stored `contemporaneous` flag, so count>0 ⇔ contemporaneous. NULL
 // bounds (no declared year) ⇒ never in-window, matching the flag. `il` is the outer LINK_SELECT row.
+// SCOPE, stated honestly (todorkolev #226 — N7): this is the SPAN from first to last filing, so a gap year
+// inside it (the official skipped a filing) still counts as in-window. The card + methodology call this „в
+// декларирания период" — the declared PERIOD, first→last — not a per-year claim, so the span is not silently
+// presented as continuous coverage. Narrowing it to the exact set of filed years needs the per-year filing
+// set (a data-model change) and is tracked separately; today the honest framing is the span.
 const IN_WINDOW = `il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
       AND cc.signed_at IS NOT NULL
       AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
@@ -95,11 +100,13 @@ const IN_WINDOW = `il.first_declared_year IS NOT NULL AND il.last_declared_year 
 // Shared projection: published material-ownership links (self + family) + names + a representative
 // declaration URL (provenance, never fabricated). Callers append a scope predicate + ORDER BY.
 // NEXUS_ORDER ranks the strongest conflict signal first: a contract from the official's OWN institution,
-// then a stake held during a contract award, then value as a tiebreak — link_key last for stability. The
-// value tiebreak is the CONTEMPORANEOUS (in-window) sum, not the lifetime contract_value_eur, so the rank
-// order matches the headline € the card shows (LINK_SELECT.contemporaneous_value_eur, an output alias
-// ORDER BY resolves); ranking by lifetime would float an official above one with a larger actual conflict.
-export const NEXUS_ORDER = `(il.own_institution = 'exact') DESC, il.contemporaneous DESC,
+// then a stake held during a contract award, then value as a tiebreak — link_key last for stability. Both
+// the „held during an award" flag and the value tiebreak read from the LIVE, read-time contemporaneous
+// subset (contemporaneous_contract_count / _value_eur, output aliases ORDER BY resolves) — NOT the frozen
+// ETL flag il.contemporaneous (todorkolev #226 — N8): the card's chip is the live count, so ranking by the
+// frozen flag could float a chip-less row above a row that shows the chip. Value tiebreak is the in-window
+// sum (matching the € the card shows), never the lifetime total.
+export const NEXUS_ORDER = `(il.own_institution = 'exact') DESC, (contemporaneous_contract_count > 0) DESC,
     contemporaneous_value_eur DESC, il.link_key`;
 
 // The surface shows private_ownership only (ADR-0030): family_ownership is withheld upstream (never
@@ -134,7 +141,13 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
   FROM interest_links il
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
-  WHERE il.status = 'published' AND il.interest_class = 'private_ownership'`;
+  WHERE il.status = 'published' AND il.interest_class = 'private_ownership'
+    -- Read-time zero-contract gate (todorkolev #226 — N9). The ETL sets contract_count at build time; if the
+    -- EOP corpus is later refreshed and this winner's contracts drop to zero, the frozen count is stale and
+    -- the link would linger on the leaderboard only to expand to „no contracts found". Gate on LIVE contract
+    -- existence so a winner with no current contracts drops off the surface entirely — „if we can't show the
+    -- contracts, we don't show the link" (methodology promise). ≤1000 rows, hourly-cached → the scan is cheap.
+    AND EXISTS (SELECT 1 ${CONTRACT_JOIN} WHERE bb.eik_normalized = il.eik)`;
 
 // own_institution is a 4-value verdict; only the deterministic 'exact' surfaces as true (the
 // name_contains/locality heuristics are disclosed elsewhere, never asserted as fact).
