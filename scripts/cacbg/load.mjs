@@ -23,7 +23,7 @@ import {
   closelyHeldForm,
 } from './classify.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
-import { fingerprint, loadSuppressionFingerprints } from './suppressions.mjs';
+import { fingerprint, loadSuppressions, SUPPRESSION_KEY_VERSION } from './suppressions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
@@ -62,7 +62,11 @@ db.exec('PRAGMA foreign_keys=ON');
 const SUPP_LIST =
   process.env.CACBG_SUPP_LIST || path.join(ROOT, 'scripts/cacbg/link-suppressions.jsonl');
 const SUPP_SALT = process.env.SUPPRESSION_SALT ?? '';
-const suppressedFp = loadSuppressionFingerprints(SUPP_LIST, SUPP_SALT);
+const suppEntries = loadSuppressions(SUPP_LIST, SUPP_SALT, SUPPRESSION_KEY_VERSION);
+const suppressedFp = new Set(suppEntries.map((e) => e.fp));
+// B3 unused-suppression gate: every listed fingerprint MUST match exactly one built link. Track which get
+// used; a fingerprint that matched nothing (a stale/mis-keyed takedown) fails the build after the load loop.
+const usedSuppressions = new Set();
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
@@ -77,8 +81,13 @@ for (const t of [
 db.exec(fs.readFileSync(MIGRATION, 'utf8'));
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
-const isSuppressed = (linkKey) =>
-  suppressedFp.size > 0 && suppressedFp.has(fingerprint(linkKey, SUPP_SALT));
+const isSuppressed = (linkKey) => {
+  if (suppressedFp.size === 0) return false;
+  const fp = fingerprint(linkKey, SUPP_SALT);
+  if (!suppressedFp.has(fp)) return false;
+  usedSuppressions.add(fp); // mark this listed suppression as having matched a real link (B3 gate)
+  return true;
+};
 
 // --- bidder index + libel gate ------------------------------------------------------------------
 const bidders = db
@@ -546,6 +555,20 @@ for (const rec of agg.values()) {
     insILA.run(linkKey, auth_id, a.name, a.count, a.value || null, a.own);
 }
 db.exec('COMMIT');
+
+// B3 unused-suppression gate: every entry in the version-controlled list MUST have matched exactly one built
+// link. A fingerprint that matched NOTHING (a changed institution in the key, a reformatted ЕИК, or a wrong
+// salt) means a taken-down link would silently return to the public surface — the exact defect this
+// mechanism exists to prevent. Fail the build (non-zero exit) instead of shipping a silent un-suppression.
+const unusedSupp = [...suppressedFp].filter((fp) => !usedSuppressions.has(fp));
+if (unusedSupp.length > 0) {
+  db.close();
+  throw new Error(
+    `${unusedSupp.length} suppression(s) matched NO built link — a stale/mis-keyed takedown would silently ` +
+      `un-suppress a contested link. Fix or remove the entry (or re-fingerprint after a key rotation). ` +
+      `Unmatched fingerprints: ${unusedSupp.map((f) => f.slice(0, 12) + '…').join(', ')}`,
+  );
+}
 
 // --- integrity + report -------------------------------------------------------------------------
 const q = (sql, ...a) => db.prepare(sql).all(...a);

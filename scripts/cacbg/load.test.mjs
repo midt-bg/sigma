@@ -538,6 +538,7 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     suppFile,
     JSON.stringify({
       fp: fingerprint(key, SUPP_SALT),
+      key_version: '1',
       reason: 'contested',
       suppressed_at: '2026-07-29',
     }) + '\n',
@@ -578,6 +579,7 @@ test('a FAMILY-scope suppression (…|family key) survives re-import — the tak
     suppFile,
     JSON.stringify({
       fp: fingerprint(key, SUPP_SALT),
+      key_version: '1',
       reason: 'family takedown',
       suppressed_at: '2026-07-29',
     }) + '\n',
@@ -604,5 +606,52 @@ test('a non-empty suppression list with no salt FAILS the build (never silently 
   assert.throws(
     () => runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: '' }),
     (err) => /SUPPRESSION_SALT is unset/.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  );
+});
+
+test('a suppression that matches NO built link FAILS the build (B3 unused-suppression gate)', () => {
+  // A fingerprint of a link_key that does not exist (a changed institution / reformatted ЕИК, or a plain
+  // typo) would silently un-suppress nothing while the operator believes a takedown is in force. The build
+  // must refuse (non-zero exit) rather than ship a stale/mis-keyed suppression.
+  const suppFile = path.join(dir, 'supp-orphan.jsonl');
+  fs.writeFileSync(
+    suppFile,
+    JSON.stringify({
+      fp: fingerprint('person:no|such|link', SUPP_SALT), // valid fingerprint, but matches no built link
+      key_version: '1',
+      reason: 'stale',
+      suppressed_at: '2026-07-30',
+    }) + '\n',
+  );
+  assert.throws(
+    () => runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: SUPP_SALT }),
+    (err) => /matched NO built link/.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  );
+});
+
+test('a suppression on a ROTATED key_version FAILS the build (B3 no silent salt mismatch)', () => {
+  // If the salt rotates, an entry left on the old key_version would fingerprint to nothing under the new
+  // salt and silently un-suppress. The loader refuses an entry whose key_version ≠ the current one.
+  const key = (() => {
+    const db = new DatabaseSync(DB);
+    const k = db
+      .prepare("SELECT link_key FROM interest_links WHERE eik='444444447' LIMIT 1")
+      .get().link_key;
+    db.close();
+    return k;
+  })();
+  const suppFile = path.join(dir, 'supp-rotated.jsonl');
+  fs.writeFileSync(
+    suppFile,
+    JSON.stringify({
+      fp: fingerprint(key, SUPP_SALT),
+      key_version: '2', // current SUPPRESSION_KEY_VERSION defaults to '1' → mismatch
+      reason: 'rotated',
+      suppressed_at: '2026-07-30',
+    }) + '\n',
+  );
+  assert.throws(
+    () => runLoad({ CACBG_SUPP_LIST: suppFile, SUPPRESSION_SALT: SUPP_SALT }),
+    (err) => /key_version/.test(String(err.stderr ?? '') + String(err.message ?? '')),
   );
 });

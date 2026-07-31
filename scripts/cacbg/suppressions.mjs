@@ -11,18 +11,28 @@
 import { createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
+// The key version the current SUPPRESSION_SALT corresponds to. Every list entry records the version it was
+// fingerprinted under; a mismatch is refused (a rotated salt must re-fingerprint every entry, never leave a
+// silent no-match). Bump both this default (via the env) and every entry's key_version when the salt rotates.
+export const SUPPRESSION_KEY_VERSION = process.env.SUPPRESSION_KEY_VERSION ?? '1';
+
 /** HMAC-SHA256(salt, link_key) as hex — the stable, non-reversible key for a suppression entry. */
 export function fingerprint(linkKey, salt) {
   return createHmac('sha256', salt).update(linkKey).digest('hex');
 }
 
 /**
- * Read the JSONL suppression list → a Set of fingerprints to apply at load.
- * FAIL-CLOSED: a non-empty list with no salt throws. Building without the salt would compute fingerprints
- * that match nothing, silently un-suppressing every taken-down link — a libel regression. Refuse instead.
+ * Read the JSONL suppression list → the entries to apply at load. Each entry is
+ * `{ fp, key_version, reason, suppressed_at }`. FAIL-CLOSED — every failure below would otherwise SILENTLY
+ * un-suppress a taken-down, defamation-sensitive link (a libel regression), so each throws instead:
+ *   1. a non-empty list with no salt → fingerprints would match nothing;
+ *   2. an entry whose key_version ≠ the current one → it was fingerprinted under a rotated salt, so it can
+ *      never match — rotation must re-fingerprint every entry, not leave one on the old key.
+ * The THIRD guard (a fingerprint matching NO built link — a changed institution / reformatted ЕИК) is
+ * enforced by the caller, which tracks which fingerprints were used and fails on any that were not.
  * An absent or empty list needs no salt (nothing to fingerprint), so the common path stays friction-free.
  */
-export function loadSuppressionFingerprints(listPath, salt) {
+export function loadSuppressions(listPath, salt, keyVersion = SUPPRESSION_KEY_VERSION) {
   const entries = existsSync(listPath)
     ? readFileSync(listPath, 'utf8')
         .split('\n')
@@ -36,5 +46,14 @@ export function loadSuppressionFingerprints(listPath, salt) {
         `(would silently un-suppress contested links). Set SUPPRESSION_SALT and retry.`,
     );
   }
-  return new Set(entries.map((e) => e.fp));
+  for (const e of entries) {
+    if (String(e.key_version ?? '') !== String(keyVersion)) {
+      throw new Error(
+        `suppression ${String(e.fp ?? '').slice(0, 12)}… has key_version ${JSON.stringify(e.key_version)} ` +
+          `but the current SUPPRESSION_KEY_VERSION is ${keyVersion} — refusing to build (a rotated salt ` +
+          `would silently un-suppress it). Re-fingerprint every entry under the current salt + key_version.`,
+      );
+    }
+  }
+  return entries;
 }
