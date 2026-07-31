@@ -343,7 +343,7 @@ before(() => {
     },
     // B4 UNKNOWN holder: the holder cell is neither confidently the declarant's own name nor a relative's
     // (an ambiguous 1-token-different cell). classifyHolder → 'unknown' → this forms NO link (counted
-    // nowhere), so it never pollutes the leaderboard or the nameless family aggregate.
+    // nowhere), so a phantom relative never enters a published family figure.
     {
       folder: '2024',
       xmlFile: 'UNK.xml',
@@ -533,19 +533,32 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(radka.status, 'published');
 
   // FAMILY: a close relative's declared stake in a winner that sold to the official's OWN institution.
-  // Collected + audited but WITHHELD from every named surface in v1 (ADR-0030): stored status='internal',
-  // never 'published', so it never reaches the leaderboard/official/company/search — it feeds only the
-  // nameless aggregate. relation 'related', class family_ownership, own_institution exact.
+  // Now PUBLISHED on the named surface identically to a self stake (ADR-0032, superseding ADR-0030): a
+  // relative's declared stake in a procurement winner is the same public-interest signal. class
+  // family_ownership, relation 'related', own_institution exact. It has real contract money (€250k, cCount>0)
+  // so the zero-contract gate keeps it.
   const family = link('888888884', 'Кмет Тестов');
   assert.equal(family.relation, 'related');
   assert.equal(family.interest_class, 'family_ownership');
-  assert.equal(family.status, 'internal');
+  assert.equal(family.status, 'published'); // ADR-0032: family surfaces like self
   assert.equal(family.own_institution, 'exact'); // relative's company sold to the official's own institution
   assert.equal(family.contemporaneous, 1);
   assert.equal(family.contract_value_eur, 250000);
   assert.equal(family.link_key, family.person_id + '|888888884|family'); // distinct from any self link
-  // PII rail: the relative's identity is never stored — no family holder name reaches the DB.
+  // NON-NEGOTIABLE (ADR-0032 #1): the relative's identity is NEVER stored — no family holder name reaches the
+  // DB, not even now that the link is public. Only holderRelation flows through; the name never leaves parse.
   assert.equal(db.prepare('SELECT COUNT(*) n FROM related_persons_internal').get().n, 0);
+  // §2 ал.3 ПЗР canary (rail #3): the build report buckets material family holdings by source template — every
+  // family holding in this corpus is declared in an ASSET declaration, so the only bucket is 'assets'. A
+  // non-'assets' bucket would mean a relative's stake leaked from a non-public source (consent/libel breach).
+  const report = JSON.parse(
+    fs
+      .readFileSync(path.join(STAGING, 'findings.md'), 'utf8')
+      .split('```json')[1]
+      .split('```')[0]
+      .trim(),
+  );
+  assert.deepEqual(Object.keys(report.family_material_by_source_template), ['assets']);
 
   // ZERO-CONTRACT gate (I5): a distinctive winner with NO contracts is collected but never published — the
   // card would read „0 договори · 0 €", which is no procurement conflict. status 'internal', not 'published'.
@@ -572,7 +585,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(divZero.status, 'withdrawn'); // caught by the empty later filing (B1)
 
   // B4 UNKNOWN holder: an ambiguous holder cell forms NO link at all (counted nowhere) — it must never
-  // reach the leaderboard or the nameless family aggregate. Двусмислен gets no interest_link.
+  // reach the leaderboard, self or family (ADR-0032). Двусмислен gets no interest_link.
   assert.equal(link('111111119', 'Двусмислен Тестов'), undefined);
   // but the person + declared_interest are still recorded (census), and it is neither self nor family.
   assert.equal(

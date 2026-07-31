@@ -14,11 +14,11 @@ import {
   fundsCellLabel,
   fundsMagnitude,
   hasContemporaneousContracts,
+  conflictHeadline,
   isHttpsUrl,
   linkContractsHref,
   officialHref,
   partitionContracts,
-  privateOwnershipHeadline,
   relationLabel,
   temporalLabel,
 } from './conflicts';
@@ -71,12 +71,12 @@ describe('relationLabel', () => {
     expect(relationLabel('owns')).toBe('дялово участие');
     expect(relationLabel('manages')).toBe('управление');
     expect(relationLabel('owns+manages')).toBe('дялово участие и управление');
+    // A relative's stake (ADR-0032) is marked as свързано лице — the relative is never named, and „деклариран"
+    // keeps it tense-neutral like the rest.
+    expect(relationLabel('related')).toBe('деклариран дял на свързано лице');
   });
   it('passes an unknown relation through rather than inventing a claim', () => {
     expect(relationLabel('mystery')).toBe('mystery');
-    // 'related' (family) no longer has a label — family never reaches this surface (ADR-0030), so it
-    // must NOT resolve to a „свързано лице" string that could render on a card.
-    expect(relationLabel('related')).toBe('related');
   });
 });
 
@@ -98,30 +98,32 @@ describe('contractYearsLabel', () => {
   });
 });
 
-describe('privateOwnershipHeadline', () => {
-  // Only own-stake links reach this layer now (family is withheld — ADR-0030), so the headline is a plain
-  // sum over the surfaced set with no family subset to isolate.
+describe('conflictHeadline', () => {
+  // Self and family links both reach this layer now (ADR-0032); the headline sums over the surfaced set, but
+  // a winner's money is deduped per (official, ЕИК) so a self+family pair on the same company counts once.
   it('sums value, counts links, and de-dupes officials', () => {
-    const h = privateOwnershipHeadline([
-      link({ officialSlug: 'a', contractValueEur: 100, contemporaneousValueEur: 60 }),
-      link({ officialSlug: 'a', contractValueEur: 50, contemporaneousValueEur: 30 }),
-      link({ officialSlug: 'b', contractValueEur: 25, contemporaneousValueEur: 10 }),
+    const h = conflictHeadline([
+      link({ officialSlug: 'a', eik: '1', contractValueEur: 100, contemporaneousValueEur: 60 }),
+      link({ officialSlug: 'a', eik: '2', contractValueEur: 50, contemporaneousValueEur: 30 }),
+      link({ officialSlug: 'b', eik: '3', contractValueEur: 25, contemporaneousValueEur: 10 }),
     ]);
     expect(h.linkCount).toBe(3);
     expect(h.officialCount).toBe(2); // de-duped
     expect(h.totalEur).toBe(175);
     expect(h.contemporaneousEur).toBe(100); // 60 + 30 + 10 — the conflict-window subset
   });
+  // NOTE: an official who declared BOTH an own and a relative's stake in the SAME winner never reaches
+  // conflictHeadline with two rows — the redundant-family collapse (ADR-0032) drops the family link at the
+  // SQL layer (related-persons.ts NOT_REDUNDANT_FAMILY), proven in related-persons-sql.test.ts. So the
+  // headline is a plain sum here; there is no per-(official,ЕИК) dedup to test at this layer.
   it('treats a null contract value as zero, never NaN', () => {
-    const h = privateOwnershipHeadline([
-      link({ contractValueEur: null, contemporaneousValueEur: null }),
-    ]);
+    const h = conflictHeadline([link({ contractValueEur: null, contemporaneousValueEur: null })]);
     expect(h.totalEur).toBe(0);
     expect(h.contemporaneousEur).toBe(0);
     expect(Number.isNaN(h.contemporaneousEur)).toBe(false);
   });
   it('is empty-safe', () => {
-    expect(privateOwnershipHeadline([])).toEqual({
+    expect(conflictHeadline([])).toEqual({
       linkCount: 0,
       officialCount: 0,
       totalEur: 0,
@@ -300,15 +302,15 @@ describe('contractTimeline', () => {
 });
 
 describe('linkContractsHref', () => {
-  it('keys on the URL-safe self scope + slug + ЕИК; scope is a path segment, not a query param', () => {
-    // Only own-stake links surface (ADR-0030), so the scope segment is always „self" — a family link never
-    // reaches the card that builds this href.
-    expect(linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111' }))).toBe(
+  it('keys on the URL-safe scope + slug + ЕИК; the scope MUST match the ETL link_key (ADR-0032)', () => {
+    // A self link → scope „self" (link_key pid|eik). A family link → scope „family" (link_key pid|eik|family);
+    // hardcoding 'self' there would fetch [] for every relative's-stake row. scope is a path segment.
+    expect(linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'owns' }))).toBe(
       '/conflicts/link/self/c2VydA/111/contracts',
     );
     expect(
       linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'related' })),
-    ).toBe('/conflicts/link/self/c2VydA/111/contracts');
+    ).toBe('/conflicts/link/family/c2VydA/111/contracts');
   });
 });
 

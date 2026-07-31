@@ -2,9 +2,10 @@
 // A holder-name cell is classified against the declarant into THREE states, not a byte-equality binary:
 //   self    — the cell is the declarant's own name (a permutation / initialed / subset variant of it);
 //   related — the cell is CONFIDENTLY a different person (≥2 name components the declarant does not have);
-//   unknown — anything else: counted NOWHERE (not surfaced, not in the nameless family aggregate).
+//   unknown — anything else: counted NOWHERE (forms no link, so it never reaches the published surface).
 // The old `nameKey(holder)===nameKey(declarant) ? 'self' : 'related'` declared a phantom relative for any
-// reordering/initial/subset of the declarant's own name, polluting the published aggregate with self stakes.
+// reordering/initial/subset of the declarant's own name; under ADR-0032 that would publish a fabricated
+// „свързано лице" card (a libel risk), so the three-state classifier is the guard.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyHolder } from './parse.mjs';

@@ -214,18 +214,20 @@ SELECT 'contract', c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title),
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
--- Свързани лица: one row per official with a PUBLISHED own-stake conflict link, so a NAME
--- search reaches their /conflicts/official profile. ref = person_id (→ personSlug at read), title = name,
--- subtitle = latest declared institution (disambiguates homonyms), amount = total contract € of their
--- linked winners. Published-only inherits the surface's expiry — a withdrawn/left-office official drops out.
+-- Свързани лица: one row per official with a PUBLISHED ownership conflict link — self OR a relative's stake
+-- (ADR-0032) — so a NAME search reaches their /conflicts/official profile. ref = person_id (→ personSlug at
+-- read), title = name, subtitle = latest declared institution (disambiguates homonyms), amount = contract €
+-- of their linked winners, each winner counted once. Published-only inherits the surface's expiry — a
+-- withdrawn/left-office official drops out.
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'official', il.person_id, p.name, NULL,
   (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
    ORDER BY d.declared_year DESC LIMIT 1),
-  -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), NOT the
-  -- lifetime contract_value_eur. Same per-link subquery as LINK_SELECT.contemporaneous_value_eur in
-  -- packages/db/src/queries/related-persons.ts, summed across the official's links, so the search headline
-  -- matches the /conflicts surface and never credits an award signed outside the declared window.
+  -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), the same
+  -- per-link subquery as LINK_SELECT.contemporaneous_value_eur, summed across the official's SURFACED links.
+  -- The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no winner's €
+  -- is double-counted. family_ownership reaches the index identically to self (ADR-0032) — the office-holder
+  -- is searchable, the relative never named. Never the lifetime total.
   SUM((SELECT SUM(cc.amount_eur) FROM contracts cc
          JOIN tenders tt ON tt.id = cc.tender_id
          JOIN authorities aa ON aa.id = tt.authority_id
@@ -236,10 +238,19 @@ SELECT 'official', il.person_id, p.name, NULL,
          AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
              BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
 FROM interest_links il JOIN persons p ON p.id = il.person_id
--- Own stake only: family_ownership is withheld from every named surface (ADR-0030) and never reaches the
--- search index. Mirrors the independent private_ownership gate in packages/db/src/queries/related-persons.ts;
--- family is status='internal', so already excluded, but the class predicate states the surface's rule.
-WHERE il.status = 'published' AND il.interest_class = 'private_ownership'
+-- Self OR family stake (ADR-0032). Two guards mirror the /conflicts read layer (related-persons.ts):
+--  (N9) index only a link whose winner has LIVE contracts, so a stale-zero-contract link never becomes a dead
+--       search hit that 404s on click;
+--  (collapse) drop a family link when the SAME official already has a published OWN stake in that winner —
+--       rendering both re-identifies the relative via a ТР owner lookup, and the company is already surfaced
+--       by the self row.
+WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
+              WHERE bb.eik_normalized = il.eik)
+  AND NOT (il.interest_class = 'family_ownership' AND EXISTS (
+    SELECT 1 FROM interest_links s
+    WHERE s.person_id = il.person_id AND s.eik = il.eik
+      AND s.status = 'published' AND s.interest_class = 'private_ownership'))
 GROUP BY il.person_id, p.name;
 
 -- Summary (last result set printed by `wrangler d1 execute`)

@@ -4,12 +4,12 @@ import { count, moneyBare } from '@sigma/shared';
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
 // routes branch on lives here so the JSX stays a declarative shell (the repo does not render-test
 // components — see search.suggest.test.ts) and every decision is unit-covered. NONE of this touches
-// related_persons_internal; only PUBLISHED private_ownership links reach the DTO. A close relative's stake
-// (family_ownership, relation 'related') is withheld from every named surface in v1 (ADR-0030) and reported
-// only as a nameless aggregate, so no 'related' link ever reaches this layer — hence no family label/branch.
+// related_persons_internal; only PUBLISHED ownership links reach the DTO. A close relative's stake
+// (family_ownership, relation 'related') now surfaces identically to a self stake (ADR-0032, superseding
+// ADR-0030) — labelled „свързано лице", with the relative never named and the relationship never asserted.
 
 // Tense-NEUTRAL labels: the surface never asserts CURRENT ownership (a stake declared years ago may have
-// been sold — the declared window dates it, ADR-0030's divestment blind spot). „притежава/управлява"
+// been sold — the declared window dates it, the divestment blind spot). „притежава/управлява"
 // (present tense — „owns/manages") would read a possibly-terminated stake as current. „дялово участие" is
 // the КПКОНПИ declaration's OWN column term („Размер на дяловото участие"), a fact about the declaration,
 // not a present-tense claim — paired with the „деклариран … г." dating on the card.
@@ -17,6 +17,10 @@ const RELATION_LABEL: Record<string, string> = {
   owns: 'дялово участие',
   manages: 'управление',
   'owns+manages': 'дялово участие и управление',
+  // A close relative's declared stake (ADR-0032): shown identically to a self stake, but marked as a свързано
+  // лице — the relative is never named and the relationship type is never asserted. „деклариран" (declared,
+  // not „притежава") keeps it tense-neutral, matching the self labels. Todor's exact ADR-0032 wording.
+  related: 'деклариран дял на свързано лице',
 };
 
 /** Bulgarian label for a declared relation. Unknown values pass through — never invent a stronger claim. */
@@ -88,10 +92,12 @@ export function fundsMagnitude(link: ConflictLink): number | null {
 }
 
 /** The on-demand resource URL for a link's contracts (client-fetched by the expandable row). Keyed on the
- *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. Only self links surface
- *  (ADR-0030), so :scope is always 'self'; the route still validates the family scope defensively. */
+ *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. :scope must match the
+ *  ETL link_key: a family link (relation 'related', ADR-0032) has key `pid|eik|family`, so it MUST request
+ *  scope 'family' — hardcoding 'self' would silently fetch [] for every relative's-stake row. */
 export function linkContractsHref(link: ConflictLink): string {
-  return `/conflicts/link/self/${encodeURIComponent(link.officialSlug)}/${encodeURIComponent(link.eik)}/contracts`;
+  const scope = link.relation === 'related' ? 'family' : 'self';
+  return `/conflicts/link/${scope}/${encodeURIComponent(link.officialSlug)}/${encodeURIComponent(link.eik)}/contracts`;
 }
 
 // The declared YEARS are when the stake was DISCLOSED (declaration within a month of taking office, then
@@ -306,16 +312,19 @@ export function authorityShareDisplay(s: AuthorityShare): ShareDisplay {
   return { mode: 'bar', ratio: s.ratio };
 }
 
-/** Leaderboard headline: total public money to linked winners and counts, over the OWN-stake surface only
- *  (family is withheld — reported separately as the nameless aggregate, ADR-0030). A null contract value
- *  counts as 0 (never NaN) — the money figure must never read as fabricated. */
-export function privateOwnershipHeadline(links: ConflictLink[]): {
+/** Leaderboard headline: total public money to linked winners and counts, over the whole published surface —
+ *  self and family stakes alike (ADR-0032). A null contract value counts as 0 (never NaN) — the money figure
+ *  must never read as fabricated. */
+export function conflictHeadline(links: ConflictLink[]): {
   linkCount: number;
   officialCount: number;
   totalEur: number;
   contemporaneousEur: number;
 } {
   const officials = new Set<string>();
+  // A plain per-link sum is exact: the read layer's NOT_REDUNDANT_FAMILY collapse guarantees at most ONE
+  // surfaced link per (official, ЕИК), so an own + a relative's stake in the same winner never both reach this
+  // array (the family row collapses to the own row upstream) and no winner's € is double-counted.
   let totalEur = 0;
   let contemporaneousEur = 0;
   for (const l of links) {

@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS interest_links (
   -- interest from EX-OFFICIO public-board roles so the headline can't defame appointed civil servants:
   --   private_ownership — self, relation owns/owns+manages (declared a stake): the real conflict signal
   --   family_ownership  — a CLOSE RELATIVE's declared stake (relation related). Official + company + value
-  --                       shown; the relative is anonymized as „свързано лице" (name never stored) — ADR-0023
+  --                       shown on the named surface, identically to a self stake; the relative is anonymized
+  --                       as „свързано лице" (name never stored), the relationship never asserted — ADR-0032
   --   ex_officio_board  — self, relation manages AND ≥2 distinct officials declared the same company
   --                       (a rotating/multi-member board = a public body, not a private interest)
   --   management_role   — self, relation manages, a single declarant (ambiguous: private manager or small board)

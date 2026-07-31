@@ -1,10 +1,17 @@
 # ADR-0030: Close-relative (family) ownership is withheld from the named surface — nameless aggregate only
 
-- Status: Accepted
+- Status: Superseded by [ADR-0032](0032-family-ownership-published-under-public-interest.md)
 - Date: 2026-07-29
 - Deciders: Todor (maintainer), lb, Claude
 - Supersedes: [ADR-0023](0023-anonymized-family-ownership-surface.md)
+- Superseded by: [ADR-0032](0032-family-ownership-published-under-public-interest.md)
 - Related: [ADR-0007](0007-scope-and-certainty-bar.md), [ADR-0010](0010-pii-posture.md), [ADR-0019](0019-private-interest-vs-ex-officio-classification.md), [ADR-0022](0022-public-surface-private-ownership-only.md); `scripts/cacbg/load.mjs`, `packages/db/src/queries/related-persons.ts`, `apps/web/app/routes/conflict*.tsx`
+
+> **Superseded (2026-07-31).** [ADR-0032](0032-family-ownership-published-under-public-interest.md) reverses this
+> decision: family-ownership links are now **published** on the named surface, identically to self stakes, on a
+> public-interest basis — the relative still never named, the relationship never asserted. Two of the three
+> premises below were found wrong on measurement (value/harm do not coincide; hiding the identifier is defeated
+> by our own `contract_number` links). Retained for the historical record.
 
 ## Context
 

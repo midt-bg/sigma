@@ -106,15 +106,16 @@ interface HitRow {
   entity_kind: EntityKind | null;
   ownership_kind: OwnershipKind | null;
   eik_valid: number | null;
-  has_conflict: number | null; // 1 when a company row has a published OWN-stake свързани-лица link (badge)
+  has_conflict: number | null; // 1 when a company row has a published свързани-лица link — self or family (badge)
   rank: number; // FTS bm25 score (lower = better); the group's top row gives its best rank for the gate
 }
 
 // One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
-// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published + own-stake
-// (private_ownership) ONLY — the SAME gate as the /conflicts surface (ADR-0030), so search can never flag a
-// company the surface wouldn't. A family-only winner MUST NOT badge: the badge is itself a re-identification
-// signal (it says „a related person owns this" next to the named company). Binds: kind, match, limit.
+// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published, self OR family
+// stake, AND the winner must have LIVE contracts (the same read-time N9 gate LINK_SELECT applies), so search
+// flags exactly the companies the /conflicts surface shows and never one whose page would 404. A family-only
+// winner badges — the /conflicts page already publishes that link by name, so the badge discloses nothing the
+// surface doesn't. Binds: kind, match, limit.
 // Exported so search-sql.test runs the EXACT SQL (not a copy).
 // Built with or without the interest_links conflict join. The join is on the свързани-лица migration (0003);
 // on an env where it has not been applied yet the join would make the ENTIRE search 500 with „no such table:
@@ -130,8 +131,10 @@ const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, sea
  ${
    withConflict
      ? `LEFT JOIN (
-   SELECT DISTINCT eik FROM interest_links
-   WHERE status = 'published' AND interest_class = 'private_ownership'
+   SELECT DISTINCT il.eik FROM interest_links il
+   WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+     AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
+                 WHERE bb.eik_normalized = il.eik)
  ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident`
      : ''
  }

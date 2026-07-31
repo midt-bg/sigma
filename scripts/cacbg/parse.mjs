@@ -32,7 +32,8 @@ const flat = (v) => (v == null || typeof v === 'object' ? '' : String(v).trim())
 // hand-typed, so a SELF stake often writes the declarant's own name reordered, initialed, or abbreviated
 // („Георгиев Иван Петров", „Иван Г. Петров", „Иван Георгиев" for declarant „Иван Петров Георгиев"). The old
 // byte-equality binary read every such variant as a RELATIVE, fabricating a phantom family link — and since
-// family is now a nameless aggregate (ADR-0030), those phantoms silently inflated a PUBLISHED number.
+// family now PUBLISHES as a named-surface row (ADR-0032, superseding ADR-0030), such a phantom would put a
+// fabricated „свързано лице" on a public card, a direct libel risk. Three-state attribution is the guard.
 //   self    — every holder token is accounted for in the declarant's own name (permutation/initial/subset),
 //             with ≥2 tokens so a lone surname isn't over-claimed;
 //   related — ≥2 holder FULL tokens the declarant does not have ⇒ confidently a different person;

@@ -11,7 +11,6 @@ import {
   LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
   OFFICIAL_SQL,
-  WITHHELD_FAMILY_AGGREGATE_SQL,
 } from './queries/related-persons';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
@@ -47,10 +46,11 @@ function rows(dbPath: string, sql: string): Record<string, string | number | nul
 
 // Иван OWNS ТРЕЙС (private_ownership, own institution, €88M). Борис + Виктор both MANAGE ХОЛДИНГ 9
 // (declared by two officials → ex_officio_board, €5M each). Кмет declares a CLOSE RELATIVE's stake in
-// ЕВРОСТРОЙ (family_ownership, €250k) — WITHHELD from the named surface (status 'internal'), counted only in
-// the nameless aggregate. Голям owns ГОЛЯМ (private, €50M, NO nexus) — a high-value link with no
-// own-institution tie, to prove NEXUS-first ordering beats raw value. Only Иван has a declaration row → his
-// link resolves a source_url; the others do not (NULL).
+// ЕВРОСТРОЙ (family_ownership, €250k) — under ADR-0032 this PUBLISHES on the named surface identically to a
+// self stake (relation 'related'), with the relative never named. Голям owns ГОЛЯМ (private, €50M, NO nexus)
+// — a high-value link with no own-institution tie, to prove NEXUS-first ordering beats raw value. Иван and
+// Кмет each have a declaration row → their links resolve a source_url (the OFFICIAL's own document, even for
+// the family link); the others do not (NULL).
 const FIXTURE = `
 INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
   ('eik:111','ТРЕЙС ГРУП ХОЛД АД','111','111',1,'company'),
@@ -61,25 +61,31 @@ INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
 INSERT INTO persons (id, name) VALUES
   ('person:ivan','Иван Минев'),('person:boris','Борис Манолов'),('person:viktor','Виктор Асенов'),
   ('person:kmet','Кмет Тестов'),('person:big','Голям Официал'),('person:dual','Двоен Тестов');
+-- Кмет's family stake is declared IN his OWN asset declaration (decl:k), so its source_url resolves to HIS
+-- document — never a relative's. That is the ADR-0032 provenance rail, exercised by the base fixture.
 INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, declared_year, template, category, institution, position, source_url) VALUES
-  ('decl:i','person:ivan','i.xml','H1','2024','2023','assets','','ТЕСТ','', 'https://register.cacbg.bg/2024/i.xml');
+  ('decl:i','person:ivan','i.xml','H1','2024','2023','assets','','ТЕСТ','', 'https://register.cacbg.bg/2024/i.xml'),
+  ('decl:k','person:kmet','k.xml','H2','2021','2020','assets','','ОБЩИНА','', 'https://register.cacbg.bg/2021/k.xml');
 INSERT INTO declared_interests (id, declaration_id, entity_raw, entity_key, kind, detail, timing, seat) VALUES
-  ('di:i','decl:i','ТРЕЙС ГРУП ХОЛД АД','ТРЕЙС ГРУП ХОЛД АД','shares','','annual','');
+  ('di:i','decl:i','ТРЕЙС ГРУП ХОЛД АД','ТРЕЙС ГРУП ХОЛД АД','shares','','annual',''),
+  ('di:k','decl:k','ЕВРОСТРОЙ 21 ЕООД','ЕВРОСТРОЙ 21 ЕООД','shares','','annual','');
 INSERT INTO interest_links
   (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
   ('il:ivan','person:ivan|111','person:ivan','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2019','2023',35,88000000,'2021','2024','published'),
   ('il:boris','person:boris|222','person:boris','eik:222','222','ХОЛДИНГ 9 ЕАД','exact_name_key','v1','B_distinctive','manages','ex_officio_board',0,'none',1,'2023','2023',10,5000000,'2023','2023','published'),
   ('il:viktor','person:viktor|222','person:viktor','eik:222','222','ХОЛДИНГ 9 ЕАД','exact_name_key','v1','B_distinctive','manages','ex_officio_board',0,'none',1,'2023','2023',10,5000000,'2023','2023','published'),
-  -- family_ownership is withheld from the named surface (ADR-0030): load.mjs marks it 'internal' (passed
-  -- every gate, but held back by the family policy). It never surfaces on any named view; it is counted only
-  -- in the nameless aggregate. Кмет's standalone relative stake (€250k) is the aggregate's one member here.
-  ('il:fam','person:kmet|333|family','person:kmet','eik:333','333','ЕВРОСТРОЙ 21 ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'exact',1,'2018','2020',5,250000,'2019','2020','internal'),
+  -- family_ownership now PUBLISHES on the named surface (ADR-0032, superseding ADR-0030), identically to a
+  -- self stake — relation 'related', the relative unnamed. Кмет's standalone relative stake (€250k) surfaces
+  -- as a 'related' row. own_institution='none' so he ranks in the non-exact tier; eik 333 has a live contract
+  -- (c:33) so the N9 read gate keeps him.
+  ('il:fam','person:kmet|333|family','person:kmet','eik:333','333','ЕВРОСТРОЙ 21 ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'none',1,'2018','2020',5,250000,'2019','2020','published'),
   ('il:big','person:big|444','person:big','eik:444','444','ГОЛЯМ ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',10,50000000,'2020','2021','published'),
   -- Двоен declared BOTH his OWN stake and a RELATIVE's stake in П2АРХ (eik 555): two published links, same
-  -- winner, same €79k. The surface must collapse them to the own-stake row — else €79k is counted twice and
-  -- Двоен appears twice for one company (de-anon). own_inst='none'/contemp=0 → ranks after Голям.
+  -- winner, same €79k. The own stake already names him on the winner, so the redundant-family collapse
+  -- (ADR-0032) DROPS the family link — only the 'owns' row surfaces. This is the de-anonymization + double-
+  -- count guard: where a self stake exists, the relative row adds nothing but a ТР re-identification path.
   ('il:dual-self','person:dual|555','person:dual','eik:555','555','П2АРХ ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
-  ('il:dual-fam','person:dual|555|family','person:dual','eik:555','555','П2АРХ ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','internal'),
+  ('il:dual-fam','person:dual|555|family','person:dual','eik:555','555','П2АРХ ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
   -- a HELD link must never surface in any query
   ('il:held','person:ivan|999','person:ivan','eik:111','999','НЯКОЙ ООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2022','2022',3,1000,'2022','2022','held'),
   -- a WITHDRAWN (divested — later filing omits the company) link must never surface either (§8/E11)
@@ -95,6 +101,7 @@ INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES
   ('t:1','unp1','Ремонт на път','a:1','открита процедура'),
   ('t:2','unp2','Доставка на софтуер','a:1','договаряне без обявление'),
   ('t:3','unp3','Т3','a:1','открита процедура'),('t:4','unp4','Т4','a:1','неизвестна'),
+  ('t:33','unp33','Обект Евространой','a:1','открита процедура'),
   ('t:44','unp44','Обект Голям','a:1','открита процедура'),
   ('t:55','unp55','Обект Двоен','a:1','открита процедура');
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
@@ -102,6 +109,9 @@ INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, co
   ('c:2','t:2','eik:111',20000000,'EUR','2023-07-01','Д-2',20000000),
   ('c:3','t:3','eik:111',5000000,'EUR','2024-02-01','Д-3',5000000),
   ('c:4','t:4','eik:111',1000000,'EUR',NULL,'Д-4',1000000),
+  -- Кмет's relative's company (eik 333, declared 2018–2020) has one contract signed 2019 — IN-window, so the
+  -- family link surfaces as a contemporaneous 'related' row (contemp=1 / €250k) and N9 keeps it.
+  ('c:33','t:33','eik:333',250000,'EUR','2019-05-01','Д-33',250000),
   -- Голям (eik 444, declared 2020–2021) has a €50M contract signed 2021 — IN-window, so contemporaneous>0:
   -- he ranks below Иван (own-institution) but above Двоен on the live contemporaneous tier (N8), and the
   -- read-time zero-contract gate (N9) keeps him — his winner has real contracts.
@@ -128,18 +138,26 @@ describe('свързани-лица SQL (real SQLite)', () => {
     }
   }
 
-  it('leaderboard returns the official’s OWN ownership only (private), NEXUS-ranked; family/held/withdrawn/ex-officio excluded', () => {
+  it('leaderboard surfaces self AND family ownership (ADR-0032), NEXUS-ranked; redundant family collapsed; held/withdrawn/ex-officio excluded', () => {
     withDb((dbPath) => {
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
-      // Excluded: held €1000, withdrawn €2M, both ex-officio board links, Кмет's family stake (withheld —
-      // ADR-0030), and Двоен's family link. Three SELF nexuses remain (Двоен's own stake stays; his family
-      // one does not surface).
-      expect(board.map((r) => r.official)).toEqual(['Иван Минев', 'Голям Официал', 'Двоен Тестов']);
-      // A close relative's stake is NEVER named on the surface — Кмет (family only) must be absent entirely,
-      // and no surfaced row may carry relation='related'.
-      expect(board.some((r) => r.official === 'Кмет Тестов')).toBe(false);
-      expect(board.every((r) => r.relation !== 'related')).toBe(true);
-      // NEXUS-first: Иван (own institution) leads; Голям (€50M, no nexus but contemporaneous) outranks Двоен.
+      // Excluded: held €1000, withdrawn €2M, both ex-officio board links (class gate). Surfaced: Иван (own,
+      // exact nexus), Голям (own, €50M contemp), Кмет (family, €250k contemp), and Двоен ONCE — he declared
+      // both an own AND a relative's stake in the same winner, so the redundant-family collapse (ADR-0032)
+      // drops the family row and keeps his own. Кмет's standalone relative stake survives (no self link).
+      expect(board.map((r) => r.official)).toEqual([
+        'Иван Минев',
+        'Голям Официал',
+        'Кмет Тестов',
+        'Двоен Тестов',
+      ]);
+      // Кмет's stake is a relative's → it surfaces as a 'related' row (never named as his own ownership).
+      expect(board.find((r) => r.official === 'Кмет Тестов')!.relation).toBe('related');
+      // Двоен appears once, as his OWN stake — the redundant family row collapsed away.
+      const dvoen = board.filter((r) => r.official === 'Двоен Тестов');
+      expect(dvoen).toHaveLength(1);
+      expect(dvoen[0]!.relation).toBe('owns');
+      // NEXUS-first: Иван (own institution) leads; Голям (€50M, no nexus but contemporaneous) is next.
       expect(board[0]!.official).toBe('Иван Минев');
       expect(board[1]!.official).toBe('Голям Официал');
       expect(board[0]!.contract_value_eur).toBe(88_000_000);
@@ -151,44 +169,34 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('a family_ownership link never surfaces on the leaderboard — even when its declaration resolves (de-anon, libel)', () => {
+  it('a family link surfaces with the OFFICIAL’s own declaration as provenance — never the relative’s (ADR-0032)', () => {
     withDb((dbPath) => {
-      // ADR-0030: a close relative's stake is withheld from the named surface entirely (not merely
-      // source-nulled). Give Кмет's family link a real declaration that WOULD resolve a source_url — the row
-      // must still be absent from the board, so nothing (name, company, ЕИК, source) about the relative ships.
-      sqlite(
-        dbPath,
-        `INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, declared_year, template, category, institution, position, source_url) VALUES
-           ('decl:k','person:kmet','k.xml','H2','2021','2020','assets','','ОБЩИНА','', 'https://register.cacbg.bg/2021/k.xml');
-         INSERT INTO declared_interests (id, declaration_id, entity_raw, entity_key, kind, detail, timing, seat) VALUES
-           ('di:k','decl:k','ЕВРОСТРОЙ 21 ЕООД','ЕВРОСТРОЙ 21 ЕООД','shares','','annual','');`,
-      );
+      // The family stake is declared IN Кмет's own asset declaration (decl:k), so source_url resolves to HIS
+      // document. The relative is never named; the row carries relation 'related' and points only at the
+      // office-holder's public filing — the same provenance rail as a self link.
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
-      expect(board.find((r) => r.official === 'Кмет Тестов')).toBeUndefined(); // family link withheld
-      const ivan = board.find((r) => r.official === 'Иван Минев');
-      expect(ivan!.source_url).toBe('https://register.cacbg.bg/2024/i.xml'); // self link keeps provenance
+      const kmet = board.find((r) => r.official === 'Кмет Тестов')!;
+      expect(kmet.relation).toBe('related');
+      expect(kmet.source_url).toBe('https://register.cacbg.bg/2021/k.xml'); // Кмет's OWN declaration
+      const ivan = board.find((r) => r.official === 'Иван Минев')!;
+      expect(ivan.source_url).toBe('https://register.cacbg.bg/2024/i.xml');
     });
   });
 
-  it('the nameless family aggregate counts withheld close-relative stakes (COUNTS ONLY, no €), excluding redundant + zero-contract links', () => {
+  it('a family link whose winner has no live contracts is gated out (N9) — same read gate as a self link', () => {
     withDb((dbPath) => {
-      // ADR-0030 + B2 (todorkolev #226): family stakes are reported as COUNTS ONLY — the SQL returns no €
-      // (a euro sum is a re-identifying fingerprint). Кмет's standalone relative stake in ЕВРОСТРОЙ (status
-      // 'internal', contract_count=5) is the one member. Двоен's family stake is EXCLUDED — he holds a
-      // published OWN stake in the same winner (already on the board). A family link whose company won ZERO
-      // contracts is not a procurement conflict and must NOT be counted either.
+      // A published family link whose company won ZERO contracts is not a procurement conflict; the read-time
+      // N9 gate (EXISTS a contract) drops it exactly as it would a self link — no special family handling.
       sqlite(
         dbPath,
         `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:666','НУЛА ООД','666','666',1,'company');
          INSERT INTO persons (id, name) VALUES ('person:zero','Нула Тестов');
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'internal');`,
+           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'published');`,
       );
-      const agg = rows(dbPath, WITHHELD_FAMILY_AGGREGATE_SQL)[0]!;
-      expect(Number(agg.official_count)).toBe(1); // Кмет only — zero-contract link excluded by contract_count>0
-      expect(Number(agg.link_count)).toBe(1);
-      expect(agg.total_eur).toBeUndefined(); // no € column at all — the fingerprint is gone
+      const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+      expect(board.some((r) => r.official === 'Нула Тестов')).toBe(false); // no live contracts → gated out
     });
   });
 
@@ -224,13 +232,19 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('a family (close-relative) link never surfaces on the winner or official view (withheld — ADR-0030)', () => {
+  it('a family (close-relative) link surfaces on the winner and official view as a "related" row (ADR-0032)', () => {
     withDb((dbPath) => {
-      // ЕВРОСТРОЙ (eik 333) carries ONLY Кмет's family stake → the company view is empty (no named row for
-      // the relative's company). Кмет, who declared only a relative's stake, has no official page at all —
-      // the surface never names a person on account of a family stake.
-      expect(rows(dbPath, lit(COMPANY_SQL, '333'))).toHaveLength(0);
-      expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:kmet'))).toHaveLength(0);
+      // ЕВРОСТРОЙ (eik 333) carries Кмет's family stake → the company view shows it, and Кмет's official page
+      // shows the single 'related' link. The office-holder is named; the RELATIVE is never named (relation is
+      // 'related', no holder identity anywhere on the row).
+      const company = rows(dbPath, lit(COMPANY_SQL, '333'));
+      expect(company).toHaveLength(1);
+      expect(company[0]!.official).toBe('Кмет Тестов');
+      expect(company[0]!.relation).toBe('related');
+      const official = rows(dbPath, lit(OFFICIAL_SQL, 'person:kmet'));
+      expect(official).toHaveLength(1);
+      expect(official[0]!.relation).toBe('related');
+      expect(official[0]!.company).toBe('ЕВРОСТРОЙ 21 ЕООД');
     });
   });
 
@@ -254,11 +268,12 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('shows the official’s own stake once when they declared both their own and a relative’s stake in the same winner (family withheld — no €-double-count, no de-anon)', () => {
+  it('collapses the redundant family link when the official also declared an own stake in the same winner (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Двоен has an own stake (private_ownership) AND a relative's stake (family_ownership, withheld) in
-      // П2АРХ. Only the own-stake row surfaces, so €79k is counted once and Двоен is not shown twice for one
-      // company (the ТР-cross-reference de-anon vector is closed by construction — family never surfaces).
+      // Двоен has an own stake (private_ownership) AND a relative's stake (family_ownership) in П2АРХ. The own
+      // stake already names him on the winner, so the family row would only re-point at the same company via a
+      // relative — a ТР de-anonymization vector AND a money double-count. ADR-0032's redundant-family collapse
+      // drops the family row wherever a published self stake exists on the same (official, ЕИК); only 'owns' survives.
       const company = rows(dbPath, lit(COMPANY_SQL, '555'));
       expect(company).toHaveLength(1);
       expect(company[0]!.relation).toBe('owns');
@@ -292,13 +307,11 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('a family link never surfaces even if it carried status=published or resolved to a DIFFERENT bidder row (read-layer class gate)', () => {
+  it('collapses the redundant family link even when it resolved a variant bidder row for the same ЕИК (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Defense-in-depth: the read query filters interest_class='private_ownership' — an INDEPENDENT gate from
-      // load.mjs's status. Even a family row that (wrongly) carried status='published' and resolved to a variant
-      // bidder row for the same ЕИК must stay hidden. ONE eik ('800') on TWO bidder rows: Дубъл's own stake →
-      // 'eik:800', his relative's stake → 'eik:800b' (same company, different bidder_id, status 'published').
-      // The own stake surfaces; the family one never does — no де-анон via a bidder-row split (ADR-0030).
+      // ONE eik ('800') on TWO bidder rows: Дубъл's own stake → 'eik:800', his relative's stake → 'eik:800b'
+      // (same company, a name variant, different bidder_id). The collapse keys on (person_id, ЕИК), NOT
+      // bidder_id — so the redundant family link drops despite pointing at a different bidder row; only 'owns' survives.
       sqlite(
         dbPath,
         `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
@@ -312,14 +325,44 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:80','unp80','Обект Дубъл','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:80','t:80','eik:800',60000,'EUR','2021-05-01','Д-80',60000);`,
       );
-      // COMPANY view for eik 800: both links match il.eik='800'; the family one must collapse → one 'owns' row.
+      // COMPANY view for eik 800: the family link collapses (a self stake exists on ЕИК 800) → one 'owns' row.
       const company = rows(dbPath, lit(COMPANY_SQL, '800'));
       expect(company).toHaveLength(1);
       expect(company[0]!.relation).toBe('owns');
-      // …and the official view collapses too — Дубъл is never shown twice for the one company (no de-anon).
       const official = rows(dbPath, lit(OFFICIAL_SQL, 'person:dubl'));
       expect(official).toHaveLength(1);
       expect(official[0]!.relation).toBe('owns');
+    });
+  });
+
+  it('a family link SURVIVES the collapse when the official’s self stake in the same winner is NOT published (held/withdrawn) — the collapse keys on a PUBLISHED self stake (ADR-0032)', () => {
+    withDb((dbPath) => {
+      // The collapse drops a family row ONLY where a PUBLISHED self stake already names the official on that
+      // winner. If the self stake is held/withdrawn/suppressed it never surfaced — so the family link is the
+      // ONLY public signal for that (official, ЕИК) and MUST survive. This pins the s.status='published' guard
+      // inside NOT_REDUNDANT_FAMILY: dropping it (collapsing on ANY self stake) would silently bury a real,
+      // standalone family conflict behind a self stake the public never sees.
+      sqlite(
+        dbPath,
+        `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:850','АСИМ ЕООД','850','850',1,'company');
+         INSERT INTO persons (id, name) VALUES ('person:asim','Асим Тестов');
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
+           ('il:asim-self-held','person:asim|850','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','held'),
+           ('il:asim-fam','person:asim|850|family','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','published');
+         INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:85','unp85','Обект Асим','a:1','открита процедура');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:85','t:85','eik:850',40000,'EUR','2021-05-01','Д-85',40000);`,
+      );
+      // The self stake is HELD (never surfaces), so the family link is NOT redundant → it survives as the one
+      // published row for ЕИК 850, on both the company and the official view.
+      const company = rows(dbPath, lit(COMPANY_SQL, '850'));
+      expect(company).toHaveLength(1);
+      expect(company[0]!.relation).toBe('related');
+      const official = rows(dbPath, lit(OFFICIAL_SQL, 'person:asim'));
+      expect(official).toHaveLength(1);
+      expect(official[0]!.relation).toBe('related');
+      // …and its /contracts drill-down works — the family key is the surviving surface, not a dead link.
+      expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:asim|850|family'))).toHaveLength(1);
     });
   });
 
@@ -400,31 +443,24 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('the /contracts route never serves a family link_key (family surface withheld — de-anon oracle closed)', () => {
+  it('the /contracts drill-down collapses a redundant family link_key but serves the surviving self key (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Двоен's family link to П2АРХ (eik 555) is withheld from every surface (ADR-0030 — family is internal).
-      // eik 555 already has a real contract (c:55, from the base fixture), so the ONLY reason the family key
-      // returns [] is the class gate, not an empty contract set. A leak here would be an existence-oracle
-      // confirming the relative's stake.
-      // The surfaced self link returns its contract…
+      // Двоен's own and family links both point at П2АРХ (eik 555). The self key serves eik 555's one contract
+      // (c:55); the family key collapses (a published self stake exists on the same ЕИК) and serves nothing —
+      // the same read gate the surface applies, so a drilled-down family URL can't resurrect the collapsed link.
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:dual|555'))).toHaveLength(1);
-      // …but the collapsed family link_key returns [] — no probe for the suppressed relative stake.
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:dual|555|family'))).toHaveLength(0);
     });
   });
 
-  it('a STANDALONE family link is also withheld from /contracts — the whole family surface is internal (ADR-0030)', () => {
+  it('a STANDALONE family link serves its contracts on /contracts (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Кмет declared only a RELATIVE's stake in ЕВРОСТРОЙ (eik 333) — no own stake. Under ADR-0030 the family
-      // surface is withdrawn entirely, so even a standalone relative-ownership conflict has no drill-down; it
-      // is represented only by the nameless aggregate. Give eik 333 a real contract so [] is the class gate,
-      // not an empty contract set — proving no family drill-down survives.
-      sqlite(
-        dbPath,
-        `INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:8','unp8','Обект','a:1','открита процедура');
-         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:8','t:8','eik:333',250000,'EUR','2019-05-01','Д-8',250000);`,
-      );
-      expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:kmet|333|family'))).toHaveLength(0);
+      // Кмет declared only a RELATIVE's stake in ЕВРОСТРОЙ (eik 333) — no own stake. Under ADR-0032 the family
+      // link publishes, so its drill-down returns eik 333's contract (c:33 from the base fixture) — a real
+      // procurement-nexus conflict with a working drill-down, the relative never named.
+      const list = rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:kmet|333|family'));
+      expect(list).toHaveLength(1);
+      expect(list[0]!.contract_number).toBe('Д-33');
     });
   });
 

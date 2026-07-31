@@ -37,7 +37,8 @@
 | [0027](0027-overmerge-gate-is-telemetry-not-a-gate.md) | Load-time гейтът за over-merge е телеметрия, не порта (strictKey беше структурна фалшива нула); доказателството е етикетираният тест | Прието |
 | [0028](0028-declared-eik-is-a-determining-identifier.md) | Деклариран ЕИК е определящ идентификатор — ниво `A_eik`, освободено от ТР-преброяването (ЕИК-ът е самоличността, не името) | Прието |
 | [0029](0029-worker-native-fx-load.md) | Worker-native FX зареждане в cron refresh-а и режим на отказ | Прието |
-| [0030](0030-family-ownership-withheld-nameless-aggregate.md) | Дял на свързано лице не влиза в поименната повърхност (v1): събира се и се одитира, но се отчита само като безименен сбор (GDPR C-37/20; заменя ADR-0023) | Прието |
+| [0030](0030-family-ownership-withheld-nameless-aggregate.md) | Дял на свързано лице не влиза в поименната повърхност (v1): събира се и се одитира, но се отчита само като безименен сбор (GDPR C-37/20; заменя ADR-0023) | Заменено от [ADR-0032](0032-family-ownership-published-under-public-interest.md) |
 | [0031](0031-suppressions-version-controlled-fingerprinted.md) | Свалянията на връзки са версиониран списък с HMAC-отпечатък (salt = CI secret), прилаган при зареждане — не служебна таблица; не изтича сигнала „кой е свален" към прод | Прието |
+| [0032](0032-family-ownership-published-under-public-interest.md) | Дял на свързано лице се публикува на поименната повърхност наравно със собствения — на основание надделяващ обществен интерес (ЗДОИ чл. 41и; C-184/20 забранява само поименните данни); близкият никога не се назовава, връзката не се твърди; заменя ADR-0030 | Прието |
 
 Свързан проектен документ: [spec/related-persons-foundation.md](../spec/related-persons-foundation.md).

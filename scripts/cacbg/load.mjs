@@ -208,6 +208,11 @@ let diN = 0,
   unknownHolder = 0,
   namelessInstitution = 0,
   namelessPerson = 0;
+// §2 ал.3 ПЗР canary (rail #3): every MATERIAL family holding must originate from a PUBLIC asset declaration.
+// parse.mjs builds family scope SOLELY from parseAssets/<PublicPerson> (templateType 'assets'), so this map —
+// material family holdings bucketed by their source declaration's template — must stay 100% 'assets'. Any other
+// bucket = a relative's stake leaking from a non-public source (a consent/libel breach). Telemetry tripwire.
+const familyMaterialByTemplate = new Map();
 
 // B1 divest-to-zero horizon: the latest year each person filed ANY declaration — including empty /
 // no-material filings that emit no holdings row (extract → filings.jsonl). The per-scope material-ownership
@@ -267,7 +272,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // Unknown holder (B4): the holder cell is neither confidently the declarant's own name nor confidently a
   // relative's (an ambiguous 1-token-different / initials-only cell). Counted NOWHERE — it forms no link and
   // never advances a scope's ownership horizon — so a name we cannot resolve never pollutes a published
-  // number (the nameless family aggregate or the leaderboard). Retained in declared_interests for census.
+  // number (the self or family leaderboard). Retained in declared_interests for census.
   if (h.holderRelation === 'unknown') {
     unknownHolder++;
     continue;
@@ -291,6 +296,12 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   if (scope === 'family' && !material) {
     immaterialFamily++;
     continue;
+  }
+  // §2 ал.3 canary: a material family holding reached link formation — bucket it by its source template so the
+  // report can prove the rail-3 by-construction invariant (family ⟹ 'assets') actually held on this corpus.
+  if (scope === 'family') {
+    const t = h.template || '—';
+    familyMaterialByTemplate.set(t, (familyMaterialByTemplate.get(t) ?? 0) + 1);
   }
   // E11 divestment horizon (per person+scope) — advance BEFORE resolution, over EVERY material ownership
   // filing, not only winner-resolved ones. Most declared holdings are ordinary non-winner companies; if the
@@ -517,12 +528,15 @@ for (const rec of agg.values()) {
     recOwnMax != null &&
     Number.isFinite(horizon) &&
     horizon > recOwnMax;
-  // status must be SELF-DESCRIBING in D1: 'published' means "on the public surface", not merely "passed
-  // the tier gate". Only the official's OWN material ownership (private_ownership) surfaces. family_ownership
-  // (a close relative's stake) is collected + audited but WITHHELD from the named surface in v1 (ADR-0030,
-  // superseding ADR-0023): it re-identifies a sole-owner relative via the card's ЕИК + ТР link. It is
-  // reported only as a nameless aggregate (getWithheldFamilyAggregate), which reads exactly the family
-  // rows this branch marks 'internal'. ex_officio_board / management_role never surface either. Non-surfaced
+  // status must be SELF-DESCRIBING in D1: 'published' means "on the public surface", not merely "passed the
+  // tier gate". Both the official's OWN material ownership (private_ownership) AND a close relative's declared
+  // stake (family_ownership) surface, identically (ADR-0032, superseding ADR-0030): the public-interest basis
+  // is the same declared-stake × procurement-winner signal, and the relative's NAME never enters staging, the
+  // DB or the DTO (parse.mjs keeps only holderRelation), nor is the relationship type ever asserted — the card
+  // says only „свързано лице". § 2 ал. 3 ПЗР (asset declaration not public for some admin staff) is honored
+  // BY CONSTRUCTION: family_ownership can arise only from the ASSET declaration (parse.mjs parseAssets /
+  // <PublicPerson>), so a person whose asset declaration is not published at source has no family link to
+  // surface — we never exceed the source. ex_officio_board / management_role never surface. Non-surfaced
   // classes that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
   // Zero-contract gate (I5): the surface's whole premise is „a stake in a company that WON public money".
   // A match to a bidder with no recorded contracts (cCount===0 — a winner row with every contract deduped/
@@ -530,7 +544,7 @@ for (const rec of agg.values()) {
   // card would read „0 договори · 0 €". Such a link is collected but never surfaces — treat it like a
   // non-surfaced class ('internal'), not 'published'. cValue can legitimately be 0 with cCount>0 (contracts
   // whose amount is unknown/NULL) — that is a real conflict of unknown value, so gate on COUNT, not value.
-  const surfaces = iClass === 'private_ownership' && cCount > 0;
+  const surfaces = (iClass === 'private_ownership' || iClass === 'family_ownership') && cCount > 0;
   const status = isSuppressed(linkKey)
     ? 'suppressed'
     : divested
@@ -624,7 +638,8 @@ const S = {
       "SELECT COALESCE(SUM(contract_value_eur),0) v FROM interest_links WHERE status='published' AND interest_class='private_ownership'",
     ).v,
   ),
-  // family (close-relative) ownership — the previously-discarded half of the map (anonymized surface, ADR-0023)
+  // family (close-relative) ownership — now published on the named surface identically to self stakes
+  // (ADR-0032, superseding ADR-0030); the relative's name is never stored/shown, the relation never asserted.
   published_family_ownership_links: one(
     "SELECT COUNT(*) n FROM interest_links WHERE status='published' AND interest_class='family_ownership'",
   ).n,
@@ -636,6 +651,8 @@ const S = {
   family_officials: one(
     "SELECT COUNT(DISTINCT person_id) n FROM interest_links WHERE interest_class='family_ownership'",
   ).n,
+  // §2 ал.3 ПЗР canary (rail #3): material family holdings by source declaration template — must be 100% 'assets'.
+  family_material_by_source_template: Object.fromEntries(familyMaterialByTemplate),
   published_by_interest_class: Object.fromEntries(
     q(
       "SELECT interest_class, COUNT(*) n, ROUND(COALESCE(SUM(contract_value_eur),0)) v FROM interest_links WHERE status='published' GROUP BY interest_class",
@@ -697,6 +714,16 @@ console.log(
   ambiguousKeys.length
     ? `\nℹ ${ambiguousKeys.length} ambiguous name keys (>1 valid ЕИК) — quarantined, never published (telemetry, not a gate; ADR-0027)`
     : '\nℹ 0 ambiguous name keys',
+);
+// §2 ал.3 rail-3 tripwire: any material family holding from a non-'assets' template is a relative's stake
+// pulled from a non-public source — investigate before ship. Telemetry (ADR-0027 stance), not a hard gate.
+const familyLeak = [...familyMaterialByTemplate].filter(([t]) => t !== 'assets');
+console.log(
+  familyLeak.length
+    ? `⚠ §2 ал.3 CANARY: ${familyLeak.length} family holding template(s) ≠ 'assets' — non-public source: ${familyLeak
+        .map(([t, n]) => `${t}:${n}`)
+        .join(', ')} (rail #3, ADR-0032)`
+    : "✓ §2 ал.3 canary: all material family holdings sourced from 'assets' declarations (rail #3, ADR-0032)",
 );
 console.log(`report → ${REPORT}`);
 db.close();
