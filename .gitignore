@@ -11,6 +11,8 @@ build/
 .react-router/
 .turbo/
 coverage/
+# rendered by scripts/check-coverage.mjs for the CI artifact/PR comment
+/coverage-summary.md
 
 # Cloudflare / wrangler
 .wrangler/
