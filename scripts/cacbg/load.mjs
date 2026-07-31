@@ -24,6 +24,7 @@ import {
 } from './classify.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import { fingerprint, loadSuppressions, SUPPRESSION_KEY_VERSION } from './suppressions.mjs';
+import { canonicalInstitution } from './institutions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
@@ -190,8 +191,11 @@ const insRP = db.prepare(
 // stable across their filing years — which the E11 divestment horizon (keyed on person_id) depends on.
 // register_year/position are deliberately EXCLUDED (ADR-0026): both would split one official across
 // years/promotions, fragmenting identity and blinding the cross-year divestment tracking.
+// Institution is canonicalized (N10) so an official's „МВР" / „Министерство на вътрешните работи" filings
+// fold to ONE identity instead of splitting into two person-pages. An unknown/ambiguous string passes
+// through unchanged (a safe split), never a wrong merge.
 const personId = (name, institution) =>
-  `person:${companyNameKey(name)}|${companyNameKey(institution ?? '')}`;
+  `person:${companyNameKey(name)}|${companyNameKey(canonicalInstitution(institution))}`;
 // Financial-interest kinds (a genuine stake), as opposed to management-only or listed securities.
 const OWN_KINDS = new Set(['shares', 'participation', 'sole_trader']);
 const agg = new Map();
@@ -202,6 +206,7 @@ let diN = 0,
   quarantined = 0,
   immaterialFamily = 0,
   unknownHolder = 0,
+  namelessInstitution = 0,
   namelessPerson = 0;
 
 // B1 divest-to-zero horizon: the latest year each person filed ANY declaration — including empty /
@@ -265,6 +270,14 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // number (the nameless family aggregate or the leaderboard). Retained in declared_interests for census.
   if (h.holderRelation === 'unknown') {
     unknownHolder++;
+    continue;
+  }
+  // N10: the person grain is (name, institution). An EMPTY institution (after canonicalization) cannot
+  // distinguish two same-named officials, so forming a link would risk attributing one person's stake to a
+  // homonym (false attribution — libel). Withhold from link formation; the declaration + declared interest
+  // are already recorded above for census. Counted so the dropped volume is visible in the Phase-0 report.
+  if (!isMatchableKey(companyNameKey(canonicalInstitution(h.institution)))) {
+    namelessInstitution++;
     continue;
   }
   // scope = whose stake this is. holderRelation='related' ⇒ a CLOSE RELATIVE's stake declared by the
@@ -649,6 +662,7 @@ const S = {
   quarantined,
   immaterialFamilySkipped: immaterialFamily,
   unknownHolderSkipped: unknownHolder,
+  namelessInstitutionSkipped: namelessInstitution,
   namelessPersonSkipped: namelessPerson,
 };
 console.log(JSON.stringify(S, null, 2));

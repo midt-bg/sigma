@@ -82,6 +82,14 @@ before(() => {
     -- stake at all. The empty filing advances his horizon past 2019 → the 2019 stake is withdrawn.
     INSERT INTO bidders VALUES ('eik:101010104','ДИВЕСТ ЗЕРО 4 ЕООД','101010104',1,'София');
     INSERT INTO contracts VALUES ('c11','t1','eik:101010104','2019-05-01',150000);
+    -- N10 canonicalization: Канонов owns КАНОН ТЕХ 5, filing „МВР" one year and the full ministry name the
+    -- next → ONE identity, ONE link (not a split). Distinctive name (number) → tier B publishable.
+    INSERT INTO bidders VALUES ('eik:131313136','КАНОН ТЕХ 5 ЕООД','131313136',1,'София');
+    INSERT INTO contracts VALUES ('c12','t1','eik:131313136','2022-05-01',90000);
+    -- N10 empty-institution: Безинст owns a distinctive winner but declares NO institution → cannot be
+    -- attributed without risking a homonym merge → forms NO link.
+    INSERT INTO bidders VALUES ('eik:141414141','БЕЗИНСТ ТЕХ 6 ЕООД','141414141',1,'София');
+    INSERT INTO contracts VALUES ('c13','t1','eik:141414141','2023-05-01',80000);
   `);
   db.close();
 
@@ -353,6 +361,60 @@ before(() => {
       holderRelation: 'unknown',
       controlHash: 'H15',
     },
+    // N10 canonicalization: Канонов declares „МВР" (2022) and „Министерство на вътрешните работи" (2023) for
+    // the SAME winner. Both institution strings fold to one canonical identity → ONE person, ONE link.
+    {
+      folder: '2023',
+      xmlFile: 'CN1.xml',
+      year: '2022',
+      template: 'assets',
+      category: '',
+      institution: 'МВР',
+      person: 'Канонов Тестов',
+      position: '',
+      entity: 'КАНОН ТЕХ 5 ЕООД',
+      kind: 'shares',
+      detail: '50%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H16',
+    },
+    {
+      folder: '2024',
+      xmlFile: 'CN2.xml',
+      year: '2023',
+      template: 'assets',
+      category: '',
+      institution: 'Министерство на вътрешните работи',
+      person: 'Канонов Тестов',
+      position: '',
+      entity: 'КАНОН ТЕХ 5 ЕООД',
+      kind: 'shares',
+      detail: '50%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H17',
+    },
+    // N10 empty-institution: Безинст owns a winner but declares NO institution → forms NO link (homonym guard).
+    {
+      folder: '2024',
+      xmlFile: 'BI.xml',
+      year: '2023',
+      template: 'assets',
+      category: '',
+      institution: '',
+      person: 'Безинст Тестов',
+      position: '',
+      entity: 'БЕЗИНСТ ТЕХ 6 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H18',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -521,6 +583,22 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
       .get().n,
     0,
   );
+
+  // N10 canonicalization: Канонов's „МВР" and „Министерство на вътрешните работи" filings fold to ONE
+  // identity → exactly ONE link and ONE person_id for КАНОН ТЕХ 5 (not a split into two person-pages).
+  assert.equal(
+    db.prepare("SELECT COUNT(*) n FROM interest_links WHERE eik='131313136'").get().n,
+    1,
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(DISTINCT person_id) n FROM interest_links WHERE eik='131313136'").get()
+      .n,
+    1,
+  );
+  const kanon = link('131313136', 'Канонов Тестов');
+  assert.equal(kanon.status, 'published'); // distinctive, private ownership, has a contract
+  // N10 empty-institution: an empty institution cannot distinguish homonyms → Безинст forms NO link.
+  assert.equal(link('141414141', 'Безинст Тестов'), undefined);
   db.close();
 });
 
@@ -551,11 +629,13 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 12 links: 11 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
-  // 'withdrawn') + 1 family; Мария (quarantined), Акционер (securities) & Двусмислен (unknown holder) form none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 12);
-  // 14 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен and zero-contract Нула.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 14);
+  // 13 links: 11 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 'withdrawn') + 1 family + Канонов's canonicalized single link; Мария (quarantined), Акционер
+  // (securities), Двусмислен (unknown holder) & Безинст (empty institution) form none.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 13);
+  // 16 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст and
+  // zero-contract Нула; Канонов's two institution-variant filings fold to ONE person.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 16);
   db.close();
 });
 
