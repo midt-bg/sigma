@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COMPANY_SQL,
   LEADERBOARD_SQL,
+  LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
   OFFICIAL_SQL,
   WITHHELD_FAMILY_AGGREGATE_SQL,
@@ -406,6 +407,27 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:8','t:8','eik:333',250000,'EUR','2019-05-01','Д-8',250000);`,
       );
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:kmet|333|family'))).toHaveLength(0);
+    });
+  });
+
+  it(`caps one link's expanded contract list at LINK_CONTRACTS_LIMIT — a huge winner cannot return an unbounded payload (ydimitrof #226: perf/DoS)`, () => {
+    withDb((dbPath) => {
+      // Give Иван's winner (eik 111) far more than the cap. A recursive CTE mints LIMIT+100 in-window
+      // contracts (2021, inside his 2019–2023 span) so ORDER BY keeps them all eligible; the query must
+      // still return exactly LINK_CONTRACTS_LIMIT rows, never the whole set.
+      const extra = LINK_CONTRACTS_LIMIT + 100;
+      sqlite(
+        dbPath,
+        `INSERT INTO tenders (id, source_id, title, authority_id, procedure_type)
+           WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < ${extra})
+           SELECT 'tt:'||i, 'unpN'||i, 'Обект '||i, 'a:1', 'открита процедура' FROM n;
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur)
+           WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < ${extra})
+           SELECT 'cc:'||i, 'tt:'||i, 'eik:111', 1000, 'EUR', '2021-06-01', 'ДN-'||i, 1000 FROM n;`,
+      );
+      expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:ivan|111'))).toHaveLength(
+        LINK_CONTRACTS_LIMIT,
+      );
     });
   });
 });

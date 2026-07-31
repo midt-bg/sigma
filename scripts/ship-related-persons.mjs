@@ -63,9 +63,14 @@ export function sqlIdent(s) {
   return `"${String(s).replaceAll('"', '""')}"`;
 }
 // SQL literal — the ONLY interpolation into shipped SQL. Strips NUL, doubles quotes, NULLs non-finite
-// numbers. Values come from our own sqlite, but this is still the trust boundary into D1.
+// numbers. Values come from our own sqlite (int/text/null via `sqlite3 -json`), but this is still the trust
+// boundary into D1, so every JS type maps to an explicit SQL form rather than falling through to String(v):
+// boolean → 1/0 and bigint → its digits (ydimitrof #226), so a source change can't emit `'true'` or a
+// mistyped literal.
 export function sqlLiteral(v) {
   if (v === null || v === undefined) return 'NULL';
+  if (typeof v === 'boolean') return v ? '1' : '0';
+  if (typeof v === 'bigint') return String(v);
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   return `'${String(v).replaceAll('\x00', '').replaceAll("'", "''")}'`;
 }
@@ -173,6 +178,13 @@ export function insertStatements(table, cols, rows) {
   for (const row of rows) {
     const tuple = `(${cols.map((c) => sqlLiteral(row[c])).join(',')})`;
     const tupleBytes = Buffer.byteLength(tuple) + 2;
+    // A single tuple larger than the batch budget can't be split — it ships as a lone statement that may
+    // exceed D1's per-statement size limit and fail at apply time. Make that explicit rather than a silent
+    // over-limit INSERT (ydimitrof #226); the schema has no such wide column today, so this is a canary.
+    if (Buffer.byteLength(prefix) + tupleBytes > MAX_BATCH_BYTES)
+      console.warn(
+        `ship: oversized row for ${table} (${tupleBytes}B > ${MAX_BATCH_BYTES}B budget) — emitted as a lone statement; may exceed D1's statement limit`,
+      );
     if (batch.length && (batch.length >= MAX_BATCH_ROWS || bytes + tupleBytes > MAX_BATCH_BYTES))
       flush();
     batch.push(tuple);
@@ -216,7 +228,9 @@ function main() {
   }
 
   // D1 enforces foreign keys, so a re-seed cannot DELETE a parent while children still reference it. Wipe
-  // every table first, children-before-parents (WIPE_ORDER), as ONE atomic batched request; then re-insert
+  // every table first, children-before-parents (WIPE_ORDER), as ONE batched request — `d1 execute --file`
+  // is a single request but not cross-statement transactional (ydimitrof #226); harmless here (all DELETEs
+  // in FK-correct order, and the surface is only briefly empty), but not "atomic". Then re-insert
   // parents-before-children (TABLES), each table its own batched request. Trade-off vs the old per-table
   // DELETE+INSERT: the surface is briefly empty between the wipe and the interest_links re-insert. That is
   // acceptable for a deliberate manual re-seed and is the only structure that both works on a populated D1

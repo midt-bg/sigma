@@ -243,6 +243,15 @@ interface ContractRow {
   temporal: ConflictContract['temporal'];
 }
 
+// Hard ceiling on one link's expanded contract list. A winner with thousands of contracts would otherwise
+// return the whole set on every row expansion, growing the payload and D1 scan unbounded as the corpus
+// grows (ydimitrof #226: perf/DoS surface). The card summary already shows the authoritative total
+// (contractCount) and the in-window count (contemporaneousContractCount), so a capped list against a larger
+// count reads as an honest "showing the top N" signal, never silent truncation. ORDER BY puts the
+// contemporaneous, most-recent, highest-value contracts first, so the cap keeps the most relevant rows.
+// ponytail: fixed cap, not pagination — add keyset paging only if a real winner exceeds this in practice.
+export const LINK_CONTRACTS_LIMIT = 500;
+
 // One published link's contracts, each marked against the declared-stake window. The WHERE gate on
 // status/interest_class + the redundant-family collapse means a non-surfaced link_key returns [] — never a
 // way to enumerate held/internal links OR to confirm a family link the leaderboard collapsed away.
@@ -267,7 +276,8 @@ export const LINK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS author
     LEFT JOIN authority_totals ath ON ath.authority_id = aa.id
   WHERE il.link_key = ?
     AND il.status = 'published' AND il.interest_class = 'private_ownership'
-  ORDER BY (temporal = 'contemporaneous') DESC, cc.signed_at DESC, cc.amount_eur DESC`;
+  ORDER BY (temporal = 'contemporaneous') DESC, cc.signed_at DESC, cc.amount_eur DESC
+  LIMIT ${LINK_CONTRACTS_LIMIT}`;
 
 /** The contracts of one published link, contemporaneous-first, each flagged in/out the declared window.
  *  Empty for an unknown or non-surfaced link_key (never leaks internal/held/withdrawn links). */

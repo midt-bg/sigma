@@ -24,19 +24,23 @@ export function relationLabel(relation: string): string {
   return RELATION_LABEL[relation] ?? relation;
 }
 
+// Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either
+// assumption ever drifts, an un-escaped `/`, `?` or `#` would break routing and the cache key. Escape the
+// dynamic segments unconditionally (ydimitrof #226, conflicts.ts).
+
 /** /conflicts/official/:slug — the office-holder's page (slug already base64url-encoded). */
 export function officialHref(officialSlug: string): string {
-  return `/conflicts/official/${officialSlug}`;
+  return `/conflicts/official/${encodeURIComponent(officialSlug)}`;
 }
 
 /** /conflicts/company/:eik — officials with a declared interest in this winner. */
 export function companyConflictsHref(eik: string): string {
-  return `/conflicts/company/${eik}`;
+  return `/conflicts/company/${encodeURIComponent(eik)}`;
 }
 
 /** /companies/:eik — the winner's spending profile (matched winners always carry a valid ЕИК). */
 export function companyProfileHref(eik: string): string {
-  return `/companies/${eik}`;
+  return `/companies/${encodeURIComponent(eik)}`;
 }
 
 /** Contract-activity span for a link: a range, a single year, or „—". */
@@ -87,7 +91,7 @@ export function fundsMagnitude(link: ConflictLink): number | null {
  *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. Only self links surface
  *  (ADR-0030), so :scope is always 'self'; the route still validates the family scope defensively. */
 export function linkContractsHref(link: ConflictLink): string {
-  return `/conflicts/link/self/${link.officialSlug}/${link.eik}/contracts`;
+  return `/conflicts/link/self/${encodeURIComponent(link.officialSlug)}/${encodeURIComponent(link.eik)}/contracts`;
 }
 
 // The declared YEARS are when the stake was DISCLOSED (declaration within a month of taking office, then
@@ -233,7 +237,8 @@ export interface AuthorityShare {
   companyEur: number;
   /** The body's total recorded procurement (authority_totals.spent_eur), the ratio's denominator. */
   authorityTotalEur: number | null;
-  /** companyEur / authorityTotalEur, clamped to [0,1]; null when the denominator is missing or ≤0. */
+  /** companyEur / authorityTotalEur, clamped to [0,1]; null when the numerator or denominator is missing or ≤0
+   *  (a 0-€ row renders as no-value, so it must also sort as no-value — ydimitrof #226). */
   ratio: number | null;
   /** ≥1 of these contracts falls in the declared-disclosure window — the conflict subset, a row marker. */
   inWindow: boolean;
@@ -269,7 +274,7 @@ export function authorityShares(contracts: ConflictContract[]): AuthorityShare[]
   const rows = [...byAuthority.values()];
   for (const r of rows) {
     r.ratio =
-      r.authorityTotalEur != null && r.authorityTotalEur > 0
+      r.companyEur > 0 && r.authorityTotalEur != null && r.authorityTotalEur > 0
         ? Math.min(1, r.companyEur / r.authorityTotalEur)
         : null;
   }

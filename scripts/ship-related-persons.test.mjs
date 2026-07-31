@@ -19,6 +19,10 @@ test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () =>
   assert.equal(sqlLiteral(NaN), 'NULL');
   assert.equal(sqlLiteral("Д'Артанян"), "'Д''Артанян'"); // single quote doubled — injection-safe
   assert.equal(sqlLiteral('a\x00b'), "'ab'"); // NUL stripped
+  // boolean/bigint map to explicit SQL forms, never String(v) → 'true' / a mistyped literal (ydimitrof #226)
+  assert.equal(sqlLiteral(true), '1');
+  assert.equal(sqlLiteral(false), '0');
+  assert.equal(sqlLiteral(9007199254740993n), '9007199254740993');
 });
 
 test('sqlIdent double-quotes and escapes identifiers', () => {

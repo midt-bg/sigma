@@ -39,6 +39,26 @@ describe('rateLimitConflictsRoute', () => {
     }
   });
 
+  // React Router matches routes case-insensitively (caseSensitive: false), so a mixed-case URL reaches the
+  // names loader. normalizedPathname must lowercase, or `/CONFLICTS/official/ivan.data` slips isConflictsRequest
+  // → the sole anti-enumeration control is bypassed (ydimitrof #226, conflicts-rate-limit.ts:18).
+  it('matches a mixed-case path — the limiter cannot be bypassed by upper-casing the URL', async () => {
+    for (const path of [
+      '/CONFLICTS',
+      '/Conflicts/official/ivan-petrov',
+      '/CONFLICTS/official/ivan.data',
+    ]) {
+      const { limiter, limit } = rateLimiter(false);
+      const response = await rateLimitConflictsRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.42' } }),
+        { CONFLICTS_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(limit, path).toHaveBeenCalledWith({ key: '203.0.113.42' });
+      expect(response?.status, path).toBe(429);
+    }
+  });
+
   it('does not match a sibling path that merely starts with the same prefix', async () => {
     const { limiter, limit } = rateLimiter(false);
     await expect(
