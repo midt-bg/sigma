@@ -58,8 +58,8 @@ contracts — a targeted, reasoned subset, not a register copy.
 
 1. **Family-ownership links are published on the named surface, identically to self-ownership links** — office
    holder named, company named with ЕИК, contract facts, per-contract list, declaration link. No special case
-   for sole-owner (ЕООД/ЕТ/ЕАД) companies. The only difference is the relation label: „притежава дял" for a self
-   stake, „деклариран дял на свързано лице" for a family one. **One narrowing:** where the same official already
+   for sole-owner (ЕООД/ЕТ/ЕАД) companies. The only difference is the relation label: „дялово участие" for a self
+   stake, „деклариран дял на свързано лице" for a family one (`RELATION_LABEL` in `apps/web/app/lib/conflicts.ts`). **One narrowing:** where the same official already
    has a published *self* stake in the same winner, the *family* row is redundant and collapses away (see the
    implementation note) — the self row already names the official on that company, so the family row would add
    no signal, only a de-anonymization path.
