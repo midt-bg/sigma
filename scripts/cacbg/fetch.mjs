@@ -119,8 +119,8 @@ function atomicWrite(file, buf) {
 // folder == year. The register splits a year across suffixed folders (2021_nc/_nonc/f1 compliance sets,
 // 2019e local elections, 2018h, *y end-of-year republications) — a year-only guess silently drops them.
 // Parse href="<folder>/index.html" out of the index HTML; safeFolder rejects anything off-shape.
-async function discoverFolders() {
-  const res = await politeGet(`${BASE}/`, { tries: 3 });
+async function discoverFolders(get = politeGet) {
+  const res = await get(`${BASE}/`, { tries: 3 });
   if (res.status !== 200) throw new Error(`index ${BASE}/ → ${res.status}`);
   const html = res.body.toString('utf8');
   const seen = new Set();
@@ -143,28 +143,34 @@ async function pool(items, concurrency, worker) {
   );
 }
 
-async function run() {
-  assertScratchIgnored();
-  const {
-    limit,
-    concurrency,
-    folders: override,
-    allowIncomplete,
-  } = parseCrawlOptions(process.argv);
+// The crawl. Returns the intended process exit code (0 = complete, 1 = incomplete without an override) so the
+// completeness gate is a pure, testable decision rather than a global `process.exitCode` side effect. The I/O
+// boundary is injectable — `httpGet` (a get-with-retries, default politeGet), the raw output dir, argv, the
+// scratch guard, and folder discovery — so the gate can be integration-tested offline (getPinned pins the
+// CACBG host, so a fake server is impossible; injection is the only seam). Defaults reproduce production 1:1.
+export async function run({
+  httpGet = politeGet,
+  discover = discoverFolders,
+  rawDir = RAW,
+  argv = process.argv,
+  guard = assertScratchIgnored,
+} = {}) {
+  guard();
+  const { limit, concurrency, folders: override, allowIncomplete } = parseCrawlOptions(argv);
 
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
     ? override.split(',').map((f) => safeFolder(f.trim()))
-    : (console.log('Discovering folders from register index …'), await discoverFolders());
+    : (console.log('Discovering folders from register index …'), await discover(httpGet));
   console.log(`Folders to crawl (${folders.length}): ${folders.join(', ') || '(none)'}`);
 
   // Per-set accounting so completeness can be reconciled announced↔obtained (Todor #2). A set whose list.xml
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   for (const folder of folders) {
-    const dir = path.join(RAW, folder);
+    const dir = path.join(rawDir, folder);
     fs.mkdirSync(dir, { recursive: true });
-    const listRes = await politeGet(`${BASE}/${folder}/list.xml`);
+    const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
       console.log(`  ${folder}/list.xml → ${listRes.status}, SKIP (announced set not crawled)`);
       stats.skippedFolders.push({ folder, status: listRes.status });
@@ -193,7 +199,7 @@ async function run() {
       }
       let res;
       try {
-        res = await politeGet(`${BASE}/${folder}/${xmlFile}`);
+        res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
       } catch {
         fstat.errors++;
         consecutive = nextBreaker(consecutive, 'fail');
@@ -225,10 +231,10 @@ async function run() {
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
   console.log('\n=== crawl summary ===');
   console.log(JSON.stringify({ folders: stats.folders, ...completeness }, null, 2));
-  console.log(`raw cache → ${RAW}`);
+  console.log(`raw cache → ${rawDir}`);
 
   // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
-  // platform's job. Fail loud unless the operator has explicitly accepted the shortfall.
+  // platform's job. Return a non-zero exit code unless the operator has explicitly accepted the shortfall.
   if (completeness.incomplete) {
     const skipped =
       stats.skippedFolders.map((s) => `${s.folder} (${s.status})`).join(', ') || 'none';
@@ -242,16 +248,22 @@ async function run() {
       console.error(
         `\n✖ ${msg} Re-run to resume, or pass --allow-incomplete to proceed knowingly.`,
       );
-      process.exitCode = 1;
+      return 1;
     }
   }
+  return 0;
 }
 
-// Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit test of the
-// pure helpers above — must NOT kick off a live network crawl of the register.
+// Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit/integration tests
+// above — must NOT kick off a live network crawl of the register. run() returns the exit code; assign it to
+// process.exitCode (natural drain flushes the summary) rather than process.exit (which can truncate stdout).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  run().catch((err) => {
-    console.error('FATAL:', err.message);
-    process.exit(1);
-  });
+  run()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error('FATAL:', err.message);
+      process.exit(1);
+    });
 }
