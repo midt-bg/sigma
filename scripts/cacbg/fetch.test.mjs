@@ -3,7 +3,7 @@
 // degrades to a no-op crawl, and (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCrawlOptions, nextBreaker, BREAKER_TRIP } from './fetch.mjs';
+import { parseCrawlOptions, nextBreaker, BREAKER_TRIP, assessCompleteness } from './fetch.mjs';
 
 test('parseCrawlOptions: defaults — no limit, 6 workers', () => {
   const o = parseCrawlOptions([]);
@@ -64,4 +64,45 @@ test('nextBreaker: a sustained non-200 wall crosses the trip threshold', () => {
   let c = 0;
   for (let i = 0; i < BREAKER_TRIP + 1; i++) c = nextBreaker(c, 'fail');
   assert.ok(c > BREAKER_TRIP, `expected > ${BREAKER_TRIP}, got ${c}`);
+});
+
+// --- completeness gate (Todor #2): announced↔obtained reconciliation, 404 is a legit source gap ---
+test('parseCrawlOptions: --allow-incomplete defaults false, present → true', () => {
+  assert.equal(parseCrawlOptions([]).allowIncomplete, false);
+  assert.equal(parseCrawlOptions(['--allow-incomplete']).allowIncomplete, true);
+});
+test('assessCompleteness: fetched + cached + 404 only → complete (404 is a source gap, not a shortfall)', () => {
+  const r = assessCompleteness(
+    { 2024: { announced: 10, fetched: 6, cached: 3, missing: 1, errors: 0 } },
+    [],
+  );
+  assert.equal(r.obtained, 9);
+  assert.equal(r.sourceGaps, 1);
+  assert.equal(r.unfetched, 0);
+  assert.equal(r.incomplete, false);
+});
+test('assessCompleteness: a non-404 unfetched declaration marks the corpus INCOMPLETE', () => {
+  const r = assessCompleteness(
+    { 2024: { announced: 10, fetched: 6, cached: 1, missing: 1, errors: 2 } },
+    [],
+  );
+  assert.equal(r.unfetched, 2);
+  assert.equal(r.incomplete, true);
+});
+test('assessCompleteness: a skipped set (list.xml unavailable) marks the corpus INCOMPLETE', () => {
+  const r = assessCompleteness({}, [{ folder: '2025', status: 503 }]);
+  assert.equal(r.skippedSets, 1);
+  assert.equal(r.incomplete, true);
+});
+test('assessCompleteness: an empty crawl of fully-obtained sets is complete', () => {
+  const r = assessCompleteness(
+    {
+      a: { announced: 2, fetched: 2, cached: 0, missing: 0, errors: 0 },
+      b: { announced: 0, fetched: 0, cached: 0, missing: 0, errors: 0 },
+    },
+    [],
+  );
+  assert.equal(r.reachedSets, 2);
+  assert.equal(r.announcedDeclarations, 2);
+  assert.equal(r.incomplete, false);
 });

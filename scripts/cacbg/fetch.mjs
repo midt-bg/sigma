@@ -44,6 +44,38 @@ export function parseCrawlOptions(argv) {
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
     concurrency: posInt(get('concurrency', '6'), 'concurrency'),
     folders: get('folders', ''),
+    // A transparency platform must not silently publish a partial corpus. By default an incomplete crawl
+    // (a set whose list.xml never loaded, or an announced declaration we failed to fetch for a non-404
+    // reason) exits non-zero; the operator passes --allow-incomplete to proceed knowingly (#226, Todor #2).
+    allowIncomplete: argv.includes('--allow-incomplete'),
+  };
+}
+
+// Reconcile what the register ANNOUNCED against what the crawl OBTAINED, per set. Symmetric to the
+// bidders-side integrity gate (integrity-checks.mjs), which fails before the resolver on an export↔source
+// mismatch — the declaration side had no such check, so a skipped set or a wall of fetch errors published a
+// silently short list (#226, Todor #2). A 404 is a legitimate source gap (listed-but-unpublished), NOT a
+// shortfall; only non-404 misses and wholesale-skipped sets count. Pure — takes the collected stats, returns
+// the report + an `incomplete` verdict.
+export function assessCompleteness(perFolder, skippedFolders = []) {
+  let announcedDeclarations = 0,
+    obtained = 0,
+    sourceGaps = 0,
+    unfetched = 0;
+  for (const f of Object.values(perFolder)) {
+    announcedDeclarations += f.announced;
+    obtained += f.fetched + f.cached;
+    sourceGaps += f.missing; // 404 — listed but unpublished at source (expected, not a shortfall)
+    unfetched += f.errors; // announced but not obtained for a non-404 reason — a real shortfall
+  }
+  return {
+    reachedSets: Object.keys(perFolder).length,
+    skippedSets: skippedFolders.length,
+    announcedDeclarations,
+    obtained,
+    sourceGaps,
+    unfetched,
+    incomplete: unfetched > 0 || skippedFolders.length > 0,
   };
 }
 
@@ -113,7 +145,12 @@ async function pool(items, concurrency, worker) {
 
 async function run() {
   assertScratchIgnored();
-  const { limit, concurrency, folders: override } = parseCrawlOptions(process.argv);
+  const {
+    limit,
+    concurrency,
+    folders: override,
+    allowIncomplete,
+  } = parseCrawlOptions(process.argv);
 
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
@@ -121,19 +158,23 @@ async function run() {
     : (console.log('Discovering folders from register index …'), await discoverFolders());
   console.log(`Folders to crawl (${folders.length}): ${folders.join(', ') || '(none)'}`);
 
-  const stats = { folders: {}, fetched: 0, cached: 0, missing: 0, errors: 0 };
+  // Per-set accounting so completeness can be reconciled announced↔obtained (Todor #2). A set whose list.xml
+  // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
+  const stats = { folders: {}, skippedFolders: [] };
   for (const folder of folders) {
     const dir = path.join(RAW, folder);
     fs.mkdirSync(dir, { recursive: true });
     const listRes = await politeGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
-      console.log(`  ${folder}/list.xml → ${listRes.status}, skip`);
+      console.log(`  ${folder}/list.xml → ${listRes.status}, SKIP (announced set not crawled)`);
+      stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
     }
     atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
     let rows = parseList(listRes.body.toString('utf8'));
     if (Number.isFinite(limit)) rows = rows.slice(0, limit);
-    stats.folders[folder] = rows.length;
+    const fstat = { announced: rows.length, fetched: 0, cached: 0, missing: 0, errors: 0 };
+    stats.folders[folder] = fstat;
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
@@ -142,33 +183,33 @@ async function run() {
       try {
         xmlFile = safeXmlFile(row.xmlFile);
       } catch {
-        stats.errors++;
+        fstat.errors++;
         return;
       }
       const dest = path.join(dir, xmlFile);
       if (fs.existsSync(dest)) {
-        stats.cached++;
+        fstat.cached++;
         return;
       }
       let res;
       try {
         res = await politeGet(`${BASE}/${folder}/${xmlFile}`);
       } catch {
-        stats.errors++;
+        fstat.errors++;
         consecutive = nextBreaker(consecutive, 'fail');
         if (consecutive > BREAKER_TRIP)
           throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
         return;
       }
       if (res.status === 404) {
-        stats.missing++;
+        fstat.missing++;
         consecutive = nextBreaker(consecutive, 'missing');
         return;
       } // listed-but-unpublished (source gap)
       if (res.status !== 200) {
         // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
         // just network throws — so the crawl stops instead of hammering the register indefinitely.
-        stats.errors++;
+        fstat.errors++;
         consecutive = nextBreaker(consecutive, 'fail');
         if (consecutive > BREAKER_TRIP)
           throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
@@ -176,13 +217,34 @@ async function run() {
       }
       consecutive = nextBreaker(consecutive, 'ok');
       atomicWrite(dest, res.body);
-      stats.fetched++;
+      fstat.fetched++;
       await sleep(15);
     });
   }
+
+  const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
   console.log('\n=== crawl summary ===');
-  console.log(JSON.stringify(stats, null, 2));
+  console.log(JSON.stringify({ folders: stats.folders, ...completeness }, null, 2));
   console.log(`raw cache → ${RAW}`);
+
+  // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
+  // platform's job. Fail loud unless the operator has explicitly accepted the shortfall.
+  if (completeness.incomplete) {
+    const skipped =
+      stats.skippedFolders.map((s) => `${s.folder} (${s.status})`).join(', ') || 'none';
+    const msg =
+      `INCOMPLETE CORPUS — ${completeness.unfetched} announced declaration(s) unfetched (non-404), ` +
+      `${completeness.skippedSets} set(s) skipped: ${skipped}. Publishing this would omit declarations ` +
+      `the register lists.`;
+    if (allowIncomplete) {
+      console.warn(`\n⚠ ${msg} Proceeding (--allow-incomplete).`);
+    } else {
+      console.error(
+        `\n✖ ${msg} Re-run to resume, or pass --allow-incomplete to proceed knowingly.`,
+      );
+      process.exitCode = 1;
+    }
+  }
 }
 
 // Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit test of the
