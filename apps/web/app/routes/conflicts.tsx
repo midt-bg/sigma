@@ -35,9 +35,10 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
   return { 'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(3600) };
 }
 
-// All eligible published ownership links — self and family (ADR-0032). Small enough to load whole and
-// paginate in the client, so the summary totals the full set rather than one page. NB: hard ceiling 1000 —
-// switch to keyset LIMIT/OFFSET (see companies.tsx) if the eligible set ever nears it.
+// All eligible published ownership links — self and family (ADR-0032). ~98 on the full 2015–2026 corpus
+// (77 self + 21 family; the per-declaration-type divest fix recovered 23 true links, #226). Small enough to
+// load whole and paginate in the client, so the summary totals the full set rather than one page. NB: hard
+// ceiling 1000 — switch to keyset LIMIT/OFFSET (see companies.tsx) if the eligible set ever nears it.
 const LEADERBOARD_MAX = 1000;
 const PER_PAGE = 100;
 

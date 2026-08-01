@@ -94,6 +94,7 @@ function run() {
           folder,
           xmlFile: file,
           year: d.year,
+          template: d.templateType, // the divest horizon is compared PER declaration type (B1/#226)
           person,
           institution: c.institution ?? '',
         }) + '\n',

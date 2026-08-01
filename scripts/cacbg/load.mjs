@@ -199,8 +199,6 @@ const personId = (name, institution) =>
 // Financial-interest kinds (a genuine stake), as opposed to management-only or listed securities.
 const OWN_KINDS = new Set(['shares', 'participation', 'sole_trader']);
 const agg = new Map();
-// `${pid}|${scope}` → latest year that scope filed a MATERIAL ownership holding (E11 divestment horizon).
-const ownMaxByScope = new Map();
 let diN = 0,
   noMatch = 0,
   quarantined = 0,
@@ -214,18 +212,20 @@ let diN = 0,
 // bucket = a relative's stake leaking from a non-public source (a consent/libel breach). Telemetry tripwire.
 const familyMaterialByTemplate = new Map();
 
-// B1 divest-to-zero horizon: the latest year each person filed ANY declaration — including empty /
-// no-material filings that emit no holdings row (extract → filings.jsonl). The per-scope material-ownership
-// max alone cannot see a divest-to-ZERO (selling everything and filing an empty declaration leaves no
-// ownership row to advance it), so a sold stake would keep asserting a CURRENT holding. An absent file
-// yields an empty map ⇒ the loader falls back to the old per-scope horizon (backward-compatible).
-const filingMaxByPerson = new Map();
+// Divest horizon, PER DECLARATION TYPE (`${pid}|${template}` → latest year the person filed a declaration of
+// that type). A stake declared in a type-T document is only withdrawn when a LATER type-T declaration omits it;
+// a later declaration of a DIFFERENT type — which for this person may structurally never carry company holdings
+// — must not count, or its silence would read as a sale and drop a TRUE link (#226, Todor B1: 13% of holders
+// declare a stake ONLY in the interests declaration). One record per declaration incl. empty / no-material ones,
+// so a same-type divest-to-ZERO still advances the horizon. An absent/typeless file just yields no match ⇒ the
+// link is kept (fail-safe: never withdraw on missing evidence).
+const filingMaxByPersonType = new Map();
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   if (!isMatchableKey(companyNameKey(f.person))) continue;
   const fy = yr(f.year);
   if (!Number.isFinite(fy)) continue;
-  const fpid = personId(f.person, f.institution);
-  filingMaxByPerson.set(fpid, Math.max(filingMaxByPerson.get(fpid) ?? fy, fy));
+  const k = `${personId(f.person, f.institution)}|${f.template ?? ''}`;
+  filingMaxByPersonType.set(k, Math.max(filingMaxByPersonType.get(k) ?? fy, fy));
 }
 
 db.exec('BEGIN');
@@ -303,19 +303,6 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     const t = h.template || '—';
     familyMaterialByTemplate.set(t, (familyMaterialByTemplate.get(t) ?? 0) + 1);
   }
-  // E11 divestment horizon (per person+scope) — advance BEFORE resolution, over EVERY material ownership
-  // filing, not only winner-resolved ones. Most declared holdings are ordinary non-winner companies; if the
-  // horizon only advanced on resolved holdings, an official who divested a winner-stake and kept filing
-  // (listing only non-winner companies) would never advance it, so the stale winner link would keep
-  // asserting a CURRENT stake — a false present-tense claim. `divested` below compares each link's own last
-  // year against this scope-wide horizon, so it must see the official's latest filing regardless of match.
-  if (material) {
-    const hy = yr(h.year);
-    if (Number.isFinite(hy)) {
-      const sk = `${pid}|${scope}`;
-      ownMaxByScope.set(sk, Math.max(ownMaxByScope.get(sk) ?? hy, hy));
-    }
-  }
   // resolve (clean name → declared ЕИК → extracted-from-prose name)
   const res = resolveEntity(h.entity);
   if (!res || res.ambiguous) {
@@ -340,6 +327,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         hasMaterialOwn: false,
         declYears: new Set(),
         ownYears: new Set(),
+        templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
         seats: new Set(),
         institutions: new Set(),
         method: res.method,
@@ -347,14 +335,14 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
       .get(gid);
   if (METHOD_RANK[res.method] > METHOD_RANK[rec.method]) rec.method = res.method; // strongest evidence wins
   rec.kinds.add(h.kind);
+  if (h.template) rec.templates.add(h.template);
   const y = yr(h.year);
   if (Number.isFinite(y)) rec.declYears.add(y);
-  // Per-company material ownership years (this resolved winner only) — `recOwnMax` below dates the link to
-  // its last declaration. The per-scope horizon (ownMaxByScope) is advanced above, before resolution, so it
-  // spans ALL material filings; comparing the two is what detects divestment (§8/E11). Material-ownership
-  // only: management filing cadence is unverified (spec §6). A divest-to-ZERO (sell everything, file an
-  // empty declaration) is caught too (B1): filings.jsonl gives the person's latest-filing horizon, so a
-  // stake absent from a later even-empty filing is withdrawn — no longer a documented blind spot.
+  // Per-company material ownership years (this resolved winner only) — `recOwnMax` below dates the link to its
+  // last declaration, compared against the person's latest filing OF THE SAME declaration type(s) to detect
+  // divestment (§8/E11). Material-ownership only: management filing cadence is unverified (spec §6). A
+  // divest-to-ZERO (sell everything, file an empty same-type declaration) is caught too (B1): filings.jsonl
+  // carries a record per declaration, so a stake absent from a later even-empty type-T filing is withdrawn.
   if (material) {
     rec.hasMaterialOwn = true;
     if (Number.isFinite(y)) rec.ownYears.add(y);
@@ -516,13 +504,17 @@ for (const rec of agg.values()) {
   // ended → 'withdrawn' (excluded from the published surface, like held/suppressed). Ownership relations
   // (self owns/owns+manages, family related), compared against material-ownership years for that scope.
   const recOwnMax = rec.ownYears.size ? Math.max(...rec.ownYears) : null;
-  // Divestment horizon = the later of (a) the per-scope material-ownership max and (b) the person's
-  // latest-filing year (B1). (b) is what catches a divest-to-ZERO: selling everything and filing an empty
-  // declaration advances the filing horizon past the stake's last year, so the stale link is withdrawn
-  // instead of asserting a stake the person no longer holds. filings ⊇ ownership, so max() is safe.
-  const scopeOwnMax = ownMaxByScope.get(`${rec.pid}|${rec.scope}`) ?? null;
-  const filingMax = filingMaxByPerson.get(rec.pid) ?? null;
-  const horizon = Math.max(scopeOwnMax ?? -Infinity, filingMax ?? -Infinity);
+  // Divestment horizon = the person's latest filing year AMONG the declaration type(s) this stake was declared
+  // under (rec.templates). A later filing of a different type is ignored: for a holder who declares a company
+  // only in the interests declaration, a subsequent asset-only declaration carries no company section, so its
+  // silence is not evidence of a sale — counting it would withdraw a TRUE link (#226, Todor B1). Same-type
+  // filings (incl. empty ones) still advance it, so a divest-to-ZERO is caught. No same-type later filing ⇒
+  // horizon stays at/under recOwnMax ⇒ the link is kept (fail-safe on missing evidence).
+  let horizon = -Infinity;
+  for (const t of rec.templates) {
+    const fm = filingMaxByPersonType.get(`${rec.pid}|${t}`);
+    if (fm != null) horizon = Math.max(horizon, fm);
+  }
   const divested =
     (relation === 'owns' || relation === 'owns+manages' || relation === 'related') &&
     recOwnMax != null &&

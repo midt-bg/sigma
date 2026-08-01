@@ -1,9 +1,10 @@
-// Regression: the E11 divestment horizon must advance on EVERY material ownership filing, not only the ones
-// that resolve to a contract winner. Most declared holdings are ordinary (non-winner) companies; if the
-// horizon only advanced on winner-resolved holdings, an official who divested a winner-stake and then kept
-// filing — listing only non-winner companies — would never advance the horizon, so the stale winner link
-// would keep asserting a CURRENT stake (a false, libel-adjacent present-tense claim). load.test.mjs already
-// covers the winner→winner case (Николай ДИВЕСТ 1→2, both winners); this covers the winner→NON-winner gap.
+// Regression: the E11 divestment horizon must advance on EVERY later declaration OF THE SAME TYPE, not only
+// the ones that resolve to a contract winner. Most declared holdings are ordinary (non-winner) companies; a
+// later declaration listing only non-winner companies still writes a filing record (extract.mjs emits one per
+// declaration), so the per-(person,type) filing horizon advances and the stale winner link is withdrawn — it
+// must not keep asserting a CURRENT stake (a false, libel-adjacent present-tense claim). The horizon is
+// per-declaration-type (#226): a later same-type filing counts; a different-type one does not. load.test.mjs
+// covers winner→winner (Николай) and the cross-type keep (Интер); this covers the winner→NON-winner gap.
 // Run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/load-divestment-nonwinner.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -113,6 +114,21 @@ before(() => {
     holdings.map((h) => JSON.stringify(h)).join('\n') + '\n',
   );
   fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
+  // filings.jsonl — one record per declaration (as extract.mjs emits it), carrying the declaration type. The
+  // divest horizon is built from this: Диан's 2022 assets declaration (listing only the non-winner) advances
+  // his assets horizon to 2022 → the 2019 ДИВ ТЕХ 5 winner stake is withdrawn. Верен has only a 2019 filing.
+  const filings = holdings.map((h) => ({
+    folder: h.folder,
+    xmlFile: h.xmlFile,
+    year: h.year,
+    template: h.template,
+    person: h.person,
+    institution: h.institution,
+  }));
+  fs.writeFileSync(
+    path.join(STAGING, 'filings.jsonl'),
+    filings.map((f) => JSON.stringify(f)).join('\n') + '\n',
+  );
 });
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));

@@ -90,6 +90,10 @@ before(() => {
     -- attributed without risking a homonym merge → forms NO link.
     INSERT INTO bidders VALUES ('eik:141414141','БЕЗИНСТ ТЕХ 6 ЕООД','141414141',1,'София');
     INSERT INTO contracts VALUES ('c13','t1','eik:141414141','2023-05-01',80000);
+    -- #226 cross-type divest: Интер owns ИНТЕР ТЕХ 8 (distinctive → tier B) declared ONLY in an INTERESTS
+    -- declaration (2020). His later 2023 ASSET declaration lists no company → must NOT withdraw this stake.
+    INSERT INTO bidders VALUES ('eik:161616163','ИНТЕР ТЕХ 8 ЕООД','161616163',1,'София');
+    INSERT INTO contracts VALUES ('c14','t1','eik:161616163','2020-05-01',120000);
   `);
   db.close();
 
@@ -415,6 +419,26 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H18',
     },
+    // #226 cross-type divest: Интер's ONLY declaration of ИНТЕР ТЕХ 8 is this INTERESTS filing (2020). A later
+    // ASSET filing (pushed into filings.jsonl below, no holdings row) must NOT withdraw it — no later INTERESTS
+    // filing omits the company. Under a per-person horizon this wrongly reads as divested; per-type keeps it.
+    {
+      folder: '2021',
+      xmlFile: 'INT.xml',
+      year: '2020',
+      template: 'interests',
+      category: '',
+      institution: 'INT',
+      person: 'Интер Тестов',
+      position: '',
+      entity: 'ИНТЕР ТЕХ 8 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H19',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -428,6 +452,7 @@ before(() => {
     folder: h.folder,
     xmlFile: h.xmlFile,
     year: h.year,
+    template: h.template, // divest horizon is per declaration type (#226)
     person: h.person,
     institution: h.institution,
   }));
@@ -435,8 +460,21 @@ before(() => {
     folder: '2023',
     xmlFile: 'ZE1.xml',
     year: '2023',
+    template: 'assets', // Пълен's later EMPTY ASSET filing — same type as his 2019 asset stake ⇒ divests it
     person: 'Пълен Дивестов',
     institution: 'T2',
+  });
+  // #226 (Todor B1) cross-type: Интер declares his stake ONLY in an INTERESTS declaration (2020); his later
+  // 2023 filing is an ASSET declaration that (for him) lists no company at all. A per-person horizon would
+  // read that asset-declaration silence as a sale and WITHDRAW a true stake. A per-TYPE horizon must not: no
+  // later INTERESTS filing omits the company, so the link stays published.
+  filings.push({
+    folder: '2024',
+    xmlFile: 'INTA.xml',
+    year: '2023',
+    template: 'assets',
+    person: 'Интер Тестов',
+    institution: 'INT',
   });
   fs.writeFileSync(
     path.join(STAGING, 'filings.jsonl'),
@@ -584,6 +622,15 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(divZero.last_declared_year, '2019'); // dated to its last declaration, never asserted current
   assert.equal(divZero.status, 'withdrawn'); // caught by the empty later filing (B1)
 
+  // #226 (Todor B1) PER-TYPE horizon: Интер declared ИНТЕР ТЕХ 8 only in an INTERESTS declaration (2020) and
+  // later filed only an ASSET declaration (2023) that, for him, lists no company. A per-person horizon reads
+  // that asset-declaration silence as a sale and WITHDRAWS the stake; the per-type horizon must not — no later
+  // INTERESTS filing omits the company. This link must stay PUBLISHED. (Guards against dropping a true link:
+  // 13% of holders declare a stake only in the interests declaration.)
+  const crossType = link('161616163', 'Интер Тестов');
+  assert.equal(crossType.interest_class, 'private_ownership');
+  assert.equal(crossType.status, 'published'); // NOT withdrawn — the later asset filing is a different type
+
   // B4 UNKNOWN holder: an ambiguous holder cell forms NO link at all (counted nowhere) — it must never
   // reach the leaderboard, self or family (ADR-0032). Двусмислен gets no interest_link.
   assert.equal(link('111111119', 'Двусмислен Тестов'), undefined);
@@ -642,13 +689,13 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 13 links: 11 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
-  // 'withdrawn') + 1 family + Канонов's canonicalized single link; Мария (quarantined), Акционер
-  // (securities), Двусмислен (unknown holder) & Безинст (empty institution) form none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 13);
-  // 16 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст and
+  // 14 links: 12 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 'withdrawn' + Интер's per-type-kept published link) + 1 family + Канонов's canonicalized single link;
+  // Мария (quarantined), Акционер (securities), Двусмислен (unknown holder) & Безинст (empty institution) none.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 14);
+  // 17 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст and
   // zero-contract Нула; Канонов's two institution-variant filings fold to ONE person.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 16);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 17);
   db.close();
 });
 
