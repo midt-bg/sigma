@@ -80,7 +80,7 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   const ok = {
     remote: true,
     shipEnv: 'production',
-    d1Name: 'sigma',
+    d1Name: 'sigma-blue',
     expectedId: ID,
     resolvedId: ID,
   };
@@ -110,9 +110,15 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
     () => assertD1TargetAuthorized({ ...ok, d1Name: 'sigma-stage', resolvedId: ID }),
     /not an allowed target for SIGMA_SHIP_ENV='production'/,
   );
-  // THE MIRROR CASE: a production D1 name under a non-production declared env → refuse (meant dev, wiped prod).
+  // THE MIRROR CASE (#226): BOTH real prod blue-green slots under a non-production declared env → refuse (meant
+  // dev, wiped prod). Regression guard — a stale PRODUCTION_SLOTS previously omitted `sigma-blue`, so naming the
+  // real prod slot from a dev run slipped past this denylist, collapsing two defenses (name + id) to one.
   assert.throws(
-    () => assertD1TargetAuthorized({ ...ok, shipEnv: 'dev', d1Name: 'sigma' }),
+    () => assertD1TargetAuthorized({ ...ok, shipEnv: 'dev', d1Name: 'sigma-blue' }),
+    /is a PRODUCTION slot but SIGMA_SHIP_ENV='dev'/,
+  );
+  assert.throws(
+    () => assertD1TargetAuthorized({ ...ok, shipEnv: 'dev', d1Name: 'sigma-green' }),
     /is a PRODUCTION slot but SIGMA_SHIP_ENV='dev'/,
   );
   // no expected id → cannot verify → refuse.
@@ -134,7 +140,9 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   assert.doesNotThrow(() =>
     assertD1TargetAuthorized({ ...ok, shipEnv: 'staging', d1Name: 'sigma-stage' }),
   );
-  assert.ok(SHIP_TARGETS.production.includes('sigma'));
+  assert.ok(SHIP_TARGETS.production.includes('sigma-blue'));
+  assert.ok(SHIP_TARGETS.production.includes('sigma-green'));
+  assert.ok(!SHIP_TARGETS.production.includes('sigma')); // there is no slot named `sigma` (#226)
 });
 
 test('assertShipFloor refuses to wipe the live surface below the floor (empty/partial staging)', () => {

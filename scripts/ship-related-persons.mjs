@@ -108,23 +108,26 @@ export function parseMinLinks(raw) {
 }
 
 /**
- * The D1 name to ship to. A --remote write MUST name its target explicitly: on a remote run an unset
- * SIGMA_D1_NAME falling back to the prod default 'sigma' silently wipes+reloads PRODUCTION (this path
- * DELETEs every свързани-лица table before re-inserting). --local carries no such blast radius, so it
- * keeps the 'sigma' default. Pure — unit-tested.
+ * The D1 name to ship to. A --remote write MUST name its target explicitly: this path DELETEs every
+ * свързани-лица table before re-inserting, so a silent fallback on a remote run is unacceptable — an unset
+ * SIGMA_D1_NAME must fail closed, not guess. (The real prod slots are `sigma-blue`/`sigma-green`; there is no
+ * slot named `sigma` — see PRODUCTION_SLOTS.) --local carries no durable blast radius, so it keeps a bare
+ * `sigma` local default for the on-disk dev DB. Pure — unit-tested.
  */
 export function resolveD1Name({ remote, envName }) {
   if (remote && !envName)
     throw new Error(
-      "SIGMA_D1_NAME must be set for a --remote ship — refusing the production default 'sigma', which " +
-        "would wipe+reload prod. Set it to the target environment's D1 name.",
+      'SIGMA_D1_NAME must be set for a --remote ship — refusing to guess a wipe target. Set it to the ' +
+        "target environment's D1 name (production: sigma-blue | sigma-green).",
     );
   return envName || 'sigma';
 }
 
-// The blue-green PRODUCTION D1 slots (deploy.md „Blue/green слотове"): the stable slot `sigma` and its partner
-// `sigma-green`. Fixed HERE, in the repo — the wipe-prod footgun the authorization check guards against.
-export const PRODUCTION_SLOTS = ['sigma', 'sigma-green'];
+// The blue-green PRODUCTION D1 slots (deploy.md „production" row): `sigma-blue` and `sigma-green`. There is no
+// slot named `sigma` — the pointer (SIGMA_D1_ID) moves between these two; the name is cosmetic. Fixed HERE, in
+// the repo — the wipe-prod footgun the authorization check guards against (todorkolev #226: a stale value here
+// let `sigma-blue`, the real prod slot, slip past the non-production denylist in 2b below).
+export const PRODUCTION_SLOTS = ['sigma-blue', 'sigma-green'];
 
 /**
  * Version-controlled ship-target policy by ENVIRONMENT (T48, todorkolev #226). production pins its exact
