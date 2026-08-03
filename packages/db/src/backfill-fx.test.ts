@@ -22,6 +22,12 @@ const flowIdxSql = readFileSync(
   resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql'),
   'utf8',
 );
+// refresh-slice.sql reads contracts.current_value_currency (migration 0002) — the served DB the
+// backfill runs against has it applied, so the fixture must too.
+const cvCurrencySql = readFileSync(
+  resolve(root, 'packages/db/migrations/0002_current_value_currency.sql'),
+  'utf8',
+);
 const stagingSql = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const refreshSliceSql = readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8');
 
@@ -43,6 +49,7 @@ interface Contract {
   estimate?: number;
   estCcy?: string;
   current?: number;
+  annexCcy?: string;
 }
 
 // One tender + one contract per row; SUSP/REV exercise the flag re-classification the bug window
@@ -95,11 +102,23 @@ const CORPUS: Contract[] = [
     estCcy: 'USD',
     current: 500000,
   },
+  // Euro-annex on a FOREIGN contract: USD signing, EUR-denominated annex → current_value_currency
+  // = 'EUR' ≠ contract currency. Probes the euro-annex trap (#245): the derive converts
+  // current_value at par (EUR), NOT via the USD signing rate.
+  {
+    unp: 'UNP-EURANX',
+    num: 'C-USD-EURANX',
+    value: 40000,
+    ccy: 'USD',
+    current: 45000,
+    annexCcy: 'EUR',
+  },
 ];
 
 function seedCorpus(db: DatabaseSync): void {
   db.exec(initSql);
   db.exec(flowIdxSql);
+  db.exec(cvCurrencySql);
   db.exec(stagingSql);
   for (const c of CORPUS) {
     db.prepare(
@@ -143,7 +162,7 @@ function seedCorpus(db: DatabaseSync): void {
       c.value,
       c.current,
       c.current - c.value,
-      c.ccy,
+      c.annexCcy ?? c.ccy,
     );
   }
 }
@@ -233,6 +252,10 @@ const ROLLUP_QUERIES = {
   search_index:
     "SELECT kind, ref, title, ident, amount FROM search_index WHERE kind IN ('contract','company','authority') ORDER BY kind, ref",
   data_freshness: 'SELECT source, as_of, rows FROM data_freshness ORDER BY source',
+  // cohort-stats (full-rebuild percentiles over priced 'ok' rows) — the backfill must refresh it
+  // after repair, so the equivalence must cover it.
+  cpv_division_stats:
+    'SELECT division, priced_contracts, p25_eur, median_eur, p75_eur, p90_eur, p95_eur, p99_eur FROM cpv_division_stats ORDER BY division',
 };
 
 describe('legacy-NULL FX damage (bug-window derive)', () => {
@@ -240,7 +263,7 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
     const db = damagedDb();
     const rows = db
       .prepare(
-        "SELECT contract_number, value_flag, amount_eur FROM contracts WHERE currency NOT IN ('BGN','EUR') ORDER BY contract_number",
+        "SELECT contract_number, value_flag, amount_eur FROM contracts WHERE currency NOT IN ('BGN','EUR') AND amount_eur IS NULL ORDER BY contract_number",
       )
       .all() as { contract_number: string; value_flag: string; amount_eur: number | null }[];
     expect(rows).toHaveLength(6);
@@ -263,6 +286,17 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
       expect(r.value_flag).toBe('ok');
       expect(r.amount_eur).not.toBeNull();
     }
+    // The euro-annex damage class: a foreign contract whose headline value is a EUR-denominated
+    // annex has amount_eur populated AT PAR (so amount_eur IS NULL misses it), yet still carries
+    // NULL fx_rate / signing_value_eur — caught only by the fx_rate-IS-NULL predicate.
+    const eur = db
+      .prepare(
+        "SELECT amount_eur, fx_rate, signing_value_eur FROM contracts WHERE contract_number = 'C-USD-EURANX'",
+      )
+      .get() as { amount_eur: number; fx_rate: number | null; signing_value_eur: number | null };
+    expect(eur.amount_eur).toBe(45000);
+    expect(eur.fx_rate).toBeNull();
+    expect(eur.signing_value_eur).toBeNull();
   });
 
   it('ground truth: the same corpus derived with rates prices and flags correctly', () => {
@@ -287,6 +321,8 @@ describe('legacy-NULL FX damage (bug-window derive)', () => {
     expect(flag('C-BGN-SUSP').amount_eur).toBeCloseTo(2000 * USD_RATE, 6);
     expect(flag('C-USD-ANNEXSUSP').value_flag).toBe('value_suspect');
     expect(flag('C-USD-ANNEXSUSP').amount_eur).toBeCloseTo(2000 * USD_RATE, 6);
+    // Euro-annex: current_value (45000 EUR) converts at par, NOT via the USD signing rate.
+    expect(flag('C-USD-EURANX')).toEqual({ value_flag: 'ok', amount_eur: 45000 });
   });
 });
 
@@ -294,8 +330,8 @@ describe('backfillFx', () => {
   it('reports the damage before repairing', () => {
     const db = damagedDb();
     const report = reportFxDamage(runnerFor(db));
-    expect(report.total).toBe(6);
-    expect(report.byCurrency).toEqual({ CHF: 1, USD: 5 });
+    expect(report.total).toBe(7);
+    expect(report.byCurrency).toEqual({ CHF: 1, USD: 6 });
     // The three flag-only candidates (USD tender estimates, no rate loaded) are unverifiable
     // offline — surfaced instead of silently ignored.
     expect(report.flagUnverified).toBe(3);
@@ -307,7 +343,7 @@ describe('backfillFx', () => {
     const db = damagedDb();
 
     const summary = await backfill(db);
-    expect(summary.repaired).toBe(5);
+    expect(summary.repaired).toBe(6);
     expect(summary.reflagged).toBe(3);
     expect(summary.remaining.map((r) => r.currency)).toEqual(['CHF']);
 

@@ -36,11 +36,23 @@ const PEG = 1.95583;
 const stripControls = (s) => String(s).replace(/[\x00-\x1F]/g, '');
 const sqlStr = (s) => (s == null ? 'NULL' : `'${stripControls(s).replace(/'/g, "''")}'`);
 
-// The damage predicate — same shape as import.mjs's assertFxPopulated: foreign currency, no EUR
-// amount, and not value_suspect (those are repaired from the procedure estimate, not FX).
+// The damage predicate: a foreign-currency contract with no fx_rate is one the cron bug window left
+// un-priced. `fx_rate IS NULL` is the ROOT cause; `amount_eur IS NULL` was only its most visible
+// symptom — a foreign contract whose headline value is a EUR-denominated annex has amount_eur
+// populated at par yet still carries NULL fx_rate / signing_value_eur (the euro-annex case, #245),
+// and must be repaired too. value_suspect rows are repaired from the procedure estimate, not FX.
 const damage = (p = '') =>
-  `${p}currency NOT IN ('BGN','EUR') AND ${p}amount_eur IS NULL AND ${p}value_flag <> 'value_suspect'`;
+  `${p}currency NOT IN ('BGN','EUR') AND ${p}fx_rate IS NULL AND ${p}value_flag <> 'value_suspect'`;
 const DAMAGE = damage();
+
+// A damaged row the loaded rates can actually price: a fx_rate exists for its currency within the
+// lookback of its signing date. Distinguishes repairable (rate loaded) from ECB-unpriceable (CHF).
+const PRICEABLE = `EXISTS (
+    SELECT 1 FROM fx_rates f
+    WHERE f.base_currency = contracts.currency
+      AND f.rate_date <= contracts.signed_at
+      AND f.rate_date >= date(contracts.signed_at, '-${FX_LOOKBACK_DAYS} days')
+  )`;
 
 // Latest usable rate for `ccyExpr` at `dateExpr` — keep in sync with the fx_rate subqueries in
 // scripts/refresh-slice.sql (same bounds, FX_LOOKBACK_DAYS carry-forward).
@@ -62,16 +74,36 @@ const procEstEur = `(SELECT CASE
 
 const procEstNative = `(SELECT t.estimated_value FROM tenders t WHERE t.id = contracts.tender_id)`;
 
-// The derive's own effective value (COALESCE(current, signing) in EUR — refresh-slice.sql's
-// eff_eur), NOT amount × fx_rate: for annex_suspect rows the served amount is the signing-side
-// fallback while eff is current-based, and for BGN/EUR rows fx_rate is NULL.
+// The contract's own signing-date rate. current_value may be denominated in a DIFFERENT currency
+// than the contract (current_value_currency, migration 0002 — e.g. a 2026 EUR annex on a foreign
+// contract), but the derive still converts the foreign branch at the CONTRACT's rate, switching
+// only the EUR/BGN par/peg branches by the value's own currency. Keep this ladder byte-identical to
+// refresh-slice.sql's amount_eur / current_value_eur / signing_value_eur / eff_eur CASEs (#245).
+const contractRate = rateAt('contracts.signed_at', `NULLIF(contracts.currency, '')`);
+const contractCurrency = `COALESCE(NULLIF(contracts.currency, ''), 'BGN')`;
+const cvCurrency = `COALESCE(NULLIF(contracts.current_value_currency, ''), NULLIF(contracts.currency, ''), 'BGN')`;
+const toEur = (nativeExpr, ccyExpr) => `CASE
+    WHEN ${ccyExpr} = 'EUR' THEN ${nativeExpr}
+    WHEN ${ccyExpr} = 'BGN' THEN ${nativeExpr} / ${PEG}
+    WHEN ${contractRate} IS NOT NULL THEN ${nativeExpr} * ${contractRate}
+    ELSE NULL
+  END`;
+
+// The currency of the trusted (headline) native value — current_value's currency when present,
+// else the contract's; annex_suspect trusts the signing side instead. Mirrors refresh-slice.sql's
+// trusted_currency. Evaluated AFTER step 3 reclassifies value_flag.
+const trustedCurrency = `CASE
+    WHEN contracts.value_flag = 'annex_suspect' THEN
+      CASE WHEN contracts.signing_value IS NOT NULL THEN ${contractCurrency} ELSE ${cvCurrency} END
+    ELSE
+      CASE WHEN contracts.current_value IS NOT NULL THEN ${cvCurrency} ELSE ${contractCurrency} END
+  END`;
+
+// The derive's effective value in EUR (refresh-slice.sql's eff_eur): current_value at its own
+// currency when present, else signing_value at the contract currency.
 const EFF = `(CASE
-    WHEN COALESCE(NULLIF(contracts.currency, ''), 'BGN') = 'EUR'
-      THEN COALESCE(contracts.current_value, contracts.signing_value)
-    WHEN COALESCE(NULLIF(contracts.currency, ''), 'BGN') = 'BGN'
-      THEN COALESCE(contracts.current_value, contracts.signing_value) / ${PEG}
-    ELSE COALESCE(contracts.current_value, contracts.signing_value)
-      * ${rateAt('contracts.signed_at', `NULLIF(contracts.currency, '')`)}
+    WHEN contracts.current_value IS NOT NULL THEN ${toEur('contracts.current_value', cvCurrency)}
+    ELSE ${toEur('contracts.signing_value', contractCurrency)}
   END)`;
 
 // The fx-dependent part of the derive's value_flag CASE (same precedence: value_suspect wins over
@@ -223,40 +255,44 @@ function repairRowsSql() {
        current_value_eur = NULL
      WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag = 'value_suspect';`,
 
-    // Remaining FOREIGN rows: the stored amount is already the flag-consistent native value
-    // (display_native), so amount × fx_rate is the derive's own identity (see the contracts
-    // schema comment on fx_rate). annex_suspect keeps current_value_eur suppressed. BGN/EUR
-    // rows in the touched set were flag-only repairs — their EUR columns are already correct
-    // and fx_rate is NULL, so they must never take this arithmetic.
+    // Remaining rows: recompute the EUR columns from the served native values via the derive's own
+    // per-value currency ladder (toEur). amount == display_native == trusted_native for these rows,
+    // so amount_eur converts at trusted_currency; current_value at its own currency (the euro-annex
+    // case, #245); signing at the contract currency. BGN/EUR rows converge to par/peg and any
+    // flag-only BGN/EUR repair recomputes to its existing (correct) value — idempotent.
     `UPDATE contracts SET
-       amount_eur = amount * fx_rate,
-       signing_value_eur = CASE WHEN signing_value IS NULL THEN NULL ELSE signing_value * fx_rate END,
-       current_value_eur = CASE WHEN value_flag = 'annex_suspect' OR current_value IS NULL THEN NULL ELSE current_value * fx_rate END
-     WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag <> 'value_suspect'
-       AND COALESCE(NULLIF(currency, ''), 'BGN') NOT IN ('BGN','EUR');`,
+       amount_eur = ${toEur('contracts.amount', trustedCurrency)},
+       signing_value_eur = CASE WHEN contracts.signing_value IS NULL THEN NULL
+         ELSE ${toEur('contracts.signing_value', contractCurrency)} END,
+       current_value_eur = CASE WHEN contracts.value_flag = 'annex_suspect' OR contracts.current_value IS NULL THEN NULL
+         ELSE ${toEur('contracts.current_value', cvCurrency)} END
+     WHERE id IN (SELECT id FROM refresh_touched_contracts) AND value_flag <> 'value_suspect';`,
   ].join('\n');
 }
 
 export function repairSql() {
   return [
-    // 1. Price the damaged rows at their signing-date rate (NULL when no usable rate exists).
-    `UPDATE contracts SET fx_rate = ${rateAt('contracts.signed_at', 'contracts.currency')}
-     WHERE ${DAMAGE} AND signed_at IS NOT NULL;`,
-
-    // 2. Capture every row that can actually be repaired — the priced damage set AND the
-    //    flag-only candidates whose recomputed flag differs — plus their entities, for the
-    //    rollup refresh (refresh-slice.sql's own touched-table mechanism, see its setup batch).
+    // 1. Capture every row we will repair — the PRICEABLE damage set (a rate now exists for its
+    //    currency+date) AND the flag-only candidates whose recomputed flag differs — plus their
+    //    entities, for the rollup refresh (refresh-slice.sql's own touched-table mechanism, see its
+    //    setup batch). Captured BEFORE step 2 sets fx_rate, since the damage predicate keys on
+    //    fx_rate IS NULL. ECB-unpriceable rows (no rate) are excluded and stay in `remaining`.
     `DROP TABLE IF EXISTS refresh_touched_contracts;`,
     `DROP TABLE IF EXISTS refresh_touched_bidders;`,
     `DROP TABLE IF EXISTS refresh_touched_authorities;`,
     `CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);`,
     `CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);`,
     `CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);`,
-    `INSERT INTO refresh_touched_contracts SELECT id FROM contracts WHERE ${DAMAGE} AND fx_rate IS NOT NULL;`,
+    `INSERT INTO refresh_touched_contracts SELECT id FROM contracts WHERE ${DAMAGE} AND signed_at IS NOT NULL AND ${PRICEABLE};`,
     `INSERT OR IGNORE INTO refresh_touched_contracts
        SELECT id FROM contracts WHERE ${FLAG_CANDIDATE} AND (${NEW_FLAG}) <> contracts.value_flag;`,
     `INSERT INTO refresh_touched_bidders SELECT DISTINCT bidder_id FROM contracts WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
     `INSERT INTO refresh_touched_authorities SELECT DISTINCT t.authority_id FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.id IN (SELECT id FROM refresh_touched_contracts);`,
+
+    // 2. Price the touched foreign rows at their signing-date rate.
+    `UPDATE contracts SET fx_rate = ${rateAt('contracts.signed_at', 'contracts.currency')}
+     WHERE id IN (SELECT id FROM refresh_touched_contracts)
+       AND COALESCE(NULLIF(currency, ''), 'BGN') NOT IN ('BGN','EUR');`,
 
     // 3–5. The row repair itself (also runs standalone when resuming an interrupted run).
     repairRowsSql(),

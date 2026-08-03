@@ -60,6 +60,7 @@ export const REFRESH_SLICE_ROLLUP_GROUPS = [
   'entity-search-index',
   'contract-search-index',
   'globals',
+  'cohort-stats',
   'cleanup',
 ] as const;
 
