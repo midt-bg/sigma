@@ -3,7 +3,15 @@
 // both route through scripts/load-eop.mjs; only the date window and derive mode differ.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.ts';
@@ -221,7 +229,7 @@ function validateDeriveMode(mode) {
     throw new Error(`unknown --derive=${mode}; expected full|slice`);
 }
 
-function runFullDerive() {
+async function runFullDerive() {
   execSql(resolve(root, 'scripts/derive-amendments.sql'));
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
@@ -230,17 +238,17 @@ function runFullDerive() {
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
-  assertIntegrity(d1, { label: 'full derive (D1)' });
+  await assertIntegrity(d1, { label: 'full derive (D1)' });
   reportAnomalies(d1, 'full derive (D1)');
 }
 
-function runSliceDerive() {
+async function runSliceDerive() {
   execSql(resolve(root, 'scripts/derive-amendments.sql'));
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
-  assertIntegrity(d1, { label: 'slice derive (D1)' });
+  await assertIntegrity(d1, { label: 'slice derive (D1)' });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
@@ -261,7 +269,7 @@ function runRefreshSliceBatches() {
   }
 }
 
-function runWorkBackfill() {
+async function runWorkBackfill() {
   const rawWorkDb = arg('work-db');
   const workDb =
     rawWorkDb === true
@@ -272,7 +280,11 @@ function runWorkBackfill() {
   if (existsSync(workDb)) rmSync(workDb, { force: true });
   console.log(`==> Sigma import (work DB ${workDb})`);
 
-  sqliteFile(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+  const migrationsDir = resolve(root, 'packages/db/migrations');
+  const migrations = readdirSync(migrationsDir)
+    .filter((name) => /^\d+.*\.sql$/.test(name))
+    .sort();
+  for (const migration of migrations) sqliteFile(workDb, resolve(migrationsDir, migration));
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
   let loadFlags = explicitRangeFlags();
@@ -310,7 +322,7 @@ function runWorkBackfill() {
   // Rollup checks self-skip here: the work DB's rollups are built later by precompute on the served
   // D1 (ship-domain.mjs), which runs its own assertIntegrity. This validates the work DB's
   // contract-level invariants and the staging→domain reconciliation before shipping.
-  assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
+  await assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
 
   const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
   if (remote) shipArgs.push('--remote', '--yes');
@@ -351,7 +363,7 @@ if (reset) {
 }
 
 if (arg('work-db') !== undefined) {
-  runWorkBackfill();
+  await runWorkBackfill();
   process.exit(0);
 }
 
@@ -373,8 +385,8 @@ if (catchup) {
 validateDeriveMode(deriveMode);
 
 run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
-if (deriveMode === 'slice') runSliceDerive();
-else runFullDerive();
+if (deriveMode === 'slice') await runSliceDerive();
+else await runFullDerive();
 execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
 
 console.log('\n==> import complete.');

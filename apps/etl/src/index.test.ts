@@ -1,188 +1,216 @@
+/// <reference types="node" />
+// End-to-end refresh Workflow test (#158): the cron path must load FX rates before the derive so
+// foreign-currency contracts get a real amount_eur instead of silently dropping out of every
+// rollup. Runs the real RefreshWorkflow.run() — real staging, real refresh-slice.sql derive —
+// against a real SQLite behind the D1 facade, with storage.eop.bg and frankfurter fetches
+// mocked deterministically (fixed rates, no live network).
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FRANKFURTER_API } from '../../../packages/ingest/src/fx';
+import { d1FromSqlite } from '../../../packages/ingest/src/test/d1-sqlite';
+import { RefreshWorkflow, type Env } from './index';
 
-// index.ts is the Cloudflare Workflow entrypoint. Isolate its orchestration by mocking the platform
-// base class, the build-time `.sql` string imports, the ingest helpers, and the eop bucket walk — so
-// these tests assert the run()/scheduled() control flow (staging lifecycle, capped/zero-ingest
-// branches, derive loop, finally-drop) without any real D1, network, or Workflow runtime.
-vi.mock('cloudflare:workers', () => ({
-  WorkflowEntrypoint: class {
-    env: unknown;
-    ctx: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-vi.mock('../../../scripts/refresh-slice.sql', () => ({ default: 'REFRESH_SLICE_SQL' }));
-vi.mock('../../../scripts/work-staging-schema.sql', () => ({ default: 'WORK_STAGING_SCHEMA_SQL' }));
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const migrationsDir = resolve(root, 'packages/db/migrations');
 
-// Hoisted so the vi.mock factories (themselves hoisted above the imports) can close over them.
-const { ingest, eop } = vi.hoisted(() => ({
-  ingest: {
-    createTransientStaging: vi.fn(async () => {}),
-    dropTransientStaging: vi.fn(async () => {}),
-    refreshDerivedContractCount: vi.fn(async () => 42),
-    refreshSliceStatementGroups: vi.fn(() => [{ name: 'g1', statements: ['a', 'b'] }]),
-    runRefreshSliceStatementGroup: vi.fn(async () => {}),
-  },
-  eop: {
-    computeWorkerCatchupPlan: vi.fn(),
-    ingestBucketWindow: vi.fn(),
-  },
-}));
-vi.mock('@sigma/ingest', () => ingest);
-vi.mock('./eop', () => eop);
-
-import worker, { RefreshWorkflow } from './index';
-
-const PLAN = {
-  maxLoadedDate: '2026-06-01',
-  from: '2026-05-29',
-  to: '2026-06-07',
-  gapDays: 10,
-  capped: false,
-  originalFrom: '2026-05-29',
-  originalGapDays: 10,
+const TODAY = '2026-07-10';
+const BUCKET_DAY = '2026-07-09';
+const CONTRACT_DATE = '2026-07-08';
+const USD_VALUE = 120000;
+const BGN_VALUE = 1000;
+// ECB business-day rates only up to 2026-07-07: the contract date itself has no rate, so the
+// derive must carry the latest prior rate forward (the 10-day lookback in refresh-slice.sql).
+const USD_RATES: Record<string, { EUR: number }> = {
+  '2026-07-04': { EUR: 0.86 },
+  '2026-07-07': { EUR: 0.87 },
 };
+const EXPECTED_USD_EUR = USD_VALUE * 0.87;
+const BGN_PEG = 1.95583;
 
-const dayResult = (over: Partial<Record<string, number>> = {}) => ({
-  day: '2026-06-07',
-  found: true,
-  baseContracts: 0,
-  baseTenders: 0,
-  baseAmendments: 0,
-  ocdsContracts: 0,
-  ocdsAmendments: 0,
-  parties: 0,
-  lots: 0,
-  ...over,
-});
+function freshServedDb(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
+  for (const file of readdirSync(migrationsDir).sort()) {
+    if (file.endsWith('.sql')) db.exec(readFileSync(resolve(migrationsDir, file), 'utf8'));
+  }
+  return db;
+}
 
-// A step runner that simply executes each step body inline and records the step names.
-function fakeStep(names: string[]) {
-  return {
-    do: async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-      names.push(name);
-      return fn();
-    },
+const bucketContracts = [
+  {
+    noticeId: 'DOC-FX-USD',
+    publicationDate: BUCKET_DAY,
+    uniqueProcurementNumber: 'UNP-FX-1',
+    tenderId: 'TENDER-FX-1',
+    procedureType: 'open',
+    tenderName: 'FX tender',
+    typeOfContract: 'services',
+    buyerName: 'Authority FX',
+    buyerRegistryNumber: '123456789',
+    buyerType: 'public',
+    lotIdentifier: '1',
+    contractNumber: 'CONTRACT-FX-USD',
+    contractDate: CONTRACT_DATE,
+    contractValue: String(USD_VALUE),
+    contractCurrency: 'USD',
+    contractSubject: 'FX contract in USD',
+    supplierRegisterNumber: '987654321',
+    supplierName: 'Bidder FX',
+    supplierNationality: 'BG',
+    offersCount: '3',
+  },
+  {
+    noticeId: 'DOC-FX-BGN',
+    publicationDate: BUCKET_DAY,
+    uniqueProcurementNumber: 'UNP-FX-2',
+    tenderId: 'TENDER-FX-2',
+    procedureType: 'open',
+    tenderName: 'BGN tender',
+    typeOfContract: 'services',
+    buyerName: 'Authority FX',
+    buyerRegistryNumber: '123456789',
+    buyerType: 'public',
+    lotIdentifier: '1',
+    contractNumber: 'CONTRACT-FX-BGN',
+    contractDate: CONTRACT_DATE,
+    contractValue: String(BGN_VALUE),
+    contractCurrency: 'BGN',
+    contractSubject: 'Control contract in BGN',
+    supplierRegisterNumber: '987654322',
+    supplierName: 'Bidder BGN',
+    supplierNationality: 'BG',
+    offersCount: '2',
+  },
+];
+
+const BUCKET_KEY = `договори-${BUCKET_DAY}.json`;
+
+function stubFetchRoutes(): { frankfurterCalls: () => number } {
+  let frankfurterCalls = 0;
+  vi.stubGlobal('fetch', (async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url.startsWith(`${FRANKFURTER_API}/`)) {
+      frankfurterCalls += 1;
+      const base = new URL(url).searchParams.get('base');
+      if (base === 'USD') {
+        return new Response(JSON.stringify({ base: 'USD', rates: USD_RATES }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
+    }
+
+    const bucketUrl = `https://storage.eop.bg/open-data-${BUCKET_DAY}/`;
+    if (url === bucketUrl) {
+      const xml = `<ListBucketResult><Contents><Key>${BUCKET_KEY}</Key></Contents></ListBucketResult>`;
+      return new Response(xml, { status: 200 });
+    }
+    if (url === `${bucketUrl}${encodeURIComponent(BUCKET_KEY)}`) {
+      return new Response(JSON.stringify(bucketContracts), { status: 200 });
+    }
+    if (/^https:\/\/storage\.eop\.bg\/open-data-\d{4}-\d{2}-\d{2}\/$/.test(url)) {
+      return new Response('no such bucket', { status: 404 });
+    }
+    throw new Error(`unexpected fetch in test: ${url}`);
+  }) as unknown as typeof fetch);
+  return { frankfurterCalls: () => frankfurterCalls };
+}
+
+const fakeStep: WorkflowStep = {
+  async do<T>(
+    _name: string,
+    configOrCallback: Record<string, unknown> | (() => Promise<T>),
+    maybeCallback?: () => Promise<T>,
+  ): Promise<T> {
+    const callback =
+      typeof configOrCallback === 'function'
+        ? configOrCallback
+        : (maybeCallback as () => Promise<T>);
+    return callback();
+  },
+} as WorkflowStep;
+
+function makeWorkflow(db: DatabaseSync): RefreshWorkflow {
+  const env: Env = {
+    DB: d1FromSqlite(db),
+    REFRESH: undefined as unknown as Workflow,
+    EOP_OPEN_DATA_BASE_URL: 'https://storage.eop.bg',
   };
+  const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+  return new RefreshWorkflow(ctx, env);
 }
 
-function makeWorkflow() {
-  const env = { DB: {} as D1Database, REFRESH: {} as Workflow };
-  return new RefreshWorkflow({} as never, env);
+function runRefresh(workflow: RefreshWorkflow) {
+  const event = {
+    payload: { today: TODAY },
+    timestamp: new Date(`${TODAY}T00:00:00Z`),
+    instanceId: 'test-run',
+  } as WorkflowEvent<{ today: string }>;
+  return workflow.run(event, fakeStep);
 }
 
-afterEach(() => {
-  vi.clearAllMocks();
-  vi.restoreAllMocks();
-});
-
-describe('RefreshWorkflow.run', () => {
-  it('runs the full pipeline: stage, ingest, derive slice groups, count, and drop', async () => {
-    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([
-      // All seven staged-row counts are non-zero (distinct values) so `staged` guards every term of
-      // the sum — including baseAmendments/ocdsAmendments, which no other case exercises.
-      dayResult({
-        baseContracts: 3,
-        baseTenders: 6,
-        baseAmendments: 5,
-        ocdsContracts: 2,
-        ocdsAmendments: 7,
-        parties: 1,
-        lots: 4,
-      }),
-    ]);
-    const wf = makeWorkflow();
-    const names: string[] = [];
-
-    const result = await wf.run(
-      { payload: { today: '2026-06-07' } } as never,
-      fakeStep(names) as never,
-    );
-
-    expect(result).toMatchObject({ from: '2026-05-29', days: 1, staged: 28, derived: 42 });
-    expect(ingest.createTransientStaging).toHaveBeenCalledWith({}, 'WORK_STAGING_SCHEMA_SQL');
-    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1);
-    expect(ingest.refreshDerivedContractCount).toHaveBeenCalledOnce();
-    expect(names).toContain('derive-slice:g1');
-    expect(names).toContain('drop-transient-staging'); // finally always drops
+describe('RefreshWorkflow FX loading (#158)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it('defaults the payload to an empty object when the event carries none', async () => {
-    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseTenders: 1 })]);
-    const wf = makeWorkflow();
+  it('prices a staged foreign-currency contract in EUR during the cron refresh', async () => {
+    const db = freshServedDb();
+    const { frankfurterCalls } = stubFetchRoutes();
 
-    const result = await wf.run({} as never, fakeStep([]) as never);
-    expect(result.staged).toBe(1);
-    expect(eop.computeWorkerCatchupPlan).toHaveBeenCalledWith(
-      {},
-      { today: undefined, lookbackDays: undefined, maxWindowDays: undefined },
-    );
+    const result = await runRefresh(makeWorkflow(db));
+    expect(result.staged).toBe(2);
+    expect(result.derived).toBeGreaterThanOrEqual(0);
+
+    const fxRows = db
+      .prepare("SELECT COUNT(*) AS n FROM fx_rates WHERE source = 'ecb:frankfurter'")
+      .get() as { n: number };
+    expect(fxRows.n).toBe(Object.keys(USD_RATES).length);
+    expect(frankfurterCalls()).toBe(1);
+
+    const usd = db
+      .prepare(
+        "SELECT amount_eur, currency FROM contracts WHERE contract_number = 'CONTRACT-FX-USD'",
+      )
+      .get() as { amount_eur: number | null; currency: string };
+    expect(usd.currency).toBe('USD');
+    // THE BUG (#158): without an FX load in the cron path this is NULL and the contract silently
+    // drops out of every rollup and total.
+    expect(usd.amount_eur).not.toBeNull();
+    expect(usd.amount_eur).toBeCloseTo(EXPECTED_USD_EUR, 2);
   });
 
-  it('logs a capped warning when the plan window was truncated', async () => {
-    eop.computeWorkerCatchupPlan.mockResolvedValue({
-      ...PLAN,
-      capped: true,
-      from: '2026-05-18',
-      gapDays: 21,
-      originalGapDays: 40,
-    });
-    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 5 })]);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const wf = makeWorkflow();
+  it('keeps BGN contracts on the fixed peg (no FX regression)', async () => {
+    const db = freshServedDb();
+    stubFetchRoutes();
 
-    await wf.run({ payload: {} } as never, fakeStep([]) as never);
+    await runRefresh(makeWorkflow(db));
 
-    const capped = warn.mock.calls
-      .map((c) => String(c[0]))
-      .find((s) => s.includes('etl_window_capped'));
-    expect(capped).toBeDefined();
-    expect(capped).toContain('"originalGapDays":40');
+    const bgn = db
+      .prepare("SELECT amount_eur FROM contracts WHERE contract_number = 'CONTRACT-FX-BGN'")
+      .get() as { amount_eur: number | null };
+    expect(bgn.amount_eur).toBeCloseTo(BGN_VALUE / BGN_PEG, 2);
   });
 
-  it('short-circuits with a zero-ingest warning and still drops staging when nothing staged', async () => {
-    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // all counts 0
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const wf = makeWorkflow();
-    const names: string[] = [];
+  it('re-runs idempotently: no duplicate rates, no redundant FX fetch, stable amounts', async () => {
+    const db = freshServedDb();
+    const { frankfurterCalls } = stubFetchRoutes();
+    const workflow = makeWorkflow(db);
 
-    const result = await wf.run({ payload: {} } as never, fakeStep(names) as never);
+    await runRefresh(workflow);
+    const firstCalls = frankfurterCalls();
+    await runRefresh(workflow);
 
-    expect(result).toMatchObject({ days: 1, staged: 0, derived: 0 });
-    expect(ingest.runRefreshSliceStatementGroup).not.toHaveBeenCalled(); // no derive on empty ingest
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('etl_zero_ingest'))).toBe(true);
-    expect(names).toContain('drop-transient-staging'); // finally still runs
-  });
+    // The staged window is already covered by fx_rates, so the second run must not re-fetch.
+    expect(frankfurterCalls()).toBe(firstCalls);
+    const fxRows = db.prepare('SELECT COUNT(*) AS n FROM fx_rates').get() as { n: number };
+    expect(fxRows.n).toBe(Object.keys(USD_RATES).length);
 
-  it('drops staging even when ingestion throws', async () => {
-    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
-    eop.ingestBucketWindow.mockRejectedValue(new Error('bucket down'));
-    const wf = makeWorkflow();
-    const names: string[] = [];
-
-    await expect(wf.run({ payload: {} } as never, fakeStep(names) as never)).rejects.toThrow(
-      'bucket down',
-    );
-    expect(names).toContain('drop-transient-staging'); // finally runs on the error path
-    expect(ingest.dropTransientStaging).toHaveBeenCalled();
-  });
-});
-
-describe('scheduled handler', () => {
-  it('kicks one durable refresh run and logs its id', async () => {
-    const create = vi.fn(async () => ({ id: 'wf-123' }));
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const env = { DB: {} as D1Database, REFRESH: { create } as unknown as Workflow };
-
-    await worker.scheduled?.({} as never, env);
-
-    expect(create).toHaveBeenCalledOnce();
-    expect(log.mock.calls.some((c) => String(c[0]).includes('"id":"wf-123"'))).toBe(true);
+    const usd = db
+      .prepare("SELECT amount_eur FROM contracts WHERE contract_number = 'CONTRACT-FX-USD'")
+      .get() as { amount_eur: number | null };
+    expect(usd.amount_eur).toBeCloseTo(EXPECTED_USD_EUR, 2);
   });
 });

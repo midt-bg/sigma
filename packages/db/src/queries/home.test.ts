@@ -64,9 +64,11 @@ const totalsRow = {
 function fakeDb(
   totals: typeof totalsRow | null,
   singleOffer: { value_eur: number; contracts: number } | null = { value_eur: 50000, contracts: 1 },
+  capture?: string[],
 ): D1Database {
   return {
     prepare(sql: string) {
+      capture?.push(sql);
       return {
         bind() {
           return this;
@@ -121,6 +123,15 @@ describe('getHomeData', () => {
     expect(data.topMinistries[0]!.slug).toBe('000695089');
 
     expect(data.topMunicipalities).toHaveLength(1);
+  });
+
+  it('excludes the unknown identity bucket from top companies', async () => {
+    const sql: string[] = [];
+    await getHomeData(fakeDb(totalsRow, undefined, sql));
+
+    expect(sql.find((query) => query.includes('FROM company_totals'))).toContain(
+      "WHERE kind <> 'unknown'",
+    );
   });
 
   it('includes single-offer contract lists', async () => {

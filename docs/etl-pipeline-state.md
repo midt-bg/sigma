@@ -33,7 +33,7 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 
 **Записва директно в live (served) таблици — няма blue-green swap:**
 - contracts (DELETE стари `c:e:`/`c:o:` от прозореца → INSERT нови с `amount_eur`)
-- `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts` (DELETE + REPLACE на засегнатите rollup-и)
+- `authority_totals`, `company_totals`, `flow_pairs`, `home_totals`, `sector_totals`, `facet_counts`, `cpv_division_stats` (DELETE + REPLACE на засегнатите rollup-и)
 - `search_index`, `data_freshness`
 
 **Извиква се от:**
@@ -60,9 +60,7 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 6. `derive-slice:count`
 7. `drop-transient-staging` (в `finally`)
 
-❌ **Не вика `assertIntegrity`.** ❌ **Не вика `load-fx`.**
-
-➡️ Точно автономният път — този без надзор — няма нито reconciliation проверка, нито FX зареждане.
+✅ **Зарежда FX** — `load-fx` стъпка след ingest, преди derive групите (Worker-native, само реални дупки в покритието; виж `docs/adr/0029-worker-native-fx-load.md`). ❌ **Не вика `assertIntegrity`** — reconciliation гейтът пристига с #156 (ред: FX → derive → gate).
 
 ---
 
@@ -70,13 +68,13 @@ Scoped, идемпотентен дневен delta refresh. Заменя сам
 
 **Файл:** `scripts/load-fx.mjs`
 
-Тегли ECB референтни курсове от `frankfurter.app`, попълва таблицата `fx_rates`, използвана за конверсия на чужда валута → каноничен EUR по курса към датата на подписване.
+Тегли ECB референтни курсове от `frankfurter.dev`, попълва таблицата `fx_rates`, използвана за конверсия на чужда валута → каноничен EUR по курса към датата на подписване.
 
-- **Извиква се само от CLI:** `import.mjs` (`runFullDerive`, `runSliceDerive`) пуска `load-fx.mjs --apply` **преди** `normalize-raw.sql`.
-- **Cron пътят не я вика** — приема, че курсовете вече са заредени.
+- **CLI:** `import.mjs` (`runFullDerive`, `runSliceDerive`) пуска `load-fx.mjs --apply` **преди** `normalize-raw.sql`.
+- **Cron пътят** зарежда курсове Worker-native през споделената логика в `packages/ingest/src/fx.ts` — само реалните дупки в покритието, идемпотентно (`INSERT OR REPLACE`).
 - BGN не минава оттук — пегът 1.95583 е hardcode-нат в `normalize-raw.sql`.
 
-➡️ Договор в чужда валута, подписан след последния CLI backfill → `amount_eur = NULL` → изпада от всички суми, без флаг. (Изведено в #158.)
+➡️ Затворено с #263 (#158): cron-ът вече зарежда курсовете преди derive. Остатъчен случай: валута извън ECB/frankfurter остава `NULL`, но видимо — всеки run логва `etl_fx_uncovered`.
 
 ---
 
@@ -101,7 +99,7 @@ Gate-ът е вързан **само в operator скриптовете** (`impo
 | Rollup | Поведение | Глобална консистентност |
 |--------|-----------|--------------------------|
 | `company_totals`, `authority_totals` | **scoped** към touched множеството (`refresh-slice.sql:1262`) | зависи от touched множеството |
-| `home_totals`, `sector_totals`, `facet_counts`, `flow_pairs`, `data_freshness` | **full-recompute** всеки run | по конструкция ✅ |
+| `home_totals`, `sector_totals`, `facet_counts`, `flow_pairs`, `cpv_division_stats`, `data_freshness` | **full-recompute** всеки run | по конструкция ✅ |
 
 Touched множеството се строи от **новата** атрибуция (`refresh-slice.sql:1198–1239`), след DELETE+INSERT на договорите. Contract id-то вгражда `bidder_key` (`refresh-slice.sql:527`), а DELETE-ът мачва само по `contract_number + tender` (ред 499).
 

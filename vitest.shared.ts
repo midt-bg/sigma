@@ -25,6 +25,10 @@ export function sharedCoverage(include: string[]): NonNullable<ViteUserConfig['t
       '**/*.json',
       '**/*.md',
       '**/*.d.ts',
+      // Test-support helpers (SQLite D1 shims, cloudflare:workers/workflows stubs) live under src/test/.
+      // They exist only to drive the suites — instrumenting them measures test scaffolding, not product
+      // code, so they belong with fixtures on the exclude list.
+      '**/src/test/**',
     ],
     reporter: ['text', 'json-summary'],
     reportsDirectory: './coverage',
