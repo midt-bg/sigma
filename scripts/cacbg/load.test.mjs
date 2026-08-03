@@ -94,6 +94,11 @@ before(() => {
     -- declaration (2020). His later 2023 ASSET declaration lists no company → must NOT withdraw this stake.
     INSERT INTO bidders VALUES ('eik:161616163','ИНТЕР ТЕХ 8 ЕООД','161616163',1,'София');
     INSERT INTO contracts VALUES ('c14','t1','eik:161616163','2020-05-01',120000);
+    -- #226 headline dedup: TWO different officials each own a stake in the SAME winner (ПАРТНЬОРИ 5, €600k).
+    -- Both publish (distinctive name → B_distinctive), so the build summary must count that winner's € ONCE,
+    -- not twice — the load-side sibling of the UI conflictHeadline per-ЕИК money dedup.
+    INSERT INTO bidders VALUES ('eik:181818187','ПАРТНЬОРИ 5 ЕООД','181818187',1,'София');
+    INSERT INTO contracts VALUES ('c15','t1','eik:181818187','2022-06-01',600000);
   `);
   db.close();
 
@@ -439,6 +444,43 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H19',
     },
+    // #226 headline dedup: Алфа AND Бета each own a stake in the SAME winner (ПАРТНЬОРИ 5). Distinctive name
+    // → both publish → two published private_ownership links on ЕИК 181818187, so the build summary's € totals
+    // must count that winner's €600k once, not twice.
+    {
+      folder: '2024',
+      xmlFile: 'PA.xml',
+      year: '2022',
+      template: 'assets',
+      category: '',
+      institution: 'ТЕСТ ВЕДОМСТВО',
+      person: 'Алфа Партньоров',
+      position: '',
+      entity: 'ПАРТНЬОРИ 5 ЕООД',
+      kind: 'shares',
+      detail: '50%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H20',
+    },
+    {
+      folder: '2024',
+      xmlFile: 'PB.xml',
+      year: '2022',
+      template: 'assets',
+      category: '',
+      institution: 'ДРУГО ВЕДОМСТВО',
+      person: 'Бета Партньоров',
+      position: '',
+      entity: 'ПАРТНЬОРИ 5 ЕООД',
+      kind: 'shares',
+      detail: '30%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H21',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -598,6 +640,47 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   );
   assert.deepEqual(Object.keys(report.family_material_by_source_template), ['assets']);
 
+  // #226 headline dedup: the build summary's € totals are a per-ЕИК quantity, not a per-link sum. Алфа AND
+  // Бета both publish an own stake in the SAME winner (ПАРТНЬОРИ 5, ЕИК 181818187, €600k), so a plain
+  // SUM(contract_value_eur) over published links double-counts that winner — the load-side twin of the UI
+  // conflictHeadline bug. Prove the fixture actually exercises the collision (naive per-link sum strictly
+  // exceeds the per-ЕИК-deduped sum), then assert the reported totals equal the deduped figure.
+  const alfa = link('181818187', 'Алфа Партньоров');
+  const beta = link('181818187', 'Бета Партньоров');
+  assert.equal(alfa.status, 'published');
+  assert.equal(beta.status, 'published');
+  assert.equal(alfa.interest_class, 'private_ownership');
+  assert.equal(beta.interest_class, 'private_ownership');
+  assert.equal(alfa.contract_value_eur, 600000); // winner's total, identical on both links
+  assert.equal(beta.contract_value_eur, 600000);
+  const naive = db
+    .prepare(
+      "SELECT COALESCE(SUM(contract_value_eur),0) v FROM interest_links WHERE status='published'",
+    )
+    .get().v;
+  const dedup = db
+    .prepare(
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(contract_value_eur) v FROM interest_links WHERE status='published' GROUP BY eik)",
+    )
+    .get().v;
+  assert.ok(
+    naive > dedup,
+    'fixture must exercise a shared-ЕИК double-count, else the test has no teeth',
+  );
+  assert.equal(naive - dedup, 600000); // exactly ПАРТНЬОРИ 5's €600k, counted twice by the naive sum
+  // The reported totals must be the DEDUPED figure, never the inflated per-link sum.
+  assert.equal(report.published_contract_value_eur, Math.round(dedup));
+  const privDedup = db
+    .prepare(
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(contract_value_eur) v FROM interest_links WHERE status='published' AND interest_class='private_ownership' GROUP BY eik)",
+    )
+    .get().v;
+  assert.equal(report.published_private_ownership_value_eur, Math.round(privDedup)); // the "headline conflict number"
+  assert.equal(
+    report.published_by_interest_class.private_ownership.value_eur,
+    Math.round(privDedup),
+  );
+
   // ZERO-CONTRACT gate (I5): a distinctive winner with NO contracts is collected but never published — the
   // card would read „0 договори · 0 €", which is no procurement conflict. status 'internal', not 'published'.
   const zero = link('121212129', 'Нула Тестов');
@@ -689,13 +772,14 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 14 links: 12 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
-  // 'withdrawn' + Интер's per-type-kept published link) + 1 family + Канонов's canonicalized single link;
-  // Мария (quarantined), Акционер (securities), Двусмислен (unknown holder) & Безинст (empty institution) none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 14);
-  // 17 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст and
-  // zero-contract Нула; Канонов's two institution-variant filings fold to ONE person.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 17);
+  // 16 links: 12 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 'withdrawn' + Интер's per-type-kept published link) + 1 family + Канонов's canonicalized single link +
+  // Алфа & Бета (two officials on one winner, ПАРТНЬОРИ 5); Мария (quarantined), Акционер (securities),
+  // Двусмислен (unknown holder) & Безинст (empty institution) none.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 16);
+  // 19 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст,
+  // zero-contract Нула and the two ПАРТНЬОРИ co-owners; Канонов's two institution-variant filings fold to ONE.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 19);
   db.close();
 });
 

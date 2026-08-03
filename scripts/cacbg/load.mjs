@@ -594,6 +594,14 @@ const q = (sql, ...a) => db.prepare(sql).all(...a);
 const one = (sql, ...a) => db.prepare(sql).get(...a);
 const links = one('SELECT COUNT(*) n FROM interest_links').n;
 const pub = one("SELECT COUNT(*) n FROM interest_links WHERE status='published'").n;
+// Per-interest-class € deduped per ЕИК (money is per-winner, not per-link — see published_contract_value_eur).
+// Own map so the value SUMs per (class, ЕИК) while the link COUNT below stays per-link, without a nested
+// correlated subquery.
+const classValueByClass = new Map(
+  q(
+    "SELECT interest_class, ROUND(COALESCE(SUM(v),0)) v FROM (SELECT interest_class, eik, MAX(contract_value_eur) v FROM interest_links WHERE status='published' GROUP BY interest_class, eik) GROUP BY interest_class",
+  ).map((r) => [r.interest_class, r.v]),
+);
 const S = {
   persons: one('SELECT COUNT(*) n FROM persons').n,
   declarations: one('SELECT COUNT(*) n FROM declarations').n,
@@ -617,9 +625,16 @@ const S = {
   own_institution_locality: one(
     "SELECT COUNT(*) n FROM interest_links WHERE own_institution='locality'",
   ).n,
+  // Money is a COMPANY-level quantity keyed on ЕИК, not per-link: contract_value_eur is the winner's total,
+  // identical on every link to that ЕИК. Two DIFFERENT officials on one winner yield two links (the redundant-
+  // family collapse only merges a SAME official's own + relative stake), so a plain SUM(contract_value_eur)
+  // over links double-counts that winner once per extra official — the same defect fixed in the UI headline
+  // (conflicts.ts conflictHeadline, #226). Dedup per ЕИК via MAX (exact, since it is constant within a ЕИК)
+  // before summing; COUNT/COUNT(DISTINCT person) stay per-link/per-official.
   published_contract_value_eur: Math.round(
-    one("SELECT COALESCE(SUM(contract_value_eur),0) v FROM interest_links WHERE status='published'")
-      .v,
+    one(
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(contract_value_eur) v FROM interest_links WHERE status='published' GROUP BY eik)",
+    ).v,
   ),
   // headline conflict number = PRIVATE ownership only (ADR-0019); ex-officio state boards excluded
   published_private_ownership_links: one(
@@ -627,7 +642,7 @@ const S = {
   ).n,
   published_private_ownership_value_eur: Math.round(
     one(
-      "SELECT COALESCE(SUM(contract_value_eur),0) v FROM interest_links WHERE status='published' AND interest_class='private_ownership'",
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(contract_value_eur) v FROM interest_links WHERE status='published' AND interest_class='private_ownership' GROUP BY eik)",
     ).v,
   ),
   // family (close-relative) ownership — now published on the named surface identically to self stakes
@@ -637,7 +652,7 @@ const S = {
   ).n,
   published_family_ownership_value_eur: Math.round(
     one(
-      "SELECT COALESCE(SUM(contract_value_eur),0) v FROM interest_links WHERE status='published' AND interest_class='family_ownership'",
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(contract_value_eur) v FROM interest_links WHERE status='published' AND interest_class='family_ownership' GROUP BY eik)",
     ).v,
   ),
   family_officials: one(
@@ -645,14 +660,20 @@ const S = {
   ).n,
   // §2 ал.3 ПЗР canary (rail #3): material family holdings by source declaration template — must be 100% 'assets'.
   family_material_by_source_template: Object.fromEntries(familyMaterialByTemplate),
+  // links per-link, value_eur deduped per ЕИК (classValueByClass, computed above).
   published_by_interest_class: Object.fromEntries(
     q(
-      "SELECT interest_class, COUNT(*) n, ROUND(COALESCE(SUM(contract_value_eur),0)) v FROM interest_links WHERE status='published' GROUP BY interest_class",
-    ).map((r) => [r.interest_class, { links: r.n, value_eur: r.v }]),
+      "SELECT interest_class, COUNT(*) n FROM interest_links WHERE status='published' GROUP BY interest_class",
+    ).map((r) => [
+      r.interest_class,
+      { links: r.n, value_eur: classValueByClass.get(r.interest_class) ?? 0 },
+    ]),
   ),
+  // interest_link_authorities.value_eur is per (link, authority) but company-level: two officials on one ЕИК
+  // carry the SAME value for the SAME authority. Dedup per (ЕИК, authority) via MAX before summing.
   published_own_institution_value_eur: Math.round(
     one(
-      "SELECT COALESCE(SUM(value_eur),0) v FROM interest_link_authorities ila JOIN interest_links il ON il.link_key=ila.link_key WHERE il.status='published' AND ila.own='exact'",
+      "SELECT COALESCE(SUM(v),0) v FROM (SELECT MAX(ila.value_eur) v FROM interest_link_authorities ila JOIN interest_links il ON il.link_key=ila.link_key WHERE il.status='published' AND ila.own='exact' GROUP BY il.eik, ila.authority_id)",
     ).v,
   ),
   // strongest signal: material ownership (self OR family) whose company sold to the official's OWN institution
