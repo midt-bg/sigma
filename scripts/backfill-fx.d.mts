@@ -35,6 +35,10 @@ export interface FxBackfillSummary {
   repaired: number;
   /** flag-only repairs: rows whose recomputed value_flag differed (any contract currency) */
   reflagged: number;
+  /** repaired rows priced to 'ok' with a tiny (< 1000 EUR) signing value whose value_low
+   *  5%-of-estimate classification is undecidable offline (the raw estimate is not served) — an
+   *  upper bound on rows that may skew cpv_division_stats percentiles (ADR-0030 residual) */
+  valueLowUnverifiable: number;
   /** rows still unpriced after the repair (no usable ECB rate) */
   remaining: Array<{
     id: unknown;

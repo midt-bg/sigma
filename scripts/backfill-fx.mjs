@@ -241,8 +241,11 @@ function repairRowsSql() {
   return [
     // Re-resolve the fx-dependent value_flag branches the bug window could not evaluate —
     // NEW_FLAG mirrors the value_flag CASE in scripts/refresh-slice.sql. The value_low
-    // 5%-of-estimate branch needs raw-staging columns that do not survive to the served rows —
-    // label-only residual, counted identically in every sum (ADR-0030).
+    // 5%-of-estimate branch needs raw-staging columns (the contract's own estimated_value /
+    // procurement_currency) that do not survive to the served rows, so a repaired row that should be
+    // value_low stays 'ok'. Neutral for SUM rollups (value_low is summed like 'ok'), but NOT for
+    // cpv_division_stats, which filters value_flag='ok' — such a row pollutes its CPV percentiles.
+    // Surfaced via summary.valueLowUnverifiable; full re-derive is the fix (ADR-0030).
     `UPDATE contracts SET value_flag = (${NEW_FLAG})
      WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
 
@@ -325,7 +328,15 @@ export async function backfillFx(runner, { fetchFn = fetch, fetchedAt, refreshSl
     healed = true;
   }
   if (before.total === 0 && before.flagUnverified === 0) {
-    return { repaired: 0, reflagged: 0, remaining: [], fetched: [], healed, before };
+    return {
+      repaired: 0,
+      reflagged: 0,
+      valueLowUnverifiable: 0,
+      remaining: [],
+      fetched: [],
+      healed,
+      before,
+    };
   }
 
   const fetched = await loadMissingRates(runner, { fetchFn, fetchedAt, api });
@@ -334,12 +345,29 @@ export async function backfillFx(runner, { fetchFn = fetch, fetchedAt, refreshSl
       `SELECT COUNT(*) AS n FROM contracts WHERE ${FLAG_CANDIDATE} AND (${NEW_FLAG}) <> contracts.value_flag`,
     )[0]?.n ?? 0,
   );
+  // value_low blind spot: the derive's value_low "< 1000 EUR signed AND < 5% of the estimate" branch
+  // needs the contract's OWN estimated_value / procurement_currency, which are NOT served (dropped
+  // from the contracts table). A row we price to 'ok' with a tiny (< 1000 EUR) signing value is
+  // exactly where that branch MIGHT fire — undecidable offline. Counted pre-repair (rates loaded,
+  // rows still match the damage predicate): they may enter cpv_division_stats percentiles where a
+  // full re-derive would exclude them (ADR-0030 residual). Upper bound — a genuinely small estimate
+  // leaves the row correctly 'ok'.
+  const valueLowUnverifiable = Number(
+    runner.query(
+      `SELECT COUNT(*) AS n FROM contracts
+       WHERE ${DAMAGE} AND signed_at IS NOT NULL AND ${PRICEABLE}
+         AND (${NEW_FLAG}) = 'ok'
+         AND contracts.signing_value IS NOT NULL
+         AND ${toEur('contracts.signing_value', contractCurrency)} < 1000`,
+    )[0]?.n ?? 0,
+  );
   runner.exec(`${repairSql()}\n${rollupSql}`);
 
   const after = reportFxDamage(runner);
   return {
     repaired: before.total - after.total,
     reflagged,
+    valueLowUnverifiable,
     remaining: after.rows.map((r) => ({
       id: r.id,
       contract_number: r.contract_number,
@@ -462,6 +490,11 @@ async function main() {
     refreshSliceSql,
   });
   console.log(`\nrepaired: ${summary.repaired}, reflagged: ${summary.reflagged}`);
+  if (summary.valueLowUnverifiable > 0) {
+    console.warn(
+      `value_low unverifiable offline (tiny foreign value, raw estimate not served): ${summary.valueLowUnverifiable} — may skew cpv_division_stats percentiles; run a full re-derive for absolute correctness (ADR-0030).`,
+    );
+  }
   if (summary.healed) console.log('healed the interrupted run’s stale rollups.');
   for (const f of summary.fetched) {
     console.log(

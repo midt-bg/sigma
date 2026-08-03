@@ -455,6 +455,92 @@ describe('backfillFx', () => {
     expect(reportFxDamage(runnerFor(db)).interrupted).toBe(false);
   });
 
+  // The documented value_low blind spot (ADR-0030 residual): the derive's value_low "< 1000 EUR
+  // signed AND < 5% of the estimate" branch reads the contract's OWN estimated_value /
+  // procurement_currency from raw staging, which the served `contracts` table does not carry. A
+  // repaired tiny foreign row that should be value_low stays 'ok' — neutral for SUM rollups but NOT
+  // for cpv_division_stats (filters value_flag='ok'). This test PINS that boundary: the backfill
+  // must surface the class (summary.valueLowUnverifiable) rather than hide it, and the known
+  // percentile divergence from a full re-derive is asserted so any future change is deliberate.
+  it('surfaces the value_low blind spot and pins its cpv_division_stats divergence', async () => {
+    // Two USD works contracts in CPV division 45: one tiny (500 USD, own estimate 100000 EUR →
+    // truth value_low, excluded from percentiles) and one normal (50000 USD → ok, counted).
+    const seedTwo = (db: DatabaseSync, withRates: boolean) => {
+      db.exec(initSql);
+      db.exec(flowIdxSql);
+      db.exec(cvCurrencySql);
+      db.exec(stagingSql);
+      const insert = (num: string, signing: number, estOwn: number | null) => {
+        db.prepare(
+          `INSERT INTO raw_tenders
+            (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+             cpv_code, contract_kind, estimated_value, currency, authority_name, authority_eik,
+             authority_type, num_lots, published_at)
+           VALUES ('eop:tenders:2026-06-01', 2026, ?, ?, ?, 'open', 'T', '45000000', 'works', NULL,
+                   'BGN', 'A', '123456789', 'public', 1, '2026-05-15')`,
+        ).run(FETCHED_AT, `U-${num}`, `T-${num}`);
+        db.prepare(
+          `INSERT INTO raw_contracts
+            (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+             published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+             contract_kind, estimated_value, procurement_currency, authority_name, authority_eik,
+             authority_type, contract_number, contract_date, signing_value, currency,
+             contract_subject, contractor_eik, contractor_name, contractor_country, bids_received)
+           VALUES ('eop:contracts:2026-06-01', 2026, 'eop', ?, 0, ?, '2026-06-01', ?, ?, 'open',
+                   'T', '45000000', 'works', ?, ?, 'A', '123456789', 'public', ?, ?, ?, 'USD',
+                   'C', '987654321', 'B', 'BG', 3)`,
+        ).run(
+          FETCHED_AT,
+          `DOC-${num}`,
+          `U-${num}`,
+          `T-${num}`,
+          estOwn,
+          estOwn ? 'EUR' : null,
+          num,
+          SIGNED,
+          signing,
+        );
+      };
+      insert('C-USD-LOW', 500, 100000);
+      insert('C-USD-BIG', 50000, null);
+      if (withRates) insertUsdRates(db);
+      derive(db);
+    };
+
+    const truth = new DatabaseSync(':memory:');
+    seedTwo(truth, true);
+    const db = new DatabaseSync(':memory:');
+    seedTwo(db, false);
+    dropStaging(db);
+
+    const summary = await backfill(db);
+
+    // Priced correctly: the tiny row's amount_eur is right (500 × 0.9 = 450).
+    const low = db
+      .prepare("SELECT amount_eur, value_flag FROM contracts WHERE contract_number = 'C-USD-LOW'")
+      .get() as { amount_eur: number; value_flag: string };
+    expect(low.amount_eur).toBeCloseTo(450, 6);
+    // But the flag cannot be recomputed to value_low offline — it stays 'ok' (the residual)…
+    expect(low.value_flag).toBe('ok');
+    expect(
+      truth.prepare("SELECT value_flag FROM contracts WHERE contract_number = 'C-USD-LOW'").get(),
+    ).toEqual({ value_flag: 'value_low' });
+    // …and the backfill SURFACES it rather than hiding it.
+    expect(summary.valueLowUnverifiable).toBe(1);
+
+    // The pinned consequence: cpv_division_stats diverges from a full re-derive — the backfill
+    // counts the mislabeled row (2 priced, median dragged down), truth excludes it (1 priced).
+    const cs = (d: DatabaseSync) =>
+      d.prepare('SELECT division, priced_contracts, median_eur FROM cpv_division_stats').get();
+    expect(cs(truth)).toEqual({
+      division: '45',
+      priced_contracts: 1,
+      median_eur: 50000 * USD_RATE,
+    });
+    expect(cs(db)).toEqual({ division: '45', priced_contracts: 2, median_eur: 450 });
+    // Full re-derive is the path to absolute percentile correctness (ADR-0030).
+  });
+
   it('leaves flag-clean BGN/EUR rows and their rollup contributions untouched', async () => {
     const db = damagedDb();
     const sql =
