@@ -270,6 +270,14 @@ describe('releaseToContracts', () => {
       0,
     );
   });
+
+  it('nulls bids_received when the release carries no bids statistics', () => {
+    // No `bids` block on the release → `rel.bids?.statistics` is nullish; the row still stages with a
+    // null bid count rather than throwing on the optional chain.
+    const rows = releaseToContracts({ ...release, bids: undefined }, meta);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.bids_received).toBeNull();
+  });
 });
 
 describe('releaseToAmendments', () => {

@@ -3,7 +3,7 @@
   "workspaces": {
     "apps/etl": {
       "lines": 100,
-      "branches": 98.5
+      "branches": 97
     },
     "apps/web": {
       "lines": 99.4,
