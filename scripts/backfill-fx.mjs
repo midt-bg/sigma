@@ -5,7 +5,7 @@
 // This repairs the served rows in place: load the missing ECB rates (shared fx.ts logic), recompute
 // fx_rate / flags / EUR columns for exactly the damaged rows, then refresh the rollups through
 // refresh-slice.sql's own touched-scoped batches — no staging, no re-ingest, no duplicated rollup
-// SQL. See docs/adr/0008-legacy-fx-backfill.md.
+// SQL. See docs/adr/0030-legacy-fx-backfill.md.
 //
 //   node scripts/backfill-fx.mjs                    # report damage on local D1, exit 1 if any
 //   node scripts/backfill-fx.mjs --apply            # repair local D1
@@ -210,7 +210,7 @@ function repairRowsSql() {
     // Re-resolve the fx-dependent value_flag branches the bug window could not evaluate —
     // NEW_FLAG mirrors the value_flag CASE in scripts/refresh-slice.sql. The value_low
     // 5%-of-estimate branch needs raw-staging columns that do not survive to the served rows —
-    // label-only residual, counted identically in every sum (ADR-0008).
+    // label-only residual, counted identically in every sum (ADR-0030).
     `UPDATE contracts SET value_flag = (${NEW_FLAG})
      WHERE id IN (SELECT id FROM refresh_touched_contracts);`,
 
@@ -433,7 +433,7 @@ async function main() {
     );
   }
   if (summary.remaining.length > 0) {
-    console.warn(`\nstill unpriced (no ECB rate available — see ADR-0008):`);
+    console.warn(`\nstill unpriced (no ECB rate available — see ADR-0030):`);
     for (const r of summary.remaining) {
       console.warn(`  ${r.contract_number} ${r.currency} ${r.signed_at}`);
     }
