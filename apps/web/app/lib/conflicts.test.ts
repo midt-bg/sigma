@@ -99,8 +99,8 @@ describe('contractYearsLabel', () => {
 });
 
 describe('conflictHeadline', () => {
-  // Self and family links both reach this layer now (ADR-0032); the headline sums over the surfaced set, but
-  // a winner's money is deduped per (official, ЕИК) so a self+family pair on the same company counts once.
+  // Money is aggregated per ЕИК, not per link (a winner's € belongs to the company, not to each linked
+  // official); linkCount/officialCount stay per-link/per-official. Distinct ЕИК here → the sum is unaffected.
   it('sums value, counts links, and de-dupes officials', () => {
     const h = conflictHeadline([
       link({ officialSlug: 'a', eik: '1', contractValueEur: 100, contemporaneousValueEur: 60 }),
@@ -112,10 +112,37 @@ describe('conflictHeadline', () => {
     expect(h.totalEur).toBe(175);
     expect(h.contemporaneousEur).toBe(100); // 60 + 30 + 10 — the conflict-window subset
   });
-  // NOTE: an official who declared BOTH an own and a relative's stake in the SAME winner never reaches
-  // conflictHeadline with two rows — the redundant-family collapse (ADR-0032) drops the family link at the
-  // SQL layer (related-persons.ts NOT_REDUNDANT_FAMILY), proven in related-persons-sql.test.ts. So the
-  // headline is a plain sum here; there is no per-(official,ЕИК) dedup to test at this layer.
+  // NOT_REDUNDANT_FAMILY (related-persons.ts) collapses only a SAME official's own+relative stake in one
+  // winner, so two DIFFERENT officials on the SAME winner both reach this array — a plain per-link sum would
+  // count that winner's € twice (#226, Todor: +8,1% / ~7,9M € on the full corpus). Money is deduped per ЕИК:
+  // contract_value_eur is constant within a ЕИК (exact); contemporaneous_value_eur is a per-link window subset,
+  // so the MAX per ЕИК is taken (deterministic, never overstated). Counts stay per-link/per-official.
+  it('counts a winner’s money once across two different officials on the same ЕИК', () => {
+    const h = conflictHeadline([
+      link({
+        officialSlug: 'a',
+        eik: '111',
+        contractValueEur: 88_000_000,
+        contemporaneousValueEur: 40_000_000,
+      }),
+      link({
+        officialSlug: 'b',
+        eik: '111',
+        contractValueEur: 88_000_000,
+        contemporaneousValueEur: 25_000_000,
+      }),
+      link({
+        officialSlug: 'c',
+        eik: '222',
+        contractValueEur: 10_000_000,
+        contemporaneousValueEur: 5_000_000,
+      }),
+    ]);
+    expect(h.linkCount).toBe(3); // still three links
+    expect(h.officialCount).toBe(3); // three distinct officials
+    expect(h.totalEur).toBe(98_000_000); // 88M once + 10M — NOT 88 + 88 + 10
+    expect(h.contemporaneousEur).toBe(45_000_000); // max(40M, 25M) for ЕИК 111 + 5M — never doubled
+  });
   it('treats a null contract value as zero, never NaN', () => {
     const h = conflictHeadline([link({ contractValueEur: null, contemporaneousValueEur: null })]);
     expect(h.totalEur).toBe(0);

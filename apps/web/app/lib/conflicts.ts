@@ -322,15 +322,28 @@ export function conflictHeadline(links: ConflictLink[]): {
   contemporaneousEur: number;
 } {
   const officials = new Set<string>();
-  // A plain per-link sum is exact: the read layer's NOT_REDUNDANT_FAMILY collapse guarantees at most ONE
-  // surfaced link per (official, ЕИК), so an own + a relative's stake in the same winner never both reach this
-  // array (the family row collapses to the own row upstream) and no winner's € is double-counted.
-  let totalEur = 0;
-  let contemporaneousEur = 0;
+  // Money is a COMPANY-level quantity keyed on ЕИК, not per-link. NOT_REDUNDANT_FAMILY collapses only a SAME
+  // official's own + relative stake in one winner; TWO DIFFERENT officials linked to the same winner both reach
+  // this array, so a plain per-link sum double-counts that winner's € once per extra official (+8,1% / ~7,9M €
+  // on the full corpus, #226). Aggregate per ЕИК: contract_value_eur is the winner's total (constant within a
+  // ЕИК → dedup is exact); contemporaneous_value_eur is a per-link WINDOW subset that can differ between
+  // officials on the same winner (IN_WINDOW keys on the link's declared years), so take the MAX per ЕИК —
+  // deterministic and never overstated (the money figure must never read as fabricated). linkCount/
+  // officialCount count links and people, so they stay per-link/per-official.
+  const perEik = new Map<string, { total: number; contemporaneous: number }>();
   for (const l of links) {
     officials.add(l.officialSlug);
-    totalEur += l.contractValueEur ?? 0;
-    contemporaneousEur += l.contemporaneousValueEur ?? 0;
+    const prev = perEik.get(l.eik) ?? { total: 0, contemporaneous: 0 };
+    perEik.set(l.eik, {
+      total: Math.max(prev.total, l.contractValueEur ?? 0),
+      contemporaneous: Math.max(prev.contemporaneous, l.contemporaneousValueEur ?? 0),
+    });
+  }
+  let totalEur = 0;
+  let contemporaneousEur = 0;
+  for (const v of perEik.values()) {
+    totalEur += v.total;
+    contemporaneousEur += v.contemporaneous;
   }
   return {
     linkCount: links.length,

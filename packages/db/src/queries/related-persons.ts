@@ -126,7 +126,8 @@ export const SURFACED_OWNERSHIP = `il.status = 'published'
 // row adds the leak with little marginal signal (the official is not hiding — he declared his own stake too).
 // STANDALONE family links (no self stake in that winner) still surface — that is where the „hiding a stake in
 // a relative's name" signal is strongest and the relative is not trivially ТР-identifiable. As a side effect,
-// at most ONE link per (official, ЕИК) surfaces, so no winner's € is ever double-counted downstream.
+// at most ONE link per (official, ЕИК) surfaces; a winner shared by TWO DIFFERENT officials still yields two
+// links, so per-ЕИК money dedup is the leaderboard's job (conflicts.ts conflictHeadline), not this collapse's.
 export const NOT_REDUNDANT_FAMILY = `NOT (il.interest_class = 'family_ownership' AND EXISTS (
       SELECT 1 FROM interest_links s
       WHERE s.person_id = il.person_id AND s.eik = il.eik
