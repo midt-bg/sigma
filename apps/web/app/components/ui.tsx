@@ -5,8 +5,10 @@ import { pct } from '@sigma/shared';
 // Small editorial primitives shared across pages. Class definitions live in app.css (ported verbatim
 // from the mock); these just emit the markup.
 
-export function Chip({ children }: { children: ReactNode }) {
-  return <span className="chip">{children}</span>;
+// `tone` weights a chip by signal strength: 'strong' for the strongest conflict signal (own-institution),
+// 'window' for the declared-stake overlap. Omit for a neutral chip (the default everywhere else).
+export function Chip({ children, tone }: { children: ReactNode; tone?: 'strong' | 'window' }) {
+  return <span className={`chip${tone ? ` chip-${tone}` : ''}`}>{children}</span>;
 }
 
 const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult';
@@ -79,16 +81,21 @@ export function ShareBar({ ratio, warn }: { ratio: number; warn?: boolean }) {
 
 export function Callout({
   title,
+  titleAs = 'h3',
   variant,
   children,
 }: {
   title?: ReactNode;
+  // Heading level for the title. Defaults to h3 (a callout nested under a section's h2). Pass 'h2' when the
+  // callout sits at the TOP of a page — directly under the page h1 — so the outline doesn't skip h1→h3→h2.
+  titleAs?: 'h2' | 'h3';
   variant?: 'warning';
   children: ReactNode;
 }) {
+  const Heading = titleAs;
   return (
     <div className={`callout${variant ? ` ${variant}` : ''}`}>
-      {title != null && <h3>{title}</h3>}
+      {title != null && <Heading>{title}</Heading>}
       {children}
     </div>
   );
