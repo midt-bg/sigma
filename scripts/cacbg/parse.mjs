@@ -13,6 +13,7 @@
 // XXE-safe: fast-xml-parser resolves no DTDs/external entities; we also reject DOCTYPE/ENTITY input.
 
 import { XMLParser } from 'fast-xml-parser';
+import { isXmlFile } from './guard.mjs';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -107,8 +108,15 @@ export function parseList(xml) {
           for (const pos of asArray(person?.Position)) {
             const position = flat(pos?.Name);
             for (const decl of asArray(pos?.Declaration)) {
+              // A row must NAME A FILE to be announced. The register also emits placeholder rows that
+              // announce no document — `<Sent>False</Sent><xmlFile>U</xmlFile><Title>Уведомление</Title>`
+              // (87 of them across 15 sets). A bare truthiness test accepted 'U' as a filename, so the
+              // crawler counted a declaration that does not exist, then failed to fetch it and booked an
+              // error — permanently pinning the completeness gate for those sets below their announced
+              // count. Require the filename shape and a phantom is never announced in the first place.
               const xmlFile = flat(decl?.xmlFile);
-              if (xmlFile) out.push({ category, institution, person: name, position, xmlFile });
+              if (isXmlFile(xmlFile))
+                out.push({ category, institution, person: name, position, xmlFile });
             }
           }
         }

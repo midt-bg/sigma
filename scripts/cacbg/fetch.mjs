@@ -68,6 +68,10 @@ export function assessCompleteness(perFolder, skippedFolders = []) {
     sourceGaps += f.missing; // 404 — listed but unpublished at source (expected, not a shortfall)
     unfetched += f.errors; // announced but not obtained for a non-404 reason — a real shortfall
   }
+  // Every announced row ends in exactly one bucket, so a full pass satisfies
+  // announced == obtained + sourceGaps + unfetched. A surplus means rows were never ATTEMPTED — the
+  // --limit case, which produces no errors and would otherwise sail through the checks below.
+  const notAttempted = Math.max(0, announcedDeclarations - (obtained + sourceGaps + unfetched));
   return {
     reachedSets: Object.keys(perFolder).length,
     skippedSets: skippedFolders.length,
@@ -75,7 +79,8 @@ export function assessCompleteness(perFolder, skippedFolders = []) {
     obtained,
     sourceGaps,
     unfetched,
-    incomplete: unfetched > 0 || skippedFolders.length > 0,
+    notAttempted,
+    incomplete: unfetched > 0 || notAttempted > 0 || skippedFolders.length > 0,
   };
 }
 
@@ -178,8 +183,12 @@ export async function run({
     }
     atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
     let rows = parseList(listRes.body.toString('utf8'));
+    // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
+    // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
+    // gate certified a corpus it had never attempted to fetch (ydimitrof #226).
+    const announced = rows.length;
     if (Number.isFinite(limit)) rows = rows.slice(0, limit);
-    const fstat = { announced: rows.length, fetched: 0, cached: 0, missing: 0, errors: 0 };
+    const fstat = { announced, fetched: 0, cached: 0, missing: 0, errors: 0 };
     stats.folders[folder] = fstat;
     console.log(`  ${folder}: ${rows.length} declarations`);
 
@@ -240,6 +249,7 @@ export async function run({
       stats.skippedFolders.map((s) => `${s.folder} (${s.status})`).join(', ') || 'none';
     const msg =
       `INCOMPLETE CORPUS — ${completeness.unfetched} announced declaration(s) unfetched (non-404), ` +
+      `${completeness.notAttempted} never attempted (--limit), ` +
       `${completeness.skippedSets} set(s) skipped: ${skipped}. Publishing this would omit declarations ` +
       `the register lists.`;
     if (allowIncomplete) {

@@ -212,3 +212,40 @@ test('XXE guard rejects DOCTYPE/ENTITY input', () => {
   assert.throws(() => parseDeclaration(evil), /XXE guard/);
   assert.throws(() => parseList(evil), /XXE guard/);
 });
+
+// The register announces placeholder rows that name no document — `<Sent>False</Sent><xmlFile>U</xmlFile>`
+// with `<Title>Уведомление</Title>`. 87 of them sit across 15 sets. A bare truthiness test on xmlFile
+// accepted 'U' as a filename, so the crawler announced a declaration that does not exist, failed to fetch
+// it, and booked an error — pinning the completeness gate below the announced count for those sets forever.
+const LIST_WITH_PHANTOM = `<?xml version="1.0"?>
+<root><MainCategory><Category Name="Тест категория">
+  <Institution Name="Тест институция">
+    <Person><Name>Иван Петров Тестов</Name>
+      <Position><Name>Директор</Name>
+        <Declaration><xmlFile>REAL.xml</xmlFile></Declaration>
+        <Declaration><Sent>False</Sent><xmlFile>U</xmlFile><Title>Уведомление</Title></Declaration>
+      </Position>
+    </Person>
+  </Institution>
+</Category></MainCategory></root>`;
+
+test('parseList: a placeholder row naming no file is NOT announced', () => {
+  const rows = parseList(LIST_WITH_PHANTOM);
+  assert.equal(rows.length, 1, 'only the row bearing a real filename counts');
+  assert.equal(rows[0].xmlFile, 'REAL.xml');
+});
+
+test('parseList: only values shaped like a declaration filename are announced', () => {
+  const shape = (v) =>
+    parseList(`<?xml version="1.0"?>
+<root><MainCategory><Category Name="к"><Institution Name="и">
+  <Person><Name>Име Име Име</Name><Position><Name>п</Name>
+    <Declaration><xmlFile>${v}</xmlFile></Declaration>
+  </Position></Person>
+</Institution></Category></MainCategory></root>`).length;
+  assert.equal(shape('AAAA.xml'), 1);
+  assert.equal(shape('U'), 0, 'the register placeholder');
+  assert.equal(shape(''), 0);
+  assert.equal(shape('Уведомление'), 0, 'a title slotted into the filename field');
+  assert.equal(shape('AAAA.pdf'), 0, 'not a declaration document');
+});
