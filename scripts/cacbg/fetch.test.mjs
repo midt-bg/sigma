@@ -106,3 +106,25 @@ test('assessCompleteness: an empty crawl of fully-obtained sets is complete', ()
   assert.equal(r.announcedDeclarations, 2);
   assert.equal(r.incomplete, false);
 });
+
+// --limit truncates the WORK, never the announcement. Before this, `announced` was read after the slice,
+// so a deliberately partial crawl reported announced == obtained and the gate certified a corpus it had
+// never tried to fetch. Rows that were never attempted produce no errors, so `incomplete` has to notice
+// the arithmetic hole itself: announced > obtained + sourceGaps + unfetched.
+test('assessCompleteness: rows announced but never attempted (--limit) mark the corpus INCOMPLETE', () => {
+  const r = assessCompleteness(
+    { 2024: { announced: 5000, fetched: 10, cached: 0, missing: 0, errors: 0 } },
+    [],
+  );
+  assert.equal(r.notAttempted, 4990);
+  assert.equal(r.unfetched, 0, 'no fetch was even tried, so nothing can have errored');
+  assert.equal(r.incomplete, true);
+});
+test('assessCompleteness: notAttempted is 0 when every announced row landed in a bucket', () => {
+  const r = assessCompleteness(
+    { 2024: { announced: 10, fetched: 6, cached: 3, missing: 1, errors: 0 } },
+    [],
+  );
+  assert.equal(r.notAttempted, 0);
+  assert.equal(r.incomplete, false);
+});
