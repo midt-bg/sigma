@@ -5,6 +5,7 @@ import {
   bidderIdFromSlug,
   getEntityNetwork,
   type NetworkParams,
+  getDb,
 } from '@sigma/db';
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -46,7 +47,7 @@ function parseCenter(token: string | null): NetworkParams | null {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const center = parseCenter(new URL(request.url).searchParams.get('center'));
-  const data = await getEntityNetwork(context.cloudflare.env.DB, center);
+  const data = await getEntityNetwork(getDb(context.cloudflare.env), center);
   // A well-formed but non-existent ?center should 404 like the other entity pages, not render an
   // empty 200 that then gets edge-cached. A missing or malformed ?center keeps the default centre.
   if (center && !data.center) {

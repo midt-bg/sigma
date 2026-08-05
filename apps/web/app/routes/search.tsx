@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { count, money, plural, searchTokens } from '@sigma/shared';
-import { MAX_QUERY_TOKENS, search } from '@sigma/db';
+import { MAX_QUERY_TOKENS, search, getDb } from '@sigma/db';
 import type { SearchHit } from '@sigma/api-contract';
 import type { Route } from './+types/search';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -66,11 +66,12 @@ function cappedQuery(q: string): string {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const q = cappedQuery(new URL(request.url).searchParams.get('q') ?? '');
-  const results = await search(context.cloudflare.env.DB, q);
+  const results = await search(getDb(context.cloudflare.env), q);
   return { results };
 }
 
 const KIND_LABEL: Record<string, string> = {
+  official: 'длъжностно лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',
@@ -101,6 +102,10 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
   const badge = exceptionBadge(hit);
   const ownershipBadge =
     hit.kind === 'company' && hit.ownershipKind ? <OwnershipChip kind={hit.ownershipKind} /> : null;
+  // A company that appears in the свързани-лица surface carries a trailing flag; the card links to the
+  // company page, which links on to /conflicts/company/:eik (a nested <a> here would be invalid).
+  const conflictBadge =
+    hit.kind === 'company' && hit.hasConflict ? <Chip>свързани лица</Chip> : null;
   return (
     <>
       {badge}
@@ -108,6 +113,8 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
       {ownershipBadge}
       {ownershipBadge && ' '}
       {renderTitle(hit, re)}
+      {conflictBadge && ' '}
+      {conflictBadge}
     </>
   );
 }
