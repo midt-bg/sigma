@@ -1,8 +1,9 @@
 # ADR-0017: A globally non-unique name cannot ride the name-distinctive tier — even with a certain ЕИК
 
-- Status: Accepted
+- Status: Superseded by [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md)
 - Date: 2026-07-05
 - Deciders: lb, Claude
+- Superseded by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) — the name-distinctive tier it gates leaves the publishing path; the `nameGloballyUnique` precondition survives, narrowed to the weakest evidence rung
 - Related: [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md), [ADR-0016](0016-free-text-entity-resolution.md); `scripts/cacbg/load.mjs`, `scripts/cacbg/audit.mjs`
 
 ## Context

@@ -1,8 +1,9 @@
 # ADR-0009: Name-uniqueness is not absolute → single-ЕИК guard + publish tiers
 
-- Status: Accepted
+- Status: Superseded by [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md)
 - Date: 2026-07-05
 - Deciders: lb, Claude
+- Superseded by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md)
 - Related: spec §5; refines [ADR-0008](0008-deterministic-name-to-eik-resolution.md)
 
 ## Context

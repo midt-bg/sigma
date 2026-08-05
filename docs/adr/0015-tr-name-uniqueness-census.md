@@ -1,8 +1,9 @@
 # ADR-0015: TR name-uniqueness census (promoting tier-C generic-name matches)
 
-- Status: Accepted (design; implemented as a Phase-1 pipeline step)
+- Status: Superseded by [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md)
 - Date: 2026-07-05
 - Deciders: lb, Claude
+- Superseded by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md)
 - Related: [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md); spec §5
 
 ## Context
