@@ -28,10 +28,11 @@ jobs:
       # so no `pnpm install` is required.
       - run: node --test scripts/*.test.mjs
 
-  # свързани-лица CACBG pipeline tests (parse/classify/load/audit/tr-census/extract). These use
-  # node:sqlite (DatabaseSync) and import the shared companyNameKey .ts via the register-ts resolve
-  # hook, so they need Node 24 (node:sqlite + native TS type-stripping, no experimental flag) rather
-  # than the Node 22 above. The libel-critical resolution logic gates merges here.
+  # свързани-лица pipeline tests — the CACBG leg (parse/classify/load/audit/tr-census/extract) and the
+  # Търговски регистър leg (scripts/tr: ЕИК checksum, HTTP client, deed cache). These use node:sqlite
+  # (DatabaseSync) and import the shared companyNameKey .ts via the register-ts resolve hook, so they
+  # need Node 24 (node:sqlite + native TS type-stripping, no experimental flag) rather than the Node 22
+  # above. The libel-critical resolution logic gates merges here.
   cacbg:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -47,4 +48,6 @@ jobs:
       # parse.mjs imports fast-xml-parser (a workspace dep), so this job needs node_modules — unlike
       # the plain-node scripts above. Install before the scraper tests run.
       - run: pnpm install --frozen-lockfile
-      - run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/*.test.mjs
+      # Both legs, or the glob silently excludes a whole module: scripts/tr/*.test.mjs matched NO job
+      # until this line existed, so every test in it would have been decorative.
+      - run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/*.test.mjs scripts/tr/*.test.mjs
