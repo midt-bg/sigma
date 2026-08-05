@@ -28,6 +28,8 @@ export const TABLES = [
   'declarations',
   'declared_interests',
   'interest_links',
+  // AFTER interest_links: a seal references its link, so inserting it first fails the FK (#279).
+  'interest_link_evidence',
   'interest_link_authorities',
 ];
 // DELETE order for the pre-insert wipe — children before parents. related_persons_internal (PII, never
@@ -35,6 +37,8 @@ export const TABLES = [
 // carrying internal rows would block DELETE FROM declarations.
 export const WIPE_ORDER = [
   'interest_link_authorities',
+  // BEFORE interest_links, for the mirror reason: deleting a link whose seal survives fails the FK.
+  'interest_link_evidence',
   'related_persons_internal',
   'interest_links',
   'declared_interests',

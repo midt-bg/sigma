@@ -10,6 +10,7 @@ import {
   sqlLiteral,
   sqlIdent,
   TABLES,
+  WIPE_ORDER,
 } from './ship-related-persons.mjs';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
@@ -70,9 +71,29 @@ test('TABLES ships parents before children and covers the served related-persons
     'declared_interests',
     'interest_links',
     'interest_link_authorities',
+    'interest_link_evidence',
   ]) {
     assert.ok(TABLES.includes(t), `missing ${t}`);
   }
+});
+
+test('the evidence seal ships AFTER the links it references, and is wiped BEFORE them', () => {
+  // D1 enforces foreign keys, so ordering is not cosmetic: inserting a seal before its link fails,
+  // and deleting a link while a seal still references it fails the re-seed at interest_links.
+  assert.ok(
+    TABLES.indexOf('interest_link_evidence') > TABLES.indexOf('interest_links'),
+    'a seal inserted before its link violates the FK',
+  );
+  assert.ok(
+    WIPE_ORDER.indexOf('interest_link_evidence') < WIPE_ORDER.indexOf('interest_links'),
+    'a link deleted while its seal survives violates the FK',
+  );
+});
+
+test('every shipped table is wiped, and every wiped table is real', () => {
+  // A table added to TABLES but forgotten in WIPE_ORDER accumulates stale rows on every re-ship —
+  // the surface would then carry evidence for links that no longer exist.
+  for (const t of TABLES) assert.ok(WIPE_ORDER.includes(t), `${t} ships but is never wiped`);
 });
 
 test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) before a remote wipe (T48)', () => {

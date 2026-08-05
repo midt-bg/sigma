@@ -185,6 +185,12 @@ jobs:
           pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
             --config wrangler.deploy.jsonc --remote --yes \
             --file ../../packages/db/migrations/0003_related_persons_foundation.sql
+          # 0006 attaches the Trade Register evidence seal (#279, ADR-0033). Both migrations are
+          # applied by name here because wrangler's migration ledger is empty on this D1 (the base
+          # schema was created out-of-band), so `d1 migrations apply` would collide on 0000.
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0006_interest_link_evidence.sql
 
       - name: Ship свързани-лица tables → D1
         # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it

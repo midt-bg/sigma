@@ -11,6 +11,7 @@ const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+const migration6 = resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -146,6 +147,59 @@ describe('served migrations', () => {
       expect(sqlite(dbPath, "SELECT printf('%.2f', won_eur) FROM flow_pairs;").trim()).toBe(
         '104748559.44',
       );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 0006 attaches the Trade Register evidence seal to a link (#279, ADR-0033). A SIDE TABLE rather than
+  // columns on interest_links, for two reasons that are easy to forget: SQLite's ADD COLUMN has no
+  // IF NOT EXISTS and migrations are applied by a bare `d1 execute --file` with no tracking, so a
+  // re-apply must be a no-op; and load.mjs rebuilds the CACBG tables from 0003 alone, so any column
+  // added here would have to be duplicated into 0003 and kept in step forever.
+  it('0006 adds the evidence seal and re-applying it is a no-op', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-0006-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      for (const m of [migration0, migration1, migration2, migration3, migration6])
+        readScript(dbPath, m);
+
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='interest_link_evidence';",
+        ).trim(),
+      ).toBe('1');
+
+      // A seal for a real link survives a second apply — the migration must not drop and recreate.
+      sqlite(
+        dbPath,
+        `INSERT INTO persons (id, name) VALUES ('person:a', 'Иван Петров Тестов');
+         INSERT INTO bidders (id, name, eik_normalized, eik_valid)
+           VALUES ('eik:201122335', 'АЛФА СТРОЙ ООД', '201122335', 1);
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, matcher_version, publish_tier,
+            relation, interest_class, status)
+         VALUES ('il:k', 'k', 'person:a', 'eik:201122335', '201122335', 'АЛФА СТРОЙ ООД',
+                 'test', 'document', 'owns', 'private_ownership', 'published');
+         INSERT INTO interest_link_evidence
+           (link_key, evidence_kind, matched_fact, lookup_date, rules_version, live_status)
+         VALUES ('k', 'document', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live');`,
+      );
+      readScript(dbPath, migration6); // idempotent re-apply
+      expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_link_evidence;').trim()).toBe('1');
+
+      // The FK is real: a seal for a link that does not exist is rejected. D1 enforces foreign keys,
+      // so this is what stops the ship path inserting seals before (or after wiping) their links.
+      expect(() =>
+        sqlite(
+          dbPath,
+          `PRAGMA foreign_keys=ON;
+           INSERT INTO interest_link_evidence
+             (link_key, evidence_kind, matched_fact, lookup_date, rules_version, live_status)
+           VALUES ('nope', 'document', 'eik', '2026-08-05', 'tr-rules-1', 'live');`,
+        ),
+      ).toThrow(/FOREIGN KEY/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

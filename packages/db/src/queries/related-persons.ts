@@ -19,6 +19,9 @@ const CONFLICT_TABLES = [
   'declared_interests',
   'interest_link_authorities',
   'related_persons_internal',
+  // 0006 (#279, ADR-0033). Listed here for the same reason as the rest: on an environment where 0006
+  // has not been applied yet, the evidence join must degrade to an empty surface rather than a 500.
+  'interest_link_evidence',
 ];
 // „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
 const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;

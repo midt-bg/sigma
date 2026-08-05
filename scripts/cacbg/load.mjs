@@ -30,6 +30,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
 const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/staging');
 const MIGRATION = path.join(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// 0006 attaches the Trade Register evidence seal (#279, ADR-0033). Applied here as well as 0003
+// because this loader rebuilds the CACBG tables from the migrations on every run — a seal table
+// missing from the work DB would make every evidence write fail at ship time instead of at load.
+const MIGRATION_EVIDENCE = path.join(
+  ROOT,
+  'packages/db/migrations/0006_interest_link_evidence.sql',
+);
 const REPORT = path.join(STAGING, 'findings.md');
 const MATCHER_VERSION = 'cnk-1+classify-1'; // bump when the normalizer or classify logic changes
 const { companyNameKey, isMatchableKey } =
@@ -71,6 +78,8 @@ const usedSuppressions = new Set();
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
+  // FIRST: interest_link_evidence references interest_links, so it must go before its parent.
+  'interest_link_evidence',
   'interest_link_authorities',
   'interest_links',
   'declared_interests',
@@ -80,6 +89,7 @@ for (const t of [
 ])
   db.exec(`DROP TABLE IF EXISTS ${t}`);
 db.exec(fs.readFileSync(MIGRATION, 'utf8'));
+db.exec(fs.readFileSync(MIGRATION_EVIDENCE, 'utf8'));
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
 const isSuppressed = (linkKey) => {
