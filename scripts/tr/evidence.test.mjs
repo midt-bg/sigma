@@ -1,0 +1,318 @@
+// node:test — the evidence ladder (ADR-0033 decision 1). Pure: deed in, verdict out.
+//
+// Six outcomes, first match wins. What each rung is allowed to CONCLUDE is the whole subject:
+// the registry proves the identity of the COMPANY, never that the official owns it — the ownership
+// claim comes from the official's own filed declaration. So a wrong match here does not invent an
+// ownership claim, it attaches a real official to the wrong company's ЕИК, contracts and money.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { RULES_VERSION, evidenceVerdict, reconcileTermination } from './evidence.mjs';
+
+const container = (t) =>
+  `<div class='record-container record-container--preview'><p class='field-text'>${t}</p></div>`;
+const joined = (...ts) => ts.map(container).join(`<hr class='hr--report' />`);
+const ERASED = `<div class='record-container'><div class='erasure-text-inline'>Заличено обстоятелство.</div></div>`;
+
+const fld = (nameCode, htmlData, entryDate = '2011-05-02T00:00:00') => ({
+  nameCode,
+  htmlData,
+  fieldEntryNumber: '20110502101007',
+  fieldEntryDate: entryDate,
+  fieldOperation: 3,
+});
+const deed = (fields, over = {}) => ({
+  uic: '201122335',
+  fullName: '"АЛФА СТРОЙ" ООД',
+  legalForm: 4,
+  sections: [{ subDeeds: [{ groups: [{ fields }] }] }],
+  ...over,
+});
+
+const OWNER_DEED = deed([
+  fld('CR_F_19_L', joined('ИВАН ПЕТРОВ ТЕСТОВ, Държава: БЪЛГАРИЯ', 'МАРИЯ СТОЯНОВА ИВАНОВА')),
+  fld('CR_F_5_L', container('Държава: БЪЛГАРИЯ<br/>Населено място: гр. Пловдив, п.к. 4000')),
+]);
+
+const base = {
+  deed: OWNER_DEED,
+  declarantName: 'Иван Петров Тестов',
+  declaredSeats: [],
+  declaredEik: false,
+  firstDeclaredYear: 2021,
+  scope: 'self',
+  nameGloballyUnique: true,
+};
+
+test('RULES_VERSION is a stable, non-empty identifier — §8 hangs off it', () => {
+  assert.equal(typeof RULES_VERSION, 'string');
+  assert.ok(RULES_VERSION.length > 0);
+});
+
+// ── rung 1: the joint-stock bar wins over everything ──────────────────────────
+test('rung 1 — a joint-stock company is barred even when the person IS in the deed', () => {
+  const ad = deed([fld('CR_F_19_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))], {
+    legalForm: 5,
+    fullName: '"ГАМА ИНВЕСТ" АД',
+  });
+  const v = evidenceVerdict({ ...base, deed: ad });
+  assert.equal(v.kind, 'bar_joint_stock');
+  assert.equal(v.publishable, false);
+});
+
+test('rung 1 — an UNKNOWN legal form withholds; it never falls through to a lower rung', () => {
+  const odd = deed([fld('CR_F_19_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))], {
+    legalForm: 99,
+    fullName: 'НЕЩО БЕЗ ФОРМА',
+  });
+  const v = evidenceVerdict({ ...base, deed: odd });
+  assert.equal(v.kind, 'unknown');
+  assert.equal(v.publishable, false);
+});
+
+// ── rung 2: „Документ" ────────────────────────────────────────────────────────
+test('rung 2 — a full-name match in a live ownership field publishes, with the role kept', () => {
+  const v = evidenceVerdict(base);
+  assert.equal(v.kind, 'document');
+  assert.equal(v.publishable, true);
+  assert.equal(v.registryRole, 'owner');
+  assert.equal(v.matchedFact, 'role:owner:CR_F_19_L');
+  assert.equal(v.entryNumber, '20110502101007');
+  assert.equal(v.entryDate, '2011-05-02');
+});
+
+test('rung 2 — a manager-only match publishes but records the weaker role', () => {
+  const mgr = deed([
+    fld('CR_F_7_L', container('ИВАН ПЕТРОВ ТЕСТОВ, Държава: БЪЛГАРИЯ')),
+    fld('CR_F_19_L', container('ДРУГО ЛИЦЕ ТУК')),
+  ]);
+  const v = evidenceVerdict({ ...base, deed: mgr });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.registryRole, 'manager');
+  assert.equal(v.matchedFact, 'role:manager:CR_F_7_L');
+});
+
+test('rung 2 — a TWO-token declarant can never earn „Документ"', () => {
+  // 46 of 301 measured matches were two-token only, which is exactly the homonym risk. Falls to a
+  // lower rung rather than publishing on a name that half a register could satisfy.
+  const two = deed([fld('CR_F_19_L', container('ИВАН ТЕСТОВ, Държава: БЪЛГАРИЯ'))]);
+  const v = evidenceVerdict({ ...base, deed: two, declarantName: 'Иван Тестов' });
+  assert.notEqual(v.kind, 'document');
+  assert.equal(v.shortName, true, 'the refusal is counted, not silently dropped');
+});
+
+test('rung 2 — the match must fall inside ONE entity (the libel guard, end to end)', () => {
+  const two = deed([
+    fld('CR_F_19_L', joined('ПЕНКО НЕСТОРОВ НЕСТОРОВ', 'ИЛИЯН КОСТАДИНОВ ФИЛИПОВ')),
+  ]);
+  const v = evidenceVerdict({ ...base, deed: two, declarantName: 'ПЕНКО КОСТАДИНОВ ФИЛИПОВ' });
+  assert.notEqual(v.kind, 'document');
+});
+
+test('rung 2 — an ERASED ownership entry cannot produce a document match', () => {
+  const gone = deed([fld('CR_F_23_L', ERASED, '2013-07-16T10:10:07')]);
+  const v = evidenceVerdict({ ...base, deed: gone });
+  assert.notEqual(v.kind, 'document');
+});
+
+test('rung 2 — a Latin homoglyph in the name is a NON-match, and is counted', () => {
+  // company-name-key.ts deliberately does not fold Cyrillic↔Latin; person names take the same posture.
+  const v = evidenceVerdict({ ...base, declarantName: 'ИBAH ПЕТРОВ ТЕСТОВ' }); // Latin B, A, H
+  assert.notEqual(v.kind, 'document');
+  assert.equal(v.latinInName, true);
+});
+
+// ── rung 3: „Потвърдено" ──────────────────────────────────────────────────────
+test('rung 3 — a declared seat matching the registered seat confirms the company', () => {
+  const other = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив, п.к. 4000'), '2015-01-01T00:00:00'),
+  ]);
+  const v = evidenceVerdict({ ...base, deed: other, declaredSeats: ['Пловдив'] });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.publishable, true);
+  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
+});
+
+test('rung 3 — a declared ЕИК confirms the company on its own', () => {
+  const other = deed([fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК'))]);
+  const v = evidenceVerdict({ ...base, deed: other, declaredEik: true });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.matchedFact, 'eik');
+});
+
+test('rung 3 — an EMPTY declared seat never confirms', () => {
+  const noSeat = deed([fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК'))]);
+  const v = evidenceVerdict({ ...base, deed: noSeat, declaredSeats: ['', '   '] });
+  assert.notEqual(v.kind, 'confirmed');
+});
+
+test('rung 3 — a seat registered AFTER the declared period does not confirm', () => {
+  // R10, and W0 measured that seats move: a company that relocated INTO the declared settlement after
+  // the fact would otherwise produce a false „Потвърдено".
+  const moved = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив'), '2024-06-01T00:00:00'),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: moved,
+    declaredSeats: ['Пловдив'],
+    firstDeclaredYear: 2021,
+  });
+  assert.notEqual(v.kind, 'confirmed');
+});
+
+test('rung 3 — the weakest rung ALSO requires global name uniqueness (ADR-0017 carried forward)', () => {
+  const other = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив')),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: other,
+    declaredSeats: ['Пловдив'],
+    nameGloballyUnique: false,
+  });
+  assert.notEqual(v.kind, 'confirmed', 'a nationally shared name cannot ride the weakest rung');
+});
+
+test('rung 3 — name uniqueness does NOT gate the stronger „Документ" rung', () => {
+  const v = evidenceVerdict({ ...base, nameGloballyUnique: false });
+  assert.equal(
+    v.kind,
+    'document',
+    'the registry named the person in THIS company; the name key is moot',
+  );
+});
+
+// ── rung 4: „Оборена" ─────────────────────────────────────────────────────────
+test('rung 4 — absent from a deed whose ownership predates the declaration refutes the link', () => {
+  const older = deed([
+    fld('CR_F_19_L', container('СЪВСЕМ ДРУГ СОБСТВЕНИК'), '2015-03-01T00:00:00'),
+  ]);
+  const v = evidenceVerdict({ ...base, deed: older, firstDeclaredYear: 2021 });
+  assert.equal(v.kind, 'refuted');
+  assert.equal(v.publishable, false);
+});
+
+test('rung 4 — the comparison is date-to-DATE, not date-to-year', () => {
+  // R17: „strictly before the first declared year" means before YYYY-01-01. An entry inside the first
+  // declared year does NOT cover the period and must not refute.
+  const inYear = deed([fld('CR_F_19_L', container('ДРУГ СОБСТВЕНИК'), '2021-06-15T00:00:00')]);
+  assert.notEqual(
+    evidenceVerdict({ ...base, deed: inYear, firstDeclaredYear: 2021 }).kind,
+    'refuted',
+  );
+  const justBefore = deed([fld('CR_F_19_L', container('ДРУГ СОБСТВЕНИК'), '2020-12-31T00:00:00')]);
+  assert.equal(
+    evidenceVerdict({ ...base, deed: justBefore, firstDeclaredYear: 2021 }).kind,
+    'refuted',
+  );
+});
+
+test('rung 4 — NEVER applies to a family stake', () => {
+  // The owner there is the relative, whose name we neither store nor check (ADR-0010 item 4,
+  // ADR-0032 decision 2), so „the official is not in the deed" says nothing at all.
+  const older = deed([fld('CR_F_19_L', container('ДРУГ СОБСТВЕНИК'), '2015-03-01T00:00:00')]);
+  const v = evidenceVerdict({ ...base, deed: older, scope: 'family', firstDeclaredYear: 2021 });
+  assert.notEqual(v.kind, 'refuted');
+  assert.equal(v.kind, 'unknown');
+});
+
+test('rung 4 — suppressed inside the 2011–2012 re-registration window', () => {
+  // R13: court-registered companies had every entry date flattened into the re-registration window,
+  // so „strictly before" certifies nothing there.
+  const flattened = deed([fld('CR_F_19_L', container('ДРУГ СОБСТВЕНИК'), '2011-11-04T00:00:00')]);
+  const v = evidenceVerdict({ ...base, deed: flattened, firstDeclaredYear: 2021 });
+  assert.notEqual(v.kind, 'refuted');
+  assert.equal(v.kind, 'unknown');
+});
+
+// ── rungs 5 and 6 ─────────────────────────────────────────────────────────────
+test('rung 5 — everything else is „Неизвестна" and stays hidden', () => {
+  const recent = deed([fld('CR_F_19_L', container('ДРУГ СОБСТВЕНИК'), '2023-01-01T00:00:00')]);
+  const v = evidenceVerdict({ ...base, deed: recent, firstDeclaredYear: 2021 });
+  assert.equal(v.kind, 'unknown');
+  assert.equal(v.publishable, false);
+});
+
+test('rung 6 — outside the register is its own outcome, and is not publishable', () => {
+  const v = evidenceVerdict({ ...base, deed: null, outsideTr: true });
+  assert.equal(v.kind, 'outside_tr');
+  assert.equal(v.publishable, false);
+});
+
+test('a missing deed that is NOT marked outside-ТР is an error, not a silent hold', () => {
+  // Fail closed: a cache gap must be visible, never quietly downgraded to „unknown".
+  assert.throws(() => evidenceVerdict({ ...base, deed: null, outsideTr: false }), /deed/i);
+});
+
+// ── the seal ──────────────────────────────────────────────────────────────────
+test('matched_fact stays inside the closed vocabulary — it can never carry a name', () => {
+  const CLOSED = /^(?:seat:[\p{Lu} -]+|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
+  for (const v of [
+    evidenceVerdict(base),
+    evidenceVerdict({ ...base, deed: deed([fld('CR_F_7_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))]) }),
+    evidenceVerdict({ ...base, declaredEik: true }),
+    evidenceVerdict({
+      ...base,
+      deed: deed([
+        fld('CR_F_19_L', container('ДРУГ ЧОВЕК')),
+        fld('CR_F_5_L', container('Населено място: гр. Пловдив')),
+      ]),
+      declaredSeats: ['Пловдив'],
+    }),
+  ]) {
+    if (v.matchedFact == null) continue;
+    assert.match(v.matchedFact, CLOSED, `matched_fact escaped the vocabulary: ${v.matchedFact}`);
+    assert.ok(!/ИВАН|ПЕТРОВ|ТЕСТОВ/.test(v.matchedFact), 'a NAME reached matched_fact');
+  }
+});
+
+test('every verdict carries the rules version that produced it', () => {
+  assert.equal(evidenceVerdict(base).rulesVersion, RULES_VERSION);
+});
+
+// ── §7 reconciliation ─────────────────────────────────────────────────────────
+test('reconcileTermination — still a registered owner ⇒ NOT terminated', () => {
+  const r = reconcileTermination({
+    deed: OWNER_DEED,
+    declarantName: 'Иван Петров Тестов',
+    scope: 'self',
+  });
+  assert.equal(r.terminated, false);
+  assert.equal(r.label, 'owner_today');
+});
+
+test('reconcileTermination — manager only ⇒ terminated as a stake, but the tie continues', () => {
+  const mgr = deed([
+    fld('CR_F_7_L', container('ИВАН ПЕТРОВ ТЕСТОВ')),
+    fld('CR_F_19_L', container('ДРУГ')),
+  ]);
+  const r = reconcileTermination({ deed: mgr, declarantName: 'Иван Петров Тестов', scope: 'self' });
+  assert.equal(r.terminated, true);
+  assert.equal(r.label, 'manager_today');
+});
+
+test('reconcileTermination — absent from the live deed ⇒ the declared termination stands', () => {
+  const none = deed([fld('CR_F_19_L', container('НЯКОЙ ДРУГ'))]);
+  const r = reconcileTermination({
+    deed: none,
+    declarantName: 'Иван Петров Тестов',
+    scope: 'self',
+  });
+  assert.equal(r.terminated, true);
+  assert.equal(r.label, null);
+});
+
+test('reconcileTermination — a FAMILY stake is never reconciled, by an early branch', () => {
+  // Structural, not a caller convention: the relative's name is not stored, so there is nothing to
+  // look for, and looking would be a de-anonymisation attempt.
+  const r = reconcileTermination({
+    deed: OWNER_DEED,
+    declarantName: 'Иван Петров Тестов',
+    scope: 'family',
+  });
+  assert.equal(r.terminated, true);
+  assert.equal(r.label, null);
+});

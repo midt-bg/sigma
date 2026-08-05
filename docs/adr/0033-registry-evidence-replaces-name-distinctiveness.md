@@ -68,9 +68,16 @@ requests, 2026-08-04 — well inside the pacing above, so no 429 was encountered
   — `legalForm=4` and `legalForm=10` return a byte-identical catalogue.
 - The envelope's `fullName` carries the legal form (`"ПИМК" ООД`) while `CR_F_2_L` is bare. The joint-stock
   bar can therefore be derived from the ЗТРРЮЛНЦ-mandated suffix, at zero extra requests.
-- Erasure is **structural, not textual**: an erased entity is a `record-container` block carrying the class
-  `field-text--erased`. Entities inside one field are separated by
+- Erasure is **structural, not textual**. Entities inside one field are separated by
   `<div class='record-container record-container--preview'>` blocks delimited by `<hr class='hr--report'/>`.
+  An erased entity is such a block carrying an erasure marker. **Correction, on implementation:** this ADR
+  first named that marker `field-text--erased`. Re-measured against the full live deed for ЕИК 115536179,
+  that class occurs **zero** times; the register emits `<div class='erasure-text-inline'>` (with
+  `<i class='ui-icon ui-icon-erased'>`) and the erased container carries **no `field-text` paragraph at
+  all**. The parser therefore treats *either* spelling as erasure — honouring both costs nothing, while
+  assuming one costs a wrong publish. `fieldOperation` is **not** the signal: it reads 2 on both erased
+  fields in that deed but 1 on the erased history records W0 sampled, so it is an undocumented enum we do
+  not rely on.
 - Erased versions are **live in the current deed**: the first company sampled carries a fully-erased
   `CR_F_23_L` dated 2013-07-16, which read naïvely becomes „latest ownership entry: 2013-07-16" and feeds
   the refutation rule.
