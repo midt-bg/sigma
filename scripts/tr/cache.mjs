@@ -153,10 +153,16 @@ export function readDeed(db, eik) {
   };
 }
 
+/** ADR-0033 decision 5: one monthly refresh cycle plus slack. See purgeExpired. */
+export const RETENTION_DAYS = 35;
+
 /**
  * Which of `wanted` still need a request — the resumability primitive.
- * A cached row past `maxAgeDays` becomes pending again (the 35-day retention of ADR-0033 decision 5);
- * pass no `maxAgeDays` to treat any cached row as current.
+ *
+ * `maxAgeDays` is a FRESHNESS knob, not the retention rail: past it a cached row becomes pending and
+ * is re-requested. Retention — actually deleting the personal data — is purgeExpired below. Refreshing
+ * a deed rewrites it; only purging removes it, and conflating the two is how a documented TTL ends up
+ * never deleting anything. Pass no `maxAgeDays` to treat any cached row as current.
  */
 export function pendingEiks(db, wanted, { maxAgeDays = null, now = new Date() } = {}) {
   const cutoff = maxAgeDays == null ? null : now.getTime() - maxAgeDays * 86_400_000;
@@ -197,4 +203,66 @@ export function coverage(db, wanted) {
     missing: wanted.length - covered,
     ratio: wanted.length === 0 ? 1 : covered / wanted.length,
   };
+}
+
+/**
+ * Delete deed data past its retention — ADR-0033 decision 5's purge step.
+ *
+ * This is a PRIVACY rail, not a cache-eviction policy, and the distinction decides the design. The raw
+ * JSON under scratch/tr/deeds/ is the only place third-party names live: co-owners and managers who
+ * hold no public office, and the company's street address. We keep it because re-deriving a boolean is
+ * cheaper than re-requesting somebody else's register — not because we are entitled to hold it.
+ *
+ * Retention is 35 days: one monthly refresh cycle plus slack. Under normal operation nothing is ever
+ * purged, because the refresh at ~30 days rewrites the row first. What this actually catches is the
+ * residue — a company that dropped out of the candidate set, or a refresh that failed — which is
+ * exactly the data with no remaining reason to exist.
+ *
+ * Orphaned files are removed too: a raw deed with no index row is unreachable by every read path here,
+ * so it is pure retained personal data.
+ *
+ * @returns {{rows:number, files:number, orphans:number}} what was removed
+ */
+export function purgeExpired(
+  db,
+  rawDir,
+  { retentionDays = RETENTION_DAYS, now = new Date() } = {},
+) {
+  const cutoff = new Date(now.getTime() - retentionDays * 86_400_000).toISOString();
+  const expired = db.prepare('SELECT eik, raw_path FROM deeds WHERE fetched_at < ?').all(cutoff);
+
+  let files = 0;
+  for (const row of expired) {
+    if (!row.raw_path) continue;
+    // Resolve through the same safeEik path-traversal rail the writer used, never the stored string.
+    try {
+      fs.unlinkSync(path.join(rawDir, `${safeEik(row.eik)}.json`));
+      files++;
+    } catch (e) {
+      // Already gone is the goal state, not a failure. Anything else must surface — a purge that
+      // silently fails to delete is worse than no purge, because it reports success.
+      if (e.code !== 'ENOENT') throw e;
+    }
+  }
+  db.prepare('DELETE FROM deeds WHERE fetched_at < ?').run(cutoff);
+
+  let orphans = 0;
+  let names = [];
+  try {
+    names = fs.readdirSync(rawDir);
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e; // no raw dir yet — nothing to orphan
+  }
+  const known = new Set(
+    db
+      .prepare('SELECT eik FROM deeds')
+      .all()
+      .map((r) => `${r.eik}.json`),
+  );
+  for (const name of names) {
+    if (!name.endsWith('.json') || known.has(name)) continue;
+    fs.unlinkSync(path.join(rawDir, name));
+    orphans++;
+  }
+  return { rows: expired.length, files, orphans };
 }

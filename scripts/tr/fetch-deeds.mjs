@@ -24,7 +24,14 @@ import crypto from 'node:crypto';
 import { assertTrScratchIgnored, TR_DB, TR_RAW, safeEik, deedPath } from './paths.mjs';
 import { eikChecksumValid } from './eik.mjs';
 import { deedUrl, politeTrGet, RateLimitError, httpsGet } from './client.mjs';
-import { openCache, upsertDeed, markOutsideTr, pendingEiks } from './cache.mjs';
+import {
+  openCache,
+  upsertDeed,
+  markOutsideTr,
+  pendingEiks,
+  purgeExpired,
+  RETENTION_DAYS,
+} from './cache.mjs';
 import {
   assertUicEcho,
   registryLegalForm,
@@ -74,11 +81,17 @@ export function parseTrOptions(argv) {
     );
   }
   const maxAgeRaw = get('max-age-days', '');
+  // --max-age-days is FRESHNESS (re-request past it); --retention-days is RETENTION (delete past it).
+  // They are separate flags because they are separate obligations: refreshing rewrites the personal
+  // data, only purging removes it. Retention defaults to the ADR's 35 days rather than to „off", so
+  // the rail holds for an operator who passes neither.
+  const retentionRaw = get('retention-days', '');
   return {
     eiksFile,
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
     minIntervalMs,
     maxAgeDays: maxAgeRaw ? posInt(maxAgeRaw, 'max-age-days') : null,
+    retentionDays: retentionRaw ? posInt(retentionRaw, 'retention-days') : RETENTION_DAYS,
   };
 }
 
@@ -117,7 +130,7 @@ export async function run({
   argv = process.argv,
 } = {}) {
   guard();
-  const { eiksFile, limit, minIntervalMs, maxAgeDays } = parseTrOptions(argv);
+  const { eiksFile, limit, minIntervalMs, maxAgeDays, retentionDays } = parseTrOptions(argv);
 
   const requested = readEiksFile(eiksFile);
   // A shape- or checksum-invalid code is dropped BEFORE any request: it cannot name a real company,
@@ -241,6 +254,24 @@ export async function run({
     }
     return 0;
   } finally {
+    // The purge step ADR-0033 decision 5 puts „in the same job" — in `finally`, and that placement is
+    // the point. Retention is an obligation about other people's data, not a reward for a clean run,
+    // so it must also happen on the paths that leave early: a 429 (exit 2), a tripped breaker, an
+    // unresolved candidate. Under normal operation it removes nothing, because the monthly refresh
+    // rewrites each row well inside the window; anything it does delete is residue — a company that
+    // left the candidate set, or a refresh that never landed.
+    try {
+      const purged = purgeExpired(db, rawDir, { retentionDays, now: now() });
+      if (purged.rows || purged.files || purged.orphans) {
+        console.log(
+          `purged ${purged.rows} row(s), ${purged.files} raw deed(s), ${purged.orphans} orphan(s) past ${retentionDays}d retention`,
+        );
+      }
+    } catch (e) {
+      // A failed purge must be loud but must not mask the run's own outcome — especially not a 429,
+      // whose exit code is what tells the operator to back off.
+      console.error(`purge failed: ${e.message}`);
+    }
     db.close();
   }
 }

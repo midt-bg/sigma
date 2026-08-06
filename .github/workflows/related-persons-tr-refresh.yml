@@ -10,6 +10,11 @@ name: Related-persons — Trade Register cache refresh (monthly)
 # It SHIPS NOTHING. It writes only the cache under scratch/tr/, which is git-ignored and never leaves
 # the runner except as an artifact. A run that fails leaves the previous cache intact.
 #
+# It also PURGES: raw deeds past the 35-day retention (ADR-0033 decision 5) are deleted at the end of
+# every run, including one a 429 cut short. Retention is not the same knob as freshness — --max-age-days
+# decides what gets re-requested, --retention-days decides what stops being kept — and the default is
+# the ADR's 35 days, so the rail holds even when the workflow passes neither.
+#
 # Pace and refusals live in scripts/tr/fetch-deeds.mjs and are not configurable here on purpose:
 # 1 request / 3 s, sequential, a closed candidate set, and a 429 ends the run (exit 2) without marking
 # anything. Spec §3.3 permits a bounded per-ЕИК lookup and forbids bulk scraping; the limiter is the

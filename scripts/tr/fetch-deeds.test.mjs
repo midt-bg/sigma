@@ -371,3 +371,57 @@ test('the circuit breaker aborts a sustained wall of failures', async () => {
     c.cleanup();
   }
 });
+
+// ── retention (ADR-0033 decision 5: „a purge step in the same job") ───────────
+test('the job purges past-retention deeds, and does so even when a 429 ends the run', async () => {
+  // Retention is an obligation about other people's data, not a reward for a clean run: the paths that
+  // leave early — a 429, a tripped breaker — are exactly the ones where a naive placement after the
+  // fetch loop would skip it and let third-party names sit on disk indefinitely.
+  for (const [label, route] of [
+    ['clean run', ok(A)],
+    ['429 stops the run', status(429)],
+  ]) {
+    const c = ctx();
+    try {
+      // An old deed with its raw file — well past the 35-day window at the harness's fixed clock.
+      fs.mkdirSync(c.rawDir, { recursive: true });
+      fs.writeFileSync(path.join(c.rawDir, `${C}.json`), '{"owner":"ТРЕТО ЛИЦЕ"}');
+      const db = new DatabaseSync(c.dbFile);
+      db.exec(`CREATE TABLE IF NOT EXISTS deeds (
+        eik TEXT PRIMARY KEY, status TEXT NOT NULL, http_status INTEGER, fetched_at TEXT NOT NULL,
+        raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
+        seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
+        attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT);
+        INSERT INTO deeds (eik,status,fetched_at,raw_path) VALUES ('${C}','fetched','2026-01-01T00:00:00Z','${C}.json');`);
+      db.close();
+
+      await harness(c, [A], { [A]: route }).promise;
+
+      assert.equal(
+        fs.existsSync(path.join(c.rawDir, `${C}.json`)),
+        false,
+        `${label}: the past-retention raw deed must be deleted`,
+      );
+      assert.equal(
+        rows(c.dbFile).some((r) => r.eik === C),
+        false,
+        `${label}: its index row must go with it`,
+      );
+    } finally {
+      c.cleanup();
+    }
+  }
+});
+
+test('the purge leaves in-window deeds alone — it is a privacy rail, not a cache eviction', async () => {
+  // If it evicted live cache, every run would re-request deeds it already holds, which is precisely
+  // the volume against the register the pacing exists to avoid.
+  const c = ctx();
+  try {
+    await harness(c, [A], { [A]: ok(A) }).promise;
+    assert.equal(rows(c.dbFile).length, 1, 'the deed just fetched must survive its own job');
+    assert.equal(fs.existsSync(path.join(c.rawDir, `${A}.json`)), true);
+  } finally {
+    c.cleanup();
+  }
+});

@@ -9,7 +9,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openCache, upsertDeed, markOutsideTr, pendingEiks, readDeed, coverage } from './cache.mjs';
+import {
+  openCache,
+  upsertDeed,
+  markOutsideTr,
+  pendingEiks,
+  readDeed,
+  coverage,
+  purgeExpired,
+  RETENTION_DAYS,
+} from './cache.mjs';
 
 function tmpDb() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tr-cache-'));
@@ -157,4 +166,66 @@ test('markOutsideTr is permanent-by-intent and records WHY', () =>
     const row = readDeed(db, '204556676');
     assert.equal(row.status, 'outside_tr');
     assert.match(row.outsideReason, /ДЗЗД/);
+  }));
+
+// ── retention (ADR-0033 decision 5) ───────────────────────────────────────────
+// The ADR promises „a 35-day retention and a purge step in the same job". Freshness (pendingEiks'
+// maxAgeDays) only makes a row pending again — it re-REQUESTS, it never deletes. Only this purge
+// removes the third-party names in the raw deed, so these tests are the difference between a stated
+// TTL and an enforced one.
+function withRaw(fn) {
+  const { dir, file } = tmpDb();
+  const rawDir = path.join(dir, 'deeds');
+  fs.mkdirSync(rawDir, { recursive: true });
+  const db = openCache(file);
+  try {
+    return fn(db, rawDir);
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+const writeRaw = (rawDir, eik) =>
+  fs.writeFileSync(path.join(rawDir, `${eik}.json`), '{"names":"third-party PII"}');
+
+test('purgeExpired deletes the raw deed AND its row past the retention window', () =>
+  withRaw((db, rawDir) => {
+    const now = new Date('2026-08-05T00:00:00Z');
+    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-05-01T00:00:00Z' })); // ~96 days old
+    upsertDeed(db, deed({ eik: '201122335', fetchedAt: '2026-08-01T00:00:00Z' })); // 4 days old
+    writeRaw(rawDir, '115536179');
+    writeRaw(rawDir, '201122335');
+
+    const res = purgeExpired(db, rawDir, { retentionDays: 35, now });
+    assert.equal(res.rows, 1);
+    assert.equal(res.files, 1);
+    assert.equal(fs.existsSync(path.join(rawDir, '115536179.json')), false, 'PII must be gone');
+    assert.equal(readDeed(db, '115536179'), null);
+    // The in-window deed is untouched — a purge that also evicted live cache would force a re-crawl,
+    // which is the one thing the pacing exists to avoid.
+    assert.equal(fs.existsSync(path.join(rawDir, '201122335.json')), true);
+    assert.ok(readDeed(db, '201122335'));
+  }));
+
+test('purgeExpired removes orphaned raw deeds — unreachable data is pure retained PII', () =>
+  withRaw((db, rawDir) => {
+    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-08-01T00:00:00Z' }));
+    writeRaw(rawDir, '115536179');
+    writeRaw(rawDir, '204556676'); // no index row: no read path can ever reach it
+    const res = purgeExpired(db, rawDir, { now: new Date('2026-08-05T00:00:00Z') });
+    assert.equal(res.orphans, 1);
+    assert.equal(fs.existsSync(path.join(rawDir, '204556676.json')), false);
+    assert.equal(fs.existsSync(path.join(rawDir, '115536179.json')), true);
+  }));
+
+test('purgeExpired defaults to the 35-day window and tolerates an already-missing file', () =>
+  withRaw((db, rawDir) => {
+    assert.equal(RETENTION_DAYS, 35);
+    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-06-25T00:00:00Z' })); // 41 days
+    upsertDeed(db, deed({ eik: '201122335', fetchedAt: '2026-07-15T00:00:00Z' })); // 21 days
+    // No raw file on disk for the expired row: already gone is the goal state, not an error.
+    const res = purgeExpired(db, rawDir, { now: new Date('2026-08-05T00:00:00Z') });
+    assert.equal(res.rows, 1);
+    assert.equal(res.files, 0);
+    assert.ok(readDeed(db, '201122335'), 'the 21-day-old deed is inside the window');
   }));
