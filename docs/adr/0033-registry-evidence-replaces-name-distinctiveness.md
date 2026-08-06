@@ -261,11 +261,28 @@ None of these are follow-ups.
 - **Precision is proven by a hand-labelled sample, not by the control totals.** A human verifies against the
   portal: every reconciled link, every refuted link, and random samples of „Документ" and „Потвърдено".
   **Pass mark: zero wrong-company and zero wrong-person errors.** The control numbers of #279 §10 are a
-  reproducibility check — and they are usable as one only after the §5/§10 discrepancy is resolved with the
-  author (§5's „102 по седалище, 3 по ЕИК" leaves those three ЕИК confirmations in no bucket of the §10
-  row, which sums to exactly 568 without them), and re-measured on top of the §12 phantom-row fix, which
-  changed the corpus — that fix has landed as #281 (87 phantom rows across 15 sets; 256,286 announced −
-  87 = 256,199, covered exactly by 255,582 fetched + 617 missing at source).
+  reproducibility check, and two things had to be settled before they could serve as one.
+
+  **The §5/§10 discrepancy is a dropped histogram category, not a disputed measurement.** §5's rungs carry
+  their own control counts: 4 barred + 281 document + 102 seat + 3 ЕИК + 21 refuted + 156 unknown = 567,
+  plus the 4 links whose ЕИК is not in the register at all (§5 scopes the ladder to links „с изтеглен акт",
+  so those reach no rung) = **571**. §10's identity row is 281 / 102 / 156 / 21 / 4 / 4 = **568**. The
+  difference is exactly the „3 по ЕИК".
+
+  The cause is visible in the labels. The identity row names its second bucket **„седалище"** — one leg of
+  rung 3 — while the evidence row two lines below names the same rung **„потвърдено"** (251 / 78). Rung 3
+  has two legs; the row tallied one and presented the result as a partition of the resolved set. And the
+  stated total 568 equals that row's sum exactly, which makes it a figure derived from the histogram rather
+  than measured independently. So both move together: the bucket becomes **„потвърдено: 105"** and the
+  resolved total becomes **571**. F8 measures against those and reports if its own count disagrees — the
+  reconciliation is not permitted to adopt whichever reading makes it pass.
+
+  **Not a discrepancy, and not to be „fixed":** „извън ТР" is 4 in §10 and 3 in §3/§11 because the units
+  differ — 3 ЕИК that are not in the register, carrying 4 links between them. §10's row counts links.
+
+  The numbers must also be re-measured on top of the §12 phantom-row fix, which changed the corpus — that
+  fix has landed as #281 (87 phantom rows across 15 sets; 256,286 announced − 87 = 256,199, covered exactly
+  by 255,582 fetched + 617 missing at source).
 - **Every anti-false-zero control is a positive control.** „Sofia seat confirmations: 0" is indistinguishable
   from a broken normalizer without one; so is a joint-stock bar with no marginal effect over
   `closelyHeldForm`, and a matcher that always returns false (ADR-0027's lesson).
@@ -304,7 +321,8 @@ None of these are follow-ups.
   as-of evidence via `?entryDate=`, and the §7 „и към днешна дата" labels with their post-period contracts.
 - The seat rung is structurally capped and we accept the cap: a declared seat is captured **only** from the
   ООД/ЕООД holdings table of an *asset* declaration (`parse.mjs`), so it can never rescue a link declared
-  solely in an interests declaration. This is probably consistent with the measured 102 — rung 1 bars the
+  solely in an interests declaration. This is probably consistent with the 102 measured for the seat leg
+  specifically (not the 105 of the whole rung, whose other three come from the ЕИК leg) — rung 1 bars the
   joint-stock cases anyway — but it is confirmed against the corpus before launch, not assumed.
 
 ### Measured outcome — recorded on completion
@@ -313,8 +331,10 @@ This ADR is accepted on the design. Exactly one amendment is permitted afterward
 filled in with the measured result, and nothing else in the file is rewritten (repo convention — an
 accepted ADR is superseded, not edited). To be recorded:
 
-- the realized ladder split against the #279 §10 control row, with each number naming the SQL that produced
-  it, and the 54-link gap between identified (281 + 102) and surfaced (329) attributed bucket by bucket;
+- the realized ladder split against the #279 §10 control row **as corrected above** (281 / 105 / 156 / 21 /
+  4 / 4 = 571), with each number naming the SQL that produced it, and the gap between identified (281 + 105)
+  and surfaced (329) attributed bucket by bucket — 57 links on the corrected reading, 54 on the row as
+  written, so the figure itself distinguishes the two;
 - the true candidate-ЕИК count (#279's „~400" is an assumption; the figure is `COUNT(DISTINCT eik)` over
   all links, not just published ones);
 - the hand-labelled sample result;
