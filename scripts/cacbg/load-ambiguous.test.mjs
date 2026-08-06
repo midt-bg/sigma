@@ -45,12 +45,33 @@ function buildAndLoad(bidderRows) {
   fs.writeFileSync(path.join(STAGING, 'holdings.jsonl'), '');
   fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
 
+  // An EMPTY Trade Register cache, pointed at explicitly (#279, ADR-0033). This fixture declares no
+  // holdings, so it resolves no links and the coverage gate is satisfied by an empty candidate set —
+  // but the cache FILE must still exist, because a missing one refuses the whole load.
+  //
+  // Explicit rather than defaulted, and that matters: load.mjs falls back to the repo's real
+  // scratch/tr/tr-cache.sqlite, so a test that omits TR_CACHE_DB silently runs against whatever the
+  // developer's last live crawl left behind. That is exactly how this test passed locally and failed
+  // in CI, where no such file exists.
+  const trDb = path.join(dir, 'tr-cache.sqlite');
+  new DatabaseSync(trDb).close();
+
   let threw = false;
   try {
     execFileSync(
       'node',
       ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
-      { cwd: ROOT, env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING }, stdio: 'pipe' },
+      {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          CACBG_DB: DB,
+          CACBG_STAGING: STAGING,
+          TR_CACHE_DB: trDb,
+          TR_RAW_DIR: path.join(dir, 'tr-deeds'),
+        },
+        stdio: 'pipe',
+      },
     );
   } catch {
     threw = true; // execFileSync throws on a non-zero exit code (a fired hard-gate)
