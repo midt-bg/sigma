@@ -64,7 +64,7 @@ export function entityBlocks(html, { strict = false } = {}) {
   const decoded = decodeEntities(html); // decode BEFORE splitting — see the order above
   const chunks = decoded
     .split(/<hr\b[^>]*>/i)
-    .flatMap((part) => part.split(/(?=<div[^>]*class='[^']*record-container)/i))
+    .flatMap((part) => part.split(/(?=<div[^>]*class=['"][^'"]*record-container)/i))
     .map((c) => c.trim())
     .filter((c) => c !== '');
 
@@ -74,7 +74,7 @@ export function entityBlocks(html, { strict = false } = {}) {
     // Read the visible text WITHOUT the erasure notice, so „Заличено обстоятелство." never counts as
     // content and an erased block reads as empty.
     const withoutNotice = chunk.replace(
-      /<div[^>]*class='[^']*erasure-text-inline[^']*'[^>]*>.*?<\/div>/gis,
+      /<div[^>]*class=['"][^'"]*erasure-text-inline[^'"]*['"][^>]*>.*?<\/div>/gis,
       ' ',
     );
     const text = stripTags(withoutNotice);

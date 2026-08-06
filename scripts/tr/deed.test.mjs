@@ -75,6 +75,36 @@ test('T1 — tokens from two DIFFERENT people never combine into a match', () =>
   assert.equal(fullSubsetMatch(frankenstein, F19_THREE), true, 'naive whole-field match fires');
 });
 
+// The live register emits single-quoted attributes today, and every fixture above is verbatim from a
+// real deed. But the entity split is the ONLY thing standing between three people and one merged
+// token pool, and it must not be quiet about a markup change: if the register ever switches to
+// class="…", a quote-specific pattern stops splitting, all three owners collapse into one block, and
+// the frankenstein match above starts firing — a named public claim about a person who is not there.
+// R7's doctrine for this module is „refuse loudly, never guess"; silently mis-splitting is neither.
+const dq = (s) => s.replace(/class='([^']*)'/g, 'class="$1"');
+
+test('T1 — the entity split survives double-quoted attributes (markup-drift hardening)', () => {
+  // Strip the <hr> separators first. entityBlocks splits on BOTH <hr> and record-container precisely
+  // because either may be absent; with the <hr> present this test would pass on the <hr> rule alone
+  // and prove nothing about the quote handling it is here to pin.
+  const blocks = entityBlocks(dq(F19_THREE).replace(/<hr\b[^>]*>/gi, ''));
+  assert.equal(blocks.length, 3, 'a quote style change must not merge three owners into one block');
+  assert.equal(
+    blocks.some((b) => fullSubsetMatch('ПЕНКО КОСТАДИНОВ ФИЛИПОВ', b.text)),
+    false,
+    'cross-entity match under double quotes — the libel bug via markup drift',
+  );
+  assert.ok(blocks.some((b) => fullSubsetMatch('ПЕНКО НЕСТОРОВ НЕСТОРОВ', b.text)));
+});
+
+test('T1 — erasure is still detected and stripped under double-quoted attributes', () => {
+  const [block] = entityBlocks(dq(F23_ERASED));
+  assert.equal(block.erased, true);
+  assert.equal(block.text, '', 'the erasure notice must not survive as content');
+  // The strict contradiction check must not fire merely because the quote style changed.
+  assert.doesNotThrow(() => entityBlocks(dq(F23_ERASED), { strict: true }));
+});
+
 test('T1 positive control — the CORRECT declarant does match', () => {
   // Without this, a matcher that always returns false passes every negative test above (ADR-0027).
   const blocks = entityBlocks(F19_THREE);
