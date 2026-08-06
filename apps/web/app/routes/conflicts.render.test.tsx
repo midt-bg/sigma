@@ -194,8 +194,16 @@ describe('/conflicts route — render', () => {
       (a) => a.textContent === 'декларация',
     );
     expect(sourceAnchor?.getAttribute('href')).toBe('https://register.cacbg.bg/2024/i.xml');
-    // the zero-contract link has no toggle (contractCount === 0) and a muted „—" source
-    expect(text()).toContain('—');
+    // Scoped to the card that actually has sourceUrl: null. A page-wide toContain('—') passes on any
+    // em-dash anywhere — including the ones the value and date cells render — so it would survive the
+    // source branch being deleted outright.
+    const cards = container.querySelectorAll('.conflict-card');
+    const noSourceCard = [...cards].find((c) => c.textContent?.includes('ПРАЗЕН ООД'))!;
+    expect(noSourceCard).toBeTruthy();
+    expect(
+      [...noSourceCard.querySelectorAll('a')].some((a) => a.textContent === 'декларация'),
+    ).toBe(false);
+    expect(noSourceCard.textContent).toContain('—');
   });
 
   it('a zero-contract link renders no „Виж договорите" toggle', async () => {
