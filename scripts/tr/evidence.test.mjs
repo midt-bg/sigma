@@ -176,6 +176,38 @@ test('rung 3 — the weakest rung ALSO requires global name uniqueness (ADR-0017
   assert.notEqual(v.kind, 'confirmed', 'a nationally shared name cannot ride the weakest rung');
 });
 
+test('rung 3 — a declared ЕИК is NOT gated by name uniqueness (ADR-0028)', () => {
+  // The case ADR-0017 was written about — a фирма backing two ЕИК — is exactly where a declarant-supplied
+  // ЕИК is most valuable. Gating it on the name would discard the strongest identifier precisely when the
+  // name is useless.
+  const other = deed([fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК'))]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: other,
+    declaredEik: true,
+    nameGloballyUnique: false,
+  });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.matchedFact, 'eik');
+});
+
+test('rung 3 — the seat rung DOES rescue a merely generic name; it is uniqueness that gates it', () => {
+  // The seat leg exists to rescue generic names (a bare one- or two-word фирма). Requiring the name to
+  // be distinctive would empty the rung of its entire purpose; only NATIONAL non-uniqueness blocks it.
+  const generic = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив')),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: generic,
+    declaredSeats: ['Пловдив'],
+    nameGloballyUnique: true,
+  });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
+});
+
 test('rung 3 — name uniqueness does NOT gate the stronger „Документ" rung', () => {
   const v = evidenceVerdict({ ...base, nameGloballyUnique: false });
   assert.equal(

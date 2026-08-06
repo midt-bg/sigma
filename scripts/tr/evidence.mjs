@@ -157,9 +157,16 @@ export function evidenceVerdict(input) {
   // The weakest publishing rung, so it carries the extra AND-gate: a nationally shared company name
   // cannot ride it (ADR-0017's holding, carried forward). The stronger „Документ" rung above is not
   // gated — the register named this person in THIS company, which makes the name key moot.
-  if (nameGloballyUnique) {
-    if (declaredEik) return verdict('confirmed', true, { matchedFact: 'eik' });
+  // The declared-ЕИК leg is NOT name-gated. ADR-0028: the ЕИК is the identity, not the name, so it
+  // resolves the company deterministically even behind a nationally shared фирма — which is exactly the
+  // case ADR-0017 was written about. Gating it on name uniqueness would discard the strongest
+  // identifier we have precisely where it is most needed.
+  if (declaredEik) return verdict('confirmed', true, { matchedFact: 'eik' });
 
+  // The SEAT leg is name-gated, and only this one. ADR-0017's holding carried forward: a name shared by
+  // two ЕИК cannot support a name-derived identity claim. The seat still rescues a GENERIC name — that
+  // is the whole point of the rung — it just cannot rescue a NATIONALLY SHARED one.
+  if (nameGloballyUnique) {
     const seat = registrySeat(deed);
     // Empty NEVER confirms — otherwise every link with no seat data on either side rubber-stamps.
     if (seat.settlement !== '') {

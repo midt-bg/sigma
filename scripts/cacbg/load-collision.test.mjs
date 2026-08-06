@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-let dir, DB, STAGING;
+let dir, DB, STAGING, TR_DB, TR_RAW;
 
 function runLoad() {
   execFileSync(
@@ -24,15 +24,81 @@ function runLoad() {
     ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
     {
       cwd: ROOT,
-      env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING },
+      env: {
+        ...process.env,
+        CACBG_DB: DB,
+        CACBG_STAGING: STAGING,
+        TR_CACHE_DB: TR_DB,
+        TR_RAW_DIR: TR_RAW,
+      },
       stdio: 'pipe',
     },
   );
+}
+
+/**
+ * Minimal Trade Register evidence for this fixture (#279, ADR-0033). Publishing now rests on a registry
+ * fact, so a loader test without a cache would only ever exercise the fail-closed path. Each winner's
+ * deed names its own declarant as съдружник, which is the „Документ" rung.
+ */
+function buildTrCache(owners) {
+  fs.mkdirSync(TR_RAW, { recursive: true });
+  const cache = new DatabaseSync(TR_DB);
+  cache.exec(`CREATE TABLE IF NOT EXISTS deeds (
+    eik TEXT PRIMARY KEY, status TEXT NOT NULL, http_status INTEGER, fetched_at TEXT NOT NULL,
+    raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
+    seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
+    attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT)`);
+  for (const [eik, name] of Object.entries(owners)) {
+    const deed = {
+      uic: eik,
+      fullName: '"ФИКС" ЕООД',
+      legalForm: 4,
+      sections: [
+        {
+          subDeeds: [
+            {
+              groups: [
+                {
+                  fields: [
+                    {
+                      nameCode: 'CR_F_19_L',
+                      htmlData: `<div class='record-container'><p class='field-text'>${name}</p></div>`,
+                      fieldEntryNumber: '20110502101007',
+                      fieldEntryDate: '2011-05-02T00:00:00',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    fs.writeFileSync(path.join(TR_RAW, `${eik}.json`), JSON.stringify(deed));
+    cache
+      .prepare(
+        'INSERT OR REPLACE INTO deeds(eik,status,http_status,fetched_at,raw_path,legal_form_code,legal_form_verdict,latest_own_entry_date) VALUES(?,?,?,?,?,?,?,?)',
+      )
+      .run(
+        eik,
+        'fetched',
+        200,
+        '2026-08-05T00:00:00Z',
+        `${eik}.json`,
+        4,
+        'closely_held',
+        '2011-05-02',
+      );
+  }
+  cache.close();
 }
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
 before(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-collision-'));
+  TR_DB = path.join(dir, 'tr-cache.sqlite');
+  TR_RAW = path.join(dir, 'tr-deeds');
   DB = path.join(dir, 'fixture.sqlite');
   STAGING = path.join(dir, 'staging');
   fs.mkdirSync(STAGING, { recursive: true });
@@ -92,6 +158,11 @@ before(() => {
     holdings.map((h) => JSON.stringify(h)).join('\n') + '\n',
   );
   fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
+
+  buildTrCache({
+    100000001: 'ИВАН ПЪРВИ ТЕСТОВ',
+    200000002: 'ПЕТЪР ВТОРИ ПРОБЕН',
+  });
 });
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));

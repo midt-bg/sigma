@@ -16,12 +16,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   nameDistinctiveness,
-  seatConfirmed,
-  publishTier,
   temporalStatus,
   localityToken,
   closelyHeldForm,
 } from './classify.mjs';
+import { openCache, readDeed, coverage } from '../tr/cache.mjs';
+import { TR_DB, TR_RAW } from '../tr/paths.mjs';
+import { evidenceVerdict, reconcileTermination, RULES_VERSION } from '../tr/evidence.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import { fingerprint, loadSuppressions, SUPPRESSION_KEY_VERSION } from './suppressions.mjs';
 import { canonicalInstitution } from './institutions.mjs';
@@ -38,7 +39,15 @@ const MIGRATION_EVIDENCE = path.join(
   'packages/db/migrations/0006_interest_link_evidence.sql',
 );
 const REPORT = path.join(STAGING, 'findings.md');
-const MATCHER_VERSION = 'cnk-1+classify-1'; // bump when the normalizer or classify logic changes
+// Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
+// Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
+// separately — §8's monotonicity gate keys on that one, not on this.
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1';
+const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
+const TR_RAW_DIR = process.env.TR_RAW_DIR || TR_RAW;
+// A deliberate, logged override for the coverage gate below. Without it a single permanently
+// unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
+const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
 const { companyNameKey, isMatchableKey } =
   await import('../../packages/shared/src/company-name-key.ts');
 
@@ -403,6 +412,12 @@ const insLink = db.prepare(
 const insILA = db.prepare(
   'INSERT OR IGNORE INTO interest_link_authorities(link_key,authority_id,authority_name,contract_count,value_eur,own) VALUES(?,?,?,?,?,?)',
 );
+// The evidence seal (#279 §8, migration 0006). Written for EVERY link, not only published ones — the
+// seals on held and withdrawn links are what let the review queue explain itself. `matched_fact` is a
+// closed vocabulary and must NEVER carry a name; the audit enforces that with a pattern check.
+const insEvidence = db.prepare(
+  'INSERT OR REPLACE INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,entry_number,entry_date,lookup_date,rules_version,live_status) VALUES(?,?,?,?,?,?,?,?,?)',
+);
 // classify one authority (whose name may be a ';'-joined blob) against the official's institutions.
 // exact = deterministic name equality; name_contains/locality = DISCLOSED heuristics (candidate, not proof).
 const OWN_RANK = { exact: 3, name_contains: 2, locality: 1, none: 0 };
@@ -426,6 +441,73 @@ function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
 }
 // Distinct officials who declared each company (ЕИК). A private interest has ONE owner-declarant; a
 // public body's board is declared by MANY rotating members — the deterministic ex-officio tell (ADR-0019).
+// ── Trade Register evidence: the candidate set, the fail-closed gate, and the deed reader ─────────
+// Identity now rests on a checkable registry fact rather than on the shape of the declared name
+// (#279, ADR-0033). Two consequences the loader has to enforce, both fail-closed:
+//
+//   1. NO cache ⇒ throw. Publishing without evidence is precisely what this change abolishes.
+//   2. PARTIAL cache ⇒ throw. This is the silent one. An 80%-restored cache yields roughly 80
+//      published links, which is ABOVE ship-related-persons.mjs's floor of 50 — so it would sail
+//      through that guard, ship a decimated surface, and wipe the rest of the live links.
+//
+// The candidate set is every resolved ЕИК across ALL aggregates, not just the ones that end up
+// published: a link held for want of evidence still needs its deed to say so.
+const candidateEiks = [...new Set([...agg.values()].map((r) => r.eik))].sort();
+fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\n') + '\n');
+
+if (!fs.existsSync(TR_CACHE_DB)) {
+  db.close();
+  throw new Error(
+    `REFUSE TO LOAD: no Trade Register cache at ${TR_CACHE_DB}. Every publishing decision now rests ` +
+      `on a registry fact (ADR-0033); without the cache there is no evidence to rest on. Run ` +
+      `scripts/tr/fetch-deeds.mjs --eiks-file ${path.join(STAGING, 'candidate-eiks.txt')} first.`,
+  );
+}
+const trCache = openCache(TR_CACHE_DB);
+const trCoverage = coverage(trCache, candidateEiks);
+console.log(
+  `TR cache: ${trCoverage.covered}/${trCoverage.wanted} covered ` +
+    `(fetched ${trCoverage.fetched}, outside ТР ${trCoverage.outsideTr}, missing ${trCoverage.missing})`,
+);
+if (trCoverage.missing > 0 && !ALLOW_PARTIAL_TR) {
+  trCache.close();
+  db.close();
+  throw new Error(
+    `REFUSE TO LOAD: the Trade Register cache covers ${trCoverage.covered} of ${trCoverage.wanted} ` +
+      `candidate ЕИК. A partial cache does not fail loudly downstream — it publishes a decimated ` +
+      `surface that still clears the ship floor and then wipes the rest of the live links. Finish ` +
+      `the crawl, or pass --allow-partial-tr to state that a smaller surface is intended.`,
+  );
+}
+
+// Deeds are read from git-ignored scratch and cached in memory for the run. The parsed deed carries
+// third-party names; they are used ONLY inside evidenceVerdict's boolean comparisons and never reach
+// a column, a log line or the report (ADR-0033 decision 5).
+// The lookup date sealed on every link: when the evidence was gathered, not when it was interpreted.
+// It is the freshness bound the methodology page has to state, so it comes from the cache rather than
+// from `now` — a re-run over an unchanged cache must not make the evidence look fresher than it is.
+const trLookupDate = (() => {
+  const row = trCache.prepare('SELECT MAX(fetched_at) m FROM deeds').get();
+  return row?.m ? String(row.m).slice(0, 10) : new Date().toISOString().slice(0, 10);
+})();
+
+const deedCache = new Map();
+function deedFor(eik) {
+  if (deedCache.has(eik)) return deedCache.get(eik);
+  const row = readDeed(trCache, eik);
+  let entry;
+  if (!row) entry = { deed: null, outsideTr: false, missing: true };
+  else if (row.status === 'outside_tr') entry = { deed: null, outsideTr: true, missing: false };
+  else {
+    const file = path.join(TR_RAW_DIR, row.rawPath ?? `${eik}.json`);
+    entry = fs.existsSync(file)
+      ? { deed: JSON.parse(fs.readFileSync(file, 'utf8')), outsideTr: false, missing: false }
+      : { deed: null, outsideTr: false, missing: true };
+  }
+  deedCache.set(eik, entry);
+  return entry;
+}
+
 const declarantsByEik = new Map();
 for (const rec of agg.values()) {
   if (rec.scope !== 'self') continue; // ex-officio tell counts SELF declarants of a public board only
@@ -470,7 +552,20 @@ for (const rec of agg.values()) {
     a.count++;
     if (r.eur != null) a.value += r.eur;
   }
-  const seatOk = [...rec.seats].some((s) => seatConfirmed(s, rec.bidder.settlement));
+  // ── the evidence ladder replaces the publish tiers (ADR-0033 decision 1) ────────────────────────
+  // rec.seats is keyed on `pid|eik|scope`, so it already holds ONLY the seats this person declared for
+  // THIS company — which is what #279 §5 rung 3 requires: 4.9% of company-name keys carry more than one
+  // distinct declared seat, so a company-only key would let one person's seat confirm another's link.
+  const { deed, outsideTr, missing } = deedFor(rec.eik);
+  if (missing && !ALLOW_PARTIAL_TR) {
+    // Unreachable via the coverage gate above; kept as a belt-and-braces refusal so a future change
+    // that loosens the gate cannot silently publish a link with no evidence behind it.
+    trCache.close();
+    db.close();
+    throw new Error(
+      `no cached deed for ЕИК ${rec.eik} — the coverage gate should have caught this`,
+    );
+  }
   // A declarant-provided ЕИК is the national unique identifier (ЗТРРЮЛНЦ) — it resolves the winner
   // deterministically even behind a generic or winner-colliding name, so a declared_eik match publishes
   // on its own basis (A_eik), never held for name-genericness. This is at least as certain as the seat
@@ -478,14 +573,39 @@ for (const rec of agg.values()) {
   // Name-only methods (exact_name_key / extracted_name) still ride the distinctiveness/seat gate below:
   // a globally non-unique winner name (e.g. „Водоснабдяване и канализация ЕАД" → 2 valid ЕИК in different
   // towns) can never be name-distinctive, so it publishes only if the declared SEAT disambiguates, else held.
+  // The filters that can only WITHHOLD are retained as an AND-gate on the weakest rung only
+  // (ADR-0033 decision 2): a nationally shared company name cannot ride „Потвърдено". The stronger
+  // „Документ" rung is deliberately not gated — the register named this person in THIS company, which
+  // makes the name key moot. Near-zero recall cost, and it preserves ADR-0017's outcome.
+  // ADR-0017 carried forward, and NARROWED to what it actually held: a name backing more than one valid
+  // ЕИК cannot support a name-derived identity claim. It gates the SEAT leg of rung 3 only — never the
+  // declared-ЕИК leg (ADR-0028: the ЕИК is the identity), and never rung 2 (the register named this
+  // person in THIS company). nameDistinctiveness is deliberately NOT part of this gate: the seat rung
+  // exists precisely to rescue a generic name, so requiring distinctiveness would empty it.
   const nameUnique = nameGloballyUnique(rec.key);
-  const tier =
-    rec.method === 'declared_eik'
-      ? 'A_eik'
-      : publishTier({
-          seatOk,
-          distinctiveness: nameUnique ? nameDistinctiveness(rec.key) : 'generic',
-        });
+  // With --allow-partial-tr the operator has accepted an incomplete cache. An uncached ЕИК then yields
+  // no evidence at all, which is „Неизвестна" — held. It must never be read as a reason to publish.
+  const verdict = missing
+    ? {
+        kind: 'unknown',
+        publishable: false,
+        registryRole: null,
+        matchedFact: null,
+        entryNumber: null,
+        entryDate: null,
+        rulesVersion: RULES_VERSION,
+      }
+    : evidenceVerdict({
+        deed,
+        outsideTr,
+        declarantName: rec.person,
+        declaredSeats: [...rec.seats],
+        declaredEik: rec.method === 'declared_eik',
+        firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
+        scope: rec.scope,
+        nameGloballyUnique: nameUnique,
+      });
+  const tier = verdict.kind;
   const contemporaneous = [...years].some(
     (cy) => temporalStatus(declYears, cy) === 'contemporaneous',
   )
@@ -547,15 +667,33 @@ for (const rec of agg.values()) {
   // non-surfaced class ('internal'), not 'published'. cValue can legitimately be 0 with cCount>0 (contracts
   // whose amount is unknown/NULL) — that is a real conflict of unknown value, so gate on COUNT, not value.
   const surfaces = (iClass === 'private_ownership' || iClass === 'family_ownership') && cCount > 0;
+  // §7: „terminated" is an inference from SILENCE, and its commonest cause is a finished mandate, not a
+  // sale. Before ADR-0021 E11's withdrawal takes effect, a terminated OWN stake is reconciled against the
+  // live deed: a person still registered as an owner has not divested. Family stakes are never reconciled
+  // — the registered owner there is the relative, whose name we neither store nor check.
+  // PHASE 1 uses only `terminated`; the „и към днешна дата" label is computed and deliberately not
+  // rendered (ADR-0033 decision 4 — it asserts a present tense behind an LIA addendum).
+  const recon =
+    divested && rec.scope === 'self'
+      ? reconcileTermination({ deed, declarantName: rec.person, scope: rec.scope })
+      : { terminated: divested, label: null };
+  const terminatedEffective = recon.terminated;
+
+  // Order matters and differs from the old ladder: `internal` is now decided BEFORE `published`, so a
+  // non-surfaced class (ex-officio board, management-only, zero-contract) can never land in `held`.
+  // `held` is the REVIEW QUEUE, and its population is exactly the evidence rungs that withhold —
+  // bar_joint_stock, unknown and outside_tr.
   const status = isSuppressed(linkKey)
     ? 'suppressed'
-    : divested
-      ? 'withdrawn'
-      : tier === 'C_hold'
-        ? 'held'
-        : surfaces
-          ? 'published'
-          : 'internal';
+    : verdict.kind === 'refuted'
+      ? 'withdrawn' // §5.4 — own stakes only; evidence.mjs refuses to refute a family stake
+      : terminatedEffective
+        ? 'withdrawn'
+        : !surfaces
+          ? 'internal'
+          : verdict.publishable
+            ? 'published'
+            : 'held';
   const yrs = [...years];
   insLink.run(
     `il:${linkKey}`,
@@ -579,6 +717,26 @@ for (const rec of agg.values()) {
     yrs.length ? String(Math.min(...yrs)) : null,
     yrs.length ? String(Math.max(...yrs)) : null,
     status,
+  );
+  // live_status is RE-DERIVED every run and never treated as part of the permanent seal (ADR-0033 R3):
+  // it asserts a present tense whose freshness is bounded by the cache refresh cycle.
+  const liveStatus = !terminatedEffective
+    ? recon.label === 'owner_today'
+      ? 'terminated_owner_still'
+      : 'live'
+    : recon.label === 'manager_today'
+      ? 'terminated_manager_still'
+      : 'terminated';
+  insEvidence.run(
+    linkKey,
+    verdict.kind,
+    verdict.registryRole,
+    verdict.matchedFact,
+    verdict.entryNumber,
+    verdict.entryDate,
+    trLookupDate,
+    verdict.rulesVersion,
+    liveStatus,
   );
   for (const [auth_id, a] of perAuth)
     insILA.run(linkKey, auth_id, a.name, a.count, a.value || null, a.own);

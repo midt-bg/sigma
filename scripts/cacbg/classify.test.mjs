@@ -2,8 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   nameDistinctiveness,
-  seatConfirmed,
-  publishTier,
   temporalStatus,
   localityToken,
   closelyHeldForm,
@@ -30,19 +28,6 @@ test('nameDistinctiveness: numbers / Latin / ≥3 words are distinctive; bare 1-
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ, ЕООД'), 'generic'); // comma before form; СТРОЙ+ИНВЕСТ = 2
   assert.equal(nameDistinctiveness('СТРОЙ.ИНВЕСТ-ЕООД'), 'generic'); // period+hyphen glued; still 2 content words
   assert.equal(nameDistinctiveness('„ДОМИНО" ЕООД'), 'generic'); // quoted single word + form
-});
-
-test('seatConfirmed: equal non-empty seats confirm; empty or mismatched do not', () => {
-  assert.equal(seatConfirmed('Шумен', 'ШУМЕН'), true);
-  assert.equal(seatConfirmed('София', 'Пловдив'), false);
-  assert.equal(seatConfirmed('', 'София'), false); // sparse winner/declared seat never confirms
-  assert.equal(seatConfirmed('София', ''), false);
-});
-
-test('publishTier: seat proof wins; else distinctiveness decides publish vs hold', () => {
-  assert.equal(publishTier({ seatOk: true, distinctiveness: 'generic' }), 'A_seat');
-  assert.equal(publishTier({ seatOk: false, distinctiveness: 'distinctive' }), 'B_distinctive');
-  assert.equal(publishTier({ seatOk: false, distinctiveness: 'generic' }), 'C_hold');
 });
 
 test('temporalStatus: contract within declared-year span is contemporaneous', () => {

@@ -28,7 +28,7 @@ jobs:
       # so no `pnpm install` is required.
       - run: node --test scripts/*.test.mjs
 
-  # свързани-лица pipeline tests — the CACBG leg (parse/classify/load/audit/tr-census/extract) and the
+  # свързани-лица pipeline tests — the CACBG leg (parse/classify/load/audit/extract) and the
   # Търговски регистър leg (scripts/tr: ЕИК checksum, HTTP client, deed cache). These use node:sqlite
   # (DatabaseSync) and import the shared companyNameKey .ts via the register-ts resolve hook, so they
   # need Node 24 (node:sqlite + native TS type-stripping, no experimental flag) rather than the Node 22

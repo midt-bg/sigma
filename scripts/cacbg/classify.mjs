@@ -96,26 +96,12 @@ export function closelyHeldForm(name) {
   );
 }
 
-/** Seat proof: declared seat and winner settlement both present and equal ⇒ same entity (deterministic). */
-export function seatConfirmed(declSeat, winnerSettlement) {
-  const a = norm(declSeat);
-  const b = norm(winnerSettlement);
-  return a.length > 0 && b.length > 0 && a === b;
-}
-
-/**
- * Publish tier for a single-winner-ЕИК match:
- *   'A_eik'         — a declarant-provided ЕИК resolved the winner: the national unique identifier,
- *                     deterministic even behind a generic/colliding name. Assigned by the loader for
- *                     declared_eik matches (not this function — it needs the match method); ADR-0016.
- *   'A_seat'        — seat-confirmed: deterministic, publishable even for generic names.
- *   'B_distinctive' — single-ЕИК + structurally distinctive name: publishable (disclosed heuristic).
- *   'C_hold'        — generic name, no seat/ЕИК proof: withhold pending TR name-census.
- */
-export function publishTier({ seatOk, distinctiveness }) {
-  if (seatOk) return 'A_seat';
-  return distinctiveness === 'distinctive' ? 'B_distinctive' : 'C_hold';
-}
+// seatConfirmed() and publishTier() lived here until #279. The publish tiers they produced
+// (A_seat / B_distinctive / C_hold) are superseded by the Trade Register evidence ladder in
+// scripts/tr/evidence.mjs — identity now rests on a checkable registry fact rather than on the shape
+// of the declared name (ADR-0033, superseding ADR-0009). The seat comparison moved with it, because a
+// declared seat is now matched against the REGISTERED seat rather than against the winner row's
+// settlement column. nameDistinctiveness above survives, narrowed to an AND-gate on the weakest rung.
 
 /**
  * Temporal relation of a contract to the years a stake was declared (asset decls are annual snapshots).

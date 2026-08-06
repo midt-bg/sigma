@@ -204,7 +204,14 @@ jobs:
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
           cp apps/web/wrangler.deploy.jsonc apps/web/wrangler.jsonc
           export PATH="$GITHUB_WORKSPACE/apps/web/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
-          node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --remote --yes
+          # --min-links is passed EXPLICITLY, not left at its default of 50. Under #279 the surface is
+          # measured at ~329 links, so 50 no longer protects anything: a partially-restored Trade
+          # Register cache yields roughly 80 published links, which clears a floor of 50, ships a
+          # decimated surface and wipes the rest. The loader's coverage gate is the first defence and
+          # this is the second (ADR-0033 decision 7). Lower it deliberately, in a PR, if a genuinely
+          # smaller surface is ever expected.
+          node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --remote --yes \
+            --min-links 250
 
       - name: Reindex search projection → officials searchable (same batch the cron runs)
         # ship writes ONLY the свързани-лица domain tables (interest_links, persons, …), NOT search_index.
