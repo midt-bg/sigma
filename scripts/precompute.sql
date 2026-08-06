@@ -245,6 +245,13 @@ FROM interest_links il JOIN persons p ON p.id = il.person_id
 --       rendering both re-identifies the relative via a ТР owner lookup, and the company is already surfaced
 --       by the self row.
 WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  -- …and the identity rests on a Trade Register fact (#279, ADR-0033). This predicate is the THIRD copy
+  -- of the surface gate — the other two are SURFACED_OWNERSHIP in packages/db/src/queries/related-persons.ts
+  -- and the sibling block in the other of precompute.sql / refresh-slice.sql. All three must move
+  -- together: this one feeds the officials search index, so omitting it would keep officials findable
+  -- whose links no longer surface.
+  AND EXISTS (SELECT 1 FROM interest_link_evidence e
+              WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
   AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
               WHERE bb.eik_normalized = il.eik)
   AND NOT (il.interest_class = 'family_ownership' AND EXISTS (

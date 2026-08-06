@@ -705,6 +705,15 @@ export interface ConflictLink {
   firstContractYear: string | null;
   lastContractYear: string | null;
   sourceUrl: string | null; // a representative declaration URL — provenance, never a fabricated value
+  // Trade Register evidence (#279, ADR-0033). A link only reaches this DTO when its identity rests on a
+  // checkable registry fact, so these describe WHICH fact — the surface's whole point is that every shown
+  // link can explain itself. `registryRole` is the role the register records, NOT a claim about who owns
+  // what: the ownership claim comes from the official's own declaration.
+  evidenceKind: 'document' | 'confirmed'; // the only two rungs that publish
+  registryRole: 'owner' | 'manager' | null; // set only for evidenceKind='document'
+  registryEntryNumber: string | null; // TEXT — a fieldEntryNumber exceeds the exact-integer range
+  registryEntryDate: string | null; // the registry entry the evidence rests on
+  registryLookupDate: string; // when the deed was read — the freshness bound on the claim
 }
 
 /** One contract of a linked winner, marked by whether it was signed during the declared-stake window.

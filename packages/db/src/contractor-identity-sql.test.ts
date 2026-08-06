@@ -16,6 +16,11 @@ const migration3 = readFileSync(
   resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql'),
   'utf8',
 );
+// …and 0006, which those same blocks now join for the Trade Register evidence gate (#279, ADR-0033).
+const migration6 = readFileSync(
+  resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -66,7 +71,7 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(schema);
   db.exec(migration2);
-  db.exec(migration3);
+  db.exec(migration3 + migration6);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {

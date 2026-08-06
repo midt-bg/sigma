@@ -26,7 +26,7 @@ const dirs = [];
 
 // Build a fixture DB (bidders + declarations + declared_interests + interest_links), run audit.mjs against
 // it as a subprocess, and return { threw, out } — threw=true iff the audit exited non-zero (a hard finding).
-function buildAndAudit({ bidders, decls = [], dis = [], links }) {
+function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
   const DB = path.join(dir, 'fixture.sqlite');
@@ -38,10 +38,16 @@ function buildAndAudit({ bidders, decls = [], dis = [], links }) {
     CREATE TABLE interest_links(
       id TEXT PRIMARY KEY, link_key TEXT, person_id TEXT, eik TEXT, entity_key TEXT, match_method TEXT,
       publish_tier TEXT, bidder_id TEXT, relation TEXT, contemporaneous INT, contract_value_eur REAL, status TEXT);
+    -- The evidence seal (#279, migration 0006). The audit LEFT JOINs it, so it must exist even when a
+    -- case deliberately leaves a link unsealed — an unsealed published link is itself a finding.
+    CREATE TABLE interest_link_evidence(
+      link_key TEXT PRIMARY KEY, evidence_kind TEXT, registry_role TEXT, matched_fact TEXT,
+      entry_number TEXT, entry_date TEXT, lookup_date TEXT, rules_version TEXT, live_status TEXT);
     ${bidders.map((b) => `INSERT INTO bidders VALUES (${b});`).join('\n')}
     ${decls.map((d) => `INSERT INTO declarations VALUES (${d});`).join('\n')}
     ${dis.map((d) => `INSERT INTO declared_interests(declaration_id, entity_raw) VALUES (${d});`).join('\n')}
     ${links.map((l) => `INSERT INTO interest_links VALUES (${l});`).join('\n')}
+    ${seals.map((e) => `INSERT INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,lookup_date,rules_version,live_status) VALUES (${e});`).join('\n')}
   `);
   db.close();
 
@@ -73,8 +79,9 @@ test('A_eik behind a colliding name, backed by a real ЕИК+name double-lock, P
     // the declarant wrote BOTH the ЕИК and the фирма → the double-lock the loader required
     dis: [`'d1','„ОБЩ" ЕООД, ЕИК 100000001'`],
     links: [
-      `'il1','p1|100000001','p1','100000001','${KEY}','declared_eik','A_eik','b1','owns',0,1000,'published'`,
+      `'il1','p1|100000001','p1','100000001','${KEY}','declared_eik','confirmed','b1','owns',0,1000,'published'`,
     ],
+    seals: [`'p1|100000001','confirmed',NULL,'eik','2026-08-05','tr-rules-1','live'`],
   });
   assert.equal(
     threw,
@@ -93,8 +100,9 @@ test('A_eik published on a ЕИК that is NOT a winner bearing the name key → 
     dis: [`'d1','„ОБЩ" ЕООД, ЕИК 300000003'`],
     // entity_key claims the colliding name, but the published eik/bidder is the unrelated 300000003
     links: [
-      `'il1','p1|300000003','p1','300000003','${KEY}','declared_eik','A_eik','b3','owns',0,1000,'published'`,
+      `'il1','p1|300000003','p1','300000003','${KEY}','declared_eik','confirmed','b3','owns',0,1000,'published'`,
     ],
+    seals: [`'p1|300000003','confirmed',NULL,'eik','2026-08-05','tr-rules-1','live'`],
   });
   assert.equal(threw, true, 'a stray-ЕИК A_eik link must fail the gate');
   assert.equal(
@@ -110,8 +118,9 @@ test('A_eik with no declaration carrying its ЕИК+name → A_eik_no_provenance
     decls: [`'d1','p1'`],
     dis: [`'d1','нещо съвсем друго без ЕИК'`], // no ЕИК, no фирма → the double-lock cannot be re-proven
     links: [
-      `'il1','p1|100000001','p1','100000001','${K('„ОБЩ" ЕООД')}','declared_eik','A_eik','b1','owns',0,1000,'published'`,
+      `'il1','p1|100000001','p1','100000001','${K('„ОБЩ" ЕООД')}','declared_eik','confirmed','b1','owns',0,1000,'published'`,
     ],
+    seals: [`'p1|100000001','confirmed',NULL,'eik','2026-08-05','tr-rules-1','live'`],
   });
   assert.equal(
     threw,
@@ -130,9 +139,85 @@ test('a NON-A_eik (name-based) colliding link STILL fails A_multi_eik — the na
     bidders: COLLIDING_BIDDERS,
     // exact_name_key published on a name that maps to 2 ЕИК — exactly what the gate must keep rejecting
     links: [
-      `'il1','p1|100000001','p1','100000001','${KEY}','exact_name_key','B_distinctive','b1','owns',0,1000,'published'`,
+      `'il1','p1|100000001','p1','100000001','${KEY}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
     ],
   });
   assert.equal(threw, true, 'a name-based colliding published link must still fail');
   assert.equal(/A_multi_eik/.test(out), true, 'invariant A still fires for non-A_eik links');
+});
+
+// ── C: evidence honesty (#279, ADR-0033) ─────────────────────────────────────────────────────────
+// The axis that used to re-derive name distinctiveness now re-derives the PUBLISHING rule, because the
+// publishing rule changed: identity rests on a registry fact, and nameDistinctiveness survives only as
+// a withholding filter inside the loader. Re-checking distinctiveness here would assert a rule that is
+// no longer in force — a test that passes while guarding nothing.
+test('a published link with NO evidence seal is a hard finding', () => {
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [], // the whole point: nothing sealed it
+  });
+  assert.equal(threw, true, 'publishing without evidence must fail the gate');
+  assert.equal(/C_no_evidence/.test(out), true, out);
+});
+
+test('a link published on a WITHHOLDING rung is a hard finding', () => {
+  // bar_joint_stock / unknown / outside_tr never publish. If one ever reaches status='published', the
+  // loader and the seal disagree and a claim is on the surface that no evidence supports.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','unknown','b1','owns',0,1000,'published'`,
+    ],
+    seals: [`'p1|100000001','unknown',NULL,NULL,'2026-08-05','tr-rules-1','live'`],
+  });
+  assert.equal(threw, true);
+  assert.equal(/C_withholding_evidence/.test(out), true, out);
+});
+
+test('a tier that disagrees with its own seal is a hard finding', () => {
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [`'p1|100000001','confirmed',NULL,'eik','2026-08-05','tr-rules-1','live'`],
+  });
+  assert.equal(threw, true);
+  assert.equal(/C_tier_evidence_mismatch/.test(out), true, out);
+});
+
+test('a matched_fact outside the closed vocabulary is a hard finding — the name-leak rail', () => {
+  // #279 §9: the deed's names are read only to produce a boolean and must never reach a served column.
+  // A schema cannot enforce a vocabulary, so the audit does. This is the shape a leak would take.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','ИВАН ПЕТРОВ ТЕСТОВ','2026-08-05','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true, 'a name in matched_fact must fail the gate');
+  assert.equal(/C_matched_fact_shape/.test(out), true, out);
+});
+
+test('a well-formed seal passes every C axis (positive control)', () => {
+  // Without this, all four negatives above would still pass if the axes fired unconditionally.
+  const { threw } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, false, 'a correctly sealed link must not fail the gate');
 });

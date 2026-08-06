@@ -36,6 +36,12 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     firstContractYear: '2020',
     lastContractYear: '2024',
     sourceUrl: 'https://register.cacbg.bg/2024/i.xml',
+    // #279: a link only reaches the DTO when its identity rests on a Trade Register fact.
+    evidenceKind: 'document',
+    registryRole: 'owner',
+    registryEntryNumber: '20110502101007',
+    registryEntryDate: '2011-05-02',
+    registryLookupDate: '2026-08-05',
     ...over,
   };
 }
@@ -236,5 +242,29 @@ describe('/conflicts route — render', () => {
     expect(
       container.querySelector('.pagination, nav[aria-label], [class*="pagination"]'),
     ).not.toBeNull();
+  });
+});
+
+describe('Trade Register evidence on the card (#279, ADR-0033)', () => {
+  it('renders the registry fact the link rests on, so the card explains itself', async () => {
+    await renderConflicts([link({ evidenceKind: 'document', registryRole: 'owner' })]);
+    const text = container.textContent ?? '';
+    expect(text).toContain('Регистър');
+    expect(text).toContain('лицето е вписано като съдружник/собственик');
+    expect(text).toContain('вписване 2011-05-02'); // WHICH entry
+    expect(text).toContain('справка 2026-08-05'); // and HOW FRESH it is
+  });
+
+  it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
+    await renderConflicts([link({ evidenceKind: 'confirmed', registryRole: null })]);
+    const text = container.textContent ?? '';
+    expect(text).toContain('самоличност, потвърдена по декларирани данни');
+    expect(text).not.toContain('вписано като');
+  });
+
+  it('links out to the register so a reader can check the same act we read', async () => {
+    await renderConflicts([link({ eik: '201122335' })]);
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
   });
 });

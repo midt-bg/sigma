@@ -132,6 +132,7 @@ describe('served migrations', () => {
       );
       readScript(dbPath, migration2);
       readScript(dbPath, migration3);
+      readScript(dbPath, migration6);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);
 

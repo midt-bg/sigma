@@ -34,7 +34,13 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     contemporaneousValueEur: 30_000_000,
     firstContractYear: '2020',
     lastContractYear: '2024',
-    sourceUrl: 'https://register.cacbg.bg/2024/i.xml',
+    sourceUrl: 'https://register.cacbg.bg/2024/x.xml',
+    // #279: a link only reaches the DTO when its identity rests on a Trade Register fact.
+    evidenceKind: 'document',
+    registryRole: 'owner',
+    registryEntryNumber: '20110502101007',
+    registryEntryDate: '2011-05-02',
+    registryLookupDate: '2026-08-05',
     ...over,
   };
 }

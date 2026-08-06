@@ -82,6 +82,11 @@ interface LinkRow {
   first_contract_year: string | null;
   last_contract_year: string | null;
   source_url: string | null;
+  evidence_kind: string | null;
+  registry_role: string | null;
+  entry_number: string | null;
+  entry_date: string | null;
+  lookup_date: string | null;
 }
 
 // The winner's contracts, joined exactly as the ETL aggregate does (contracts→tenders→authorities→bidders,
@@ -119,8 +124,15 @@ export const NEXUS_ORDER = `(il.own_institution = 'exact') DESC, (contemporaneou
 // The two surfaced ownership classes (ADR-0032): the official's own stake (private_ownership) and a close
 // relative's (family_ownership). Anchored once here + in LINK_CONTRACTS_SQL so the read gate and the
 // drill-down never drift.
+// …and the identity must rest on a Trade Register fact (#279, ADR-0033). `status='published'` already
+// encodes the loader's decision, so this EXISTS is belt-and-braces: it makes the read path refuse a link
+// whose seal is missing or whose evidence is a withholding rung, even if a future writer sets status
+// wrongly. 'document' and 'confirmed' are the only two rungs that publish; bar_joint_stock, unknown,
+// refuted and outside_tr never reach a reader.
 export const SURFACED_OWNERSHIP = `il.status = 'published'
-    AND il.interest_class IN ('private_ownership', 'family_ownership')`;
+    AND il.interest_class IN ('private_ownership', 'family_ownership')
+    AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))`;
 // Redundant-family collapse (ADR-0032, per todorkolev review). A family link is DROPPED when the SAME official
 // already has a published OWN stake in the SAME winner. Rendering both a self row and a family row for one
 // (official, ЕИК) is a de-anonymisation vector: the office-holder is himself in that company's Търговски
@@ -159,8 +171,13 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
     -- leaderboard is ≤1000 rows and hourly-cached, so the extra scan is immaterial.
     (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-     ORDER BY d.declared_year DESC LIMIT 1) AS institution
+     ORDER BY d.declared_year DESC LIMIT 1) AS institution,
+    -- The evidence the link rests on, so the card can explain itself (ADR-0033 decision 7). LEFT JOIN
+    -- rather than an inner one: SURFACED_OWNERSHIP already requires a publishing seal, and an inner join
+    -- here would silently re-filter rather than surface a contradiction.
+    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date
   FROM interest_links il
+  LEFT JOIN interest_link_evidence ev ON ev.link_key = il.link_key
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
   WHERE ${SURFACED_OWNERSHIP}
@@ -196,6 +213,16 @@ function toLink(r: LinkRow): ConflictLink {
     firstContractYear: r.first_contract_year,
     lastContractYear: r.last_contract_year,
     sourceUrl: r.source_url,
+    // SURFACED_OWNERSHIP guarantees a publishing seal exists, so these are non-null in practice; the
+    // fallbacks keep a half-migrated environment rendering rather than throwing on a null read.
+    evidenceKind: (r.evidence_kind === 'confirmed' ? 'confirmed' : 'document') as
+      | 'document'
+      | 'confirmed',
+    registryRole:
+      r.registry_role === 'owner' || r.registry_role === 'manager' ? r.registry_role : null,
+    registryEntryNumber: r.entry_number,
+    registryEntryDate: r.entry_date,
+    registryLookupDate: r.lookup_date ?? '',
   };
 }
 

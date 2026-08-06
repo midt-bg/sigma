@@ -22,6 +22,8 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// …and 0006: SURFACED_OWNERSHIP now requires a Trade Register evidence seal (#279, ADR-0033).
+const migration6 = resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();
@@ -122,6 +124,13 @@ INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, co
 -- Rollup row for the awarding body — the per-authority capture-share denominator the read query LEFT JOINs.
 INSERT INTO authority_totals (authority_id, name, spent_eur, contracts, suppliers, avg_eur) VALUES
   ('a:1','ОБЩИНА ТЕСТ',50000000,10,4,5000000);
+
+-- Every link carries a Trade Register evidence seal (#279, ADR-0033). SURFACED_OWNERSHIP now requires
+-- one, so a fixture without seals renders an EMPTY surface and every assertion below passes vacuously.
+-- Derived from interest_links itself, so a row added to the fixture later is sealed automatically and
+-- cannot silently drop off the surface.
+INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+  SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links;
 `;
 
 describe('свързани-лица SQL (real SQLite)', () => {
@@ -131,6 +140,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
     try {
       readScript(dbPath, migration0);
       readScript(dbPath, migration2);
+      readScript(dbPath, migration6);
       sqlite(dbPath, FIXTURE);
       return fn(dbPath);
     } finally {
@@ -193,7 +203,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO persons (id, name) VALUES ('person:zero','Нула Тестов');
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'published');`,
+           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);`,
       );
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.some((r) => r.official === 'Нула Тестов')).toBe(false); // no live contracts → gated out
@@ -217,6 +229,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:alen','person:alen|701','person:alen','eik:701','701','АЛЕН КО ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',1,1000000,'2021','2021','published'),
            ('il:boyan','person:boyan|702','person:boyan','eik:702','702','БОЯН КО ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',1,10000000,'2021','2021','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES
            ('t:71','unp71','Обект А','a:1','открита процедура'),('t:72','unp72','Обект Б','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
@@ -322,6 +336,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:dubl-self','person:dubl|800','person:dubl','eik:800','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published'),
            ('il:dubl-fam','person:dubl|800|family','person:dubl','eik:800b','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:80','unp80','Обект Дубъл','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:80','t:80','eik:800',60000,'EUR','2021-05-01','Д-80',60000);`,
       );
@@ -350,6 +366,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:asim-self-held','person:asim|850','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','held'),
            ('il:asim-fam','person:asim|850|family','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:85','unp85','Обект Асим','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:85','t:85','eik:850',40000,'EUR','2021-05-01','Д-85',40000);`,
       );
@@ -475,7 +493,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO persons (id, name) VALUES ('person:praz','Празен Тестов');
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-           ('il:praz','person:praz|900','person:praz','eik:900','900','ПРАЗЕН ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2022',7,7000000,'2021','2022','published');`,
+           ('il:praz','person:praz|900','person:praz','eik:900','900','ПРАЗЕН ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2022',7,7000000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);`,
       );
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.some((r) => r.official === 'Празен Тестов')).toBe(false); // gated out — no live contracts

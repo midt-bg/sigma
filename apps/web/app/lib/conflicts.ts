@@ -24,6 +24,24 @@ const RELATION_LABEL: Record<string, string> = {
 };
 
 /** Bulgarian label for a declared relation. Unknown values pass through — never invent a stronger claim. */
+/**
+ * How the company's identity was established, in the register's own terms (#279, ADR-0033).
+ *
+ * Deliberately does NOT say the official owns anything: „вписан съдружник/собственик" reports what the
+ * act RECORDS, while the ownership claim itself comes from the official's own declaration and is
+ * rendered separately as „дялово участие". „Потвърдено" means the company was identified by a fact the
+ * official declared — the seat or the ЕИК — not that anybody was found in the act.
+ */
+export function registryEvidenceLabel(l: {
+  evidenceKind: 'document' | 'confirmed';
+  registryRole: 'owner' | 'manager' | null;
+}): string {
+  if (l.evidenceKind === 'confirmed') return 'самоличност, потвърдена по декларирани данни';
+  return l.registryRole === 'manager'
+    ? 'лицето е вписано като управител'
+    : 'лицето е вписано като съдружник/собственик';
+}
+
 export function relationLabel(relation: string): string {
   return RELATION_LABEL[relation] ?? relation;
 }

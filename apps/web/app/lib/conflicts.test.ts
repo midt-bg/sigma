@@ -21,6 +21,7 @@ import {
   partitionContracts,
   relationLabel,
   temporalLabel,
+  registryEvidenceLabel,
 } from './conflicts';
 
 function link(over: Partial<ConflictLink> = {}): ConflictLink {
@@ -43,7 +44,13 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     contemporaneousValueEur: 40_000_000,
     firstContractYear: '2021',
     lastContractYear: '2024',
-    sourceUrl: 'https://register.cacbg.bg/2024/i.xml',
+    sourceUrl: 'https://register.cacbg.bg/2024/x.xml',
+    // #279: a link only reaches the DTO when its identity rests on a Trade Register fact.
+    evidenceKind: 'document',
+    registryRole: 'owner',
+    registryEntryNumber: '20110502101007',
+    registryEntryDate: '2011-05-02',
+    registryLookupDate: '2026-08-05',
     ...over,
   };
 }
@@ -521,5 +528,33 @@ describe('authorityShareDisplay', () => {
     expect(authorityShareDisplay(share({ companyEur: 0, ratio: null }))).toEqual({
       mode: 'no-value',
     });
+  });
+});
+
+describe('registryEvidenceLabel', () => {
+  // The wording is load-bearing. The register records a ROLE; it does not certify that the official owns
+  // anything — that claim comes from their own declaration and is rendered separately. A label that said
+  // „собственик според ТР" would assert something the evidence does not support (ADR-0033 decision 2).
+  it('reports what the act records, never an ownership conclusion', () => {
+    expect(registryEvidenceLabel({ evidenceKind: 'document', registryRole: 'owner' })).toBe(
+      'лицето е вписано като съдружник/собственик',
+    );
+    expect(registryEvidenceLabel({ evidenceKind: 'document', registryRole: 'manager' })).toBe(
+      'лицето е вписано като управител',
+    );
+  });
+
+  it('a seat/ЕИК confirmation claims identity, not a registry role', () => {
+    // „Потвърдено" means the COMPANY was identified from something the official declared — nobody was
+    // found in the act, so the label must not imply anyone was.
+    const label = registryEvidenceLabel({ evidenceKind: 'confirmed', registryRole: null });
+    expect(label).toBe('самоличност, потвърдена по декларирани данни');
+    expect(label).not.toMatch(/вписан/);
+  });
+
+  it('never renders the word „собственик" for a mere confirmation', () => {
+    expect(registryEvidenceLabel({ evidenceKind: 'confirmed', registryRole: 'owner' })).not.toMatch(
+      /собственик/,
+    );
   });
 });

@@ -7,7 +7,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nameDistinctiveness } from './classify.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -31,11 +30,20 @@ const published = db
     `
   SELECT il.id, il.link_key, il.person_id, il.eik, il.entity_key, il.match_method, il.publish_tier,
          il.bidder_id, il.relation, il.contemporaneous, il.contract_value_eur,
-         b.name AS bidder_name, b.eik_normalized AS bidder_eik, b.eik_valid AS bidder_eik_valid
+         b.name AS bidder_name, b.eik_normalized AS bidder_eik, b.eik_valid AS bidder_eik_valid,
+         -- LEFT JOIN, deliberately: a published link with NO seal is the finding, so it must reach the
+         -- loop rather than be filtered out of it.
+         e.evidence_kind, e.registry_role, e.matched_fact
   FROM interest_links il JOIN bidders b ON b.id = il.bidder_id
+  LEFT JOIN interest_link_evidence e ON e.link_key = il.link_key
   WHERE il.status = 'published'`,
   )
   .all();
+
+// The only two evidence rungs that publish (ADR-0033 decision 1). Everything else withholds.
+const PUBLISHING_EVIDENCE = new Set(['document', 'confirmed']);
+// The closed vocabulary for a sealed matched_fact. Anything else is a potential name leak.
+const MATCHED_FACT = /^(?:seat:[\p{Lu} -]+|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
 
 const findings = [];
 const flag = (link, axis, detail) =>
@@ -50,12 +58,16 @@ for (const l of published) {
   //    l.eik is a valid winner BEARING this name key (a stray/mis-attached ЕИК is still caught). The ЕИК+name
   //    double-lock itself is re-proven in the provenance pass below (A_eik_no_provenance).
   if (!rec) flag(l, 'A_key_missing', `entity_key ${l.entity_key} not found in live bidder set`);
-  else if (l.publish_tier === 'A_eik') {
+  else if (l.match_method === 'declared_eik') {
+    // Identity here is the declarant-provided ЕИК, not the name (ADR-0028), so a name shared by more
+    // than one winner is legitimate — the ЕИК picks exactly one. Require instead that l.eik is a valid
+    // winner BEARING this name key, which still catches a stray or mis-attached ЕИК. The ЕИК+name
+    // double-lock is re-proven independently in the provenance pass below.
     if (!rec.valid.has(l.eik))
       flag(
         l,
         'A_eik_not_winner',
-        `A_eik published ${l.eik}, not among key ${l.entity_key}'s valid winners {${[...rec.valid].join(',')}}`,
+        `declared_eik published ${l.eik}, not among key ${l.entity_key}'s valid winners {${[...rec.valid].join(',')}}`,
       );
   } else if (rec.valid.size !== 1)
     flag(
@@ -72,12 +84,34 @@ for (const l of published) {
   if (!l.bidder_eik_valid)
     flag(l, 'B_eik_invalid', `published on eik_valid=0 bidder ${l.bidder_name}`);
 
-  // C. Tier honesty: B_distinctive must actually be distinctive by the same classifier that gated it.
-  if (l.publish_tier === 'B_distinctive' && nameDistinctiveness(l.entity_key) !== 'distinctive')
+  // C. Evidence honesty (#279, ADR-0033). The tier IS the evidence kind now, so the axis that used to
+  //     re-derive name distinctiveness re-derives the publishing rule instead: a published link must
+  //     carry a seal, and that seal must be one of the two rungs that publish. `nameDistinctiveness`
+  //     no longer gates publication at all — it survives only as a withholding filter inside the
+  //     loader — so re-checking it here would assert a rule that is no longer in force.
+  if (!l.evidence_kind)
+    flag(l, 'C_no_evidence', `published with no Trade Register evidence seal (${l.bidder_name})`);
+  else if (!PUBLISHING_EVIDENCE.has(l.evidence_kind))
     flag(
       l,
-      'C_not_distinctive',
-      `tier B_distinctive but nameDistinctiveness=${nameDistinctiveness(l.entity_key)} (${l.bidder_name})`,
+      'C_withholding_evidence',
+      `published on evidence_kind='${l.evidence_kind}', which withholds (${l.bidder_name})`,
+    );
+  else if (l.evidence_kind !== l.publish_tier)
+    flag(
+      l,
+      'C_tier_evidence_mismatch',
+      `publish_tier='${l.publish_tier}' but sealed evidence_kind='${l.evidence_kind}'`,
+    );
+
+  // C2. The PII rail, audited rather than assumed: matched_fact is a CLOSED vocabulary and can never
+  //     carry a name. The registry deed's names are read only to produce a boolean and must never reach
+  //     a served column (#279 §9, ADR-0033 decision 5). A schema cannot enforce this; this does.
+  if (l.matched_fact != null && !MATCHED_FACT.test(l.matched_fact))
+    flag(
+      l,
+      'C_matched_fact_shape',
+      `matched_fact='${l.matched_fact}' is outside the closed vocabulary — a name may have leaked`,
     );
 }
 
