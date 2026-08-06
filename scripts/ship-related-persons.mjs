@@ -47,6 +47,48 @@ export function wipeSql() {
 const MAX_BATCH_BYTES = 90_000;
 const MAX_BATCH_ROWS = 400;
 
+// One `d1 execute --file` per TABLE meant the whole table went up as a single bulk import: on the first
+// full-corpus ship that was 516k rows written in one hour with a p90 batch time of 18.2s, two orders of
+// magnitude above a normal cron hour (2.9-4.5k rows, 19-450ms) — after which the database returned
+// „internal error" for hours, including on its own metadata endpoint, before recovering with all data
+// intact. The Cloudflare-side mechanism is not provable from outside, so this is a deliberate defensive
+// bound rather than a proven fix: cap how much one request carries and leave a gap between requests, so a
+// re-seed is a series of ordinary writes instead of one shock. 25 × MAX_BATCH_ROWS = 10 000 rows/request.
+const MAX_STATEMENTS_PER_REQUEST = 25;
+const PACE_MS = 500;
+
+/** Group per-table INSERT statements into request-sized chunks. Pure — unit-tested. */
+export function chunkStatements(statements, maxPerRequest = MAX_STATEMENTS_PER_REQUEST) {
+  if (!Number.isInteger(maxPerRequest) || maxPerRequest < 1)
+    throw new Error(
+      `maxPerRequest must be a positive integer, got ${JSON.stringify(maxPerRequest)}`,
+    );
+  const chunks = [];
+  for (let i = 0; i < statements.length; i += maxPerRequest)
+    chunks.push(statements.slice(i, i + maxPerRequest));
+  return chunks;
+}
+
+/** Block the (synchronous) ship loop without burning CPU. */
+const sleepSync = (ms) => {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+/**
+ * Send one table's INSERTs as paced, request-sized batches. The I/O boundary (`apply`, `sleep`) is
+ * injected so the WIRING is testable, not just the pure chunker — the split only helps if main() actually
+ * calls it, and „one request per table" is exactly the shape a refactor would drift back to.
+ * @returns {number} requests issued
+ */
+export function applyTableChunks(table, statements, { apply, sleep, maxStatements, paceMs }) {
+  const chunks = chunkStatements(statements, maxStatements);
+  chunks.forEach((chunk, i) => {
+    if (i) sleep(paceMs); // between requests only — never before the first or after the last
+    apply(chunks.length > 1 ? `${table}.${i + 1}` : table, chunk.join(''));
+  });
+  return chunks.length;
+}
+
 // Supports --name=value, --name value, and bare --name (boolean). A --name whose next token is another
 // --flag (or absent) is a boolean; otherwise it consumes the next token as its value.
 const arg = (name, def) => {
@@ -106,6 +148,17 @@ export function parseMinLinks(raw) {
     throw new Error(`--min-links must be a positive integer, got ${JSON.stringify(raw)}.`);
   return n;
 }
+
+/** Shared shape check for the pacing flags: a bare `--flag` must not silently mean 1 (or 0). */
+function parseIntFlag(raw, name, min) {
+  if (raw === true) throw new Error(`--${name} requires a value, e.g. --${name}=25`);
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min)
+    throw new Error(`--${name} must be an integer >= ${min}, got ${JSON.stringify(raw)}.`);
+  return n;
+}
+const parsePositiveInt = (raw, name) => parseIntFlag(raw, name, 1);
+const parseNonNegativeInt = (raw, name) => parseIntFlag(raw, name, 0);
 
 /**
  * The D1 name to ship to. A --remote write MUST name its target explicitly: this path DELETEs every
@@ -187,6 +240,38 @@ export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, 
 
 /** Live lookup of the uuid Cloudflare maps `d1Name` to, via `wrangler d1 info --json`. Returns '' on any
  *  failure (unknown name, network, parse) so assertD1TargetConsistent turns that into an explicit refusal. */
+/**
+ * Read the shipped tables' row counts back off the target, in one query. Returns {} when the read itself
+ * fails — `assertShippedCounts` then reports every table as unanswered and fails the run, which is the
+ * right way round: a verification step that cannot verify must not pass.
+ */
+function readShippedCounts(d1Name, remote, expected) {
+  const tables = Object.entries(expected)
+    .filter(([, n]) => typeof n === 'number')
+    .map(([t]) => t);
+  if (!tables.length) return {};
+  const sql = tables
+    .map((t) => `SELECT ${sqlLiteral(t)} AS t, COUNT(*) AS n FROM ${sqlIdent(t)}`)
+    .join(' UNION ALL ');
+  try {
+    const out = execFileSync(
+      'wrangler',
+      ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
+      { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+    );
+    // wrangler prefixes its own notices before the JSON payload; take the document, not the whole stream.
+    const start = out.indexOf('[');
+    const parsed = JSON.parse(start >= 0 ? out.slice(start) : out);
+    const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
+    return Object.fromEntries(rows.map((r) => [r.t, Number(r.n)]));
+  } catch (err) {
+    console.error(
+      `ship: could not read back row counts — ${err instanceof Error ? err.message : err}`,
+    );
+    return {};
+  }
+}
+
 function resolveD1Id(d1Name) {
   try {
     const out = execFileSync('wrangler', ['d1', 'info', d1Name, '--json'], {
@@ -198,6 +283,34 @@ function resolveD1Id(d1Name) {
   } catch {
     return '';
   }
+}
+
+/**
+ * Compare what we meant to ship against what the target actually holds. Pure — unit-tested; the live read
+ * is injected as `readCounts`.
+ *
+ * The ship is a wipe followed by SEVERAL independent requests (no cross-request transaction), so a failure
+ * part-way leaves the target holding some tables and not others — and today nothing notices: the run exits 0
+ * and the surface renders as a smaller corpus. That asymmetry is glaring next to the READ path, where the
+ * EOP hydrate already refuses to proceed on a local↔remote row-count mismatch. Close it on the destructive
+ * side too: any drift fails the run, loudly and with the numbers.
+ */
+export function assertShippedCounts(expected, actual) {
+  const drift = Object.entries(expected)
+    .filter(([, n]) => typeof n === 'number')
+    .map(([table, n]) => ({ table, expected: n, actual: actual[table] }))
+    .filter(({ expected: e, actual: a }) => a !== e);
+  if (drift.length)
+    throw new Error(
+      'ship verification FAILED — the target does not hold what was shipped:\n' +
+        drift
+          .map(
+            ({ table, expected: e, actual: a }) =>
+              `  ${table}: shipped ${e}, target has ${a === undefined ? 'no answer' : a}`,
+          )
+          .join('\n') +
+        '\nThe wipe already ran, so the surface is now partial. Re-run the ship.',
+    );
 }
 
 /** Batched multi-row INSERTs for one table, bounded by D1's statement size. Pure — unit-tested. */
@@ -238,6 +351,11 @@ function main() {
   const remote = Boolean(arg('remote', false));
   const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
   const minLinks = parseMinLinks(arg('min-links', 50));
+  const maxStatements = parsePositiveInt(
+    arg('max-statements-per-request', MAX_STATEMENTS_PER_REQUEST),
+    'max-statements-per-request',
+  );
+  const paceMs = parseNonNegativeInt(arg('pace-ms', PACE_MS), 'pace-ms');
   if (remote && !arg('yes', false))
     throw new Error('--remote requires --yes (guards against an accidental prod write)');
 
@@ -310,14 +428,27 @@ function main() {
         continue;
       }
       const rows = sqliteJson(`SELECT * FROM ${sqlIdent(table)}`);
-      const inserts = insertStatements(table, cols, rows).join('');
+      const statements = insertStatements(table, cols, rows);
       summary[table] = rows.length;
-      if (emit) writeFileSync(resolve(emit, `${table}.sql`), inserts);
-      else if (inserts) applyFile(table, inserts); // wipe already cleared it; skip an empty INSERT batch
+      // --emit keeps ONE file per table: those are applied by hand, and numbered fragments would only add
+      // ordering rope to a manual run. The paced split below matters for the live path, where the request
+      // itself is the unit of load.
+      if (emit) writeFileSync(resolve(emit, `${table}.sql`), statements.join(''));
+      else if (statements.length)
+        applyTableChunks(table, statements, {
+          apply: applyFile,
+          sleep: sleepSync,
+          maxStatements,
+          paceMs,
+        });
     }
   } finally {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
+  // Verify what actually landed. Skipped for --emit (nothing was written yet — the files are applied later
+  // by hand, and the header on 0_wipe.sql already puts that check on whoever runs them).
+  if (!emit) assertShippedCounts(summary, readShippedCounts(d1Name, remote, summary));
+
   console.log(
     JSON.stringify(
       { workDb, target: emit ? `emit:${emit}` : remote ? 'D1:remote' : 'D1:local', rows: summary },

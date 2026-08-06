@@ -7,6 +7,9 @@ import {
   parseMinLinks,
   resolveD1Name,
   insertStatements,
+  chunkStatements,
+  applyTableChunks,
+  assertShippedCounts,
   sqlLiteral,
   sqlIdent,
   TABLES,
@@ -180,4 +183,96 @@ test('related_persons_internal (relative-name PII) is NOT shipped to the served 
   // No served query reads it; shipping PII we never surface is a latent exposure. It stays in the
   // build/work DB only. If a real read path is ever added, ship it deliberately and revisit anonymization.
   assert.ok(!TABLES.includes('related_persons_internal'));
+});
+
+// The first full-corpus ship put 516k rows through in one hour, p90 batch 18.2s, and the database then
+// returned „internal error" for hours. Chunking bounds what a single request carries; these lock the
+// boundaries so a refactor cannot quietly restore the one-request-per-table shape.
+test('chunkStatements splits into request-sized groups and preserves order', () => {
+  const stmts = Array.from({ length: 7 }, (_, i) => `S${i};`);
+  assert.deepEqual(chunkStatements(stmts, 3), [
+    ['S0;', 'S1;', 'S2;'],
+    ['S3;', 'S4;', 'S5;'],
+    ['S6;'],
+  ]);
+  assert.deepEqual(chunkStatements(stmts, 100), [stmts], 'fits in one request');
+  assert.deepEqual(chunkStatements([], 3), [], 'nothing to ship, nothing to send');
+});
+
+test('chunkStatements refuses a non-positive size rather than looping forever', () => {
+  assert.throws(() => chunkStatements(['a'], 0), /positive integer/);
+  assert.throws(() => chunkStatements(['a'], -1), /positive integer/);
+  assert.throws(() => chunkStatements(['a'], 1.5), /positive integer/);
+});
+
+// The ship wipes, then writes over SEVERAL requests with no cross-request transaction. Before this, a
+// failure part-way exited 0 and the surface silently served a partial corpus — while the READ path
+// (EOP hydrate) already refused on a row-count mismatch. Same standard on the destructive side.
+test('assertShippedCounts passes when the target holds exactly what was shipped', () => {
+  assert.doesNotThrow(() =>
+    assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 2 }),
+  );
+});
+
+test('assertShippedCounts fails on a short table and names the numbers', () => {
+  assert.throws(
+    () => assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 1 }),
+    (e) =>
+      /interest_links: shipped 2, target has 1/.test(e.message) &&
+      /verification FAILED/.test(e.message),
+  );
+});
+
+test('assertShippedCounts fails closed when the read-back returned nothing', () => {
+  assert.throws(
+    () => assertShippedCounts({ persons: 3 }, {}),
+    /persons: shipped 3, target has no answer/,
+  );
+});
+
+test('assertShippedCounts ignores tables the ship skipped as absent', () => {
+  assert.doesNotThrow(() =>
+    assertShippedCounts({ persons: 1, gone: 'absent (skipped)' }, { persons: 1 }),
+  );
+});
+
+// The wiring, not just the chunker: „one request per table" is the shape this change exists to remove,
+// and a refactor would drift straight back to it. Drive the real loop with a recording apply/sleep.
+test('applyTableChunks issues one request per chunk, paced, in order', () => {
+  const calls = [];
+  const naps = [];
+  const n = applyTableChunks('persons', ['A;', 'B;', 'C;', 'D;', 'E;'], {
+    apply: (name, sql) => calls.push([name, sql]),
+    sleep: (ms) => naps.push(ms),
+    maxStatements: 2,
+    paceMs: 500,
+  });
+  assert.equal(n, 3);
+  assert.deepEqual(
+    calls.map(([name]) => name),
+    ['persons.1', 'persons.2', 'persons.3'],
+    'numbered so a failed request is identifiable in the log',
+  );
+  assert.deepEqual(
+    calls.map(([, sql]) => sql),
+    ['A;B;', 'C;D;', 'E;'],
+  );
+  assert.deepEqual(
+    naps,
+    [500, 500],
+    'a gap between requests, none before the first or after the last',
+  );
+});
+
+test('applyTableChunks keeps the bare table name and never sleeps when it fits in one request', () => {
+  const calls = [];
+  const naps = [];
+  applyTableChunks('declarations', ['A;'], {
+    apply: (name, sql) => calls.push([name, sql]),
+    sleep: (ms) => naps.push(ms),
+    maxStatements: 25,
+    paceMs: 500,
+  });
+  assert.deepEqual(calls, [['declarations', 'A;']]);
+  assert.deepEqual(naps, [], 'a single request must not pay the pacing delay');
 });
