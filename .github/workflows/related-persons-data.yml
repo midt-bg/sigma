@@ -16,6 +16,19 @@ name: Related-persons data foundation (build + ship)
 # XML (fetch.mjs skips files already on disk) — it fills gaps, not a from-scratch rebuild unless the cache is cleared.
 
 on:
+  # DAILY, and deliberately on the EXISTING workflow rather than a second one. #279 §9 asks for the
+  # publishing decisions to run on a cadence; duplicating the job would create a second ship path with
+  # its own copy of the credential guards, the D1-target guard and the ship floor — and the copy is the
+  # one nobody exercises. A scheduled run takes the same path as a manual one, with two differences:
+  #   • it targets STAGING (the environment default below). Production stays manual, so the
+  #     assertD1TargetAuthorized guard keeps a prod write a deliberate act.
+  #   • `full_crawl` is empty and therefore false, so it never crawls the register — it re-runs the
+  #     decisions over the cached corpus, which is exactly what #279 §9 means by a pure, zero-network
+  #     decision. Registry lookups have their own workflow (related-persons-tr-refresh.yml).
+  # If the corpus cache has been evicted, extract yields nothing, the ship floor refuses, and the run
+  # fails loudly rather than wiping the surface.
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       environment:
@@ -34,7 +47,7 @@ permissions:
 
 concurrency:
   # Never let two data-foundation writes to the same environment overlap; do not cancel one in flight.
-  group: related-persons-data-${{ inputs.environment }}
+  group: related-persons-data-${{ inputs.environment || 'staging' }}
   cancel-in-progress: false
 
 jobs:
@@ -46,7 +59,7 @@ jobs:
     # (stalled gov-server I/O) — fail rather than burn the slot. The raw corpus is cached (below) so a
     # re-run resumes instead of re-crawling from scratch.
     timeout-minutes: 300
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment || 'staging' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -54,7 +67,7 @@ jobs:
       SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
       # The DECLARED intended environment — the independent anchor the ship guard checks the (name, id) pair
       # against (T48), so a consistent-but-wrong pair can't wipe the wrong DB. See assertD1TargetAuthorized.
-      SIGMA_SHIP_ENV: ${{ inputs.environment }}
+      SIGMA_SHIP_ENV: ${{ inputs.environment || 'staging' }}
       # Suppression (takedown) list keying — load.mjs fingerprints link-suppressions.jsonl under this salt and
       # refuses to build if the list is non-empty but the salt is unset (fail-closed, ADR-0031). Without this
       # the first suppression entry would break every ship; the key version guards a coordinated salt rotation.
@@ -93,14 +106,14 @@ jobs:
             sigma-blue|sigma-green) IS_PROD_SLOT=1 ;;
             *) IS_PROD_SLOT=0 ;;
           esac
-          if [ "${{ inputs.environment }}" = "production" ]; then
+          if [ "${{ inputs.environment || 'staging' }}" = "production" ]; then
             if [ "$IS_PROD_SLOT" != "1" ]; then
               echo "::error::production requires SIGMA_D1_NAME to be a prod slot (sigma-blue|sigma-green), got '${SIGMA_D1_NAME}' — refusing to ship."
               exit 1
             fi
           else
             if [ "$IS_PROD_SLOT" = "1" ]; then
-              echo "::error::SIGMA_D1_NAME='${SIGMA_D1_NAME}' (a PRODUCTION slot) on a '${{ inputs.environment }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
+              echo "::error::SIGMA_D1_NAME='${SIGMA_D1_NAME}' (a PRODUCTION slot) on a '${{ inputs.environment || 'staging' }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
               exit 1
             fi
           fi

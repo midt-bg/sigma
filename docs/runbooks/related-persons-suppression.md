@@ -4,6 +4,21 @@ A contested, corrected, or legally-challenged link on the свързани-ли�
 the version-controlled suppression list. See [ADR-0031](../adr/0031-suppressions-version-controlled-fingerprinted.md)
 for why this is a git list keyed on an HMAC fingerprint, not a DB row.
 
+## Grounds that require a takedown
+
+Two of these are specific to the Trade Register evidence (#279, ADR-0033) and are easy to miss, because
+neither shows up as a bug: the pipeline is working correctly and the claim is still wrong.
+
+- **A court-annulled entry (чл. 29 ЗТРРЮЛНЦ).** A registry entry set aside by a court is void, but the
+  deed we cached may still carry it, and the rules that read it are unchanged — so a rules-version bump
+  will NOT remove the link. This is an evidence-invalidation ground, and suppression is the mechanism.
+- **A match against the wrong person (a namesake).** The register carries no ЕГН, so a three-name match
+  inside one entity is strong evidence of identity but not proof. If the named official is not the person
+  in the act, the link is a false public claim about them and must come down immediately — do not wait for
+  a rules change or a re-crawl.
+- The ordinary grounds are unchanged: a contested link under review, a correction the source has since
+  published, or a legal challenge.
+
 ## What you need
 
 - The exact `link_key`. Self links are `pid|eik`; a close-relative link is `pid|eik|family`. Get it from the
