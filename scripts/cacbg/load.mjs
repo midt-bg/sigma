@@ -14,12 +14,9 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  nameDistinctiveness,
-  temporalStatus,
-  localityToken,
-  closelyHeldForm,
-} from './classify.mjs';
+// nameDistinctiveness is deliberately NOT imported: the evidence ladder replaced it in the publish
+// path (ADR-0033). It survives in classify.mjs for the review queue, not for a publishing decision.
+import { temporalStatus, localityToken, closelyHeldForm } from './classify.mjs';
 import { openCache, readDeed, coverage } from '../tr/cache.mjs';
 import { TR_DB, TR_RAW } from '../tr/paths.mjs';
 import { evidenceVerdict, reconcileTermination, RULES_VERSION } from '../tr/evidence.mjs';
@@ -84,6 +81,40 @@ const suppressedFp = new Set(suppEntries.map((e) => e.fp));
 // B3 unused-suppression gate: every listed fingerprint MUST match exactly one built link. Track which get
 // used; a fingerprint that matched nothing (a stale/mis-keyed takedown) fails the build after the load loop.
 const usedSuppressions = new Set();
+// Export the CURRENT published surface before anything is dropped — ADR-0033 decision 6.
+//
+// The rebuild below is total, so the previous run's published set exists only in this instant. The
+// audit compares against this file and hard-fails on a link that was published last run and is not
+// published now under an UNCHANGED rules_version: nothing licensed that removal, so it is a silent
+// recall regression. rules_version travels per key, because a link that vanished under a rules BUMP is
+// an intentional removal and must degrade to a printed diff instead.
+//
+// Held and withdrawn links are deliberately excluded: they were never a public claim, so their absence
+// next run is not a regression. On a first run the tables do not exist yet and the export is an empty
+// set — written, not skipped, so a missing file means „the loader never ran", not „nothing published".
+const priorPublished = (() => {
+  try {
+    return db
+      .prepare(
+        `SELECT il.link_key AS link_key, e.rules_version AS rules_version
+           FROM interest_links il
+           LEFT JOIN interest_link_evidence e ON e.link_key = il.link_key
+          WHERE il.status = 'published'`,
+      )
+      .all()
+      .map((r) => ({ link_key: r.link_key, rules_version: r.rules_version ?? RULES_VERSION }));
+  } catch (e) {
+    // A first run: interest_links does not exist yet. Any OTHER failure must surface — swallowing it
+    // would turn a broken export into a permanently silent gate.
+    if (!/no such table/i.test(e.message)) throw e;
+    return [];
+  }
+})();
+fs.writeFileSync(
+  path.join(STAGING, 'published-snapshot.json'),
+  JSON.stringify(priorPublished, null, 2) + '\n',
+);
+
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [

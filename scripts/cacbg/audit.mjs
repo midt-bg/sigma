@@ -7,10 +7,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
+import { RULES_VERSION } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
+const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/staging');
+const SNAPSHOT = path.join(STAGING, 'published-snapshot.json');
 const { companyNameKey } = await import('../../packages/shared/src/company-name-key.ts');
 
 const db = new DatabaseSync(DB, { readOnly: true });
@@ -160,6 +164,40 @@ for (const l of nonExact) {
 
 db.close();
 
+// D. Monotonicity — ADR-0033 decision 6, the correction of #279 §8.
+//
+// §8 asked for a seal kept „forever" and strictly-additive recomputation. That is unachievable: labels
+// flip, the deed cache expires, and a court can annul an entry (чл. 29 ЗТРРЮЛНЦ) with no rules change
+// at all. So the seal is NOT a store — it is re-derived every run — and monotonicity is enforced HERE,
+// as a gate, against the export load.mjs writes immediately before it drops the CACBG tables.
+//
+// The rule: a link that was published last run and is not published now is a REGRESSION unless the
+// rules themselves changed. Under an unchanged rules_version nothing licensed the removal, so it is a
+// hard finding. Under a changed one it is an intentional event and degrades to a printed diff.
+//
+// ship-related-persons.mjs's count floor cannot do this job: it compares a COUNT, so a one-for-one
+// swap — one true link silently dropped, one gained — leaves it perfectly quiet.
+const publishedNow = new Set(published.map((l) => l.link_key));
+let priorPublished = null;
+try {
+  priorPublished = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'));
+} catch (e) {
+  // ENOENT is the legitimate first run — there is no prior surface to regress from. Anything else
+  // (unreadable, malformed) must not be swallowed into a silent pass of the gate.
+  if (e.code !== 'ENOENT') throw e;
+}
+const vanished = (priorPublished ?? []).filter((p) => !publishedNow.has(p.link_key));
+const regressions = vanished.filter((p) => p.rules_version === RULES_VERSION);
+for (const p of regressions)
+  findings.push({
+    axis: 'D_monotonicity',
+    link_key: p.link_key,
+    eik: p.link_key.split('|')[1] ?? '',
+    // The link_key is named explicitly: it is the only handle a human has to go and look at which
+    // claim disappeared, and the shared axis report prints the ЕИК alone.
+    detail: `${p.link_key} published last run under rules_version ${p.rules_version} (unchanged) and is not published now — nothing licensed this removal`,
+  });
+
 // Report
 const byAxis = {};
 for (const f of findings) (byAxis[f.axis] ??= []).push(f);
@@ -171,6 +209,23 @@ for (const [axis, fs] of Object.entries(byAxis)) {
   for (const f of fs.slice(0, 20)) console.log(`  - [${f.eik}] ${f.detail}`);
   console.log('');
 }
+if (priorPublished === null) {
+  console.log(`## monotonicity — no prior export at ${SNAPSHOT}; treating this as a first run\n`);
+} else {
+  const declared = vanished.filter((p) => p.rules_version !== RULES_VERSION);
+  console.log(
+    `## monotonicity — ${priorPublished.length} published last run, ${publishedNow.size} now; ` +
+      `${regressions.length} regression(s), ${declared.length} declared removal(s)\n`,
+  );
+  // Declared removals are not findings, but they are never silent: a rules bump is exactly when a
+  // human should read which named claims it withdrew.
+  for (const p of declared)
+    console.log(
+      `  - ${p.link_key} removed under a rules change (${p.rules_version} → ${RULES_VERSION})`,
+    );
+  if (declared.length) console.log('');
+}
+
 console.log(`## non-exact provenance (${provenance.length}) — verify each cross-check by eye`);
 for (const p of provenance) {
   console.log(`  - ${p.method} [${p.eik}] winner="${p.winner}"`);

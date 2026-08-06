@@ -26,10 +26,15 @@ const dirs = [];
 
 // Build a fixture DB (bidders + declarations + declared_interests + interest_links), run audit.mjs against
 // it as a subprocess, and return { threw, out } — threw=true iff the audit exited non-zero (a hard finding).
-function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [] }) {
+function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snapshot = null }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
   const DB = path.join(dir, 'fixture.sqlite');
+  const staging = path.join(dir, 'staging');
+  fs.mkdirSync(staging, { recursive: true });
+  // The pre-wipe export load.mjs writes before it drops the CACBG tables. Absent === a first run.
+  if (snapshot)
+    fs.writeFileSync(path.join(staging, 'published-snapshot.json'), JSON.stringify(snapshot));
   const db = new DatabaseSync(DB);
   db.exec(`
     CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT);
@@ -57,7 +62,12 @@ function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [] }) {
     out = execFileSync(
       'node',
       ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'audit.mjs')],
-      { cwd: ROOT, env: { ...process.env, CACBG_DB: DB }, encoding: 'utf8', stdio: 'pipe' },
+      {
+        cwd: ROOT,
+        env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: staging },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
     );
   } catch (e) {
     threw = true; // execFileSync throws on non-zero exit (a hard finding fired)
@@ -220,4 +230,63 @@ test('a well-formed seal passes every C axis (positive control)', () => {
     ],
   });
   assert.equal(threw, false, 'a correctly sealed link must not fail the gate');
+});
+
+// ── D. Monotonicity (ADR-0033 decision 6) ────────────────────────────────────────────────────────
+// #279 §8 asked for a seal kept „forever" and strictly-additive recomputation. ADR-0033 showed that is
+// false (labels flip, the cache expires, a court can annul an entry) and replaced the STORE with a
+// GATE: seals are re-derived every run, and the audit compares the current published set against the
+// pre-wipe export. A link that vanishes under an UNCHANGED rules_version is a hard finding — nothing
+// about the rules changed, so its disappearance is a regression, not a decision.
+//
+// Why this needs its own gate and ship's count floor cannot serve: assertShipFloor checks a COUNT.
+// A one-for-one swap — one link lost, one gained — leaves the count identical and the floor silent
+// while a true published link is dropped. Only a per-key comparison sees it.
+const SEALED = [
+  `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+];
+const ONE_LINK = {
+  bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`, `'b2','ВТОРА ФИРМА ЕООД','200000002',1`],
+  links: [
+    `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+  ],
+  seals: SEALED,
+};
+
+test('D — a previously published link that vanished under an UNCHANGED rules_version is a hard finding', () => {
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    snapshot: [
+      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
+      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' }, // published last run, gone now
+    ],
+  });
+  assert.equal(threw, true, 'a silent recall regression must fail the build');
+  assert.match(out, /D_monotonicity/);
+  assert.match(out, /p9\|200000002/);
+});
+
+test('D — the same disappearance under a CHANGED rules_version is a printed diff, not a finding', () => {
+  // Removal stays an intentional event: bumping the rules version is how you declare one.
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    snapshot: [{ link_key: 'p9|200000002', rules_version: 'tr-rules-0' }],
+  });
+  assert.equal(threw, false, 'a declared rules change must not fail the build');
+  assert.match(out, /p9\|200000002/, 'but it must still be reported');
+});
+
+test('D — no snapshot (a first run) neither fires nor crashes', () => {
+  const { threw } = buildAndAudit(ONE_LINK);
+  assert.equal(threw, false);
+});
+
+test('D positive control — an unchanged published set produces no monotonicity finding', () => {
+  // Without this, a gate that never fires would pass both negatives above.
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    snapshot: [{ link_key: 'p1|100000001', rules_version: 'tr-rules-1' }],
+  });
+  assert.equal(threw, false);
+  assert.doesNotMatch(out, /D_monotonicity/);
 });

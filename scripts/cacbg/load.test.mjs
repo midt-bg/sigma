@@ -1157,3 +1157,66 @@ test('a family stake publishes ONLY when the official confirmed the company them
   assert.equal(seal.matched_fact, 'seat:РУСЕ');
   db.close();
 });
+
+test('the published surface is exported BEFORE the wipe, so the audit can gate monotonicity', () => {
+  // ADR-0033 decision 6. The loader rebuilds the CACBG tables from scratch every run, so the previous
+  // published set exists only in the instant before the DROP. Without this export the audit has
+  // nothing to compare against and the monotonicity gate can never fire — which is precisely the state
+  // review found: rules_version was written and never read.
+  // A FIRST run, on its own database: interest_links does not exist yet, so the export must be an
+  // empty set that is WRITTEN rather than skipped — a missing file has to keep meaning „the loader
+  // never ran", not „nothing was published".
+  const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-load-first-'));
+  fs.mkdirSync(path.join(fresh, 'staging'), { recursive: true });
+  for (const f of fs.readdirSync(STAGING))
+    fs.copyFileSync(path.join(STAGING, f), path.join(fresh, 'staging', f));
+  // The base DB (bidders, contracts) comes from the main pipeline and is a precondition of the load —
+  // a genuinely empty file is not a first run, it is a broken one. So: copy the base and drop the
+  // CACBG tables, which is exactly the state before the loader has ever run against it.
+  const firstDb = path.join(fresh, 'first.sqlite');
+  fs.copyFileSync(DB, firstDb);
+  const fdb = new DatabaseSync(firstDb);
+  for (const t of [
+    'interest_link_evidence',
+    'interest_link_authorities',
+    'interest_links',
+    'declared_interests',
+    'related_persons_internal',
+    'declarations',
+    'persons',
+  ])
+    fdb.exec(`DROP TABLE IF EXISTS ${t}`);
+  fdb.close();
+  runLoad({ CACBG_DB: firstDb, CACBG_STAGING: path.join(fresh, 'staging') });
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(fresh, 'staging', 'published-snapshot.json'), 'utf8')),
+    [],
+  );
+  fs.rmSync(fresh, { recursive: true, force: true });
+
+  const SNAP = path.join(STAGING, 'published-snapshot.json');
+  runLoad();
+  const db = open();
+  const published = db
+    .prepare("SELECT link_key FROM interest_links WHERE status='published'")
+    .all()
+    .map((r) => r.link_key);
+  db.close();
+  assert.ok(published.length > 0, 'fixture must publish something for this test to mean anything');
+
+  runLoad();
+  const snap = JSON.parse(fs.readFileSync(SNAP, 'utf8'));
+  assert.deepEqual(
+    snap.map((s) => s.link_key).sort(),
+    [...published].sort(),
+    'the export must hold exactly what was published before the wipe',
+  );
+  // rules_version travels WITH each key: the gate distinguishes „vanished under unchanged rules"
+  // (a regression) from „vanished under a rules bump" (an intentional removal), and it cannot do that
+  // from the current version alone.
+  for (const s of snap)
+    assert.ok(s.rules_version?.length > 0, 'each exported key carries its rules');
+  // Held and withdrawn links must NOT be exported — they were never a public claim, so their absence
+  // next run is not a regression to gate on.
+  assert.equal(snap.length, published.length);
+});
