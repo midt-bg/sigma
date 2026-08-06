@@ -16,6 +16,7 @@ const FORM_TOKENS = new Set([
   'КД',
   'СД',
   'АДСИЦ',
+  'КДА',
   'КООПЕРАЦИЯ',
   'ФОНДАЦИЯ',
   'СДРУЖЕНИЕ',
@@ -71,15 +72,16 @@ const norm = (s) =>
     .replace(/[\s.\-–—]+/g, ' ')
     .trim();
 
-// Joint-stock / listed legal form (АД / ЕАД / АДСИЦ) as the TRAILING form token. In BG company names the
+// Joint-stock / share-issuing legal form (АД / ЕАД / АДСИЦ / КДА) as the TRAILING form token. In BG company names the
 // legal form is always the suffix, so anchor to the end (optionally followed by quotes/whitespace); a whole
 // token bounded on the left by string edge, whitespace or quotes — NOT hyphens/dots, so „АД-ХОК ЕООД" (a
 // hyphenated ООД name) is not misread. Anchoring to the suffix is what stops „АД ГРУП ООД" (an ООД whose
 // NAME begins with the token „АД") being wrongly excluded as joint-stock — the form there is ООД.
-const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ)[\s"„“”«»]*$/u;
+const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
 /**
  * Materiality by legal form. The public ownership surface is CLOSELY-HELD companies only (ООД/ЕООД/ЕТ/
- * КД/СД/ДЗЗД or a form-unspecified name from the closely-held table). Joint-stock forms (АД/ЕАД/АДСИЦ) are
+ * КД/СД/ДЗЗД or a form-unspecified name from the closely-held table). Joint-stock forms (АД/ЕАД/АДСИЦ/КДА,
+ * the last a командитно дружество с акции — it issues shares, so it belongs with them) are
  * public-float securities — a declared parcel of listed shares is NOT a material ownership conflict, and
  * presenting it as one defames (the „11 Trace shares → €88M" trap). Excludes only an explicit АД-form token,
  * so it withholds rather than fabricates. @returns {boolean} true ⇒ material/closely-held.
