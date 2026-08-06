@@ -125,7 +125,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="twitter:card" content="summary_large_image" />
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
-        <Links />
+        {/*
+          Force an empty (but present) nonce on the stylesheet/icon <link>s.
+
+          `<ServerRouter nonce>` seeds React Router's FrameworkContext nonce — needed for the
+          streaming <script> chunks — and <Links> reads that same context nonce and stamps it on
+          every <link> it renders. The client's <HydratedRouter> never receives the nonce (it isn't
+          serialized in the hydration handoff), so <Links> renders the links WITHOUT a nonce on the
+          client. Server `nonce="…"` vs client `nonce={undefined}` is a hydration attribute mismatch
+          on EVERY page (issue #274).
+
+          Passing an explicit non-null nonce here wins over the context nonce (RR only falls back to
+          the context value when the prop is null), so both server and client render `nonce=""` —
+          they match. The links never needed a real nonce anyway: the CSP is `style-src 'self'
+          'unsafe-inline'` (no style nonce), so the value is cosmetic. Scripts keep their real nonce
+          via <Scripts nonce> / renderToReadableStream, so the CSP script gate is unaffected.
+        */}
+        <Links nonce="" />
         {schemaOrg && (
           <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: schemaOrg }} />
         )}
