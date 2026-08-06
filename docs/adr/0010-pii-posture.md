@@ -1,6 +1,7 @@
 # ADR-0010: PII posture
 
 - Status: Accepted
+- Amended by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) — решения 3 и 6 (кешът от актове и срокът на съхранение)
 - Date: 2026-07-05
 - Deciders: lb, Claude
 - Related: spec §8; КЗЛД guidance; GDPR Art. 6(1)(c)/(f), Art. 85

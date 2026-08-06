@@ -1,6 +1,7 @@
 # ADR-0028: Declared ЕИК is a determining identifier — tier `A_eik`, exempt from the TR census
 
 - Status: Accepted
+- Amended by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) — декларираният ЕИК остава определящ, но вече иска и регистърно доказателство
 - Date: 2026-07-11
 - Deciders: lb, Claude
 - Related: [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md), [ADR-0015](0015-tr-name-uniqueness-census.md), [ADR-0016](0016-free-text-entity-resolution.md); `scripts/cacbg/load.mjs`, `scripts/cacbg/classify.mjs`
