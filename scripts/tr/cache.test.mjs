@@ -108,6 +108,37 @@ test('valid 9- and 13-digit codes are NOT caught by the ЕГН guard', () =>
     assert.doesNotThrow(() => markOutsideTr(db, '1155361790001', 'клон'));
   }));
 
+// A 13-digit ЕИК (клон/подразделение) CONTAINS ten-digit substrings, so an unanchored /\d{10}/
+// rejects it — and rawPath on the fetched path is `<eik>.json`, derived from that very ЕИК. This is
+// the exact shape fetch-deeds.mjs writes (path.relative(rawDir, deedPath(eik))), and upsertDeed sits
+// past its JSON.parse/assertUicEcho try-catch, so a throw here aborts the whole crawl on the first
+// branch office that returns a deed. The guard's own stated soundness ("an ЕИК is 9 or 13 digits,
+// never 10") only holds if the run is matched as a WHOLE, which is why the pattern is anchored.
+test('a 13-digit ЕИК does not trip the ЕГН guard through its own derived rawPath', () =>
+  withCache((db) => {
+    assert.doesNotThrow(() =>
+      upsertDeed(db, deed({ eik: '1155361790001', rawPath: '1155361790001.json' })),
+    );
+    assert.equal(readDeed(db, '1155361790001').eik, '1155361790001');
+  }));
+
+// The rail must not be a hand-maintained allowlist of four field names: upsertDeed binds thirteen
+// values, and the next one added would bypass the check silently. Every bound value is screened.
+test('the ЕГН guard screens EVERY bound value, not a hand-picked subset', () =>
+  withCache((db) => {
+    for (const field of ['seatEntryDate', 'latestOwnEntryDate', 'fetchedAt'])
+      assert.throws(() => upsertDeed(db, deed({ [field]: '8001014567' })), /ten-digit|ЕГН/i, field);
+  }));
+
+// ...with one exemption, and it is measured rather than assumed: a sha256 hex digest is 64 chars of
+// [0-9a-f], so a standalone ten-digit run occurs in ~7% of hashes (18% unanchored). Screening it
+// would refuse roughly one deed in fourteen for no privacy gain — a hash is not an ЕГН, and it is a
+// hash precisely so that no deed content reaches the index.
+test('the body hash is exempt from the ЕГН guard — a digit run there is arithmetic, not an ЕГН', () =>
+  withCache((db) => {
+    assert.doesNotThrow(() => upsertDeed(db, deed({ bodySha256: `8001014567${'a'.repeat(54)}` })));
+  }));
+
 test('the schema exposes no column that could hold a person name', () =>
   withCache((db) => {
     const cols = db

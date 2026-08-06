@@ -7,9 +7,11 @@
 //      exist only in the raw JSON under git-ignored scratch/, are read only to produce a boolean, and
 //      never enter a public table, a response or a log. A hash rather than an excerpt, because an
 //      excerpt of a deed IS third-party personal data.
-//   2. Nothing may carry a ten-digit run. That is the ЕГН shape, and the check is sound precisely
-//      because an ЕИК is 9 or 13 digits — never 10 — so it cannot reject a legitimate identifier.
-//      ЕГН was absent from every payload examined; this is the rail for the day one leaks.
+//   2. Nothing may carry a STANDALONE ten-digit run. That is the ЕГН shape, and the check is sound
+//      precisely because an ЕИК is 9 or 13 digits — never 10 — so it cannot reject a legitimate
+//      identifier. „Standalone" is load-bearing: a 13-digit ЕИК contains ten-digit substrings, so an
+//      unanchored match would refuse every клон. ЕГН was absent from every payload examined; this is
+//      the rail for the day one leaks.
 //
 // Resumability is the other job: the register throttles hard and a 429 ends the run (client.mjs), so a
 // crawl must be able to pick up exactly where it stopped without re-requesting what it already has.
@@ -49,21 +51,33 @@ export function openCache(file) {
 }
 
 // ── the ЕГН rail ──────────────────────────────────────────────────────────────
-const TEN_DIGITS = /\d{10}/;
+// ANCHORED, and that is the whole correctness of the rail. An ЕИК is 9 or 13 digits — never 10 — so
+// a ten-digit run cannot be a legitimate identifier here. But that reasoning only holds when the run
+// is matched as a WHOLE: an unanchored /\d{10}/ matches INSIDE the 13-digit ЕИК of a клон, and
+// rawPath on the fetched path is `<eik>.json`, so every branch office would be refused and the crawl
+// would abort on the first one.
+const EGN_SHAPE = /(?<!\d)\d{10}(?!\d)/;
 /**
- * Refuse any text destined for the index that carries a ten-digit run.
- * An ЕИК is 9 or 13 digits, so a 10-digit run is never a legitimate identifier here — it is an ЕГН
- * shape, and storing one would breach ADR-0010 decision 2 outright.
+ * Refuse any value destined for the index that carries a standalone ten-digit run — the ЕГН shape.
+ * Storing one would breach ADR-0010 decision 2 outright.
  */
 function assertNoEgnShape(value, field) {
-  if (value != null && TEN_DIGITS.test(String(value))) {
+  if (value != null && EGN_SHAPE.test(String(value))) {
     throw new Error(
       `REFUSE TO STORE: ${field} carries a ten-digit run (ЕГН shape) — the index holds no personal data`,
     );
   }
 }
 
-const TEXT_FIELDS = ['rawPath', 'legalFormVerdict', 'seatNormalized', 'outsideReason'];
+// Screened by EXCLUSION, not by an allowlist: a hand-maintained list of text columns is only as
+// strong as whoever remembers to extend it, and the next field added would bypass the rail silently.
+// Both exemptions are structural, not conveniences:
+//   eik         — already shape-validated by safeEik (9 or 13 digits, nothing else).
+//   bodySha256  — 64 chars of [0-9a-f]. A standalone ten-digit run occurs in ~7% of sha256 digests
+//                 (18% unanchored, both measured), so screening it would refuse roughly one deed in
+//                 fourteen for no privacy gain. A digest is not personal data; it exists precisely so
+//                 that no deed content reaches the index.
+const EGN_EXEMPT = new Set(['eik', 'bodySha256']);
 
 /**
  * Record a fetched deed. Replaces on re-fetch so a refresh never duplicates a row.
@@ -72,7 +86,7 @@ const TEXT_FIELDS = ['rawPath', 'legalFormVerdict', 'seatNormalized', 'outsideRe
  */
 export function upsertDeed(db, d) {
   const eik = safeEik(d.eik);
-  for (const f of TEXT_FIELDS) assertNoEgnShape(d[f], f);
+  for (const [f, v] of Object.entries(d)) if (!EGN_EXEMPT.has(f)) assertNoEgnShape(v, f);
   db.prepare(
     `INSERT INTO deeds (eik, status, http_status, fetched_at, raw_path, body_sha256,
         legal_form_code, legal_form_verdict, seat_normalized, seat_entry_date,
@@ -110,7 +124,6 @@ export function upsertDeed(db, d) {
  * wall becomes permanent data (R6).
  */
 export function markOutsideTr(db, eik, reason, now = new Date()) {
-  assertNoEgnShape(reason, 'outsideReason');
   upsertDeed(db, {
     eik,
     status: 'outside_tr',
