@@ -38,6 +38,10 @@ overrides:
   #   valibot <1.4.2 — GHSA-5qjj-4xww-7phc (MEDIUM); transitive, build-time only, never
   #                 ships to the Worker.
   valibot: '^1.4.2'
+  #   nanoid <3.3.17 — GHSA-2v37-7h3g-55p8 (HIGH, 8.2); pulled in by postcss (itself pinned
+  #                 above), so postcss 8.5.24 keeps resolving 3.3.16 on its own. Build-time
+  #                 only, via vite/vitest — never ships to the Worker.
+  nanoid: '^3.3.17'
 
 onlyBuiltDependencies:
   - esbuild
