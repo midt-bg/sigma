@@ -80,10 +80,9 @@ function disallowedFinalHost(requestUrl: string, responseUrl: string): string | 
 // A response body that is never read keeps its stream open for the rest of the invocation; the
 // collector is not a substitute for releasing it. Every path below that walks away from a response
 // without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it here.
-// A response body that is never read keeps its stream open for the rest of the invocation; the
-// collector is not a substitute. Deliberately NOT awaited - cancelling only needs to be INITIATED for
-// the runtime to release the stream, and awaiting it would make every caller hostage to a cancel()
-// that never settles, which is precisely the failure mode this file exists to reduce.
+// Deliberately NOT awaited: cancelling only needs to be INITIATED for the runtime to release the
+// stream, and awaiting it would make every caller hostage to a cancel() that never settles, which
+// is precisely the failure mode this file exists to reduce.
 function discardBody(res: Response): void {
   try {
     void res.body?.cancel().catch(() => {});
