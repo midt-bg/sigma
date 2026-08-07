@@ -33,6 +33,13 @@ function row(over: Record<string, unknown> = {}) {
     first_contract_year: '2021',
     last_contract_year: '2024',
     source_url: 'https://register.cacbg.bg/2024/i.xml',
+    // SURFACED_OWNERSHIP only returns rows carrying a publishing seal, so the fixture carries one too —
+    // a fixture without it would exercise a row shape the SQL cannot produce.
+    evidence_kind: 'document',
+    registry_role: 'owner',
+    entry_number: '20110502101007',
+    entry_date: '2011-05-02',
+    lookup_date: '2026-08-05',
     ...over,
   };
 }
@@ -195,5 +202,49 @@ describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {
       const db = throwingDb(new Error(`D1_ERROR: no such table: ${t}: SQLITE_ERROR`));
       expect(await getConflictLeaderboard(db, 10), t).toEqual([]);
     }
+  });
+});
+
+// The evidence seal is what licenses the card's registry sentence, and the two rungs assert very
+// different things: 'document' renders „лицето е вписано като съдружник/собственик" — that the register
+// names THIS person in THIS company — while 'confirmed' claims only that the declared data matched.
+// The mapper used to read `kind === 'confirmed' ? 'confirmed' : 'document'`, so NULL, 'refuted', a rung
+// added later, or a typo all became the STRONGEST claim we can make about a named human being. The SQL
+// gate makes that unreachable today; the failure DIRECTION is still wrong, and this is the one place in
+// the codebase where being wrong by default is libel rather than a rendering glitch.
+describe('an unrecognised evidence seal withholds the link instead of upgrading it', () => {
+  for (const kind of ['refuted', 'unknown', 'bar_joint_stock', 'outside_tr', 'future_rung_v9'])
+    it(`'${kind}' never renders as a registry claim`, async () => {
+      const db = fakeDb({ '10': [row({ evidence_kind: kind })] });
+      expect(await getConflictLeaderboard(db, 10)).toEqual([]);
+    });
+
+  it('a NULL seal — the half-migrated read the old comment invited — withholds too', async () => {
+    const db = fakeDb({ '10': [row({ evidence_kind: null })] });
+    expect(await getConflictLeaderboard(db, 10)).toEqual([]);
+  });
+
+  it('both publishing rungs still map, and to DIFFERENT kinds — the guard bounds, it does not flatten', async () => {
+    for (const kind of ['document', 'confirmed']) {
+      const db = fakeDb({ '10': [row({ evidence_kind: kind })] });
+      const links = await getConflictLeaderboard(db, 10);
+      expect(links).toHaveLength(1);
+      expect(links[0]!.evidenceKind).toBe(kind);
+    }
+  });
+
+  it('the official page 404s rather than render a page under a name with nothing left to show', async () => {
+    const db = fakeDb({ 'person:ivan': [row({ evidence_kind: 'refuted' })] });
+    expect(await getOfficialConflicts(db, 'person:ivan')).toBeNull();
+    expect(
+      await getCompanyConflicts(fakeDb({ '111': [row({ evidence_kind: null })] }), '111'),
+    ).toBeNull();
+  });
+
+  it('one withheld row does not take its sealed siblings down with it', async () => {
+    const db = fakeDb({
+      '10': [row({ link_key: 'ok|111' }), row({ link_key: 'bad|111', evidence_kind: 'refuted' })],
+    });
+    expect((await getConflictLeaderboard(db, 10)).map((l) => l.linkKey)).toEqual(['ok|111']);
   });
 });

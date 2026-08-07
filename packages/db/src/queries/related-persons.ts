@@ -190,6 +190,25 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- …and drop a family link redundant with the official's own stake in the same winner (de-anon guard).
     AND ${NOT_REDUNDANT_FAMILY}`;
 
+// The two rungs that license a public claim (ADR-0033 decision 1), and the ONLY two the card knows how
+// to render. Anything else — 'refuted', 'unknown', 'bar_joint_stock', 'outside_tr', a rung added by a
+// later rules_version, a typo, or NULL from a row with no seal — is withheld, never mapped.
+//
+// The mapper used to read `kind === 'confirmed' ? 'confirmed' : 'document'`, which turned every one of
+// those into 'document' — the STRONGEST claim on the surface, rendering „лицето е вписано като
+// съдружник/собственик": that the register names this specific person in this specific company. The SQL
+// gate makes it unreachable today, but the direction was wrong, and this is the one mapping in the
+// codebase where a default is a defamatory statement about a named human being rather than a glitch.
+// The LEFT JOIN in LINK_SELECT is deliberately not an inner one so a contradiction SURFACES here; the
+// old fallback then converted exactly that contradiction into the strongest possible label.
+const PUBLISHING_EVIDENCE = new Set(['document', 'confirmed']);
+
+/** Rows whose seal licenses a public claim. Withholding is silent by design — the SQL already filters
+ *  these out, so anything reaching here is a contradiction to drop, not a condition to report per row. */
+function sealed(rows: LinkRow[]): LinkRow[] {
+  return rows.filter((r) => PUBLISHING_EVIDENCE.has(String(r.evidence_kind)));
+}
+
 // own_institution is a 4-value verdict; only the deterministic 'exact' surfaces as true (the
 // name_contains/locality heuristics are disclosed elsewhere, never asserted as fact).
 function toLink(r: LinkRow): ConflictLink {
@@ -213,11 +232,9 @@ function toLink(r: LinkRow): ConflictLink {
     firstContractYear: r.first_contract_year,
     lastContractYear: r.last_contract_year,
     sourceUrl: r.source_url,
-    // SURFACED_OWNERSHIP guarantees a publishing seal exists, so these are non-null in practice; the
-    // fallbacks keep a half-migrated environment rendering rather than throwing on a null read.
-    evidenceKind: (r.evidence_kind === 'confirmed' ? 'confirmed' : 'document') as
-      | 'document'
-      | 'confirmed',
+    // Narrowed, not defaulted — `sealed()` above has already dropped every other value, so this asserts
+    // what the filter guarantees instead of inventing a rung the row never carried.
+    evidenceKind: r.evidence_kind as 'document' | 'confirmed',
     registryRole:
       r.registry_role === 'owner' || r.registry_role === 'manager' ? r.registry_role : null,
     registryEntryNumber: r.entry_number,
@@ -233,7 +250,7 @@ export const LEADERBOARD_SQL = `${LINK_SELECT}
  *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value). */
 export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
   try {
-    const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
+    const rows = sealed((await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results);
     return rows.map(toLink);
   } catch (e) {
     if (conflictSchemaAbsent(e, 'leaderboard')) return []; // un-migrated env → empty surface, not a 500
@@ -251,7 +268,9 @@ export async function getOfficialConflicts(
   personId: string,
 ): Promise<OfficialConflicts | null> {
   try {
-    const rows = (await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results;
+    // Filtered BEFORE the emptiness check, so a person whose every link is withheld 404s rather than
+    // rendering an empty page under their name.
+    const rows = sealed((await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
     return { official: links[0]!.official, links };
@@ -270,7 +289,7 @@ export async function getCompanyConflicts(
   eik: string,
 ): Promise<CompanyConflicts | null> {
   try {
-    const rows = (await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results;
+    const rows = sealed((await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     return { company: rows[0]!.company, eik, links: rows.map(toLink) };
   } catch (e) {
