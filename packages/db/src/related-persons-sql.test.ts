@@ -551,9 +551,12 @@ describe('свързани-лица SQL (real SQLite)', () => {
     ] as const;
 
     function seedRungs(dbPath: string): void {
-      const people = [...WITHHELD.map(([, id, name]) => [id, name] as const)];
-      people.push(['person:none', 'Безпечатен Тестов'], ['person:ok', 'Потвърден Тестов']);
-      const links = [...WITHHELD.map(([, id]) => id), 'person:none', 'person:ok'];
+      const people: [string, string][] = [
+        ...WITHHELD.map(([, id, name]) => [id, name] as [string, string]),
+        ['person:none', 'Безпечатен Тестов'],
+        ['person:ok', 'Потвърден Тестов'],
+      ];
+      const links: string[] = [...WITHHELD.map(([, id]) => id), 'person:none', 'person:ok'];
       sqlite(
         dbPath,
         `INSERT INTO persons (id, name) VALUES ${people.map(([id, n]) => `('${id}','${n}')`).join(',')};
