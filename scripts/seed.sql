@@ -28,6 +28,7 @@ INSERT OR IGNORE INTO bidders (id, name, bulstat) VALUES
 --   • a LIVE contract for that ЕИК                                                     — the read-time zero-contract gate
 --   • signed_at inside [first_declared_year, last_declared_year]                       — IN_WINDOW ⇒ the „в периода" chip
 --   • no published SELF stake on the same (official, ЕИК) for a family row             — NOT_REDUNDANT_FAMILY
+--   • a Trade Register evidence seal of a PUBLISHING rung                              — the #279 seal gate
 -- One link per outcome, including the non-surfaced ones, so a change to the publishing rule is
 -- visible as a before/after rather than as an empty page either way.
 
@@ -95,3 +96,23 @@ VALUES
 INSERT OR IGNORE INTO interest_link_authorities (link_key, authority_id, authority_name, contract_count, value_eur, own) VALUES
   ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'auth-plovdiv', 'Община Пример', 1, 429000, 'exact'),
   ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'auth-sofia', 'Община София', 1, 190000, 'exact');
+
+-- Trade Register evidence seals (#279, ADR-0033, migration 0006). NOT optional decoration: since the
+-- evidence ladder landed, SURFACED_OWNERSHIP requires a publishing seal, so a seeded link without one
+-- renders NOTHING — which is the exact failure this fixture exists to prevent. A seal per link, one per
+-- rung, so the dev surface shows the same three outcomes as production:
+--   document         — the register names this person in this company (the strongest rung)
+--   confirmed        — identity confirmed by declared data (seat), no person found in the act itself
+--   bar_joint_stock  — an АД: a declared parcel of shares is not a material ownership conflict
+-- matched_fact stays inside the closed vocabulary (evidence.mjs isSealedFact) — never a name.
+INSERT OR IGNORE INTO interest_link_evidence
+  (link_key, evidence_kind, registry_role, matched_fact, entry_number, entry_date, lookup_date, rules_version, live_status)
+VALUES
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|201122335', 'document', 'owner', 'role:owner:CR_F_19_L',
+   '20220314150210', '2022-03-14', '2026-08-05', 'tr-rules-1', 'live'),
+  ('person:МАРИЯ ГЕОРГИЕВА ОБРАЗЦОВА|ОБЩИНА СОФИЯ|203445566|family', 'confirmed', NULL, 'seat:СОФИЯ',
+   '20210902110455', '2021-09-02', '2026-08-05', 'tr-rules-1', 'live'),
+  -- The held link is sealed too — seals exist for held links so the review queue can explain itself,
+  -- and this one doubles as the fixture's negative case for the seal gate.
+  ('person:ИВАН ПЕТРОВ ТЕСТОВ|ОБЩИНА ПРИМЕР|204556676', 'bar_joint_stock', NULL, NULL,
+   NULL, NULL, '2026-08-05', 'tr-rules-1', 'live');
