@@ -48,3 +48,9 @@ describe('entityHref', () => {
     expect(href).not.toMatch(/[#?&]/); // no fragment/query/param can be injected via a malformed id
   });
 });
+
+describe('formatCell — date null branch', () => {
+  it('renders a null date value as the shared em-dash', () => {
+    expect(formatCell(null, 'date')).toBe(date(null));
+  });
+});

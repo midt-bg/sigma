@@ -18,6 +18,17 @@ export function sharedCoverage(include: string[]): NonNullable<ViteUserConfig['t
       '**/dist/**',
       '**/build/**',
       '**/.react-router/**',
+      // Test data and type-only declarations are not executable code — instrumenting them reports a
+      // permanent 0% that drags the workspace total without any coverable statement (e.g. the
+      // assistant JSON fixtures).
+      '**/fixtures/**',
+      '**/*.json',
+      '**/*.md',
+      '**/*.d.ts',
+      // Test-support helpers (SQLite D1 shims, cloudflare:workers/workflows stubs) live under src/test/.
+      // They exist only to drive the suites — instrumenting them measures test scaffolding, not product
+      // code, so they belong with fixtures on the exclude list.
+      '**/src/test/**',
     ],
     reporter: ['text', 'json-summary'],
     reportsDirectory: './coverage',
