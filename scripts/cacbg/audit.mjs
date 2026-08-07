@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
-import { RULES_VERSION } from '../tr/evidence.mjs';
+import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
@@ -46,8 +46,10 @@ const published = db
 
 // The only two evidence rungs that publish (ADR-0033 decision 1). Everything else withholds.
 const PUBLISHING_EVIDENCE = new Set(['document', 'confirmed']);
-// The closed vocabulary for a sealed matched_fact. Anything else is a potential name leak.
-const MATCHED_FACT = /^(?:seat:[\p{Lu} -]+|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
+// The closed vocabulary for a sealed matched_fact lives in evidence.mjs, next to the code that WRITES
+// it — one definition, so the gate can never permit a shape the writer has stopped emitting (or, worse,
+// the other way round). `isSealedFact` bounds the seat leg to a settlement's one or two tokens, which is
+// what stops a three-part Bulgarian name riding through behind the legitimate `seat:` prefix.
 
 const findings = [];
 const flag = (link, axis, detail) =>
@@ -111,7 +113,7 @@ for (const l of published) {
   // C2. The PII rail, audited rather than assumed: matched_fact is a CLOSED vocabulary and can never
   //     carry a name. The registry deed's names are read only to produce a boolean and must never reach
   //     a served column (#279 §9, ADR-0033 decision 5). A schema cannot enforce this; this does.
-  if (l.matched_fact != null && !MATCHED_FACT.test(l.matched_fact))
+  if (!isSealedFact(l.matched_fact))
     flag(
       l,
       'C_matched_fact_shape',

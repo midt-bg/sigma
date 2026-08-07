@@ -40,6 +40,30 @@ export const RULES_VERSION = 'tr-rules-1';
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
 
+/**
+ * The CLOSED vocabulary a sealed `matched_fact` may take: `seat:<SETTLEMENT>`, `role:owner:<FIELD>`,
+ * `role:manager:<FIELD>`, or `eik`. It must NEVER carry the matched NAME — the deed's names are read
+ * only to produce a boolean and never leave git-ignored scratch (#279 §9, ADR-0033 decision 5).
+ *
+ * The seat token bound is the whole rail. `seat:` is a legitimate prefix, so an unbounded settlement
+ * pattern admits `seat:ИВАН ПЕТРОВ ГЕОРГИЕВ` — a full three-part Bulgarian name (ЗГР чл. 9) wearing an
+ * allowed prefix, which is exactly the value a mis-split of the seat field would produce and exactly
+ * what the rail exists to reject. A settlement is one or two tokens („СОФИЯ", „ВЕЛИКО ТЪРНОВО",
+ * „ГЕНЕРАЛ ТОШЕВО"); a three-part name is exactly three. Bounding at two separates them cleanly, and a
+ * rarer 3-token seat stops the run for a human rather than publishing — the correct direction for a rail
+ * whose failure mode is putting somebody's name on a served column.
+ *
+ * Defined ONCE and consumed by both the writer (load.mjs) and the audit, so the two cannot drift into
+ * a state where the gate permits what the writer emits.
+ */
+export const MATCHED_FACT_RE =
+  /^(?:seat:\p{Lu}[\p{Lu}-]*(?: \p{Lu}[\p{Lu}-]*)?|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
+
+/** True when `fact` is a member of the closed vocabulary. `null` is legal — a rung may match no fact. */
+export function isSealedFact(fact) {
+  return fact == null || MATCHED_FACT_RE.test(String(fact));
+}
+
 // Court-registered companies were re-registered into the Търговски регистър in a single administrative
 // push, which flattened their entry dates into this window. „Strictly before the declared period"
 // certifies nothing when the date is an artefact of the migration rather than of the ownership, so the

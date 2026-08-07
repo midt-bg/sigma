@@ -19,7 +19,12 @@ import { fileURLToPath } from 'node:url';
 import { temporalStatus, localityToken, closelyHeldForm } from './classify.mjs';
 import { openCache, readDeed, coverage } from '../tr/cache.mjs';
 import { TR_DB, TR_RAW } from '../tr/paths.mjs';
-import { evidenceVerdict, reconcileTermination, RULES_VERSION } from '../tr/evidence.mjs';
+import {
+  evidenceVerdict,
+  isSealedFact,
+  reconcileTermination,
+  RULES_VERSION,
+} from '../tr/evidence.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import { fingerprint, loadSuppressions, SUPPRESSION_KEY_VERSION } from './suppressions.mjs';
 import { canonicalInstitution } from './institutions.mjs';
@@ -773,6 +778,15 @@ for (const rec of agg.values()) {
     : recon.label === 'manager_today'
       ? 'terminated_manager_still'
       : 'terminated';
+  // Refuse at WRITE time, not only in the post-hoc audit. The audit runs after the whole domain is
+  // built; by then the name is already in a table, and a run that dies on a suppressed-by-default axis
+  // could ship it. `matched_fact` is the one sealed column derived from a deed's text, so it is the one
+  // place a third-party name can reach a served row — the rail belongs where the value is produced.
+  if (!isSealedFact(verdict.matchedFact))
+    throw new Error(
+      `REFUSE TO SEAL: matched_fact for ${linkKey} is outside the closed vocabulary — a name may have ` +
+        `leaked out of a deed (#279 §9, ADR-0033 decision 5)`,
+    );
   insEvidence.run(
     linkKey,
     verdict.kind,

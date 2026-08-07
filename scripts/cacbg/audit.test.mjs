@@ -218,6 +218,41 @@ test('a matched_fact outside the closed vocabulary is a hard finding — the nam
   assert.equal(/C_matched_fact_shape/.test(out), true, out);
 });
 
+// …and the rail must catch the shape a leak would ACTUALLY take. `seat:<CITY>` is a legitimate member
+// of the vocabulary, so an unbounded `seat:[\p{Lu} -]+` admits `seat:ИВАН ПЕТРОВ ГЕОРГИЕВ` — a full
+// three-part Bulgarian name (ЗГР чл. 9) wearing the prefix of a fact we allow. That is precisely the
+// value the rail exists to reject, and it is the one a mis-split of the seat field would produce.
+// A Bulgarian settlement is one or two tokens („СОФИЯ", „ВЕЛИКО ТЪРНОВО", „ГЕНЕРАЛ ТОШЕВО"); the
+// three-part name is exactly three. The bound is deliberately tight: a rarer 3-token seat trips the
+// audit and a human adjudicates, which is the correct direction for a rail whose failure mode is
+// publishing somebody's name.
+test('a THREE-TOKEN seat is a name shape, not a settlement — the rail must catch it', () => {
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','confirmed','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','confirmed',NULL,'seat:ИВАН ПЕТРОВ ГЕОРГИЕВ','2026-08-05','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true, 'a three-part name behind seat: must fail the gate');
+  assert.equal(/C_matched_fact_shape/.test(out), true, out);
+});
+
+test('a real two-token settlement still passes — the bound must not empty the seat rung', () => {
+  const { threw } = buildAndAudit({
+    bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('УНИК ТЕХ 7 ЕООД')}','exact_name_key','confirmed','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','confirmed',NULL,'seat:ВЕЛИКО ТЪРНОВО','2026-08-05','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, false, 'ВЕЛИКО ТЪРНОВО is a settlement and must survive the rail');
+});
+
 test('a well-formed seal passes every C axis (positive control)', () => {
   // Without this, all four negatives above would still pass if the axes fired unconditionally.
   const { threw } = buildAndAudit({
