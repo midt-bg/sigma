@@ -123,13 +123,21 @@ const FROM = `
 //     the current data, where `legal_form` is largely NULL); mirrors `isNaturalPersonProfileName`.
 //   • legal form — the registry `legal_form` code where present (ЕТ / ЕДНОЛИЧЕН ТЪРГОВЕЦ / SOLE TRADER /
 //     INDIVIDUAL); mirrors `isSingleNaturalPersonProfile`. Hardens prod, where the field is populated.
-// Consortiums are never a single natural person. SQLite `LIKE` is case-insensitive for ASCII; the Cyrillic
-// tokens are matched against the registry's uppercase normalisation. Used at SQL level (pre-LIMIT) so the
-// flagged homepage never surfaces an identifiable individual under a „сигнали за риск" label (#236 review,
-// GDPR/ЗЗЛД — mirrors the noindex on sole-trader company profiles).
+// Consortiums are never a single natural person.
+//
+// Case handling (#236 review): `bidders.name` keeps the raw source case (normalize-raw.sql stores
+// MIN(contractor_name); only the bidder *id* is uppercased), and SQLite `LIKE`/`UPPER` fold case for
+// ASCII only — a lowercased Cyrillic „ет " would slip past `LIKE 'ЕТ %'`. So the name prefix is matched
+// with a GLOB character class that spells out both cases of both scripts (`[ЕеEe][ТтTt]`), independent
+// of any ETL uppercasing. The trailing space is required, so „ЕТАЖ…"/„ETO…" (no space) don't false-match.
+// The `legal_form` tokens stay literal — they are a controlled uppercase registry vocabulary, not free text.
+// Used at SQL level (pre-LIMIT) so the flagged homepage never surfaces an identifiable individual under a
+// „сигнали за риск" label (GDPR/ЗЗЛД — mirrors the noindex on sole-trader company profiles). Residual,
+// accepted limitation: a sole trader whose name carries no „ЕТ " marker AND has a NULL legal_form is not
+// detectable here without Trade-Register data — documented, out of scope for this predicate.
 const NATURAL_PERSON_BIDDER_SQL = `(
   b.kind <> 'consortium' AND (
-    TRIM(b.name) LIKE 'ЕТ %' OR TRIM(b.name) LIKE 'ET %'
+    TRIM(b.name) GLOB '[ЕеEe][ТтTt] *'
     OR (b.legal_form IS NOT NULL AND (
       TRIM(b.legal_form) IN ('ЕТ', 'ET')
       OR b.legal_form LIKE '%ЕДНОЛИЧЕН ТЪРГОВЕЦ%'

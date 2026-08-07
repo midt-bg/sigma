@@ -240,6 +240,34 @@ describe('excludeNaturalPersons — sole-trader (ЕТ) suppression', () => {
     // Its name starts with "ЕТ" but the kind guard keeps it — consortiums are legal entities, not people.
     expect(clean.items.some((c) => c.bidderKind === 'consortium')).toBe(true);
   });
+
+  it('drops a lowercase / mixed-case Cyrillic „ет " prefix (GLOB is case-robust, unlike ASCII LIKE)', async () => {
+    // `bidders.name` keeps the raw source case; SQLite LIKE/UPPER fold ASCII only, so a lowercased
+    // Cyrillic prefix must still be caught. Guards the GLOB '[ЕеEe][ТтTt] *' predicate (#236 review).
+    const db = realDb();
+    open!.exec(`
+      INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind, legal_form) VALUES
+        ('eik:300000004', 'ет иван петров', '300000004', '300000004', 1, 'company', NULL),
+        ('eik:300000005', 'Ет Мария Георгиева', '300000005', '300000005', 1, 'company', NULL);
+      INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+        ('t:np4', 'UNP-NP4', 'Строеж', 'auth:obshtina', '45000000', 'открита процедура', 'awarded'),
+        ('t:np5', 'UNP-NP5', 'Строеж', 'auth:obshtina', '45000000', 'открита процедура', 'awarded');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, bids_rejected, eu_funded,
+         value_flag, date_flag, signing_value_eur, current_value_eur, amount_eur) VALUES
+        ('cnp4', 't:np4', 'eik:300000004', 9996, 'EUR', '2024-02-04', 1, 0, 0, 'ok', 'ok', 9996, 9996, 9996),
+        ('cnp5', 't:np5', 'eik:300000005', 9995, 'EUR', '2024-02-05', 1, 0, 0, 'ok', 'ok', 9995, 9995, 9995);
+    `);
+    const clean = await listContracts(db, {
+      flags: ['all'],
+      sort: 'value-desc',
+      pageSize: 20,
+      excludeNaturalPersons: true,
+    });
+    const names = clean.items.map((c) => c.bidderName);
+    expect(names).not.toContain('ет иван петров'); // lowercase Cyrillic prefix
+    expect(names).not.toContain('Ет Мария Георгиева'); // mixed-case Cyrillic prefix
+  });
 });
 
 // #236 review note: the homepage builds a `?type=<typeGroup>` link per byAuthorityType row, and /contracts

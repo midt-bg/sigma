@@ -38,6 +38,9 @@ export const FLAG_SQL = {
   // signing)/signing > 0.2, which for a NEGATIVE base is NOT algebraically equal to
   // (current − signing) > 0.2·signing — so `<> 0` would count a negative-base row here that the contract
   // page never badges. `> 0` makes the aggregate and the per-contract badge provably identical (#236 review).
+  // `value_flag NOT IN (...)` is safe against a NULL-swallow (a NULL would make NOT IN yield NULL → the row
+  // would silently drop from high_markup): `value_flag` is `NOT NULL DEFAULT 'ok'` (0000_init.sql:126), so a
+  // non-suspect row always reads a concrete 'ok'-family value here, never NULL (#236 review).
   high_markup:
     `c.value_flag NOT IN ${SUSPECT_VALUE_FLAGS} AND c.signing_value_eur IS NOT NULL ` +
     'AND c.signing_value_eur > 0 AND (c.current_value_eur - c.signing_value_eur) > 0.2 * c.signing_value_eur',
@@ -88,6 +91,16 @@ interface AuthTypeRow {
  * de-duplicated total. `bySector` (top 6) and `byAuthorityType` are TOP slices that need not sum to the
  * total: flagged rows with a NULL `cpv_code`/`type_group` are excluded, `bySector` is capped at 6, and
  * `byAuthorityType` keeps only canonical buckets (see CANONICAL_TYPE_GROUPS).
+ *
+ * Cost (#236 review): the flag predicates are computed expressions (arithmetic on bids/values, membership
+ * on the flag columns), so no index turns these into a lookup — they are full aggregate scans of
+ * `contracts` by design, the same shape as the pre-existing single-offer scan in home.ts. There are three
+ * here (total+byType fold into ONE scan; bySector and byAuthorityType add one each with a covered JOIN via
+ * idx_contracts_tender / idx_tenders_authority), plus the LIMIT-10 flagged list in home.ts — four scans of
+ * a bounded corpus. That stays well inside D1's per-query rows-read ceiling and the D1_ROWS_READ_BUDGET
+ * DoW guard (a few × corpus rows), and the whole homepage response is edge-cached for 1h, so the scans run
+ * only on a cold cache. If the corpus grows an order of magnitude, precompute these into a summary table
+ * (the deliberately-avoided schema change) rather than widening the live scan.
  */
 export async function getFlaggedValue(db: D1Database): Promise<FlaggedValue> {
   const typeCols = FLAG_TYPES.flatMap((t) => [
