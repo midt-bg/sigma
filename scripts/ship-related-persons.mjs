@@ -45,7 +45,7 @@ export function wipeSql() {
   return WIPE_ORDER.map((t) => `DELETE FROM ${sqlIdent(t)};`).join('\n') + '\n';
 }
 const MAX_BATCH_BYTES = 90_000;
-const MAX_BATCH_ROWS = 400;
+export const MAX_BATCH_ROWS = 400;
 
 // One `d1 execute --file` per TABLE meant the whole table went up as a single bulk import: on the first
 // full-corpus ship that was 516k rows written in one hour with a p90 batch time of 18.2s, two orders of
@@ -277,6 +277,18 @@ export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, 
  * fails — `assertShippedCounts` then reports every table as unanswered and fails the run, which is the
  * right way round: a verification step that cannot verify must not pass.
  */
+/** First bracket that actually parses — notices may contain '[' of their own. Exported for the test. */
+export function parseWranglerJson(out) {
+  for (let i = out.indexOf('['); i >= 0; i = out.indexOf('[', i + 1)) {
+    try {
+      return JSON.parse(out.slice(i));
+    } catch {
+      // not the payload — keep looking
+    }
+  }
+  return JSON.parse(out); // no usable bracket: let the original parse error surface
+}
+
 function readShippedCounts(d1Name, remote, expected) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
@@ -291,9 +303,11 @@ function readShippedCounts(d1Name, remote, expected) {
       ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
       { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
     );
-    // wrangler prefixes its own notices before the JSON payload; take the document, not the whole stream.
-    const start = out.indexOf('[');
-    const parsed = JSON.parse(start >= 0 ? out.slice(start) : out);
+    // wrangler prefixes its own notices before the JSON payload; take the document, not the whole
+    // stream. Slicing from the FIRST '[' is not enough — a notice can itself contain one („▲
+    // [WARNING] Processing wrangler.jsonc"), which sliced to the wrong offset and turned a perfectly
+    // healthy ship into a verification failure. Try each candidate and keep the first that parses.
+    const parsed = parseWranglerJson(out);
     const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
     // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass
     // for „the table is empty"; anything non-numeric must land as NaN so assertShippedCounts fails closed.

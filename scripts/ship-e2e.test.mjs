@@ -1,10 +1,13 @@
 // End-to-end coverage of the SHIP PATH ITSELF — the one thing unit tests of the helpers cannot give.
 //
-// Twice now a refactor of this script has silently dropped a guarantee while the whole suite stayed
-// green: first when main() called applyTableChunks, then again after that call site moved into
-// runShip(). Both times the helper was well tested and the CALL was not. The only test that cannot be
-// fooled that way drives the real script as a subprocess and watches what it actually asks wrangler
-// to do, so this file does exactly that: a fake `wrangler` first on PATH records every invocation.
+// Three times a refactor of this script silently dropped a guarantee while the suite stayed green:
+// when main() called applyTableChunks, again after that moved into runShip(), and again when a first
+// cut of THIS file asserted only on request filenames and counts — so mutations that shipped an empty
+// payload, a wipe that deleted nothing, or every request to a PRODUCTION slot all passed.
+//
+// The fix is to stop trusting a stub: the fake `wrangler` here APPLIES each --file to a real sqlite
+// target and answers each --command FROM that target. The assertions are then about what the target
+// actually holds, which no amount of correct-looking request plumbing can fake.
 //
 // Run: node --test scripts/ship-e2e.test.mjs
 import { test } from 'node:test';
@@ -14,145 +17,231 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TABLES } from './ship-related-persons.mjs';
+import { MAX_BATCH_ROWS, TABLES } from './ship-related-persons.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const SCRIPT = resolve(HERE, 'ship-related-persons.mjs');
 const MIG = resolve(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql');
+const D1_NAME = 'sigma-test-local';
 
-// insertStatements packs up to MAX_BATCH_ROWS (400) rows per statement, so the corpus has to exceed
-// that before chunking has anything to split — 3 statements at --max-statements-per-request=1.
-const LINKS = 801;
+// Derived, not magic: insertStatements packs up to MAX_BATCH_ROWS rows per statement, so this
+// guarantees >= 3 statements and therefore real chunking at --max-statements-per-request=1. Retuning
+// the batch size must not turn a correct ship into a red build.
+const LINKS = MAX_BATCH_ROWS * 2 + 1;
+const EXPECTED_CHUNKS = Math.ceil(LINKS / MAX_BATCH_ROWS);
 
-/** A work DB holding a small but complete related-persons corpus. */
-function newWorkDb(dir) {
-  const db = join(dir, 'work.sqlite');
-  const links = Array.from(
-    { length: LINKS },
-    (_, i) =>
-      `INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il${i}','p1|${i}','p1','eik:1','1','e','v1','B_distinctive','owns','published');`,
-  ).join('\n');
-  // Dot-commands like `.read` only work from a script/stdin, never as the SQL argument.
-  execFileSync('sqlite3', ['-bail', db], {
-    stdio: 'pipe',
-    input: `PRAGMA foreign_keys=ON;
+const sqlite = (db, input) => execFileSync('sqlite3', ['-bail', db], { input, stdio: 'pipe' });
+
+/** The five served tables plus the two FK parents they reference. */
+const SCHEMA = `PRAGMA foreign_keys=ON;
 CREATE TABLE bidders(id TEXT PRIMARY KEY);
 CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${MIG}
 INSERT INTO bidders(id) VALUES('eik:1');
-INSERT INTO authorities(id) VALUES('auth:1');
+INSERT INTO authorities(id) VALUES('auth:1');`;
+
+const CORPUS = `
 INSERT INTO persons(id,name) VALUES('p1','П Тест');
 INSERT INTO declarations(id,person_id,xml_file,folder_year,template,source_url) VALUES('d1','p1','x.xml','2024','assets','u');
 INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES('di1','d1','E','e','shares');
-${links}
-INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('p1|0','auth:1','A');`,
-  });
-  return db;
-}
+${Array.from(
+  { length: LINKS },
+  (_, i) =>
+    `INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il${i}','p1|${i}','p1','eik:1','1','e','v1','B_distinctive','owns','published');`,
+).join('\n')}
+`;
+// interest_link_authorities is deliberately left EMPTY above: its expected count is 0, which is the
+// only shape where `Number(null) === 0` would let an unanswered read-back pass for "table is empty".
+
+const STALE = `
+INSERT INTO persons(id,name) VALUES('stale','Стар запис');
+INSERT INTO declarations(id,person_id,xml_file,folder_year,template,source_url) VALUES('sd','stale','s.xml','2019','assets','u');
+INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES('sdi','sd','S','s','shares');
+INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('sil','stale|0','stale','eik:1','1','s','v0','B_distinctive','owns','published');
+INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('stale|0','auth:1','A');`;
+
+const EXPECTED_ROWS = {
+  persons: 1,
+  declarations: 1,
+  declared_interests: 1,
+  interest_links: LINKS,
+  interest_link_authorities: 0,
+};
 
 /**
- * A `wrangler` that touches no network: it appends every invocation to a log and answers the
- * read-back UNION ALL query from a counts map, so the run can complete and be inspected.
+ * A `wrangler` that touches no network but is otherwise faithful: it records the FULL argv, applies
+ * every --file to the target sqlite DB with foreign keys ON (so a wrong wipe order fails exactly as
+ * D1 would), and answers every --command from that same DB. Notices go to stderr and pure JSON to
+ * stdout, mirroring real `wrangler --json`.
+ *
+ * SHIP_FAKE_SKIP  — drop one --file by name, to simulate a request that never landed.
+ * SHIP_FAKE_NULLN — answer the read-back with a non-numeric count, to exercise the fail-closed guard.
+ * SHIP_FAKE_NOISE — emit a `[WARNING]`-shaped line on stdout before the JSON.
  */
-function fakeWrangler(dir, counts) {
+function fakeWrangler(dir) {
   const bin = join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
   const log = join(dir, 'calls.jsonl');
+  const target = join(dir, 'target.sqlite');
+  // Seeded with STALE rows on purpose: against an empty target a wipe that deletes nothing is
+  // indistinguishable from a correct one, and that mutation escaped the first cut of this test.
+  sqlite(target, SCHEMA + STALE);
   const exe = join(bin, 'wrangler');
   writeFileSync(
     exe,
     `#!/usr/bin/env node
-const { appendFileSync, readFileSync } = require('node:fs');
+import { appendFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 const argv = process.argv.slice(2);
 const at = (f) => (argv.indexOf(f) >= 0 ? argv[argv.indexOf(f) + 1] : null);
 const file = at('--file');
 const command = at('--command');
-appendFileSync(${JSON.stringify(log)}, JSON.stringify({
-  file: file && file.split('/').pop(),
-  sql: file ? readFileSync(file, 'utf8') : null,
-  command,
-}) + '\\n');
-if (command) {
-  const counts = ${JSON.stringify(counts)};
-  const results = Object.entries(counts).map(([t, n]) => ({ t, n }));
-  process.stdout.write('some wrangler notice\\n' + JSON.stringify([{ results }]));
+const TARGET = ${JSON.stringify(target)};
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, file: file && file.split('/').pop() }) + '\\n');
+const run = (input) =>
+  execFileSync('sqlite3', ['-bail', TARGET], { input: 'PRAGMA foreign_keys=ON;\\n' + input, encoding: 'utf8' });
+try {
+  if (file) {
+    const skip = process.env.SHIP_FAKE_SKIP;
+    if (!skip || !file.endsWith(skip)) run('.read ' + file);
+  } else if (command) {
+    const rows = JSON.parse(run('.mode json\\n' + command) || '[]');
+    const shaped = process.env.SHIP_FAKE_NULLN
+      ? rows.map((r) => (r.t === process.env.SHIP_FAKE_NULLN ? { ...r, n: null } : r))
+      : rows;
+    if (process.env.SHIP_FAKE_NOISE) process.stdout.write('▲ [WARNING] Processing wrangler.jsonc\\n');
+    process.stdout.write(JSON.stringify([{ results: shaped, success: true }]));
+  }
+} catch (err) {
+  process.stderr.write(String(err.stderr || err.message));
+  process.exit(1);
 }
 `,
     { mode: 0o755 },
   );
   chmodSync(exe, 0o755);
-  return { bin, readCalls: () => readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) };
+  // package.json so the extensionless fake is unambiguously ESM wherever os.tmpdir() lives.
+  writeFileSync(join(bin, 'package.json'), '{"type":"module"}');
+  return {
+    bin,
+    target,
+    calls: () =>
+      readFileSync(log, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l)),
+    count: (t) =>
+      Number(execFileSync('sqlite3', [target, `SELECT COUNT(*) FROM ${t};`]).toString()),
+  };
 }
 
-function runShipScript(dir, counts, extraArgs = []) {
-  const db = newWorkDb(dir);
-  const { bin, readCalls } = fakeWrangler(dir, counts);
+function runShip(dir, env = {}) {
+  const work = join(dir, 'work.sqlite');
+  sqlite(work, SCHEMA + CORPUS);
+  const fake = fakeWrangler(dir);
   const res = spawnSync(
     process.execPath,
     [
       SCRIPT,
-      `--work-db=${db}`,
+      `--work-db=${work}`,
       '--local',
       '--min-links=1',
       '--max-statements-per-request=1',
       '--pace-ms=0',
-      ...extraArgs,
     ],
-    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+    {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...env,
+        SIGMA_D1_NAME: D1_NAME,
+        PATH: `${fake.bin}:${process.env.PATH}`,
+      },
+    },
   );
-  return { res, calls: readCalls() };
+  return { res, fake };
 }
 
-const SHIPPED = {
-  persons: 1,
-  declarations: 1,
-  declared_interests: 1,
-  interest_links: LINKS,
-  interest_link_authorities: 1,
-};
-
-test('the real ship run wipes first, chunks each table, and reads the counts back', (t) => {
+test('a real ship run leaves the target holding exactly what the work DB held', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res, calls } = runShipScript(dir, SHIPPED);
+  const { res, fake } = runShip(dir);
   assert.equal(res.status, 0, `ship failed:\n${res.stderr}`);
+
+  // The assertion that no amount of correct-looking plumbing can fake: the SQL really applied.
+  for (const [table, n] of Object.entries(EXPECTED_ROWS))
+    assert.equal(fake.count(table), n, `${table} did not land`);
+
+  const calls = fake.calls();
+  // Every request must name the declared DB and stay local — a mutation that retargets a production
+  // slot is the single highest-consequence regression this script can suffer.
+  for (const c of calls) {
+    assert.deepEqual(c.argv.slice(0, 3), ['d1', 'execute', D1_NAME]);
+    assert.ok(c.argv.includes('--local'), `request escaped --local: ${c.argv.join(' ')}`);
+    assert.ok(!c.argv.includes('--remote'), `request went remote: ${c.argv.join(' ')}`);
+  }
 
   const applies = calls.filter((c) => c.file);
   assert.match(applies[0].file, /^0_wipe\./, 'the wipe must be the first request');
-  for (const table of TABLES)
-    assert.ok(
-      applies.some((c) => c.file.startsWith(`${table}.`)),
-      `${table} was never shipped`,
-    );
 
-  // THE guarantee: a multi-statement table must arrive as several NUMBERED requests, not one bulk
-  // shot. One request per table is the shape that caused the incident this change exists to prevent.
-  const linkRequests = applies.filter((c) => /^interest_links\.\d+\./.test(c.file));
-  assert.equal(
-    linkRequests.length,
-    3,
-    `${LINKS} rows must ship as 3 numbered requests, got ${JSON.stringify(applies.map((c) => c.file))}`,
+  // Chunking: a table past the batch budget must arrive as several CONTIGUOUSLY numbered requests.
+  const nums = applies
+    .map((c) => /^interest_links\.(\d+)\./.exec(c.file))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+  assert.ok(
+    nums.length >= 2,
+    `interest_links must be chunked, got ${JSON.stringify(applies.map((c) => c.file))}`,
+  );
+  assert.equal(nums.length, EXPECTED_CHUNKS);
+  assert.deepEqual(
+    nums,
+    Array.from({ length: nums.length }, (_, i) => i + 1),
   );
 
-  // THE other guarantee: the run must ask the target what it actually holds.
-  const readBack = calls.filter((c) => c.command);
-  assert.equal(readBack.length, 1, 'exactly one read-back query');
+  // The read-back must be the LAST thing the run does, and must count each table from that table.
+  const last = calls.at(-1);
+  assert.ok(last.argv.includes('--command'), 'the read-back must come after the inserts');
+  const sql = last.argv[last.argv.indexOf('--command') + 1];
   for (const table of TABLES)
     assert.match(
-      readBack[0].command,
-      new RegExp(`COUNT\\(\\*\\).*${table}`),
-      `${table} unverified`,
+      sql,
+      new RegExp(`COUNT\\(\\*\\) AS n FROM "${table}"`),
+      `${table} not really counted`,
     );
 });
 
-test('the real ship run fails when the target came up short', (t) => {
+test('a request that never landed fails the run', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-short-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res } = runShipScript(dir, { ...SHIPPED, interest_links: LINKS - 1 });
+  const { res } = runShip(dir, { SHIP_FAKE_SKIP: 'interest_links.2.sql' });
   assert.notEqual(res.status, 0, 'a short target must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
-  assert.match(res.stderr, new RegExp(`interest_links: shipped ${LINKS}, target has ${LINKS - 1}`));
+  assert.match(res.stderr, /interest_links: shipped \d+, target has \d+/);
+});
+
+test('a read-back that answers with a non-number fails closed', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-nan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // `Number(null)` is 0, which would read as "the table is empty" and quietly pass.
+  const { res } = runShip(dir, { SHIP_FAKE_NULLN: 'interest_link_authorities' });
+  assert.notEqual(res.status, 0, 'an unanswered count must fail the run');
+  assert.match(res.stderr, /ship verification FAILED/);
+});
+
+test('a bracketed notice on stdout does not corrupt the read-back', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-noise-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // The script slices from the first '[' to skip wrangler's preamble — a `[WARNING]` line would
+  // send that slice to the wrong offset. Real wrangler --json keeps notices on stderr, but the
+  // defensive slice exists precisely because that has not always been true.
+  const { res } = runShip(dir, { SHIP_FAKE_NOISE: '1' });
+  assert.equal(res.status, 0, `a stdout notice broke the read-back:\n${res.stderr}`);
 });
