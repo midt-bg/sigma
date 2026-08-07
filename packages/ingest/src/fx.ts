@@ -4,7 +4,19 @@
 // validation) live here once so the two implementations cannot drift; the Worker-native loader and
 // its coverage guard are D1-based and pure-fetch, safe for workerd (no Node APIs).
 
-import { discardBody } from './http';
+// A response body that is never read keeps its stream - and the connection behind it - open for the
+// rest of the invocation; the collector is not a substitute. Deliberately NOT awaited: cancelling only
+// needs to be INITIATED for the runtime to release the stream, and awaiting it would make the caller
+// hostage to a cancel() that never settles. Kept private here rather than shared with apps/etl: this
+// file is also loaded as raw TypeScript by the Node CLI (scripts/load-fx.mjs), where an extensionless
+// relative import does not resolve and a `.ts` one needs allowImportingTsExtensions repo-wide.
+function discardBody(res: Response): void {
+  try {
+    void res.body?.cancel().catch(() => {});
+  } catch {
+    // Already consumed, locked, or errored - there is nothing left to release either way.
+  }
+}
 
 // Canonical host. The legacy api.frankfurter.app now 301-redirects here — with host-pinned
 // fetches (assertSameFinalHost) the legacy host would fail closed, so point at the target
