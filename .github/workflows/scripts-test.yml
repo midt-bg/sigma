@@ -25,7 +25,9 @@ jobs:
         with:
           node-version: 22
       # node:test only — the scripts under test import nothing outside node built-ins and each other,
-      # so no `pnpm install` is required.
+      # so no `pnpm install` is required. The one external dependency is the `sqlite3` binary, which
+      # ship-e2e.test.mjs drives as the real target its fake wrangler writes into; it ships with the
+      # ubuntu-latest image, and the test fails loudly (never skips) if it is ever absent.
       - run: node --test scripts/*.test.mjs
 
   # свързани-лица CACBG pipeline tests (parse/classify/load/audit/tr-census/extract). These use
