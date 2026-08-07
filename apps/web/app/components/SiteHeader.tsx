@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, NavLink, useLocation, useSearchParams } from 'react-router';
+import { Link, NavLink, useLocation, useRouteLoaderData, useSearchParams } from 'react-router';
+import { date } from '@sigma/shared';
 import { SmartSearch } from './SmartSearch';
 import { ANALYTICS_NAV_PATHS } from '../lib/analytics-lenses';
 
@@ -24,13 +25,21 @@ function pathMatches(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
-// Masthead: serif brand + mono nav. The search icon opens a drawer below the mast; on mobile the
-// nav collapses into a slide-in drawer with a dimmed backdrop. All interaction is React state — no
-// external script — so the strict CSP needs no script allowance beyond the framework nonce. SSR
-// renders everything closed; the handlers wire up on hydration.
+// Masthead — „technical dossier" direction: a 3-column grid (220px brand / nav / 220px source
+// stamp) over a solid 1px rule, with hairline dividers between every nav item. The brand is pure
+// CSS/text (a steel-blue Σ square + tracked wordmark), superseding logo.svg.
+//
+// Everything behavioural is carried over unchanged from the previous masthead: the search drawer,
+// the mobile nav drawer with its dimmed backdrop, focus movement on open, Esc-to-close with focus
+// return, body-scroll lock, and `inert` on the rest of the header while the drawer is open. All
+// interaction is React state — no external script — so the strict CSP needs no allowance beyond the
+// framework nonce. SSR renders everything closed; handlers wire up on hydration.
 export function SiteHeader() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  // The root loader carries coverage metadata for every route; the mast stamps the refresh date.
+  const rootData = useRouteLoaderData('root') as { refreshedAt?: string | null } | undefined;
+  const refreshedAt = rootData?.refreshedAt ?? null;
   // Prefill from the active query so reopening search on a results page shows it.
   const activeQuery = searchParams.get('q') ?? '';
   const [searchOpen, setSearchOpen] = useState(false);
@@ -93,7 +102,8 @@ export function SiteHeader() {
     return () => document.removeEventListener('click', onClick);
   }, [searchOpen]);
 
-  // Returning to the desktop layout clears an open mobile nav.
+  // Returning to the desktop layout clears an open mobile nav. 961px matches the `--rail`
+  // collapse breakpoint in tokens.css, so the drawer and the rail switch together.
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 961px)');
     const onChange = (e: MediaQueryListEvent) => e.matches && setNavOpen(false);
@@ -109,68 +119,72 @@ export function SiteHeader() {
   return (
     <>
       <header className="site-header" role="banner">
-        <div className="site-header-inner">
+        <div className="mast-brand" inert={navOpen}>
           <Link
             className="brand"
             to="/"
             aria-label="СИГМА — начална страница"
             title="Система за интегриран граждански мониторинг и анализ на обществените поръчки"
-            inert={navOpen}
           >
-            <img className="brand-logo" src="/logo.svg" width={523} height={115} alt="СИГМА" />
-            <span className="brand-sub">Платформа за прозрачност на обществените поръчки</span>
+            {/* Brand mark. WCAG 1.4.3 exempts logotypes from the contrast minimum, so the Σ keeps
+                the designed --accent fill rather than the darker accent-700 used for UI labels. */}
+            <span className="brand-mark" aria-hidden="true">
+              Σ
+            </span>
+            <span className="brand-word">СИГМА</span>
           </Link>
-          <nav
-            className={`site-nav${navOpen ? ' is-open' : ''}`}
-            id={navId}
-            aria-label="Главна навигация"
-          >
-            <div className="site-nav-head">
-              <span className="site-nav-head-label">Навигация</span>
-              <button
-                ref={navCloseRef}
-                type="button"
-                className="site-nav-close"
-                aria-label="Затвори менюто"
-                onClick={closeNav}
-              >
-                ×
-              </button>
-            </div>
-            {NAV.map((item) => {
-              // „Анализи" must highlight for the whole analytics family (its lens routes), not just
-              // /analytics. NavLink derives aria-current from its own `to` match and overrides a
-              // passed prop, so for the grouped entry we use a plain Link and drive aria-current
-              // (which the existing `a[aria-current='page']` styles) from a prefix match ourselves.
-              if (item.activePaths) {
-                const active = item.activePaths.some((path) =>
-                  pathMatches(location.pathname, path),
-                );
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    aria-current={active ? 'page' : undefined}
-                    className={active ? 'active' : undefined}
-                    onClick={() => setNavOpen(false)}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              }
+        </div>
+
+        <nav
+          className={`site-nav${navOpen ? ' is-open' : ''}`}
+          id={navId}
+          aria-label="Главна навигация"
+        >
+          <div className="site-nav-head">
+            <span className="site-nav-head-label">Навигация</span>
+            <button
+              ref={navCloseRef}
+              type="button"
+              className="site-nav-close"
+              aria-label="Затвори менюто"
+              onClick={closeNav}
+            >
+              ×
+            </button>
+          </div>
+          {NAV.map((item) => {
+            // „Анализи" must highlight for the whole analytics family (its lens routes), not just
+            // /analytics. NavLink derives aria-current from its own `to` match and overrides a
+            // passed prop, so for the grouped entry we use a plain Link and drive aria-current
+            // (which the existing `a[aria-current='page']` styles) from a prefix match ourselves.
+            if (item.activePaths) {
+              const active = item.activePaths.some((path) => pathMatches(location.pathname, path));
               return (
-                <NavLink
+                <Link
                   key={item.to}
                   to={item.to}
-                  end={item.end}
+                  aria-current={active ? 'page' : undefined}
+                  className={active ? 'active' : undefined}
                   onClick={() => setNavOpen(false)}
                 >
                   {item.label}
-                </NavLink>
+                </Link>
               );
-            })}
-          </nav>
-          <div className="site-actions" inert={navOpen}>
+            }
+            return (
+              <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setNavOpen(false)}>
+                {item.label}
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        <div className="mast-meta" inert={navOpen}>
+          <div className="mast-stamp">
+            <span>ЦАИС ЕОП</span>
+            {refreshedAt ? <span>обновено {date(refreshedAt)}</span> : null}
+          </div>
+          <div className="mast-actions">
             <button
               ref={searchToggleRef}
               className="nav-search"

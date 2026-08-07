@@ -58,6 +58,12 @@ importers:
       '@ai-sdk/openai':
         specifier: ^3.0.73
         version: 3.0.74(zod@4.4.3)
+      '@fontsource/fira-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/fira-sans-condensed':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@sigma/api-contract':
         specifier: workspace:*
         version: link:../../packages/api-contract
@@ -73,6 +79,9 @@ importers:
       ai:
         specifier: ^6.0.208
         version: 6.0.208(zod@4.4.3)
+      animejs:
+        specifier: ^4.5.0
+        version: 4.5.0
       isbot:
         specifier: ^5.1.36
         version: 5.1.40
@@ -595,6 +604,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/fira-sans-condensed@5.3.0':
+    resolution: {integrity: sha512-aYiPJnAwfvhHW1Yra+YPGdFvhvJhQax1wHb6aa6979ixPe51CspvxgZTJ8JNfIs3Gu7UcclUl6d2MuDnw1wsdg==}
+
+  '@fontsource/fira-sans@5.3.0':
+    resolution: {integrity: sha512-z1SKSG7eRhm3srlb7rQ3j77QP4TP7OFxCZ4wUWhCdt+3hOF9K0AyvybpAsz6+JWNcCVV7AqC7dbOT3e67P2r5A==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -1297,6 +1312,17 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
+
+  animejs@4.5.0:
+    resolution: {integrity: sha512-NQimYX+lz8WaXonGS9zVVoviCIAjONeJayxacUditaivYLqyXgGjFKjuyl0aUUhFKm5MriX9ty1TGovNzoJQWA==}
+    peerDependencies:
+      '@types/three': '>=0.150.0'
+      three: '>=0.150.0'
+    peerDependenciesMeta:
+      '@types/three':
+        optional: true
+      three:
+        optional: true
 
   anynum@1.0.1:
     resolution: {integrity: sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A==}
@@ -2494,6 +2520,10 @@ snapshots:
 
   '@exodus/bytes@1.15.1': {}
 
+  '@fontsource/fira-sans-condensed@5.3.0': {}
+
+  '@fontsource/fira-sans@5.3.0': {}
+
   '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.35.3':
@@ -3036,6 +3066,8 @@ snapshots:
       '@ai-sdk/provider-utils': 4.0.30(zod@4.4.3)
       '@opentelemetry/api': 1.9.1
       zod: 4.4.3
+
+  animejs@4.5.0: {}
 
   anynum@1.0.1: {}
 

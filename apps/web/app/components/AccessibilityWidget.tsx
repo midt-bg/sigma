@@ -34,7 +34,7 @@ const POLL_INTERVAL_MS = 100;
 const SURVIVAL_CSS = `
 @font-face{font-family:'adys';src:url(/assets/accessibility/ADYS-Regular-V5-4.ttf);font-weight:normal;font-style:normal}
 html.a11y-textonly .sr-only{display:none!important;position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
-html.a11y-textonly .brand-sub{display:inline-block!important;font-weight:700!important;font-size:1.1em!important}
+html.a11y-textonly .brand-word{display:inline-block!important;font-weight:700!important;font-size:1.1em!important}
 html.a11y-textonly .skip:not(:focus){position:absolute!important;left:-9999px!important;top:-9999px!important;width:1px!important;height:1px!important;overflow:hidden!important}
 html.a11y-textonly img,html.a11y-textonly svg,html.a11y-textonly video{display:none!important}
 html.a11y-textonly #filter-rail-toggle,html.a11y-textonly .filter-rail-toggle,html.a11y-textonly .filter-rail-summary,html.a11y-textonly .a11y-tools__button{display:none!important}

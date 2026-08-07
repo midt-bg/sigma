@@ -1,31 +1,85 @@
-/* Design tokens — OKLch colour palette, type stack, 8-pt spacing scale.
+/* Design tokens — „Industry" technical-dossier direction (design handoff, 2026-08).
    @theme exposes these to Tailwind (bg-paper, text-ink…) AND as CSS vars;
    :root aliases let component CSS keep using var(--ink), var(--accent), etc.
-   The mock uses a system serif/mono stack — no webfont request. */
+
+   THREE THINGS THAT ARE LOAD-BEARING HERE — read before retuning:
+
+   1. ACCENT IS NO LONGER RED. The previous palette used red as the generic accent
+      (links, focus, warnings). This direction makes the accent steel blue and reserves
+      red EXCLUSIVELY as a semantic competition-risk signal (--risk). Re-pointing
+      --accent alone would have turned every warning blue and destroyed the risk
+      signal, so --warning* is re-mapped onto --risk below rather than onto --accent.
+      If you ever need a non-risk emphasis colour, take it from the accent ramp — do
+      not reach for red.
+
+   2. SMALL TEXT USES A DARKER RAMP STEP THAN THE HANDOFF SPECIFIES. The handoff
+      palette fails WCAG 2.1 AA on five text pairs against the #f2f2f3 ground:
+        neutral-500 2.57 · neutral-600 3.82 · accent-as-text 3.71
+        white-on-accent 4.15 · risk-on-risk-bg 4.26      (all need 4.5)
+      Large text, fills, rules and borders keep the handoff values exactly; only the
+      TEXT roles step down the ramp. Measured replacements are annotated inline.
+      The site carries EN 301 549 / WCAG 2.1 AA obligations (see docs/accessibility.md)
+      and tokens.css has annotated contrast ratios since the previous palette — keep
+      that habit: if you change a text colour, put its measured ratio in the comment.
+
+   3. RADIUS IS 0 EVERYWHERE. Square corners are the direction, not an oversight. */
 
 @theme {
-  --color-paper: oklch(98.5% 0.008 80);
-  --color-paper-warm: oklch(96% 0.012 78);
-  --color-paper-deep: oklch(94% 0.014 78);
-  --color-ink: oklch(18% 0.012 70);
-  --color-ink-mid: oklch(38% 0.01 70);
-  --color-ink-soft: oklch(
-    50% 0.008 70
-  ); /* ≥4.5:1 on paper / paper-warm / accent-bg — WCAG 1.4.3 AA */
-  --color-rule: oklch(86% 0.008 75);
-  --color-rule-soft: oklch(91% 0.008 75);
-  --color-accent: oklch(48% 0.18 28); /* red — links/warnings */
-  --color-accent-bg: oklch(94% 0.04 28);
-  --color-pos: oklch(45% 0.1 165); /* teal — positive deltas */
+  /* — ground / ink — */
+  --color-paper: #f2f2f3; /* Industry --color-bg */
+  --color-paper-warm: #e9e9ea; /* Industry --color-surface */
+  --color-paper-deep: #e7e7ea; /* neutral-200 */
+  --color-ink: #1d1f20; /* 14.79:1 on paper — AA ✓ */
+  --color-ink-mid: #5d5d60; /* neutral-700 · 5.87:1 — AA ✓ (handoff said 600 = 3.82 ✗) */
+  --color-ink-soft: #5d5d60; /* neutral-700 · 5.87:1 — AA ✓ (handoff said 500 = 2.57 ✗) */
+  --color-rule: color-mix(in srgb, #1d1f20 16%, transparent); /* hairline divider */
+  --color-rule-soft: color-mix(in srgb, #1d1f20 9%, transparent);
 
-  --font-sans:
-    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-  --font-serif: 'Charter', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
-  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  /* — neutral ramp (Industry, OKLCH-derived) — */
+  --color-neutral-100: #f5f5f8;
+  --color-neutral-200: #e7e7ea;
+  --color-neutral-300: #d4d4d7;
+  --color-neutral-400: #b7b7ba;
+  --color-neutral-500: #98989b; /* decorative only — 2.57:1, never for text */
+  --color-neutral-600: #7a7a7d; /* decorative only — 3.82:1, never for text */
+  --color-neutral-700: #5d5d60; /* 5.87:1 — the lightest AA-safe text grey */
+  --color-neutral-800: #424244; /* 8.96:1 */
+  --color-neutral-900: #2b2b2d;
+
+  /* — accent ramp (steel blue) — */
+  --color-accent: #5980a6; /* fills, rules, focus ring (3.71:1 — non-text only) */
+  --color-accent-100: #eef6ff;
+  --color-accent-200: #d6ebff; /* ranked-bar fill */
+  --color-accent-300: #b5d9fd;
+  --color-accent-400: #94bce3;
+  --color-accent-500: #749dc4;
+  --color-accent-600: #597ea3;
+  --color-accent-700: #416180; /* 5.78:1 — accent TEXT + primary button fill */
+  --color-accent-800: #2c455d; /* 8.87:1 — link hover */
+  --color-accent-900: #1d2d3d;
+
+  /* — risk: the ONLY red on the site, competition-risk facts only — */
+  --color-risk: #a1574e; /* 4.71:1 on paper — AA ✓, exactly as designed */
+  --color-risk-bg: #f3e4e1;
+  --color-risk-text: #944d45; /* 4.99:1 on risk-bg — AA ✓ (handoff #a1574e = 4.26 ✗) */
+
+  /* — type — Fira replaces Barlow: the handoff's Barlow/Barlow Condensed have no
+     Cyrillic. Self-hosted via @fontsource (see app.css): the production CSP is
+     `font-src 'self'` / `style-src 'self'`, so the handoff's Google Fonts @import
+     would be blocked outright — and a government portal should not hand visitor IPs
+     to a third-party font CDN. */
+  --font-sans: 'Fira Sans', system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+  --font-heading: 'Fira Sans Condensed', 'Fira Sans', system-ui, sans-serif;
+  /* The direction has no monospace and no serif. Both aliases resolve to Fira so the
+     ported component CSS (which still says var(--font-mono) for tracked uppercase
+     labels, and var(--font-serif) in conflict-cards.css) renders in the new voice
+     instead of dropping to a system fallback. */
+  --font-mono: 'Fira Sans', system-ui, sans-serif;
+  --font-serif: 'Fira Sans', system-ui, sans-serif;
 }
 
 :root {
-  /* Short aliases → @theme tokens, so the ported component CSS keeps using var(--paper) etc. */
+  /* Short aliases → @theme tokens, so ported component CSS keeps using var(--paper) etc. */
   --paper: var(--color-paper);
   --paper-warm: var(--color-paper-warm);
   --paper-deep: var(--color-paper-deep);
@@ -35,10 +89,21 @@
   --rule: var(--color-rule);
   --rule-soft: var(--color-rule-soft);
   --accent: var(--color-accent);
-  --accent-bg: var(--color-accent-bg);
-  --pos: var(--color-pos);
+  --accent-bg: var(--color-accent-100);
 
-  /* Legacy token aliases — keep page-local inline styles working */
+  /* Accent text vs accent fill are DIFFERENT tokens on purpose (see note 2 above).
+     --accent is the fill/rule value; --accent-text is the AA-safe text value. */
+  --accent-text: var(--color-accent-700);
+  --accent-strong: var(--color-accent-800);
+
+  /* Risk — semantic, never decorative. */
+  --risk: var(--color-risk);
+  --risk-bg: var(--color-risk-bg);
+  --risk-text: var(--color-risk-text);
+
+  /* Legacy token aliases — keep the existing component CSS working while it is
+     restyled. `--warning*` maps onto RISK (not accent): every current use of it is a
+     competition/data-quality signal, which is exactly what red now means. */
   --bg: var(--paper);
   --canvas: var(--paper-warm);
   --surface: var(--paper);
@@ -48,18 +113,21 @@
   --border: var(--rule);
   --border-soft: var(--rule-soft);
   --border-strong: var(--ink);
-  --link: var(--ink);
-  --link-hover: var(--accent);
-  --link-visited: var(--ink);
-  --focus: var(--accent);
-  --warning: var(--accent);
-  --warning-bg: var(--accent-bg);
-  --warning-strong: var(--accent);
-  --success: var(--pos);
-  --success-bg: oklch(94% 0.04 165);
+  --link: var(--accent-text);
+  --link-hover: var(--accent-strong);
+  --link-visited: var(--accent-text);
+  --focus: var(--accent); /* 3.71:1 vs paper — AA ✓ for a non-text focus indicator (1.4.11) */
+  --warning: var(--risk);
+  --warning-bg: var(--risk-bg);
+  --warning-strong: var(--risk);
+  /* No green in this direction — red is the only signal colour. Positive deltas read
+     as ordinary ink rather than introducing a third hue. */
+  --pos: var(--color-neutral-800);
+  --success: var(--color-neutral-800);
+  --success-bg: var(--color-neutral-100);
   --info: var(--ink-mid);
 
-  /* Strict 8-pt spacing scale */
+  /* Strict 8-pt spacing scale (unchanged — the ported CSS depends on it). */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
@@ -70,20 +138,25 @@
   --s-8: 64px;
   --s-9: 96px;
 
-  /* Page rhythm */
+  /* Page rhythm — the dossier grid. `--rail` is the 220px section-label column that
+     every content band is built on; `--gutter` is the 48px desktop content padding. */
+  --rail: 220px;
   --max: 1280px;
   --max-narrow: 880px;
-  --gutter: 64px;
+  --gutter: 48px;
 
-  /* Card surface — both values reuse existing sitewide precedent rather than importing SaaS-generic
-     chrome: 3px is the only radius already used (home.css .tile); the shadow is the smart-search
-     popover's lift (chrome.css:445) verbatim, so a card hover reads as an established affordance. */
-  --radius-card: 3px;
-  --shadow-elevate: 0 18px 40px -24px rgb(0 0 0 / 0.45);
+  /* Square corners everywhere — the blueprint/wireframe treatment. */
+  --radius-card: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --shadow-elevate: none;
 }
 
-@media (max-width: 880px) {
+@media (max-width: 960px) {
   :root {
-    --gutter: 28px;
+    --gutter: 20px;
+    /* The rail collapses on mobile: labels become horizontal rows above each section. */
+    --rail: 0px;
   }
 }

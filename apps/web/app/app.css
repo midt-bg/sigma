@@ -1,7 +1,26 @@
 @import 'tailwindcss' source('.');
 
+/* Fira, self-hosted via @fontsource — NOT Google Fonts.
+   The handoff's styles.css opens with an @import from fonts.googleapis.com; that is
+   blocked twice over by this app's production CSP (`style-src 'self' 'unsafe-inline'`
+   for the stylesheet, `font-src 'self'` for the woff2), and a public-sector portal
+   should not hand visitor IPs to a third-party font CDN. Vite emits these woff2 files
+   as same-origin assets, so the CSP needs no relaxation.
+
+   Import the PER-WEIGHT entrypoints (400.css), never the per-subset ones
+   (latin-400.css / cyrillic-400.css): the per-subset files declare no `unicode-range`,
+   so importing latin + cyrillic together would collide on the same family/weight and
+   the last one would win — silently losing either the Cyrillic or the digits. The
+   per-weight files declare every subset WITH ranges, so a browser downloads only what
+   the page actually uses. */
+@import '@fontsource/fira-sans/400.css';
+@import '@fontsource/fira-sans/500.css';
+@import '@fontsource/fira-sans-condensed/400.css';
+@import '@fontsource/fira-sans-condensed/600.css';
+
 @import './styles/tokens.css';
 @import './styles/base.css';
+@import './styles/industry.css';
 @import './styles/chrome.css';
 @import './styles/layout.css';
 @import './styles/components.css';

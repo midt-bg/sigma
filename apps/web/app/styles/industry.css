@@ -1,0 +1,418 @@
+/* „Industry" primitives — the technical-dossier vocabulary shared by every screen.
+   Ported from the design handoff's styles.css, retuned for this codebase:
+     · radius 0 everywhere (the handoff overrides its own radius tokens to 0);
+     · text colours use the AA-safe ramp steps (see tokens.css note 2);
+     · red appears ONLY through --risk, never as generic emphasis.
+   Page-specific composition lives in home.css / pages.css / tables.css. */
+
+/* ══ blueprint frame ══════════════════════════════════════════════════════════
+   A hairline box with four "+" registration marks sitting outside the border.
+   The marks are decorative: they carry no meaning and are hidden from AT. */
+.blueprint {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+}
+.blueprint > .corner {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  pointer-events: none;
+}
+.blueprint > .corner::before,
+.blueprint > .corner::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+.blueprint > .corner::before {
+  left: 5px;
+  top: 0;
+  width: 1px;
+  height: 100%;
+}
+.blueprint > .corner::after {
+  top: 5px;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+.blueprint > .corner.tl {
+  top: -6px;
+  left: -6px;
+}
+.blueprint > .corner.tr {
+  top: -6px;
+  right: -6px;
+}
+.blueprint > .corner.bl {
+  bottom: -6px;
+  left: -6px;
+}
+.blueprint > .corner.br {
+  bottom: -6px;
+  right: -6px;
+}
+
+/* ══ tracked uppercase labels ════════════════════════════════════════════════
+   The dossier's connective tissue: rail labels, figure captions, table heads,
+   breadcrumb segments. Always AA-safe ink (never neutral-500/600). */
+.label-xs,
+.label-sm {
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  font-weight: 500;
+}
+.label-xs {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+.label-sm {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+}
+
+/* ══ section band + rail ═════════════════════════════════════════════════════
+   Every content band is a grid: a 220px label column, then content. The label
+   column carries „Раздел NN" over a coloured subtitle. On mobile the rail
+   collapses and the label becomes a horizontal row above the section. */
+.band {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  border-bottom: 1px solid var(--rule);
+}
+.band-split {
+  grid-template-columns: var(--rail) 1fr 1fr;
+}
+.band > .band-rail {
+  padding: 26px var(--s-5) 26px var(--gutter);
+  border-right: 1px solid var(--rule);
+}
+.band > .band-body {
+  padding: 26px var(--gutter) 36px var(--s-6);
+  min-width: 0; /* let tables/charts shrink instead of forcing the grid wider */
+}
+.band-rail .rail-no {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}
+.band-rail .rail-title {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+/* Competition/risk sections label in red — the one place red is allowed as chrome,
+   because the section itself is the risk signal. */
+.band-rail .rail-title.is-risk {
+  color: var(--risk);
+}
+
+@media (max-width: 960px) {
+  .band,
+  .band-split {
+    grid-template-columns: 1fr;
+  }
+  .band > .band-rail {
+    padding: 14px var(--gutter) 8px;
+    border-right: 0;
+  }
+  .band > .band-body {
+    padding: 4px var(--gutter) 26px;
+  }
+  /* „Раздел 01 · Обхват на данните" reads as one horizontal row on mobile. */
+  .band-rail .rail-no,
+  .band-rail .rail-title {
+    display: inline;
+    font-size: 10px;
+  }
+  .band-rail .rail-no::after {
+    content: ' · ';
+  }
+}
+
+/* ══ figures strip ═══════════════════════════════════════════════════════════ */
+.figures {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--ink);
+}
+.figures > .fig {
+  padding: 18px var(--s-4);
+  border-right: 1px solid var(--rule);
+}
+.figures > .fig:last-child {
+  border-right: 0;
+}
+.fig-cap {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}
+.fig-value {
+  margin-top: 6px;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 46px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.fig-value.is-risk {
+  color: var(--risk);
+}
+.fig-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ink-mid);
+}
+@media (max-width: 960px) {
+  .figures {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .figures > .fig {
+    border-bottom: 1px solid var(--rule);
+  }
+  .figures > .fig:nth-child(2n) {
+    border-right: 0;
+  }
+  .fig-value {
+    font-size: 34px;
+  }
+}
+
+/* ══ ranked bars ═════════════════════════════════════════════════════════════
+   The fill is decorative: every row also prints its value as text, so the bar
+   is never the sole carrier of information (WCAG 1.4.1). */
+.ranked {
+  border-top: 1px solid var(--ink);
+}
+.ranked > li {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 9px 6px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13.5px;
+}
+.ranked .bar-fill {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  background: var(--color-accent-200);
+  z-index: 0;
+}
+.ranked .bar-name,
+.ranked .bar-value {
+  position: relative;
+  z-index: 1;
+}
+.ranked .bar-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 960px) {
+  .ranked > li {
+    padding: 11px 6px;
+  }
+}
+
+/* ══ share bar (single-offer share) ══════════════════════════════════════════ */
+.share-bar {
+  display: flex;
+  height: 14px;
+  border: 1px solid var(--ink);
+  /* The remainder is a diagonal hatch rather than a second solid colour, so the
+     comparison does not depend on hue. */
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-neutral-200) 0 4px,
+    transparent 4px 8px
+  );
+}
+.share-bar > .share-fill {
+  background: var(--risk);
+}
+
+/* ══ tags ════════════════════════════════════════════════════════════════════ */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 0;
+}
+.tag-accent {
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+}
+.tag-neutral {
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+}
+/* The only red tag. Text is --risk-text (4.99:1 on --risk-bg), not --risk (4.26 ✗). */
+.tag-risk {
+  background: var(--risk-bg);
+  color: var(--risk-text);
+}
+.tag-outline {
+  border: 1px solid var(--accent-text);
+  color: var(--accent-text);
+}
+
+/* ══ buttons ═════════════════════════════════════════════════════════════════ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  /* ≥44px touch target (WCAG 2.5.8) — the handoff's mobile note, applied everywhere. */
+  min-height: 44px;
+  padding: 8px 16px;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* accent-700 fill, not accent: white-on-accent is 4.15 ✗, white-on-accent-700 is 6.47 ✓ */
+.btn-primary {
+  background: var(--color-accent-700);
+  border-color: var(--color-accent-700);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--color-accent-800);
+  border-color: var(--color-accent-800);
+}
+.btn-primary:active {
+  background: var(--color-accent-900);
+  border-color: var(--color-accent-900);
+}
+.btn-secondary:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.btn-secondary:active {
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.btn-ghost {
+  border-color: transparent;
+  color: var(--accent-text);
+}
+.btn-ghost:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.btn-block {
+  width: 100%;
+}
+
+/* ══ inputs ══════════════════════════════════════════════════════════════════ */
+.input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  caret-color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+}
+.input::placeholder {
+  color: var(--ink-mid);
+}
+.input:hover {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+/* The search field inside a .blueprint frame is borderless — the frame is the border. */
+.blueprint > .input-bare {
+  border: 0;
+  background: transparent;
+}
+
+/* ══ segmented control ═══════════════════════════════════════════════════════ */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+}
+.seg-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink);
+  text-decoration: none;
+}
+.seg-opt + .seg-opt {
+  border-left: 1px solid var(--rule);
+}
+.seg-opt[aria-current='true'],
+.seg-opt:has(input:checked) {
+  background: var(--color-accent-700);
+  color: #fff;
+}
+.seg-opt:not([aria-current='true']):hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.seg-opt input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ══ focus ═══════════════════════════════════════════════════════════════════
+   One visible focus treatment everywhere. 3.71:1 against the ground clears the
+   3:1 that WCAG 1.4.11 asks of a non-text indicator. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ══ risk edge-mark ══════════════════════════════════════════════════════════
+   The 3px red left rule that marks a standout row/card. Always paired with a
+   textual tag — the rule alone must never be the only signal (WCAG 1.4.1). */
+.risk-edge {
+  border-left: 3px solid var(--risk);
+  padding-left: var(--s-3);
+}
+
+/* ══ motion ══════════════════════════════════════════════════════════════════
+   Elements are visible by default and animated FROM JavaScript, so a failed or
+   blocked bundle can never leave the page blank. The home timeline additionally
+   bails out entirely under prefers-reduced-motion (see home-motion.client.ts). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

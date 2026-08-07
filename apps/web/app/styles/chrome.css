@@ -17,191 +17,195 @@
 }
 
 /* Masthead — editorial: serif brand, mono nav, hairline rule */
+/* ══ masthead — „technical dossier" ══════════════════════════════════════════
+   A 3-column grid over a solid rule: 220px brand rail / nav / source stamp. Every
+   nav item carries a right hairline, so the bar reads as a ruled index rather than
+   a floating menu. The right column is `minmax(--rail, auto)` rather than a hard
+   220px because it also hosts the search + menu controls. */
 .site-header {
-  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: var(--rail) 1fr minmax(var(--rail), auto);
+  align-items: stretch;
   background: var(--paper);
-}
-.site-header {
+  border-bottom: 1px solid var(--ink);
   position: relative;
   z-index: 20;
 }
-.site-header-inner {
-  max-width: var(--max);
-  margin: 0 auto;
-  padding: 24px var(--gutter) 16px;
+
+.mast-brand {
   display: flex;
   align-items: center;
-  gap: var(--s-4) var(--s-5);
-  flex-wrap: wrap;
-}
-.site-header-inner > .brand {
-  margin-right: auto;
+  padding: 16px var(--s-5);
+  border-right: 1px solid var(--rule);
 }
 .brand {
-  text-decoration: none;
-  color: var(--ink);
   display: inline-flex;
   align-items: center;
-  gap: var(--s-3);
-  min-width: 0;
-}
-.brand:hover {
-  color: var(--ink);
+  gap: 10px;
   text-decoration: none;
+  color: var(--ink);
 }
+.brand:hover,
 .brand:visited {
   color: var(--ink);
 }
-.brand-logo {
-  display: block;
-  height: 28px;
-  width: auto;
-  /* Wordmark: brand-red mark + warm-grey „СИГМА" lettering on transparent — sits on the warm paper masthead. */
-}
-/* The pre-existing brand-sub tagline competes with the editorial mast tone */
-.brand-sub {
-  display: none;
-}
-
-/* Right-side controls — search icon (always) + menu toggle (mobile only) */
-.site-actions {
+/* Logotype: WCAG 1.4.3 exempts brand marks from the contrast minimum, so this keeps
+   the designed --accent fill (3.71:1) rather than the darker UI-label accent-700. */
+.brand-mark {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-5);
-  flex: 0 0 auto;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  background: var(--accent);
+  color: var(--paper);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 18px;
+  line-height: 1;
+}
+.brand-word {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: 0.14em;
+  line-height: 1;
 }
 
 .site-nav {
   display: flex;
-  gap: var(--s-6);
-  font: 11px/1.3 var(--font-mono);
-  letter-spacing: 0.14em;
+  min-width: 0;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-mid);
-  align-items: center;
 }
 .site-nav a {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  min-block-size: 24px;
-  text-decoration: none;
+  padding: 0 18px;
   color: var(--ink-mid);
-  padding: 4px 0;
-  border-bottom: 2px solid transparent;
-  font-weight: 500;
+  text-decoration: none;
   white-space: nowrap;
+  border-right: 1px solid var(--rule);
 }
 .site-nav a:hover {
-  color: var(--accent);
-}
-.site-nav a[aria-current='page'] {
   color: var(--ink);
-  border-bottom-color: var(--ink);
 }
-/* Drawer chrome — only present once the nav collapses (≤960px). */
+.site-nav a[aria-current='page'],
+.site-nav a.active {
+  background: var(--color-accent-100);
+  color: var(--ink);
+}
+/* Drawer-only header; inert on desktop. */
 .site-nav-head {
   display: none;
 }
-.nav-backdrop {
-  display: none;
-}
 
-/* Search icon button — opens the search drawer below the masthead */
-.nav-search {
-  background: transparent;
-  border: 0;
-  padding: 3px;
-  margin: 0;
-  color: var(--ink-mid);
-  cursor: pointer;
-  display: inline-flex;
+.mast-meta {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  min-height: 24px;
-  line-height: 0;
-  border-radius: 0;
-  font: inherit;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  padding: 12px var(--s-5);
+  border-left: 1px solid var(--rule);
 }
-.nav-search:hover,
-.nav-search[aria-expanded='true'] {
-  color: var(--accent);
+.mast-stamp {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+  font-size: 10.5px;
+  line-height: 1.5;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
 }
-.nav-search:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
-}
-.nav-search svg {
-  display: block;
-  width: 20px;
-  height: 20px;
-}
-.nav-search-text {
-  display: none;
-}
-
-/* Menu toggle — hidden on desktop; revealed when the nav collapses */
-.nav-toggle {
-  display: none;
+.mast-actions {
+  display: flex;
   align-items: center;
   gap: var(--s-2);
-  background: transparent;
-  border: 0;
-  padding: 4px 0;
-  margin: 0;
-  color: var(--ink-mid);
-  cursor: pointer;
-  min-height: 24px;
-  font: 500 11px/1 var(--font-mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-.nav-toggle:hover,
-.nav-toggle[aria-expanded='true'] {
-  color: var(--accent);
-}
-.nav-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
-}
-.nav-toggle-box {
-  position: relative;
-  display: inline-block;
-  width: 18px;
-  height: 11px;
-}
-.nav-toggle-box span {
-  position: absolute;
-  left: 0;
-  width: 18px;
-  height: 1.75px;
-  background: currentColor;
-  transition:
-    transform 0.22s ease,
-    top 0.22s ease;
-}
-.nav-toggle-box span:nth-child(1) {
-  top: 1px;
-}
-.nav-toggle-box span:nth-child(2) {
-  top: 8px;
-}
-.nav-toggle[aria-expanded='true'] .nav-toggle-box span:nth-child(1) {
-  top: 4px;
-  transform: rotate(45deg);
-}
-.nav-toggle[aria-expanded='true'] .nav-toggle-box span:nth-child(2) {
-  top: 4px;
-  transform: rotate(-45deg);
 }
 
-/* ≤960px — six mono nav items get tight, so the inline bar gives way to a menu button that opens a
-   right-side drawer over a dimmed backdrop. The slide is a compositor-friendly transform (not the
-   old layout-bound max-height), and `visibility` takes the panel out of the tab order when closed. */
+.nav-search,
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink-mid);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.nav-search:hover,
+.nav-toggle:hover,
+.nav-search[aria-expanded='true'],
+.nav-toggle[aria-expanded='true'] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.nav-search svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+/* The menu button is desktop-hidden; the drawer breakpoint below reveals it. */
+.nav-toggle {
+  display: none;
+}
+.nav-toggle-box {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 16px;
+}
+.nav-toggle-box span {
+  display: block;
+  height: 1.5px;
+  width: 16px;
+  background: currentColor;
+  transition: transform 0.2s ease;
+}
+.nav-toggle[aria-expanded='true'] .nav-toggle-box span:nth-child(1) {
+  transform: translateY(3px) rotate(45deg);
+}
+.nav-toggle[aria-expanded='true'] .nav-toggle-box span:nth-child(2) {
+  transform: translateY(-2px) rotate(-45deg);
+}
+
+/* ≤960px — the mast collapses to brand + controls and the nav becomes a drawer. */
 @media (max-width: 960px) {
-  .site-header-inner {
-    padding: 18px var(--gutter) 16px;
+  .site-header {
+    grid-template-columns: 1fr auto;
   }
+  .mast-brand {
+    border-right: 0;
+    padding: 14px var(--gutter);
+  }
+  .mast-meta {
+    border-left: 0;
+    padding: 12px var(--gutter);
+  }
+  /* The source stamp is desktop chrome; the footer already carries it on mobile. */
+  .mast-stamp {
+    display: none;
+  }
+  .nav-search-text {
+    display: none;
+  }
+}
+
+/* ≤960px — the drawer itself: slides in over a dimmed backdrop. The slide is a
+   compositor-friendly transform (not a layout-bound max-height), and `visibility`
+   takes the panel out of the tab order when closed. */
+@media (max-width: 960px) {
   .nav-toggle {
     display: inline-flex;
   }
