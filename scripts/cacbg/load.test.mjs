@@ -1220,3 +1220,90 @@ test('the published surface is exported BEFORE the wipe, so the audit can gate m
   // next run is not a regression to gate on.
   assert.equal(snap.length, published.length);
 });
+
+// The crawl input and the crawl's consumer are the same script, which used to make the two workflows
+// deadlock: the decision run refused without a deed cache, the refresh run refused without a candidate
+// list, and each produced only what the other needed. Merged into one job, the job still has to be able
+// to BOOTSTRAP — produce the candidate list on a runner that has no cache yet — and it cannot do that by
+// running the full load and ignoring a non-zero exit, because that exit is also how a genuinely broken
+// run reports itself. Hence an explicit mode that stops at the list and succeeds.
+test('--emit-candidates writes the crawl list and exits 0 with NO Trade Register cache', () => {
+  const gone = path.join(dir, 'bootstrap-absent.sqlite');
+  const listFile = path.join(STAGING, 'candidate-eiks.txt');
+  fs.rmSync(listFile, { force: true });
+  assert.doesNotThrow(() =>
+    execFileSync(
+      'node',
+      [
+        '--import',
+        path.join(HERE, 'register-ts.mjs'),
+        path.join(HERE, 'load.mjs'),
+        '--emit-candidates',
+      ],
+      {
+        cwd: ROOT,
+        env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING, TR_CACHE_DB: gone },
+        stdio: 'pipe',
+      },
+    ),
+  );
+  const listed = fs.readFileSync(listFile, 'utf8').split('\n').filter(Boolean);
+  assert.ok(listed.length > 0, 'the bootstrap must actually produce candidates');
+  assert.equal(new Set(listed).size, listed.length);
+  runLoad(); // restore the full built state for any later reader
+});
+
+function emitCandidates(trCacheDb) {
+  execFileSync(
+    'node',
+    [
+      '--import',
+      path.join(HERE, 'register-ts.mjs'),
+      path.join(HERE, 'load.mjs'),
+      '--emit-candidates',
+    ],
+    {
+      cwd: ROOT,
+      env: { ...process.env, CACBG_DB: DB, CACBG_STAGING: STAGING, TR_CACHE_DB: trCacheDb },
+      stdio: 'pipe',
+    },
+  );
+}
+
+test('a bootstrap pass leaves the REAL work DB untouched — it runs on a throwaway copy', () => {
+  // Reaching the candidate list means rebuilding the corpus tables, and the pass never publishes, so
+  // against the real DB it would leave interest_links empty. That is the damage: not the pass itself,
+  // but what the NEXT run then reads.
+  runLoad();
+  const db = open();
+  const before = db.prepare('SELECT COUNT(*) AS n FROM interest_links').get().n;
+  db.close();
+  assert.ok(before > 0, 'the fixture must actually publish something');
+
+  emitCandidates(path.join(dir, 'bootstrap-absent-2.sqlite'));
+
+  const after = open();
+  assert.equal(
+    after.prepare('SELECT COUNT(*) AS n FROM interest_links').get().n,
+    before,
+    'the bootstrap pass must not empty the domain it was pointed at',
+  );
+  after.close();
+  assert.equal(fs.existsSync(`${DB}.bootstrap`), false, 'the throwaway copy must be cleaned up');
+});
+
+test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', () => {
+  // The end-to-end shape of the merged workflow: real run → bootstrap (to produce the crawl list) →
+  // real run. If the bootstrap emptied interest_links, the second real run would export an EMPTY
+  // prior-published set, and the gate — whose only job is to notice a published claim disappearing —
+  // would pass unconditionally, for ever.
+  const snapshot = path.join(STAGING, 'published-snapshot.json');
+  runLoad();
+  emitCandidates(path.join(dir, 'bootstrap-absent-3.sqlite'));
+  runLoad();
+  const prior = JSON.parse(fs.readFileSync(snapshot, 'utf8'));
+  assert.ok(
+    prior.length > 0,
+    'the snapshot went empty — the gate is now vacuous and would never fire again',
+  );
+});

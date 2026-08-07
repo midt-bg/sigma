@@ -50,6 +50,19 @@ const TR_RAW_DIR = process.env.TR_RAW_DIR || TR_RAW;
 // A deliberate, logged override for the coverage gate below. Without it a single permanently
 // unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
 const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
+// Bootstrap mode: write the crawl's input list and stop, successfully. The decision run and the register
+// crawl now share one job (they must — the raw deeds hold third-party names and cannot travel between
+// runners), and that job has to be able to start from nothing: the list is derived from the resolved
+// corpus, so only this script can produce it, but the full run refuses without the very cache the list
+// is used to fill. Ignoring the refusal's exit code instead would erase the difference between „no cache
+// yet" and „this run is broken".
+//
+// POINT THIS AT A SCRATCH COPY OF THE WORK DB. It is not a read-only pass: reaching the candidate list
+// means rebuilding the corpus tables, so it drops and repopulates persons/declarations/declared_interests
+// and leaves interest_links EMPTY. Empty is the safe end state (the ship floor refuses it, and no link
+// can be published without evidence it never gathered), but it is not the state a subsequent real run
+// should inherit. The one thing it must never touch either way is the monotonicity snapshot — see below.
+const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey } =
   await import('../../packages/shared/src/company-name-key.ts');
 
@@ -73,7 +86,24 @@ const readJsonl = (f) =>
         .map((l) => JSON.parse(l))
     : [];
 
-const db = new DatabaseSync(DB);
+// Bootstrap mode works on a THROWAWAY COPY, and that is not a convenience — it is the correctness of the
+// monotonicity gate. Reaching the candidate list means rebuilding the corpus tables, which drops
+// interest_links; the pass itself never publishes, so it would leave the table EMPTY. The next real run
+// would then read that empty table as its prior-published set, write an empty snapshot, and the gate —
+// whose only job is to notice a published claim disappearing — would pass unconditionally, for ever.
+// Copying here rather than asking the caller to do it keeps the flag safe wherever it is invoked from.
+const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
+if (EMIT_CANDIDATES_ONLY) {
+  for (const suffix of ['', '-wal', '-shm']) {
+    // -wal/-shm may legitimately be absent (a cleanly closed DB has neither); anything else must surface.
+    try {
+      fs.copyFileSync(`${DB}${suffix}`, `${WORK_DB}${suffix}`);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+  }
+}
+const db = new DatabaseSync(WORK_DB);
 db.exec('PRAGMA foreign_keys=ON');
 // Suppressions live in a VERSION-CONTROLLED, HMAC-fingerprinted list (ADR-0031), NOT a DB table — so a
 // takedown survives a fresh-CI-runner rebuild and never ships the „who was taken down" signal to prod.
@@ -115,10 +145,13 @@ const priorPublished = (() => {
     return [];
   }
 })();
-fs.writeFileSync(
-  path.join(STAGING, 'published-snapshot.json'),
-  JSON.stringify(priorPublished, null, 2) + '\n',
-);
+// Not written by the bootstrap pass, which works on a throwaway copy and has no business restating what
+// the real run is about to record.
+if (!EMIT_CANDIDATES_ONLY)
+  fs.writeFileSync(
+    path.join(STAGING, 'published-snapshot.json'),
+    JSON.stringify(priorPublished, null, 2) + '\n',
+  );
 
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
@@ -490,6 +523,18 @@ function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
 // published: a link held for want of evidence still needs its deed to say so.
 const candidateEiks = [...new Set([...agg.values()].map((r) => r.eik))].sort();
 fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\n') + '\n');
+
+if (EMIT_CANDIDATES_ONLY) {
+  // Stop BEFORE the TR gate and before anything is written to the domain. A bootstrap pass that built
+  // links would leave a surface resting on no evidence at all, and a failure between this pass and the
+  // real one would leave that surface sitting in the work DB, shippable.
+  console.log(
+    `${candidateEiks.length} candidate ЕИК written for the crawler; stopping (--emit-candidates)`,
+  );
+  db.close();
+  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${WORK_DB}${suffix}`, { force: true }); // the copy has served its purpose
+  process.exit(0);
+}
 
 if (!fs.existsSync(TR_CACHE_DB)) {
   db.close();
