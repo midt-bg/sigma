@@ -297,9 +297,7 @@ function readShippedCounts(d1Name, remote, expected) {
     const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
     // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass
     // for „the table is empty"; anything non-numeric must land as NaN so assertShippedCounts fails closed.
-    return Object.fromEntries(
-      rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]),
-    );
+    return Object.fromEntries(rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]));
   } catch (err) {
     console.error(
       `ship: could not read back row counts — ${err instanceof Error ? err.message : err}`,
