@@ -8,7 +8,7 @@ import {
   resolveD1Name,
   insertStatements,
   chunkStatements,
-  applyTableChunks,
+  runShip,
   assertShippedCounts,
   sqlLiteral,
   sqlIdent,
@@ -236,43 +236,74 @@ test('assertShippedCounts ignores tables the ship skipped as absent', () => {
   );
 });
 
-// The wiring, not just the chunker: „one request per table" is the shape this change exists to remove,
-// and a refactor would drift straight back to it. Drive the real loop with a recording apply/sleep.
-test('applyTableChunks issues one request per chunk, paced, in order', () => {
+// These drive the REAL ship path, not the helpers in isolation. That distinction is the whole point:
+// with the previous shape — helpers unit-tested, main() calling them — reverting the call site to one
+// request per table, and deleting the verification line outright, BOTH left the suite fully green.
+const shipHarness = (over = {}) => {
   const calls = [];
   const naps = [];
-  const n = applyTableChunks('persons', ['A;', 'B;', 'C;', 'D;', 'E;'], {
+  const source = over.source ?? {
+    persons: { rowCount: 5, statements: ['A;', 'B;', 'C;', 'D;', 'E;'] },
+    declarations: { rowCount: 1, statements: ['F;'] },
+  };
+  const opts = {
+    tables: over.tables ?? ['persons', 'declarations'],
+    readTable: (t) => source[t] ?? null,
+    wipeSql: 'DELETE FROM persons;',
     apply: (name, sql) => calls.push([name, sql]),
     sleep: (ms) => naps.push(ms),
-    maxStatements: 2,
+    readCounts: over.readCounts ?? ((expected) => ({ ...expected })),
+    maxStatements: over.maxStatements ?? 2,
     paceMs: 500,
-  });
-  assert.equal(n, 3);
+  };
+  return { calls, naps, run: () => runShip(opts) };
+};
+
+test('runShip wipes, then ships every table in request-sized chunks, in order', () => {
+  const h = shipHarness();
+  const summary = h.run();
+
   assert.deepEqual(
-    calls.map(([name]) => name),
-    ['persons.1', 'persons.2', 'persons.3'],
-    'numbered so a failed request is identifiable in the log',
+    h.calls.map(([name]) => name),
+    ['0_wipe', 'persons.1', 'persons.2', 'persons.3', 'declarations'],
+    'wipe first, chunks numbered so a failed request is identifiable, single-chunk table stays bare',
   );
   assert.deepEqual(
-    calls.map(([, sql]) => sql),
-    ['A;B;', 'C;D;', 'E;'],
+    h.calls.map(([, sql]) => sql),
+    ['DELETE FROM persons;', 'A;B;', 'C;D;', 'E;', 'F;'],
   );
+  assert.deepEqual(summary, { persons: 5, declarations: 1 });
+});
+
+// THE regression this exists to prevent: the counter used to restart per table, so every table
+// boundary — including wipe → first insert, the most destructive transition in the run — was unpaced.
+test('runShip paces every request boundary, including wipe → first insert', () => {
+  const h = shipHarness();
+  h.run();
+  assert.equal(h.calls.length, 5);
   assert.deepEqual(
-    naps,
-    [500, 500],
-    'a gap between requests, none before the first or after the last',
+    h.naps,
+    [500, 500, 500, 500],
+    'one gap between each pair of requests: none before the first, none after the last, and none skipped at a table boundary',
   );
 });
 
-test('applyTableChunks keeps the bare table name and never sleeps when it fits in one request', () => {
-  const calls = [];
-  const naps = [];
-  applyTableChunks('declarations', ['A;'], {
-    apply: (name, sql) => calls.push([name, sql]),
-    sleep: (ms) => naps.push(ms),
-    maxStatements: 25,
-    paceMs: 500,
-  });
-  assert.deepEqual(calls, [['declarations', 'A;']]);
-  assert.deepEqual(naps, [], 'a single request must not pay the pacing delay');
+test('runShip verifies what landed — a short table fails the run', () => {
+  const h = shipHarness({ readCounts: (expected) => ({ ...expected, persons: 4 }) });
+  assert.throws(() => h.run(), /ship verification FAILED[\s\S]*persons: shipped 5, target has 4/);
+});
+
+test('runShip fails the run when the read-back itself could not answer', () => {
+  const h = shipHarness({ readCounts: () => ({}) });
+  assert.throws(() => h.run(), /no answer/);
+});
+
+test('runShip skips a table absent from the work DB without shipping or verifying it', () => {
+  const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
+  const summary = h.run();
+  assert.equal(summary.ghost, 'absent (skipped)');
+  assert.ok(
+    !h.calls.some(([name]) => name.startsWith('ghost')),
+    'an absent table must issue no request',
+  );
 });

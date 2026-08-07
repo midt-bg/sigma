@@ -75,18 +75,50 @@ const sleepSync = (ms) => {
 };
 
 /**
- * Send one table's INSERTs as paced, request-sized batches. The I/O boundary (`apply`, `sleep`) is
- * injected so the WIRING is testable, not just the pure chunker — the split only helps if main() actually
- * calls it, and „one request per table" is exactly the shape a refactor would drift back to.
- * @returns {number} requests issued
+ * The whole destructive live path: wipe, then paced request-sized inserts per table, then the read-back
+ * check. Both guarantees live HERE, behind injected I/O (`apply`, `sleep`, `readCounts`), because both are
+ * one refactor away from silently vanishing — „one request per table" is exactly the shape this drifts back
+ * to, and a `if (!emit) assert…` line at a call site is exactly the kind of line that gets dropped.
+ * Testing the pure helpers alone did NOT catch either: reverting the call site and deleting the
+ * verification each left the whole suite green. Keep the orchestration itself covered.
+ * @returns {Record<string, number|string>} rows shipped per table
  */
-export function applyTableChunks(table, statements, { apply, sleep, maxStatements, paceMs }) {
-  const chunks = chunkStatements(statements, maxStatements);
-  chunks.forEach((chunk, i) => {
-    if (i) sleep(paceMs); // between requests only — never before the first or after the last
-    apply(chunks.length > 1 ? `${table}.${i + 1}` : table, chunk.join(''));
-  });
-  return chunks.length;
+export function runShip({
+  tables,
+  readTable,
+  wipeSql,
+  apply,
+  sleep,
+  readCounts,
+  maxStatements,
+  paceMs,
+}) {
+  // ONE counter for the whole run, not one per table. Pacing per table left every table boundary
+  // unpaced — including wipe → first insert, which is the single most destructive transition here.
+  let requests = 0;
+  const applyPaced = (label, sql) => {
+    if (requests++) sleep(paceMs); // between requests only — never before the first
+    apply(label, sql);
+  };
+
+  applyPaced('0_wipe', wipeSql);
+
+  const summary = {};
+  for (const table of tables) {
+    const read = readTable(table);
+    if (!read) {
+      summary[table] = 'absent (skipped)';
+      continue;
+    }
+    summary[table] = read.rowCount;
+    const chunks = chunkStatements(read.statements, maxStatements);
+    chunks.forEach((chunk, i) =>
+      applyPaced(chunks.length > 1 ? `${table}.${i + 1}` : table, chunk.join('')),
+    );
+  }
+
+  assertShippedCounts(summary, readCounts(summary));
+  return summary;
 }
 
 // Supports --name=value, --name value, and bare --name (boolean). A --name whose next token is another
@@ -263,7 +295,11 @@ function readShippedCounts(d1Name, remote, expected) {
     const start = out.indexOf('[');
     const parsed = JSON.parse(start >= 0 ? out.slice(start) : out);
     const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
-    return Object.fromEntries(rows.map((r) => [r.t, Number(r.n)]));
+    // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass
+    // for „the table is empty"; anything non-numeric must land as NaN so assertShippedCounts fails closed.
+    return Object.fromEntries(
+      rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]),
+    );
   } catch (err) {
     console.error(
       `ship: could not read back row counts — ${err instanceof Error ? err.message : err}`,
@@ -416,38 +452,45 @@ function main() {
     '-- ⚠ DESTRUCTIVE, UNGUARDED: this wipe was emitted with --emit and did NOT pass the live D1\n' +
     '-- target-authorization check (SIGMA_SHIP_ENV allowlist + name↔SIGMA_D1_ID). If you apply it by hand,\n' +
     '-- YOU are responsible for confirming the target D1 is the intended one before running it.\n';
-  if (emit) writeFileSync(resolve(emit, '0_wipe.sql'), EMIT_WIPE_HEADER + wipeSql());
-  else applyFile('0_wipe', wipeSql());
+  // One read of a source table: null when the table is absent from the work DB.
+  const readTable = (table) => {
+    const cols = sqliteJson(`PRAGMA table_info(${sqlIdent(table)})`).map((r) => r.name);
+    if (!cols.length) return null;
+    const rows = sqliteJson(`SELECT * FROM ${sqlIdent(table)}`);
+    return { rowCount: rows.length, statements: insertStatements(table, cols, rows) };
+  };
 
-  const summary = {};
+  let summary = {};
   try {
-    for (const table of TABLES) {
-      const cols = sqliteJson(`PRAGMA table_info(${sqlIdent(table)})`).map((r) => r.name);
-      if (!cols.length) {
-        summary[table] = 'absent (skipped)';
-        continue;
-      }
-      const rows = sqliteJson(`SELECT * FROM ${sqlIdent(table)}`);
-      const statements = insertStatements(table, cols, rows);
-      summary[table] = rows.length;
+    if (emit) {
       // --emit keeps ONE file per table: those are applied by hand, and numbered fragments would only add
-      // ordering rope to a manual run. The paced split below matters for the live path, where the request
-      // itself is the unit of load.
-      if (emit) writeFileSync(resolve(emit, `${table}.sql`), statements.join(''));
-      else if (statements.length)
-        applyTableChunks(table, statements, {
-          apply: applyFile,
-          sleep: sleepSync,
-          maxStatements,
-          paceMs,
-        });
+      // ordering rope to a manual run. Nothing is written to a DB, so there is nothing to pace or verify —
+      // the header on 0_wipe.sql puts the target check on whoever applies them.
+      writeFileSync(resolve(emit, '0_wipe.sql'), EMIT_WIPE_HEADER + wipeSql());
+      for (const table of TABLES) {
+        const read = readTable(table);
+        if (!read) {
+          summary[table] = 'absent (skipped)';
+          continue;
+        }
+        summary[table] = read.rowCount;
+        writeFileSync(resolve(emit, `${table}.sql`), read.statements.join(''));
+      }
+    } else {
+      summary = runShip({
+        tables: TABLES,
+        readTable,
+        wipeSql: wipeSql(),
+        apply: applyFile,
+        sleep: sleepSync,
+        readCounts: (expected) => readShippedCounts(d1Name, remote, expected),
+        maxStatements,
+        paceMs,
+      });
     }
   } finally {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
-  // Verify what actually landed. Skipped for --emit (nothing was written yet — the files are applied later
-  // by hand, and the header on 0_wipe.sql already puts that check on whoever runs them).
-  if (!emit) assertShippedCounts(summary, readShippedCounts(d1Name, remote, summary));
 
   console.log(
     JSON.stringify(
