@@ -7,6 +7,9 @@ import {
   parseMinLinks,
   resolveD1Name,
   insertStatements,
+  chunkStatements,
+  runShip,
+  assertShippedCounts,
   sqlLiteral,
   sqlIdent,
   TABLES,
@@ -180,4 +183,127 @@ test('related_persons_internal (relative-name PII) is NOT shipped to the served 
   // No served query reads it; shipping PII we never surface is a latent exposure. It stays in the
   // build/work DB only. If a real read path is ever added, ship it deliberately and revisit anonymization.
   assert.ok(!TABLES.includes('related_persons_internal'));
+});
+
+// The first full-corpus ship put 516k rows through in one hour, p90 batch 18.2s, and the database then
+// returned „internal error" for hours. Chunking bounds what a single request carries; these lock the
+// boundaries so a refactor cannot quietly restore the one-request-per-table shape.
+test('chunkStatements splits into request-sized groups and preserves order', () => {
+  const stmts = Array.from({ length: 7 }, (_, i) => `S${i};`);
+  assert.deepEqual(chunkStatements(stmts, 3), [
+    ['S0;', 'S1;', 'S2;'],
+    ['S3;', 'S4;', 'S5;'],
+    ['S6;'],
+  ]);
+  assert.deepEqual(chunkStatements(stmts, 100), [stmts], 'fits in one request');
+  assert.deepEqual(chunkStatements([], 3), [], 'nothing to ship, nothing to send');
+});
+
+test('chunkStatements refuses a non-positive size rather than looping forever', () => {
+  assert.throws(() => chunkStatements(['a'], 0), /positive integer/);
+  assert.throws(() => chunkStatements(['a'], -1), /positive integer/);
+  assert.throws(() => chunkStatements(['a'], 1.5), /positive integer/);
+});
+
+// The ship wipes, then writes over SEVERAL requests with no cross-request transaction. Before this, a
+// failure part-way exited 0 and the surface silently served a partial corpus — while the READ path
+// (EOP hydrate) already refused on a row-count mismatch. Same standard on the destructive side.
+test('assertShippedCounts passes when the target holds exactly what was shipped', () => {
+  assert.doesNotThrow(() =>
+    assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 2 }),
+  );
+});
+
+test('assertShippedCounts fails on a short table and names the numbers', () => {
+  assert.throws(
+    () => assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 1 }),
+    (e) =>
+      /interest_links: shipped 2, target has 1/.test(e.message) &&
+      /verification FAILED/.test(e.message),
+  );
+});
+
+test('assertShippedCounts fails closed when the read-back returned nothing', () => {
+  assert.throws(
+    () => assertShippedCounts({ persons: 3 }, {}),
+    /persons: shipped 3, target has no answer/,
+  );
+});
+
+test('assertShippedCounts ignores tables the ship skipped as absent', () => {
+  assert.doesNotThrow(() =>
+    assertShippedCounts({ persons: 1, gone: 'absent (skipped)' }, { persons: 1 }),
+  );
+});
+
+// These drive the REAL ship path, not the helpers in isolation. That distinction is the whole point:
+// with the previous shape — helpers unit-tested, main() calling them — reverting the call site to one
+// request per table, and deleting the verification line outright, BOTH left the suite fully green.
+const shipHarness = (over = {}) => {
+  const calls = [];
+  const naps = [];
+  const source = over.source ?? {
+    persons: { rowCount: 5, statements: ['A;', 'B;', 'C;', 'D;', 'E;'] },
+    declarations: { rowCount: 1, statements: ['F;'] },
+  };
+  const opts = {
+    tables: over.tables ?? ['persons', 'declarations'],
+    readTable: (t) => source[t] ?? null,
+    wipeSql: 'DELETE FROM persons;',
+    apply: (name, sql) => calls.push([name, sql]),
+    sleep: (ms) => naps.push(ms),
+    readCounts: over.readCounts ?? ((expected) => ({ ...expected })),
+    maxStatements: over.maxStatements ?? 2,
+    paceMs: 500,
+  };
+  return { calls, naps, run: () => runShip(opts) };
+};
+
+test('runShip wipes, then ships every table in request-sized chunks, in order', () => {
+  const h = shipHarness();
+  const summary = h.run();
+
+  assert.deepEqual(
+    h.calls.map(([name]) => name),
+    ['0_wipe', 'persons.1', 'persons.2', 'persons.3', 'declarations'],
+    'wipe first, chunks numbered so a failed request is identifiable, single-chunk table stays bare',
+  );
+  assert.deepEqual(
+    h.calls.map(([, sql]) => sql),
+    ['DELETE FROM persons;', 'A;B;', 'C;D;', 'E;', 'F;'],
+  );
+  assert.deepEqual(summary, { persons: 5, declarations: 1 });
+});
+
+// THE regression this exists to prevent: the counter used to restart per table, so every table
+// boundary — including wipe → first insert, the most destructive transition in the run — was unpaced.
+test('runShip paces every request boundary, including wipe → first insert', () => {
+  const h = shipHarness();
+  h.run();
+  assert.equal(h.calls.length, 5);
+  assert.deepEqual(
+    h.naps,
+    [500, 500, 500, 500],
+    'one gap between each pair of requests: none before the first, none after the last, and none skipped at a table boundary',
+  );
+});
+
+test('runShip verifies what landed — a short table fails the run', () => {
+  const h = shipHarness({ readCounts: (expected) => ({ ...expected, persons: 4 }) });
+  assert.throws(() => h.run(), /ship verification FAILED[\s\S]*persons: shipped 5, target has 4/);
+});
+
+test('runShip fails the run when the read-back itself could not answer', () => {
+  const h = shipHarness({ readCounts: () => ({}) });
+  assert.throws(() => h.run(), /no answer/);
+});
+
+test('runShip skips a table absent from the work DB without shipping or verifying it', () => {
+  const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
+  const summary = h.run();
+  assert.equal(summary.ghost, 'absent (skipped)');
+  assert.ok(
+    !h.calls.some(([name]) => name.startsWith('ghost')),
+    'an absent table must issue no request',
+  );
 });
