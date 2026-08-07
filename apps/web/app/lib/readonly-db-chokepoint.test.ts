@@ -16,8 +16,17 @@ function stripComments(src: string): string {
 }
 
 // [path, comment-stripped code] for every non-test web source file (build output excluded).
+// `test/integration/setup.ts` is exempted: it bootstraps the local wrangler proxy and applies the
+// D1 migrations (`proxy.env.DB.exec(...)`) — schema admin, not application data access. Production
+// runtime still goes through getDb; this file runs only inside `vitest run --config
+// vitest.integration.config.ts` (never in the deployed Worker).
 const CODE: ReadonlyArray<readonly [string, string]> = Object.entries(SOURCES)
-  .filter(([path]) => !path.includes('.test.') && !path.includes('/build/'))
+  .filter(
+    ([path]) =>
+      !path.includes('.test.') &&
+      !path.includes('/build/') &&
+      !path.endsWith('/test/integration/setup.ts'),
+  )
   .map(([path, src]) => [path, stripComments(src)] as const);
 
 const offenders = (re: RegExp): string[] =>
