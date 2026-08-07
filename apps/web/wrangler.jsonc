@@ -84,6 +84,17 @@
         "namespace_id": "1005",
         "simple": { "limit": 10, "period": 60 },
       },
+      {
+        // Per-IP throttle for the /conflicts* subtree (personal-names surface + its .data twins). Higher
+        // than the aggregation limit because a single page view triggers a follow-up .data fetch and the
+        // leaderboard's cache HITs bypass this entirely — only distinct uncached URLs (the scrape pattern)
+        // consume it. 40/min throttles enumerating ~1000 official slugs to a crawl without touching normal
+        // browsing. namespace_id 1006 (1001–1005 taken; 1004 = /health per #118).
+        "name": "CONFLICTS_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 40, "period": 60 },
+      },
     ],
   },
   "observability": {

@@ -5,15 +5,39 @@ on:
     branches: [main]
   pull_request:
 
-# Least-privilege default token; no job in this workflow writes to the repo.
+# Least-privilege default token; the only write anywhere is the coverage-comment
+# job's pull-requests:write, scoped to that job (and it never runs for fork PRs).
 permissions:
   contents: read
 
 jobs:
+  # SAST scan, parallel to `check` so it never lengthens the lint/typecheck/test critical path.
+  # The official image is pinned by digest, like the sha256-pinned gitleaks and osv-scanner
+  # binaries below. The RULE PACKS are not: `p/security-audit`, `p/secrets` and `p/typescript`
+  # are fetched from the semgrep registry on every run and can change upstream without a commit
+  # here. Accepted deliberately — the failure mode is a visible, fixable red build (a new rule
+  # fires on existing code), not a silent bypass, and pinning would mean vendoring three curated
+  # packs and re-syncing them by hand, which in practice means running stale security rules.
+  # Revisit if an upstream rule change ever breaks CI on an unrelated PR.
+  # Explicit rulesets (not `--config auto`, which refuses to run with metrics off) +
+  # `--metrics=off` so nothing about the repo is reported to semgrep.dev; `--error` makes any
+  # finding fail the build.
+  semgrep:
+    runs-on: ubuntu-latest
+    # Cap the job so a hung rule fetch or a runaway scan can't sit until GitHub's default runner
+    # limit. 15m is a generous ceiling — local scans complete in under a minute.
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Static analysis (semgrep)
+        run: semgrep scan --config p/security-audit --config p/secrets --config p/typescript --metrics=off --error
+
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Secret scan FIRST, on the pristine checkout (tracked files only) — before `pnpm install`
       # creates node_modules. The gitleaks *Action* requires a paid GITLEAKS_LICENSE on GitHub
@@ -32,7 +56,7 @@ jobs:
           "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -65,7 +89,25 @@ jobs:
         run: pnpm typecheck
       - name: Test
         if: ${{ !cancelled() }}
-        run: pnpm test
+        run: pnpm test -- --coverage
+      # Coverage ratchet (#93): per-workspace lines/branches may not drop below
+      # coverage-baseline.json (0.5pp tolerance). The checker self-tests first,
+      # so the gate is itself gated — same pattern as the docs check below.
+      - name: Coverage ratchet
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm check:coverage:test
+          pnpm check:coverage
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          retention-days: 14
+          path: |
+            coverage-summary.md
+            apps/*/coverage/coverage-summary.json
+            packages/*/coverage/coverage-summary.json
       # Docs integrity (#102): fail on a dangling docs reference in source or an
       # unindexed doc. The checker self-tests first, so the gate is itself gated.
       - name: Docs integrity
@@ -73,3 +115,48 @@ jobs:
         run: |
           pnpm check:docs:test
           pnpm check:docs
+
+  # Sticky PR comment with the coverage table (#93). Same-repo PRs only: fork
+  # PRs get a read-only token no matter what `permissions:` says, so for them
+  # the table lives in the step summary + artifact instead. `always()` so the
+  # comment still updates when the ratchet fails; continue-on-error so a
+  # comment hiccup never gates a merge.
+  coverage-comment:
+    needs: check
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+      - name: Sticky coverage comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f coverage-summary.md ]; then
+            echo "coverage-summary.md missing from artifact; nothing to post"
+            exit 0
+          fi
+          marker='<!-- coverage-report -->'
+          # Two steps, not a pipeline: `gh api | head -1` under the runner's
+          # default `pipefail` can surface gh's SIGPIPE (exit 141) as failure.
+          gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" > comment-ids.txt
+          existing=$(head -1 comment-ids.txt)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${GH_REPO}/issues/comments/${existing}" \
+              -F body=@coverage-summary.md > /dev/null
+            echo "updated comment ${existing}"
+          else
+            gh api --method POST "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+              -F body=@coverage-summary.md > /dev/null
+            echo "created comment"
+          fi
