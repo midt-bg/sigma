@@ -21,6 +21,7 @@ import {
 } from '../packages/ingest/src/ocds.ts';
 import {
   dropTransientStagingStatements,
+  fullClearTables,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
@@ -233,20 +234,52 @@ function validateDeriveMode(mode) {
 
 // Refuse the one combination that silently destroys data: a full derive (which rebuilds the domain
 // from staging) driven by a window that does not reach back to the start of the feed. Anything the
-// window misses is deleted and never reloaded. Checked before the load so it costs nothing.
+// window misses is deleted and never reloaded. Checked before the load, and the refusal tears the
+// transient staging back down: it cannot run any earlier, because the catch-up plan reads
+// raw_contracts, but it must not leave a half-built schema behind for a run that never started.
+//
+// The question is asked of EVERY table the full clear empties, not of `contracts` alone: a corpus
+// with no contracts but populated tenders, bidders or authorities is exactly the state a half-failed
+// run leaves behind, and the narrow-window rebuild would then wipe those too while the guard waved
+// it through. The list comes out of normalize-raw.sql itself (see @full-clear there).
 function assertDeriveWindowSafe(mode, from) {
   if (mode !== 'full') return;
-  const rows = safeD1('SELECT COUNT(*) AS rows FROM contracts');
-  const hasCorpus = Number(rows[0]?.rows ?? 0) > 0;
-  if (fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus })) return;
+  const tables = fullClearTables(readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8'));
+  if (tables.length === 0)
+    throw new Error(
+      'normalize-raw.sql has no @full-clear block — refusing to guess what it clears',
+    );
+  // EXISTS per table, not COUNT(*) over the union: this runs on every full derive and must stay
+  // cheap on a corpus of hundreds of thousands of rows.
+  const probe = tables.map((t) => `(SELECT EXISTS(SELECT 1 FROM ${t})) AS "${t}"`).join(', ');
+  const row = safeD1(`SELECT ${probe}`)[0];
+  // safeD1 turns a missing table into an empty result, which would otherwise read as "no corpus" and
+  // wave the destructive path through — one absent table blinding the guard about the other thirteen.
+  // A probe that could not answer is not an answer: fail closed.
+  if (!row || tables.some((table) => !(table in row))) {
+    console.error(
+      `!! refusing --derive=full: could not read the corpus. Every table normalize-raw.sql clears ` +
+        `(${tables.join(', ')}) must be answerable before a rebuild may drop it.`,
+    );
+    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    process.exit(1);
+  }
+  const populated = Object.entries(row)
+    .filter(([, present]) => Number(present) > 0)
+    .map(([table]) => table);
+  if (
+    fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus: populated.length > 0 })
+  )
+    return;
   console.error(
-    `!! refusing --derive=full: the load window starts ${from}, but the corpus already holds ` +
-      `${rows[0]?.rows} contracts going back to ${DEFAULT_FROM}.\n` +
-      `   A full derive rebuilds contracts from staging, so every contract before ${from} would be ` +
-      `dropped and not reloaded.\n` +
+    `!! refusing --derive=full: the load window starts ${from}, but the corpus is already ` +
+      `populated back to ${DEFAULT_FROM}.\n` +
+      `   A full derive rebuilds the domain from staging, so everything before ${from} would be ` +
+      `dropped and not reloaded — including ${populated.join(', ')}.\n` +
       `   Use --derive=slice for an incremental refresh, or reload the whole feed with ` +
       `--from=${DEFAULT_FROM}.`,
   );
+  execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
   process.exit(1);
 }
 
@@ -391,6 +424,7 @@ if (arg('work-db') !== undefined) {
 console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'})`);
 run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
 execSqlStatements(dropTransientStagingStatements(), 'drop-stale-transient-staging');
+// Must precede resolveCatchupPlan(): latestLoadedDate() reads raw_contracts, which lives here.
 execSql(resolve(root, 'scripts/work-staging-schema.sql'));
 
 let deriveMode = String(arg('derive') || 'full');
