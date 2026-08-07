@@ -524,4 +524,105 @@ describe('свързани-лица SQL (real SQLite)', () => {
       );
     });
   });
+
+  // ── the evidence seal gate (#279, ADR-0033 decision 1) ──────────────────────
+  //
+  // This block exists because the gate had NO test pressure at all: deleting the entire
+  // `EXISTS (… interest_link_evidence …)` clause out of SURFACED_OWNERSHIP left the whole db suite
+  // green (361/361), because every fixture above seals every link 'document'. That clause is the only
+  // SQL between a WITHHELD link and a named public claim that a specific official owns a specific
+  // company, so an untested one is the most expensive kind of dead rail.
+  //
+  // Each rung below is a REAL withholding outcome of evidence.mjs, not an invented value:
+  //   refuted          — the register contradicts the declared stake
+  //   bar_joint_stock  — an АД/ЕАД, where a declared parcel of shares is not a material conflict
+  //   unknown          — no rung reached; the deed proves nothing either way
+  //   outside_tr       — ДЗЗД/BULSTAT, not in the Trade Register at all
+  // …plus a link with NO seal row whatsoever, which is what a half-loaded run produces.
+  describe('a link withheld by its evidence seal never reaches any public query', () => {
+    // All six share the SAME winner (eik 111, which has live contracts) and the same shape, so the
+    // ONLY thing that differs is the seal. Without that, an absent row could be absent for an unrelated
+    // reason and every assertion here would pass vacuously — which is exactly the bug being fixed.
+    const WITHHELD = [
+      ['refuted', 'person:ref', 'Оборен Тестов'],
+      ['bar_joint_stock', 'person:bar', 'Акционер Тестов'],
+      ['unknown', 'person:unk', 'Неясен Тестов'],
+      ['outside_tr', 'person:out', 'Извън Тестов'],
+    ] as const;
+
+    function seedRungs(dbPath: string): void {
+      const people = [...WITHHELD.map(([, id, name]) => [id, name] as const)];
+      people.push(['person:none', 'Безпечатен Тестов'], ['person:ok', 'Потвърден Тестов']);
+      const links = [...WITHHELD.map(([, id]) => id), 'person:none', 'person:ok'];
+      sqlite(
+        dbPath,
+        `INSERT INTO persons (id, name) VALUES ${people.map(([id, n]) => `('${id}','${n}')`).join(',')};
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
+           ${links
+             .map(
+               (p) =>
+                 `('il:${p.split(':')[1]}','${p}|111','${p}','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2019','2023',3,1000,'2020','2021','published')`,
+             )
+             .join(',')};
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status) VALUES
+           ${WITHHELD.map(([kind, id]) => `('${id}|111','${kind}',NULL,NULL,'2026-08-05','tr-rules-1','live')`).join(',')},
+           ('person:ok|111','confirmed',NULL,'seat:СОФИЯ','2026-08-05','tr-rules-1','live');`,
+      );
+      // person:none deliberately gets NO evidence row at all.
+    }
+
+    it('the POSITIVE CONTROL surfaces — so every absence below is caused by the seal, not the fixture', () => {
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+        expect(board.some((r) => r.official === 'Потвърден Тестов')).toBe(true);
+        expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:ok'))).toHaveLength(1);
+      });
+    });
+
+    for (const [kind, personId, name] of WITHHELD) {
+      it(`'${kind}' is withheld from the leaderboard, the official page, the company page and the drill-down`, () => {
+        withDb((dbPath) => {
+          seedRungs(dbPath);
+          const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+          expect(board.some((r) => r.official === name)).toBe(false);
+          expect(board.some((r) => r.link_key === `${personId}|111`)).toBe(false);
+          // The official's own page must 404 rather than render a withheld claim under their name…
+          expect(rows(dbPath, lit(OFFICIAL_SQL, personId))).toHaveLength(0);
+          // …the company page must not list them among that winner's office-holders…
+          expect(rows(dbPath, lit(COMPANY_SQL, '111')).some((r) => r.official === name)).toBe(
+            false,
+          );
+          // …and the drill-down must not enumerate the contracts of a link it may not name.
+          expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, `${personId}|111`))).toHaveLength(0);
+        });
+      });
+    }
+
+    it('a link with NO seal row at all is withheld too — a half-loaded run must not publish', () => {
+      // The LEFT JOIN in LINK_SELECT would happily return this row with NULL evidence columns; only the
+      // EXISTS gate keeps it off the surface. This is the case a partial load actually produces.
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+        expect(board.some((r) => r.official === 'Безпечатен Тестов')).toBe(false);
+        expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:none'))).toHaveLength(0);
+        expect(
+          rows(dbPath, lit(COMPANY_SQL, '111')).some((r) => r.official === 'Безпечатен Тестов'),
+        ).toBe(false);
+        expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:none|111'))).toHaveLength(0);
+      });
+    });
+
+    it('the company page shows ONLY the sealed office-holders of that winner', () => {
+      // Four withheld links and one confirmed link all point at eik 111, alongside the base fixture's
+      // Иван. A gate that let any withheld rung through would show up here as an extra name.
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const names = rows(dbPath, lit(COMPANY_SQL, '111')).map((r) => r.official);
+        expect(names.sort()).toEqual(['Иван Минев', 'Потвърден Тестов']);
+      });
+    });
+  });
 });
