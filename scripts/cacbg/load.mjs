@@ -614,19 +614,23 @@ for (const rec of agg.values()) {
   // person in THIS company). nameDistinctiveness is deliberately NOT part of this gate: the seat rung
   // exists precisely to rescue a generic name, so requiring distinctiveness would empty it.
   const nameUnique = nameGloballyUnique(rec.key);
+  // „Неизвестна" — the withholding verdict, used for every way of ending up with no usable evidence.
+  const noEvidence = () => ({
+    kind: 'unknown',
+    publishable: false,
+    registryRole: null,
+    matchedFact: null,
+    entryNumber: null,
+    entryDate: null,
+    rulesVersion: RULES_VERSION,
+  });
   // With --allow-partial-tr the operator has accepted an incomplete cache. An uncached ЕИК then yields
   // no evidence at all, which is „Неизвестна" — held. It must never be read as a reason to publish.
-  const verdict = missing
-    ? {
-        kind: 'unknown',
-        publishable: false,
-        registryRole: null,
-        matchedFact: null,
-        entryNumber: null,
-        entryDate: null,
-        rulesVersion: RULES_VERSION,
-      }
-    : evidenceVerdict({
+  let verdict;
+  if (missing) verdict = noEvidence();
+  else {
+    try {
+      verdict = evidenceVerdict({
         deed,
         outsideTr,
         declarantName: rec.person,
@@ -636,6 +640,17 @@ for (const rec of agg.values()) {
         scope: rec.scope,
         nameGloballyUnique: nameUnique,
       });
+    } catch (err) {
+      // A deed we cannot parse is a deed we cannot reason about — so this link withholds, exactly as an
+      // uncached one does, and the run continues. Failing the whole load instead would let one malformed
+      // deed out of ~400 decide the fate of every other link, and the ship floor would then refuse the
+      // reduced surface — turning a single bad payload into a total outage. Loud, per link, fail-closed.
+      console.error(
+        `  ${rec.eik}: evidence UNREADABLE — ${err instanceof Error ? err.message : err} (link held)`,
+      );
+      verdict = noEvidence();
+    }
+  }
   const tier = verdict.kind;
   const contemporaneous = [...years].some(
     (cy) => temporalStatus(declYears, cy) === 'contemporaneous',

@@ -216,35 +216,42 @@ export async function run({
         continue;
       }
 
-      let deed;
+      // ONE refuse-and-continue block around EVERYTHING derived from the response — the JSON, the UIC
+      // echo, and the HTML parsing alike. The parsing used to sit outside it, which made the block's
+      // own promise false: a throw from deed.mjs escaped the loop, escaped run(), and killed the
+      // process, so one malformed deed ended a crawl that had already spent its paced request budget.
+      // The decode guard in deed.mjs removes the one throw we know of; this is the rail that holds when
+      // the next one appears, and the cost of being wrong here is measured in hours of pacing.
       try {
-        deed = JSON.parse(res.body.toString('utf8'));
+        const deed = JSON.parse(res.body.toString('utf8'));
         // The deed we got back must be the deed we asked for, or every claim derived from it names
         // the wrong company (R8).
         assertUicEcho(deed, eik);
+
+        // The raw response is the ONLY place names live; it stays under git-ignored scratch. Written
+        // only after the echo check, so a deed for the wrong company never lands on disk.
+        atomicWrite(deedPath(eik, rawDir), res.body);
+        const seat = registrySeat(deed);
+        const form = registryLegalForm(deed);
+        upsertDeed(db, {
+          eik,
+          status: 'fetched',
+          httpStatus: 200,
+          fetchedAt: now().toISOString(),
+          rawPath: path.relative(rawDir, deedPath(eik, rawDir)),
+          bodySha256: crypto.createHash('sha256').update(res.body).digest('hex'),
+          legalFormCode: form.code,
+          legalFormVerdict: form.verdict,
+          seatNormalized: seat.settlement || null,
+          seatEntryDate: seat.entryDate,
+          latestOwnEntryDate: latestOwnershipEntryDate(deed),
+        });
       } catch (err) {
         console.error(`  ${eik}: REFUSED — ${err instanceof Error ? err.message : err}`);
         unresolved++;
         consecutive++;
         continue;
       }
-
-      // The raw response is the ONLY place names live; it stays under git-ignored scratch.
-      atomicWrite(deedPath(eik, rawDir), res.body);
-      const seat = registrySeat(deed);
-      upsertDeed(db, {
-        eik,
-        status: 'fetched',
-        httpStatus: 200,
-        fetchedAt: now().toISOString(),
-        rawPath: path.relative(rawDir, deedPath(eik, rawDir)),
-        bodySha256: crypto.createHash('sha256').update(res.body).digest('hex'),
-        legalFormCode: registryLegalForm(deed).code,
-        legalFormVerdict: registryLegalForm(deed).verdict,
-        seatNormalized: seat.settlement || null,
-        seatEntryDate: seat.entryDate,
-        latestOwnEntryDate: latestOwnershipEntryDate(deed),
-      });
       consecutive = 0;
     }
 

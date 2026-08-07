@@ -29,12 +29,23 @@ const ENTITIES = {
   '&gt;': '>',
   '&nbsp;': ' ',
 };
+// `String.fromCodePoint` THROWS RangeError above U+10FFFF (and on a surrogate half), and the input is
+// whatever the register put on the wire. An unguarded throw here does not stay local: it escapes
+// entityBlocks and registrySeat, past the crawl loop's refuse-and-continue block (which covers only
+// JSON.parse + assertUicEcho) and out of run() — one malformed escape in one deed ends a paced crawl
+// that has already spent its request budget, and does the same to load.mjs at decision time.
+// Out of range is not a character and cannot be part of a name, so it decodes to nothing: the rest of
+// the entity still parses, which is the difference between losing a glyph and losing the run.
+const MAX_CODE_POINT = 0x10ffff;
+const codePoint = (n) =>
+  Number.isInteger(n) && n >= 0 && n <= MAX_CODE_POINT ? String.fromCodePoint(n) : '';
+
 /** Decode the entity set the register actually emits, plus numeric escapes. FIRST step, always. */
 function decodeEntities(s) {
   return String(s)
     .replace(/&(?:quot|apos|amp|lt|gt|nbsp);/g, (m) => ENTITIES[m])
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+    .replace(/&#(\d+);/g, (_, n) => codePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => codePoint(parseInt(n, 16)));
 }
 
 /** Strip tags and collapse whitespace, INSIDE one already-isolated entity. */

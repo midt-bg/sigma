@@ -172,6 +172,41 @@ test('an empty htmlData yields no entities and does not throw', () => {
   assert.deepEqual(entityBlocks(null), []);
 });
 
+// A numeric entity is attacker-shaped input in the only sense that matters here: it comes off the
+// wire, and `String.fromCodePoint` throws RangeError above U+10FFFF. That throw escapes decodeEntities,
+// escapes entityBlocks and registrySeat, and — because the crawl loop's try/catch covers only
+// JSON.parse + assertUicEcho — escapes run() and kills the process. One malformed entity in one deed
+// would end a paced crawl that has already spent its request budget. Out of range is not a person, so
+// the only defensible reading is „no character": drop it and keep parsing the rest of the entity.
+test('an out-of-range numeric entity is dropped, never thrown out of the parser', () => {
+  const overflow = F19_THREE.replace('ПЕНКО', '&#999999999999;ПЕНКО');
+  const blocks = entityBlocks(overflow);
+  assert.equal(blocks.length, 3, 'the deed still parses into its three entities');
+  assert.match(blocks[1].text, /ПЕНКО НЕСТОРОВ НЕСТОРОВ/, 'the surrounding name survives intact');
+  assert.ok(!blocks[1].text.includes('&#'), 'the escape itself does not survive as literal text');
+});
+
+test('the hex numeric form is guarded too — both decode lines, not just the decimal one', () => {
+  const overflow = F19_THREE.replace('ИЛИЯН', '&#xFFFFFFFF;ИЛИЯН');
+  const blocks = entityBlocks(overflow);
+  assert.equal(blocks.length, 3);
+  assert.match(blocks[2].text, /ИЛИЯН КОСТАДИНОВ ФИЛИПОВ/);
+});
+
+test('an in-range numeric entity still decodes — the guard bounds, it does not disable', () => {
+  // &#1055; is „П". A guard that dropped every numeric escape would silently mangle real names.
+  const blocks = entityBlocks(F19_THREE.replace('ПЕНКО', '&#1055;ЕНКО'));
+  assert.match(blocks[1].text, /ПЕНКО НЕСТОРОВ НЕСТОРОВ/);
+});
+
+test('registrySeat survives the same malformed entity rather than aborting the load', () => {
+  // registrySeat sits OUTSIDE the crawl loop's refuse-and-continue block (fetch-deeds.mjs), and
+  // load.mjs calls it again at decision time — so an unguarded throw here takes down both legs.
+  const d = deedOf([field('CR_F_5_L', F5_SEAT.replace('с. Марково', '&#999999999999;с. Марково'))]);
+  const seat = registrySeat(d);
+  assert.equal(seat.settlement, 'МАРКОВО');
+});
+
 test('liveFields keeps only the requested codes and reports entry date/number', () => {
   const d = deedOf([
     field('CR_F_7_L', F7_MANAGER, { nameCode: 'CR_F_7_L', fieldEntryDate: '2017-09-15T00:00:00' }),
