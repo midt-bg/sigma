@@ -345,6 +345,28 @@ describe('pageNav', () => {
 });
 
 describe('withParams', () => {
+  it('serializes an array override as repeated params in canonical order', () => {
+    expect(withParams(sp(''), { year: ['2024', '2025'] })).toBe('?year=2024&year=2025');
+  });
+
+  it('deletes cursor and page when overridden with null (keyset reset)', () => {
+    expect(
+      withParams(sp('sort=date-desc&cursor=after:x&page=3'), { cursor: null, page: null }),
+    ).toBe('?sort=date-desc');
+  });
+
+  it('preserves unrelated existing params while overriding one key', () => {
+    expect(withParams(sp('sector=45&year=2025'), { year: ['2026'] })).toBe('?sector=45&year=2026');
+  });
+
+  it('drops empty-string values instead of emitting a bare key', () => {
+    expect(withParams(sp('sort=value-desc'), { value: '', eu: '' })).toBe('?sort=value-desc');
+  });
+
+  it('returns an empty string (not "?") when nothing remains', () => {
+    expect(withParams(sp('cursor=after:x'), { cursor: null })).toBe('');
+  });
+
   it('drops unknown params — including repeated ones — so none can ride a link into the edge cache (#197)', () => {
     expect(withParams(sp('sort=value-desc&x=poison'), {})).toBe('?sort=value-desc');
     expect(withParams(sp('sector=45&x=1&x=2&sort=value-desc&utm_source=ad'), {})).toBe(
@@ -370,5 +392,37 @@ describe('withParams', () => {
     // The invariant behind the filter: a key ordered but not in the allow-list would be silently
     // dropped from every generated link.
     expect(PARAM_ORDER.filter((key) => !CANONICAL_QUERY_PARAMS.has(key))).toEqual([]);
+  });
+});
+
+// Issue #181: the FilterRail is a native `<Form method="get">`. A native submit serialises the checked
+// boxes as repeated params (`?sector=45&sector=50`), omits unchecked boxes and cursor/page, and emits
+// the „Всички" radio as an empty param (`value=`). The loader's shared parser must read that back so the
+// URL round-trips a shareable filter set.
+describe('native FilterRail GET submit round-trips through the loader', () => {
+  const sectorA = CPV_SECTORS[0].code;
+  const sectorB = CPV_SECTORS[1].code;
+
+  it('parses repeated checkbox params into the selected filter arrays', () => {
+    const submitted = sp(`sort=date-desc&sector=${sectorA}&sector=${sectorB}&year=2026&year=2025`);
+    const f = contractListFilters(submitted);
+    expect(f.sectors).toEqual([sectorA, sectorB]);
+    expect(f.years).toEqual(['2026', '2025']);
+    expect(f.sort).toBe('date-desc');
+  });
+
+  it('treats the empty „Всички" radio params as unset', () => {
+    const submitted = sp('sort=value-desc&value=&eu=');
+    const f = contractListFilters(submitted);
+    expect(getMulti(submitted, 'value')).toEqual([]);
+    expect(f.eu).toBeNull();
+    expect(f.valueBucket).toBe('');
+  });
+
+  it('yields empty filter arrays when no boxes were checked', () => {
+    const f = contractListFilters(sp('sort=value-desc'));
+    expect(f.sectors).toEqual([]);
+    expect(f.years).toEqual([]);
+    expect(f.procedureGroups).toEqual([]);
   });
 });
