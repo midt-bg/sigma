@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
+  isNaturalPersonBidder,
   isNaturalPersonProfileName,
   longDate,
   money,
@@ -21,6 +22,7 @@ import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexTex
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
+import { markPrivacyMaskApplied } from '../lib/security';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -99,7 +101,16 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   return tags;
 }
 
-export function headers() {
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the masked Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response (same shape as
+  // `company.tsx:47`). The `.data` RRv7 single-fetch twin shares the same loader, so the marker
+  // set on the loader Response covers both surfaces.
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    return { 'Cache-Control': publicCache(3600), 'X-Privacy-Mask': 'applied' };
+  }
   return { 'Cache-Control': publicCache(3600) };
 }
 
@@ -107,6 +118,26 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
   const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
+
+  // Privacy policy for the contract detail page (ADR-0033 §6, decision recorded in PR #183 review):
+  // the trading `displayName` is PUBLIC, the ЕИК is the sensitive natural-person identifier. This
+  // is the MOST-indexable surface — `robots.txt` does not block `/contracts/:id` (or its `.data`
+  // twin), and the contract page is among the most-visited. Masking + signalling in the shared
+  // loader covers both the rendered HTML and the RRv7 single-fetch `.data` payload at once, rather
+  // than per-surface. The policy mirrors `company.tsx:89` exactly: ЕИК → null on the shared object,
+  // the marker is translated to `X-Robots-Tag: noindex` by `hardenResponse` in workers/app.ts. The
+  // `kind === 'consortium'` guard matches the JSON masker (MAJOR 1) and the CSV streamer
+  // (`bidder_kind !== 'consortium'`, contracts.ts:459) so a JV whose first member is a sole trader
+  // is never over-masked/noindexed. Legal-entity records keep the plain-object return (no marker).
+  const isNatural =
+    contract.bidder.kind !== 'consortium' &&
+    isNaturalPersonBidder(contract.bidder.name, contract.bidder_legal_form);
+  if (isNatural) {
+    contract.bidder.eik = null;
+    const responseHeaders = new Headers({ 'Cache-Control': publicCache(3600) });
+    markPrivacyMaskApplied(responseHeaders);
+    return Response.json({ contract }, { headers: responseHeaders });
+  }
   return { contract };
 }
 

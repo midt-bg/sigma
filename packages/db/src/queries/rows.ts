@@ -44,6 +44,7 @@ export interface CompanyTotalsRow {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  legal_form: string | null;
 }
 
 export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {

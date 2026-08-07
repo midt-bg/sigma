@@ -33,6 +33,7 @@ describe('toCompanyListItem', () => {
     eu_eur: 10000,
     first_date: '2022-01-01',
     last_date: '2024-06-01',
+    legal_form: 'ООД',
   };
 
   it('maps core fields', () => {

@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
-  isNaturalPersonProfileName,
+  isNaturalPersonBidder,
   money,
   moneyBare,
   pct,
@@ -25,18 +25,6 @@ import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tab
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
-function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
-  if (kind === 'consortium' || !legalForm) return false;
-  const normalized = legalForm.trim().toUpperCase();
-  return (
-    normalized === 'ЕТ' ||
-    normalized === 'ET' ||
-    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
-    normalized.includes('SOLE TRADER') ||
-    normalized.includes('INDIVIDUAL')
-  );
-}
-
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
@@ -48,8 +36,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
   if (
     data?.company &&
-    (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||
-      isNaturalPersonProfileName(data.company.displayName) ||
+    (isNaturalPersonBidder(data.company.displayName, data.company.legalForm) ||
       (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });
@@ -57,7 +44,14 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   return metaTags;
 }
 
-export function headers() {
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response.
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    return { 'Cache-Control': publicCache(3600), 'X-Privacy-Mask': 'applied' };
+  }
   return { 'Cache-Control': publicCache(3600) };
 }
 
@@ -74,6 +68,31 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
+    // Privacy policy for the company profile (ADR-0033 §3, decision recorded in PR #183 review):
+    // the trading `displayName` is PUBLIC — it is rendered verbatim on the HTML page
+    // (`<PageHeader title={c.displayName}>`, breadcrumbs, `<title>`) and is the same string a
+    // visitor sees. The sensitive natural-person identifier is the ЕИК, which we mask here.
+    //
+    // The `.data` turbo-stream twin is NOT a standalone machine-readable export (unlike
+    // `/contracts/:id.json` or the CSV exports, which DO mask the name). It is React Router v7's
+    // single-fetch transport for client-side navigations: when a user clicks a `<Link to="/companies/…">`
+    // the browser fetches `.data` and re-renders the SAME HTML page from `company.displayName`.
+    // Masking the name in `.data` would therefore make client-rendered pages show
+    // `MASKED_NATURAL_PERSON_LABEL` — breaking the legitimate user-facing HTML view that ADR-0033
+    // explicitly preserves. Only the ЕИК (the sensitive ID) is masked, consistently across both the
+    // HTML and `.data` representations. The whole response is marked `noindex` regardless.
+    //
+    // The mutation clears the natural person's ЕИК on the returned object (covers `.data`); the
+    // `X-Privacy-Mask` marker is translated into `X-Robots-Tag: noindex` by `hardenResponse` in
+    // `apps/web/workers/app.ts`. Legal-entity records keep the plain-object return (no marker, no
+    // mutation).
+    if (isNaturalPersonBidder(company.displayName, company.legalForm)) {
+      company.eik = null;
+      return Response.json(
+        { company, coverage, trend, network },
+        { headers: { 'X-Privacy-Mask': 'applied' } },
+      );
+    }
     return { company, coverage, trend, network };
   });
 }

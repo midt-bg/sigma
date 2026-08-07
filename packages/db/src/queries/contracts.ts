@@ -3,7 +3,12 @@
 
 import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import {
+  cleanName,
+  entityName,
+  isNaturalPersonBidder,
+  MASKED_NATURAL_PERSON_LABEL,
+} from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
 import {
@@ -426,6 +431,7 @@ interface CsvRow extends ContractRow {
   rowid: number;
   authority_eik: string;
   contractor_eik: string | null;
+  bidder_legal_form: string | null;
 }
 
 /** A streamed text/csv Response honouring the same filters; a 190k-row export never materialises. */
@@ -443,7 +449,8 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
     async pull(controller) {
       if (done) return;
       const where = filters.sql ? filters.sql + ' AND c.rowid > ?' : ' WHERE c.rowid > ?';
-      const sql = `${SELECT}, c.rowid AS rowid, a.bulstat AS authority_eik, b.eik_normalized AS contractor_eik
+      const sql = `${SELECT}, c.rowid AS rowid, a.bulstat AS authority_eik, b.eik_normalized AS contractor_eik,
+        b.legal_form AS bidder_legal_form
         ${FROM}${where} ORDER BY c.rowid LIMIT ?`;
       const { results } = await db
         .prepare(sql)
@@ -456,6 +463,17 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       }
       let block = '';
       for (const r of results) {
+        const bidderName = cleanName(r.bidder_name);
+        // `isNaturalPersonBidder`'s docstring delegates consortium filtering to the caller (a JV is a
+        // legal entity even if a lead member's name / legal_form looks like a sole trader). Guard with
+        // `bidder_kind` first so a consortium such as „ЕТ Иван Петров; Строй ООД" is NOT over-masked as
+        // a natural person — it keeps the „… и др." shape and the consortium ЕИК.
+        const isNatural =
+          r.bidder_kind !== 'consortium' && isNaturalPersonBidder(bidderName, r.bidder_legal_form);
+        const contractor = isNatural
+          ? MASKED_NATURAL_PERSON_LABEL
+          : entityName(bidderName, r.bidder_kind);
+        const contractorEik = isNatural ? '' : r.contractor_eik;
         block +=
           [
             // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
@@ -466,8 +484,8 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
             r.subject,
             cleanName(r.authority_name),
             r.authority_eik,
-            entityName(cleanName(r.bidder_name), r.bidder_kind),
-            r.contractor_eik,
+            contractor,
+            contractorEik,
             r.bidder_kind,
             r.cpv_code ? r.cpv_code.slice(0, 2) : '',
             procedureGroup(r.procedure_type).label,

@@ -40,5 +40,7 @@
 | [0030](0030-family-ownership-withheld-nameless-aggregate.md) | Дял на свързано лице не влиза в поименната повърхност (v1): събира се и се одитира, но се отчита само като безименен сбор (GDPR C-37/20; заменя ADR-0023) | Заменено от [ADR-0032](0032-family-ownership-published-under-public-interest.md) |
 | [0031](0031-suppressions-version-controlled-fingerprinted.md) | Свалянията на връзки са версиониран списък с HMAC-отпечатък (salt = CI secret), прилаган при зареждане — не служебна таблица; не изтича сигнала „кой е свален" към прод | Прието |
 | [0032](0032-family-ownership-published-under-public-interest.md) | Дял на свързано лице се публикува на поименната повърхност наравно със собствения — на основание надделяващ обществен интерес (ЗДОИ чл. 41и; C-184/20 забранява само поименните данни); близкият никога не се назовава, връзката не се твърди; заменя ADR-0030 | Прието |
+| [0033](0033-privacy-masking.md) | `noindex` + маскиране на естествено-личностни идентификатори в машинно-четим изход (Issue #173, PR #183) | Прието |
+| [0034](0034-centralized-x-robots-tag-worker.md) | Централизирано авторство на `X-Robots-Tag: noindex` в worker-а (маркерният договор; refactor на PR #183) | Прието |
 
 Свързан проектен документ: [spec/related-persons-foundation.md](../spec/related-persons-foundation.md).
