@@ -14,6 +14,7 @@ import {
   upsertContractStaging,
   upsertLotStaging,
   upsertPartyStaging,
+  discardBody,
   type BucketKeyKind,
   type OcdsMeta,
   type OcdsPackage,
@@ -80,19 +81,6 @@ function disallowedFinalHost(requestUrl: string, responseUrl: string): string | 
 // A response body that is never read keeps its stream open for the rest of the invocation; the
 // collector is not a substitute for releasing it. Every path below that walks away from a response
 // without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it here.
-// Deliberately NOT awaited. Cancelling only needs to be *initiated* for the runtime to release the
-// stream, and awaiting it would make every caller hostage to a cancel() that never settles - which is
-// precisely the failure mode this file is supposed to be reducing, not adding to.
-function discardBody(res: Response): void {
-  try {
-    void res.body?.cancel().catch(() => {
-      // Already consumed, locked, or errored - there is nothing left to release either way.
-    });
-  } catch {
-    // `cancel()` itself threw synchronously (locked body). Same conclusion.
-  }
-}
-
 function releaseAndFail(res: Response, message: string): never {
   discardBody(res);
   throw new Error(message);
