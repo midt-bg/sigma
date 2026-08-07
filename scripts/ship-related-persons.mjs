@@ -54,8 +54,8 @@ export const MAX_BATCH_ROWS = 400;
 // intact. The Cloudflare-side mechanism is not provable from outside, so this is a deliberate defensive
 // bound rather than a proven fix: cap how much one request carries and leave a gap between requests, so a
 // re-seed is a series of ordinary writes instead of one shock. 25 × MAX_BATCH_ROWS = 10 000 rows/request.
-const MAX_STATEMENTS_PER_REQUEST = 25;
-const PACE_MS = 500;
+export const MAX_STATEMENTS_PER_REQUEST = 25;
+export const PACE_MS = 500;
 
 /** Group per-table INSERT statements into request-sized chunks. Pure — unit-tested. */
 export function chunkStatements(statements, maxPerRequest = MAX_STATEMENTS_PER_REQUEST) {

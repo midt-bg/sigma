@@ -17,7 +17,12 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MAX_BATCH_ROWS, TABLES } from './ship-related-persons.mjs';
+import {
+  MAX_BATCH_ROWS,
+  MAX_STATEMENTS_PER_REQUEST,
+  PACE_MS,
+  TABLES,
+} from './ship-related-persons.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -25,11 +30,15 @@ const SCRIPT = resolve(HERE, 'ship-related-persons.mjs');
 const MIG = resolve(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const D1_NAME = 'sigma-test-local';
 
-// Derived, not magic: insertStatements packs up to MAX_BATCH_ROWS rows per statement, so this
-// guarantees >= 3 statements and therefore real chunking at --max-statements-per-request=1. Retuning
-// the batch size must not turn a correct ship into a red build.
-const LINKS = MAX_BATCH_ROWS * 2 + 1;
-const EXPECTED_CHUNKS = Math.ceil(LINKS / MAX_BATCH_ROWS);
+// Derived from BOTH production constants, and the run below does NOT override either: one row past
+// what a single default request can carry, so chunking is exercised at the shipped settings. Forcing
+// it with --max-statements-per-request=1 (the first cut of this file) left the real constant free to
+// be retuned to infinity with the suite still green.
+const LINKS = MAX_STATEMENTS_PER_REQUEST * MAX_BATCH_ROWS + 1;
+const EXPECTED_CHUNKS = Math.ceil(LINKS / MAX_BATCH_ROWS / MAX_STATEMENTS_PER_REQUEST);
+// The failure-mode tests below do not need the full-size corpus — they force chunking with a flag and
+// keep the fixture small, so only the one test that constrains the defaults pays for 10k rows.
+const LINKS_SMALL = MAX_BATCH_ROWS * 2 + 1;
 
 const sqlite = (db, input) => execFileSync('sqlite3', ['-bail', db], { input, stdio: 'pipe' });
 
@@ -41,12 +50,12 @@ CREATE TABLE authorities(id TEXT PRIMARY KEY);
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');`;
 
-const CORPUS = `
+const corpus = (links) => `
 INSERT INTO persons(id,name) VALUES('p1','П Тест');
 INSERT INTO declarations(id,person_id,xml_file,folder_year,template,source_url) VALUES('d1','p1','x.xml','2024','assets','u');
 INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES('di1','d1','E','e','shares');
 ${Array.from(
-  { length: LINKS },
+  { length: links },
   (_, i) =>
     `INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il${i}','p1|${i}','p1','eik:1','1','e','v1','B_distinctive','owns','published');`,
 ).join('\n')}
@@ -78,6 +87,7 @@ const EXPECTED_ROWS = {
  * SHIP_FAKE_SKIP  — drop one --file by name, to simulate a request that never landed.
  * SHIP_FAKE_NULLN — answer the read-back with a non-numeric count, to exercise the fail-closed guard.
  * SHIP_FAKE_NOISE — emit a `[WARNING]`-shaped line on stdout before the JSON.
+ * SHIP_FAKE_READFAIL — make the read-back call itself fail, so the catch path is exercised.
  */
 function fakeWrangler(dir) {
   const bin = join(dir, 'bin');
@@ -106,6 +116,7 @@ try {
     const skip = process.env.SHIP_FAKE_SKIP;
     if (!skip || !file.endsWith(skip)) run('.read ' + file);
   } else if (command) {
+    if (process.env.SHIP_FAKE_READFAIL) { process.stderr.write('read-back exploded'); process.exit(1); }
     const rows = JSON.parse(run('.mode json\\n' + command) || '[]');
     const shaped = process.env.SHIP_FAKE_NULLN
       ? rows.map((r) => (r.t === process.env.SHIP_FAKE_NULLN ? { ...r, n: null } : r))
@@ -137,19 +148,35 @@ try {
   };
 }
 
-function runShip(dir, env = {}) {
+function runShip(
+  dir,
+  {
+    env = {},
+    links = LINKS_SMALL,
+    forceChunks = true,
+    minLinks = 1,
+    remote = false,
+    yes = false,
+    emit = null,
+  } = {},
+) {
   const work = join(dir, 'work.sqlite');
-  sqlite(work, SCHEMA + CORPUS);
+  sqlite(work, SCHEMA + corpus(links));
   const fake = fakeWrangler(dir);
   const res = spawnSync(
     process.execPath,
     [
       SCRIPT,
       `--work-db=${work}`,
-      '--local',
-      '--min-links=1',
-      '--max-statements-per-request=1',
+      ...(remote ? ['--remote'] : ['--local']),
+      ...(yes ? ['--yes'] : []),
+      ...(emit ? [`--emit=${emit}`] : []),
+      `--min-links=${minLinks}`,
+      // The pacing delay is always zeroed to keep the suite quick — it is covered by the runShip unit
+      // tests. Whether the REQUEST SIZE is overridden matters: the defaults-constraining test leaves
+      // it alone on purpose.
       '--pace-ms=0',
+      ...(forceChunks ? ['--max-statements-per-request=1'] : []),
     ],
     {
       cwd: ROOT,
@@ -169,11 +196,11 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res, fake } = runShip(dir);
+  const { res, fake } = runShip(dir, { links: LINKS, forceChunks: false });
   assert.equal(res.status, 0, `ship failed:\n${res.stderr}`);
 
   // The assertion that no amount of correct-looking plumbing can fake: the SQL really applied.
-  for (const [table, n] of Object.entries(EXPECTED_ROWS))
+  for (const [table, n] of Object.entries({ ...EXPECTED_ROWS, interest_links: LINKS }))
     assert.equal(fake.count(table), n, `${table} did not land`);
 
   const calls = fake.calls();
@@ -219,7 +246,7 @@ test('a request that never landed fails the run', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-short-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res } = runShip(dir, { SHIP_FAKE_SKIP: 'interest_links.2.sql' });
+  const { res } = runShip(dir, { env: { SHIP_FAKE_SKIP: 'interest_links.2.sql' } });
   assert.notEqual(res.status, 0, 'a short target must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
   assert.match(res.stderr, /interest_links: shipped \d+, target has \d+/);
@@ -230,7 +257,7 @@ test('a read-back that answers with a non-number fails closed', (t) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   // `Number(null)` is 0, which would read as "the table is empty" and quietly pass.
-  const { res } = runShip(dir, { SHIP_FAKE_NULLN: 'interest_link_authorities' });
+  const { res } = runShip(dir, { env: { SHIP_FAKE_NULLN: 'interest_link_authorities' } });
   assert.notEqual(res.status, 0, 'an unanswered count must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
 });
@@ -242,6 +269,81 @@ test('a bracketed notice on stdout does not corrupt the read-back', (t) => {
   // The script slices from the first '[' to skip wrangler's preamble — a `[WARNING]` line would
   // send that slice to the wrong offset. Real wrangler --json keeps notices on stderr, but the
   // defensive slice exists precisely because that has not always been true.
-  const { res } = runShip(dir, { SHIP_FAKE_NOISE: '1' });
+  const { res } = runShip(dir, { env: { SHIP_FAKE_NOISE: '1' } });
   assert.equal(res.status, 0, `a stdout notice broke the read-back:\n${res.stderr}`);
+});
+
+// The guards below all sit at UNPROTECTED call sites: deleting each one, or moving it after the
+// destructive run, left the whole suite green. They are the last thing standing between a mistyped
+// flag and a wiped production surface, so each gets an end-to-end test that also proves NO request
+// was issued before the refusal.
+// `d1 info` (the id resolution the authorization guard itself needs) is a read and is fine; what must
+// never happen before a refusal is an `execute`, which is what carries the wipe.
+const noWrites = (fake) => {
+  try {
+    return !fake.calls().some((c) => c.argv[0] === 'd1' && c.argv[1] === 'execute');
+  } catch {
+    return true; // the log file is only created by the first invocation
+  }
+};
+
+test('an under-floor corpus refuses to wipe, before any request', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-floor-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { res, fake } = runShip(dir, { minLinks: LINKS_SMALL + 1 });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /refusing to ship/i);
+  assert.ok(noWrites(fake), 'the refusal must come before the wipe');
+});
+
+test('a bare --remote refuses without --yes, before any request', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-remote-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { res, fake } = runShip(dir, { remote: true });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /--remote requires --yes/);
+  assert.ok(noWrites(fake), 'the refusal must come before the wipe');
+});
+
+test('a --remote ship with no declared environment refuses, before any request', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-env-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const { res, fake } = runShip(dir, { remote: true, yes: true, env: { SIGMA_SHIP_ENV: '' } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /SIGMA_SHIP_ENV/);
+  assert.ok(noWrites(fake), 'the refusal must come before the wipe');
+});
+
+test('a read-back that cannot answer at all fails the run', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-readfail-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // „a verification step that cannot verify must not pass" — the catch returning {} is what makes
+  // that true, and returning the expectation instead would silently pass.
+  const { res } = runShip(dir, { env: { SHIP_FAKE_READFAIL: '1' } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /ship verification FAILED/);
+  assert.match(res.stderr, /no answer/);
+});
+
+test('--emit writes a guarded wipe plus one file per table, and touches no database', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-emit-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const out = join(dir, 'emitted');
+  const { res, fake } = runShip(dir, { emit: out });
+  assert.equal(res.status, 0, `emit failed:\n${res.stderr}`);
+  assert.ok(noWrites(fake), '--emit must not touch a database');
+
+  const wipe = readFileSync(join(out, '0_wipe.sql'), 'utf8');
+  assert.match(wipe, /DESTRUCTIVE, UNGUARDED/, 'the emitted wipe must carry its warning header');
+  for (const table of TABLES) assert.match(wipe, new RegExp(`DELETE FROM "${table}"`));
+  for (const table of TABLES) {
+    const body = readFileSync(join(out, `${table}.sql`), 'utf8');
+    if (table === 'interest_link_authorities') assert.equal(body, '', 'empty table, empty file');
+    else assert.match(body, new RegExp(`INSERT INTO "${table}"`));
+  }
 });
