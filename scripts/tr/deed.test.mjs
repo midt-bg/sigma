@@ -336,3 +336,33 @@ test('latestOwnershipEntryDate is null when no live ownership field survives', (
   const d = deedOf([field('CR_F_23_L', F23_ERASED, { fieldOperation: 2 })]);
   assert.equal(latestOwnershipEntryDate(d), null);
 });
+
+// The erasure-notice strip used an unbounded lazy `.*?`, which backtracks quadratically when the opening
+// div is never closed — each opening restarts a scan to end-of-input. Measured on that shape: 34K→3.3ms,
+// 68K→13.6ms, 136K→53.8ms, 272K→240ms, 1M→4.0s (×4 per doubling). The parser runs against whatever the
+// register returns, so that is remote-controlled CPU on a paced crawl with a per-request budget.
+test('adversarial unclosed markup parses in linear time, not quadratically', () => {
+  // ~1 MB of unclosed erasure openings — the exact shape that triggers the backtracking.
+  const doc = '<div class="erasure-text-inline">z'.repeat(32_000);
+  const t = process.hrtime.bigint();
+  entityBlocks(doc);
+  const ms = Number(process.hrtime.bigint() - t) / 1e6;
+  // Bounded measures ~190ms here and unbounded ~4000ms, so 1500ms separates them with ~8× headroom
+  // over the bounded path — wide enough not to flake on a loaded runner, tight enough to catch a
+  // reintroduced `.*?`.
+  assert.ok(ms < 1500, `entityBlocks took ${ms.toFixed(0)}ms on 1MB of unclosed markup`);
+});
+
+test('an over-long erasure notice still marks the block erased — the bound cannot leak a live owner', () => {
+  // If the notice exceeds the bound the regex simply does not strip it. `erased` is decided separately
+  // by ERASED_MARKER, so the block is still erased and liveFields still drops it: the failure mode of
+  // the bound is a noisier block, never a resurrected owner.
+  const long = `<div class='record-container'><div class='erasure-text-inline'>${'Заличено. '.repeat(400)}</div></div>`;
+  const [block] = entityBlocks(long);
+  assert.equal(block.erased, true);
+  assert.deepEqual(
+    liveFields(deedOf([field('CR_F_19_L', long)]), ['CR_F_19_L']),
+    [],
+    'an erased block contributes no live entity regardless of its notice length',
+  );
+});

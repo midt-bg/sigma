@@ -70,19 +70,61 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
  * module deliberately does NOT verify against system roots (it pins a leaf instead, ADR-0011), so a
  * reader comparing the two needs to see that this leg takes the ordinary, stronger path.
  */
-export function httpsGet(url, { timeoutMs = 20_000 } = {}) {
+/**
+ * Ceiling on a single response body. A measured deed is ~34 KB, so 8 MB is ~240× the real thing —
+ * this bounds abuse, not the register, and can never refuse a large-but-legitimate company.
+ */
+export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Read one response into a Buffer, refusing past `maxBytes`.
+ *
+ * The timeout on the request bounds how long a response may STALL; nothing bounded how much it may
+ * SEND. Without a counter the crawler buffers whatever arrives, so a wedged or hostile endpoint decides
+ * how much memory this process holds. It also composes badly with the parser: the erasure regex in
+ * deed.mjs backtracks quadratically on unclosed markup (measured 34K→3.7ms, 68K→13.5ms, 136K→53.2ms,
+ * 272K→215.4ms — ×4 per doubling), and that path is reachable only through a body large enough to make
+ * it matter. One byte counter bounds both, and destroying the request is the load-bearing half: merely
+ * rejecting the promise would leave the socket draining the rest of the response.
+ *
+ * Separated from `httpsGet` so it is testable without TLS or a live socket — `res` needs only to be an
+ * emitter of 'data'/'end'/'error', which is the same injection posture as politeTrGet's `httpGet`.
+ */
+export function collectBody(res, { req, maxBytes = MAX_BODY_BYTES } = {}) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let done = false;
+    const fail = (err) => {
+      if (done) return;
+      done = true;
+      req?.destroy(err); // tear the socket down; do not sit and drain what we already refused
+      reject(err);
+    };
+    res.on('data', (c) => {
+      if (done) return;
+      size += c.length;
+      if (size > maxBytes) {
+        fail(new Error(`response too large: over ${maxBytes} bytes — refusing to buffer it`));
+        return;
+      }
+      chunks.push(c);
+    });
+    res.on('end', () => {
+      if (done) return;
+      done = true;
+      resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+    });
+    res.on('error', fail);
+  });
+}
+
+export function httpsGet(url, { timeoutMs = 20_000, maxBytes = MAX_BODY_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(
       url,
       { headers: { accept: 'application/json', 'user-agent': TR_USER_AGENT } },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
-        );
-        res.on('error', reject);
-      },
+      (res) => collectBody(res, { req, maxBytes }).then(resolve, reject),
     );
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout after ${timeoutMs}ms: ${url}`)));
     req.on('error', reject);

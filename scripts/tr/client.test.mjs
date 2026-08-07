@@ -6,6 +6,7 @@
 // So a 429 is an instruction to stop, not a transient to retry through. ADR-0033 decision 7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import {
   TR_HOST,
   TR_USER_AGENT,
@@ -14,6 +15,8 @@ import {
   politeTrGet,
   assertTrHost,
   httpsGet,
+  collectBody,
+  MAX_BODY_BYTES,
 } from './client.mjs';
 
 const okRes = (body = '{}') => ({ status: 200, headers: {}, body: Buffer.from(body) });
@@ -150,3 +153,45 @@ test('RateLimitError carries the url and is distinguishable from a generic failu
   assert.ok(err instanceof Error);
   assert.match(err.message, /115536179/);
 });
+
+// ── response size ─────────────────────────────────────────────────────────────
+// The timeout bounds how long a response may STALL; nothing bounded how large it may GROW. A deed is
+// ~34 KB measured; an unbounded reader buffers whatever arrives, so a wedged or hostile endpoint could
+// have the crawler hold an arbitrary amount of memory. It also composes badly with the parser: the
+// erasure regex in deed.mjs backtracks quadratically on unclosed markup (measured 34K→3.7ms,
+// 68K→13.5ms, 136K→53.2ms, 272K→215.4ms — ×4 per doubling), and that path is only reachable through a
+// body large enough to make it matter. One byte counter bounds both.
+test('a response past the cap is refused and the request destroyed, not buffered', async () => {
+  const res = fakeRes(200);
+  const destroyed = [];
+  const p = collectBody(res, { req: { destroy: (e) => destroyed.push(e) }, maxBytes: 1024 });
+  res.emit('data', Buffer.alloc(700));
+  res.emit('data', Buffer.alloc(700)); // 1400 > 1024
+  await assert.rejects(p, /too large|1024/i);
+  assert.equal(destroyed.length, 1, 'the socket must be torn down, not left draining');
+});
+
+test('a response under the cap still resolves with the WHOLE body', async () => {
+  const res = fakeRes(200);
+  const p = collectBody(res, { req: { destroy: () => {} }, maxBytes: 1024 });
+  res.emit('data', Buffer.from('{"uic":'));
+  res.emit('data', Buffer.from('"115536179"}'));
+  res.emit('end');
+  const out = await p;
+  assert.equal(out.status, 200);
+  assert.equal(out.body.toString(), '{"uic":"115536179"}');
+});
+
+test('the cap leaves real deeds far under it — it bounds abuse, not the register', () => {
+  // A measured deed is ~34 KB. The cap must sit well above that or it becomes a correctness bug that
+  // silently refuses large-but-legitimate companies.
+  assert.ok(MAX_BODY_BYTES >= 1_000_000, `cap ${MAX_BODY_BYTES} is too tight for a real deed`);
+});
+
+// A stand-in for an http.IncomingMessage: an emitter carrying a status code.
+function fakeRes(status) {
+  const e = new EventEmitter();
+  e.statusCode = status;
+  e.headers = {};
+  return e;
+}

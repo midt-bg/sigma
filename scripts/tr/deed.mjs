@@ -63,6 +63,21 @@ function stripTags(html) {
 // and honouring both costs nothing while assuming one costs a wrong publish.
 const ERASED_MARKER = /erasure-text-inline|ui-icon-erased|field-text--erased/;
 
+// The erasure notice, stripped so „Заличено обстоятелство." never reads as content.
+//
+// The `{0,2000}` bound is not cosmetic. With a plain `.*?` this backtracks QUADRATICALLY on markup where
+// the opening div is never closed: every opening restarts a scan to end-of-input, measured at 34K→3.3ms,
+// 68K→13.6ms, 136K→53.8ms, 272K→240ms, 1M→4.0s — ×4 per doubling. Bounding the lazy run makes each start
+// position scan a fixed window instead, which is linear: the same inputs measure 5.3 / 10.3 / 24.8 / 41.6
+// / 187ms. A real notice is one short sentence, so 2000 characters is ~80× the live shape.
+//
+// Failing to match is safe by construction: `erased` is decided independently by ERASED_MARKER above, so
+// an over-long notice still marks the block erased and liveFields still drops it. The only visible effect
+// is that its text survives into the block — which in strict mode raises the drift alarm, loudly, rather
+// than passing anything through silently.
+const ERASURE_NOTICE =
+  /<div[^>]*class=['"][^'"]*erasure-text-inline[^'"]*['"][^>]*>.{0,2000}?<\/div>/gis;
+
 /**
  * Split one field's htmlData into the separate registered entities it holds.
  *
@@ -84,10 +99,7 @@ export function entityBlocks(html, { strict = false } = {}) {
     const erased = ERASED_MARKER.test(chunk);
     // Read the visible text WITHOUT the erasure notice, so „Заличено обстоятелство." never counts as
     // content and an erased block reads as empty.
-    const withoutNotice = chunk.replace(
-      /<div[^>]*class=['"][^'"]*erasure-text-inline[^'"]*['"][^>]*>.*?<\/div>/gis,
-      ' ',
-    );
+    const withoutNotice = chunk.replace(ERASURE_NOTICE, ' ');
     const text = stripTags(withoutNotice);
     if (erased && text !== '' && strict) {
       throw new Error(
