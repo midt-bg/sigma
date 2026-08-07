@@ -17,13 +17,27 @@ overrides:
   #                 (GHSA-vmh5-mc38-953g), WebSocket DoS via fragment-count bypass
   #                 (GHSA-vxpw-j846-p89q), cross-origin routing via SOCKS5 pool reuse
   #                 (GHSA-hm92-r4w5-c3mj). miniflare's local fetch only; never ships to the Worker.
+  #   undici <7.29.0 — five further advisories disclosed against 7.28.0 (GHSA-4cwx-7wf7-3272 at
+  #                 CVSS 7.4, plus GHSA-8xcm-r25x-g524, GHSA-jr45-8vmc-qm54, GHSA-m8rv-5g2x-5cg5,
+  #                 GHSA-v3r7-h72x-cjcm), all fixed in 7.29.0. The range already admitted it; the
+  #                 lockfile had simply not moved, so the audit gate went red on main.
   ws: '^8.21.0'
   vite@7: '^7.3.5'
   vite@8: '^8.0.16'
-  undici: '^7.28.0'
+  undici: '^7.29.0'
   #   @babel/core <7.29.6 — arbitrary file read via sourceMappingURL (GHSA-4x5r-pxfx-6jf8);
   #                 dev/build-time only (via @react-router/dev), never ships to the Worker.
   '@babel/core': '^7.29.6'
+  #   sharp <0.35.0 — inherited libvips CVEs (GHSA-f88m-g3jw-g9cj, HIGH), via wrangler→
+  #                 miniflare (^0.34.5 cannot take 0.35.x on its own); local dev image handling
+  #                 only, never ships to the Worker. Drop once miniflare bumps its range.
+  sharp: '^0.35.3'
+  #   postcss <8.5.18 — GHSA-r28c-9q8g-f849 (HIGH); dev/build-time only (via vite→vitest),
+  #                 never ships to the Worker.
+  postcss: '^8.5.18'
+  #   valibot <1.4.2 — GHSA-5qjj-4xww-7phc (MEDIUM); transitive, build-time only, never
+  #                 ships to the Worker.
+  valibot: '^1.4.2'
 
 onlyBuiltDependencies:
   - esbuild

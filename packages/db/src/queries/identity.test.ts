@@ -8,6 +8,8 @@ import {
   contractIdFromSlug,
   contractSlug,
   hrefForEntity,
+  personIdFromSlug,
+  personSlug,
 } from './identity';
 
 describe('company slug', () => {
@@ -23,7 +25,11 @@ describe('company slug', () => {
     expect(bidderIdFromSlug(slug)).toBe(id);
   });
   it('round-trips a 13-digit ЕИК', () => {
-    expect(bidderIdFromSlug(companySlug('eik:1234567890123'))).toBe('eik:1234567890123');
+    expect(bidderIdFromSlug(companySlug('eik:8316417910124'))).toBe('eik:8316417910124');
+  });
+  it('resolves the unknown bidder linked from contract pages', () => {
+    expect(companySlug('unknown:анонимен')).toBe('unknown:анонимен');
+    expect(bidderIdFromSlug('unknown:анонимен')).toBe('unknown:анонимен');
   });
 });
 
@@ -103,6 +109,25 @@ describe('authority / contract slugs', () => {
     expect(slugWithCtrl).toContain('%01');
     expect(slugWithCtrl).toContain('%7F');
     expect(contractIdFromSlug(decodeURIComponent(slugWithCtrl))).toBe(idWithCtrl);
+  });
+});
+
+describe('person slug (свързани лица)', () => {
+  it('reversibly encodes a person id (Cyrillic name key, URL-safe)', () => {
+    const id = 'person:ИВАН ПЕТРОВ ГЕОРГИЕВ';
+    const slug = personSlug(id);
+    expect(slug).not.toContain(' ');
+    expect(slug).not.toContain('/');
+    expect(slug).not.toContain('+');
+    expect(personIdFromSlug(slug)).toBe(id);
+  });
+  it('round-trips a key that itself contains a pipe (never split-parsed)', () => {
+    // person_id feeds link_key as `person_id|eik`; the slug must not depend on that separator.
+    const id = 'person:ФИРМА | ЕООД';
+    expect(personIdFromSlug(personSlug(id))).toBe(id);
+  });
+  it('returns null for an undecodable slug rather than throwing', () => {
+    expect(personIdFromSlug('!!!not base64!!!')).toBeNull();
   });
 });
 
