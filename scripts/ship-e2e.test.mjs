@@ -42,6 +42,15 @@ const LINKS_SMALL = MAX_BATCH_ROWS * 2 + 1;
 
 const sqlite = (db, input) => execFileSync('sqlite3', ['-bail', db], { input, stdio: 'pipe' });
 
+// Unlike the other scripts/*.test.mjs this one needs the `sqlite3` BINARY (present on ubuntu-latest
+// and in the devcontainer): the fake wrangler applies real SQL to a real database, which is the whole
+// reason these assertions mean anything. Say so up front — a missing binary would otherwise surface as
+// an opaque ENOENT from whichever test happened to run first. Failing, never skipping: a skip here
+// silently returns the suite to the state where mutations walked through it.
+if (spawnSync('sqlite3', ['-version'], { stdio: 'ignore' }).error) {
+  throw new Error('scripts/ship-e2e.test.mjs requires the sqlite3 binary on PATH');
+}
+
 /** The five served tables plus the two FK parents they reference. */
 const SCHEMA = `PRAGMA foreign_keys=ON;
 CREATE TABLE bidders(id TEXT PRIMARY KEY);
