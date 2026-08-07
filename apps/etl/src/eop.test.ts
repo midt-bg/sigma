@@ -109,6 +109,48 @@ describe('EOP responses the ingest walks away from', () => {
     expect(cancelled()).toBe(true);
   });
 
+  // The one drain site the first cut of this change left uncovered: bypassing it kept the whole suite
+  // green. A blocked redirect on an OBJECT fetch is a different call path from the bucket listing.
+  it('releases the body of a redirected object fetch before throwing', async () => {
+    const { response, cancelled } = openBodyResponse({
+      status: 200,
+      url: 'https://evil.example/open-data-2026-06-01/contracts.json',
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => response) as unknown as typeof fetch);
+
+    await expect(
+      stageBaseFromBucket(
+        {} as D1Database,
+        {
+          day: '2026-06-01',
+          bucketUrl: 'https://storage.eop.bg/open-data-2026-06-01/',
+          keys: { contracts: 'contracts.json' },
+        },
+        '2026-06-01T00:00:00.000Z',
+      ),
+    ).rejects.toThrow(/blocked redirected EOP fetch from storage\.eop\.bg to evil\.example/);
+    expect(cancelled()).toBe(true);
+  });
+
+  // Cancellation must be initiated, never awaited: a stream whose cancel() never settles must not be
+  // able to wedge the ingest. Before this, `await res.body.cancel()` made listBucketForDay hang forever.
+  it('does not wait for a cancel that never settles', async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'));
+      },
+      cancel() {
+        return new Promise<void>(() => {}); // never settles
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 403 })) as unknown as typeof fetch,
+    );
+
+    await expect(listBucketForDay('2026-06-01')).resolves.toBeNull();
+  });
+
   it('releases the body of a failed object fetch before throwing', async () => {
     const { response, cancelled } = openBodyResponse({ status: 500 });
     vi.stubGlobal('fetch', vi.fn(async () => response) as unknown as typeof fetch);

@@ -80,16 +80,21 @@ function disallowedFinalHost(requestUrl: string, responseUrl: string): string | 
 // A response body that is never read keeps its stream open for the rest of the invocation; the
 // collector is not a substitute for releasing it. Every path below that walks away from a response
 // without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it here.
-async function discardBody(res: Response): Promise<void> {
+// Deliberately NOT awaited. Cancelling only needs to be *initiated* for the runtime to release the
+// stream, and awaiting it would make every caller hostage to a cancel() that never settles - which is
+// precisely the failure mode this file is supposed to be reducing, not adding to.
+function discardBody(res: Response): void {
   try {
-    await res.body?.cancel();
+    void res.body?.cancel().catch(() => {
+      // Already consumed, locked, or errored - there is nothing left to release either way.
+    });
   } catch {
-    // Already consumed, locked, or errored - there is nothing left to release either way.
+    // `cancel()` itself threw synchronously (locked body). Same conclusion.
   }
 }
 
-async function releaseAndFail(res: Response, message: string): Promise<never> {
-  await discardBody(res);
+function releaseAndFail(res: Response, message: string): never {
+  discardBody(res);
   throw new Error(message);
 }
 
@@ -193,7 +198,7 @@ export async function listBucketForDay(
   const blocked = disallowedFinalHost(bucketUrl, res.url);
   if (blocked) return releaseAndFail(res, blocked);
   if (res.status === 403 || res.status === 404) {
-    await discardBody(res);
+    discardBody(res);
     return null;
   }
   if (!res.ok) return releaseAndFail(res, `bucket ${day}: HTTP ${res.status}`);
