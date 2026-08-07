@@ -1,0 +1,217 @@
+name: assign-issue
+
+# Implements contributor issue-claiming via /assign and /unassign comments.
+#
+# WHY body-marker: GitHub's Assignees API rejects non-collaborators, so the bot
+# edits the issue body to embed an invisible <!-- sigma-claim: {"user":"..."} -->
+# marker as the claim of record. This mirrors the Rust @rustbot claim precedent
+# (which hit the same API restriction) and matches the <!-- sigma-preview --> marker
+# convention already in use in this repo (preview-reap.yml).
+#
+# ALL decision logic lives in scripts/issue-claim.mjs (pure functions, unit-tested).
+# This workflow is thin I/O glue: checkout → parse → fetch → write.
+#
+# Security: untrusted comment body is passed via env var and read via process.env
+# inside the github-script — never interpolated into the JS string (S1, injection guard).
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: assign-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # Cheap pre-filter before any API calls:
+    #   - only issue comments (not PR review comments) — github.event.issue.pull_request is
+    #     absent on real issues and present on PR threads
+    #   - skip bot authors to prevent feedback loops (O5)
+    #   - only /assign or /unassign comment starters
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.type != 'Bot' &&
+      (startsWith(github.event.comment.body, '/assign') ||
+       startsWith(github.event.comment.body, '/unassign'))
+
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # Pass untrusted comment body via env — never interpolate into the JS string (S1).
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        with:
+          script: |
+            const { parseCommand, parseClaimMarker, writeClaim, stripClaim, canUnassign, IN_PROGRESS }
+              = await import(`${process.env.GITHUB_WORKSPACE}/scripts/issue-claim.mjs`);
+
+            const actor = context.payload.comment.user.login;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.issue.number;
+
+            // Authoritative command parse from the env-isolated body (S1).
+            const command = parseCommand(process.env.COMMENT_BODY);
+            if (!command) return;
+
+            // Fetch the current issue body (source of truth for the claim marker).
+            const { data: issueData } = await github.rest.issues.get({ owner, repo, issue_number });
+            let body = issueData.body || '';
+            let claim = parseClaimMarker(body);
+
+            // ── /assign ──────────────────────────────────────────────────────────
+            if (command === '/assign') {
+              if (claim && claim.user !== actor) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: `Задачата вече е заета от @${claim.user}. ` +
+                    `Заетостта се освобождава автоматично след 21 дни неактивност. ` +
+                    `Ако искаш да работиш по нея, изчакай или се свържи с @${claim.user}.`,
+                });
+                return;
+              }
+
+              if (claim && claim.user === actor) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: `Задачата вече е заета от теб (@${actor}). ` +
+                    `Напиши \`/unassign\` ако се откажеш.`,
+                });
+                return;
+              }
+
+              // Write the claim with a 3-attempt retry on concurrent body edits (O2).
+              let updateError;
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await github.rest.issues.update({
+                    owner, repo, issue_number,
+                    body: writeClaim(body, actor),
+                  });
+                  updateError = null;
+                  break;
+                } catch (error) {
+                  if (error.status === 409 || error.status === 422) {
+                    updateError = error;
+                    // Re-read the body before retrying so we apply onto the latest version.
+                    const { data: fresh } = await github.rest.issues.get({ owner, repo, issue_number });
+                    body = fresh.body || '';
+                    claim = parseClaimMarker(body);
+                    // If someone else claimed while we were retrying, bail out gracefully.
+                    if (claim && claim.user !== actor) {
+                      await github.rest.issues.createComment({
+                        owner, repo, issue_number,
+                        body: `Задачата беше заета от @${claim.user} точно преди теб. ` +
+                          `Свържи се с тях ако смяташ да работиш по нея.`,
+                      });
+                      return;
+                    }
+                    await new Promise((r) => setTimeout(r, attempt * 500));
+                  } else {
+                    throw error;
+                  }
+                }
+              }
+              if (updateError) throw updateError;
+
+              // Add the in-progress label — best-effort; 404/422 are benign (label may not exist yet).
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [IN_PROGRESS] });
+              } catch (error) {
+                if (error.status !== 404 && error.status !== 422) {
+                  core.warning(`addLabels(${IN_PROGRESS}): ${error.status} ${error.message}`);
+                }
+              }
+
+              // Assign the actor — best-effort; non-collaborators get a 422 and that is expected.
+              try {
+                await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [actor] });
+              } catch (error) {
+                if (error.status !== 404 && error.status !== 422) {
+                  core.warning(`addAssignees(${actor}): ${error.status} ${error.message}`);
+                }
+              }
+
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: `Задачата е заета от @${actor}! ` +
+                  `Когато отвориш PR, сложи \`Closes #${issue_number}\` в описанието. ` +
+                  `Ако се откажеш, напиши \`/unassign\` за да освободиш задачата.`,
+              });
+              return;
+            }
+
+            // ── /unassign ────────────────────────────────────────────────────────
+            if (command === '/unassign') {
+              // Resolve privilege via collaborator permission level (O6).
+              let privileged = false;
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner, repo, username: actor,
+                });
+                privileged = ['admin', 'write'].includes(data.permission);
+              } catch {
+                privileged = false;
+              }
+
+              if (!claim) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: `Няма активно заемане на тази задача.`,
+                });
+                return;
+              }
+
+              if (!canUnassign({ actor, claimedUser: claim.user, privileged })) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: `Само @${claim.user} или maintainer може да освободи тази задача.`,
+                });
+                return;
+              }
+
+              await github.rest.issues.update({
+                owner, repo, issue_number,
+                body: stripClaim(body),
+              });
+
+              // Remove label — 404 means label was never added or already removed (benign).
+              try {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number, name: IN_PROGRESS,
+                });
+              } catch (error) {
+                if (error.status !== 404 && error.status !== 422) {
+                  core.warning(`removeLabel(${IN_PROGRESS}): ${error.status} ${error.message}`);
+                }
+              }
+
+              // Remove assignee — 404/422 benign (was never formally assigned).
+              try {
+                await github.rest.issues.removeAssignees({
+                  owner, repo, issue_number, assignees: [claim.user],
+                });
+              } catch (error) {
+                if (error.status !== 404 && error.status !== 422) {
+                  core.warning(`removeAssignees(${claim.user}): ${error.status} ${error.message}`);
+                }
+              }
+
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: `Задачата е освободена от @${claim.user}. ` +
+                  `Вече е свободна — коментирай \`/assign\` ако искаш да я вземеш.`,
+              });
+            }
