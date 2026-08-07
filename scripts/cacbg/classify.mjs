@@ -77,7 +77,10 @@ const norm = (s) =>
 // token bounded on the left by string edge, whitespace or quotes — NOT hyphens/dots, so „АД-ХОК ЕООД" (a
 // hyphenated ООД name) is not misread. Anchoring to the suffix is what stops „АД ГРУП ООД" (an ООД whose
 // NAME begins with the token „АД") being wrongly excluded as joint-stock — the form there is ООД.
-const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
+// Twinned byte-for-byte by JOINT_SUFFIX in scripts/tr/deed.mjs — the TR parser cannot import from this
+// directory without closing a cacbg↔tr cycle. A test in deed.test.mjs pins the two identical; change one
+// and that test fails rather than the two silently diverging on a legal form.
+export const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
 /**
  * Materiality by legal form. The public ownership surface is CLOSELY-HELD companies only (ООД/ЕООД/ЕТ/
  * КД/СД/ДЗЗД or a form-unspecified name from the closely-held table). Joint-stock forms (АД/ЕАД/АДСИЦ/КДА,

@@ -241,8 +241,15 @@ const FORM_CODES = new Map([
 
 // The фирма's legal form is its SUFFIX under ЗТРРЮЛНЦ, and the deed envelope's `fullName` carries it
 // („ПИМК" ООД) while CR_F_2_L is bare („ПИМК"). So the bar has a second, independent signal at zero
-// extra cost. КДА is included here and is absent from classify.mjs's JOINT_STOCK/FORM_TOKENS today.
-const JOINT_SUFFIX = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
+// extra cost.
+//
+// DELIBERATELY a twin of classify.mjs's JOINT_STOCK rather than an import, for the same reason
+// personTokens twins parse.mjs's holderTokens: the dependency direction here is cacbg → tr (load.mjs
+// imports this module), so importing back out of scripts/cacbg/ would close a cycle across the two
+// directories. The two are pinned byte-identical by a test in deed.test.mjs — this comment used to
+// claim КДА was missing from classify.mjs, which stopped being true in 5f64f5c, and an unenforced
+// „keep these in step" note is exactly how that happens.
+export const JOINT_SUFFIX = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
 const CLOSELY_SUFFIX = /(?:^|[\s"„“”«»])(ООД|ЕООД|ЕТ|ДЗЗД|КД|СД|КООПЕРАЦИЯ)[\s"„“”«»]*$/u;
 
 /**

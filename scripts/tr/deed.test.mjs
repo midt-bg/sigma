@@ -20,6 +20,7 @@ import {
   registryLegalForm,
   latestOwnershipEntryDate,
   assertUicEcho,
+  JOINT_SUFFIX,
 } from './deed.mjs';
 
 // ── real markup ───────────────────────────────────────────────────────────────
@@ -365,4 +366,26 @@ test('an over-long erasure notice still marks the block erased — the bound can
     [],
     'an erased block contributes no live entity regardless of its notice length',
   );
+});
+
+// JOINT_SUFFIX here and JOINT_STOCK in scripts/cacbg/classify.mjs are the SAME rule — which legal-form
+// suffixes mark a share-issuing company — held in two places because the TR parser cannot import out of
+// scripts/cacbg/ without closing a cacbg↔tr cycle. The drift this risks has already happened once: 5f64f5c
+// added КДА to classify.mjs while deed.mjs's comment still asserted it was absent there. A prose „keep
+// these in step" note does not keep anything in step; this does.
+test('the joint-stock suffix rule is identical in the TR parser and the classifier', async () => {
+  const { JOINT_STOCK } = await import('../cacbg/classify.mjs');
+  assert.equal(JOINT_SUFFIX.source, JOINT_STOCK.source, 'the two patterns have diverged');
+  assert.equal(JOINT_SUFFIX.flags, JOINT_STOCK.flags, 'the two patterns have diverged in flags');
+  // Behavioural pin as well as textual: identical sources with different behaviour is impossible, but a
+  // future refactor could legitimately change BOTH sources while breaking one. These are the forms the
+  // bar exists for — every one must be caught by both, or a joint-stock parcel publishes as ownership.
+  for (const name of ['ТРЕЙС ГРУП ХОЛД АД', 'НЕЩО ЕАД', 'ФОНД АДСИЦ', 'НЕЩО КДА']) {
+    assert.equal(JOINT_SUFFIX.test(name), true, name);
+    assert.equal(JOINT_STOCK.test(name), true, name);
+  }
+  for (const name of ['АЛФА СТРОЙ ООД', 'БЕТА ЕООД', 'АД ГРУП ООД']) {
+    assert.equal(JOINT_SUFFIX.test(name), false, name);
+    assert.equal(JOINT_STOCK.test(name), false, name);
+  }
 });

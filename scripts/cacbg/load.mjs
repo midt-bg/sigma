@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 // path (ADR-0033). It survives in classify.mjs for the review queue, not for a publishing decision.
 import { temporalStatus, localityToken, closelyHeldForm } from './classify.mjs';
 import { openCache, readDeed, coverage } from '../tr/cache.mjs';
-import { TR_DB, TR_RAW } from '../tr/paths.mjs';
+import { TR_DB, TR_RAW, deedPath } from '../tr/paths.mjs';
 import {
   evidenceVerdict,
   isSealedFact,
@@ -535,7 +535,12 @@ function deedFor(eik) {
   if (!row) entry = { deed: null, outsideTr: false, missing: true };
   else if (row.status === 'outside_tr') entry = { deed: null, outsideTr: true, missing: false };
   else {
-    const file = path.join(TR_RAW_DIR, row.rawPath ?? `${eik}.json`);
+    // RE-DERIVED from the ЕИК through safeEik, never the stored raw_path. The cache index is written by
+    // the crawler but travels between runs — and once it does, a stored path is attacker-influenced
+    // input joined straight onto a filesystem root, which is a traversal read. purgeExpired already
+    // re-derives for exactly this reason; this was the one read that did not. deedPath also throws on a
+    // malformed ЕИК rather than quietly reading some other company's deed (R8).
+    const file = deedPath(eik, TR_RAW_DIR);
     entry = fs.existsSync(file)
       ? { deed: JSON.parse(fs.readFileSync(file, 'utf8')), outsideTr: false, missing: false }
       : { deed: null, outsideTr: false, missing: true };
