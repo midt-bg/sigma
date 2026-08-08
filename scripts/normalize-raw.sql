@@ -31,6 +31,10 @@
 --     every contract has a parent. bids stays empty (the data has a bid COUNT, not bids).
 
 -- Full clear in child→parent order (D1 enforces FKs).
+-- @full-clear — everything emptied between this marker and the blank line below is rebuilt from
+-- staging alone, so a full derive driven by a partial window loses whatever the window misses.
+-- scripts/import.mjs reads the list from here to decide whether refusing is warranted; keep new
+-- DELETEs inside the block so the guard picks them up on its own.
 DROP TABLE IF EXISTS joint_tender_leads;
 DROP TABLE IF EXISTS unp_prefix_authorities;
 DROP TABLE IF EXISTS joint_authority_members;

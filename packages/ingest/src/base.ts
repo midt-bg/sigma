@@ -7,6 +7,7 @@ export type BaseCoercionKind =
   | 'real'
   | 'bool'
   | 'date'
+  | 'real_signed'
   | 'secured_inverse'
   | 'variants_enum';
 export type BaseStagingValue = string | number | null;
@@ -94,6 +95,19 @@ export function toReal(v: unknown): number | null {
   return Number.isFinite(n) && n >= 0 && n <= MAX_PLAUSIBLE_VALUE ? n : null;
 }
 
+// contractValueDifference is the one published figure that is legitimately negative - an annex can
+// reduce a contract, and ЦАИС ЕОП publishes that as e.g. "-345,16". Every other REAL column here is a
+// magnitude (values, estimates, subcontracting), where a minus sign means corrupt input, so toReal
+// keeps rejecting negatives rather than being loosened for all of them.
+export function toSignedReal(v: unknown): number | null {
+  const s = clean(v);
+  if (s === null) return null;
+  const compact = s.replace(/\s/g, '');
+  if (!compact.startsWith('-')) return toReal(compact);
+  const magnitude = toReal(compact.slice(1));
+  return magnitude === null ? null : -magnitude;
+}
+
 export function toBool(v: unknown): number | null {
   const s = clean(v);
   if (s === null) return null;
@@ -131,6 +145,7 @@ function toVariants(v: unknown): number | null {
 export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
   if (kind === 'int') return toInt(v);
   if (kind === 'real') return toReal(v);
+  if (kind === 'real_signed') return toSignedReal(v);
   if (kind === 'bool') return toBool(v);
   if (kind === 'date') return toISODate(v);
   if (kind === 'secured_inverse') return toSecuredFinancing(v);
@@ -297,7 +312,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('contract_date', 'contractDate', 'date'),
       field('value_before', 'lastContractValue', 'real'),
       field('value_after', 'currentContractValue', 'real'),
-      field('value_delta', 'contractValueDifference', 'real'),
+      field('value_delta', 'contractValueDifference', 'real_signed'),
       field('currency', 'contractCurrency', 'text'),
       field('contract_subject', 'contractSubject', 'text'),
       field('awarded_to_group', 'awardedToGroup', 'bool'),
@@ -432,7 +447,7 @@ export function baseSqlLiteral(
 ): string {
   if (value === null || value === undefined) return 'NULL';
   const kind = baseColumnKind(cat, column);
-  if (['int', 'real', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
+  if (['int', 'real', 'real_signed', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
     return String(value);
   }
   return escapeSqlText(String(value));
