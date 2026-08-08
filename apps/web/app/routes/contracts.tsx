@@ -20,6 +20,7 @@ import {
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { contractIndicators, isFlagged } from '../lib/indicators';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -111,6 +112,17 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
       type: 'radio',
       selected: sp.get('value') ? [sp.get('value')!] : [],
       options: VALUE_BUCKETS,
+    },
+    {
+      // „Индикатори" — the design also lists „С анекси над +10%", which needs the amendment-delta
+      // derived field the handoff defers; only the single-offer filter is wired because only it
+      // has data behind it today.
+      key: 'bids',
+      label: 'Индикатори',
+      type: 'checkbox',
+      tone: 'risk',
+      selected: sp.get('bids') === '1' ? ['1'] : [],
+      options: [{ value: '1', label: 'Само с една оферта' }],
     },
     {
       key: 'eu',
@@ -223,7 +235,7 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                   </thead>
                   <tbody>
                     {result.items.map((c, i) => (
-                      <tr className="contract-row" key={c.id}>
+                      <tr className={`contract-row${isFlagged(c) ? ' is-flagged' : ''}`} key={c.id}>
                         <td className="rank cell-rank" data-label="#">
                           {startRank + i + 1}
                         </td>
@@ -231,11 +243,22 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           <Link className="title" to={`/contracts/${c.id}`}>
                             {c.subject}
                           </Link>
-                          {c.euFunded && <span className="eu">ЕС</span>}
-                          <span className="unp">
-                            УНП {c.unp}
-                            {c.isConsortium ? ' · обединение' : ''}
-                          </span>
+                          <span className="unp">УНП {c.unp}</span>
+                          {(() => {
+                            const tags = contractIndicators(c);
+                            return tags.length > 0 ? (
+                              <span className="row-tags">
+                                {tags.map((t) => (
+                                  <span
+                                    key={t.label}
+                                    className={`tag ${t.risk ? 'tag-risk' : 'tag-neutral'}`}
+                                  >
+                                    {t.label}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : null;
+                          })()}
                         </td>
                         <td className="parties" data-label="Възложител · Изпълнител">
                           <span className="from">

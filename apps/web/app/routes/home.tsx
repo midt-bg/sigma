@@ -12,6 +12,7 @@ import { ANALYTICS_LENSES } from '../lib/analytics-lenses';
 import { publicCache } from '../lib/cache';
 import { coverageEndYear, coveragePartialNote, coverageRange } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
+import { contractIndicators, isFlagged } from '../lib/indicators';
 
 const metaTitle = 'СИГМА — Платформа за прозрачност на обществените поръчки';
 const metaDescription =
@@ -32,21 +33,6 @@ export async function loader({ context }: Route.LoaderArgs) {
   return getHomeData(getDb(env));
 }
 
-// Factual indicator tags for a standout contract. ONLY indicators backed by a field the list query
-// actually returns are rendered — the design also shows „99,8% от прогнозата" and „анекс +18%",
-// which need the signing/estimate ratio and amendment delta the handoff lists as NEW derived
-// fields. Those are not in ContractListItem, so they are deliberately omitted rather than
-// approximated: an indicator the data cannot support has no place on a transparency surface.
-function indicators(c: ContractListItem): { label: string; risk: boolean }[] {
-  const out: { label: string; risk: boolean }[] = [];
-  if (c.bidsReceived === 1) out.push({ label: '1 оферта', risk: true });
-  else if (c.bidsReceived != null && c.bidsReceived > 1)
-    out.push({ label: `${c.bidsReceived} оферти`, risk: false });
-  if (c.euFunded) out.push({ label: 'ЕС финансиране', risk: false });
-  if (c.isConsortium) out.push({ label: 'обединение', risk: false });
-  return out;
-}
-
 // „Поръчки, които се открояват" — the factual rows under the competition climax. Each row is
 // title + meta + indicator tags on the left, sum right-aligned. The 3px red edge marks a flagged
 // row, but never alone: a flagged row always carries a red indicator tag too, so the signal does
@@ -56,8 +42,8 @@ function StandoutRows({ items }: { items: ContractListItem[] }) {
   return (
     <ul className="standout">
       {items.map((c) => {
-        const tags = indicators(c);
-        const flagged = tags.some((t) => t.risk);
+        const tags = contractIndicators(c);
+        const flagged = isFlagged(c);
         return (
           <li key={c.id} className={flagged ? 'is-flagged' : undefined}>
             <div className="standout-main">

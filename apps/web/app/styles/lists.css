@@ -1,0 +1,157 @@
+/* List surfaces in the dossier direction (/contracts, /companies, /authorities).
+   Imported LAST so it wins over layout.css / tables.css / pages.css without having to
+   raise specificity — the base rules there are already close (the rail is 220px, the
+   filter summaries are already tracked uppercase), so this file carries only the deltas
+   the „technical dossier" adds: the rail hairline, the risk-titled indicator group, the
+   filter action buttons, row indicator tags and the red edge mark on flagged rows. */
+
+/* ══ rail + results ══════════════════════════════════════════════════════════
+   The 220px filter rail replaces the section rail on list pages, so it is divided
+   from the results by the same hairline every band uses, rather than by a gap. */
+.split {
+  gap: 0;
+  margin-top: 0;
+  border-bottom: 1px solid var(--rule);
+}
+.split > aside {
+  padding: 26px var(--s-5) var(--s-6) var(--gutter);
+  border-right: 1px solid var(--rule);
+}
+.split > section,
+.split > div {
+  padding: 26px var(--gutter) 36px var(--s-6);
+}
+
+/* „Индикатори" — the one group whose title is red, because the group itself is the
+   competition-risk signal. */
+.split aside .filter-group.is-risk > summary {
+  color: var(--risk);
+}
+
+.filter-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+
+/* ══ table ═══════════════════════════════════════════════════════════════════ */
+.split table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.split thead th {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ink);
+}
+.split tbody td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  font-size: 13.5px;
+}
+.split tbody tr:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.split .num,
+.split .money,
+.split .rank {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.split .cell-title .title {
+  font-size: 14.5px;
+}
+.split .unp {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-mid);
+  margin-top: 2px;
+}
+/* Tiny uppercase role labels under each party name („възложител" / „изпълнител"). */
+.split .parties .who {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}
+.split .parties .from,
+.split .parties .to {
+  display: block;
+}
+
+/* Indicator tags sit under the title, never under the sum. */
+.row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* The red edge marks a flagged row on the subject cell. It never travels alone — the row
+   always carries a red indicator tag too, so the signal survives without colour
+   (WCAG 1.4.1). */
+.contract-row.is-flagged .subj {
+  border-left: 3px solid var(--risk);
+  padding-left: 10px;
+}
+
+@media (max-width: 960px) {
+  .split > aside {
+    padding: 14px var(--gutter);
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .split > section,
+  .split > div {
+    padding: 20px var(--gutter) 28px;
+  }
+  /* tbl-cards already stacks each row into a card; keep the edge mark on the card itself. */
+  .tbl-cards .contract-row.is-flagged {
+    border-left: 3px solid var(--risk);
+  }
+  .tbl-cards .contract-row.is-flagged .subj {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+/* Filter option rows: the right-aligned count must not collide with a wrapping label
+   (the CPV sector names wrap to 2–3 lines and were overlapping their counts). */
+.split aside .check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: 5px 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.split aside .check > input {
+  flex: none;
+  margin-top: 2px;
+}
+.split aside .check > .muted.small {
+  margin-left: auto;
+  padding-left: var(--s-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* List page titles are 44px in the dossier (the 64px setting is the home hero only). */
+.split ~ * .page-title,
+main > .page-header .page-title,
+.page-header h1 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 44px;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}

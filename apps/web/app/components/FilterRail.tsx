@@ -25,6 +25,8 @@ export interface FilterGroup {
   selected: string[];
   allLabel?: string; // radio groups: the „Всички" (clear) option label
   more?: { href: string; label: string };
+  /** „Индикатори" — a competition-risk group. Titles in --risk, the one place the rail uses red. */
+  tone?: 'risk';
 }
 
 // Sticky filter rail. Filters live in the URL (shareable). A `<Form method="get">` auto-submits on
@@ -105,7 +107,13 @@ export function FilterRail({
         ))}
         {groups.map((g) => {
           return (
-            <details className="filter-group" key={g.key} open role="group" aria-label={g.label}>
+            <details
+              className={`filter-group${g.tone === 'risk' ? ' is-risk' : ''}`}
+              key={g.key}
+              open
+              role="group"
+              aria-label={g.label}
+            >
               <summary>
                 {g.label}
                 {g.selected.length > 0 && (
@@ -203,15 +211,16 @@ export function FilterRail({
             Покажи резултатите
           </button>
         </noscript>
-        <p className="small muted mt-s4">
-          <Link to={clearHref}>Изчисти филтрите</Link>
+        <div className="filter-actions">
+          <Link className="btn btn-secondary btn-block" to={clearHref}>
+            Изчисти филтрите
+          </Link>
           {csvHref && (
-            <>
-              {' · '}
-              <a href={csvHref}>Изтегли CSV</a>
-            </>
+            <a className="btn btn-ghost btn-block" href={csvHref}>
+              Свали CSV ↓
+            </a>
           )}
-        </p>
+        </div>
       </Form>
     </aside>
   );
