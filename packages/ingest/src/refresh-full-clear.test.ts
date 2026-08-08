@@ -51,6 +51,26 @@ describe('fullClearTables', () => {
     expect(fullClearTables(sql)).toEqual(['contracts', 'authorities']);
   });
 
+  it('sees a table however it is quoted', () => {
+    // `DELETE FROM "search_index";` is valid SQLite and reads as pure formatting. A bare-identifier
+    // matcher dropped it from the list, which silently reopened the data-loss hole: the guard would
+    // then wave through a corpus whose only populated table was the re-quoted one.
+    const sql = [
+      '-- @full-clear',
+      'DELETE FROM "search_index";',
+      'DELETE FROM `flow_pairs`;',
+      'DELETE FROM [home_totals];',
+      'delete from contracts;',
+      '',
+    ].join('\n');
+    expect(fullClearTables(sql)).toEqual([
+      'search_index',
+      'flow_pairs',
+      'home_totals',
+      'contracts',
+    ]);
+  });
+
   it('returns nothing when the marker is absent', () => {
     expect(fullClearTables('DELETE FROM contracts;\nDELETE FROM lots;\n')).toEqual([]);
   });

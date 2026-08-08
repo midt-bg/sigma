@@ -109,7 +109,12 @@ export function transientStagingStatements(workStagingSchemaSql: string): string
 }
 
 const FULL_CLEAR_MARKER = /^--\s*@full-clear\b/i;
-const DELETE_FROM = /^DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$/i;
+// All three SQLite quoting styles, not just the bare identifier. Rewriting one line as
+// `DELETE FROM "search_index";` is a valid, invisible formatting change — and with a bare-only
+// matcher it would drop that table out of the guard's list and quietly reopen the hole this parser
+// exists to close.
+const DELETE_FROM =
+  /^DELETE\s+FROM\s+(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))\s*;?\s*$/i;
 
 /**
  * The tables `scripts/normalize-raw.sql` empties before rebuilding the domain from staging, read out
@@ -133,7 +138,7 @@ export function fullClearTables(normalizeRawSql: string): string[] {
     if (!inBlock) continue;
     const hit = trimmed.match(DELETE_FROM);
     if (hit) {
-      tables.push(hit[1]!);
+      tables.push((hit[1] ?? hit[2] ?? hit[3] ?? hit[4])!);
       continue;
     }
     // Comments and the DROP TABLEs share the block; a blank line ends it.

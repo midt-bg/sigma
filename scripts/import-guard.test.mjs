@@ -146,21 +146,49 @@ test('a slice derive is never probed at all', () => {
   assert.equal(r.probe, undefined, 'slice derives must not pay for the corpus probe');
 });
 
+// Written out by hand ON PURPOSE. The first version of this test re-derived the list from
+// normalize-raw.sql using its own copy of the parser's regex — so the oracle inherited the parser's
+// blind spot, and rewriting one line as `DELETE FROM "search_index";` (valid SQLite, invisible in
+// review) dropped that table out of the probe with both suites still green. A list that shares the
+// implementation's assumptions cannot test them.
+const CLEARED = [
+  'search_index',
+  'flow_pairs',
+  'company_totals',
+  'authority_joint_participation',
+  'authority_totals',
+  'sector_totals',
+  'facet_counts',
+  'home_totals',
+  'contract_co_authorities',
+  'contracts',
+  'lots',
+  'tenders',
+  'bidders',
+  'authorities',
+];
+
 test('the probe covers every table the SQL clears, not a subset', () => {
   const r = runImport(PARTIAL, { populated: 'contracts' });
   const sql = String(r.probe[r.probe.indexOf('--command') + 1]);
-  const cleared = readFileSync(resolve(ROOT, 'scripts/normalize-raw.sql'), 'utf8')
-    .split(/\r?\n/)
-    .slice(
-      readFileSync(resolve(ROOT, 'scripts/normalize-raw.sql'), 'utf8')
-        .split(/\r?\n/)
-        .findIndex((l) => /^--\s*@full-clear/.test(l.trim())),
-    );
-  for (const line of cleared) {
-    if (line.trim() === '') break;
-    const hit = line.trim().match(/^DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)\s*;$/i);
-    if (hit) assert.match(sql, new RegExp(`FROM ${hit[1]}\\)`), `probe is missing ${hit[1]}`);
+  for (const table of CLEARED) {
+    assert.match(sql, new RegExp(`FROM ${table}\\)`), `probe is missing ${table}`);
   }
+});
+
+test('the hand-written list still matches what the SQL clears', () => {
+  // The other half of the cross-check: the list above holds the parser to account, and this holds the
+  // list to account. Either one drifting is caught here instead of in production. The matcher is
+  // deliberately loose about quoting so that a re-quoted table shows up as a MISMATCH rather than
+  // vanishing the way it did from the first version.
+  const sql = readFileSync(resolve(ROOT, 'scripts/normalize-raw.sql'), 'utf8');
+  const marker = sql.indexOf('-- @full-clear');
+  assert.notEqual(marker, -1, 'normalize-raw.sql lost its @full-clear marker');
+  const block = sql.slice(marker).split(/\r?\n\s*\r?\n/)[0];
+  const deletes = [...block.matchAll(/DELETE\s+FROM\s+(.+?)\s*;/gi)].map((m) =>
+    m[1].replace(/^["`[]/, '').replace(/["`\]]$/, ''),
+  );
+  assert.deepEqual(deletes, CLEARED);
 });
 
 test('a refusal leaves no transient staging behind', () => {
