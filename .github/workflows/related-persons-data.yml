@@ -61,9 +61,9 @@ jobs:
       SUPPRESSION_SALT: ${{ secrets.SUPPRESSION_SALT }}
       SUPPRESSION_KEY_VERSION: ${{ vars.SUPPRESSION_KEY_VERSION || '1' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24 # node:sqlite (DatabaseSync) + native TS type-stripping, no flags
           cache: pnpm
@@ -112,7 +112,7 @@ jobs:
       # (Cross-run only — a hard mid-crawl job timeout can't save; durable incremental persistence is the
       # sigma-etl Worker's R2 job per ADR-0006. GitHub's 10 GB repo cache is the ceiling here.)
       - name: Restore raw CACBG corpus cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: scratch/cacbg/raw
           key: cacbg-raw-${{ github.run_id }}
@@ -129,7 +129,7 @@ jobs:
       # run resumes from here. Skipped on full_crawl=false runs (nothing new was fetched).
       - name: Save raw CACBG corpus cache
         if: ${{ always() && inputs.full_crawl }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: scratch/cacbg/raw
           key: cacbg-raw-${{ github.run_id }}
