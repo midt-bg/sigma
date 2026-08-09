@@ -59,7 +59,10 @@ test('an agent co-author IS flagged, and named in the output', (t) => {
     encoding: 'utf8',
   });
   if (fetched.status !== 0) return t.skip('cannot reach the PR ref');
-  const head = execFileSync('git', ['rev-parse', 'FETCH_HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const head = execFileSync('git', ['rev-parse', 'FETCH_HEAD'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  }).trim();
   const base = execFileSync('git', ['rev-list', '--max-count=1', `${head}~40`], {
     cwd: ROOT,
     encoding: 'utf8',
