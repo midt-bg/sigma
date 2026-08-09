@@ -277,7 +277,8 @@ export function assertD1TargetAuthorized({ remote, shipEnv, d1Name, expectedId, 
  * fails — `assertShippedCounts` then reports every table as unanswered and fails the run, which is the
  * right way round: a verification step that cannot verify must not pass.
  */
-/** First bracket that actually parses — notices may contain '[' of their own. Exported for the test. */
+/** First bracket that actually parses — a notice on the same stream could contain one of its own.
+ *  Belt-and-braces: today wrangler keeps notices on stderr (see the call site). Exported for the test. */
 export function parseWranglerJson(out) {
   for (let i = out.indexOf('['); i >= 0; i = out.indexOf('[', i + 1)) {
     try {
@@ -303,10 +304,11 @@ function readShippedCounts(d1Name, remote, expected) {
       ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
       { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
     );
-    // wrangler prefixes its own notices before the JSON payload; take the document, not the whole
-    // stream. Slicing from the FIRST '[' is not enough — a notice can itself contain one („▲
-    // [WARNING] Processing wrangler.jsonc"), which sliced to the wrong offset and turned a perfectly
-    // healthy ship into a verification failure. Try each candidate and keep the first that parses.
+    // Defensive, NOT a fix for an observed failure — the earlier wording here claimed otherwise and
+    // was wrong. Checked against the real tool: `wrangler d1 execute --json` writes its notices
+    // („▲ [WARNING] Processing wrangler.jsonc") to STDERR and leaves stdout as clean JSON, and
+    // execFileSync returns stdout alone, so slicing from the first '[' is in fact safe today. The
+    // scan below survives a future release that changes that, and costs one failed parse if it does.
     const parsed = parseWranglerJson(out);
     const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
     // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass

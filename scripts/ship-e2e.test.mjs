@@ -275,9 +275,14 @@ test('a bracketed notice on stdout does not corrupt the read-back', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-noise-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  // The script slices from the first '[' to skip wrangler's preamble — a `[WARNING]` line would
-  // send that slice to the wrong offset. Real wrangler --json keeps notices on stderr, but the
-  // defensive slice exists precisely because that has not always been true.
+  // This is a HYPOTHETICAL, and saying so is the point. `wrangler d1 execute --json` was run against
+  // the real tool afterwards: the notice goes to stderr, stdout is clean JSON, and execFileSync
+  // returns stdout alone. So this models a stream layout wrangler does not currently produce.
+  //
+  // It stays as a cheap guard against a future release moving notices onto stdout — but the PR that
+  // added it billed the scan as fixing an observed failure, which it never was. A fake is a claim
+  // about the world; this one went unchecked, the suite was green, and the false claim shipped.
+  // Anything modelled here that has not been confirmed against the real binary gets labelled as such.
   const { res } = runShip(dir, { env: { SHIP_FAKE_NOISE: '1' } });
   assert.equal(res.status, 0, `a stdout notice broke the read-back:\n${res.stderr}`);
 });
