@@ -24,7 +24,9 @@ No `develop`, no `staging`. Maintainers with write access work on short-lived fe
 
 - Use [conventional commits](https://www.conventionalcommits.org): `<type>(<scope>): <subject>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `perf`, `style`. Subject is lowercase imperative, no trailing period.
 - Use the `/smart-commit` and `/suggest-commit` skills when drafting messages. They produce the canonical format for this repo.
-- **Never include `Co-Authored-By:` trailers.** Keep the history clean; CI may grep for this.
+- **Never credit a coding agent in a `Co-Authored-By:` trailer** — Claude Code, Codex, Cursor, Copilot and the like. They are tools we drive, not contributors, and naming them misrepresents who wrote the code. CI enforces this (`scripts/check-agent-trailers.mjs`).
+- Trailers naming **people** are fine, and mostly not ours to write: GitHub's squash merge generates them from the PR's commit authors, and they are the only thing that keeps a contributor's credit on `main` — the squash commit's own author is always the PR opener, whoever wrote the code. Do not strip those. Dependency bots (dependabot, renovate) are left alone for the same reason.
+- If an agent trailer does reach a PR, the maintainer merging it edits the squash message (`gh pr merge --squash --body "…"`). Never force-push a contributor's fork to clean this up.
 - Small, focused commits are encouraged. Commit as you go — not all at the end. Easier to review and revert. Don't mix unrelated changes in one commit.
 
 ## Pull requests
