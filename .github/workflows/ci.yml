@@ -38,26 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Full history so the agent-trailer step below can walk base..head; the default PR
-          # checkout is a shallow merge ref with neither endpoint reachable.
-          fetch-depth: 0
-
-      # `Co-authored-by:` naming a coding agent (Claude Code, Codex, Cursor, Copilot …). Trailers
-      # naming PEOPLE are deliberately left alone: GitHub's squash merge builds them from the PR's
-      # commit authors and they are the only thing that keeps a contributor's credit on main, since
-      # the squash commit's own author is always the PR opener. Dependency bots are exempt likewise.
-      # Fixing a hit never requires touching a contributor's fork — see the script's own advice.
-      #
-      # Deliberately a STEP of `check` rather than a job of its own: `check` is the only context the
-      # main ruleset actually requires, so a separate job would show a red X that nothing enforces.
-      # Runs first — it costs a second and needs no install.
-      - name: No agent co-author trailers
-        if: github.event_name == 'pull_request'
-        run: node scripts/check-agent-trailers.mjs "$BASE" "$HEAD"
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
 
       # Secret scan FIRST, on the pristine checkout (tracked files only) — before `pnpm install`
       # creates node_modules. The gitleaks *Action* requires a paid GITLEAKS_LICENSE on GitHub

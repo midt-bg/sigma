@@ -21,17 +21,4 @@ if [ ! -f .dev.vars ] && [ -f .dev.vars.example ]; then
   echo "==> Copied .dev.vars.example → .dev.vars (fill in real keys before pnpm dev)"
 fi
 
-# A placeholder git identity does not stay local: GitHub's squash merge turns every distinct commit
-# author in a PR into a `Co-authored-by:` line on `main`, so `t <t@e.com>` and
-# `you@Your-MacBook.local` end up permanently in the public history. Both have already happened here.
-# Warn rather than set anything — the right identity is the developer's, not this script's.
-git_email="$(git config user.email || true)"
-case "$git_email" in
-  '' | *@e.com | *.local | *@localhost | *localdomain*)
-    echo "==> WARNING: git user.email is '${git_email:-unset}', which looks like a placeholder."
-    echo "    Commits made with it land in the public history as a stray Co-authored-by line."
-    echo "    Set it before committing:  git config user.email you@example.com"
-    ;;
-esac
-
 echo "==> Done. Next: pnpm run setup, then pnpm dev"
