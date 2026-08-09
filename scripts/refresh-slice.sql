@@ -1173,7 +1173,15 @@ FROM (
                 )
             END
           ), 0) < 0.05 THEN 'value_low'
-            WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
+            WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+              -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
+              -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
+              -- back below signing, and flagging those would RAISE the shown value, not repair it.
+              OR (c.current_value / c.signing_value >= 5 AND EXISTS (
+                SELECT 1 FROM raw_amendments am
+                WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                  AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
+              ))))) THEN 'annex_suspect'
             WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
             ELSE 'ok'
           END AS value_flag,
@@ -1457,7 +1465,15 @@ FROM (
                 )
             END
           ), 0) < 0.05 THEN 'value_low'
-            WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
+            WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+              -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
+              -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
+              -- back below signing, and flagging those would RAISE the shown value, not repair it.
+              OR (c.current_value / c.signing_value >= 5 AND EXISTS (
+                SELECT 1 FROM raw_amendments am
+                WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                  AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
+              ))))) THEN 'annex_suspect'
             WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
             ELSE 'ok'
           END AS value_flag,
@@ -1710,7 +1726,15 @@ WITH contract_base AS (
         )
       ORDER BY rc.source DESC, rc.id DESC
       LIMIT 1
-    ), te.estimated_value) AS classifier_estimated_value
+    ), te.estimated_value) AS classifier_estimated_value,
+    -- One annex step jumped ≥10× — half of the mis-keyed-annex conjunction below. Checked against
+    -- the CUMULATIVE domain amendments, matching where this pass re-rolls current_value from.
+    EXISTS (
+      SELECT 1 FROM amendments am
+      WHERE am.unp = substr(c.tender_id, 3)
+        AND am.contract_number = c.contract_number
+        AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
+    ) AS has_step10
   FROM contracts c
   JOIN tenders te ON te.id = c.tender_id
   WHERE (
@@ -1734,14 +1758,19 @@ WITH contract_base AS (
   SELECT id, currency, signing_value, current_value, current_value_currency, fx_rate, proc_est_eur, proc_est_native,
     CASE
       WHEN c.value_flag <> 'annex_suspect'
-        AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)))
+        AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+          OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))))
       THEN c.value_flag
       WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
             OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
-      WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
+      WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+        -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
+        -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
+        -- back below signing, and flagging those would RAISE the shown value, not repair it.
+        OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))) THEN 'annex_suspect'
       WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
       ELSE 'ok'
     END AS new_value_flag
