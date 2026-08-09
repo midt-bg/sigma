@@ -694,7 +694,8 @@ SET ownership_kind = (
 
 -- 5) Contracts — awarded lines (1:1 with staging rows), linked to tender + winning bidder,
 --    with the data-quality verdict (see 0007_data_quality.sql):
---      value_flag = 'value_suspect'  effective value >2bn EUR, or >200× the procedure estimate
+--      value_flag = 'value_suspect'  effective value >2bn EUR, >200× the procedure estimate, or
+--                                    inside the 95×–105× стотинки band (a dropped decimal point)
 --                                    when that estimate is at least 1000 EUR — repaired to the
 --                                    procedure estimate for sums/display
 --                 | 'value_low'      zero/negative, OR a tiny signed value (< 1000 EUR) that is also
@@ -879,7 +880,11 @@ FROM (
         CASE
           -- Over-valuation + absurd are checked FIRST and repaired to the procedure estimate.
           -- value_low is a labelled-but-counted flag (see the amount_eur CASE).
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
           -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
           -- estimate. Large legitimate framework call-offs (small share of a huge ceiling but big in
           -- absolute terms) are NOT caught — the < 1000 EUR floor keeps them OUT of value_low.
@@ -1210,7 +1215,11 @@ SELECT 1,
       SELECT c.*,
         CASE
           -- Mirrors the main derive CASE above; value_low is checked AFTER over-valuation + absurd.
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
           WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
           WHEN c.estimated_value > 0 AND c.signing_value IS NOT NULL AND (
             CASE

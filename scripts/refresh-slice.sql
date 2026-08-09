@@ -1059,7 +1059,11 @@ FROM (
             -- Over-valuation + absurd FIRST and repaired to the procedure estimate.
             -- value_low is labelled-but-counted (see the amount_eur CASE). Keep in sync with
             -- normalize-raw.sql and the EOP block below.
-            WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+            WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
             -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
             -- estimate. The < 1000 EUR floor keeps large legitimate framework call-offs OUT.
             WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
@@ -1339,7 +1343,11 @@ FROM (
             -- Over-valuation + absurd FIRST and repaired to the procedure estimate.
             -- value_low is labelled-but-counted (see the amount_eur CASE). Keep in sync with
             -- normalize-raw.sql and the OCDS block above.
-            WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+            WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
             -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
             -- estimate. The < 1000 EUR floor keeps large legitimate framework call-offs OUT.
             WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
@@ -1652,7 +1660,11 @@ WITH contract_base AS (
       WHEN c.value_flag <> 'annex_suspect'
         AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)))
       THEN c.value_flag
-      WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+      WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
       WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
       WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
       ELSE 'ok'
