@@ -147,7 +147,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
         <script src="/assets/accessibility/accessibility.js" defer />
       </head>
-      <body>
+      {/*
+        `suppressHydrationWarning` on <body>: browser extensions (ColorZilla → `cz-shortcut-listen`,
+        Grammarly → `data-gr-*`, password managers, etc.) inject attributes onto <body> BEFORE React
+        hydrates, which React then reports as a „server ≠ client" attribute mismatch on every page.
+        The app itself sets no attributes on <body>, so the only source is the visitor's extensions —
+        noise we can't control, and exactly the console clutter #274 set out to clear so real mismatches
+        aren't masked. The flag is SHALLOW (it suppresses mismatches on <body>'s own attributes/text
+        only, never its children), so a genuine app-level mismatch inside the page still surfaces.
+      */}
+      <body suppressHydrationWarning>
         {children}
         <ScrollRestoration nonce={nonce} getKey={scrollKey} />
         <Scripts nonce={nonce} />
