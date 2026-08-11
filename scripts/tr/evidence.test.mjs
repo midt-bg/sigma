@@ -162,6 +162,59 @@ test('rung 3 — a seat registered AFTER the declared period does not confirm', 
   assert.notEqual(v.kind, 'confirmed');
 });
 
+test('rung 3 — an UNKNOWN first declared year cannot confirm on a seat', () => {
+  // R10 again, from the other side. `load.mjs` passes `firstDeclaredYear: null` whenever no history row
+  // carried a parseable year, and a null year means the temporal check has NOTHING to compare against —
+  // not that the seat covers the period. The same relocated company as the test above, with the year
+  // unknown instead of 2021, must reach the same held outcome: an unknown guard is a failed guard.
+  const moved = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив'), '2024-06-01T00:00:00'),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: moved,
+    declaredSeats: ['Пловдив'],
+    firstDeclaredYear: null,
+  });
+  assert.notEqual(v.kind, 'confirmed');
+});
+
+test('rung 3 — an unknown year holds a seat match even when the seat has NO entry date', () => {
+  // The nastier half: with no entry date on the register side AND no year on the declaration side there
+  // are two unknowns and zero evidence about the period, yet both legs of the old disjunction read TRUE.
+  // Rung 4's refutation leg already refuses to run without a year (`firstDeclaredYear != null`); the seat
+  // leg must refuse on the same ground, or the weakest rung is the one with no temporal check at all.
+  const undated = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив')),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: undated,
+    declaredSeats: ['Пловдив'],
+    firstDeclaredYear: null,
+  });
+  assert.notEqual(v.kind, 'confirmed', 'two unknowns must not multiply into a public claim');
+});
+
+test('rung 3 — a KNOWN year with an undated seat still confirms (the guard is not a blanket)', () => {
+  // Positive control. Bounding the null case must not quietly kill the rung: a seat with no entry date
+  // is the ordinary shape for a company that never moved, and it still confirms under a known year.
+  const undated = deed([
+    fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),
+    fld('CR_F_5_L', container('Населено място: гр. Пловдив')),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: undated,
+    declaredSeats: ['Пловдив'],
+    firstDeclaredYear: 2021,
+  });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
+});
+
 test('rung 3 — the weakest rung ALSO requires global name uniqueness (ADR-0017 carried forward)', () => {
   const other = deed([
     fld('CR_F_19_L', container('НЯКОЙ ДРУГ ЧОВЕК')),

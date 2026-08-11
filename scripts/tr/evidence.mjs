@@ -197,10 +197,17 @@ export function evidenceVerdict(input) {
       const declared = declaredSeats.map(normalizeSettlement).filter((s) => s !== '');
       // R10: the registered seat must have been in force for the declared period. Seats move, and a
       // company that relocated INTO the declared settlement afterwards would otherwise confirm falsely.
+      //
+      // A null `firstDeclaredYear` FAILS the guard rather than skipping it. `load.mjs` passes null
+      // whenever no history row carried a parseable year, and an unknown year is not a satisfied
+      // temporal test — it is the absence of one. Reading it as „covers the period" made the weakest
+      // rung the only one with no temporal check, on exactly the links where we know least, and rung 4
+      // below already refuses to run without a year (`firstDeclaredYear != null`) on the same ground.
+      // The undated-seat leg is different and stays: a seat with no entry date is the ordinary shape
+      // for a company that never moved, and it is checkable — a known year is still on the other side.
       const seatCoversPeriod =
-        firstDeclaredYear == null ||
-        seat.entryDate == null ||
-        seat.entryDate <= `${firstDeclaredYear}-12-31`;
+        firstDeclaredYear != null &&
+        (seat.entryDate == null || seat.entryDate <= `${firstDeclaredYear}-12-31`);
       if (seatCoversPeriod && declared.includes(seat.settlement)) {
         return verdict('confirmed', true, {
           matchedFact: `seat:${seat.settlement}`,
