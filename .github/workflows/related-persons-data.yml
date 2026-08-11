@@ -21,7 +21,10 @@ on:
   # its own copy of the credential guards, the D1-target guard and the ship floor — and the copy is the
   # one nobody exercises.
   #
-  # WHY MONTHLY AND NOT DAILY, which is what §9 and ADR-0033 describe. A decision cannot be recomputed
+  # WHY MONTHLY AND NOT DAILY, which is what §9 and ADR-0033 originally describe. The decision and its
+  # rejected alternatives are recorded in ADR-0034, which supersedes ADR-0033's cadence line — this
+  # comment is the operational summary, not the record, so a reader who disagrees has somewhere to argue.
+  # A decision cannot be recomputed
   # without the raw deeds — evidenceVerdict's strongest rung matches the declarant's name against the
   # register's own text — and the raw deeds must not be persisted between runs: they carry the names and
   # addresses of co-owners and managers who hold no public office, and an Actions cache entry lives on

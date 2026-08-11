@@ -327,7 +327,11 @@ None of these are follow-ups.
   function of declarations, cached deeds and contracts, but they no longer run on the 6-hourly ETL cycle
   (#279 §9 assumes they do; they do not — the loader needs `node:sqlite`, the declaration corpus and the
   full winner set, none of which exist inside a Worker). Cadence becomes two scheduled workflows: decisions
-  daily, registry lookups monthly.
+  daily, registry lookups monthly. **Superseded by [ADR-0034](0034-registry-lookups-and-decisions-share-one-monthly-run.md):**
+  the split rests on the decision run being able to work from the cache alone, and it cannot — the strongest
+  rung compares the declarant's name against the deed text itself, which the index deliberately does not
+  store, so the raw deeds must be present; and they must not survive the runner. One monthly job, therefore.
+  Nothing else in this ADR is affected.
 - Two capabilities are deliberately left on the table and become separate changes under new rules versions:
   as-of evidence via `?entryDate=`, and the §7 „и към днешна дата" labels with their post-period contracts.
 - The seat rung is structurally capped and we accept the cap: a declared seat is captured **only** from the
