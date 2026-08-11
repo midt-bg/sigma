@@ -229,3 +229,65 @@ test('purgeExpired defaults to the 35-day window and tolerates an already-missin
     assert.equal(res.files, 0);
     assert.ok(readDeed(db, '201122335'), 'the 21-day-old deed is inside the window');
   }));
+
+test('purgeExpired tolerates an orphan that vanished under it, and keeps sweeping', () => {
+  // The benign race: readdirSync lists a name, and it is gone by the time unlink runs (a concurrent
+  // purge, an operator clearing scratch/). The expired loop right above has always tolerated this;
+  // the orphan loop did not, and it throws AFTER the DB DELETE has committed — so the run half-purges,
+  // reports "purge failed", and leaves the operator unable to tell "already gone" from "an orphan
+  // still holding third-party names". Injected rather than staged, because the race cannot be timed
+  // from a test; the injection seam matches the one httpGet/sleep/now already use in this codebase.
+  return withRaw((db, rawDir) => {
+    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-08-01T00:00:00Z' }));
+    writeRaw(rawDir, '115536179');
+    writeRaw(rawDir, '204556676'); // orphan 1 — disappears under us
+    writeRaw(rawDir, '831391124'); // orphan 2 — must still be swept
+
+    const seen = [];
+    const res = purgeExpired(db, rawDir, {
+      now: new Date('2026-08-05T00:00:00Z'),
+      unlink: (p) => {
+        seen.push(path.basename(p));
+        if (p.endsWith('204556676.json')) {
+          const err = new Error('ENOENT: no such file or directory');
+          err.code = 'ENOENT';
+          throw err;
+        }
+        fs.unlinkSync(p);
+      },
+    });
+
+    assert.deepEqual(seen.sort(), ['204556676.json', '831391124.json'], 'both orphans attempted');
+    assert.equal(
+      res.orphans,
+      1,
+      'a file that was already gone was not deleted BY US — do not count it',
+    );
+    assert.equal(fs.existsSync(path.join(rawDir, '831391124.json')), false, 'the sweep continued');
+    assert.equal(
+      fs.existsSync(path.join(rawDir, '115536179.json')),
+      true,
+      'the live deed is untouched',
+    );
+  });
+});
+
+test('purgeExpired still refuses loudly on an orphan it could not delete for a REAL reason', () => {
+  // The other half, and the reason the guard is ENOENT-only. A permission error means retained PII is
+  // still on disk; reporting success would be the failure mode the purge exists to prevent.
+  return withRaw((db, rawDir) => {
+    writeRaw(rawDir, '204556676');
+    assert.throws(
+      () =>
+        purgeExpired(db, rawDir, {
+          now: new Date('2026-08-05T00:00:00Z'),
+          unlink: () => {
+            const err = new Error('EACCES: permission denied');
+            err.code = 'EACCES';
+            throw err;
+          },
+        }),
+      /EACCES/,
+    );
+  });
+});

@@ -128,20 +128,25 @@ jobs:
       # live in each Environment's SIGMA_D1_NAME var; the ship step additionally requires SIGMA_SHIP_ENV to match
       # and PROVES the name↔SIGMA_D1_ID pair against Cloudflare before deleting — assertD1TargetAuthorized.)
       # The slot set is kept in lockstep with PRODUCTION_SLOTS in scripts/ship-related-persons.mjs (#226).
+      # $SIGMA_SHIP_ENV, never `${{ inputs.environment }}` inline. `type: choice` is enforced by the UI
+      # only — a POST to .../dispatches can pass an arbitrary string, which an inline expression pastes
+      # into the shell before `[` ever evaluates it. This block is also the one that decides whether the
+      # production guard fires, so a crafted value could both inject and walk past the guard it was
+      # meant to trip. The env binding above passes the same value as data, where it cannot be code.
       - name: Guard — SIGMA_D1_NAME matches the environment
         run: |
           case "${SIGMA_D1_NAME}" in
             sigma-blue|sigma-green) IS_PROD_SLOT=1 ;;
             *) IS_PROD_SLOT=0 ;;
           esac
-          if [ "${{ inputs.environment || 'staging' }}" = "production" ]; then
+          if [ "${SIGMA_SHIP_ENV}" = "production" ]; then
             if [ "$IS_PROD_SLOT" != "1" ]; then
               echo "::error::production requires SIGMA_D1_NAME to be a prod slot (sigma-blue|sigma-green), got '${SIGMA_D1_NAME}' — refusing to ship."
               exit 1
             fi
           else
             if [ "$IS_PROD_SLOT" = "1" ]; then
-              echo "::error::SIGMA_D1_NAME='${SIGMA_D1_NAME}' (a PRODUCTION slot) on a '${{ inputs.environment || 'staging' }}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
+              echo "::error::SIGMA_D1_NAME='${SIGMA_D1_NAME}' (a PRODUCTION slot) on a '${SIGMA_SHIP_ENV}' run — a rebuild would WIPE prod. Set a non-production SIGMA_D1_NAME variable for this Environment."
               exit 1
             fi
           fi

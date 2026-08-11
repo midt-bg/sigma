@@ -369,7 +369,11 @@ test('D — neither escape hatch fires on its own: an unacknowledged, unsuppress
       { link_key: 'p9|200000002', rules_version: 'tr-rules-1' },
     ],
   });
-  assert.equal(threw, true, 'held is not a sanctioned removal — the evidence simply stopped licensing it');
+  assert.equal(
+    threw,
+    true,
+    'held is not a sanctioned removal — the evidence simply stopped licensing it',
+  );
 });
 
 test('D positive control — an unchanged published set produces no monotonicity finding', () => {

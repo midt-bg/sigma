@@ -220,7 +220,9 @@ const vanished = (priorPublished ?? []).filter((p) => !publishedNow.has(p.link_k
 // Both are declared, both are reviewed, and both are still PRINTED below: a withdrawn public claim is
 // never silent, it just is not a build failure.
 const declaredRemoval = (p) =>
-  p.rules_version !== RULES_VERSION || p.corrected === true || statusNow.get(p.link_key) === 'suppressed';
+  p.rules_version !== RULES_VERSION ||
+  p.corrected === true ||
+  statusNow.get(p.link_key) === 'suppressed';
 const regressions = vanished.filter((p) => !declaredRemoval(p));
 for (const p of regressions)
   findings.push({

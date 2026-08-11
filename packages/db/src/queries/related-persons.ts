@@ -239,7 +239,11 @@ function toLink(r: LinkRow): ConflictLink {
       r.registry_role === 'owner' || r.registry_role === 'manager' ? r.registry_role : null,
     registryEntryNumber: r.entry_number,
     registryEntryDate: r.entry_date,
-    registryLookupDate: r.lookup_date ?? '',
+    // Narrowed for the same reason as evidenceKind, not defaulted. `lookup_date` is NOT NULL in
+    // migration 0006 and the row only reaches here through the seal filter, so `?? ''` was a branch
+    // that could not run — and if the invariant ever broke it would have shipped an empty string as a
+    // date, which reads as a valid-but-blank provenance rather than as the contradiction it is.
+    registryLookupDate: r.lookup_date as string,
   };
 }
 

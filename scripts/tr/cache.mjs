@@ -226,7 +226,7 @@ export function coverage(db, wanted) {
 export function purgeExpired(
   db,
   rawDir,
-  { retentionDays = RETENTION_DAYS, now = new Date() } = {},
+  { retentionDays = RETENTION_DAYS, now = new Date(), unlink = fs.unlinkSync } = {},
 ) {
   const cutoff = new Date(now.getTime() - retentionDays * 86_400_000).toISOString();
   const expired = db.prepare('SELECT eik, raw_path FROM deeds WHERE fetched_at < ?').all(cutoff);
@@ -236,7 +236,7 @@ export function purgeExpired(
     if (!row.raw_path) continue;
     // Resolve through the same safeEik path-traversal rail the writer used, never the stored string.
     try {
-      fs.unlinkSync(path.join(rawDir, `${safeEik(row.eik)}.json`));
+      unlink(path.join(rawDir, `${safeEik(row.eik)}.json`));
       files++;
     } catch (e) {
       // Already gone is the goal state, not a failure. Anything else must surface — a purge that
@@ -261,8 +261,18 @@ export function purgeExpired(
   );
   for (const name of names) {
     if (!name.endsWith('.json') || known.has(name)) continue;
-    fs.unlinkSync(path.join(rawDir, name));
-    orphans++;
+    // The same ENOENT tolerance the expired loop above has, and for a sharper reason here: this loop
+    // runs AFTER the DB DELETE has committed, so an unguarded throw half-purges — rows gone, files
+    // still on disk — and reports the whole run as failed. The listing is a snapshot, so a name can
+    // legitimately be gone by the time we reach it (a concurrent purge, an operator clearing scratch).
+    // Already gone is the goal state. Anything else still surfaces: a purge that cannot delete has
+    // left third-party names on disk, and reporting success would be the failure it exists to prevent.
+    try {
+      unlink(path.join(rawDir, name));
+      orphans++;
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
   }
   return { rows: expired.length, files, orphans };
 }

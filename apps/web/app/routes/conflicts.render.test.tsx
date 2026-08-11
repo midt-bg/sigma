@@ -53,6 +53,13 @@ const familyLink = link({
   company: 'ЕВРОСТРОЙ 21 ЕООД',
   eik: '333',
   relation: 'related', // a close relative's stake — anonymized
+  // The shape the QUERY actually yields for a family link, not the base factory's self-link default.
+  // `findPerson` searches the act for the OFFICIAL; a relative's stake is registered to the relative,
+  // so the official is never found and no `document` rung is reachable — only a seat/ЕИК confirmation.
+  // A fixture carrying `document`/`owner` here tested a row that cannot exist and hid the assertion
+  // below, which is the one that matters: no registry-role claim on an anonymized card.
+  evidenceKind: 'confirmed' as const,
+  registryRole: null,
   ownInstitution: false,
   contractCount: 1,
   contractValueEur: 250_000,
@@ -268,6 +275,20 @@ describe('Trade Register evidence on the card (#279, ADR-0033)', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('самоличност, потвърдена по декларирани данни');
     expect(text).not.toContain('вписано като');
+  });
+
+  it('a FAMILY card never carries a registry-role claim — the relative is not in the act we read', async () => {
+    // The production shape for a family link, which the fixture used to contradict: `findPerson` looks
+    // for the OFFICIAL, and a relative's stake is registered to the relative, so the official is never
+    // found and the rung can only ever be `confirmed`/`registryRole: null`. A card that said „лицето е
+    // вписано като съдружник/собственик" here would assert that the named official is recorded in the
+    // register as an owner of this company — a false, named, libel-shaped claim, on the one card whose
+    // whole design is that the stakeholder stays anonymous (ADR-0030/0032).
+    await renderConflicts([familyLink]);
+    const familyCard = container.querySelector('.conflict-card')!;
+    expect(familyCard.textContent).toContain('деклариран дял на свързано лице');
+    expect(familyCard.textContent).toContain('самоличност, потвърдена по декларирани данни');
+    expect(familyCard.textContent).not.toContain('вписано като');
   });
 
   it('links out to the register so a reader can check the same act we read', async () => {
