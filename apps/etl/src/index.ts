@@ -94,6 +94,12 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     let results: Awaited<ReturnType<typeof ingestBucketWindow>> = [];
     let staged = 0;
     let derived = 0;
+    // The runtime logs an error ("...your Worker's code had hung...") on every *successful* instance
+    // of this Workflow, at the instant run() returns - measured across runs of 5 and 30 steps, see
+    // docs/etl.md. "No errors in the dashboard" is therefore not a health signal here, so a refresh
+    // that actually finished has to say so itself. Logged from the finally, after the staging drop,
+    // so it only ever claims success for a run that survived its own cleanup.
+    let outcome: RefreshResult | null = null;
 
     try {
       await step.do('create-transient-staging', async () =>
@@ -109,7 +115,8 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
 
       if (staged === 0) {
         console.warn(JSON.stringify({ level: 'warn', event: 'etl_zero_ingest', fetchedAt, plan }));
-        return { ...plan, days: results.length, staged: 0, derived: 0 };
+        outcome = { ...plan, days: results.length, staged: 0, derived: 0 };
+        return outcome;
       }
 
       // FX rates BEFORE the derive (#158): the CLI paths run scripts/load-fx.mjs first, but this
@@ -180,9 +187,13 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         }
       });
 
-      return { ...plan, days: results.length, staged, derived };
+      outcome = { ...plan, days: results.length, staged, derived };
+      return outcome;
     } finally {
       await step.do('drop-transient-staging', async () => dropTransientStaging(this.env.DB));
+      if (outcome) {
+        console.log(JSON.stringify({ level: 'info', event: 'etl_refresh_complete', ...outcome }));
+      }
     }
   }
 }

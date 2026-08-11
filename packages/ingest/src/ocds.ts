@@ -452,6 +452,27 @@ export function computeCatchupWindow({
   return { from: from > today ? today : from, to: today };
 }
 
+/**
+ * A full derive rebuilds the domain from whatever the staging tables hold — `scripts/normalize-raw.sql`
+ * opens with `DELETE FROM contracts` — so every contract outside the loaded window is dropped. It is
+ * only sound when the window reaches back to the first day the feed is loaded from, or when there is
+ * no corpus yet (the initial backfill). A gap-aware catch-up window never does, which is why
+ * `--catchup` derives a slice.
+ */
+export function fullDeriveIsSafe({
+  windowFrom,
+  feedStart,
+  hasCorpus,
+}: {
+  windowFrom: string;
+  feedStart: string;
+  hasCorpus: boolean;
+}): boolean {
+  validateDay(windowFrom, 'windowFrom');
+  validateDay(feedStart, 'feedStart');
+  return !hasCorpus || windowFrom <= feedStart;
+}
+
 export function daysInWindow(from: string, to: string): number {
   validateDay(from, 'from');
   validateDay(to, 'to');
