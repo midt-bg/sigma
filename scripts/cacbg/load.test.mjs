@@ -1307,3 +1307,79 @@ test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', 
     'the snapshot went empty — the gate is now vacuous and would never fire again',
   );
 });
+
+// ── the corrections list — ADR-0033 decision 6's second sanctioned removal ────────────────────────
+// Decision 6 licenses removal by „a rules-version bump, or a correction of wrong input". Only the
+// first was expressible. Suppression cannot carry a correction: correcting the input UNBUILDS the
+// link, and the B3 unused-suppression gate above then fails the build for a fingerprint that matched
+// nothing — so the two sanctioned removals failed in opposite directions and a real correction had no
+// path at all. The list is fingerprinted for the same reason ADR-0031's is: `pid|eik` in git would
+// record which named official was linked to which company, for ever.
+
+test('a corrections entry marks its key in the snapshot, so the audit reads a declared removal', () => {
+  runLoad();
+  const db = open();
+  const key = db
+    .prepare("SELECT link_key FROM interest_links WHERE status='published' LIMIT 1")
+    .get().link_key;
+  db.close();
+
+  const corrFile = path.join(dir, 'corr.jsonl');
+  fs.writeFileSync(
+    corrFile,
+    JSON.stringify({
+      fp: fingerprint(key, SUPP_SALT),
+      key_version: '1',
+      reason: 'the declaration row was misparsed; the stake was never declared',
+      corrected_at: '2026-08-11',
+    }) + '\n',
+  );
+  runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: SUPP_SALT });
+
+  const snap = JSON.parse(fs.readFileSync(path.join(STAGING, 'published-snapshot.json'), 'utf8'));
+  const marked = snap.find((s) => s.link_key === key);
+  assert.ok(marked, 'the key must still be exported — the gate needs to SEE it leave');
+  assert.equal(marked.corrected, true);
+  // Every other key stays unflagged: an acknowledgement is per-link, never a blanket amnesty.
+  assert.equal(
+    snap.filter((s) => s.corrected === true).length,
+    1,
+    'one acknowledgement must not clear the whole surface',
+  );
+});
+
+test('a corrections entry matching NO previously published link fails the build', () => {
+  // The B3 rail, mirrored. A stale acknowledgement is worse than a missing one: it sits in the list
+  // and would clear a FUTURE disappearance of the same link — the exact regression the gate exists to
+  // catch — with nobody having decided that.
+  const corrFile = path.join(dir, 'corr-stale.jsonl');
+  fs.writeFileSync(
+    corrFile,
+    JSON.stringify({
+      fp: fingerprint('p-nobody|999999999', SUPP_SALT),
+      key_version: '1',
+      reason: 'stale',
+      corrected_at: '2026-08-11',
+    }) + '\n',
+  );
+  runLoad();
+  assert.throws(
+    () => runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: SUPP_SALT }),
+    (err) =>
+      /correction/i.test(String(err.stderr ?? '') + String(err.message ?? '')) &&
+      /matched NO/i.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  );
+});
+
+test('corrections are fail-closed on a missing salt, exactly like suppressions', () => {
+  const corrFile = path.join(dir, 'corr-nosalt.jsonl');
+  fs.writeFileSync(
+    corrFile,
+    JSON.stringify({ fp: 'deadbeef', key_version: '1', reason: 'x', corrected_at: '2026-08-11' }) +
+      '\n',
+  );
+  assert.throws(
+    () => runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: '' }),
+    (err) => /SUPPRESSION_SALT is unset/.test(String(err.stderr ?? '') + String(err.message ?? '')),
+  );
+});

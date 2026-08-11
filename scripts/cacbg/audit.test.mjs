@@ -316,6 +316,62 @@ test('D — no snapshot (a first run) neither fires nor crashes', () => {
   assert.equal(threw, false);
 });
 
+// The gate must also let the two removals ADR-0033 decision 6 actually SANCTIONS through, or it
+// deadlocks the mechanisms it points at. Both are declared events with a reviewed paper trail in git;
+// neither is a silent recall regression, and the gate exists to tell those apart.
+
+test('D — a link taken down through the ADR-0031 suppression path is a declared removal, not a regression', () => {
+  // Decision 6 names the court-annulled entry (чл. 29 ЗТРРЮЛНЦ) and wires it to ADR-0031. That path
+  // flips status published → suppressed, so the link leaves the published set with rules_version
+  // unchanged — firing the gate on the ONE removal the ADR explicitly licenses.
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    links: [
+      ...ONE_LINK.links,
+      `'il2','p9|200000002','p9','200000002','${K('ВТОРА ФИРМА ЕООД')}','exact_name_key','document','b2','owns',0,1000,'suppressed'`,
+    ],
+    snapshot: [
+      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
+      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' },
+    ],
+  });
+  assert.equal(threw, false, 'the sanctioned takedown path must not fail the build');
+  assert.match(out, /p9\|200000002/, 'but a withdrawn public claim is never silent');
+});
+
+test('D — a snapshot entry acknowledged as a corrected input is a declared removal', () => {
+  // The other sanctioned ground: the link should never have been published because its INPUT was
+  // wrong. Suppression cannot express it — correcting the input unbuilds the link, and load.mjs's B3
+  // gate then fails the build for a suppression that matched nothing. Without this the two sanctioned
+  // removals fail in opposite directions and there is no way to clear either.
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    snapshot: [
+      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
+      { link_key: 'p9|200000002', rules_version: 'tr-rules-1', corrected: true },
+    ],
+  });
+  assert.equal(threw, false, 'an acknowledged correction must not fail the build');
+  assert.match(out, /p9\|200000002/);
+});
+
+test('D — neither escape hatch fires on its own: an unacknowledged, unsuppressed drop still hard-fails', () => {
+  // The mutation control for the two tests above. A gate that accepted every disappearance would pass
+  // both of them, and this is the assertion that says it did not.
+  const { threw } = buildAndAudit({
+    ...ONE_LINK,
+    links: [
+      ...ONE_LINK.links,
+      `'il2','p9|200000002','p9','200000002','${K('ВТОРА ФИРМА ЕООД')}','exact_name_key','document','b2','owns',0,1000,'held'`,
+    ],
+    snapshot: [
+      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
+      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' },
+    ],
+  });
+  assert.equal(threw, true, 'held is not a sanctioned removal — the evidence simply stopped licensing it');
+});
+
 test('D positive control — an unchanged published set produces no monotonicity finding', () => {
   // Without this, a gate that never fires would pass both negatives above.
   const { threw, out } = buildAndAudit({

@@ -26,7 +26,12 @@ import {
   RULES_VERSION,
 } from '../tr/evidence.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
-import { fingerprint, loadSuppressions, SUPPRESSION_KEY_VERSION } from './suppressions.mjs';
+import {
+  fingerprint,
+  loadCorrections,
+  loadSuppressions,
+  SUPPRESSION_KEY_VERSION,
+} from './suppressions.mjs';
 import { canonicalInstitution } from './institutions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -145,13 +150,56 @@ const priorPublished = (() => {
     return [];
   }
 })();
+// Decision 6's SECOND sanctioned removal: „a correction of wrong input". A link whose input was wrong
+// should never have been published, but correcting the input UNBUILDS it — so a suppression on it
+// would match no built link and trip the B3 gate above, while doing nothing leaves a permanent hard
+// finding. The acknowledgement is therefore recorded here, against the set the gate actually compares:
+// each prior-published key whose fingerprint is listed is exported flagged, and audit.mjs reads the
+// flag as a declared removal. Fingerprinted for ADR-0031's reason — `pid|eik` in git would record which
+// named official was tied to which company for ever.
+const CORRECTIONS_LIST =
+  process.env.CACBG_CORRECTIONS_LIST || path.join(ROOT, 'scripts/cacbg/link-corrections.jsonl');
+const correctedFp = new Set(
+  loadCorrections(CORRECTIONS_LIST, SUPP_SALT, SUPPRESSION_KEY_VERSION).map((e) => e.fp),
+);
+const usedCorrections = new Set();
+const snapshot = priorPublished.map((p) => {
+  if (correctedFp.size === 0) return p;
+  const fp = fingerprint(p.link_key, SUPP_SALT);
+  if (!correctedFp.has(fp)) return p;
+  usedCorrections.add(fp);
+  return { ...p, corrected: true };
+});
+// The B3 rail, mirrored — and it matters MORE here. A stale suppression silently un-suppresses; a
+// stale acknowledgement silently pre-clears a FUTURE disappearance of that same link, which is exactly
+// the regression the gate exists to catch, with nobody having decided it. An acknowledgement is
+// one-shot by construction: once the corrected link stops being published it also stops appearing in
+// the prior set, so the entry must be deleted from the list in the same change that lands the fix.
+if (!EMIT_CANDIDATES_ONLY) {
+  const unusedCorr = [...correctedFp].filter((fp) => !usedCorrections.has(fp));
+  if (unusedCorr.length > 0) {
+    db.close();
+    throw new Error(
+      `${unusedCorr.length} correction(s) matched NO previously published link — a stale acknowledgement ` +
+        `would clear a future disappearance of that link, which is the regression this gate exists to ` +
+        `catch. Delete the entry once its fix has shipped (an acknowledgement is one-shot). ` +
+        `Unmatched fingerprints: ${unusedCorr.map((f) => f.slice(0, 12) + '…').join(', ')}`,
+    );
+  }
+}
 // Not written by the bootstrap pass, which works on a throwaway copy and has no business restating what
 // the real run is about to record.
-if (!EMIT_CANDIDATES_ONLY)
-  fs.writeFileSync(
-    path.join(STAGING, 'published-snapshot.json'),
-    JSON.stringify(priorPublished, null, 2) + '\n',
-  );
+//
+// tmp + rename, not a bare write: a crash mid-write leaves a truncated file, and audit.mjs deliberately
+// does NOT swallow a parse failure here (only ENOENT is a legitimate first run). A torn snapshot would
+// therefore wedge every subsequent audit until a human cleared the file by hand. The raw deeds already
+// land this way; the gate's own input deserves the same.
+if (!EMIT_CANDIDATES_ONLY) {
+  const snapPath = path.join(STAGING, 'published-snapshot.json');
+  const snapTmp = `${snapPath}.tmp`;
+  fs.writeFileSync(snapTmp, JSON.stringify(snapshot, null, 2) + '\n');
+  fs.renameSync(snapTmp, snapPath);
+}
 
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.

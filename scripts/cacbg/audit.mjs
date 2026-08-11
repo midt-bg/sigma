@@ -44,6 +44,17 @@ const published = db
   )
   .all();
 
+// Every link's CURRENT status, for the monotonicity gate below. A link that left the published set
+// because it was SUPPRESSED is still in this table — the takedown is a status flip, not a delete — and
+// distinguishing that from a link that simply stopped being built is the difference between a declared
+// removal and a silent recall regression. Read here, while the handle is open.
+const statusNow = new Map(
+  db
+    .prepare('SELECT link_key, status FROM interest_links')
+    .all()
+    .map((r) => [r.link_key, r.status]),
+);
+
 // The only two evidence rungs that publish (ADR-0033 decision 1). Everything else withholds.
 const PUBLISHING_EVIDENCE = new Set(['document', 'confirmed']);
 // The closed vocabulary for a sealed matched_fact lives in evidence.mjs, next to the code that WRITES
@@ -189,7 +200,28 @@ try {
   if (e.code !== 'ENOENT') throw e;
 }
 const vanished = (priorPublished ?? []).filter((p) => !publishedNow.has(p.link_key));
-const regressions = vanished.filter((p) => p.rules_version === RULES_VERSION);
+
+// The three grounds decision 6 sanctions for a removal. Anything else that vanished is a regression.
+//
+// Getting this set right is what stops the gate from deadlocking the mechanisms it points at. The
+// rules bump is the obvious one. The other two are not optional extras — each is the ONLY expressible
+// form of a removal the ADR names in prose:
+//
+//   suppressed — the ADR-0031 takedown path, which decision 6 wires the court-annulled entry
+//     (чл. 29 ЗТРРЮЛНЦ) to by name. It flips status published → suppressed with rules_version
+//     untouched, so without this branch the one removal the ADR explicitly licenses hard-fails.
+//   corrected — "a correction of wrong input". Suppression cannot express it: correcting the input
+//     unbuilds the link, and load.mjs's B3 unused-suppression gate then fails the build for a
+//     fingerprint that matched nothing. So the two sanctioned removals would fail in OPPOSITE
+//     directions, leaving a real correction with no path at all. The flag is set by load.mjs from the
+//     version-controlled, fingerprinted corrections list — a human decision recorded in git, not a
+//     condition the audit can infer.
+//
+// Both are declared, both are reviewed, and both are still PRINTED below: a withdrawn public claim is
+// never silent, it just is not a build failure.
+const declaredRemoval = (p) =>
+  p.rules_version !== RULES_VERSION || p.corrected === true || statusNow.get(p.link_key) === 'suppressed';
+const regressions = vanished.filter((p) => !declaredRemoval(p));
 for (const p of regressions)
   findings.push({
     axis: 'D_monotonicity',
@@ -214,17 +246,23 @@ for (const [axis, fs] of Object.entries(byAxis)) {
 if (priorPublished === null) {
   console.log(`## monotonicity — no prior export at ${SNAPSHOT}; treating this as a first run\n`);
 } else {
-  const declared = vanished.filter((p) => p.rules_version !== RULES_VERSION);
+  const declared = vanished.filter(declaredRemoval);
   console.log(
     `## monotonicity — ${priorPublished.length} published last run, ${publishedNow.size} now; ` +
       `${regressions.length} regression(s), ${declared.length} declared removal(s)\n`,
   );
-  // Declared removals are not findings, but they are never silent: a rules bump is exactly when a
-  // human should read which named claims it withdrew.
-  for (const p of declared)
-    console.log(
-      `  - ${p.link_key} removed under a rules change (${p.rules_version} → ${RULES_VERSION})`,
-    );
+  // Declared removals are not findings, but they are never silent: withdrawing a named public claim is
+  // exactly when a human should read WHICH claims went and on what ground. The ground is printed too —
+  // "removed" alone would flatten a court annulment, a corrected parse and a rules bump into one line.
+  for (const p of declared) {
+    const ground =
+      p.rules_version !== RULES_VERSION
+        ? `a rules change (${p.rules_version} → ${RULES_VERSION})`
+        : statusNow.get(p.link_key) === 'suppressed'
+          ? 'a suppression (ADR-0031 takedown path)'
+          : 'an acknowledged input correction';
+    console.log(`  - ${p.link_key} removed under ${ground}`);
+  }
   if (declared.length) console.log('');
 }
 

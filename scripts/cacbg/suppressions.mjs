@@ -33,6 +33,25 @@ export function fingerprint(linkKey, salt) {
  * An absent or empty list needs no salt (nothing to fingerprint), so the common path stays friction-free.
  */
 export function loadSuppressions(listPath, salt, keyVersion = SUPPRESSION_KEY_VERSION) {
+  return loadFingerprintedList(listPath, salt, keyVersion, 'suppression');
+}
+
+/**
+ * The MONOTONICITY-gate twin (ADR-0033 decision 6): links whose removal is licensed because their
+ * INPUT was wrong, not because the rules changed.
+ *
+ * A separate list from the suppressions, because the two are not the same act and cannot share one.
+ * A suppression keeps a built link OUT of the public surface; a correction says the link should never
+ * have been built at all — so correcting the input unbuilds it, and a suppression on it would then
+ * match nothing and trip the B3 unused gate. Same fingerprinting for the same reason: the raw
+ * `pid|eik` records which named official was tied to which company, which is precisely what must not
+ * live in git history. Consumed by load.mjs, which flags the matching keys in the pre-wipe snapshot.
+ */
+export function loadCorrections(listPath, salt, keyVersion = SUPPRESSION_KEY_VERSION) {
+  return loadFingerprintedList(listPath, salt, keyVersion, 'correction');
+}
+
+function loadFingerprintedList(listPath, salt, keyVersion, label) {
   const entries = existsSync(listPath)
     ? readFileSync(listPath, 'utf8')
         .split('\n')
@@ -42,14 +61,14 @@ export function loadSuppressions(listPath, salt, keyVersion = SUPPRESSION_KEY_VE
     : [];
   if (entries.length > 0 && !salt) {
     throw new Error(
-      `${entries.length} suppression(s) in ${listPath} but SUPPRESSION_SALT is unset — refusing to build ` +
+      `${entries.length} ${label}(s) in ${listPath} but SUPPRESSION_SALT is unset — refusing to build ` +
         `(would silently un-suppress contested links). Set SUPPRESSION_SALT and retry.`,
     );
   }
   for (const e of entries) {
     if (String(e.key_version ?? '') !== String(keyVersion)) {
       throw new Error(
-        `suppression ${String(e.fp ?? '').slice(0, 12)}… has key_version ${JSON.stringify(e.key_version)} ` +
+        `${label} ${String(e.fp ?? '').slice(0, 12)}… has key_version ${JSON.stringify(e.key_version)} ` +
           `but the current SUPPRESSION_KEY_VERSION is ${keyVersion} — refusing to build (a rotated salt ` +
           `would silently un-suppress it). Re-fingerprint every entry under the current salt + key_version.`,
       );

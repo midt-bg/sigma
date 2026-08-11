@@ -252,7 +252,18 @@ Therefore: seals are **re-derived deterministically** on every run — a seal is
 including held ones, so the review queue explains itself — and monotonicity is enforced as a **gate**. The
 audit compares against the pre-wipe export and raises a hard finding when a previously published link
 disappears under an **unchanged** `rules_version`; under a changed version it degrades to a printed diff.
-Removal remains an intentional event: a rules-version bump, or a correction of wrong input.
+Removal remains an intentional event, and each ground has an expressible mechanism — a gate that hard-fails
+the only removals it sanctions is a deadlock, not a rail:
+
+| Ground | Mechanism | Why not one of the others |
+|---|---|---|
+| The rules changed | a `rules_version` bump | — |
+| The evidence is void (court annulment, wrong person) | ADR-0031 suppression — `status` flips to `suppressed`, so the audit reads the current status and treats it as declared | the link is correctly built; only its publication is wrong |
+| The input was wrong | `scripts/cacbg/link-corrections.jsonl`, fingerprinted like the suppression list; `load.mjs` flags the key in the pre-wipe snapshot | correcting the input *unbuilds* the link, so a suppression on it matches nothing and trips the unused-entry rail |
+
+Both non-rules grounds are one-shot, version-controlled, and reviewed in git; neither is silent — the audit
+prints every declared removal with the ground that licensed it. An acknowledgement that matches nothing
+fails the build, because a stale one would pre-clear a *future* disappearance of that same link.
 
 ### 7. Launch gates
 
