@@ -41,6 +41,9 @@ const base = {
   firstDeclaredYear: 2021,
   scope: 'self',
   nameGloballyUnique: true,
+  // The company was resolved by a name unlikely to have a national twin. The rung-2 tests below are about
+  // NAME matching inside a deed, so they hold this dimension fixed; the gate itself is tested separately.
+  companyNameDistinctive: true,
 };
 
 test('RULES_VERSION is a stable, non-empty identifier — §8 hangs off it', () => {
@@ -268,6 +271,104 @@ test('rung 3 — name uniqueness does NOT gate the stronger „Документ"
     'document',
     'the registry named the person in THIS company; the name key is moot',
   );
+});
+
+// ── rung 2's company gate: the winner-vs-non-winner homonym (ADR-0035) ────────
+//
+// The ladder proves a person with these three tokens is registered in the company we LOOKED UP. It cannot
+// prove that company is the one the official declared. `resolveEntity` maps a declared name to the sole
+// WINNER holding it, and `nameGloballyUnique` ranges over procurement bidders only — never the whole
+// register. So when an official owns a same-named company that never bid, we resolve to the winner, and a
+// three-token homonym in the winner's deed „proves" a link that is false in both halves.
+//
+// Two coincidences, and neither is rare in Bulgaria: a shared фирма and a shared three-part name. The gate
+// asks for a reason to believe the COMPANY is the declared one before rung 2 may assert.
+test('rung 2 — a GENERIC company name with no corroboration cannot publish on a name match alone', () => {
+  const v = evidenceVerdict({ ...base, companyNameDistinctive: false });
+  assert.equal(
+    v.kind,
+    'document_uncorroborated',
+    'the deed names SOMEONE with this name in THIS company — not that this is the declared company',
+  );
+  assert.equal(v.publishable, false);
+  // It must not fall through to `unknown`: the residual is the input to F8's decision on whether this gate
+  // tightens, and a rung-2 match withheld for want of company identity is a different fact from no match.
+  assert.equal(v.registryRole, null);
+  assert.equal(v.matchedFact, null);
+});
+
+test('rung 2 — a declared ЕИК corroborates the company, so the name match publishes', () => {
+  // POSITIVE CONTROL. The ЕИК IS the identity (ЗТРРЮЛНЦ, ADR-0028) — it resolves the company behind any
+  // shared фирма, which is exactly the collision the gate is about.
+  const v = evidenceVerdict({ ...base, companyNameDistinctive: false, declaredEik: true });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.publishable, true);
+  assert.equal(v.registryRole, 'owner');
+});
+
+test('rung 2 — a declared seat matching the registered seat corroborates the company', () => {
+  // POSITIVE CONTROL. The declarant put this company in гр. Пловдив and the register agrees; a national
+  // twin in another town is excluded by the same fact rung 3 publishes on.
+  const v = evidenceVerdict({
+    ...base,
+    companyNameDistinctive: false,
+    declaredSeats: ['гр. Пловдив'],
+  });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.publishable, true);
+});
+
+test('rung 2 — a DISTINCTIVE company name publishes uncorroborated (the gate is not a blanket)', () => {
+  // POSITIVE CONTROL, and the one that distinguishes this fix from disabling rung 2. A predicate that
+  // always withheld would satisfy the bar above; this is what it must NOT do.
+  const v = evidenceVerdict({ ...base, companyNameDistinctive: true });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.publishable, true);
+});
+
+test('rung 2 — a seat that does NOT match cannot corroborate a generic name', () => {
+  // The corroborator has to actually corroborate. A declared seat in another town is evidence AGAINST the
+  // company being the declared one, so it certainly cannot rescue the rung.
+  const v = evidenceVerdict({
+    ...base,
+    companyNameDistinctive: false,
+    declaredSeats: ['гр. Бургас'], // the deed says Пловдив
+  });
+  assert.equal(v.kind, 'document_uncorroborated');
+  assert.equal(v.publishable, false);
+});
+
+test('rung 2 — the seat corroborator carries the SAME temporal guard as rung 3 (R10)', () => {
+  // A seat registered after the declared period cannot corroborate anything: the company may have moved
+  // INTO that town afterwards. Rung 3 already refuses it; rungs 2 and 3 share one implementation so they
+  // cannot drift into disagreeing about what a seat match means.
+  const moved = deed([
+    fld('CR_F_19_L', container('ИВАН ПЕТРОВ ТЕСТОВ')),
+    fld(
+      'CR_F_5_L',
+      container('Държава: БЪЛГАРИЯ<br/>Населено място: гр. Пловдив, п.к. 4000'),
+      '2023-07-01T00:00:00',
+    ),
+  ]);
+  const v = evidenceVerdict({
+    ...base,
+    deed: moved,
+    companyNameDistinctive: false,
+    declaredSeats: ['гр. Пловдив'],
+    firstDeclaredYear: 2021,
+  });
+  assert.equal(v.kind, 'document_uncorroborated');
+});
+
+test('rung 2 — the company gate never rescues a link rung 1 has barred', () => {
+  // Ordering: a joint-stock bar outranks everything, corroborated or not. The gate adds a way to WITHHOLD,
+  // never a way to publish something a stronger rung refused.
+  const ad = deed([fld('CR_F_19_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))], {
+    legalForm: 5,
+    fullName: '"ГАМА ИНВЕСТ" АД',
+  });
+  const v = evidenceVerdict({ ...base, deed: ad, companyNameDistinctive: true, declaredEik: true });
+  assert.equal(v.kind, 'bar_joint_stock');
 });
 
 // ── rung 4: „Оборена" ─────────────────────────────────────────────────────────

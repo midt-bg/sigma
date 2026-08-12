@@ -179,6 +179,13 @@ before(() => {
     -- ignored, never guessed — an undatable filing is no evidence of a sale, so this stake stays published.
     INSERT INTO bidders VALUES ('eik:232323231','ДРЪНКАН ТЕХ 10 ЕООД','232323231',1,'София');
     INSERT INTO contracts VALUES ('c18','t1','eik:232323231','2019-05-01',110000);
+    -- ADR-0035 winner-vs-non-winner homonym: „ХОМОНИМ ТРЕЙД" is a GENERIC фирма (two content words) and the
+    -- sole WINNER holding it. Хомоним Иванов Тестов declared a stake in a company of that name — but the one
+    -- he owns never bid, so the resolver lands on this winner instead. This winner's deed happens to name a
+    -- HOMONYM (identical three tokens), which under a name-only rung 2 „proves" a link false in both halves.
+    -- Nothing corroborates the company (no declared ЕИК, no declared seat), so it must be withheld.
+    INSERT INTO bidders VALUES ('eik:242424248','ХОМОНИМ ТРЕЙД ЕООД','242424248',1,'София');
+    INSERT INTO contracts VALUES ('c19','t1','eik:242424248','2023-05-01',95000);
     -- N10 canonicalization: Канонов owns КАНОН ТЕХ 5, filing „МВР" one year and the full ministry name the
     -- next → ONE identity, ONE link (not a split). Distinctive name (number) → tier B publishable.
     INSERT INTO bidders VALUES ('eik:131313136','КАНОН ТЕХ 5 ЕООД','131313136',1,'София');
@@ -508,6 +515,24 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H21',
     },
+    // ADR-0035: Хомоним's declared stake in a generic-named company, with NO ЕИК and NO seat declared.
+    {
+      folder: '2024',
+      xmlFile: 'HOM.xml',
+      year: '2023',
+      template: 'assets',
+      category: '',
+      institution: 'T5',
+      person: 'Хомоним Иванов Тестов',
+      position: '',
+      entity: 'ХОМОНИМ ТРЕЙД ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H22',
+    },
     // B4 UNKNOWN holder: the holder cell is neither confidently the declarant's own name nor a relative's
     // (an ambiguous 1-token-different cell). classifyHolder → 'unknown' → this forms NO link (counted
     // nowhere), so a phantom relative never enters a published family figure.
@@ -731,6 +756,9 @@ before(() => {
     // Only the folder-dated divestment withdraws it — making the pre-fix failure the dangerous one.
     212121218: { owners: ['ДРУГ СОБСТВЕНИК СЪВСЕМ'], seat: 'гр. София' },
     232323231: { owners: ['ДРЪНКАН ИВАНОВ ТЕСТОВ'] }, // still the owner → the undatable filing changes nothing
+    // The homonym: the deed names someone with Хомоним's exact three tokens. Rung 2 matches — and must
+    // still withhold, because nothing says this is the company he declared.
+    242424248: { owners: ['ХОМОНИМ ИВАНОВ ТЕСТОВ'] },
   });
 });
 
@@ -927,6 +955,24 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // that asset-declaration silence as a sale and WITHDRAWS the stake; the per-type horizon must not — no later
   // INTERESTS filing omits the company. This link must stay PUBLISHED. (Guards against dropping a true link:
   // 13% of holders declare a stake only in the interests declaration.)
+  // ADR-0035 — the CRITICAL, end to end. Хомоним declared a stake in „ХОМОНИМ ТРЕЙД ЕООД"; the company he
+  // actually owns never bid, so `resolveEntity` resolved his declaration to the same-named WINNER, whose
+  // deed names a person with his exact three tokens. Rung 2 matches. It must NOT publish: the register
+  // proves someone of that name owns THIS company, not that this is the company he declared. `nameGlobally-
+  // Unique` cannot catch it — it ranges over bidders, and this winner is the only bidder with the name.
+  const homonym = link('242424248', 'Хомоним Иванов Тестов');
+  assert.equal(homonym.publish_tier, 'document_uncorroborated');
+  assert.notEqual(homonym.status, 'published');
+  // The seal must record WHY it was withheld, and must not carry the role the rung refused to assert.
+  const homonymSeal = db
+    .prepare(
+      'SELECT evidence_kind, registry_role, matched_fact FROM interest_link_evidence WHERE link_key=?',
+    )
+    .get(homonym.link_key);
+  assert.equal(homonymSeal.evidence_kind, 'document_uncorroborated');
+  assert.equal(homonymSeal.registry_role, null);
+  assert.equal(homonymSeal.matched_fact, null);
+
   // §1.3 unparseable filing YEAR: Безгодин's later declaration has an unreadable <year> ('н/д') but a 2023
   // FOLDER. Dropping that record — the pre-fix behaviour — leaves his horizon at 2019, so `divested` stays
   // false and a stake he no longer holds keeps naming him on the public surface. The folder must date it.
@@ -1000,17 +1046,17 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 19 links: 14 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 20 links: 15 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
   // 'withdrawn' + Безгодин's folder-dated 'withdrawn' + Дрънкан's undatable-filing 'published' +
-  // Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of registry evidence,
+  // Хомоним's ADR-0035 'document_uncorroborated' hold + Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of registry evidence,
   // and Кметица's seat-confirmed one) + Канонов's canonicalized single link +
   // Алфа & Бета (two officials on one winner, ПАРТНЬОРИ 5); Мария (quarantined), Акционер (securities),
   // Двусмислен (unknown holder) & Безинст (empty institution) none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 19);
-  // 22 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст,
-  // zero-contract Нула, the two ПАРТНЬОРИ co-owners and the two §1.3 filing-date cases; Канонов's two
-  // institution-variant filings fold to ONE.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 22);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 20);
+  // 23 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст,
+  // zero-contract Нула, the two ПАРТНЬОРИ co-owners, the two §1.3 filing-date cases and Хомоним;
+  // Канонов's two institution-variant filings fold to ONE.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 23);
   db.close();
 });
 

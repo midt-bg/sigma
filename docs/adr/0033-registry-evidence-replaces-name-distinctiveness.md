@@ -138,6 +138,13 @@ Rung 2 asserts on a name match. We accept it, on these grounds and no wider:
   ships a libel.
 - **The company identity behind it passed preventive control.** The candidate ЕИК comes from the
   deterministic exact-name resolution of ADR-0008/#226, not from fuzzy matching.
+
+  > **Superseded on this point by [ADR-0035](0035-registry-evidence-must-also-establish-the-company.md).**
+  > Deterministic is not the same as correct: that resolution ranges over PROCUREMENT WINNERS only, so an
+  > official whose real company never bid resolves to a same-named winner, and a homonym in the winner's
+  > deed completes a link false in both halves. Rung 2 now requires a corroborator for the COMPANY —
+  > declared ЕИК, a matching declared seat, or a distinctive фирма — and the uncorroborated remainder is
+  > withheld as `document_uncorroborated` and counted.
 - **It is corroborated, and that is the whole difference.** A bare TR name is spec §4's *weakest* join —
   no ЕГН, no birthdate, not even ADR-0026's `(name, ведомство)` grain. The registry-graph spike that
   explored this API concluded, for its own use, that no person-derived edge may reach a user-visible

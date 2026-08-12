@@ -49,7 +49,8 @@ function buildTrCache(owners) {
     raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
     seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
     attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT)`);
-  for (const [eik, name] of Object.entries(owners)) {
+  for (const [eik, spec] of Object.entries(owners)) {
+    const { name, seat } = spec;
     const deed = {
       uic: eik,
       fullName: '"ФИКС" ЕООД',
@@ -65,6 +66,17 @@ function buildTrCache(owners) {
                       nameCode: 'CR_F_19_L',
                       htmlData: `<div class='record-container'><p class='field-text'>${name}</p></div>`,
                       fieldEntryNumber: '20110502101007',
+                      fieldEntryDate: '2011-05-02T00:00:00',
+                    },
+                    // The REGISTERED seat, matching what this official declared. Both фирми here are
+                    // generic („КОМПАНИЯ ЕДНО/ДВЕ" — two content words), so under ADR-0035 a name match
+                    // alone cannot establish which company was declared; the agreeing seat is what does.
+                    // Without it this fixture would exercise the withholding path instead of the
+                    // cross-folder attribution it exists to test.
+                    {
+                      nameCode: 'CR_F_5_L',
+                      htmlData: `<div class='record-container'><p class='field-text'>Държава: БЪЛГАРИЯ<br/>Населено място: гр. ${seat}</p></div>`,
+                      fieldEntryNumber: '20110502101008',
                       fieldEntryDate: '2011-05-02T00:00:00',
                     },
                   ],
@@ -111,7 +123,7 @@ before(() => {
     CREATE TABLE contracts(id TEXT PRIMARY KEY, tender_id TEXT, bidder_id TEXT, signed_at TEXT, amount_eur REAL);
     INSERT INTO authorities VALUES ('auth:1','ВЕДОМСТВО ТЕСТ');
     INSERT INTO tenders VALUES ('t1','auth:1'),('t2','auth:1');
-    -- Two distinct seat-confirmed single-ЕИК winners → both publish (A_seat), no ambiguity.
+    -- Two distinct single-ЕИК winners, each named in its own deed AND seat-corroborated → both publish.
     INSERT INTO bidders VALUES ('eik:100000001','КОМПАНИЯ ЕДНО ЕООД','100000001',1,'София');
     INSERT INTO bidders VALUES ('eik:200000002','КОМПАНИЯ ДВЕ ЕООД','200000002',1,'Пловдив');
     INSERT INTO contracts VALUES ('c1','t1','eik:100000001','2021-05-01',50000);
@@ -160,8 +172,8 @@ before(() => {
   fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
 
   buildTrCache({
-    100000001: 'ИВАН ПЪРВИ ТЕСТОВ',
-    200000002: 'ПЕТЪР ВТОРИ ПРОБЕН',
+    100000001: { name: 'ИВАН ПЪРВИ ТЕСТОВ', seat: 'София' },
+    200000002: { name: 'ПЕТЪР ВТОРИ ПРОБЕН', seat: 'Пловдив' },
   });
 });
 

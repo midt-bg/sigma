@@ -90,6 +90,32 @@ function findPerson(deed, name, nameCodes) {
 }
 
 /**
+ * The registered seat, when it matches one THIS person declared for THIS company and was in force for the
+ * declared period. Shared by rung 3 (which publishes on it) and rung 2's company-identity corroborator.
+ *
+ * R10: seats move. A company that relocated INTO the declared settlement afterwards would confirm falsely,
+ * so the registered seat must predate the period.
+ *
+ * A null `firstDeclaredYear` FAILS the guard rather than skipping it. `load.mjs` passes null whenever no
+ * history row carried a parseable year, and an unknown year is not a satisfied temporal test — it is the
+ * absence of one. Reading it as „covers the period" made the weakest rung the only one with no temporal
+ * check, on exactly the links where we know least, and rung 4 already refuses to run without a year on the
+ * same ground. The undated-SEAT leg is different and stays: a seat with no entry date is the ordinary shape
+ * for a company that never moved, and it is checkable — a known year is still on the other side.
+ *
+ * @returns {{settlement:string, entryDate:string|null}|null}
+ */
+function matchDeclaredSeat(deed, declaredSeats, firstDeclaredYear) {
+  const seat = registrySeat(deed);
+  // Empty NEVER matches — otherwise every link with no seat data on either side rubber-stamps itself.
+  if (seat.settlement === '') return null;
+  if (firstDeclaredYear == null) return null;
+  if (seat.entryDate != null && seat.entryDate > `${firstDeclaredYear}-12-31`) return null;
+  const declared = declaredSeats.map(normalizeSettlement).filter((s) => s !== '');
+  return declared.includes(seat.settlement) ? seat : null;
+}
+
+/**
  * Decide the evidence for one link.
  *
  * @param {object} input
@@ -104,6 +130,9 @@ function findPerson(deed, name, nameCodes) {
  * @param {number|null} [input.firstDeclaredYear]
  * @param {'self'|'family'} [input.scope]
  * @param {boolean}     [input.nameGloballyUnique] AND-gate on the WEAKEST rung only
+ * @param {boolean}     [input.companyNameDistinctive] the declared фирма is unlikely to have a national
+ *                                              twin. Gates an UNCORROBORATED rung 2 (ADR-0035).
+ *                                              Defaults to FALSE: a caller that forgets it withholds.
  * @returns {{kind:string, publishable:boolean, registryRole:string|null, matchedFact:string|null,
  *            entryNumber:string|null, entryDate:string|null, rulesVersion:string,
  *            shortName:boolean, latinInName:boolean}}
@@ -118,6 +147,11 @@ export function evidenceVerdict(input) {
     firstDeclaredYear = null,
     scope = 'self',
     nameGloballyUnique = true,
+    // Fail-CLOSED, unlike `nameGloballyUnique` above. That one's permissive default is bounded — it gates
+    // only the weakest rung. This one gates the PRIMARY publishing rung, so a caller that forgets to pass
+    // it must withhold rather than publish a claim naming a real person against a company we did not
+    // establish. There is exactly one production caller (load.mjs) and it passes it explicitly.
+    companyNameDistinctive = false,
   } = input;
 
   const tokens = personTokens(declarantName);
@@ -152,12 +186,43 @@ export function evidenceVerdict(input) {
   if (form.verdict === 'joint_stock') return verdict('bar_joint_stock', false);
   if (form.verdict === 'unknown') return verdict('unknown', false);
 
+  // The registered seat, matched against what THIS person declared for THIS company, with R10's temporal
+  // guard applied. Computed once and consumed by two rungs: rung 3 publishes „Потвърдено" on it, and rung 2
+  // uses it as a COMPANY-IDENTITY corroborator. One implementation, because two copies of "what counts as a
+  // seat match" would eventually disagree about which links may be published.
+  const matchedSeat = matchDeclaredSeat(deed, declaredSeats, firstDeclaredYear);
+
   // ── rung 2 ──────────────────────────────────────────────────────────────────
   // Only a full three-token name may assert. A Latin homoglyph makes the name a non-match rather than
   // a false match — company-name-key.ts's posture, applied to people.
+  //
+  // The company gate (ADR-0035). A name match proves someone with these three tokens is registered in the
+  // company we LOOKED UP — never that this is the company the official declared. `resolveEntity` picks the
+  // sole WINNER holding the declared name and `nameGloballyUnique` ranges over bidders only, so an official
+  // whose real company never bid resolves to a same-named winner, and a homonym in that winner's deed
+  // completes a link false in both halves. Before rung 2 may assert, something other than the фирма must
+  // say the company is the declared one:
+  //   • the declarant wrote the ЕИК — the national identifier resolves it outright (ADR-0028); or
+  //   • the declared seat matches the registered one — a twin in another town is excluded; or
+  //   • the фирма is distinctive enough that a national twin is improbable in the first place.
+  // The third is a bound, not a proof, and it is COUNTED (`documentUncorroborated`) so F8 can decide from
+  // the measured residual whether to tighten to the first two. Strict corroboration was the alternative;
+  // declared seats exist only on the ООД/ЕООД table of asset declarations, so its recall cost cannot be
+  // known before that measurement.
+  const companyCorroborated = declaredEik || matchedSeat != null;
   const eligibleForDocument = !telemetry.shortName && !telemetry.latinInName;
   if (eligibleForDocument) {
     const owner = findPerson(deed, declarantName, OWNERSHIP_FIELDS);
+    const manager = owner ? null : findPerson(deed, declarantName, [MANAGER_FIELD]);
+    const hit = owner ?? manager;
+    if (hit && !companyCorroborated && !companyNameDistinctive) {
+      // A DISTINCT withholding kind, not a fall-through to `unknown`. „We matched a person but could not
+      // establish the company" and „we matched nothing" are different facts about a link, and the review
+      // queue (which is sealed for held links precisely to be reviewable) has to be able to tell them
+      // apart. It never publishes, and it carries no role or fact — asserting either would leak the very
+      // claim the rung just refused to make.
+      return verdict('document_uncorroborated', false);
+    }
     if (owner) {
       return verdict('document', true, {
         registryRole: 'owner',
@@ -166,7 +231,6 @@ export function evidenceVerdict(input) {
         entryDate: owner.entryDate,
       });
     }
-    const manager = findPerson(deed, declarantName, [MANAGER_FIELD]);
     if (manager) {
       return verdict('document', true, {
         registryRole: 'manager',
@@ -190,31 +254,11 @@ export function evidenceVerdict(input) {
   // The SEAT leg is name-gated, and only this one. ADR-0017's holding carried forward: a name shared by
   // two ЕИК cannot support a name-derived identity claim. The seat still rescues a GENERIC name — that
   // is the whole point of the rung — it just cannot rescue a NATIONALLY SHARED one.
-  if (nameGloballyUnique) {
-    const seat = registrySeat(deed);
-    // Empty NEVER confirms — otherwise every link with no seat data on either side rubber-stamps.
-    if (seat.settlement !== '') {
-      const declared = declaredSeats.map(normalizeSettlement).filter((s) => s !== '');
-      // R10: the registered seat must have been in force for the declared period. Seats move, and a
-      // company that relocated INTO the declared settlement afterwards would otherwise confirm falsely.
-      //
-      // A null `firstDeclaredYear` FAILS the guard rather than skipping it. `load.mjs` passes null
-      // whenever no history row carried a parseable year, and an unknown year is not a satisfied
-      // temporal test — it is the absence of one. Reading it as „covers the period" made the weakest
-      // rung the only one with no temporal check, on exactly the links where we know least, and rung 4
-      // below already refuses to run without a year (`firstDeclaredYear != null`) on the same ground.
-      // The undated-seat leg is different and stays: a seat with no entry date is the ordinary shape
-      // for a company that never moved, and it is checkable — a known year is still on the other side.
-      const seatCoversPeriod =
-        firstDeclaredYear != null &&
-        (seat.entryDate == null || seat.entryDate <= `${firstDeclaredYear}-12-31`);
-      if (seatCoversPeriod && declared.includes(seat.settlement)) {
-        return verdict('confirmed', true, {
-          matchedFact: `seat:${seat.settlement}`,
-          entryDate: seat.entryDate,
-        });
-      }
-    }
+  if (nameGloballyUnique && matchedSeat != null) {
+    return verdict('confirmed', true, {
+      matchedFact: `seat:${matchedSeat.settlement}`,
+      entryDate: matchedSeat.entryDate,
+    });
   }
 
   // ── rung 4 ──────────────────────────────────────────────────────────────────

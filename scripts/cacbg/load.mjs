@@ -16,7 +16,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 // nameDistinctiveness is deliberately NOT imported: the evidence ladder replaced it in the publish
 // path (ADR-0033). It survives in classify.mjs for the review queue, not for a publishing decision.
-import { temporalStatus, localityToken, closelyHeldForm } from './classify.mjs';
+import {
+  temporalStatus,
+  localityToken,
+  closelyHeldForm,
+  nameDistinctiveness,
+} from './classify.mjs';
 import { openCache, readDeed, coverage } from '../tr/cache.mjs';
 import { TR_DB, TR_RAW, deedPath } from '../tr/paths.mjs';
 import {
@@ -769,6 +774,12 @@ for (const rec of agg.values()) {
         firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
         scope: rec.scope,
         nameGloballyUnique: nameUnique,
+        // ADR-0035. The resolver picked this winner by фирма; `nameGloballyUnique` above only says no OTHER
+        // WINNER shares that name, which says nothing about the register at large. So an uncorroborated
+        // rung 2 additionally asks whether the фирма is one a national twin is unlikely to share.
+        // `rec.key` is the WINNER's registered name — the canonical spelling of the company we actually
+        // looked up, which is the identity in question.
+        companyNameDistinctive: nameDistinctiveness(rec.key) === 'distinctive',
       });
     } catch (err) {
       // A deed we cannot parse is a deed we cannot reason about — so this link withholds, exactly as an
@@ -1039,6 +1050,21 @@ const S = {
       r.n,
     ]),
   ),
+  // Every evidence rung's count, publishing and withholding alike (ADR-0033 decision 1). `publish_tier`
+  // IS the verdict kind since #279.
+  by_evidence_kind: Object.fromEntries(
+    q('SELECT publish_tier, COUNT(*) n FROM interest_links GROUP BY publish_tier').map((r) => [
+      r.publish_tier,
+      r.n,
+    ]),
+  ),
+  // ADR-0035's residual: links where the register named this person in the resolved company but nothing
+  // established that the company is the declared one. This is the number F8's hand-labelled sample reads
+  // to decide whether the distinctiveness gate tightens to strict ЕИК/seat corroboration. Reported
+  // separately from the map above because it is a DECISION input, not just a tally.
+  document_uncorroborated: one(
+    "SELECT COUNT(*) n FROM interest_links WHERE publish_tier='document_uncorroborated'",
+  ).n,
   ambiguous_name_keys: ambiguousKeys.length,
   ambiguous_name_key_examples: ambiguousKeys,
   noMatch,
