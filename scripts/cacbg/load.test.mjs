@@ -170,6 +170,15 @@ before(() => {
     -- stake at all. The empty filing advances his horizon past 2019 → the 2019 stake is withdrawn.
     INSERT INTO bidders VALUES ('eik:101010104','ДИВЕСТ ЗЕРО 4 ЕООД','101010104',1,'София');
     INSERT INTO contracts VALUES ('c11','t1','eik:101010104','2019-05-01',150000);
+    -- §1.3 unparseable filing YEAR: Безгодин owns ДИВЕСТ БЕЗГОД (2019), then files a later declaration whose
+    -- <year> is unreadable while its FOLDER carries 2023. The folder must supply the horizon, or the filing
+    -- is dropped, the horizon never advances, and a sold stake stays published — a stale public claim.
+    INSERT INTO bidders VALUES ('eik:212121218','ДИВЕСТ БЕЗГОД 9 ЕООД','212121218',1,'София');
+    INSERT INTO contracts VALUES ('c17','t1','eik:212121218','2019-05-01',120000);
+    -- §1.3 positive control: Дрънкан's later filing is datable by NEITHER <year> NOR folder. It must be
+    -- ignored, never guessed — an undatable filing is no evidence of a sale, so this stake stays published.
+    INSERT INTO bidders VALUES ('eik:232323231','ДРЪНКАН ТЕХ 10 ЕООД','232323231',1,'София');
+    INSERT INTO contracts VALUES ('c18','t1','eik:232323231','2019-05-01',110000);
     -- N10 canonicalization: Канонов owns КАНОН ТЕХ 5, filing „МВР" one year and the full ministry name the
     -- next → ONE identity, ONE link (not a split). Distinctive name (number) → tier B publishable.
     INSERT INTO bidders VALUES ('eik:131313136','КАНОН ТЕХ 5 ЕООД','131313136',1,'София');
@@ -462,6 +471,43 @@ before(() => {
       holderRelation: 'self',
       controlHash: 'H14',
     },
+    // §1.3 unparseable filing year: Безгодин's 2019 stake. His later filing (in filings.jsonl, no holdings
+    // row) carries an unreadable <year> but a 2023 FOLDER — the fallback that must withdraw this stake.
+    {
+      folder: '2020',
+      xmlFile: 'BG0.xml',
+      year: '2019',
+      template: 'assets',
+      category: '',
+      institution: 'T3',
+      person: 'Безгодин Иванов Дивестов',
+      position: '',
+      entity: 'ДИВЕСТ БЕЗГОД 9 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: 'гр. София',
+      holderRelation: 'self',
+      controlHash: 'H20',
+    },
+    // §1.3 positive control: Дрънкан's 2019 stake, whose only later filing is undatable (see filings.jsonl).
+    {
+      folder: '2020',
+      xmlFile: 'DR0.xml',
+      year: '2019',
+      template: 'assets',
+      category: '',
+      institution: 'T4',
+      person: 'Дрънкан Иванов Тестов',
+      position: '',
+      entity: 'ДРЪНКАН ТЕХ 10 ЕООД',
+      kind: 'shares',
+      detail: '100%',
+      timing: 'annual',
+      seat: '',
+      holderRelation: 'self',
+      controlHash: 'H21',
+    },
     // B4 UNKNOWN holder: the holder cell is neither confidently the declarant's own name nor a relative's
     // (an ambiguous 1-token-different cell). classifyHolder → 'unknown' → this forms NO link (counted
     // nowhere), so a phantom relative never enters a published family figure.
@@ -630,6 +676,27 @@ before(() => {
     person: 'Интер Иванов Тестов',
     institution: 'INT',
   });
+  // §1.3: the divesting filing whose <year> is UNREADABLE. `folder` carries 2023 and is the only thing that
+  // can date it. Dropping the record leaves the horizon at 2019, `divested` false, and a sold stake on the
+  // public surface — the failure direction that matters here, since the claim names a real official.
+  filings.push({
+    folder: '2023',
+    xmlFile: 'BG1.xml',
+    year: 'н/д',
+    template: 'assets',
+    person: 'Безгодин Иванов Дивестов',
+    institution: 'T3',
+  });
+  // POSITIVE CONTROL for the same fallback: a filing datable by NEITHER field must still be ignored, not
+  // guessed at. Дрън's stake stays published — an undatable filing is no evidence of a sale.
+  filings.push({
+    folder: 'архив',
+    xmlFile: 'DR1.xml',
+    year: '',
+    template: 'assets',
+    person: 'Дрънкан Иванов Тестов',
+    institution: 'T4',
+  });
   fs.writeFileSync(
     path.join(STAGING, 'filings.jsonl'),
     filings.map((f) => JSON.stringify(f)).join('\n') + '\n',
@@ -659,6 +726,11 @@ before(() => {
     181818187: { owners: ['АЛФА ИВАНОВ ПАРТНЬОРОВ', 'БЕТА ИВАНОВ ПАРТНЬОРОВ'] },
     121212129: { owners: ['НУЛА ИВАНОВ ТЕСТОВ'] },
     191919199: { owners: ['РОДНИНА ВТОРА'], seat: 'гр. Русе' }, // family + declared seat → confirmed
+    // Безгодин is ABSENT from the deed (so §7 reconciliation cannot reverse the divestment) but his
+    // declared seat matches the registered one, so rung 3 says „Потвърдено" and the link PUBLISHES.
+    // Only the folder-dated divestment withdraws it — making the pre-fix failure the dangerous one.
+    212121218: { owners: ['ДРУГ СОБСТВЕНИК СЪВСЕМ'], seat: 'гр. София' },
+    232323231: { owners: ['ДРЪНКАН ИВАНОВ ТЕСТОВ'] }, // still the owner → the undatable filing changes nothing
   });
 });
 
@@ -855,6 +927,17 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // that asset-declaration silence as a sale and WITHDRAWS the stake; the per-type horizon must not — no later
   // INTERESTS filing omits the company. This link must stay PUBLISHED. (Guards against dropping a true link:
   // 13% of holders declare a stake only in the interests declaration.)
+  // §1.3 unparseable filing YEAR: Безгодин's later declaration has an unreadable <year> ('н/д') but a 2023
+  // FOLDER. Dropping that record — the pre-fix behaviour — leaves his horizon at 2019, so `divested` stays
+  // false and a stake he no longer holds keeps naming him on the public surface. The folder must date it.
+  const noYear = link('212121218', 'Безгодин Иванов Дивестов');
+  assert.equal(noYear.interest_class, 'private_ownership');
+  assert.equal(noYear.status, 'withdrawn');
+  // POSITIVE CONTROL: datable by NEITHER field ⇒ ignored, not guessed. The fallback must not become a
+  // licence to invent a horizon — an undatable filing is no evidence of a sale, so this link stays up.
+  const noDate = link('232323231', 'Дрънкан Иванов Тестов');
+  assert.equal(noDate.status, 'published');
+
   const crossType = link('161616163', 'Интер Иванов Тестов');
   assert.equal(crossType.interest_class, 'private_ownership');
   assert.equal(crossType.status, 'published'); // NOT withdrawn — the later asset filing is a different type
@@ -917,15 +1000,17 @@ test('re-run is idempotent and honors the suppression list (contested link stays
     'suppressed',
   );
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
-  // 17 links: 12 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
-  // 'withdrawn' + Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of
-  // registry evidence, and Кметица's seat-confirmed one) + Канонов's canonicalized single link +
+  // 19 links: 14 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
+  // 'withdrawn' + Безгодин's folder-dated 'withdrawn' + Дрънкан's undatable-filing 'published' +
+  // Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of registry evidence,
+  // and Кметица's seat-confirmed one) + Канонов's canonicalized single link +
   // Алфа & Бета (two officials on one winner, ПАРТНЬОРИ 5); Мария (quarantined), Акционер (securities),
   // Двусмислен (unknown holder) & Безинст (empty institution) none.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 17);
-  // 20 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст,
-  // zero-contract Нула and the two ПАРТНЬОРИ co-owners; Канонов's two institution-variant filings fold to ONE.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 20);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 19);
+  // 22 persons: everyone who declared a holding, incl. no-link Мария, Акционер, Двусмислен, Безинст,
+  // zero-contract Нула, the two ПАРТНЬОРИ co-owners and the two §1.3 filing-date cases; Канонов's two
+  // institution-variant filings fold to ONE.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM persons').get().n, 22);
   db.close();
 });
 

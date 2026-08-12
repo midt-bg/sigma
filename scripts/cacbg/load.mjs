@@ -355,13 +355,40 @@ const familyMaterialByTemplate = new Map();
 // declare a stake ONLY in the interests declaration). One record per declaration incl. empty / no-material ones,
 // so a same-type divest-to-ZERO still advances the horizon. An absent/typeless file just yields no match ⇒ the
 // link is kept (fail-safe: never withdraw on missing evidence).
+//
+// A filing whose <year> is unreadable falls back to its FOLDER year (#279 §1.3). Dropping the record
+// instead — the previous behaviour — is not the fail-safe it resembles: an undated filing that vanishes
+// never advances the horizon, so `divested` stays false and a stake the official has since SOLD keeps
+// naming them on the public surface. That is a stale claim about a real person, which is the failure this
+// surface can least afford. The folder year is an APPROXIMATION — it is the publication year and runs
+// ahead of the declared year (migration 0003) — so it can advance the horizon by up to a year early. That
+// errs toward WITHDRAWING a claim we are no longer sure of, which is the safe direction here.
+//
+// A filing datable by NEITHER field is still ignored: the fallback dates a filing, it does not invent one.
 const filingMaxByPersonType = new Map();
+let filingFolderDated = 0,
+  filingUndatable = 0;
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   if (!isMatchableKey(companyNameKey(f.person))) continue;
-  const fy = yr(f.year);
-  if (!Number.isFinite(fy)) continue;
+  let fy = yr(f.year);
+  if (!Number.isFinite(fy)) {
+    fy = yr(f.folder);
+    if (!Number.isFinite(fy)) {
+      // Counted, not silently dropped. A horizon we failed to advance is invisible in the output — the
+      // link simply stays up — so without this the only symptom of a corpus-wide date regression would be
+      // a surface that quietly stopped withdrawing anything.
+      filingUndatable++;
+      continue;
+    }
+    filingFolderDated++;
+  }
   const k = `${personId(f.person, f.institution)}|${f.template ?? ''}`;
   filingMaxByPersonType.set(k, Math.max(filingMaxByPersonType.get(k) ?? fy, fy));
+}
+if (filingFolderDated > 0 || filingUndatable > 0) {
+  console.log(
+    `  filings: ${filingFolderDated} dated by FOLDER (unreadable <year>), ${filingUndatable} undatable (ignored — no horizon)`,
+  );
 }
 
 db.exec('BEGIN');
