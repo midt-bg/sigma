@@ -33,6 +33,24 @@ const FORM_TOKENS = new Set([
 // generic/withhold — the safe side), never fabricates a joint-stock exclusion. Operates on UPPERCASE input.
 const SEAT_MARKER = /\s+(?:ГР|С|ОБЩ|ОБЛ|Ж\.К)\.\s*\S[^,]*$/u;
 const hasFormToken = (s) => s.split(/[^А-ЯЁ]+/).some((t) => FORM_TOKENS.has(t));
+
+// The legal forms that TERMINATE a фирма (ЗТРРЮЛНЦ writes them as a suffix), so anything after one is a
+// seat or a qualifier — never part of the name. ЕТ/СД/КД/КООПЕРАЦИЯ/ФОНДАЦИЯ/СДРУЖЕНИЕ are deliberately
+// ABSENT: those PRECEDE the фирма („ЕТ Алекс Петров Димитров"), and truncating after them would eat the
+// name itself — turning a distinctive ЕТ into a generic one and withholding a true link.
+const SUFFIX_FORMS = new Set(['ЕООД', 'ООД', 'ЕАД', 'АД', 'АДСИЦ', 'КДА', 'ДЗЗД']);
+
+// Cut everything after the LAST фирма-terminating form token. This is the case the comma-peel and the
+// marker strip both miss: „ТРЕЙС ГРУП ХОЛД АД София" has neither a comma nor a „гр." dot, so it survived
+// both, stopped ending in its form, and defeated every end-anchored form test downstream. Token-exact
+// (never a substring), so „КАДИЕВ ГЛОБАЛ ЕООД" and „АД-ХОК ЕООД" are untouched.
+function stripAfterSuffixForm(s) {
+  const re = /[А-ЯЁ]+/gu;
+  let last = null;
+  for (let m = re.exec(s); m !== null; m = re.exec(s)) if (SUFFIX_FORMS.has(m[0])) last = m;
+  return last === null ? s : s.slice(0, last.index + last[0].length).trim();
+}
+
 function stripSeatSuffix(upper) {
   let s = String(upper).trim();
   // Peel trailing comma-clauses right-to-left while the clause bears no legal form (i.e. it's a seat, not
@@ -45,7 +63,7 @@ function stripSeatSuffix(upper) {
   ) {
     s = m[1].trim();
   }
-  return s.replace(SEAT_MARKER, '').trim();
+  return stripAfterSuffixForm(s.replace(SEAT_MARKER, '').trim());
 }
 
 /**
@@ -81,6 +99,9 @@ const norm = (s) =>
 // directory without closing a cacbg↔tr cycle. A test in deed.test.mjs pins the two identical; change one
 // and that test fails rather than the two silently diverging on a legal form.
 export const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КДА)[\s"„“”«»]*$/u;
+// The same four forms as whole tokens. Kept in step with JOINT_STOCK above by classify.test.mjs, and with
+// deed.mjs's JOINT_SUFFIX twin by deed.test.mjs — three spellings of one rule, all three pinned.
+const JOINT_STOCK_FORMS = new Set(['АД', 'ЕАД', 'АДСИЦ', 'КДА']);
 /**
  * Materiality by legal form. The public ownership surface is CLOSELY-HELD companies only (ООД/ЕООД/ЕТ/
  * КД/СД/ДЗЗД or a form-unspecified name from the closely-held table). Joint-stock forms (АД/ЕАД/АДСИЦ/КДА,
@@ -90,13 +111,26 @@ export const JOINT_STOCK = /(?:^|[\s"„“”«»])(АД|ЕАД|АДСИЦ|КД
  * so it withholds rather than fabricates. @returns {boolean} true ⇒ material/closely-held.
  */
 export function closelyHeldForm(name) {
-  return !JOINT_STOCK.test(
-    stripSeatSuffix(
-      String(name ?? '')
-        .normalize('NFC')
-        .toUpperCase(),
-    ),
-  );
+  // LAST-FORM-TOKEN-WINS, not an end anchor. The anchor asked „does the name END in a joint-stock form?",
+  // which a declarant-typed cell can defeat just by appending a seat — and `stripSeatSuffix` cannot be
+  // trusted to have removed every shape of one. Asking instead „which legal form is the name's LAST?"
+  // is position-independent: a trailing seat, a stray qualifier, or nothing at all leaves the verdict
+  // unchanged, while „АД" leading („АД ГРУП ООД") or glued („АД-ХОК ЕООД") still isn't the form.
+  //
+  // This is why the predicate no longer uses JOINT_STOCK directly while deed.mjs's twin still does: that
+  // twin reads the deed envelope's `fullName` — a REGISTRY-clean name that genuinely ends in its form —
+  // whereas this one reads a free-text cell a human typed. Same rule, different input hygiene.
+  const tokens = stripSeatSuffix(
+    String(name ?? '')
+      .normalize('NFC')
+      .toUpperCase(),
+  )
+    .split(/[^А-ЯЁ]+/u)
+    .filter(Boolean);
+  const lastForm = tokens.filter((t) => FORM_TOKENS.has(t)).at(-1);
+  // No form token at all ⇒ nothing says joint-stock ⇒ material, exactly as the anchor behaved. The bar
+  // only ever fires on an EXPLICIT joint-stock form, so it withholds rather than fabricates.
+  return lastForm === undefined || !JOINT_STOCK_FORMS.has(lastForm);
 }
 
 // seatConfirmed() and publishTier() lived here until #279. The publish tiers they produced
