@@ -289,6 +289,48 @@ describe('releaseToAmendments', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.contract_number).toBe('DOC-1');
   });
+
+  // Issue #286: the УНП is absent from OCDS releases, so the amendment must carry tender.id (the EOP
+  // procedure id) for the ETL bridge to recover the УНП. And the release value is the pre-amendment
+  // value, so it is stored as value_before with a null value_after — an OCDS row must never masquerade
+  // as a fresh current_value. `unp` still holds the ocid here; rewriting it to the real УНП is the job
+  // of derive-amendments.sql / refresh-slice.sql, not the pure flattener's.
+  it('captures the tender.id bridge and records the release value as value_before (issue #286)', () => {
+    const rows = releaseToAmendments(
+      {
+        ...release,
+        tag: ['contractAmendment'],
+        tender: { ...release.tender, id: '425867' },
+        contracts: [
+          {
+            ...release.contracts![0]!,
+            id: '90029',
+            value: { amount: 21_602_081.98, currency: 'EUR' },
+            amendments: [{ description: 'Анекс 1', rationale: 'ЗОП чл. 116' }],
+          },
+        ],
+      },
+      meta,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      contract_number: '90029',
+      unp: 'ocds-bg-2026-000123',
+      tender_ext_id: '425867',
+      value_before: 21_602_081.98,
+      value_after: null,
+      value_delta: null,
+      currency: 'EUR',
+      description: 'Анекс 1',
+    });
+  });
+
+  it('captures a null tender_ext_id when the release has no tender.id', () => {
+    const rows = releaseToAmendments({ ...release, tag: ['contractUpdate'] }, meta);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.tender_ext_id).toBeNull();
+  });
 });
 
 describe('OCDS enrichment mappers', () => {

@@ -650,6 +650,189 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('bridges an OCDS-only annex to its УНП on the slice path (issue #286)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-ocds-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      readScript(dbPath, schemaPath);
+      readScript(dbPath, migration1Path);
+      readScript(dbPath, migration2Path);
+      readScript(dbPath, migration3Path);
+      readScript(dbPath, workStagingSchemaPath);
+
+      // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
+      // OCDS-only annex arrives keyed by the OCID, carrying tender_ext_id = TENDER-SLICE and NO EOP
+      // twin. The slice path's bridge must recover UNP-SLICE so the annex links to the served contract
+      // instead of staying a dead OCID row — the #286 fix, exercised through refresh-slice.sql.
+      sqlite(
+        dbPath,
+        `INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            cpv_code, cpv_description, contract_kind, estimated_value, currency, authority_name,
+            authority_eik, authority_type, published_at)
+         VALUES
+           ('eop:tenders:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-SLICE', 'TENDER-SLICE',
+            'open', 'Slice tender', '45000000', 'Construction', 'works', 5000, 'BGN',
+            'Authority Slice', '733456781', 'public', '2026-06-01');
+
+         INSERT INTO raw_contracts
+           (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+            published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+            cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+            award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+            lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+            awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+            eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+         VALUES
+           ('eop:contracts:2026-06-01', 2026, 'eop', '2026-06-07T00:00:00Z', 0, 'DOC-SLICE',
+            '2026-06-01', 'UNP-SLICE', 'TENDER-SLICE', 'open', 'Slice tender', '45000000',
+            'Construction', 'works', 5000, 'BGN', 'basis', 'lowest', 'Authority Slice', '733456781',
+            'public', 'activity', 'notice', NULL, 'CONTRACT-SLICE', '2026-06-02', 1000, 'BGN',
+            'Slice contract', 0, '787777778', 'Bidder Slice', 'BG', 'small', 0, 1, 1, 0, 0, 30);
+
+         INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, tender_ext_id, authority_eik,
+            authority_name, procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('ocds:2026-06-02', 2026, 'ocds', '2026-06-08T00:00:00Z', '1', 'AMD-SLICE-O',
+            'CONTRACT-SLICE', '2026-06-02', '2026-06-03', 'ocds-e82gsb-555', 'TENDER-SLICE',
+            '733456781', 'Authority Slice', 'Slice tender', 'works', 1000, NULL, NULL, 'BGN',
+            'OCDS-only annex');`,
+      );
+
+      readScript(dbPath, refreshSlicePath);
+
+      // No served amendment keeps an OCID — the OCDS-only annex bridged to the real УНП.
+      expect(
+        sqliteJson<{ n: number }>(
+          dbPath,
+          "SELECT COUNT(*) AS n FROM amendments WHERE unp LIKE 'ocds-%'",
+        )[0]?.n,
+      ).toBe(0);
+
+      // The annex is served against CONTRACT-SLICE, keyed by the recovered УНП (not the OCID).
+      expect(
+        sqliteJson<{ unp: string; source: string }>(
+          dbPath,
+          `SELECT unp, CASE WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'eop' END AS source
+           FROM amendments WHERE contract_number = 'CONTRACT-SLICE'`,
+        ),
+      ).toEqual([{ unp: 'UNP-SLICE', source: 'ocds' }]);
+
+      // …and it shows on the contract (annex_count = 1); current_value stays NULL — OCDS never sets
+      // an after-value, so nothing is fabricated.
+      expect(
+        sqliteJson<{ annex_count: number; current_value: number | null }>(
+          dbPath,
+          "SELECT annex_count, current_value FROM contracts WHERE contract_number = 'CONTRACT-SLICE'",
+        )[0],
+      ).toEqual({ annex_count: 1, current_value: null });
+
+      expect(sqlite(dbPath, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reconciles OCDS twins against the cumulative served amendments across windows (#286, HIGH 1)', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-xwindow-'));
+    try {
+      // A base EOP procedure (tender + contract) with УНП UNP-XW / tender.id TXW. `source` varies per
+      // window so a later slice re-reads the same contract (same derived id → INSERT OR REPLACE, no dup).
+      const base = (source: string): string =>
+        `INSERT INTO raw_tenders
+           (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+            cpv_code, cpv_description, contract_kind, estimated_value, currency, authority_name,
+            authority_eik, authority_type, published_at)
+         VALUES
+           ('eop:tenders:${source}', 2026, '2026-06-09T00:00:00Z', 'UNP-XW', 'TXW', 'open',
+            'Cross-window tender', '45000000', 'Construction', 'works', 5000, 'BGN',
+            'Authority XW', '833456781', 'public', '2026-06-01');
+         INSERT INTO raw_contracts
+           (source, dataset_year, dataset_variant, fetched_at, needs_enrichment, document_number,
+            published_at, unp, tender_ext_id, procedure_type, procurement_subject, cpv_code,
+            cpv_description, contract_kind, estimated_value, procurement_currency, legal_basis,
+            award_criteria, authority_name, authority_eik, authority_type, main_activity, notice_type,
+            lot_id, contract_number, contract_date, signing_value, currency, contract_subject,
+            awarded_to_group, contractor_eik, contractor_name, contractor_country, winner_size,
+            eu_funded, bids_received, bids_sme, bids_rejected, bids_non_eea, duration_days)
+         VALUES
+           ('eop:contracts:${source}', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-XW',
+            '2026-06-01', 'UNP-XW', 'TXW', 'open', 'Cross-window tender', '45000000',
+            'Construction', 'works', 5000, 'BGN', 'basis', 'lowest', 'Authority XW', '833456781',
+            'public', 'activity', 'notice', NULL, 'CONTRACT-XW', '2026-06-02', 1000, 'BGN',
+            'Cross-window contract', 0, '887777778', 'Bidder XW', 'BG', 'small', 0, 1, 1, 0, 0, 30);`;
+
+      const eopAnnex = `INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, authority_eik, authority_name,
+            procurement_subject, contract_kind, value_before, value_after, value_delta, currency, description)
+         VALUES
+           ('eop:annexes:2026-06-01', 2026, 'eop', '2026-06-09T00:00:00Z', '1', 'AMD-XW-E',
+            'CONTRACT-XW', '2026-06-02', '2026-06-03', 'UNP-XW', '833456781', 'Authority XW',
+            'Cross-window tender', 'works', 1000, 1500, 500, 'BGN', 'EOP annex');`;
+
+      const ocdsTwin = (source: string): string =>
+        `INSERT INTO raw_amendments
+           (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
+            contract_number, contract_date, published_at, unp, tender_ext_id, authority_eik,
+            authority_name, procurement_subject, contract_kind, value_before, value_after, value_delta,
+            currency, description)
+         VALUES
+           ('ocds:${source}', 2026, 'ocds', '2026-06-09T00:00:00Z', '1', 'AMD-XW-O',
+            'CONTRACT-XW', '2026-06-02', '2026-06-03', 'ocds-e82gsb-321', 'TXW', '833456781',
+            'Authority XW', 'Cross-window tender', 'works', 1000, NULL, NULL, 'BGN', 'OCDS twin');`;
+
+      const servedRows = (dbPath: string) =>
+        sqliteJson<{ unp: string; source: string }>(
+          dbPath,
+          `SELECT unp, CASE WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'eop' END AS source
+           FROM amendments WHERE contract_number = 'CONTRACT-XW'`,
+        );
+      const rollup = (dbPath: string) =>
+        sqliteJson<{ annex_count: number; current_value: number | null }>(
+          dbPath,
+          "SELECT annex_count, current_value FROM contracts WHERE contract_number = 'CONTRACT-XW'",
+        )[0];
+
+      // Direction A — EOP annex served first, OCDS twin arrives in a LATER window (the EOP annex is not
+      // in that window's raw_amendments). Pre-fix, the twin bridged, survived the raw-only DELETE, and
+      // promoted into the cumulative served table → annex_count = 2. The served-table check must drop it.
+      const dbA = resolve(dir, 'a.sqlite');
+      initWorkDb(dbA);
+      sqlite(dbA, `${base('2026-06-01')}\n${eopAnnex}`);
+      readScript(dbA, refreshSlicePath);
+      expect(servedRows(dbA)).toEqual([{ unp: 'UNP-XW', source: 'eop' }]);
+
+      resetRawStaging(dbA);
+      sqlite(dbA, `${base('2026-06-05')}\n${ocdsTwin('2026-06-05')}`);
+      readScript(dbA, refreshSlicePath);
+      expect(servedRows(dbA)).toEqual([{ unp: 'UNP-XW', source: 'eop' }]); // NOT doubled
+      expect(rollup(dbA)).toEqual({ annex_count: 1, current_value: 1500 });
+      expect(sqlite(dbA, 'PRAGMA foreign_key_check;').trim()).toBe('');
+
+      // Direction B — OCDS-only annex served first (net-new, no EOP twin yet), then the EOP annex arrives
+      // in a later window. The convergence DELETE must drop the stale served OCDS row so promotion of the
+      // EOP annex leaves exactly one served row (not two).
+      const dbB = resolve(dir, 'b.sqlite');
+      initWorkDb(dbB);
+      sqlite(dbB, `${base('2026-06-01')}\n${ocdsTwin('2026-06-01')}`);
+      readScript(dbB, refreshSlicePath);
+      expect(servedRows(dbB)).toEqual([{ unp: 'UNP-XW', source: 'ocds' }]);
+
+      resetRawStaging(dbB);
+      sqlite(dbB, `${base('2026-06-05')}\n${eopAnnex}`);
+      readScript(dbB, refreshSlicePath);
+      expect(servedRows(dbB)).toEqual([{ unp: 'UNP-XW', source: 'eop' }]); // OCDS twin converged away
+      expect(rollup(dbB)).toEqual({ annex_count: 1, current_value: 1500 });
+      expect(sqlite(dbB, 'PRAGMA foreign_key_check;').trim()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not insert an OCDS duplicate after an existing EOP contract', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const dbPath = resolve(dir, 'test.sqlite');
