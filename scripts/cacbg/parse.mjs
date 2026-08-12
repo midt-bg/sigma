@@ -82,10 +82,18 @@ function cellsByNum(row) {
 }
 // find the @_Num of the first column whose @_Description matches `re` (labels live on the header row)
 function colNum(firstRow, re, fallback) {
+  const found = colNumOrNull(firstRow, re);
+  return found ?? fallback;
+}
+// The same resolution WITHOUT the fallback, for the one column where "I could not find it" and "I found it
+// and it was blank" must stay distinguishable. `colNum` collapses them: an unresolvable column resolves to
+// a Num that is not in the row, `by[col]` is undefined, and the caller reads an empty cell it never found.
+// For the HOLDER column those two readings differ by who owns the stake (§1.4) — see its call site.
+function colNumOrNull(firstRow, re) {
   for (const c of asArray(firstRow?.Cell)) {
     if (c?.['@_Num'] && re.test(String(c?.['@_Description'] ?? ''))) return c['@_Num'];
   }
-  return fallback;
+  return null;
 }
 const year4 = (s) => String(s ?? '').match(/\b(20\d{2})\b/)?.[1] ?? null;
 
@@ -159,15 +167,20 @@ function parseAssets(pp) {
       ? colNum(rows[0], /наименование.*дружеств|фирма/i, '4')
       : colNum(rows[0], /емитент/i, '6');
     const cSeat = colNum(rows[0], /седалище/i, '5');
-    const cHolder = colNum(rows[0], /собствено.*фамил/i, isOod ? '7' : '8');
+    // NO fallback here, unlike every other column (§1.4). A blank holder cell MEANS something — the stake is
+    // the declarant's own (classifyHolder) — so a column we failed to resolve must not imitate one. With a
+    // fallback, a renumbered table resolves the holder to a missing column, reads '' and calls a RELATIVE's
+    // stake the official's own, which then publishes as their private_ownership. Unresolvable ⇒ 'unknown',
+    // which forms no link at all: we did not read the holder, so we make no claim about them.
+    const cHolder = colNumOrNull(rows[0], /собствено.*фамил/i);
     const cEgn = colNum(rows[0], /^егн$/i, isOod ? '8' : '9');
     for (const row of rows) {
       const by = cellsByNum(row);
       const company = by[cCompany] ?? '';
       if (!company) continue;
       if ((by[cEgn] ?? '').length > 0) egnPresent = true;
-      const holder = by[cHolder] ?? '';
-      const holderRelation = classifyHolder(holder, declarant);
+      const holderRelation =
+        cHolder === null ? 'unknown' : classifyHolder(by[cHolder] ?? '', declarant);
       if (holderRelation === 'related') familyHoldingCount += 1;
       const seat = isOod ? (by[cSeat] ?? '') : '';
       interests.push({
