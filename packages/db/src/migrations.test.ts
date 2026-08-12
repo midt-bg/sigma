@@ -354,16 +354,18 @@ describe('served migrations', () => {
       );
 
       readScript(dbPath, migration7);
-      // The valid rows survive the rebuild…
+      // The valid rows survive — nothing is rebuilt, so nothing can be lost…
       expect(sqlite(dbPath, "SELECT id FROM declarations WHERE id='d:keep';").trim()).toBe(
         'd:keep',
       );
       expect(sqlite(dbPath, "SELECT link_key FROM interest_links WHERE link_key='k';").trim()).toBe(
         'k',
       );
-      // …while the trailing-space row cannot: a status we cannot interpret is not a link to publish or
-      // guess at, and the loader rebuilds the table on the next run.
-      expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_links;').trim()).toBe('1');
+      // …including the pre-existing trailing-space row. A trigger constrains FUTURE writes; it cannot
+      // retroactively reject a row already stored, and deleting one would mean dropping a real link on a
+      // guess. The loader rewrites the table wholesale on the next run, which is what corrects it — and
+      // the read gate never showed it anyway, since 'published ' is not 'published'.
+      expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_links;').trim()).toBe('2');
       // The hashless row SURVIVES — it is a real declaration and NOT NULL was rejected for that reason —
       // but it is now covered by the natural key, so re-importing it is refused rather than duplicated.
       expect(sqlite(dbPath, "SELECT COUNT(*) FROM declarations WHERE id='d:drop';").trim()).toBe(
@@ -377,15 +379,31 @@ describe('served migrations', () => {
            VALUES ('d:dup', 'person:a', 'D.xml', NULL, '2023', 'assets', 'https://x/D.xml');`,
         ),
       ).toThrow(/UNIQUE/i);
-      // …and the constraints are actually in force afterwards.
+      // …and the constraint is in force for every writer afterwards, on INSERT and on UPDATE alike.
+      // UPDATE is the one that matters most: a hand-run status change during an incident is exactly when
+      // a stray character gets typed, and it is the path no application-level validation covers.
       expect(() =>
         sqlite(dbPath, "UPDATE interest_links SET status='published ' WHERE link_key='k';"),
-      ).toThrow(/CHECK/i);
+      ).toThrow(/CHECK failed/i);
+      expect(() =>
+        sqlite(
+          dbPath,
+          `INSERT INTO interest_links
+             (id, link_key, person_id, bidder_id, eik, entity_key, matcher_version, publish_tier,
+              relation, interest_class, status)
+           VALUES ('il:x', 'x', 'person:a', 'eik:1', '1', 'X', 't', 'document', 'owns',
+                   'private_ownership', 'publushed');`,
+        ),
+      ).toThrow(/CHECK failed/i);
+      // POSITIVE CONTROL: a legitimate status change still goes through — the trigger is a bound.
+      expect(() =>
+        sqlite(dbPath, "UPDATE interest_links SET status='withdrawn' WHERE link_key='k';"),
+      ).not.toThrow();
 
       // Migrations here are applied by a bare `d1 execute --file` with no applied-migrations tracking,
       // so a second application MUST be a no-op rather than an error or a data loss.
       readScript(dbPath, migration7);
-      expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_links;').trim()).toBe('1');
+      expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_links;').trim()).toBe('2');
       expect(sqlite(dbPath, "SELECT id FROM declarations WHERE id='d:keep';").trim()).toBe(
         'd:keep',
       );

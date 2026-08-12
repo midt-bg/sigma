@@ -8,20 +8,20 @@
 --
 -- WHY IT IS SAFE TO RE-RUN: migrations here are applied by a bare `wrangler d1 execute --file` with no
 -- applied-migrations tracking (see related-persons-data.yml / deploy.yml), so re-application MUST be a
--- no-op. Both blocks below are written to converge: the index block is `IF NOT EXISTS` over a de-duplicated
--- table, and the rebuild block copies the CURRENT table into a constrained one — run a second time it
--- copies an already-constrained table into an identical one. Idempotent by construction, no version flag.
+-- no-op. Everything below is `IF NOT EXISTS` over statements that converge.
 --
--- WHY A REBUILD FOR interest_links AND NOT `ALTER TABLE`: SQLite cannot add a CHECK in place, so
--- create-copy-drop-rename is the documented route. `declarations` needs no rebuild — its defect was a
--- constraint that failed to constrain, which a correct index fixes without touching the table.
+-- WHY TRIGGERS AND NOT A TABLE REBUILD: SQLite cannot add a CHECK in place, so the textbook route is
+-- create-copy-drop-rename. That route is WRONG here, and a real `wrangler d1 migrations apply` proved it:
+-- `interest_link_evidence` references interest_links(link_key), D1 enforces foreign keys, and
+-- `PRAGMA defer_foreign_keys` does not survive the statement-by-statement execution wrangler performs —
+-- the rebuild aborts with SQLITE_CONSTRAINT_FOREIGNKEY and the Durable Object rolls back. Dropping the
+-- child first would work mechanically but would strip every evidence seal, and since the read gate
+-- REQUIRES a seal that empties the public surface until the next monthly data run.
 --
--- FOREIGN KEYS: `interest_link_evidence` references interest_links(link_key), and D1 enforces foreign
--- keys, so dropping the parent mid-rebuild would be refused. `defer_foreign_keys` postpones the check to
--- the end of the transaction — the documented way to rebuild a referenced table — by which point the
--- renamed table satisfies it. D1 runs each file in one implicit transaction, so a failure rolls the whole
--- file back rather than leaving a half-swapped table.
-PRAGMA defer_foreign_keys = true;
+-- A BEFORE INSERT/UPDATE trigger that RAISEs enforces the identical invariant for every writer —
+-- including a hand-run UPDATE during an incident, which is when a bad value is most likely typed — with
+-- no rebuild, no FK exposure and no seal loss. Freshly created databases still get true CHECK constraints
+-- from 0003/0006; this is the retrofit path for databases that already exist.
 
 -- ── declarations ────────────────────────────────────────────────────────────────────────────────────
 -- The table-level `UNIQUE (xml_file, control_hash)` did not constrain what it was written for. SQLite
@@ -46,58 +46,54 @@ DELETE FROM declarations WHERE id NOT IN (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_declarations_natural_key
   ON declarations(xml_file, folder_year, COALESCE(control_hash, ''));
 
--- ── interest_links ──────────────────────────────────────────────────────────────────────────────────
--- `status` and `interest_class` ARE the publishing gate. The public surface is `status = 'published'`
--- AND a surfaced `interest_class`, so a value that merely resembles one — 'published ' with a trailing
--- space, the case #279 §2 names — passes every writer and then fails the gate silently. A CHECK binds
--- every writer at once, including a hand-run UPDATE during an incident, which is when it is most likely
--- to be typed.
+-- ── interest_links: status / interest_class ─────────────────────────────────────────────────────────
+-- These two ARE the publishing gate: the surface is `status = 'published'` AND a surfaced
+-- `interest_class`. A value that merely resembles one — 'published ' with a trailing space, the case
+-- #279 §2 names — passes every writer and then fails the gate silently, hiding a link that should show.
 --
--- Rows violating the new CHECKs are dropped by INSERT OR IGNORE rather than rewritten: a status we cannot
--- interpret is not a link we should publish or guess at, and the loader rebuilds the table on every run.
-CREATE TABLE IF NOT EXISTS interest_links_0007 (
-  id                  TEXT PRIMARY KEY,
-  link_key            TEXT NOT NULL UNIQUE,
-  person_id           TEXT NOT NULL REFERENCES persons(id),
-  bidder_id           TEXT NOT NULL,
-  eik                 TEXT NOT NULL,
-  entity_key          TEXT NOT NULL,
-  match_method        TEXT,
-  matcher_version     TEXT NOT NULL,
-  publish_tier        TEXT NOT NULL,
-  relation            TEXT NOT NULL,
-  interest_class      TEXT NOT NULL DEFAULT 'management_role'
-                      CHECK (interest_class IN ('private_ownership','family_ownership',
-                                                'ex_officio_board','management_role')),
-  contemporaneous     INTEGER NOT NULL DEFAULT 0,
-  own_institution     TEXT NOT NULL DEFAULT 'none',
-  evidence_count      INTEGER NOT NULL DEFAULT 1,
-  first_declared_year TEXT,
-  last_declared_year  TEXT,
-  contract_count      INTEGER NOT NULL DEFAULT 0,
-  contract_value_eur  REAL,
-  first_contract_year TEXT,
-  last_contract_year  TEXT,
-  status              TEXT NOT NULL DEFAULT 'held'
-                      CHECK (status IN ('published','internal','held','withdrawn','suppressed')),
-  verified_by         TEXT,
-  verified_at         TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-);
-INSERT OR IGNORE INTO interest_links_0007
-  (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier,
-   relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year,
-   last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year,
-   status, verified_by, verified_at, created_at)
-SELECT id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier,
-       relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year,
-       last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year,
-       status, verified_by, verified_at, created_at
-FROM interest_links
-WHERE status IN ('published','internal','held','withdrawn','suppressed')
-  AND interest_class IN ('private_ownership','family_ownership','ex_officio_board','management_role');
-DROP TABLE interest_links;
-ALTER TABLE interest_links_0007 RENAME TO interest_links;
-CREATE INDEX IF NOT EXISTS idx_interest_links_eik ON interest_links(eik);
-CREATE INDEX IF NOT EXISTS idx_interest_links_person ON interest_links(person_id);
-CREATE INDEX IF NOT EXISTS idx_interest_links_status ON interest_links(status);
+-- One trigger per operation, since SQLite triggers are per-event. `RAISE(ABORT)` rolls back the
+-- statement, so a bad write fails loudly at its source instead of surfacing later as a missing link.
+DROP TRIGGER IF EXISTS trg_interest_links_status_ins;
+CREATE TRIGGER trg_interest_links_status_ins
+BEFORE INSERT ON interest_links
+WHEN NEW.status NOT IN ('published','internal','held','withdrawn','suppressed')
+   OR NEW.interest_class NOT IN ('private_ownership','family_ownership','ex_officio_board','management_role')
+BEGIN
+  SELECT RAISE(ABORT, 'CHECK failed: interest_links.status/interest_class outside the publishing-gate enum');
+END;
+
+DROP TRIGGER IF EXISTS trg_interest_links_status_upd;
+CREATE TRIGGER trg_interest_links_status_upd
+BEFORE UPDATE ON interest_links
+WHEN NEW.status NOT IN ('published','internal','held','withdrawn','suppressed')
+   OR NEW.interest_class NOT IN ('private_ownership','family_ownership','ex_officio_board','management_role')
+BEGIN
+  SELECT RAISE(ABORT, 'CHECK failed: interest_links.status/interest_class outside the publishing-gate enum');
+END;
+
+-- ── interest_link_evidence: evidence_kind ───────────────────────────────────────────────────────────
+-- The read gate filters on this column — SURFACED_OWNERSHIP admits exactly 'document' and 'confirmed' —
+-- so an unlisted value either silently stops a link surfacing or, if it collides with a publishing name,
+-- surfaces one that was never proven. 0006 declares this as a CHECK for new databases; the trigger is
+-- the same rule for those provisioned before it.
+DROP TRIGGER IF EXISTS trg_ile_kind_ins;
+CREATE TRIGGER trg_ile_kind_ins
+BEFORE INSERT ON interest_link_evidence
+WHEN NEW.evidence_kind NOT IN ('document','confirmed','document_uncorroborated','refuted',
+                               'bar_joint_stock','unknown','outside_tr')
+   OR (NEW.registry_role IS NOT NULL AND NEW.registry_role NOT IN ('owner','manager'))
+   OR NEW.live_status NOT IN ('live','terminated_owner_still','terminated_manager_still','terminated')
+BEGIN
+  SELECT RAISE(ABORT, 'CHECK failed: interest_link_evidence enum outside the ADR-0033/0035 vocabulary');
+END;
+
+DROP TRIGGER IF EXISTS trg_ile_kind_upd;
+CREATE TRIGGER trg_ile_kind_upd
+BEFORE UPDATE ON interest_link_evidence
+WHEN NEW.evidence_kind NOT IN ('document','confirmed','document_uncorroborated','refuted',
+                               'bar_joint_stock','unknown','outside_tr')
+   OR (NEW.registry_role IS NOT NULL AND NEW.registry_role NOT IN ('owner','manager'))
+   OR NEW.live_status NOT IN ('live','terminated_owner_still','terminated_manager_still','terminated')
+BEGIN
+  SELECT RAISE(ABORT, 'CHECK failed: interest_link_evidence enum outside the ADR-0033/0035 vocabulary');
+END;
