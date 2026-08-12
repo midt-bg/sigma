@@ -48,22 +48,34 @@ function attribute(element: ts.JsxOpeningLikeElement, name: string): ts.JsxAttri
 
 describe('root Layout hydration guards', () => {
   it('passes an explicit empty nonce to Links', () => {
-    const nonce = attribute(layoutElements('Links')[0]!, 'nonce');
-
     expect(layout).toBeDefined();
+    const links = layoutElements('Links');
+    expect(links[0]).toBeDefined();
+    const nonce = attribute(links[0]!, 'nonce');
     expect(
       nonce?.initializer && ts.isStringLiteral(nonce.initializer) && nonce.initializer.text,
     ).toBe('');
   });
 
   it('suppresses hydration warnings on body attributes', () => {
-    const suppressHydrationWarning = attribute(
-      layoutElements('body')[0]!,
-      'suppressHydrationWarning',
-    );
-
     expect(layout).toBeDefined();
+    const bodies = layoutElements('body');
+    expect(bodies[0]).toBeDefined();
+    const suppressHydrationWarning = attribute(bodies[0]!, 'suppressHydrationWarning');
     expect(suppressHydrationWarning).toBeDefined();
     expect(suppressHydrationWarning?.initializer).toBeUndefined();
+  });
+
+  it('keeps body hydration suppression scoped to its only attribute', () => {
+    expect(layout).toBeDefined();
+    const bodies = layoutElements('body');
+    expect(bodies[0]).toBeDefined();
+
+    const attributes = bodies[0]!.attributes.properties;
+    expect(attributes).toHaveLength(1);
+    expect(ts.isJsxAttribute(attributes[0]!)).toBe(true);
+    expect((attributes[0]! as ts.JsxAttribute).name.getText(rootSource)).toBe(
+      'suppressHydrationWarning',
+    );
   });
 });

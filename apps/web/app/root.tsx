@@ -126,20 +126,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {imageUrl && <meta name="twitter:image" content={imageUrl} />}
         <Meta />
         {/*
-          Force an empty (but present) nonce on the stylesheet/icon <link>s.
+          Force an empty (but present) nonce throughout <Links>.
 
           `<ServerRouter nonce>` seeds React Router's FrameworkContext nonce — needed for the
           streaming <script> chunks — and <Links> reads that same context nonce and stamps it on
           every <link> it renders. The client's <HydratedRouter> never receives the nonce (it isn't
-          serialized in the hydration handoff), so <Links> renders the links WITHOUT a nonce on the
-          client. Server `nonce="…"` vs client `nonce={undefined}` is a hydration attribute mismatch
-          on EVERY page (issue #274).
+          serialized in the hydration handoff), so <Links> renders without it on the client. Only the
+          stylesheet links surface this mismatch: icon links are React 19 hoistables matched by
+          href/rel, where nonce is not compared. The shell stylesheets make this a development-console
+          warning on every page; production react-dom does no attribute hydration diffing (issue #274).
 
-          Passing an explicit non-null nonce here wins over the context nonce (RR only falls back to
-          the context value when the prop is null), so both server and client render `nonce=""` —
-          they match. The links never needed a real nonce anyway: the CSP is `style-src 'self'
-          'unsafe-inline'` (no style nonce), so the value is cosmetic. Scripts keep their real nonce
-          via <Scripts nonce> / renderToReadableStream, so the CSP script gate is unaffected.
+          Passing an explicit non-null nonce here wins over the context nonce (RR falls back only when
+          the prop is null/undefined), so both server and client render `nonce=""` — they match.
+          This regressed in react-router 7.18.0 (remix-run/react-router#15170, “Use the ServerRouter
+          nonce for nonce-aware SSR components”); before that <Links> did not read the context nonce.
+          Revisit/remove this workaround if a future RR release changes that behaviour.
+
+          The explicit value flows through the whole <Links> subtree, including criticalCss <style> and
+          PrefetchPageLinks modulepreload links. This app uses neither today; if enabled they receive an
+          empty nonce, inert under `style-src 'self' 'unsafe-inline'` but relevant if style-src gains a
+          nonce source. Scripts retain their real nonce via <Scripts nonce> / renderToReadableStream.
         */}
         <Links nonce="" />
         {schemaOrg && (
@@ -151,10 +157,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         `suppressHydrationWarning` on <body>: browser extensions (ColorZilla → `cz-shortcut-listen`,
         Grammarly → `data-gr-*`, password managers, etc.) inject attributes onto <body> BEFORE React
         hydrates, which React then reports as a „server ≠ client" attribute mismatch on every page.
-        The app itself sets no attributes on <body>, so the only source is the visitor's extensions —
-        noise we can't control, and exactly the console clutter #274 set out to clear so real mismatches
-        aren't masked. The flag is SHALLOW (it suppresses mismatches on <body>'s own attributes/text
-        only, never its children), so a genuine app-level mismatch inside the page still surfaces.
+        The app sets no <body> attributes before hydration: accessibility and overflow changes run in
+        useEffect afterwards. This suppresses extension noise, but would also mask a pre-hydration body
+        attribute mismatch (for example, from an inline script). The flag is SHALLOW: it suppresses
+        only <body>'s own attributes/text, never its children, so page-level mismatches still surface.
       */}
       <body suppressHydrationWarning>
         {children}
