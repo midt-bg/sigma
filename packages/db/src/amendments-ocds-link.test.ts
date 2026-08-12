@@ -30,9 +30,11 @@ function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', [dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
 }
 
-// EOP УНП for the twin contract (90029) and the OCDS-only contract (55500).
+// EOP УНП for the twin contract (90029), the OCDS-only contract (55500), and the OCDS-only contract
+// whose procedure is contract-only — a "synthetic tender" absent from raw_tenders (77700).
 const UNP_TWIN = '00044-2022-0146';
 const UNP_ONLY = '00099-2022-0009';
+const UNP_SYNTH = '00077-2022-0007';
 
 let dir: string;
 let db: string;
@@ -49,9 +51,12 @@ beforeEach(() => {
     `INSERT INTO raw_tenders (source, fetched_at, tender_id, unp) VALUES
        ('eop:tenders:2026-03-05', '2026-03-05', 'T1', '${UNP_TWIN}'),
        ('eop:tenders:2026-03-05', '2026-03-05', 'T2', '${UNP_ONLY}');
-     INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
-       ('eop:contracts:2026-03-05', '2026-03-05', '${UNP_TWIN}', '90029', 21602081.98, 'EUR'),
-       ('eop:contracts:2026-03-05', '2026-03-05', '${UNP_ONLY}', '55500', 500000, 'EUR');
+     INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency, tender_ext_id) VALUES
+       ('eop:contracts:2026-03-05', '2026-03-05', '${UNP_TWIN}', '90029', 21602081.98, 'EUR', 'T1'),
+       ('eop:contracts:2026-03-05', '2026-03-05', '${UNP_ONLY}', '55500', 500000, 'EUR', 'T2'),
+       -- 77700's procedure is contract-only: it has NO raw_tenders row, so the bridge must fall back
+       -- to raw_contracts.tender_ext_id (T3) to recover the УНП.
+       ('eop:contracts:2026-03-05', '2026-03-05', '${UNP_SYNTH}', '77700', 300000, 'EUR', 'T3');
      -- EOP annex for 90029 carries the correct after-value (27.4M).
      INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
        ('eop:annexes:2026-03-05', '2026-03-05', '${UNP_TWIN}', '90029', '2026-03-05', 'E1', 21602081.98, 27435415.31, 'EUR');
@@ -60,7 +65,10 @@ beforeEach(() => {
        ('ocds:2026-03-05', '2026-03-05', 'ocds-e82gsb-245534', 'T1', '90029', '2026-03-05', 'O1', 21602081.98, NULL, 'EUR');
      -- OCDS-only annex for 55500: exists in NO EOP feed. This is the row #286 wants to make visible.
      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-999999', 'T2', '55500', '2026-04-01', 'O2', 480000, NULL, 'EUR');`,
+       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-999999', 'T2', '55500', '2026-04-01', 'O2', 480000, NULL, 'EUR');
+     -- OCDS-only annex for 77700 (contract-only procedure) — bridges via the raw_contracts fallback.
+     INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
+       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-777777', 'T3', '77700', '2026-04-01', 'O3', 300000, NULL, 'EUR');`,
   );
 });
 
@@ -79,12 +87,16 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     );
     expect(stillOcid[0]?.n).toBe(0);
 
-    // Prefer-EOP dedup: the 90029 OCDS twin is gone; the OCDS-only 55500 row survives with its УНП.
+    // Prefer-EOP dedup: the 90029 OCDS twin is gone; the OCDS-only rows survive with their УНП —
+    // 55500 bridged via raw_tenders, 77700 via the raw_contracts synthetic-tender fallback.
     const ocds = sqliteJson<{ contract_number: string; unp: string }>(
       db,
       "SELECT contract_number, unp FROM raw_amendments WHERE source LIKE 'ocds:%' ORDER BY contract_number",
     );
-    expect(ocds).toEqual([{ contract_number: '55500', unp: UNP_ONLY }]);
+    expect(ocds).toEqual([
+      { contract_number: '55500', unp: UNP_ONLY },
+      { contract_number: '77700', unp: UNP_SYNTH },
+    ]);
 
     // The value trap: 90029 rolls up the EOP after-value (27.4M), never the stale OCDS 21.6M.
     const twin = sqliteJson<{ annex_count: number; current_value: number | null }>(
@@ -122,6 +134,7 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     );
     expect(served).toEqual([
       { contract_number: '55500', unp: UNP_ONLY, source: 'ocds' },
+      { contract_number: '77700', unp: UNP_SYNTH, source: 'ocds' },
       { contract_number: '90029', unp: UNP_TWIN, source: 'eop' },
     ]);
   });

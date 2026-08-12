@@ -26,20 +26,24 @@ CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 
 -- #286: recover the УНП for OCDS amendments via the tender.id bridge before any raw_amendments read
--- below, mirroring derive-amendments.sql. In the slice path raw_tenders holds only the loaded window,
--- so an OCDS amendment whose tender was published outside the window stays unbridged until the next
--- full derive — best-effort by design; the full pipeline is authoritative.
+-- below, mirroring derive-amendments.sql (raw_tenders first, then the raw_contracts synthetic-tender
+-- fallback). In the slice path the raw tables hold only the loaded window, so an OCDS amendment whose
+-- procedure was staged outside the window stays unbridged until the next full derive — best-effort by
+-- design; the full pipeline is authoritative.
 UPDATE raw_amendments
-SET unp = (
-  SELECT rt.unp FROM raw_tenders rt
-  WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
-  LIMIT 1
+SET unp = COALESCE(
+  (SELECT rt.unp FROM raw_tenders rt
+     WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL LIMIT 1),
+  (SELECT rc.unp FROM raw_contracts rc
+     WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL LIMIT 1)
 )
 WHERE source LIKE 'ocds:%'
   AND tender_ext_id IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM raw_tenders rt
-    WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
+  AND (
+    EXISTS (SELECT 1 FROM raw_tenders rt
+              WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM raw_contracts rc
+                 WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
   );
 
 -- #286: prefer the EOP annex — drop OCDS twins so annex_count and the served timeline aren't doubled.

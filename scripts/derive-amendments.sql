@@ -7,21 +7,27 @@
 
 -- #286: OCDS amendments stage the OCID in `unp` (the УНП is absent from the OCDS release), so they
 -- match no contract. Recover the real УНП through the same bridge the OCDS-lots enrichment uses
--- (normalize-raw.sql): OCDS tender.id (staged as raw_amendments.tender_ext_id) → EOP tenderId
--- (raw_tenders.tender_id) → УНП. The ocid stays only as a surrogate. Idempotent: a full run re-stages
--- raw_amendments and the UPDATE recomputes the same УНП. Runs before the rollup below and, being the
--- first amendment step in the full pipeline, leaves raw_amendments corrected for promote-amendments.sql.
+-- (normalize-raw.sql): OCDS tender.id (staged as raw_amendments.tender_ext_id) → EOP tenderId → УНП.
+-- The EOP tenderId lives in raw_tenders.tender_id for procedures in the поръчки feed AND in
+-- raw_contracts.tender_ext_id for procedures that appear only as contracts (the "synthetic tenders"
+-- of normalize-raw §2b) — so try raw_tenders first, then fall back to raw_contracts, else leave the
+-- ocid untouched. The ocid stays only as a surrogate. Idempotent: a full run re-stages raw_amendments
+-- and recomputes the same УНП. Being the first amendment step in the full pipeline, it leaves
+-- raw_amendments corrected for promote-amendments.sql.
 UPDATE raw_amendments
-SET unp = (
-  SELECT rt.unp FROM raw_tenders rt
-  WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
-  LIMIT 1
+SET unp = COALESCE(
+  (SELECT rt.unp FROM raw_tenders rt
+     WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL LIMIT 1),
+  (SELECT rc.unp FROM raw_contracts rc
+     WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL LIMIT 1)
 )
 WHERE source LIKE 'ocds:%'
   AND tender_ext_id IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM raw_tenders rt
-    WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
+  AND (
+    EXISTS (SELECT 1 FROM raw_tenders rt
+              WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM raw_contracts rc
+                 WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
   );
 
 -- #286: prefer the EOP annex. ~99% of OCDS amendments duplicate an EOP annex for the same contract;
