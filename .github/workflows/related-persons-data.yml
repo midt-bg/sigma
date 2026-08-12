@@ -309,6 +309,14 @@ jobs:
           pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
             --config wrangler.deploy.jsonc --remote --yes \
             --file ../../packages/db/migrations/0006_interest_link_evidence.sql
+          # 0007 retrofits the publishing-gate CHECK constraints and control_hash NOT NULL onto an
+          # ALREADY-PROVISIONED D1 (#279 §2). 0003 declares them now, but `CREATE TABLE IF NOT EXISTS`
+          # never revisits an existing table and the ship step wipes ROWS, not definitions — so without
+          # this a live database keeps the unconstrained shape no matter how often the data reloads.
+          # Rebuild-based and therefore idempotent: re-applying copies an already-constrained table.
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0007_publishing_gate_constraints.sql
 
       - name: Ship свързани-лица tables → D1
         # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it

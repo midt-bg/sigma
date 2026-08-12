@@ -20,9 +20,16 @@
 
 CREATE TABLE IF NOT EXISTS interest_link_evidence (
   link_key      TEXT PRIMARY KEY REFERENCES interest_links(link_key),
-  -- document | confirmed | refuted | bar_joint_stock | unknown | outside_tr  (ADR-0033 decision 1)
-  evidence_kind TEXT NOT NULL,
-  registry_role TEXT,             -- owner | manager | NULL — only meaningful for evidence_kind='document'
+  -- ADR-0033 decision 1, plus document_uncorroborated (ADR-0035: a name match whose COMPANY nothing
+  -- corroborated). CHECKed because the read gate filters on this column — SURFACED_OWNERSHIP admits
+  -- exactly 'document' and 'confirmed' — so an unlisted value is either a link that silently stops
+  -- surfacing or, if it collides with a publishing name, one that surfaces unproven.
+  evidence_kind TEXT NOT NULL
+                CHECK (evidence_kind IN ('document','confirmed','document_uncorroborated','refuted',
+                                         'bar_joint_stock','unknown','outside_tr')),
+  -- owner | manager | NULL — only meaningful for evidence_kind='document'. The card renders this as
+  -- „вписан като …", so a stray value becomes a public claim about a named person's registry role.
+  registry_role TEXT CHECK (registry_role IS NULL OR registry_role IN ('owner','manager')),
   matched_fact  TEXT,             -- the closed vocabulary above. NEVER a name.
   -- TEXT, not INTEGER: a fieldEntryNumber like 20130716101007 is already 14 digits and exceeds the
   -- exact-integer range once it round-trips through JSON/JS.
@@ -33,7 +40,9 @@ CREATE TABLE IF NOT EXISTS interest_link_evidence (
   -- live | terminated_owner_still | terminated_manager_still | terminated.
   -- RE-DERIVED on every run and deliberately NOT part of the seal's permanence: it asserts a present
   -- tense about a named person, and its freshness is bounded by the cache refresh cycle (ADR-0033 R3).
-  live_status   TEXT NOT NULL,
+  live_status   TEXT NOT NULL
+                CHECK (live_status IN ('live','terminated_owner_still','terminated_manager_still',
+                                       'terminated')),
   sealed_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
