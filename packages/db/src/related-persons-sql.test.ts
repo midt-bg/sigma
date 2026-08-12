@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,9 @@ import {
   LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
   OFFICIAL_SQL,
+  SURFACED_OWNERSHIP,
 } from './queries/related-persons';
+import { SEARCH_HITS_SQL } from './queries/search';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
 // use a fake D1 and never run the aggregation; this runs the EXACT exported SQL against a real SQLite
@@ -627,5 +629,37 @@ describe('свързани-лица SQL (real SQLite)', () => {
         expect(names.sort()).toEqual(['Иван Минев', 'Потвърден Тестов']);
       });
     });
+  });
+});
+
+// The evidence-seal gate has FOUR copies, and they must say the same thing. Reviewers found the fourth
+// (the company-search badge) checking `status='published'` alone, so search advertised a свързани-лица
+// claim about a named official that the detail page correctly withheld. `refresh-slice.sql` matters for a
+// different reason: it runs on the 6-hourly cron, so drift there silently keeps officials in the search
+// index whose links no longer surface. Nothing but a test binds SQL in three languages and two file types.
+describe('the evidence-seal gate is identical in all four places it is written', () => {
+  const sources: [string, string][] = [
+    ['related-persons.ts (SURFACED_OWNERSHIP)', SURFACED_OWNERSHIP],
+    ['search.ts (company badge)', SEARCH_HITS_SQL],
+    ['precompute.sql', readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8')],
+    ['refresh-slice.sql', readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')],
+  ];
+
+  it.each(sources)('%s requires a publishing evidence seal', (_label, sql) => {
+    // Whitespace-insensitive: the four are formatted for their own file, and a line break is not drift.
+    const flat = sql.replace(/\s+/g, ' ');
+    expect(flat).toMatch(
+      /EXISTS \( ?SELECT 1 FROM interest_link_evidence e WHERE e\.link_key = il\.link_key AND e\.evidence_kind IN \('document','confirmed'\) ?\)/,
+    );
+  });
+
+  it.each(sources)('%s admits exactly the two publishing rungs', (_label, sql) => {
+    // The rung list is the gate. A future rung added to one copy and not the others either leaks an
+    // unproven claim or silently drops a proven one, depending on which copy gained it.
+    const kinds = [...sql.matchAll(/evidence_kind IN \(([^)]*)\)/g)].map((m) =>
+      m[1]!.replace(/\s|'/g, ''),
+    );
+    expect(kinds.length).toBeGreaterThan(0);
+    for (const k of kinds) expect(k).toBe('document,confirmed');
   });
 });
