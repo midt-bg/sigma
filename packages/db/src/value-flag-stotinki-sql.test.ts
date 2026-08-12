@@ -114,7 +114,8 @@ describe('стотинки band in the value_flag CASE', () => {
         seed(dbPath, [
           // Exactly 100x: the signature of a value typed in стотинки.
           { unp: 'UNP-X100', valueBgn: ESTIMATE_BGN * 100 },
-          // Inside the band but not exact - a contract that also came in slightly under its estimate.
+          // Inside the band but not exactly 100x: the стотинки value of a contract whose own price came
+          // in slightly under the procedure estimate, so the ratio lands a little below the multiple.
           { unp: 'UNP-X97', valueBgn: Math.round(ESTIMATE_BGN * 97) },
         ]);
         readScript(dbPath, scriptPath);
