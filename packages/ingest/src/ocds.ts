@@ -217,8 +217,9 @@ export interface AmendmentStagingRow {
   circumstances: string | null;
   sme: string | null;
   // The EOP procedure id (OCDS `tender.id`) — the bridge to the УНП. The OCID is a surrogate; the
-  // real УНП is not in the OCDS release, so normalize-raw recovers it via tender_ext_id → raw_tenders
-  // → unp (see scripts/normalize-raw.sql, mirroring the OCDS-lots bridge). See issue #286.
+  // real УНП is not in the OCDS release, so the ETL recovers it via tender_ext_id → raw_tenders → unp
+  // in scripts/derive-amendments.sql (and scripts/refresh-slice.sql on the incremental path), mirroring
+  // the OCDS-lots bridge that lives in scripts/normalize-raw.sql. See issue #286.
   tender_ext_id: string | null;
 }
 
@@ -392,8 +393,9 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
         reason: amd?.rationale || null,
         circumstances: null,
         sme: null,
-        // OCDS tender.id === the EOP procedure id; the bridge to the УНП (normalize-raw.sql). The ocid
-        // stored in `unp` here is a surrogate that normalize-raw rewrites to the real УНП.
+        // OCDS tender.id === the EOP procedure id; the bridge to the УНП (derive-amendments.sql, and
+        // refresh-slice.sql on the incremental path). The ocid stored in `unp` here is a surrogate that
+        // the ETL bridge rewrites to the real УНП.
         tender_ext_id: clean(rel.tender?.id),
       },
     ];

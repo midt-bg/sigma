@@ -291,10 +291,10 @@ describe('releaseToAmendments', () => {
   });
 
   // Issue #286: the УНП is absent from OCDS releases, so the amendment must carry tender.id (the EOP
-  // procedure id) for normalize-raw's bridge to recover the УНП. And the release value is the
-  // pre-amendment value, so it is stored as value_before with a null value_after — an OCDS row must
-  // never masquerade as a fresh current_value. `unp` still holds the ocid here; rewriting it to the
-  // real УНП is normalize-raw's job, not the pure flattener's.
+  // procedure id) for the ETL bridge to recover the УНП. And the release value is the pre-amendment
+  // value, so it is stored as value_before with a null value_after — an OCDS row must never masquerade
+  // as a fresh current_value. `unp` still holds the ocid here; rewriting it to the real УНП is the job
+  // of derive-amendments.sql / refresh-slice.sql, not the pure flattener's.
   it('captures the tender.id bridge and records the release value as value_before (issue #286)', () => {
     const rows = releaseToAmendments(
       {
