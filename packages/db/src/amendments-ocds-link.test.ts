@@ -152,4 +152,23 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
       { contract_number: '90029', unp: UNP_TWIN, source: 'eop' },
     ]);
   });
+
+  it('recovers the smallest УНП deterministically when a tender.id maps to more than one', () => {
+    // The domain is 1-to-1 (one procedure = one УНП), but the bridge's `ORDER BY unp LIMIT 1` is a
+    // determinism guard: if a feed ever staged the same tender_id under two УНП, a re-run must never
+    // flip the recovered key. Give T2 a second, lexicographically-larger УНП and assert the 55500
+    // annex still bridges to UNP_ONLY ('00099-…' < 'ZZ-…'), not the arbitrary other row.
+    sqlite(
+      db,
+      `INSERT INTO raw_tenders (source, fetched_at, tender_id, unp) VALUES
+         ('eop:tenders:2026-03-05', '2026-03-05', 'T2', 'ZZ-9999-9999');`,
+    );
+    readScript(db, deriveAmendments);
+
+    const bridged = sqliteJson<{ unp: string }>(
+      db,
+      "SELECT unp FROM raw_amendments WHERE source LIKE 'ocds:%' AND contract_number = '55500'",
+    );
+    expect(bridged).toEqual([{ unp: UNP_ONLY }]);
+  });
 });
