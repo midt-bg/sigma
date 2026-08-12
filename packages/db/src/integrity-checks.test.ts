@@ -236,19 +236,24 @@ describe('reconciliation gate — injected violations', () => {
   // `amendments` is unconditional. This gate is that dedup's post-condition. The suite already pins the
   // dedup behaviourally; these cases pin the GATE — without them an `ok: n === 0` → `ok: true` edit
   // leaves every package green while the gate is inert.
+  //
+  // Sources are the real staged shapes (`eop:annexes:<day>`, `ocds:<day>`), and the offending pairs
+  // deliberately span two different years: the gate matches by source PREFIX, so a narrowed pattern
+  // (`ocds:2026%`) has to drop one of them and blow the count.
   it('amendment-twin-dedup catches an EOP and an OCDS amendment on the same (unp, contract_number)', async () => {
     const db = track(freshDb());
     sqlite(
       db,
       `INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
        VALUES
-         ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2022-03-01','E1','eop:annexes:2022-03-01'),
-         ('am:ocds:1','am:UNP-1:C-1:ocds-1','C-1','UNP-1','2022-03-01','ocds-e82gsb-1','ocds:2022-03-01');`,
+         ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2026-03-05','E1','eop:annexes:2026-03-05'),
+         ('am:ocds:1','am:UNP-1:C-1:ocds-1','C-1','UNP-1','2026-03-05','ocds-e82gsb-1','ocds:2026-03-05');`,
     );
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(false);
     expect(result.skipped).toBe(false);
-    expect(result.detail).toMatch(/1 \(unp, contract_number\).*prefer-EOP dedup regressed/);
+    expect(result.detail).toMatch(/^1 \(unp, contract_number\) carry both/);
+    expect(result.detail).toMatch(/prefer-EOP dedup regressed/);
   });
 
   it('amendment-twin-dedup stays green on the shapes a working dedup actually leaves behind', async () => {
@@ -261,13 +266,14 @@ describe('reconciliation gate — injected violations', () => {
          ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2022-03-01','E1','eop:annexes:2022-03-01'),
          ('am:eop:2','am:UNP-1:C-1:E2','C-1','UNP-1','2022-06-01','E2','eop:annexes:2022-06-01'),
          -- a genuinely OCDS-only annex on a DIFFERENT contract: what the dedup deliberately keeps
-         ('am:ocds:1','am:UNP-2:C-2:ocds-1','C-2','UNP-2','2023-02-01','ocds-e82gsb-1','ocds:2023-02-01'),
+         ('am:ocds:1','am:UNP-2:C-2:ocds-1','C-2','UNP-2','2026-02-01','ocds-e82gsb-1','ocds:2026-02-01'),
          -- an OCDS row the bridge refused (still keyed by its OCID) next to an EOP annex on the same
-         -- contract number: an honest residual, NOT double counting, because it joins no contract
-         ('am:ocds:2','am:ocds-3:C-1:ocds-2','C-1','ocds-e82gsb-3','2022-04-01','ocds-e82gsb-2','ocds:2022-04-01'),
+         -- contract number: an honest residual, NOT double counting, because every consumer keys on
+         -- (unp, contract_number) and this row's unp matches no contract
+         ('am:ocds:2','am:ocds-3:C-1:ocds-2','C-1','ocds-e82gsb-3','2026-04-01','ocds-e82gsb-2','ocds:2026-04-01'),
          -- NULL contract_number on both sides: cannot roll onto a contract, so it cannot double count
-         ('am:eop:3','am:UNP-3::E3',NULL,'UNP-3','2022-05-01','E3','eop:annexes:2022-05-01'),
-         ('am:ocds:3','am:UNP-3::ocds-3',NULL,'UNP-3','2022-05-01','ocds-e82gsb-4','ocds:2022-05-01');`,
+         ('am:eop:3','am:UNP-3::E3',NULL,'UNP-3','2026-05-01','E3','eop:annexes:2026-05-01'),
+         ('am:ocds:3','am:UNP-3::ocds-3',NULL,'UNP-3','2026-05-01','ocds-e82gsb-4','ocds:2026-05-01');`,
     );
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(true);
@@ -275,22 +281,25 @@ describe('reconciliation gate — injected violations', () => {
     expect(result.detail).toMatch(/prefer-EOP dedup intact/);
   });
 
+  // Two offending pairs, one per YEAR on both sides. Any source pattern narrower than the prefix the
+  // gate is meant to match (say `ocds:2026%` or `eop:annexes:2026%`) sees only one of them, so the
+  // count drops to 1 and this fails — a year-blind gate cannot masquerade as a working one.
   it('amendment-twin-dedup counts each offending pair once, not each row', async () => {
     const db = track(freshDb());
     sqlite(
       db,
       `INSERT INTO amendments (id, natural_key, contract_number, unp, published_at, document_number, source)
        VALUES
-         ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2022-03-01','E1','eop:annexes:2022-03-01'),
-         ('am:eop:2','am:UNP-1:C-1:E2','C-1','UNP-1','2022-04-01','E2','eop:annexes:2022-04-01'),
-         ('am:ocds:1','am:UNP-1:C-1:ocds-1','C-1','UNP-1','2022-03-01','ocds-e82gsb-1','ocds:2022-03-01'),
-         ('am:ocds:2','am:UNP-1:C-1:ocds-2','C-1','UNP-1','2022-04-01','ocds-e82gsb-2','ocds:2022-04-01'),
-         ('am:eop:3','am:UNP-2:C-2:E3','C-2','UNP-2','2022-05-01','E3','eop:annexes:2022-05-01'),
-         ('am:ocds:3','am:UNP-2:C-2:ocds-3','C-2','UNP-2','2022-05-01','ocds-e82gsb-3','ocds:2022-05-01');`,
+         ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2026-03-05','E1','eop:annexes:2026-03-05'),
+         ('am:eop:2','am:UNP-1:C-1:E2','C-1','UNP-1','2026-04-09','E2','eop:annexes:2026-04-09'),
+         ('am:ocds:1','am:UNP-1:C-1:ocds-1','C-1','UNP-1','2026-03-05','ocds-e82gsb-1','ocds:2026-03-05'),
+         ('am:ocds:2','am:UNP-1:C-1:ocds-2','C-1','UNP-1','2026-04-09','ocds-e82gsb-2','ocds:2026-04-09'),
+         ('am:eop:3','am:UNP-2:C-2:E3','C-2','UNP-2','2025-11-04','E3','eop:annexes:2025-11-04'),
+         ('am:ocds:3','am:UNP-2:C-2:ocds-3','C-2','UNP-2','2025-11-04','ocds-e82gsb-3','ocds:2025-11-04');`,
     );
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(false);
-    expect(result.detail).toMatch(/^2 \(unp, contract_number\)/);
+    expect(result.detail).toMatch(/^2 \(unp, contract_number\) carry both/);
   });
 
   it('amendment-twin-dedup self-skips when the amendments table is absent (staging-only DB)', async () => {
