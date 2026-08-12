@@ -162,6 +162,35 @@ describe('/conflicts/company/:eik — render', () => {
 });
 
 describe('/conflicts/methodology — render', () => {
+  it('discloses the matching rule verbatim — every rung, and what each may conclude', async () => {
+    // ADR-0021 E10 makes this page the disclosure of the rule, and ADR-0033 decision 7 makes it a LAUNCH
+    // CONDITION rather than a follow-up: a heuristic that asserts something about a named person is only
+    // defensible if the reader can see exactly what was asserted and why. Nothing but a test keeps the
+    // page in step with the ladder — the rule can change in evidence.mjs and leave the page describing a
+    // system that no longer exists, which is worse than not disclosing it at all.
+    await mount(ConflictMethodology as never, {});
+    const t = text();
+    // every rung of the ladder, by the name the seal and the card use
+    for (const rung of ['Документ', 'Потвърдено', 'Оборена', 'Неизвестна'])
+      expect(t).toContain(rung);
+    // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
+    expect(t).toContain('Акционерна форма');
+    expect(t).toContain('не е публична');
+    // rung 2 — all three names, one record, and the two refusals
+    expect(t).toContain('пълно съвпадение и на трите имена');
+    expect(t).toContain('един и същ запис');
+    // ADR-0035 — the company gate, the part a reader most needs to judge the claim
+    expect(t).toContain('Съвпадението по име само по себе си не стига');
+    // R10 — the seat's temporal guard, both halves
+    expect(t).toContain('вписано преди декларирания период');
+    expect(t).toContain('когато този период е известен');
+    // the honest limit: no ЕГН, so a homonym is possible
+    expect(t).toContain('не съдържа ЕГН');
+    expect(t).toContain('съименник');
+    // what the register proves and what it does not — the distinction the whole surface rests on
+    expect(t).toContain('самоличността на дружеството');
+  });
+
   it('states the three libel rails in plain language', async () => {
     await mount(ConflictMethodology as never, {});
     const t = text();

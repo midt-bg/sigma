@@ -385,3 +385,89 @@ test('D positive control — an unchanged published set produces no monotonicity
   assert.equal(threw, false);
   assert.doesNotMatch(out, /D_monotonicity/);
 });
+
+// The four axes below fire on shapes that no test exercised. Each is a hard finding — the audit is the
+// last gate before a named claim ships — so an axis that silently stopped firing would be invisible.
+
+test('A_key_missing: a link whose entity_key is in NO live bidder → hard finding', () => {
+  // The key resolved when the link was built and does not now: the winner was renamed, re-keyed or
+  // dropped from the corpus. The link still names an official against a company we can no longer find,
+  // so it must stop the run rather than ship pointing at nothing.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','РЕАЛЕН ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('ИЗЧЕЗНАЛ ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true, 'an unresolvable entity_key must fail the gate');
+  assert.equal(/A_key_missing/.test(out), true);
+});
+
+test('A_eik_mismatch: a name-resolved key pointing at a DIFFERENT ЕИК than it resolves to → hard', () => {
+  // The libel case in its purest form: the name resolves to exactly one winner, and the link published a
+  // different company against it. Everything on the card — contracts, money, the ЕИК link — would be the
+  // wrong company's, under a real official's name.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','РЕАЛЕН ЕООД','100000001',1`, `'b2','ДРУГ ЕООД','200000002',1`],
+    links: [
+      `'il1','p1|200000002','p1','200000002','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b2','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|200000002','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true);
+  assert.equal(/A_eik_mismatch/.test(out), true);
+});
+
+test('B_bidder_eik: the stored bidder row disagrees with the link ЕИК → hard finding', () => {
+  // Row integrity. The card renders the BIDDER's name and money but links out on the link's ЕИК, so a
+  // disagreement means the reader is shown one company and sent to another.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','РЕАЛЕН ЕООД','100000001',1`, `'b2','ДРУГ ЕООД','200000002',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b2','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true);
+  assert.equal(/B_bidder_eik/.test(out), true);
+});
+
+test('B_eik_invalid: publishing against a checksum-INVALID ЕИК → hard finding', () => {
+  // eik_valid=0 means the ЕИК failed its control digit, so it identifies no company at all. This axis is
+  // the rail that keeps such a row off the public surface, and nothing else re-checks it downstream.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','РЕАЛЕН ЕООД','100000001',0`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, true, 'an invalid-ЕИК publish must fail the gate');
+  assert.equal(/B_eik_invalid/.test(out), true);
+});
+
+test('the four axes above are a BOUND: a clean, valid, sealed link passes them all', () => {
+  // POSITIVE CONTROL for the whole block. Four assertions that something fails prove nothing unless the
+  // correct shape passes — an audit that flagged everything would satisfy every test above.
+  const { threw, out } = buildAndAudit({
+    bidders: [`'b1','РЕАЛЕН ЕООД','100000001',1`],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'`,
+    ],
+  });
+  assert.equal(threw, false, `a clean link must pass: ${out}`);
+  for (const axis of ['A_key_missing', 'A_eik_mismatch', 'B_bidder_eik', 'B_eik_invalid'])
+    assert.equal(new RegExp(axis).test(out), false, `${axis} must not fire on a clean link`);
+});

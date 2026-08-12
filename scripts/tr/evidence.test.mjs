@@ -273,6 +273,24 @@ test('rung 3 — name uniqueness does NOT gate the stronger „Документ"
   );
 });
 
+test('rung 2 — every OWNERSHIP field code can carry the match, not just CR_F_19_L', () => {
+  // OWNERSHIP_FIELDS is ['CR_F_18_L','CR_F_19_L','CR_F_23_L'] — едноличен собственик, съдружници, and
+  // ФЛ-търговец. Every owner test used CR_F_19_L, so a typo or a dropped entry in the other two would
+  // have silently withheld an entire ownership shape: a sole owner (the commonest ЕООД form) publishing
+  // as „Неизвестна" is a recall hole with no symptom.
+  for (const code of ['CR_F_18_L', 'CR_F_19_L', 'CR_F_23_L']) {
+    const d = deed([fld(code, container('ИВАН ПЕТРОВ ТЕСТОВ'))]);
+    const v = evidenceVerdict({ ...base, deed: d });
+    assert.equal(v.kind, 'document', `${code} must carry an ownership match`);
+    assert.equal(v.registryRole, 'owner', `${code} is an OWNERSHIP field, not management`);
+    assert.equal(v.matchedFact, `role:owner:${code}`);
+  }
+  // POSITIVE CONTROL — a field that is NOT an ownership or manager field must not match at all, or the
+  // loop above would pass for a reason other than the one it claims.
+  const other = deed([fld('CR_F_99_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))]);
+  assert.notEqual(evidenceVerdict({ ...base, deed: other }).kind, 'document');
+});
+
 // ── rung 2's company gate: the winner-vs-non-winner homonym (ADR-0035) ────────
 //
 // The ladder proves a person with these three tokens is registered in the company we LOOKED UP. It cannot
