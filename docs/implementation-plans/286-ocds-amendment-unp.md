@@ -95,6 +95,15 @@ done at the contract level: **prefer EOP; use OCDS only where EOP has no annex.*
 
 ## 3. The fix (three parts, one PR)
 
+> **Shipped implementation — where it diverged from the plan below (this section is the original
+> planning snapshot).** Part 2's bridge landed in `scripts/derive-amendments.sql` (mirrored in
+> `scripts/refresh-slice.sql`), **not** `normalize-raw.sql` — `derive-amendments.sql` is the *first*
+> consumer of `raw_amendments` on every path, so the rewrite has to happen there or its own rollup still
+> joins on the OCID. Part 3's dedup shipped as a `DELETE FROM raw_amendments` (not an inline
+> `WHERE NOT EXISTS` filter), and `promote-amendments.sql` is unchanged. On the incremental path the
+> slice dedup additionally reconciles against the cumulative served `amendments` table (full path rebuilds
+> it wholesale, so it needs no equivalent). See the review thread on the PR for the reasoning.
+
 ### Part 1 — Ingest (`packages/ingest/src/ocds.ts`, `apps/etl` re-exports)
 - Add `tender_ext_id` to `AmendmentStagingRow` and `AMENDMENT_STAGING_COLS`.
 - In `releaseToAmendments`, set `tender_ext_id: clean(rel.tender?.id)`.
