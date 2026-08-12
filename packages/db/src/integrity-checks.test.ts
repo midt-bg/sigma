@@ -278,7 +278,11 @@ describe('reconciliation gate — injected violations', () => {
          ('am:ocds:2','am:ocds-3:C-1:ocds-2','C-1','ocds-e82gsb-3','2026-04-07','ocds-e82gsb-2','ocds:2026-04-07'),
          -- NULL contract_number on both sides: cannot roll onto a contract, so it cannot double count
          ('am:eop:3','am:UNP-3::E3',NULL,'UNP-3','2026-05-06','E3','eop:annexes:2026-05-06'),
-         ('am:ocds:3','am:UNP-3::ocds-3',NULL,'UNP-3','2026-05-06','ocds-e82gsb-4','ocds:2026-05-06');`,
+         ('am:ocds:3','am:UNP-3::ocds-3',NULL,'UNP-3','2026-05-06','ocds-e82gsb-4','ocds:2026-05-06'),
+         -- NULL unp on both sides, same contract number: amendments.unp is nullable and both mappers
+         -- can leave it empty, but such a row joins no contract either, so it must stay green too
+         ('am:eop:4','am:C-9:E4','C-9',NULL,'2026-07-02','E4','eop:annexes:2026-07-02'),
+         ('am:ocds:5','am:C-9:ocds-5','C-9',NULL,'2026-07-02','ocds-e82gsb-5','ocds:2026-07-02');`,
     );
     const result = await checkAmendmentTwins(runner(db));
     expect(result.ok).toBe(true);
@@ -300,6 +304,9 @@ describe('reconciliation gate — injected violations', () => {
          ('am:eop:1','am:UNP-1:C-1:E1','C-1','UNP-1','2020-05-08','E1','eop:annexes:2020-05-08'),
          ('am:eop:2','am:UNP-1:C-1:E2','C-1','UNP-1','2026-08-11','E2','eop:annexes:2026-08-11'),
          ('am:ocds:1','am:UNP-1:C-1:ocds-1','C-1','UNP-1','2026-01-04','ocds-e82gsb-1','ocds:2026-01-04'),
+         -- ...and TWO OCDS rows, which the dedup would drop together: a gate that demanded exactly one
+         -- row per side would walk straight past this pair
+         ('am:ocds:4','am:UNP-1:C-1:ocds-4','C-1','UNP-1','2026-06-15','ocds-e82gsb-4','ocds:2026-06-15'),
          ('am:eop:3','am:UNP-1:C-2:E3','C-2','UNP-1','2023-09-12','E3','eop:annexes:2023-09-12'),
          ('am:ocds:2','am:UNP-1:C-2:ocds-2','C-2','UNP-1','2026-05-20','ocds-e82gsb-2','ocds:2026-05-20'),
          ('am:eop:4','am:UNP-2:C-1:E4','C-1','UNP-2','2026-08-11','E4','eop:annexes:2026-08-11'),
