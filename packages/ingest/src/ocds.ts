@@ -216,6 +216,10 @@ export interface AmendmentStagingRow {
   reason: string | null;
   circumstances: string | null;
   sme: string | null;
+  // The EOP procedure id (OCDS `tender.id`) — the bridge to the УНП. The OCID is a surrogate; the
+  // real УНП is not in the OCDS release, so normalize-raw recovers it via tender_ext_id → raw_tenders
+  // → unp (see scripts/normalize-raw.sql, mirroring the OCDS-lots bridge). See issue #286.
+  tender_ext_id: string | null;
 }
 
 export interface PartyStagingRow {
@@ -375,14 +379,22 @@ export function releaseToAmendments(rel: OcdsRelease, meta: OcdsMeta): Amendment
         contract_subject: c.title || sup.awardTitle || null,
         contractor_eik: sup.eik,
         contractor_name: sup.name,
-        value_before: null,
-        value_after: finiteNum(c.value?.amount),
+        // An OCDS contractAmendment/contractUpdate release carries the contract value as it stands in
+        // that release — measured against the EOP annex stream this is the value BEFORE the amendment,
+        // never a reliable "after" (issue #286). Record it as value_before with a null value_after so an
+        // OCDS row can never drive the derived current_value (derive-amendments.sql selects the latest
+        // non-null value_after); the authoritative after-value comes from the EOP annex.
+        value_before: finiteNum(c.value?.amount),
+        value_after: null,
         value_delta: null,
         currency: isoCurrency(c.value?.currency),
         description: amd?.description || null,
         reason: amd?.rationale || null,
         circumstances: null,
         sme: null,
+        // OCDS tender.id === the EOP procedure id; the bridge to the УНП (normalize-raw.sql). The ocid
+        // stored in `unp` here is a surrogate that normalize-raw rewrites to the real УНП.
+        tender_ext_id: clean(rel.tender?.id),
       },
     ];
   });
@@ -544,6 +556,7 @@ export const AMENDMENT_STAGING_COLS: (keyof AmendmentStagingRow)[] = [
   'reason',
   'circumstances',
   'sme',
+  'tender_ext_id',
 ];
 
 export const PARTY_STAGING_COLS: (keyof PartyStagingRow)[] = [
