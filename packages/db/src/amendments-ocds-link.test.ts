@@ -35,6 +35,10 @@ function readScript(dbPath: string, path: string): void {
 const UNP_TWIN = '00044-2022-0146';
 const UNP_ONLY = '00099-2022-0009';
 const UNP_SYNTH = '00077-2022-0007';
+// A fourth OCDS annex whose procedure bridges NOWHERE — its tender.id is in neither raw_tenders nor
+// raw_contracts. On the live corpus ~3/4,800 OCDS amendments are like this (#286 links 4,797/4,800);
+// they honestly keep the OCID in `unp` because they can't be keyed to a contract yet — NOT dropped.
+const OCID_UNBRIDGED = 'ocds-e82gsb-666666';
 
 let dir: string;
 let db: string;
@@ -68,7 +72,10 @@ beforeEach(() => {
        ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-999999', 'T2', '55500', '2026-04-01', 'O2', 480000, NULL, 'EUR');
      -- OCDS-only annex for 77700 (contract-only procedure) — bridges via the raw_contracts fallback.
      INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
-       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-777777', 'T3', '77700', '2026-04-01', 'O3', 300000, NULL, 'EUR');`,
+       ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-777777', 'T3', '77700', '2026-04-01', 'O3', 300000, NULL, 'EUR');
+     -- OCDS annex whose tender.id (T_MISSING) is in NEITHER raw_tenders nor raw_contracts — unbridgeable.
+     INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
+       ('ocds:2026-04-01', '2026-04-01', '${OCID_UNBRIDGED}', 'T_MISSING', '66600', '2026-04-01', 'O4', 300000, NULL, 'EUR');`,
   );
 });
 
@@ -80,21 +87,24 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
   it('bridges the УНП, drops EOP twins, and never understates current_value', () => {
     readScript(db, deriveAmendments);
 
-    // Bridge: every OCDS amendment left in staging now carries the real УНП, not the OCID.
-    const stillOcid = sqliteJson<{ n: number }>(
+    // Bridge: every *bridgeable* OCDS amendment now carries the real УНП. The one unbridgeable procedure
+    // (tender.id in neither raw_tenders nor raw_contracts) honestly keeps its OCID — it is NOT dropped.
+    const stillOcid = sqliteJson<{ contract_number: string; unp: string }>(
       db,
-      "SELECT COUNT(*) AS n FROM raw_amendments WHERE source LIKE 'ocds:%' AND unp LIKE 'ocds-%'",
+      "SELECT contract_number, unp FROM raw_amendments WHERE source LIKE 'ocds:%' AND unp LIKE 'ocds-%'",
     );
-    expect(stillOcid[0]?.n).toBe(0);
+    expect(stillOcid).toEqual([{ contract_number: '66600', unp: OCID_UNBRIDGED }]);
 
     // Prefer-EOP dedup: the 90029 OCDS twin is gone; the OCDS-only rows survive with their УНП —
-    // 55500 bridged via raw_tenders, 77700 via the raw_contracts synthetic-tender fallback.
+    // 55500 bridged via raw_tenders, 77700 via the raw_contracts synthetic-tender fallback, and 66600
+    // stays on its OCID (unbridgeable, but surfaced rather than silently deleted).
     const ocds = sqliteJson<{ contract_number: string; unp: string }>(
       db,
       "SELECT contract_number, unp FROM raw_amendments WHERE source LIKE 'ocds:%' ORDER BY contract_number",
     );
     expect(ocds).toEqual([
       { contract_number: '55500', unp: UNP_ONLY },
+      { contract_number: '66600', unp: OCID_UNBRIDGED },
       { contract_number: '77700', unp: UNP_SYNTH },
     ]);
 
@@ -116,24 +126,28 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     expect(only[0]?.current_value).toBeNull();
   });
 
-  it('promotes a clean served amendments table with no dead OCID rows', () => {
+  it('promotes served amendments, keeping only the unbridgeable OCID as the honest residual', () => {
     readScript(db, deriveAmendments);
     readScript(db, promoteAmendments);
 
-    // No served amendment still carries an OCID in unp — the issue's core symptom is gone.
-    const dead = sqliteJson<{ n: number }>(
+    // The issue's mass symptom is gone (4,800 → the handful with no bridge). The one procedure that
+    // bridges nowhere is promoted with its OCID still in unp — surfaced honestly, not silently dropped
+    // and not fabricated onto a contract. promote-amendments.sql intentionally promotes every staged row.
+    const dead = sqliteJson<{ contract_number: string; unp: string }>(
       db,
-      "SELECT COUNT(*) AS n FROM amendments WHERE unp LIKE 'ocds-%'",
+      "SELECT contract_number, unp FROM amendments WHERE unp LIKE 'ocds-%'",
     );
-    expect(dead[0]?.n).toBe(0);
+    expect(dead).toEqual([{ contract_number: '66600', unp: OCID_UNBRIDGED }]);
 
-    // The served rows: one EOP annex (90029) and one OCDS-only annex (55500), both keyed by real УНП.
+    // The served rows: one EOP annex (90029), two bridged OCDS-only annexes (55500, 77700) keyed by real
+    // УНП, and the unbridgeable OCDS residual (66600) still on its OCID.
     const served = sqliteJson<{ contract_number: string; unp: string; source: string }>(
       db,
       "SELECT contract_number, unp, CASE WHEN source LIKE 'ocds:%' THEN 'ocds' ELSE 'eop' END AS source FROM amendments ORDER BY contract_number",
     );
     expect(served).toEqual([
       { contract_number: '55500', unp: UNP_ONLY, source: 'ocds' },
+      { contract_number: '66600', unp: OCID_UNBRIDGED, source: 'ocds' },
       { contract_number: '77700', unp: UNP_SYNTH, source: 'ocds' },
       { contract_number: '90029', unp: UNP_TWIN, source: 'eop' },
     ]);

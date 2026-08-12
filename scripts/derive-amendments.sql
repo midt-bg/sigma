@@ -1,6 +1,8 @@
 -- Sigma — roll raw_amendments up onto raw_contracts.
 -- Run AFTER scripts/load-eop.mjs (which stages the EOP base + in-bucket OCDS amendments).
--- Re-runnable: resets the rollup, then matches amendments by (unp, contract_number).
+-- Re-runnable. First recovers the УНП for OCDS amendments via the tender.id bridge (#286), then
+-- prefers the EOP annex over its OCDS twin (dropping the twin), then matches amendments by
+-- (unp, contract_number).
 -- current_value = the after-value of the LATEST amendment; annex_count = how many.
 -- Contracts without amendments keep annex_count = 0 and current_value = NULL (the
 -- convention downstream is COALESCE(current_value, signing_value)).
@@ -29,6 +31,30 @@ WHERE source LIKE 'ocds:%'
     OR EXISTS (SELECT 1 FROM raw_contracts rc
                  WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
   );
+
+-- #286 diagnostic (printed by wrangler, BEFORE the drop below): keep the residual OCDS under-count
+-- OBSERVABLE. The prefer-EOP dedup is contract-level — it drops EVERY OCDS annex on a contract that
+-- already has an EOP annex, so a genuinely OCDS-only *extra* amendment there is lost. Per-annex twin
+-- matching can't rescue it: OCDS document_number is the release id (ocds-…) while EOP's is the АОП
+-- document number — different id spaces that never align, so we cannot prove per-annex which drops are
+-- true twins. Report bounds instead (run after the bridge above, so o.unp is the recovered УНП):
+--   dropped         = every OCDS annex removed by the dedup          (UPPER bound on annexes lost)
+--   excess_over_eop = Σ max(0, ocds_on_contract − eop_on_contract)   (LOWER bound: cannot all be twins)
+SELECT
+  COALESCE(SUM(g.ocds_n), 0) AS ocds_annexes_dropped,
+  COALESCE(SUM(CASE WHEN g.ocds_n > g.eop_n THEN g.ocds_n - g.eop_n ELSE 0 END), 0)
+    AS ocds_annexes_excess_over_eop
+FROM (
+  SELECT o.unp, o.contract_number,
+    COUNT(*) AS ocds_n,
+    (SELECT COUNT(*) FROM raw_amendments e
+       WHERE e.source LIKE 'eop:%' AND e.unp = o.unp AND e.contract_number = o.contract_number) AS eop_n
+  FROM raw_amendments o
+  WHERE o.source LIKE 'ocds:%'
+    AND EXISTS (SELECT 1 FROM raw_amendments e
+                  WHERE e.source LIKE 'eop:%' AND e.unp = o.unp AND e.contract_number = o.contract_number)
+  GROUP BY o.unp, o.contract_number
+) g;
 
 -- #286: prefer the EOP annex. ~99% of OCDS amendments duplicate an EOP annex for the same contract;
 -- keeping both would double annex_count and duplicate the served timeline. Drop the OCDS twin when an
