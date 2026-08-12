@@ -23,9 +23,9 @@
 -- full path never needs (promote-amendments.sql rebuilds it from scratch). raw_tenders(tender_id) is
 -- indexed in work-staging-schema.sql, but raw_contracts(tender_ext_id) is not, so the fallback lookups
 -- below would full-scan raw_contracts once per OCDS row — index it defensively (mirrors the lots bridge,
--- which indexes raw_tenders.tender_id before its join in normalize-raw.sql). ORDER BY unp makes the pick
--- deterministic: tender_id maps to exactly one УНП in practice, but if a feed ever staged two, take the
--- smallest so re-runs never flip the recovered УНП.
+-- which indexes raw_tenders.tender_id before its join in normalize-raw.sql). The WHERE bridges only when
+-- the chosen source maps the tender_ext_id to exactly ONE distinct УНП — see the refuse-on-ambiguity note
+-- inside the block; the ocds_ambiguous_bridges diagnostic below surfaces any refusal.
 CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
 -- @bridge-lockstep start
 UPDATE raw_amendments
@@ -38,12 +38,40 @@ SET unp = COALESCE(
 WHERE source LIKE 'ocds:%'
   AND tender_ext_id IS NOT NULL
   AND (
-    EXISTS (SELECT 1 FROM raw_tenders rt
-              WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM raw_contracts rc
-                 WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
+    -- raw_tenders wins when it resolves the procedure to exactly ONE УНП; else fall back to raw_contracts
+    -- when IT is unambiguous. Refuse to bridge (leave the OCID as an honest residual) when the chosen
+    -- source maps one tender_ext_id to more than one distinct УНП — the domain is 1-to-1, so this guards a
+    -- feed anomaly rather than silently mis-attributing every annex of the losing procedure (issue #286).
+    (SELECT COUNT(DISTINCT rt.unp) FROM raw_tenders rt
+       WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL) = 1
+    OR (
+      NOT EXISTS (SELECT 1 FROM raw_tenders rt
+                    WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
+      AND (SELECT COUNT(DISTINCT rc.unp) FROM raw_contracts rc
+             WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL) = 1
+    )
   );
 -- @bridge-lockstep end
+
+-- #286 diagnostic (printed by wrangler, review nikimilenkov LOW 1): count OCDS amendments the bridge
+-- REFUSED because their tender_ext_id resolves to more than one distinct УНП in the chosen source. The
+-- domain is 1-to-1, so this must be 0 on a healthy feed; a non-zero value is a feed anomaly to investigate,
+-- not a silent mis-attribution. Runs after the bridge, so refused rows still carry their OCID.
+SELECT COUNT(*) AS ocds_ambiguous_bridges
+FROM raw_amendments o
+WHERE o.source LIKE 'ocds:%'
+  AND o.tender_ext_id IS NOT NULL
+  AND o.unp LIKE 'ocds-%'
+  AND (
+    (SELECT COUNT(DISTINCT rt.unp) FROM raw_tenders rt
+       WHERE rt.tender_id = o.tender_ext_id AND rt.unp IS NOT NULL) > 1
+    OR (
+      NOT EXISTS (SELECT 1 FROM raw_tenders rt
+                    WHERE rt.tender_id = o.tender_ext_id AND rt.unp IS NOT NULL)
+      AND (SELECT COUNT(DISTINCT rc.unp) FROM raw_contracts rc
+             WHERE rc.tender_ext_id = o.tender_ext_id AND rc.unp IS NOT NULL) > 1
+    )
+  );
 
 -- #286 diagnostic (printed by wrangler, BEFORE the drop below): keep the residual OCDS under-count
 -- OBSERVABLE. The prefer-EOP dedup is contract-level — it drops EVERY OCDS annex on a contract that

@@ -27,7 +27,32 @@ function sqliteJson<T>(dbPath: string, sql: string): T[] {
 }
 
 function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', [dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
+  // Enforce FK constraints (mirrors refresh-slice.test.ts) so the promotion is validated against the
+  // served schema, not run with FK checks silently off.
+  execFileSync('sqlite3', [dbPath], {
+    input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
+    stdio: 'pipe',
+  });
+}
+
+// Captures sqlite3 stdout (the SELECT results a `.read` prints) so a test can assert the diagnostic
+// numbers the ETL emits, not just the table state.
+function readScriptCapture(dbPath: string, path: string): string {
+  return execFileSync('sqlite3', [dbPath], {
+    input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
+    encoding: 'utf8',
+  });
+}
+
+// The numeric rows derive-amendments.sql prints (its diagnostics + the final summary), split into integer
+// arrays and identified by column count: 1 col = ocds_ambiguous_bridges, 2 = dropped/excess-over-eop,
+// 4 = the run summary. sqlite3's default output separates columns by '|' and rows by newlines.
+function diagRows(out: string): number[][] {
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^\d+(\|\d+)*$/.test(line))
+    .map((line) => line.split('|').map(Number));
 }
 
 // EOP УНП for the twin contract (90029), the OCDS-only contract (55500), and the OCDS-only contract
@@ -153,22 +178,58 @@ describe('OCDS amendment → contract linkage (issue #286)', () => {
     ]);
   });
 
-  it('recovers the smallest УНП deterministically when a tender.id maps to more than one', () => {
-    // The domain is 1-to-1 (one procedure = one УНП), but the bridge's `ORDER BY unp LIMIT 1` is a
-    // determinism guard: if a feed ever staged the same tender_id under two УНП, a re-run must never
-    // flip the recovered key. Give T2 a second, lexicographically-larger УНП and assert the 55500
-    // annex still bridges to UNP_ONLY ('00099-…' < 'ZZ-…'), not the arbitrary other row.
+  it('refuses to bridge (keeps the OCID) when a tender.id resolves to more than one УНП', () => {
+    // The domain is 1-to-1 (one procedure = one УНП). Give T2 a SECOND distinct УНП in raw_tenders. Rather
+    // than pick one arbitrarily (which would mis-attribute every annex of the losing procedure), the bridge
+    // must REFUSE: 55500's annex keeps its OCID as an honest residual, and the ocds_ambiguous_bridges
+    // diagnostic reports exactly one refusal (review nikimilenkov LOW 1).
     sqlite(
       db,
       `INSERT INTO raw_tenders (source, fetched_at, tender_id, unp) VALUES
          ('eop:tenders:2026-03-05', '2026-03-05', 'T2', 'ZZ-9999-9999');`,
     );
-    readScript(db, deriveAmendments);
+    const out = readScriptCapture(db, deriveAmendments);
 
-    const bridged = sqliteJson<{ unp: string }>(
+    const row = sqliteJson<{ unp: string }>(
       db,
       "SELECT unp FROM raw_amendments WHERE source LIKE 'ocds:%' AND contract_number = '55500'",
     );
-    expect(bridged).toEqual([{ unp: UNP_ONLY }]);
+    expect(row).toEqual([{ unp: 'ocds-e82gsb-999999' }]);
+
+    // The single-column diagnostic row reports the one ambiguous refusal.
+    expect(diagRows(out).find((r) => r.length === 1)).toEqual([1]);
+  });
+
+  it('recovers the УНП from raw_tenders in preference to raw_contracts (COALESCE order)', () => {
+    // One tender_ext_id (TP) resolves to DIFFERENT УНП in the two tables. The bridge tries raw_tenders
+    // first, so it must recover UNP-FROM-TENDERS — swapping the two COALESCE arms would fail this (#286).
+    sqlite(
+      db,
+      `INSERT INTO raw_tenders (source, fetched_at, tender_id, unp) VALUES
+         ('eop:tenders:2026-03-05', '2026-03-05', 'TP', 'UNP-FROM-TENDERS');
+       INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency, tender_ext_id) VALUES
+         ('eop:contracts:2026-03-05', '2026-03-05', 'UNP-FROM-CONTRACTS', 'PREC-1', 100, 'EUR', 'TP');
+       INSERT INTO raw_amendments (source, fetched_at, unp, tender_ext_id, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
+         ('ocds:2026-04-01', '2026-04-01', 'ocds-e82gsb-tp', 'TP', 'PREC-1', '2026-04-01', 'OP', 100, NULL, 'EUR');`,
+    );
+    readScript(db, deriveAmendments);
+
+    expect(
+      sqliteJson<{ unp: string }>(
+        db,
+        "SELECT unp FROM raw_amendments WHERE contract_number = 'PREC-1'",
+      ),
+    ).toEqual([{ unp: 'UNP-FROM-TENDERS' }]);
+  });
+
+  it('emits the residual diagnostics (dropped / excess-over-eop / ambiguous) for monitoring', () => {
+    // The base fixture has exactly one twin (90029: one OCDS annex vs one EOP annex) → dropped = 1,
+    // excess-over-eop = 0; and no ambiguous procedures → 0. These are the numbers the PR promises are
+    // "surfaced, not hidden" — pin them so a wrong CASE branch, or moving a diagnostic SELECT below the
+    // DELETE (which would zero the dropped/excess counts), fails CI (review nikimilenkov MEDIUM 4).
+    const out = readScriptCapture(db, deriveAmendments);
+    const rows = diagRows(out);
+    expect(rows.find((r) => r.length === 2)).toEqual([1, 0]); // dropped, excess-over-eop
+    expect(rows.find((r) => r.length === 1)).toEqual([0]); // ocds_ambiguous_bridges
   });
 });

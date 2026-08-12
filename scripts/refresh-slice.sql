@@ -49,10 +49,18 @@ SET unp = COALESCE(
 WHERE source LIKE 'ocds:%'
   AND tender_ext_id IS NOT NULL
   AND (
-    EXISTS (SELECT 1 FROM raw_tenders rt
-              WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM raw_contracts rc
-                 WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
+    -- raw_tenders wins when it resolves the procedure to exactly ONE УНП; else fall back to raw_contracts
+    -- when IT is unambiguous. Refuse to bridge (leave the OCID as an honest residual) when the chosen
+    -- source maps one tender_ext_id to more than one distinct УНП — the domain is 1-to-1, so this guards a
+    -- feed anomaly rather than silently mis-attributing every annex of the losing procedure (issue #286).
+    (SELECT COUNT(DISTINCT rt.unp) FROM raw_tenders rt
+       WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL) = 1
+    OR (
+      NOT EXISTS (SELECT 1 FROM raw_tenders rt
+                    WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL)
+      AND (SELECT COUNT(DISTINCT rc.unp) FROM raw_contracts rc
+             WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL) = 1
+    )
   );
 -- @bridge-lockstep end
 
