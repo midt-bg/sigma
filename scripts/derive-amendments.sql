@@ -16,14 +16,18 @@
 -- ocid untouched. The ocid stays only as a surrogate. Idempotent: a full run re-stages raw_amendments
 -- and recomputes the same УНП. Being the first amendment step in the full pipeline, it leaves
 -- raw_amendments corrected for promote-amendments.sql.
--- KEEP IN LOCKSTEP with scripts/refresh-slice.sql (the slice path runs the identical bridge + prefer-EOP
--- drop before its raw_amendments read); a divergence would silently split slice vs full behaviour.
--- raw_tenders(tender_id) is indexed in work-staging-schema.sql, but raw_contracts(tender_ext_id) is not,
--- so the fallback lookups below would full-scan raw_contracts once per OCDS row — index it defensively
--- (mirrors the lots bridge, which indexes raw_tenders.tender_id before its join in normalize-raw.sql).
+-- KEEP THE BRIDGE UPDATE BELOW IN LOCKSTEP with scripts/refresh-slice.sql: the UPDATE between the
+-- @bridge-lockstep markers must stay byte-for-byte equivalent across both scripts (enforced by
+-- packages/db/src/amendments-bridge-lockstep.test.ts). The prefer-EOP dedup DELETE deliberately does NOT
+-- match — the slice path additionally reconciles against the cumulative served `amendments`, which this
+-- full path never needs (promote-amendments.sql rebuilds it from scratch). raw_tenders(tender_id) is
+-- indexed in work-staging-schema.sql, but raw_contracts(tender_ext_id) is not, so the fallback lookups
+-- below would full-scan raw_contracts once per OCDS row — index it defensively (mirrors the lots bridge,
+-- which indexes raw_tenders.tender_id before its join in normalize-raw.sql). ORDER BY unp makes the pick
+-- deterministic: tender_id maps to exactly one УНП in practice, but if a feed ever staged two, take the
+-- smallest so re-runs never flip the recovered УНП.
 CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
--- ORDER BY unp makes the pick deterministic: tender_id / tender_ext_id maps to exactly one УНП in
--- practice, but if a feed ever staged two, take the smallest so re-runs never flip the recovered УНП.
+-- @bridge-lockstep start
 UPDATE raw_amendments
 SET unp = COALESCE(
   (SELECT rt.unp FROM raw_tenders rt
@@ -39,6 +43,7 @@ WHERE source LIKE 'ocds:%'
     OR EXISTS (SELECT 1 FROM raw_contracts rc
                  WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
   );
+-- @bridge-lockstep end
 
 -- #286 diagnostic (printed by wrangler, BEFORE the drop below): keep the residual OCDS under-count
 -- OBSERVABLE. The prefer-EOP dedup is contract-level — it drops EVERY OCDS annex on a contract that

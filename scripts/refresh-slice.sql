@@ -30,11 +30,15 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 -- fallback). In the slice path the raw tables hold only the loaded window, so an OCDS amendment whose
 -- procedure was staged outside the window stays unbridged until the next full derive — best-effort by
 -- design; the full pipeline is authoritative.
--- KEEP IN LOCKSTEP with scripts/derive-amendments.sql — the bridge UPDATE and the prefer-EOP DELETE
--- below must stay byte-for-byte equivalent to the full path (only the diagnostic SELECT is full-only).
--- Index raw_contracts(tender_ext_id) so the fallback lookups don't full-scan raw_contracts per OCDS row
--- (raw_tenders(tender_id) is already indexed); ORDER BY unp keeps the recovered УНП deterministic.
+-- KEEP THE BRIDGE UPDATE BELOW IN LOCKSTEP with scripts/derive-amendments.sql: the UPDATE between the
+-- @bridge-lockstep markers must stay byte-for-byte equivalent to the full path (packages/db/src/
+-- amendments-bridge-lockstep.test.ts enforces it). The prefer-EOP dedup INTENTIONALLY DIVERGES from the
+-- full path — the slice path also reconciles against the cumulative served `amendments` table (below and
+-- before the promotion), which the full path never needs because promote-amendments.sql rebuilds it from
+-- scratch. Index raw_contracts(tender_ext_id) so the fallback lookups don't full-scan raw_contracts per
+-- OCDS row (raw_tenders(tender_id) is already indexed); ORDER BY unp keeps the recovered УНП deterministic.
 CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
+-- @bridge-lockstep start
 UPDATE raw_amendments
 SET unp = COALESCE(
   (SELECT rt.unp FROM raw_tenders rt
@@ -50,15 +54,29 @@ WHERE source LIKE 'ocds:%'
     OR EXISTS (SELECT 1 FROM raw_contracts rc
                  WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL)
   );
+-- @bridge-lockstep end
 
 -- #286: prefer the EOP annex — drop OCDS twins so annex_count and the served timeline aren't doubled.
+-- The full path (derive-amendments.sql) only checks raw_amendments because it re-stages the whole corpus
+-- every run. The slice path must ALSO consult the cumulative served `amendments`: an EOP annex promoted by
+-- an EARLIER window is not in this window's raw_amendments, yet its OCDS twin must still be dropped, or the
+-- INSERT OR REPLACE promotion below (keyed by a natural_key that never matches across sources) would leave
+-- both rows and double annex_count (issue #286, review nikimilenkov HIGH 1).
 DELETE FROM raw_amendments
 WHERE source LIKE 'ocds:%'
-  AND EXISTS (
-    SELECT 1 FROM raw_amendments e
-    WHERE e.source LIKE 'eop:%'
-      AND e.unp = raw_amendments.unp
-      AND e.contract_number = raw_amendments.contract_number
+  AND (
+    EXISTS (
+      SELECT 1 FROM raw_amendments e
+      WHERE e.source LIKE 'eop:%'
+        AND e.unp = raw_amendments.unp
+        AND e.contract_number = raw_amendments.contract_number
+    )
+    OR EXISTS (
+      SELECT 1 FROM amendments s
+      WHERE s.source LIKE 'eop:%'
+        AND s.unp = raw_amendments.unp
+        AND s.contract_number = raw_amendments.contract_number
+    )
   );
 
 CREATE TABLE refresh_amendment_winners AS
@@ -1540,6 +1558,19 @@ WHERE status <> 'awarded'
 
 -- 5) Promote window amendments into served domain history and roll touched contracts.
 -- @refresh-batch amendments
+-- #286 convergence (review nikimilenkov HIGH 1), the other direction of the served-table reconciliation
+-- above: an EOP annex arriving in THIS window supersedes an OCDS twin a PRIOR slice already served for the
+-- same (unp, contract_number). Drop the stale served OCDS row before promotion so the rollup never counts
+-- both. The full path needs no equivalent — promote-amendments.sql rebuilds `amendments` wholesale.
+DELETE FROM amendments
+WHERE source LIKE 'ocds:%'
+  AND EXISTS (
+    SELECT 1 FROM raw_amendments e
+    WHERE e.source LIKE 'eop:%'
+      AND e.unp = amendments.unp
+      AND e.contract_number = amendments.contract_number
+  );
+
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
   published_at, document_number, description, source
