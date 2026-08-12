@@ -30,12 +30,17 @@ CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 -- fallback). In the slice path the raw tables hold only the loaded window, so an OCDS amendment whose
 -- procedure was staged outside the window stays unbridged until the next full derive — best-effort by
 -- design; the full pipeline is authoritative.
+-- KEEP IN LOCKSTEP with scripts/derive-amendments.sql — the bridge UPDATE and the prefer-EOP DELETE
+-- below must stay byte-for-byte equivalent to the full path (only the diagnostic SELECT is full-only).
+-- Index raw_contracts(tender_ext_id) so the fallback lookups don't full-scan raw_contracts per OCDS row
+-- (raw_tenders(tender_id) is already indexed); ORDER BY unp keeps the recovered УНП deterministic.
+CREATE INDEX IF NOT EXISTS idx_raw_contracts_tender_ext_id ON raw_contracts(tender_ext_id);
 UPDATE raw_amendments
 SET unp = COALESCE(
   (SELECT rt.unp FROM raw_tenders rt
-     WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL LIMIT 1),
+     WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL ORDER BY rt.unp LIMIT 1),
   (SELECT rc.unp FROM raw_contracts rc
-     WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL LIMIT 1)
+     WHERE rc.tender_ext_id = raw_amendments.tender_ext_id AND rc.unp IS NOT NULL ORDER BY rc.unp LIMIT 1)
 )
 WHERE source LIKE 'ocds:%'
   AND tender_ext_id IS NOT NULL
