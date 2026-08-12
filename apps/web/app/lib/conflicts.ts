@@ -46,6 +46,23 @@ export function relationLabel(relation: string): string {
   return RELATION_LABEL[relation] ?? relation;
 }
 
+/**
+ * How to describe a PAGE's set of links in prose (#279 §2.6). The card labels above are already
+ * family-aware; the surrounding page copy was not, and asserted „собствен дял" — an OWN stake — above
+ * cards that correctly read „свързано лице". On a family-only page that is a false claim about the named
+ * official, and it is the second source of truth the card-label fix set out to remove.
+ *
+ * Derived from the links themselves rather than passed in, so a page cannot describe a set it isn't
+ * rendering. Mixed sets get the neutral wording: it is the only phrasing true of every card.
+ */
+export function declaredStakeNoun(links: { relation: string }[]): string {
+  const anyFamily = links.some((l) => l.relation === 'related');
+  const anySelf = links.some((l) => l.relation !== 'related');
+  if (anyFamily && !anySelf) return 'дял на свързано лице';
+  if (anyFamily && anySelf) return 'деклариран дял — собствен или на свързано лице';
+  return 'собствен дял';
+}
+
 // Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either
 // assumption ever drifts, an un-escaped `/`, `?` or `#` would break routing and the cache key. Escape the
 // dynamic segments unconditionally (ydimitrof #226, conflicts.ts).

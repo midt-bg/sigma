@@ -8,6 +8,7 @@ import { ConflictCards } from '../components/ConflictCards';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { declaredStakeNoun } from '../lib/conflicts';
 
 // One office-holder's declared ownership links. Reads private-ownership interest_links only. 404 (not an
 // empty page) when the person has no published link — a bare page under someone's name reads as an
@@ -39,6 +40,9 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
   const { official, links } = loaderData;
+  // Family-AWARE, not family-blind: the page must not assert an own stake above cards that say „свързано
+  // лице", and must not go vague where the stake really is the official's own (§2.6).
+  const stake = declaredStakeNoun(links);
   return (
     <>
       <Breadcrumbs
@@ -52,22 +56,22 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={links[0]?.institution ?? 'Длъжностно лице'}
           title={official}
-          lede="Дружества, спечелили обществени поръчки, в които това лице е декларирало собствен дял пред КПКОНПИ. Всяка връзка е точно съвпадение по фирмено име — деклариран интерес, не установено нарушение."
+          lede={`Дружества, спечелили обществени поръчки, за които това лице е декларирало ${stake} пред КПКОНПИ. Всяка връзка почива на проверим факт от Търговския регистър — деклариран интерес, не установено нарушение.`}
         />
 
         <Callout titleAs="h2" title="Източник и обхват">
           <p className="m-0">
             Данните са от собствените декларации на лицето (публичен регистър на КПКОНПИ),
-            съпоставени точно с регистъра на изпълнителите. Показваме само 100% съвпадения и само
-            собствен деклариран дял. Сигнал за неточност:{' '}
-            <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
+            съпоставени точно с регистъра на изпълнителите. Показваме само 100% съвпадения, и само
+            когато самоличността на дружеството е потвърдена от Търговския регистър. Сигнал за
+            неточност: <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
           </p>
         </Callout>
 
         <Section
           id="holdings"
           title="Деклариран дял в компании изпълнители"
-          hint="Дружества, спечелили обществени поръчки, в които лицето е декларирало собствен дял. Подредени по силата на връзката."
+          hint={`Дружества, спечелили обществени поръчки, за които лицето е декларирало ${stake}. Подредени по силата на връзката.`}
         >
           <ConflictCards
             links={links}

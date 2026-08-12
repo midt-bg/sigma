@@ -56,8 +56,11 @@ on:
       environment:
         description: Target D1 environment
         type: choice
-        options: [dev, staging, production]
-        default: dev
+        # No `dev` environment exists — every fallback in this file is `|| 'staging'` and the note above
+        # says the job targets staging. A `dev` default sent a manual dispatch to an environment with no
+        # secrets, so it failed at the credential guard rather than running where it was meant to.
+        options: [staging, production]
+        default: staging
       full_crawl:
         description: Crawl the CACBG corpus (slow). RESUMES from the cached raw XML — fetch.mjs skips files already on disk, so this fills gaps rather than re-fetching from scratch (clear the cache for a true rebuild). Off = extract from the existing raw cache without crawling.
         type: boolean

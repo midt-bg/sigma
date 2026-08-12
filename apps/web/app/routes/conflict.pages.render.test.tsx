@@ -100,6 +100,29 @@ describe('/conflicts/official/:id — render', () => {
     expect(card.textContent).not.toContain('Кмет Тестов');
   });
 
+  it('a family-only page never asserts the official owns the stake (§2.6)', async () => {
+    // The CARD labels were made tense-neutral and family-aware, but the page lede and the section hint
+    // still read „декларирало собствен дял" — a second source of truth on the very page that renders a
+    // relative's stake. On a family-only page that is a false claim about the named official, printed
+    // above a card that correctly says „свързано лице".
+    await mount(ConflictOfficial as never, {
+      official: 'Кмет Тестов',
+      links: [link({ relation: 'related', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' })],
+    });
+    expect(text()).not.toContain('собствен дял');
+    expect(text()).toContain('деклариран дял на свързано лице');
+  });
+
+  it('an own-stake page still says so — the wording is family-AWARE, not family-blind', async () => {
+    // POSITIVE CONTROL. Removing the claim everywhere would satisfy the assertion above while making the
+    // page vaguer than the data warrants: a self stake IS the official's own and should read that way.
+    await mount(ConflictOfficial as never, {
+      official: 'Кмет Тестов',
+      links: [link({ relation: 'owns', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' })],
+    });
+    expect(text()).toContain('собствен дял');
+  });
+
   it('meta() names the person in the title and marks the page noindex', () => {
     const tags = officialMeta({
       data: { official: 'Иван Петров', links: [] },
