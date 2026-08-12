@@ -5,6 +5,38 @@
 -- Contracts without amendments keep annex_count = 0 and current_value = NULL (the
 -- convention downstream is COALESCE(current_value, signing_value)).
 
+-- #286: OCDS amendments stage the OCID in `unp` (the УНП is absent from the OCDS release), so they
+-- match no contract. Recover the real УНП through the same bridge the OCDS-lots enrichment uses
+-- (normalize-raw.sql): OCDS tender.id (staged as raw_amendments.tender_ext_id) → EOP tenderId
+-- (raw_tenders.tender_id) → УНП. The ocid stays only as a surrogate. Idempotent: a full run re-stages
+-- raw_amendments and the UPDATE recomputes the same УНП. Runs before the rollup below and, being the
+-- first amendment step in the full pipeline, leaves raw_amendments corrected for promote-amendments.sql.
+UPDATE raw_amendments
+SET unp = (
+  SELECT rt.unp FROM raw_tenders rt
+  WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
+  LIMIT 1
+)
+WHERE source LIKE 'ocds:%'
+  AND tender_ext_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM raw_tenders rt
+    WHERE rt.tender_id = raw_amendments.tender_ext_id AND rt.unp IS NOT NULL
+  );
+
+-- #286: prefer the EOP annex. ~99% of OCDS amendments duplicate an EOP annex for the same contract;
+-- keeping both would double annex_count and duplicate the served timeline. Drop the OCDS twin when an
+-- EOP annex already exists for the same (unp, contract_number). Genuinely OCDS-only annexes survive
+-- (they carry value_after = NULL from ingest, so they never drive current_value — issue #286).
+DELETE FROM raw_amendments
+WHERE source LIKE 'ocds:%'
+  AND EXISTS (
+    SELECT 1 FROM raw_amendments e
+    WHERE e.source LIKE 'eop:%'
+      AND e.unp = raw_amendments.unp
+      AND e.contract_number = raw_amendments.contract_number
+  );
+
 UPDATE raw_contracts SET annex_count = 0, current_value = NULL;
 
 WITH keyed AS (
