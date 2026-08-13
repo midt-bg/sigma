@@ -76,7 +76,8 @@ const MONEY_AFTER = /(?:^|[^\p{L}])(?:лв\.?|лева|лев|bgn|eur|евро|e
 // that is actually a day count. A non-monetary unit sitting IMMEDIATELY after the figure (days, months,
 // years, count, percent) overrides any currency further along: the figure is a duration/quantity, never
 // the contract value. Anchored at ^ against the post-figure slice so only the immediate suffix counts.
-const NON_MONEY_UNIT_AFTER = /^\s*(?:дни|дн\.|месец\p{L}*|години|год\.|броя|бр\.|%|процент\p{L}*)/iu;
+const NON_MONEY_UNIT_AFTER =
+  /^\s*(?:дни|дн\.|месец\p{L}*|години|год\.|броя|бр\.|%|процент\p{L}*)/iu;
 
 // #307 — the exact-2× "unchanged" restatement (rule 3) may only fire WITH a positive textual signal that
 // the value did not really change: a currency re-denomination that mechanically doubled the figure, or an
