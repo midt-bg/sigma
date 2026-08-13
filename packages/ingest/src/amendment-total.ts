@@ -40,8 +40,10 @@ export interface AmendmentValueInput {
 }
 
 const REL_TOL = 0.005; // 0.5% — the text figure must be the SAME number as value_delta, allowing rounding.
-const SPACES = '[\\d \\u00a0\\u202f]'; // digit or thousands separator (space / nbsp / narrow nbsp)
-const NUMBER_RE = new RegExp(`\\d${SPACES}*(?:[.,]\\d{1,2})?`, 'g');
+// #305 — capture a full number token that may group thousands with space/nbsp/narrow-nbsp OR with '.'/','
+// (BG "1.234,56", US "1,234.56"); normalizeBgNumber disambiguates the decimal mark below. The token must
+// END on a digit so a trailing sentence period ("…100. Нов срок") is not swallowed into the number.
+const NUMBER_RE = /\d[\d\u0020\u00a0\u202f.,]*\d|\d/g;
 const WS = /[\s  ]/g;
 
 // A left boundary: start-of-window or a non-letter, non-digit character (Unicode-aware — Cyrillic is a
@@ -61,8 +63,35 @@ const INCREMENT_CTX = new RegExp(`${B}(?:с|със)\\s*$`, 'iu');
 // Checked over a wider window than NOT_TOTAL_CTX because these markers sit a few words before the figure.
 const TOTAL_VETO = /(?:в\s+размер|ресурс\p{L}*|допълнителн\p{L}*|увеличени\p{L}*|намалени\p{L}*)/iu;
 
+// #307 — a total restatement needs a MONETARY anchor bracketing the figure. Bare "на <N>" is not a money
+// signal ("на" also precedes days, article numbers, quantities), so "…удължава на 200 дни" would otherwise
+// rewrite the value with a day count. Accept the figure only when a value keyword sits immediately before
+// it (MONEY_BEFORE) OR a currency unit follows it (MONEY_AFTER). On the real corpus the value keyword is
+// usually far from the figure ("…ще възлезе на 539 240.00 лв."), so the currency unit after the number is
+// the load-bearing anchor. No ASCII \b (Cyrillic).
+const MONEY_BEFORE = /(?:стойност|цена)\p{L}*\s*$/iu;
+const MONEY_AFTER = /(?:^|[^\p{L}])(?:лв\.?|лева|лев|bgn|eur|евро|euro|€|usd|\$)(?![\p{L}])/iu;
+
+// #307 — the exact-2× "unchanged" restatement (rule 3) may only fire WITH a positive textual signal that
+// the value did not really change: a currency re-denomination that mechanically doubled the figure, or an
+// explicit "unchanged / non-material" phrasing. Absent any signal the row returns `none` and falls to the
+// arithmetic annex_total_suspect flag (exclude), rather than silently halving a possibly-legitimate
+// ЗОП чл.116 ал.1 т.1 in-scope +100% (a pre-announced option clause `outsideZop` cannot model).
+const RESTATE_UNCHANGED_CTX =
+  /(?:лев\p{L}*\s+в\s+евро|в\s+евро|деноминаци\p{L}*|не\s*се\s+промен\p{L}*|остава\p{L}*\s+непромен\p{L}*|без\s+промяна|несъществен\p{L}*)/iu;
+
 function normalizeBgNumber(raw: string): number | null {
-  const t = raw.replace(WS, '');
+  let t = raw.replace(WS, '');
+  // #305 — when BOTH '.' and ',' appear the number uses one as a thousands separator and the other as the
+  // decimal mark (BG "1.234,56" or US "1,234.56"). The LAST-occurring separator is the decimal; strip the
+  // other (thousands) and normalise the decimal to '.'. Single-separator numbers keep the existing
+  // ≤2-fraction-digit convention (the space-thousands corpus: "539 240.00", "286 694,00").
+  if (t.includes('.') && t.includes(',')) {
+    const decimalChar = t.lastIndexOf('.') > t.lastIndexOf(',') ? '.' : ',';
+    const thousandsChar = decimalChar === '.' ? ',' : '.';
+    t = t.split(thousandsChar).join('');
+    if (decimalChar === ',') t = t.replace(',', '.');
+  }
   const m = t.match(/^(\d+)(?:[.,](\d{1,2}))?$/);
   if (!m) return null;
   const value = Number(m[2] ? `${m[1]}.${m[2]}` : m[1]);
@@ -81,6 +110,7 @@ function figureInContext(
   contextRe: RegExp,
   excludeRe: RegExp | null,
   wideVetoRe: RegExp | null = null,
+  requireMoneyAnchor = false,
 ): boolean {
   NUMBER_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -92,7 +122,15 @@ function figureInContext(
     // A wider veto looks further back (~55 chars) for "в размер"/"ресурс"/increment markers that make an
     // "…на <N>" an amount, not a total.
     if (wideVetoRe && wideVetoRe.test(text.slice(Math.max(0, m.index - 55), m.index))) continue;
-    if (contextRe.test(before)) return true;
+    if (!contextRe.test(before)) continue;
+    // #307 — a total needs a monetary marker bracketing the figure, else a bare "…на <N>" matches a
+    // non-monetary number (days, article nos.) that coincidentally ≈ the target. A value keyword right
+    // before, OR a currency unit within the ~60 chars after, qualifies.
+    if (requireMoneyAnchor) {
+      const after = text.slice(m.index + m[0].length, m.index + m[0].length + 60);
+      if (!MONEY_BEFORE.test(before) && !MONEY_AFTER.test(after)) continue;
+    }
+    return true;
   }
   return false;
 }
@@ -116,21 +154,28 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
 
   // 2) The delta figure appears as a TOTAL ("на <delta>", "възлиза на …", "обща стойност … <delta>").
   //    The true value_after is the delta (the announced new total). TOTAL_VETO rejects "в размер на"/
-  //    "ресурс"/increment phrasings that name the change amount, not the contract total.
-  if (text && figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX, TOTAL_VETO)) {
+  //    "ресурс"/increment phrasings that name the change amount, not the contract total. A monetary anchor
+  //    is REQUIRED (#307) so a bare "…на <N>" over a non-monetary number (days, article nos.) is rejected.
+  if (text && figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX, TOTAL_VETO, true)) {
     return { kind: 'total_restated', correctedAfter: d };
   }
 
   // 3) Exact 2× (value_delta ≈ value_before): the "difference" field just echoed the OLD value, so
   //    value_after = before + before double-counts an UNCHANGED value (currency re-denomination or a
-  //    non-value administrative annex). ЗОП чл.116 caps a single amendment at +50%, so an exact +100% is a
-  //    definitional defect, not a real increase — restate to value_before. Text-free by design; rule 1
-  //    already exonerated any genuinely-announced increment, so this cannot understate a real one.
-  //    Skipped for outside-ЗОП exception contracts: чл.116's cap does not bind them, so a real +100% is
-  //    legal there and a text-free restatement could erase a genuine doubling. They fall to the arithmetic
-  //    flag (exclude, don't rewrite) instead.
-  if (approxEq(a, 2 * b) && !input.outsideZop) {
-    return { kind: 'unchanged_restated', correctedAfter: b };
+  //    non-value administrative annex). This restatement to value_before is only SAFE with a positive text
+  //    signal (#307): ЗОП чл.116 ал.1 т.1 permits a genuine in-scope +100% via a pre-announced option/review
+  //    clause that `outsideZop` cannot see, so a text-free rewrite could silently HALVE a legitimate value.
+  //    Require either a "value unchanged / re-denomination" phrasing (RESTATE_UNCHANGED_CTX) or the
+  //    before-value itself announced as the new total. Absent any signal, return `none` and let the
+  //    arithmetic annex_total_suspect flag EXCLUDE the row (an honest gap beats a silent corruption).
+  //    Still skipped for outside-ЗОП exception contracts, where a real +100% is legal.
+  if (approxEq(a, 2 * b) && !input.outsideZop && text) {
+    if (
+      RESTATE_UNCHANGED_CTX.test(text) ||
+      figureInContext(text, b, TOTAL_CTX, NOT_TOTAL_CTX, TOTAL_VETO, true)
+    ) {
+      return { kind: 'unchanged_restated', correctedAfter: b };
+    }
   }
 
   return { kind: 'none' };

@@ -109,11 +109,10 @@ describe('#305 amendment value double-count heuristic', () => {
     expect(restatedValueAfter(input)).toBeNull();
   });
 
-  it('conservatively restates an exact-2× to the before-value even when the text total differs (103903)', () => {
-    // Exact 2× (delta 15 120 = value_before): the "difference" field echoed the OLD value. The true total
-    // 18 900 ("…до 18 900") is a small real increase we cannot recover here (that is v2 direct-total
-    // parsing), but restating to 15 120 removes the double-count and is a safe lower bound — never the
-    // doubled 30 240.
+  it('does NOT restate an exact-2× when the text announces a DIFFERENT total ("до 18 900") — flag, not rewrite (103903)', () => {
+    // #307: exact 2× (delta 15 120 = value_before) BUT the text says the value rose "до 18 900" — it is NOT
+    // unchanged. Neither the doubled 30 240 nor the halved 15 120 is the true total, and 18 900 is not
+    // recoverable here, so return `none` and let the arithmetic annex_total_suspect flag exclude the row.
     const t = classifyAmendmentValue(
       mk(
         15120,
@@ -123,12 +122,13 @@ describe('#305 amendment value double-count heuristic', () => {
         'Прогнозната стойност по договора се увеличава от 15 120 лв. без ДДС до 18 900 лв. без ДДС',
       ),
     );
-    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 15120 });
+    expect(t).toEqual({ kind: 'none' });
   });
 
-  it('restates an exact-2× with no textual value signal to the before-value (84818 — restructuring)', () => {
-    // The value did not change (courses restructured); ЗОП caps a single amendment at +50%, so an exact
-    // +100% is a defect. Restate to the (unchanged) before value — currency-agnostic (EUR annex, BGN contract).
+  it('does NOT text-freely restate an exact-2× when the основание carries no restatement signal (84818)', () => {
+    // #307: restructuring note with no value/unchanged signal. A text-free halving could erase a legitimate
+    // ЗОП чл.116 ал.1 т.1 in-scope +100% (pre-announced option clause), so it must fall to the arithmetic
+    // annex_total_suspect flag (exclude), not be rewritten to the before-value.
     const t = classifyAmendmentValue(
       mk(
         76769540.87,
@@ -138,7 +138,7 @@ describe('#305 amendment value double-count heuristic', () => {
         'Следните курсове за 22 пилота се преструктурират и се изпълняват в рамките на гаранционния период',
       ),
     );
-    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 76769540.87 });
+    expect(t).toEqual({ kind: 'none' });
   });
 
   it('restates an exact-2× administrative annex (non-value change) to the before-value', () => {
@@ -211,5 +211,68 @@ describe('#305 amendment value double-count heuristic', () => {
     expect(
       restatedValueAfter(mk(400000, 900000, 500000, 'BGN', 'обща стойност на 12 345 лв.')),
     ).toBeNull();
+  });
+
+  it('does NOT restate a bare "…на <N>" over a NON-monetary number (#307 HIGH-1 — days / article nos.)', () => {
+    // "…удължава на 200 дни": 200 is a day count that coincidentally == value_delta. Without a currency
+    // anchor around the figure it must stay `none`, never overwrite the published 300 with 200.
+    expect(
+      classifyAmendmentValue(mk(100, 300, 200, 'BGN', 'Срокът на договора се удължава на 200 дни.'))
+        .kind,
+    ).toBe('none');
+    // An article number after "на" — non-monetary, must not restate.
+    expect(
+      classifyAmendmentValue(
+        mk(100, 300, 200, 'BGN', 'Договорът се изменя на 200 съгласно чл. 116 на ЗОП.'),
+      ).kind,
+    ).toBe('none');
+  });
+
+  it('restates a bare "…на <N>" only WHEN a currency unit follows the figure (#307 HIGH-1 anchor)', () => {
+    // Same "…на <N>" shape as the days case, but a currency unit anchors it as money ⇒ genuine total.
+    expect(
+      restatedValueAfter(
+        mk(100, 300, 200, 'BGN', 'Общата стойност на договора се променя на 200 лв. без ДДС.'),
+      ),
+    ).toBe(200);
+  });
+
+  it('does NOT rewrite an exact-2× with empty / whitespace-only texts (#307 HIGH-2 repro)', () => {
+    const t = classifyAmendmentValue({
+      valueBefore: 539240,
+      valueAfter: 1078480,
+      valueDelta: 539240,
+      currency: 'BGN',
+      texts: [null, '', '   '],
+      outsideZop: null,
+    });
+    expect(t).toEqual({ kind: 'none' });
+  });
+
+  it('does NOT rewrite an exact-2× when the text is unrelated to value (#307 HIGH-2 repro)', () => {
+    const t = classifyAmendmentValue({
+      valueBefore: 250000,
+      valueAfter: 500000,
+      valueDelta: 250000,
+      currency: 'BGN',
+      outsideZop: false,
+      texts: ['Смяна на адреса за кореспонденция на изпълнителя.'],
+    });
+    expect(t).toEqual({ kind: 'none' });
+  });
+
+  it('parses a dot-thousands + comma-decimal figure "1.234,56" (#305 number-format recall)', () => {
+    // Mixed-separator total announced as "…на 1.234,56 лв." — the resolver must read 1234.56, not 1.23.
+    expect(
+      restatedValueAfter(
+        mk(700, 1934.56, 1234.56, 'BGN', 'Общата стойност на договора се променя на 1.234,56 лв.'),
+      ),
+    ).toBe(1234.56);
+    // …and the US ordering "1,234.56" resolves to the same value.
+    expect(
+      restatedValueAfter(
+        mk(700, 1934.56, 1234.56, 'BGN', 'Общата стойност на договора се променя на 1,234.56 лв.'),
+      ),
+    ).toBe(1234.56);
   });
 });
