@@ -962,6 +962,9 @@ FROM (
           WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
             SELECT 1 FROM raw_amendments am
             WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
+              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
+              AND am.value_treatment IS NULL
               AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
               AND ABS(am.value_after - c.current_value) < 0.01
@@ -1321,6 +1324,9 @@ SELECT 1,
           WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
             SELECT 1 FROM raw_amendments am
             WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
+              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
+              AND am.value_treatment IS NULL
               AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
               AND ABS(am.value_after - c.current_value) < 0.01

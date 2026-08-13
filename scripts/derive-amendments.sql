@@ -144,8 +144,10 @@ SET
       AND a.contract_number = raw_contracts.contract_number
       AND a.rn = 1
   ),
+  -- #305 Tier-2: a text-confirmed double-count carries the corrected total in value_after_restated; use
+  -- it as the effective after so current_value reflects the true total, not the raw doubled value_after.
   current_value = (
-    SELECT a.value_after FROM dedup a
+    SELECT COALESCE(a.value_after_restated, a.value_after) FROM dedup a
     WHERE a.unp = raw_contracts.unp
       AND a.contract_number = raw_contracts.contract_number
       AND a.value_after IS NOT NULL

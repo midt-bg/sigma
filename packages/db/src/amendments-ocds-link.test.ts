@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const initSchema = resolve(root, 'packages/db/migrations/0000_init.sql');
+// #305 Tier-2: promote-amendments.sql writes value_restated/value_treatment to served amendments.
+const migration6 = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const deriveAmendments = resolve(root, 'scripts/derive-amendments.sql');
 const promoteAmendments = resolve(root, 'scripts/promote-amendments.sql');
@@ -72,6 +74,7 @@ beforeEach(() => {
   dir = mkdtempSync(resolve(tmpdir(), 'amendments-ocds-'));
   db = resolve(dir, 'work.sqlite');
   readScript(db, initSchema); // served `amendments` + `contracts`
+  readScript(db, migration6); // #305 Tier-2 value_restated/value_treatment on served amendments
   readScript(db, workStagingSchema); // raw_* staging
 
   // Two EOP procedures: T1 (contract 90029) already has an EOP annex; T2 (contract 55500) has NONE.

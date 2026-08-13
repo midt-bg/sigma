@@ -431,6 +431,7 @@ interface AmendmentRow {
   published_at: string | null;
   document_number: string | null;
   description: string | null;
+  value_restated: number | null;
   fx_rate: number | null;
 }
 
@@ -454,7 +455,8 @@ export const AMENDMENTS_SQL = `SELECT am.value_before, am.value_after, am.value_
            WHERE f.base_currency = am.currency
              AND f.rate_date <= am.published_at
              AND f.rate_date >= date(am.published_at, '-10 days')
-           ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate
+           ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate,
+        am.value_restated
  FROM amendments am
  WHERE am.unp = ? AND am.contract_number = ?
  ORDER BY am.published_at, am.id`;
@@ -681,6 +683,9 @@ export async function getContract(
       // one of before/after is known, the recorded delta can't be reconciled against valueAfterEur —
       // show „—" rather than a figure that might not add up.
       deltaEur: beforeEur != null && afterEur != null ? afterEur - beforeEur : null,
+      // #305 Tier-2: the served value_after was rewritten from the основание text (a double-count total
+      // restated to the true value) — let the UI mark the corrected row.
+      restated: am.value_restated === 1,
     };
   });
 

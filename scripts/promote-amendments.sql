@@ -8,7 +8,7 @@ DELETE FROM amendments;
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source
+  published_at, document_number, description, source, value_restated, value_treatment
 )
 WITH keyed AS (
   SELECT
@@ -40,13 +40,17 @@ SELECT
   contract_number,
   unp,
   value_before,
-  value_after,
-  value_delta,
+  -- #305 Tier-2: serve the effective (text-corrected) after and a self-consistent delta; a restated
+  -- annex carries the true total, an untreated one is unchanged.
+  COALESCE(value_after_restated, value_after),
+  COALESCE(value_after_restated, value_after) - value_before,
   currency,
   published_at,
   document_number,
   description,
-  source
+  source,
+  CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
+  value_treatment
 FROM dedup
 WHERE rn = 1;
 

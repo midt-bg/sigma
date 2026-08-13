@@ -1202,6 +1202,8 @@ FROM (
             WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
               SELECT 1 FROM raw_amendments am
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
+                AND am.value_treatment IS NULL
                 AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 AND ABS(am.value_after - c.current_value) < 0.01
@@ -1520,6 +1522,8 @@ FROM (
             WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
               SELECT 1 FROM raw_amendments am
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
+                AND am.value_treatment IS NULL
                 AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 AND ABS(am.value_after - c.current_value) < 0.01
@@ -1657,7 +1661,7 @@ WHERE source LIKE 'ocds:%'
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source
+  published_at, document_number, description, source, value_restated, value_treatment
 )
 WITH keyed AS (
   SELECT
@@ -1689,13 +1693,17 @@ SELECT
   contract_number,
   unp,
   value_before,
-  value_after,
-  value_delta,
+  -- #305 Tier-2: serve the effective (text-corrected) after and a self-consistent delta; the current_value
+  -- rollup below reads this served value_after, so a restated annex drives current_value with the true total.
+  COALESCE(value_after_restated, value_after),
+  COALESCE(value_after_restated, value_after) - value_before,
   currency,
   published_at,
   document_number,
   description,
-  source
+  source,
+  CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
+  value_treatment
 FROM dedup
 WHERE rn = 1;
 
@@ -1796,6 +1804,10 @@ WITH contract_base AS (
       SELECT 1 FROM amendments am
       WHERE am.unp = substr(c.tender_id, 3)
         AND am.contract_number = c.contract_number
+        -- #305 Tier-2: skip text-treated annexes. Restated totals already stop matching (served value_after
+        -- is the corrected total, no longer ≈2× before), but the explicit guard also covers confirmed-genuine
+        -- increments, whose value_after is legitimately ≥2× and must NOT be arithmetic-flagged.
+        AND am.value_treatment IS NULL
         AND am.value_before > 0 AND c.signing_value > 0
         AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
         AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
