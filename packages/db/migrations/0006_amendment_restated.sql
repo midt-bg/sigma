@@ -5,7 +5,7 @@
 -- corrected row and the refresh-slice reconciliation can skip text-treated annexes when arithmetic-flagging.
 --
 --   value_restated  = 1 when value_after was rewritten to the text-confirmed true total, else 0.
---   value_treatment = the raw treatment label ('total_restated' / 'currency_restated' /
+--   value_treatment = the raw treatment label ('total_restated' / 'unchanged_restated' /
 --                     'genuine_increment', NULL when the text carried no signal). Kept alongside
 --                     value_restated because the slice reconciliation re-classifies from the served
 --                     amendments and must skip confirmed-genuine increments (value_restated stays 0 there).

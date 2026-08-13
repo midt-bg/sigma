@@ -165,16 +165,17 @@ describe('base EOP mapper', () => {
     );
   });
 
-  it('leaves value_treatment/value_after_restated NULL for an annex with no text signal', () => {
+  it('leaves value_treatment/value_after_restated NULL for a >2× annex with no text total (not exact-2×)', () => {
+    // 2.5× (not exact 2×) and no announced total in the text ⇒ no confident signal ⇒ left to the flag.
     const row = mapBaseRecord(
       'annexes',
       {
         uniqueProcurementNumber: '00224-2025-0010',
         contractNumber: '990002',
         publicationDate: '05.03.2026',
-        lastContractValue: '77000000',
-        currentContractValue: '154000000',
-        contractValueDifference: '77000000',
+        lastContractValue: '1000000',
+        currentContractValue: '2500000',
+        contractValueDifference: '1500000',
         contractCurrency: 'BGN',
       },
       { day: '2026-03-05', fetchedAt: '2026-03-05T00:00:00Z' },

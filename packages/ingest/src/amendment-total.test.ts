@@ -66,7 +66,7 @@ describe('#305 amendment value double-count heuristic', () => {
         'Считано от 01.10.2025 г., отпечатваната върху акцизните бандероли продажна цена се променя от лева в евро.',
       ),
     );
-    expect(t).toEqual({ kind: 'currency_restated', correctedAfter: 77000000 });
+    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 77000000 });
   });
 
   it('does NOT touch a genuine increment announced as "…с <delta>" (108677)', () => {
@@ -81,9 +81,11 @@ describe('#305 amendment value double-count heuristic', () => {
     expect(restatedValueAfter(input)).toBeNull();
   });
 
-  it('leaves an uncorrectable double-count (true total in text ≠ delta) to the flag (103903)', () => {
-    // delta 15 120 = the OLD value ("от 15 120 … до 18 900"); the true total 18 900 ≠ delta, so no
-    // confident restatement — must return none, NOT a wrong correction.
+  it('conservatively restates an exact-2× to the before-value even when the text total differs (103903)', () => {
+    // Exact 2× (delta 15 120 = value_before): the "difference" field echoed the OLD value. The true total
+    // 18 900 ("…до 18 900") is a small real increase we cannot recover here (that is v2 direct-total
+    // parsing), but restating to 15 120 removes the double-count and is a safe lower bound — never the
+    // doubled 30 240.
     const t = classifyAmendmentValue(
       mk(
         15120,
@@ -93,10 +95,12 @@ describe('#305 amendment value double-count heuristic', () => {
         'Прогнозната стойност по договора се увеличава от 15 120 лв. без ДДС до 18 900 лв. без ДДС',
       ),
     );
-    expect(t.kind).toBe('none');
+    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 15120 });
   });
 
-  it('leaves a double-count with no textual signal to the flag (84818 — restructuring, no total/currency)', () => {
+  it('restates an exact-2× with no textual value signal to the before-value (84818 — restructuring)', () => {
+    // The value did not change (courses restructured); ЗОП caps a single amendment at +50%, so an exact
+    // +100% is a defect. Restate to the (unchanged) before value — currency-agnostic (EUR annex, BGN contract).
     const t = classifyAmendmentValue(
       mk(
         76769540.87,
@@ -106,7 +110,20 @@ describe('#305 amendment value double-count heuristic', () => {
         'Следните курсове за 22 пилота се преструктурират и се изпълняват в рамките на гаранционния период',
       ),
     );
-    expect(t.kind).toBe('none');
+    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 76769540.87 });
+  });
+
+  it('restates an exact-2× administrative annex (non-value change) to the before-value', () => {
+    const t = classifyAmendmentValue(
+      mk(
+        2685,
+        5370,
+        2685,
+        'BGN',
+        'Променя се упълномощеното лице по договора. Несъществени промени.',
+      ),
+    );
+    expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 2685 });
   });
 
   it('ignores normal increases (< 2×) and non-self-consistent rows', () => {

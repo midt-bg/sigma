@@ -17,8 +17,10 @@
 export type AmendmentValueTreatment =
   // The delta is an announced total; the true value_after is value_delta (double-count corrected).
   | { kind: 'total_restated'; correctedAfter: number }
-  // Currency re-denomination that doubled an unchanged total; the true value_after is value_before.
-  | { kind: 'currency_restated'; correctedAfter: number }
+  // An exact 2× (value_delta ≈ value_before): the "difference" field echoed the OLD value, so the value
+  // is unchanged and value_after was doubled onto itself; the true value_after is value_before. Covers
+  // currency re-denominations and non-value administrative annexes alike.
+  | { kind: 'unchanged_restated'; correctedAfter: number }
   // The delta is a genuine increment already correctly applied — value_after is right; do NOT flag it.
   | { kind: 'genuine_increment' }
   // No text signal — leave to the arithmetic flag.
@@ -48,9 +50,6 @@ const TOTAL_CTX = new RegExp(
 const NOT_TOTAL_CTX = new RegExp(`${B}(?:от|с|със)\\s*$`, 'iu');
 // "…с <N>" / "…със <N>" — N is an increment already applied.
 const INCREMENT_CTX = new RegExp(`${B}(?:с|със)\\s*$`, 'iu');
-// Currency re-denomination phrasing.
-const CURRENCY_CTX =
-  /(?:лев\p{L}*\s+в\s+евро|(?:^|[^\p{L}])в\s+евро|деноминир\p{L}*|смяна\s+на\s+валута|промяна\s+.{0,25}валута)/iu;
 
 function normalizeBgNumber(raw: string): number | null {
   const t = raw.replace(WS, '');
@@ -96,21 +95,24 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
   if (a < 2 * b || a >= 10 * b) return { kind: 'none' };
 
   const text = input.texts.filter((t): t is string => !!t && t.trim() !== '').join('  ');
-  if (text === '') return { kind: 'none' };
 
-  // 1) The delta figure appears as an INCREMENT ("с <delta>") — the value is genuinely correct.
-  if (figureInContext(text, d, INCREMENT_CTX, null)) return { kind: 'genuine_increment' };
+  // 1) The delta figure appears as an INCREMENT ("с <delta>") — the value is genuinely correct, don't
+  //    touch it. Checked FIRST so an exact 2× that the text calls a real increase is not mis-restated.
+  if (text && figureInContext(text, d, INCREMENT_CTX, null)) return { kind: 'genuine_increment' };
 
   // 2) The delta figure appears as a TOTAL ("на <delta>", "възлиза на …", "обща стойност … <delta>").
   //    The true value_after is the delta (the announced new total).
-  if (figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX)) {
+  if (text && figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX)) {
     return { kind: 'total_restated', correctedAfter: d };
   }
 
-  // 3) Currency re-denomination that doubled an unchanged total (a ≈ 2b) with a currency-change phrase.
-  //    The true value_after is the (unchanged) before value.
-  if (approxEq(a, 2 * b) && CURRENCY_CTX.test(text)) {
-    return { kind: 'currency_restated', correctedAfter: b };
+  // 3) Exact 2× (value_delta ≈ value_before): the "difference" field just echoed the OLD value, so
+  //    value_after = before + before double-counts an UNCHANGED value (currency re-denomination or a
+  //    non-value administrative annex). ЗОП чл.116 caps a single amendment at +50%, so an exact +100% is a
+  //    definitional defect, not a real increase — restate to value_before. Text-free by design; rule 1
+  //    already exonerated any genuinely-announced increment, so this cannot understate a real one.
+  if (approxEq(a, 2 * b)) {
+    return { kind: 'unchanged_restated', correctedAfter: b };
   }
 
   return { kind: 'none' };
@@ -120,7 +122,7 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
 // null (leave value_after as the source gave it).
 export function restatedValueAfter(input: AmendmentValueInput): number | null {
   const t = classifyAmendmentValue(input);
-  return t.kind === 'total_restated' || t.kind === 'currency_restated' ? t.correctedAfter : null;
+  return t.kind === 'total_restated' || t.kind === 'unchanged_restated' ? t.correctedAfter : null;
 }
 
 export function isGenuineIncrement(input: AmendmentValueInput): boolean {
@@ -131,13 +133,13 @@ export function isGenuineIncrement(input: AmendmentValueInput): boolean {
 // signal), and the corrected value_after (NULL unless a double-count was confirmed). A non-null treatment
 // tells derive/normalize NOT to arithmetic-flag the row (it is either corrected or confirmed-genuine).
 export function amendmentValueTreatment(input: AmendmentValueInput): {
-  treatment: 'total_restated' | 'currency_restated' | 'genuine_increment' | null;
+  treatment: 'total_restated' | 'unchanged_restated' | 'genuine_increment' | null;
   restatedAfter: number | null;
 } {
   const t = classifyAmendmentValue(input);
   return {
     treatment: t.kind === 'none' ? null : t.kind,
     restatedAfter:
-      t.kind === 'total_restated' || t.kind === 'currency_restated' ? t.correctedAfter : null,
+      t.kind === 'total_restated' || t.kind === 'unchanged_restated' ? t.correctedAfter : null,
   };
 }
