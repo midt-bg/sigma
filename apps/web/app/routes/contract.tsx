@@ -222,7 +222,13 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             <div className="vh now">
               <div className="step">Текуща стойност</div>
               <strong className="num">{v.currentEur != null ? money(v.currentEur) : '—'}</strong>
-              {v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>}
+              {v.currentValueDoubled ? (
+                <div className="sub suspect">
+                  стойността изглежда двойно отчетена и не се показва
+                </div>
+              ) : (
+                v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>
+              )}
               {v.deltaPct != null && (
                 <div className="delta">{signedPct(v.deltaPct)} спрямо сключване</div>
               )}
@@ -230,8 +236,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           </div>
           {v.suspect && (
             <p className="small muted">
-              Показана е публикуваната стойност от източника, без СИГМА да я коригира. Виж{' '}
-              <Link to="/methodology">методология</Link>.
+              {v.currentValueDoubled
+                ? 'Текущата стойност изглежда двойно отчетена в източника и затова не се показва. '
+                : 'Показана е публикуваната стойност от източника, без СИГМА да я коригира. '}
+              Виж <Link to="/methodology">методология</Link>.
             </p>
           )}
           {c.frameworkAwards != null && (

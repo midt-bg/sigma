@@ -195,7 +195,33 @@ describe('getContract', () => {
       expect(detail?.value.suspect).toBe(true);
       expect(detail?.value.signingEur).toBe(256.49);
       expect(detail?.value.currentEur).toBe(flag === 'annex_suspect' ? 1025.96 : 256.49);
+      expect(detail?.value.currentValueDoubled).toBe(false);
     }
+  });
+
+  it('#307 blanks the current value for a KNOWN 2× double-count (annex_total_suspect)', async () => {
+    const detail = await getContract(
+      fakeDb(
+        {
+          ...baseContractRow,
+          signing_value: 256.49,
+          current_value: 512.98, // the doubled native figure — must NOT resurface
+          signing_value_eur: 256.49,
+          current_value_eur: null, // excluded from aggregates upstream
+          value_flag: 'annex_total_suspect',
+        },
+        [],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.value.suspect).toBe(true);
+    expect(detail?.value.currentValueDoubled).toBe(true);
+    // Blanked (—), never the doubled 512.98 nor a fabricated fallback.
+    expect(detail?.value.currentEur).toBeNull();
+    expect(detail?.value.deltaPct).toBeNull();
+    // The trustworthy signing value is still shown.
+    expect(detail?.value.signingEur).toBe(256.49);
   });
 
   // Exercises the real cohort path end-to-end (baseContractRow is clean-value, CPV '72', amount 5000).

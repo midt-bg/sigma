@@ -549,11 +549,16 @@ export async function getContract(
     r.value_flag === 'review' ||
     r.value_flag === 'value_low';
   const dateSuspect = r.date_flag === 'signed_after_publication';
+  // #307 — annex_total_suspect is a KNOWN exact 2× double-count in current_value. Its current_value_eur is
+  // already NULL (excluded from aggregates), so the native fallback below would resurface the doubled figure
+  // under an "unverified" label. Blank it instead: a known-wrong number is worse than an honest gap.
+  const currentValueDoubled = r.value_flag === 'annex_total_suspect';
   const signingEur =
     r.signing_value_eur ?? eurFromNative(r.signing_value, r.contract_currency, r.fx_rate);
-  const currentRaw =
-    r.current_value_eur ??
-    eurFromNative(r.current_value, r.current_value_currency || r.contract_currency, r.fx_rate);
+  const currentRaw = currentValueDoubled
+    ? null
+    : (r.current_value_eur ??
+      eurFromNative(r.current_value, r.current_value_currency || r.contract_currency, r.fx_rate));
   const procedureEstimatedEur = eurFromNative(
     r.estimated_value,
     r.tender_currency,
@@ -610,12 +615,13 @@ export async function getContract(
     estimatedEur: currentLotEstimatedEur ?? procedureEstimatedEur,
     procedureEstimatedEur,
     signingEur,
-    currentEur: currentRaw ?? signingEur,
+    currentEur: currentValueDoubled ? null : (currentRaw ?? signingEur),
     deltaPct:
       !suspect && currentRaw != null && signingEur != null && signingEur !== 0
         ? (currentRaw - signingEur) / signingEur
         : null,
     suspect,
+    currentValueDoubled,
   };
 
   const authority: ContractParty = {

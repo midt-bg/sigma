@@ -252,6 +252,9 @@ export interface ContractValueTimeline {
   currentEur: number | null;
   deltaPct: number | null; // (current − signing) / signing, when both present
   suspect: boolean; // value_/annex_suspect/review → render with an unverified-value label
+  // annex_total_suspect → the current value is a KNOWN exact 2× double-count. currentEur is blanked (—)
+  // rather than shown as a labelled doubled figure — a known-wrong number is worse than an honest gap (#307).
+  currentValueDoubled: boolean;
 }
 
 export interface ContractLotRow {
