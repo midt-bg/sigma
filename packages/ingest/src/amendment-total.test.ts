@@ -228,6 +228,42 @@ describe('#305 amendment value double-count heuristic', () => {
     ).toBe('none');
   });
 
+  it('does NOT anchor a day-count on a currency token elsewhere in the sentence (#307 MONEY_AFTER window)', () => {
+    // "…удължава на 200 дни, стойността остава 100 лв.": 200 is a DAY count; the "лв." belongs to a
+    // different figure downstream. A non-monetary unit right after 200 must veto it, not restate 300→200.
+    expect(
+      classifyAmendmentValue(
+        mk(100, 300, 200, 'BGN', 'Срокът се удължава на 200 дни, стойността остава 100 лв.'),
+      ).kind,
+    ).toBe('none');
+    expect(
+      classifyAmendmentValue(
+        mk(
+          100,
+          300,
+          200,
+          'BGN',
+          'Срокът за изпълнение на договора се удължава на 200 дни, без промяна в договорената сума в лв.',
+        ),
+      ).kind,
+    ).toBe('none');
+  });
+
+  it('does NOT restate an exact-2× on a bare payment-in-euro clause (#307 в-евро narrowing)', () => {
+    // "Плащанията…се извършват в евро…" is a payment-currency clause, NOT an unchanged-value signal — it
+    // must not halve a real +100%. Only "X в евро" re-denomination phrasing may restate (see 189325).
+    const t = classifyAmendmentValue(
+      mk(
+        250000,
+        500000,
+        250000,
+        'BGN',
+        'Плащанията по договора се извършват в евро по сметка на изпълнителя.',
+      ),
+    );
+    expect(t).toEqual({ kind: 'none' });
+  });
+
   it('restates a bare "…на <N>" only WHEN a currency unit follows the figure (#307 HIGH-1 anchor)', () => {
     // Same "…на <N>" shape as the days case, but a currency unit anchors it as money ⇒ genuine total.
     expect(

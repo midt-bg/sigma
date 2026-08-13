@@ -71,14 +71,24 @@ const TOTAL_VETO = /(?:в\s+размер|ресурс\p{L}*|допълнител
 // the load-bearing anchor. No ASCII \b (Cyrillic).
 const MONEY_BEFORE = /(?:стойност|цена)\p{L}*\s*$/iu;
 const MONEY_AFTER = /(?:^|[^\p{L}])(?:лв\.?|лева|лев|bgn|eur|евро|euro|€|usd|\$)(?![\p{L}])/iu;
+// #307 — MONEY_AFTER scans the whole ~60-char window, so a sentence that names both a term and a value
+// ("…удължава на 200 дни, стойността остава 100 лв.") lets a downstream currency token anchor a figure
+// that is actually a day count. A non-monetary unit sitting IMMEDIATELY after the figure (days, months,
+// years, count, percent) overrides any currency further along: the figure is a duration/quantity, never
+// the contract value. Anchored at ^ against the post-figure slice so only the immediate suffix counts.
+const NON_MONEY_UNIT_AFTER = /^\s*(?:дни|дн\.|месец\p{L}*|години|год\.|броя|бр\.|%|процент\p{L}*)/iu;
 
 // #307 — the exact-2× "unchanged" restatement (rule 3) may only fire WITH a positive textual signal that
 // the value did not really change: a currency re-denomination that mechanically doubled the figure, or an
 // explicit "unchanged / non-material" phrasing. Absent any signal the row returns `none` and falls to the
 // arithmetic annex_total_suspect flag (exclude), rather than silently halving a possibly-legitimate
 // ЗОП чл.116 ал.1 т.1 in-scope +100% (a pre-announced option clause `outsideZop` cannot model).
+// #307 — the anchor is the "X в евро" re-denomination phrasing (`лев… в евро`), NOT a bare "в евро": a
+// payment-currency clause ("Плащанията…се извършват в евро…") says nothing about an unchanged total and
+// would silently halve a real doubling. The bare form was also redundant — the 189325 fixture
+// ("…се променя от лева в евро") is already caught by the `лев… в евро` alternative.
 const RESTATE_UNCHANGED_CTX =
-  /(?:лев\p{L}*\s+в\s+евро|в\s+евро|деноминаци\p{L}*|не\s*се\s+промен\p{L}*|остава\p{L}*\s+непромен\p{L}*|без\s+промяна|несъществен\p{L}*)/iu;
+  /(?:лев\p{L}*\s+в\s+евро|деноминаци\p{L}*|не\s*се\s+промен\p{L}*|остава\p{L}*\s+непромен\p{L}*|без\s+промяна|несъществен\p{L}*)/iu;
 
 function normalizeBgNumber(raw: string): number | null {
   let t = raw.replace(WS, '');
@@ -128,6 +138,9 @@ function figureInContext(
     // before, OR a currency unit within the ~60 chars after, qualifies.
     if (requireMoneyAnchor) {
       const after = text.slice(m.index + m[0].length, m.index + m[0].length + 60);
+      // A non-monetary unit immediately after the figure (days/months/years/count/%) vetoes it before
+      // a downstream currency token can wrongly anchor it as money (#307).
+      if (NON_MONEY_UNIT_AFTER.test(after)) continue;
       if (!MONEY_BEFORE.test(before) && !MONEY_AFTER.test(after)) continue;
     }
     return true;
