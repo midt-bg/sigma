@@ -1,7 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // The ETL runtime imports these modules as source under plain Node (scripts/load-eop.mjs →
+    // '../packages/ingest/src/base.ts'), which requires explicit .ts extensions on imports WITHIN that
+    // graph (base.ts → './amendment-total.ts'). Permit them here so tsc (Bundler resolution) accepts the
+    // same specifiers the runtime needs. Safe with the base config's noEmit.
+    "allowImportingTsExtensions": true
   },
   "include": ["src"]
 }

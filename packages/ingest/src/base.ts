@@ -1,6 +1,6 @@
 // Base EOP plain-JSON adapter helpers. Pure and Worker-safe: no Node APIs.
 
-import { amendmentValueTreatment } from './amendment-total';
+import { amendmentValueTreatment } from './amendment-total.ts';
 
 export type BaseCategory = 'contracts' | 'tenders' | 'annexes';
 export type BaseCoercionKind =
