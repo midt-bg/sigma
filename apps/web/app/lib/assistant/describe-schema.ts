@@ -10,11 +10,13 @@ export const DATA_TRAPS: string[] = [
   'Парични агрегати: СУМИРАЙ САМО `contracts.amount_eur` (каноничен EUR, безопасен за сумиране). ' +
     'НИКОГА не сумирай `contracts.amount` — то е „както е записано" в смесена валута (`currency`), само за показване.',
   'Канонична база за всяка парична сума: `contracts.amount_eur IS NOT NULL`. НЕ филтрирай по ' +
-    '`value_flag`: включи `ok`, `review`, `annex_suspect`, `value_low` и поправените `value_suspect` редове.',
+    '`value_flag`: включи `ok`, `review`, `annex_suspect`, `annex_total_suspect`, `value_low` и ' +
+    'поправените `value_suspect` редове.',
   '`amount_eur IS NULL` означава, че няма използваема EUR стойност (например `value_suspect` без ' +
     'прогноза за поправка или чужда валута без FX курс); само тези редове се изключват от парични суми.',
-  '`value_flag` ∈ {ok, review, annex_suspect, value_suspect, value_low} мени значението на стойността ' +
-    'на реда, но не и каноничната база; `date_flag` ∈ {ok, signed_after_publication} е вердикт за датата.',
+  '`value_flag` ∈ {ok, review, annex_suspect, annex_total_suspect, value_suspect, value_low} мени ' +
+    'значението на стойността на реда, но не и каноничната база; `date_flag` ∈ {ok, ' +
+    'signed_after_publication} е вердикт за датата.',
   "`tenders.procedure_type = 'неизвестна'` маркира СИНТЕТИЧНИ (само-договорни) преписки — " +
     'изключи ги при анализ на разпределението по процедура, освен ако нарочно ги искаш.',
   '`lots` са на grain по обособена позиция — не ги брой едно към едно срещу `contracts`.',
