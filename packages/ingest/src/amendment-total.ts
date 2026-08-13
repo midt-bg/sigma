@@ -50,6 +50,11 @@ const TOTAL_CTX = new RegExp(
 const NOT_TOTAL_CTX = new RegExp(`${B}(?:от|с|със)\\s*$`, 'iu');
 // "…с <N>" / "…със <N>" — N is an increment already applied.
 const INCREMENT_CTX = new RegExp(`${B}(?:с|със)\\s*$`, 'iu');
+// A wider veto on the "…на <N>" total match: Bulgarian "в размер на <N>" ("in the amount of N"),
+// "ресурс … в размер на N", "допълнителни … на обща стойност N" name the CHANGE/added-work amount, not
+// the new contract total — restating value_after := N there would be wrong (verified on the real corpus).
+// Checked over a wider window than NOT_TOTAL_CTX because these markers sit a few words before the figure.
+const TOTAL_VETO = /(?:в\s+размер|ресурс\p{L}*|допълнителн\p{L}*|увеличени\p{L}*|намалени\p{L}*)/iu;
 
 function normalizeBgNumber(raw: string): number | null {
   const t = raw.replace(WS, '');
@@ -70,6 +75,7 @@ function figureInContext(
   target: number,
   contextRe: RegExp,
   excludeRe: RegExp | null,
+  wideVetoRe: RegExp | null = null,
 ): boolean {
   NUMBER_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -78,6 +84,9 @@ function figureInContext(
     if (n === null || !approxEq(n, target)) continue;
     const before = text.slice(Math.max(0, m.index - 40), m.index);
     if (excludeRe && excludeRe.test(before)) continue;
+    // A wider veto looks further back (~55 chars) for "в размер"/"ресурс"/increment markers that make an
+    // "…на <N>" an amount, not a total.
+    if (wideVetoRe && wideVetoRe.test(text.slice(Math.max(0, m.index - 55), m.index))) continue;
     if (contextRe.test(before)) return true;
   }
   return false;
@@ -101,8 +110,9 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
   if (text && figureInContext(text, d, INCREMENT_CTX, null)) return { kind: 'genuine_increment' };
 
   // 2) The delta figure appears as a TOTAL ("на <delta>", "възлиза на …", "обща стойност … <delta>").
-  //    The true value_after is the delta (the announced new total).
-  if (text && figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX)) {
+  //    The true value_after is the delta (the announced new total). TOTAL_VETO rejects "в размер на"/
+  //    "ресурс"/increment phrasings that name the change amount, not the contract total.
+  if (text && figureInContext(text, d, TOTAL_CTX, NOT_TOTAL_CTX, TOTAL_VETO)) {
     return { kind: 'total_restated', correctedAfter: d };
   }
 

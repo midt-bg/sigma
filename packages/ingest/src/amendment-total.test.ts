@@ -56,6 +56,34 @@ describe('#305 amendment value double-count heuristic', () => {
     ).toBe(14693785.52);
   });
 
+  it('does NOT restate "в размер на / ресурс / increment" phrasings — they name the change, not the total', () => {
+    // Real corpus 271148→650754: "…максималния ресурс за изменението в размер на 379 606.50" names the
+    // INCREMENT; restating value_after to it would understate a genuine >100% increase. Must be `none`.
+    expect(
+      classifyAmendmentValue(
+        mk(
+          271147.5,
+          650754,
+          379606.5,
+          'BGN',
+          'Срокът се удължава до изчерпване на максималния ресурс за изменението в размер на 379 606.50 лв. без ДДС',
+        ),
+      ).kind,
+    ).toBe('none');
+    // "…или сума в размер на 86 363.08" — the added-work amount, not the new contract total.
+    expect(
+      restatedValueAfter(
+        mk(
+          71969.23,
+          151662.82,
+          79693.59,
+          'BGN',
+          'Общата стойност на договорените СМР се променя от 71 969.23 без ДДС или сума в размер на 79 693.59 лв.',
+        ),
+      ),
+    ).toBeNull();
+  });
+
   it('restates a currency re-denomination that doubled an unchanged total (189325)', () => {
     const t = classifyAmendmentValue(
       mk(
