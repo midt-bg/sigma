@@ -28,6 +28,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const SCRIPT = resolve(HERE, 'ship-related-persons.mjs');
 const MIG = resolve(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// 0006 too: the evidence seal is one of the shipped tables (#279, ADR-0033), so it appears in the ship's
+// TABLES and WIPE_ORDER. A target built from 0003 alone makes the generated wipe abort on „no such table"
+// before a single row moves — the schema under test has to be the schema the ship writes.
+const MIG_EVIDENCE = resolve(ROOT, 'packages/db/migrations/0006_interest_link_evidence.sql');
 const D1_NAME = 'sigma-test-local';
 
 // Derived from BOTH production constants, and the run below does NOT override either: one row past
@@ -51,11 +55,12 @@ if (spawnSync('sqlite3', ['-version'], { stdio: 'ignore' }).error) {
   throw new Error('scripts/ship-e2e.test.mjs requires the sqlite3 binary on PATH');
 }
 
-/** The five served tables plus the two FK parents they reference. */
+/** The served свързани-лица tables plus the two FK parents they reference. */
 const SCHEMA = `PRAGMA foreign_keys=ON;
 CREATE TABLE bidders(id TEXT PRIMARY KEY);
 CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${MIG}
+.read ${MIG_EVIDENCE}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');`;
 
@@ -66,7 +71,11 @@ INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VAL
 ${Array.from(
   { length: links },
   (_, i) =>
-    `INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il${i}','p1|${i}','p1','eik:1','1','e','v1','B_distinctive','owns','published');`,
+    `INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il${i}','p1|${i}','p1','eik:1','1','e','v1','B_distinctive','owns','published');\n` +
+    // One seal per link. Since #279 a published link without one is exactly the state the audit fails
+    // the run on (C_no_evidence) and the read gate refuses to surface, so a corpus without seals is not
+    // a shape the ship should ever be asked to carry.
+    `INSERT INTO interest_link_evidence(link_key,evidence_kind,lookup_date,rules_version,live_status) VALUES('p1|${i}','document','2026-08-13','tr-rules-1','live');`,
 ).join('\n')}
 `;
 // interest_link_authorities is deliberately left EMPTY above: its expected count is 0, which is the
@@ -77,13 +86,15 @@ INSERT INTO persons(id,name) VALUES('stale','Стар запис');
 INSERT INTO declarations(id,person_id,xml_file,folder_year,template,source_url) VALUES('sd','stale','s.xml','2019','assets','u');
 INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES('sdi','sd','S','s','shares');
 INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('sil','stale|0','stale','eik:1','1','s','v0','B_distinctive','owns','published');
-INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('stale|0','auth:1','A');`;
+INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('stale|0','auth:1','A');
+INSERT INTO interest_link_evidence(link_key,evidence_kind,lookup_date,rules_version,live_status) VALUES('stale|0','confirmed','2019-01-01','tr-rules-0','live');`;
 
 const EXPECTED_ROWS = {
   persons: 1,
   declarations: 1,
   declared_interests: 1,
   interest_links: LINKS,
+  interest_link_evidence: LINKS, // one seal per link (#279)
   interest_link_authorities: 0,
 };
 
@@ -255,10 +266,15 @@ test('a request that never landed fails the run', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-short-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res } = runShip(dir, { env: { SHIP_FAKE_SKIP: 'interest_links.2.sql' } });
+  // The skip targets a LEAF table on purpose. Since #279 the ship also carries interest_link_evidence,
+  // which has an FK to interest_links — so dropping an interest_links chunk now fails on the FOREIGN KEY
+  // as the orphaned seals land, before the read-back ever runs. That is a stronger guard, but it would
+  // leave the read-back gate itself unexercised, which is what this test is for. A seal chunk has no
+  // dependents, so its loss is invisible until the counts are compared.
+  const { res } = runShip(dir, { env: { SHIP_FAKE_SKIP: 'interest_link_evidence.2.sql' } });
   assert.notEqual(res.status, 0, 'a short target must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
-  assert.match(res.stderr, /interest_links: shipped \d+, target has \d+/);
+  assert.match(res.stderr, /interest_link_evidence: shipped \d+, target has \d+/);
 });
 
 test('a read-back that answers with a non-number fails closed', (t) => {

@@ -662,6 +662,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      // 0006 too: refresh-slice.sql's свързани-лица block reads interest_link_evidence (#279), so the
+      // script cannot parse against a DB that stops at 0003 — every site here applies both.
+      readScript(dbPath, migration6Path);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
