@@ -269,14 +269,24 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                       <td>{a.date ? longDate(a.date) : '—'}</td>
                       {/* #305 residual: an uncorrectable double-count — the source's value_after is the
                           untrusted doubled figure, so show „—" and mark the row rather than a number we
-                          can't stand behind. */}
+                          can't stand behind. A `restated` row is the opposite: СИГМА corrected the doubled
+                          total from the основание text, so we show the corrected number and flag that we
+                          rewrote it. */}
                       <td className="money">
                         {a.suspect ? (
                           <>
                             — <Chip>непотвърден тотал</Chip>
                           </>
                         ) : a.valueAfterEur != null ? (
-                          moneyBare(a.valueAfterEur)
+                          <>
+                            {moneyBare(a.valueAfterEur)}
+                            {a.restated && (
+                              <>
+                                {' '}
+                                <Chip>коригиран тотал</Chip>
+                              </>
+                            )}
+                          </>
                         ) : (
                           '—'
                         )}
