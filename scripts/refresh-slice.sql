@@ -1217,6 +1217,19 @@ FROM (
                       -- so a compounding chain where every step doubles is left untouched, not restated.
                       AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                   )
+                  -- #305 84818-class: an EXACT single-step 2× on an ORPHAN base (value_before ties neither
+                  -- signing nor any prior annex) is the ЗОП чл.116 defect signature — flag (→ signing
+                  -- fallback, EXCLUDE); never rewrites. The orphan guard leaves compounding chains untouched
+                  -- (see normalize-raw.sql).
+                  OR (
+                    ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                    AND NOT EXISTS (
+                      SELECT 1 FROM raw_amendments prev
+                      WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                        AND prev.value_after > 0
+                        AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    )
+                  )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
@@ -1552,6 +1565,19 @@ FROM (
                       -- so a compounding chain where every step doubles is left untouched, not restated.
                       AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                   )
+                  -- #305 84818-class: an EXACT single-step 2× on an ORPHAN base (value_before ties neither
+                  -- signing nor any prior annex) is the ЗОП чл.116 defect signature — flag (→ signing
+                  -- fallback, EXCLUDE); never rewrites. The orphan guard leaves compounding chains untouched
+                  -- (see normalize-raw.sql).
+                  OR (
+                    ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                    AND NOT EXISTS (
+                      SELECT 1 FROM raw_amendments prev
+                      WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                        AND prev.value_after > 0
+                        AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    )
+                  )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
@@ -1762,6 +1788,18 @@ SELECT
                   -- ...and that prior total was itself reached legitimately (prev not a ≥2× double).
                   AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
               )
+              -- #305 84818-class: EXACT single-step 2× on an ORPHAN base (value_before ties neither signing
+              -- nor any prior annex) — mark the row suspect; never rewrites (see normalize-raw.sql). The
+              -- orphan guard leaves compounding chains untouched.
+              OR (
+                ABS(dedup.value_after - 2 * dedup.value_before) < 0.005 * dedup.value_before
+                AND NOT EXISTS (
+                  SELECT 1 FROM raw_amendments prev
+                  WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
+                    AND prev.value_after > 0
+                    AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                )
+              )
             )
             AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
               = COALESCE(NULLIF(rc.currency, ''), 'BGN')
@@ -1899,6 +1937,19 @@ WITH contract_base AS (
               -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
               -- so a compounding chain where every step doubles is left untouched, not restated.
               AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
+          )
+          -- #305 84818-class: an EXACT single-step 2× on an ORPHAN base (value_before ties neither signing
+          -- nor any prior served annex) is the ЗОП чл.116 defect signature — flag (→ signing fallback,
+          -- EXCLUDE); never rewrites. The orphan guard leaves compounding chains untouched (see
+          -- normalize-raw.sql).
+          OR (
+            ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+            AND NOT EXISTS (
+              SELECT 1 FROM amendments prev
+              WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                AND prev.value_after > 0
+                AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+            )
           )
         )
         AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before

@@ -607,15 +607,62 @@ describe('#305 NEW-HIGH-1 multi-annex chain contamination', () => {
   });
 });
 
+// #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) is the ЗОП чл.116 defect
+// signature even when value_before anchors to NEITHER signing NOR a prior annex total (an orphan base) —
+// as in real contract 84818, whose annex reports 76.77M → 153.54M on a base unrelated to the contract's
+// signing. The gate flags it → signing fallback (EXCLUDE), without ever rewriting the value.
+describe('#305 84818-class orphan exact-double', () => {
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: flags an exact 2× on an orphan base, but leaves a non-exact orphan jump ok`, () => {
+      withEtlDb(label, (dbPath) => {
+        const cases: Case[] = [
+          // Orphan exact 2×: value_before 90 000 ties neither signing (195 583) nor any prior annex, and
+          // value_after is exactly 2×. Flag → signing fallback (100 000 EUR), never the doubled 180 000.
+          {
+            unp: 'UNP-ORPHAN-EXACT',
+            signing: 195_583,
+            steps: [{ before: 90_000, after: 180_000, publishedAt: '2026-06-10' }],
+          },
+          // Control: an orphan jump that is NOT an exact 2× (1.5×) is ambiguous — with no anchor and no
+          // exact-double signature it must stay ok (the relaxed rule is scoped to EXACT 2× only).
+          {
+            unp: 'UNP-ORPHAN-SMALL',
+            signing: 195_583,
+            steps: [{ before: 90_000, after: 135_000, publishedAt: '2026-06-10' }],
+          },
+        ];
+        seedContracts(dbPath, cases);
+        seedAmendments(dbPath, cases);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const rows = rowsByUnp(dbPath);
+
+        const orphan = rows.get('UNP-ORPHAN-EXACT');
+        expect(orphan?.value_flag, 'orphan exact 2× flagged').toBe('annex_total_suspect');
+        expect(orphan?.amount_eur, 'falls back to signing, not the doubled 180k').toBe(
+          Math.round(195_583 / 1.95583),
+        );
+        expect(orphan?.current_value_eur, 'doubled current suppressed').toBeNull();
+
+        const small = rows.get('UNP-ORPHAN-SMALL');
+        expect(small?.value_flag, 'non-exact orphan jump stays ok').toBe('ok');
+        expect(small?.current_value_eur).toBe(Math.round(135_000 / 1.95583));
+      });
+    });
+  }
+});
+
 // #305 NEW-HIGH-2 (reconciliation parity): the slice reconciliation reads the CUMULATIVE served
 // `amendments`, whose value_after is RESTATED, while the full path anchors on RAW values. A restated prior
 // annex used to flip the anchor's "prev not itself a double" test (restated 1.4M < 2×1.2M passes; the raw
 // 2.4M would fail), flagging on the slice but not on the full rebuild. The `prev.value_restated = 0` guard
 // restores parity: both paths reach the same verdict for a restated-prior + doubled-later chain.
 describe('#305 NEW-HIGH-2 slice reconciliation parity', () => {
-  // annex1 doubled 1.2M→2.4M, restated to 1.4M; annex2 doubles the RESTATED 1.4M to 2.8M. On the full (raw)
-  // path annex2's value_before (1.4M) anchors to neither signing (1M) nor the raw prior total (2.4M) → 'ok'.
-  // Pre-guard the slice reconciliation matched the restated 1.4M and flagged — the flip. Post-guard: 'ok'.
+  // annex1 doubled 1.2M→2.4M, restated to 1.4M; annex2 grows the RESTATED 1.4M to 2.9M (a ≥2× step, but
+  // deliberately NOT an exact 2× so the 84818-class rule doesn't fire and mask the guard under test). On the
+  // full (raw) path annex2's value_before (1.4M) anchors to neither signing (1M) nor the raw prior total
+  // (2.4M) → 'ok'. Pre-guard the slice reconciliation matched the restated 1.4M and flagged — the flip.
+  // Post-guard (prev.value_restated = 0): 'ok', matching the full rebuild.
   const FLIP: TreatedCase = {
     unp: 'UNP-RECON-FLIP',
     signing: 1_000_000,
@@ -629,7 +676,7 @@ describe('#305 NEW-HIGH-2 slice reconciliation parity', () => {
       },
       {
         before: 1_400_000,
-        after: 2_800_000,
+        after: 2_900_000,
         publishedAt: '2026-06-20',
         treatment: null,
         restatedAfter: null,

@@ -979,6 +979,21 @@ FROM (
                     -- so a compounding chain where every step doubles is left untouched, not restated.
                     AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                 )
+                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
+                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
+                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
+                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
+                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
+                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
+                OR (
+                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                  AND NOT EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
+                )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
               -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
@@ -1383,6 +1398,21 @@ SELECT 1,
                     -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
                     -- so a compounding chain where every step doubles is left untouched, not restated.
                     AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
+                )
+                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
+                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
+                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
+                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
+                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
+                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
+                OR (
+                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                  AND NOT EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
                 )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
