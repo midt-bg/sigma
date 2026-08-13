@@ -64,7 +64,18 @@ SELECT
           SELECT 1 FROM raw_contracts rc
           WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
             AND rc.signing_value > 0
-            AND ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+            -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+            -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
+            -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+            AND (
+              ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+              OR EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
+                  AND prev.value_after > 0
+                  AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+              )
+            )
             AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
               = COALESCE(NULLIF(rc.currency, ''), 'BGN')
         )

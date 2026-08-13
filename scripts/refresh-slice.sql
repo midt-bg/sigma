@@ -1189,22 +1189,32 @@ FROM (
                 WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                   AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
               ))))) THEN 'annex_suspect'
-            -- #305 single-annex value double-count: a driving annex reports a new TOTAL added to the old
-            -- instead of replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single
-            -- amendment at +50%, so one step cannot legally more than double a contract. Tier-1 scope is
-            -- the clear single-annex case: value_before ≈ the contract's signing_value (the original total
-            -- counted twice) AND value_after in [2×,10×) that base. That leaves slow legitimate multi-annex
-            -- climbs (value_before is an already-grown figure, not signing) and the ≥10× mis-key case
-            -- (#299's annex_suspect rule above) untouched; the same-currency guard skips cross-currency
-            -- annexes (a doubled native value there is an FX artefact, handled as 'review'); and the
-            -- ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a doubled
-            -- annex later superseded by a correct one is NOT flagged.
+            -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
+            -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
+            -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
+            -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
+            -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
+            -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+            -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+            -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
+            -- doubled annex later superseded by a correct one is NOT flagged.
             WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
               SELECT 1 FROM raw_amendments am
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                 -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
                 AND am.value_treatment IS NULL
-                AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+                -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
+                -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+                AND am.value_before > 0 AND (
+                  ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                  OR EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
+                )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 AND ABS(am.value_after - c.current_value) < 0.01
                 AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
@@ -1509,22 +1519,32 @@ FROM (
                 WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                   AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
               ))))) THEN 'annex_suspect'
-            -- #305 single-annex value double-count: a driving annex reports a new TOTAL added to the old
-            -- instead of replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single
-            -- amendment at +50%, so one step cannot legally more than double a contract. Tier-1 scope is
-            -- the clear single-annex case: value_before ≈ the contract's signing_value (the original total
-            -- counted twice) AND value_after in [2×,10×) that base. That leaves slow legitimate multi-annex
-            -- climbs (value_before is an already-grown figure, not signing) and the ≥10× mis-key case
-            -- (#299's annex_suspect rule above) untouched; the same-currency guard skips cross-currency
-            -- annexes (a doubled native value there is an FX artefact, handled as 'review'); and the
-            -- ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a doubled
-            -- annex later superseded by a correct one is NOT flagged.
+            -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
+            -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
+            -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
+            -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
+            -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
+            -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+            -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+            -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
+            -- doubled annex later superseded by a correct one is NOT flagged.
             WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
               SELECT 1 FROM raw_amendments am
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                 -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
                 AND am.value_treatment IS NULL
-                AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+                -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
+                -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+                AND am.value_before > 0 AND (
+                  ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                  OR EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
+                )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
                 AND ABS(am.value_after - c.current_value) < 0.01
                 AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
@@ -1717,7 +1737,18 @@ SELECT
           SELECT 1 FROM raw_contracts rc
           WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
             AND rc.signing_value > 0
-            AND ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+            -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+            -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
+            -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+            AND (
+              ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+              OR EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
+                  AND prev.value_after > 0
+                  AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+              )
+            )
             AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
               = COALESCE(NULLIF(rc.currency, ''), 'BGN')
         )
@@ -1813,11 +1844,12 @@ WITH contract_base AS (
         AND am.contract_number = c.contract_number
         AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
     ) AS has_step10,
-    -- #305 single-annex value double-count: a driving annex whose value_before ≈ the contract's
-    -- signing_value (the original total counted twice), value_after in [2×,10×) that base, same currency
-    -- as the contract, and matches current_value. Checked against the CUMULATIVE domain amendments,
-    -- matching where this pass re-rolls current_value from. ЗОП чл.116 caps a single amendment at +50%;
-    -- slow multi-annex climbs, the ≥10× mis-key and cross-currency cases are handled elsewhere.
+    -- #305 value double-count: a driving annex whose value_before ≈ a KNOWN prior total — the contract's
+    -- signing_value OR a preceding annex's value_after (the multi-annex case) — with value_after in
+    -- [2×,10×) that base, same currency, and matching current_value. Checked against the CUMULATIVE domain
+    -- amendments, matching where this pass re-rolls current_value from. ЗОП чл.116 caps a single amendment
+    -- at +50%, so the ≥2× step is the defect signal wherever it sits; slow climbs never reach ≥2×, and the
+    -- ≥10× mis-key and cross-currency cases are handled elsewhere.
     EXISTS (
       SELECT 1 FROM amendments am
       WHERE am.unp = substr(c.tender_id, 3)
@@ -1827,7 +1859,17 @@ WITH contract_base AS (
         -- increments, whose value_after is legitimately ≥2× and must NOT be arithmetic-flagged.
         AND am.value_treatment IS NULL
         AND am.value_before > 0 AND c.signing_value > 0
-        AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+        -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+        -- value_after), not signing — anchor to signing OR any recorded prior total (see normalize-raw.sql).
+        AND (
+          ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+          OR EXISTS (
+            SELECT 1 FROM amendments prev
+            WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+              AND prev.value_after > 0
+              AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+          )
+        )
         AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
         AND ABS(am.value_after - c.current_value) < 0.01
         AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))

@@ -405,3 +405,91 @@ describe('#305 annex_total_suspect single-annex value double-count', () => {
     expect(fullFlag).toBe(sliceFlag);
   });
 });
+
+// #305 multi-annex residual: the doubled step is NOT always the first annex. When a later annex reports
+// a new TOTAL added to an already-grown value, its value_before is the prior CUMULATIVE total (a preceding
+// annex's value_after), not signing. The relaxed anchor flags these too; the ≥2× single-step gate (ЗОП
+// чл.116) keeps slow legitimate climbs — whose later steps never reach 2× — untouched.
+describe('#305 annex_total_suspect multi-annex value double-count', () => {
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: flags a later-in-chain double whose value_before ties to a prior annex total, not signing`, () => {
+      withEtlDb(label, (dbPath) => {
+        const cases: Case[] = [
+          // Chain: 1M signed → annex1 +40% (1.4M, legal, not a double) → annex2 doubles the 1.4M total to
+          // 2.8M. The driving annex's value_before (1.4M) equals the PRIOR annex's value_after, not signing
+          // (1M), so the old signing-only anchor missed it. Must now flag and fall back to signing.
+          {
+            unp: 'UNP-MULTI-DOUBLE',
+            signing: 1_000_000,
+            steps: [
+              { before: 1_000_000, after: 1_400_000, publishedAt: '2026-06-10' },
+              { before: 1_400_000, after: 2_800_000, publishedAt: '2026-06-20' },
+            ],
+          },
+          // Control: same shape but the later step is a legal +36% (1.4M → 1.9M), below 2×. The relaxed
+          // anchor matches value_before to the prior total, but the ≥2× gate must keep this 'ok'.
+          {
+            unp: 'UNP-MULTI-OK',
+            signing: 1_000_000,
+            steps: [
+              { before: 1_000_000, after: 1_400_000, publishedAt: '2026-06-10' },
+              { before: 1_400_000, after: 1_900_000, publishedAt: '2026-06-20' },
+            ],
+          },
+        ];
+        seedContracts(dbPath, cases);
+        seedAmendments(dbPath, cases);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const rows = rowsByUnp(dbPath);
+
+        const multiDouble = rows.get('UNP-MULTI-DOUBLE');
+        expect(multiDouble?.value_flag, 'later-in-chain double flagged').toBe('annex_total_suspect');
+        expect(multiDouble?.amount_eur, 'amount_eur falls back to signing').toBe(
+          Math.round(1_000_000 / 1.95583),
+        );
+        expect(multiDouble?.current_value_eur, 'current_value_eur suppressed').toBeNull();
+
+        const multiOk = rows.get('UNP-MULTI-OK');
+        expect(multiOk?.value_flag, 'legal <2x later step stays ok').toBe('ok');
+        expect(multiOk?.amount_eur, 'ok row keeps current value').toBe(
+          Math.round(1_900_000 / 1.95583),
+        );
+        expect(multiOk?.current_value_eur).toBe(Math.round(1_900_000 / 1.95583));
+      });
+    });
+  }
+
+  // The per-row value_suspect marker (served amendments) must also catch the later-in-chain double, so the
+  // UI blanks that specific annex row — not just the contract-level flag.
+  const MULTI_TREATED: TreatedCase = {
+    unp: 'UNP-MULTI-SUSPECT',
+    signing: 1_000_000,
+    steps: [
+      { before: 1_000_000, after: 1_400_000, publishedAt: '2026-06-10', treatment: null, restatedAfter: null },
+      { before: 1_400_000, after: 2_800_000, publishedAt: '2026-06-20', treatment: null, restatedAfter: null },
+    ],
+  };
+
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: marks value_suspect=1 on the later-in-chain doubled annex row, not the legal earlier one`, () => {
+      withEtlDb(label, (dbPath) => {
+        seedTreatedContracts(dbPath, [MULTI_TREATED]);
+        seedTreatedAmendments(dbPath, [MULTI_TREATED]);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const served = sqliteJson<{ value_after: number; value_suspect: number }>(
+          dbPath,
+          `SELECT value_after, value_suspect FROM amendments
+             WHERE unp = 'UNP-MULTI-SUSPECT' ORDER BY value_after`,
+        );
+        expect(served.length, 'both annex rows served').toBe(2);
+        // The legal +40% step (1.4M) is not suspect; the doubled step (2.8M) is.
+        const legal = served.find((r) => r.value_after === 1_400_000);
+        const doubled = served.find((r) => r.value_after === 2_800_000);
+        expect(legal?.value_suspect, 'legal earlier step not suspect').toBe(0);
+        expect(doubled?.value_suspect, 'later-in-chain double marked suspect').toBe(1);
+      });
+    });
+  }
+});
