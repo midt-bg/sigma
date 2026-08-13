@@ -542,6 +542,7 @@ export async function getContract(
   const suspect =
     r.value_flag === 'value_suspect' ||
     r.value_flag === 'annex_suspect' ||
+    r.value_flag === 'annex_total_suspect' ||
     r.value_flag === 'review' ||
     r.value_flag === 'value_low';
   const dateSuspect = r.date_flag === 'signed_after_publication';

@@ -1063,7 +1063,7 @@ FROM (
       ELSE q.signing_value * q.fx_rate
     END AS signing_value_eur,
     CASE
-      WHEN q.value_flag IN ('value_suspect', 'annex_suspect') OR q.current_value IS NULL THEN NULL
+      WHEN q.value_flag IN ('value_suspect', 'annex_suspect', 'annex_total_suspect') OR q.current_value IS NULL THEN NULL
       WHEN q.current_value_currency = 'EUR' THEN q.current_value
       WHEN q.current_value_currency = 'BGN' THEN q.current_value / 1.95583
       ELSE q.current_value * q.fx_rate
@@ -1073,16 +1073,23 @@ FROM (
       CASE y.value_flag
         WHEN 'value_suspect' THEN y.proc_est_native
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+        WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS display_native,
       CASE y.value_flag
         WHEN 'value_suspect' THEN NULL
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+        WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS trusted_native,
       CASE y.value_flag
         WHEN 'value_suspect' THEN NULL
         WHEN 'annex_suspect' THEN CASE
+          WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        END
+        WHEN 'annex_total_suspect' THEN CASE
           WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
           ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
             WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
@@ -1182,6 +1189,25 @@ FROM (
                 WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                   AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
               ))))) THEN 'annex_suspect'
+            -- #305 single-annex value double-count: a driving annex reports a new TOTAL added to the old
+            -- instead of replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single
+            -- amendment at +50%, so one step cannot legally more than double a contract. Tier-1 scope is
+            -- the clear single-annex case: value_before ≈ the contract's signing_value (the original total
+            -- counted twice) AND value_after in [2×,10×) that base. That leaves slow legitimate multi-annex
+            -- climbs (value_before is an already-grown figure, not signing) and the ≥10× mis-key case
+            -- (#299's annex_suspect rule above) untouched; the same-currency guard skips cross-currency
+            -- annexes (a doubled native value there is an FX artefact, handled as 'review'); and the
+            -- ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a doubled
+            -- annex later superseded by a correct one is NOT flagged.
+            WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+              SELECT 1 FROM raw_amendments am
+              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+                AND ABS(am.value_after - c.current_value) < 0.01
+                AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                  = COALESCE(NULLIF(c.currency, ''), 'BGN')
+            ) THEN 'annex_total_suspect'
             WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
             ELSE 'ok'
           END AS value_flag,
@@ -1351,7 +1377,7 @@ FROM (
       ELSE q.signing_value * q.fx_rate
     END AS signing_value_eur,
     CASE
-      WHEN q.value_flag IN ('value_suspect', 'annex_suspect') OR q.current_value IS NULL THEN NULL
+      WHEN q.value_flag IN ('value_suspect', 'annex_suspect', 'annex_total_suspect') OR q.current_value IS NULL THEN NULL
       WHEN q.current_value_currency = 'EUR' THEN q.current_value
       WHEN q.current_value_currency = 'BGN' THEN q.current_value / 1.95583
       ELSE q.current_value * q.fx_rate
@@ -1361,16 +1387,23 @@ FROM (
       CASE y.value_flag
         WHEN 'value_suspect' THEN y.proc_est_native
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+        WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS display_native,
       CASE y.value_flag
         WHEN 'value_suspect' THEN NULL
         WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+        WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
         ELSE COALESCE(y.current_value, y.signing_value)
       END AS trusted_native,
       CASE y.value_flag
         WHEN 'value_suspect' THEN NULL
         WHEN 'annex_suspect' THEN CASE
+          WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
+          ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
+            WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
+        END
+        WHEN 'annex_total_suspect' THEN CASE
           WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
           ELSE COALESCE((SELECT NULLIF(w.currency, '') FROM refresh_amendment_winners w
             WHERE w.unp = y.unp AND w.contract_number = y.contract_number), NULLIF(y.currency, ''), 'BGN')
@@ -1474,6 +1507,25 @@ FROM (
                 WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                   AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
               ))))) THEN 'annex_suspect'
+            -- #305 single-annex value double-count: a driving annex reports a new TOTAL added to the old
+            -- instead of replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single
+            -- amendment at +50%, so one step cannot legally more than double a contract. Tier-1 scope is
+            -- the clear single-annex case: value_before ≈ the contract's signing_value (the original total
+            -- counted twice) AND value_after in [2×,10×) that base. That leaves slow legitimate multi-annex
+            -- climbs (value_before is an already-grown figure, not signing) and the ≥10× mis-key case
+            -- (#299's annex_suspect rule above) untouched; the same-currency guard skips cross-currency
+            -- annexes (a doubled native value there is an FX artefact, handled as 'review'); and the
+            -- ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a doubled
+            -- annex later superseded by a correct one is NOT flagged.
+            WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+              SELECT 1 FROM raw_amendments am
+              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                AND am.value_before > 0 AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+                AND ABS(am.value_after - c.current_value) < 0.01
+                AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                  = COALESCE(NULLIF(c.currency, ''), 'BGN')
+            ) THEN 'annex_total_suspect'
             WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
             ELSE 'ok'
           END AS value_flag,
@@ -1734,7 +1786,23 @@ WITH contract_base AS (
       WHERE am.unp = substr(c.tender_id, 3)
         AND am.contract_number = c.contract_number
         AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
-    ) AS has_step10
+    ) AS has_step10,
+    -- #305 single-annex value double-count: a driving annex whose value_before ≈ the contract's
+    -- signing_value (the original total counted twice), value_after in [2×,10×) that base, same currency
+    -- as the contract, and matches current_value. Checked against the CUMULATIVE domain amendments,
+    -- matching where this pass re-rolls current_value from. ЗОП чл.116 caps a single amendment at +50%;
+    -- slow multi-annex climbs, the ≥10× mis-key and cross-currency cases are handled elsewhere.
+    EXISTS (
+      SELECT 1 FROM amendments am
+      WHERE am.unp = substr(c.tender_id, 3)
+        AND am.contract_number = c.contract_number
+        AND am.value_before > 0 AND c.signing_value > 0
+        AND ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+        AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+        AND ABS(am.value_after - c.current_value) < 0.01
+        AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+          = COALESCE(NULLIF(c.currency, ''), 'BGN')
+    ) AS has_double
   FROM contracts c
   JOIN tenders te ON te.id = c.tender_id
   WHERE (
@@ -1757,9 +1825,10 @@ WITH contract_base AS (
 ), base AS (
   SELECT id, currency, signing_value, current_value, current_value_currency, fx_rate, proc_est_eur, proc_est_native,
     CASE
-      WHEN c.value_flag <> 'annex_suspect'
+      WHEN c.value_flag NOT IN ('annex_suspect', 'annex_total_suspect')
         AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
           OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))))
+        AND NOT (c.current_value IS NOT NULL AND c.signing_value > 0 AND c.has_double)
       THEN c.value_flag
       WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
@@ -1771,6 +1840,9 @@ WITH contract_base AS (
         -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
         -- back below signing, and flagging those would RAISE the shown value, not repair it.
         OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))) THEN 'annex_suspect'
+      -- #305 single-annex value double-count: the driving annex more than doubled the contract in one
+      -- step (ЗОП чл.116 caps a single amendment at +50%). has_double already ties to current_value.
+      WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND c.has_double THEN 'annex_total_suspect'
       WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
       ELSE 'ok'
     END AS new_value_flag
@@ -1780,16 +1852,22 @@ WITH contract_base AS (
     CASE new_value_flag
       WHEN 'value_suspect' THEN proc_est_native
       WHEN 'annex_suspect' THEN COALESCE(signing_value, current_value)
+      WHEN 'annex_total_suspect' THEN COALESCE(signing_value, current_value)
       ELSE COALESCE(current_value, signing_value)
     END AS display_native,
     CASE new_value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN COALESCE(signing_value, current_value)
+      WHEN 'annex_total_suspect' THEN COALESCE(signing_value, current_value)
       ELSE COALESCE(current_value, signing_value)
     END AS trusted_native,
     CASE new_value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN CASE
+        WHEN signing_value IS NOT NULL THEN COALESCE(NULLIF(currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
+      END
+      WHEN 'annex_total_suspect' THEN CASE
         WHEN signing_value IS NOT NULL THEN COALESCE(NULLIF(currency, ''), 'BGN')
         ELSE COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN')
       END
@@ -1799,7 +1877,7 @@ WITH contract_base AS (
       END
     END AS trusted_currency,
     CASE
-      WHEN new_value_flag IN ('value_suspect', 'annex_suspect') OR current_value IS NULL THEN NULL
+      WHEN new_value_flag IN ('value_suspect', 'annex_suspect', 'annex_total_suspect') OR current_value IS NULL THEN NULL
       WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
       WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
       WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
