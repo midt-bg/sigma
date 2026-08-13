@@ -214,6 +214,65 @@ jobs:
               ;;
           esac
 
+      # #305 additive columns (migrations 0006/0007) must exist BEFORE the Worker serves: the contract-page
+      # query reads amendments.value_restated/value_suspect, and promote-amendments/refresh-slice also INSERT
+      # value_treatment — so all three must be present or the read AND the ETL write fail. Same rationale as
+      # the currency step above: the migration ledger is empty, so `d1 migrations apply` would collide on
+      # 0000. Probe the actual table and ALTER only the missing columns (SQLite has no ADD COLUMN IF NOT
+      # EXISTS). These are pure additions with safe defaults (INTEGER NOT NULL DEFAULT 0 / nullable TEXT), so
+      # no backfill or completion marker is needed — an ALTER populates every existing row. Malformed
+      # responses are fatal. This also makes 0006/0007 replay-safe when they were applied out-of-ledger.
+      - name: Apply amendment restated/suspect columns
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes --json \
+            --command "SELECT
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_restated') AS has_restated,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_treatment') AS has_treatment,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_suspect') AS has_suspect")"
+
+          read_flag() {
+            printf '%s' "$schema_json" | node -e '
+              const fs = require("fs");
+              let payload;
+              try {
+                payload = JSON.parse(fs.readFileSync(0, "utf8"));
+              } catch {
+                process.exit(2);
+              }
+              const result = Array.isArray(payload) ? payload[0] : payload;
+              const row = result && Array.isArray(result.results) ? result.results[0] : null;
+              const key = process.argv[1];
+              if (!row || !Object.hasOwn(row, key)) process.exit(2);
+              process.exit(Number(row[key]) === 1 ? 0 : 1);
+            ' "$1"
+          }
+
+          add_column() {
+            echo "amendments.$1 missing; adding it."
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --command "ALTER TABLE amendments ADD COLUMN $2"
+          }
+
+          ensure_column() {
+            set +e
+            read_flag "$1"
+            status="$?"
+            set -e
+            case "$status" in
+              0) echo "amendments.$1 already exists." ;;
+              1) add_column "$1" "$2" ;;
+              *) echo "::error::Could not determine whether amendments.$1 exists."; exit 1 ;;
+            esac
+          }
+
+          ensure_column value_restated  "value_restated INTEGER NOT NULL DEFAULT 0"
+          ensure_column value_treatment "value_treatment TEXT"
+          ensure_column value_suspect   "value_suspect INTEGER NOT NULL DEFAULT 0"
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'

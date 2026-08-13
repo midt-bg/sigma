@@ -8,4 +8,7 @@
 --   value_suspect = 1 when the served amendment is a suspected double-count NOT already text-treated
 --                   (value_treatment IS NULL), else 0. A restated/genuine row (value_treatment set) is
 --                   never also suspect. The UI blanks value_after/delta for a suspect row.
+-- Additive column. Applied on the live stage DB by the column probe in .github/workflows/deploy.yml (ALTER
+-- only when missing); on a fresh ledger `d1 migrations apply` runs it once. SQLite has no `ADD COLUMN IF
+-- NOT EXISTS`, so do not replay this file against a DB that already has the column.
 ALTER TABLE amendments ADD COLUMN value_suspect INTEGER NOT NULL DEFAULT 0;
