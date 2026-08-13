@@ -30,6 +30,7 @@ export function checkNoNegativeValues(runner: IntegrityRunner): Promise<Integrit
 export function checkEikValidity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkDateSanity(runner: IntegrityRunner): Promise<IntegrityResult>;
 export function checkStagingReconciliation(runner: IntegrityRunner): Promise<IntegrityResult>;
+export function checkAmendmentTwins(runner: IntegrityRunner): Promise<IntegrityResult>;
 
 export const CHECKS: Array<(runner: IntegrityRunner) => Promise<IntegrityResult>>;
 export function runIntegrityChecks(runner: IntegrityRunner): Promise<IntegrityResult[]>;

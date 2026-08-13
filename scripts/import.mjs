@@ -14,9 +14,14 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computeCatchupWindow, daysInWindow } from '../packages/ingest/src/ocds.ts';
+import {
+  computeCatchupWindow,
+  daysInWindow,
+  fullDeriveIsSafe,
+} from '../packages/ingest/src/ocds.ts';
 import {
   dropTransientStagingStatements,
+  fullClearTables,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
 import { assertIntegrity } from './integrity-checks.mjs';
@@ -37,7 +42,6 @@ function reportAnomalies(runner, label) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
 const DEFAULT_FROM = '2020-01-01';
-const LARGE_GAP_DAYS = 14;
 const DEFAULT_LOOKBACK_DAYS = 3;
 
 const remote = process.argv.includes('--remote');
@@ -127,7 +131,8 @@ function safeD1(sql) {
   try {
     return d1(sql);
   } catch (err) {
-    const msg = String(err?.message ?? err);
+    // wrangler writes the SQLITE error to stdout, not the exception message.
+    const msg = `${err?.message ?? err} ${err?.stdout ?? ''} ${err?.stderr ?? ''}`;
     if (/no such table|does not exist/i.test(msg)) return [];
     throw err;
   }
@@ -215,18 +220,68 @@ function resolveCatchupPlan() {
   const to = String(arg('to') || window.to);
   const gapDays = daysInWindow(from, to);
   const requestedDerive = arg('derive');
-  const derive =
-    requestedDerive && requestedDerive !== true
-      ? String(requestedDerive)
-      : gapDays > LARGE_GAP_DAYS
-        ? 'full'
-        : 'slice';
+  // The catch-up window is gap-aware, so it only ever covers the tail of the feed. A full derive
+  // rebuilds `contracts` from staging (normalize-raw.sql opens with DELETE FROM contracts), which
+  // would drop every contract older than the window — so catch-up always derives a slice, however
+  // wide the gap. An operator who really has loaded the whole feed can still pass --derive=full.
+  const derive = requestedDerive && requestedDerive !== true ? String(requestedDerive) : 'slice';
   return { from, to, maxLoadedDate, gapDays, derive };
 }
 
 function validateDeriveMode(mode) {
   if (!['full', 'slice'].includes(mode))
     throw new Error(`unknown --derive=${mode}; expected full|slice`);
+}
+
+// Refuse the one combination that silently destroys data: a full derive (which rebuilds the domain
+// from staging) driven by a window that does not reach back to the start of the feed. Anything the
+// window misses is deleted and never reloaded. Checked before the load, and the refusal tears the
+// transient staging back down: it cannot run any earlier, because the catch-up plan reads
+// raw_contracts, but it must not leave a half-built schema behind for a run that never started.
+//
+// The question is asked of EVERY table the full clear empties, not of `contracts` alone: a corpus
+// with no contracts but populated tenders, bidders or authorities is exactly the state a half-failed
+// run leaves behind, and the narrow-window rebuild would then wipe those too while the guard waved
+// it through. The list comes out of normalize-raw.sql itself (see @full-clear there).
+function assertDeriveWindowSafe(mode, from) {
+  if (mode !== 'full') return;
+  const tables = fullClearTables(readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8'));
+  if (tables.length === 0)
+    throw new Error(
+      'normalize-raw.sql has no @full-clear block — refusing to guess what it clears',
+    );
+  // EXISTS per table, not COUNT(*) over the union: this runs on every full derive and must stay
+  // cheap on a corpus of hundreds of thousands of rows.
+  const probe = tables.map((t) => `(SELECT EXISTS(SELECT 1 FROM ${t})) AS "${t}"`).join(', ');
+  const row = safeD1(`SELECT ${probe}`)[0];
+  // safeD1 turns a missing table into an empty result, which would otherwise read as "no corpus" and
+  // wave the destructive path through — one absent table blinding the guard about the other thirteen.
+  // A probe that could not answer is not an answer: fail closed.
+  if (!row || tables.some((table) => !(table in row))) {
+    console.error(
+      `!! refusing --derive=full: could not read the corpus. Every table normalize-raw.sql clears ` +
+        `(${tables.join(', ')}) must be answerable before a rebuild may drop it.`,
+    );
+    execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+    process.exit(1);
+  }
+  const populated = Object.entries(row)
+    .filter(([, present]) => Number(present) > 0)
+    .map(([table]) => table);
+  if (
+    fullDeriveIsSafe({ windowFrom: from, feedStart: DEFAULT_FROM, hasCorpus: populated.length > 0 })
+  )
+    return;
+  console.error(
+    `!! refusing --derive=full: the load window starts ${from}, but the corpus is already ` +
+      `populated back to ${DEFAULT_FROM}.\n` +
+      `   A full derive rebuilds the domain from staging, so everything before ${from} would be ` +
+      `dropped and not reloaded — including ${populated.join(', ')}.\n` +
+      `   Use --derive=slice for an incremental refresh, or reload the whole feed with ` +
+      `--from=${DEFAULT_FROM}.`,
+  );
+  execSqlStatements(dropTransientStagingStatements(), 'drop-transient-staging');
+  process.exit(1);
 }
 
 async function runFullDerive() {
@@ -370,19 +425,24 @@ if (arg('work-db') !== undefined) {
 console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'})`);
 run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
 execSqlStatements(dropTransientStagingStatements(), 'drop-stale-transient-staging');
+// Must precede resolveCatchupPlan(): latestLoadedDate() reads raw_contracts, which lives here.
 execSql(resolve(root, 'scripts/work-staging-schema.sql'));
 
 let deriveMode = String(arg('derive') || 'full');
 let loadFlags = explicitRangeFlags();
+// Mirrors load-eop.mjs, which also falls back to DEFAULT_FROM when no --from is given.
+let windowFrom = String(arg('from') || DEFAULT_FROM);
 if (catchup) {
   const plan = resolveCatchupPlan();
   deriveMode = plan.derive;
   loadFlags = rangeFlags(plan.from, plan.to);
+  windowFrom = plan.from;
   console.log(
     `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${deriveMode})`,
   );
 }
 validateDeriveMode(deriveMode);
+assertDeriveWindowSafe(deriveMode, windowFrom);
 
 run('node', ['scripts/load-eop.mjs', '--apply', ...loadFlags, ...passthru]);
 if (deriveMode === 'slice') await runSliceDerive();

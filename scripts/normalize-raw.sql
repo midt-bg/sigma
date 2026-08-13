@@ -31,6 +31,10 @@
 --     every contract has a parent. bids stays empty (the data has a bid COUNT, not bids).
 
 -- Full clear in child→parent order (D1 enforces FKs).
+-- @full-clear — everything emptied between this marker and the blank line below is rebuilt from
+-- staging alone, so a full derive driven by a partial window loses whatever the window misses.
+-- scripts/import.mjs reads the list from here to decide whether refusing is warranted; keep new
+-- DELETEs inside the block so the guard picks them up on its own.
 DROP TABLE IF EXISTS joint_tender_leads;
 DROP TABLE IF EXISTS unp_prefix_authorities;
 DROP TABLE IF EXISTS joint_authority_members;
@@ -690,7 +694,8 @@ SET ownership_kind = (
 
 -- 5) Contracts — awarded lines (1:1 with staging rows), linked to tender + winning bidder,
 --    with the data-quality verdict (see 0007_data_quality.sql):
---      value_flag = 'value_suspect'  effective value >2bn EUR, or >200× the procedure estimate
+--      value_flag = 'value_suspect'  effective value >2bn EUR, >200× the procedure estimate, or
+--                                    inside the 95×–105× стотинки band (a dropped decimal point)
 --                                    when that estimate is at least 1000 EUR — repaired to the
 --                                    procedure estimate for sums/display
 --                 | 'value_low'      zero/negative, OR a tiny signed value (< 1000 EUR) that is also
@@ -698,7 +703,9 @@ SET ownership_kind = (
 --                                    LABELLED — large legitimate framework call-offs (a small share of
 --                                    a huge ceiling but big in absolute terms) are excluded by the
 --                                    < 1000 EUR floor, so they keep counting and stay unflagged
---                 | 'annex_suspect'  amendment pushed current_value ≥100× signing, or negative →
+--                 | 'annex_suspect'  amendment pushed current_value ≥100× signing, or negative, or
+--                                    a single annex step jumped ≥10× while the aggregate ended ≥5×
+--                                    over signing (a mis-keyed annex value) →
 --                                    fall back to signing_value, or current_value if signing is
 --                                    missing, so the contract still counts
 --                 | 'review'         ≥10× the procedure estimate (kept, but flagged)
@@ -875,7 +882,11 @@ FROM (
         CASE
           -- Over-valuation + absurd are checked FIRST and repaired to the procedure estimate.
           -- value_low is a labelled-but-counted flag (see the amount_eur CASE).
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
           -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
           -- estimate. Large legitimate framework call-offs (small share of a huge ceiling but big in
           -- absolute terms) are NOT caught — the < 1000 EUR floor keeps them OUT of value_low.
@@ -923,7 +934,15 @@ FROM (
               )
             END
           ), 0) < 0.05 THEN 'value_low'
-          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
+          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+            -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
+            -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
+            -- back below signing, and flagging those would RAISE the shown value, not repair it.
+            OR (c.current_value / c.signing_value >= 5 AND EXISTS (
+              SELECT 1 FROM raw_amendments am
+              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
+            ))))) THEN 'annex_suspect'
           WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
           ELSE 'ok'
         END AS value_flag,
@@ -1206,7 +1225,11 @@ SELECT 1,
       SELECT c.*,
         CASE
           -- Mirrors the main derive CASE above; value_low is checked AFTER over-valuation + absurd.
-          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND c.eff_eur > 200 * c.proc_est_eur) THEN 'value_suspect'
+          WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
+            -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
+            -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
+            -- nothing between 105x and 200x, so the band is narrow on purpose.
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
           WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
           WHEN c.estimated_value > 0 AND c.signing_value IS NOT NULL AND (
             CASE
@@ -1251,7 +1274,15 @@ SELECT 1,
               )
             END
           ), 0) < 0.05 THEN 'value_low'
-          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND c.current_value / c.signing_value >= 100)) THEN 'annex_suspect'
+          WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
+            -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
+            -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
+            -- back below signing, and flagging those would RAISE the shown value, not repair it.
+            OR (c.current_value / c.signing_value >= 5 AND EXISTS (
+              SELECT 1 FROM raw_amendments am
+              WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+                AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
+            ))))) THEN 'annex_suspect'
           WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
           ELSE 'ok'
         END AS value_flag,
