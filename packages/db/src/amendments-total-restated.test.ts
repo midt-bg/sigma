@@ -291,11 +291,11 @@ describe('#305 Tier-2 text-based amendment value correction', () => {
       slice = contractsByUnp(dbPath).get('UNP-RESTATED');
     });
 
+    // Pin both paths to the concrete expected values — a cross-equality (full === slice) would also
+    // pass on dual-undefined, so assert against the literal on each path instead.
     expect(full?.value_flag).toBe('ok');
     expect(slice?.value_flag).toBe('ok');
-    expect(full?.value_flag).toBe(slice?.value_flag);
     expect(full?.current_value).toBe(539_240);
     expect(slice?.current_value).toBe(539_240);
-    expect(full?.current_value).toBe(slice?.current_value);
   });
 });

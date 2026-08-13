@@ -296,9 +296,10 @@ describe('#305 residual: per-amendment value_suspect marker on the served row', 
       slice = servedByUnp(dbPath).get('UNP-FLAGONLY');
     });
 
+    // Pin both paths to the concrete expected value — a cross-equality (full === slice) would also pass
+    // on dual-undefined, so assert against the literal on each path instead.
     expect(full?.value_suspect).toBe(1);
     expect(slice?.value_suspect).toBe(1);
-    expect(full?.value_suspect).toBe(slice?.value_suspect);
   });
 });
 
