@@ -1776,7 +1776,10 @@ SET
     WHERE a.unp = substr(contracts.tender_id, 3)
       AND a.contract_number = contracts.contract_number
       AND a.value_after IS NOT NULL
-    ORDER BY a.published_at DESC, a.id DESC
+    -- #305: tie-break on natural_key to match the full-rebuild path (derive-amendments.sql), so the
+    -- driving amendment picked for current_value is identical across full and slice when two annexes
+    -- share published_at. `id` (row insertion order) diverged from natural_key and could pick a different row.
+    ORDER BY a.published_at DESC, a.natural_key DESC
     LIMIT 1
   ),
   current_value_currency = (
@@ -1784,7 +1787,9 @@ SET
     WHERE a.unp = substr(contracts.tender_id, 3)
       AND a.contract_number = contracts.contract_number
       AND a.value_after IS NOT NULL
-    ORDER BY a.published_at DESC, a.id DESC
+    -- #305: same natural_key tie-break as current_value above, so the currency comes from the same
+    -- driving amendment the value does.
+    ORDER BY a.published_at DESC, a.natural_key DESC
     LIMIT 1
   )
 WHERE (id GLOB 'c:[eo]:*' AND EXISTS (
