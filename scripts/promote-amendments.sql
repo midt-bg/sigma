@@ -60,6 +60,8 @@ SELECT
   CASE WHEN value_treatment IS NULL
         AND value_before > 0
         AND value_after >= 2 * value_before AND value_after < 10 * value_before
+        -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+        AND (value_delta IS NULL OR ABS(value_after - (value_before + value_delta)) < 0.01 * value_after)
         AND EXISTS (
           SELECT 1 FROM raw_contracts rc
           WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number

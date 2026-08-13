@@ -981,7 +981,36 @@ FROM (
                 )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
+              -- value_before + value_delta). If value_delta is present and contradicts that, the model
+              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
+              AND (am.value_delta IS NULL
+                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
               AND ABS(am.value_after - c.current_value) < 0.01
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
+          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
+          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
+          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
+          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
+          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
+          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
+          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
+          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              AND am.value_treatment IS NULL
+              AND am.value_before > 0
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                  AND prev.value_after_restated IS NOT NULL
+                  AND prev.value_after_restated < prev.value_after
+                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+              )
               AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
                 = COALESCE(NULLIF(c.currency, ''), 'BGN')
           ) THEN 'annex_total_suspect'
@@ -1357,7 +1386,36 @@ SELECT 1,
                 )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
+              -- value_before + value_delta). If value_delta is present and contradicts that, the model
+              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
+              AND (am.value_delta IS NULL
+                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
               AND ABS(am.value_after - c.current_value) < 0.01
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
+          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
+          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
+          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
+          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
+          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
+          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
+          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
+          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              AND am.value_treatment IS NULL
+              AND am.value_before > 0
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                  AND prev.value_after_restated IS NOT NULL
+                  AND prev.value_after_restated < prev.value_after
+                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+              )
               AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
                 = COALESCE(NULLIF(c.currency, ''), 'BGN')
           ) THEN 'annex_total_suspect'

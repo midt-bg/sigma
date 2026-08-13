@@ -1219,6 +1219,8 @@ FROM (
                   )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+                -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+                AND (am.value_delta IS NULL OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
                 AND ABS(am.value_after - c.current_value) < 0.01
                 AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
                   = COALESCE(NULLIF(c.currency, ''), 'BGN')
@@ -1552,6 +1554,8 @@ FROM (
                   )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+                -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+                AND (am.value_delta IS NULL OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
                 AND ABS(am.value_after - c.current_value) < 0.01
                 AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
                   = COALESCE(NULLIF(c.currency, ''), 'BGN')
@@ -1739,6 +1743,8 @@ SELECT
   CASE WHEN value_treatment IS NULL
         AND value_before > 0
         AND value_after >= 2 * value_before AND value_after < 10 * value_before
+        -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+        AND (value_delta IS NULL OR ABS(value_after - (value_before + value_delta)) < 0.01 * value_after)
         AND EXISTS (
           SELECT 1 FROM raw_contracts rc
           WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
@@ -1881,6 +1887,14 @@ WITH contract_base AS (
             SELECT 1 FROM amendments prev
             WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
               AND prev.value_after > 0
+              -- #305 NEW-HIGH-2: this reconciliation reads the CUMULATIVE served `amendments` (a prior-window
+              -- annex is not in this window's raw_amendments), but the full path anchors on RAW values. For a
+              -- #305-restated prev the served value_after is the CORRECTED (lower) total, not the raw one, so
+              -- `value_after < 2*value_before` flips true and the gate would disagree with the full rebuild
+              -- (flag flips between the daily slice and the next full derive). Restrict the anchor to
+              -- non-restated prevs, whose served value_after == raw value_after — reproducing the full-path
+              -- (raw) decision without losing cross-window history.
+              AND prev.value_restated = 0
               AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
               -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
               -- so a compounding chain where every step doubles is left untouched, not restated.
@@ -1888,10 +1902,37 @@ WITH contract_base AS (
           )
         )
         AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+        -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+        AND (am.value_delta IS NULL OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
         AND ABS(am.value_after - c.current_value) < 0.01
         AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
           = COALESCE(NULLIF(c.currency, ''), 'BGN')
-    ) AS has_double
+    ) AS has_double,
+    -- #305 NEW-HIGH-1 (multi-annex chain contamination), slice mirror. The full path (normalize-raw.sql)
+    -- detects this on RAW values (prev.value_after_restated < prev.value_after AND am.value_before ≈ raw
+    -- prev.value_after). The slice reads the CUMULATIVE served `amendments`, which does NOT retain the raw
+    -- value_after of a restated prev — so this is a CONSERVATIVE approximation: a driving annex whose
+    -- value_before sits ABOVE a restated prior annex's CORRECTED total (it rode the raw, doubled base) but
+    -- within a contamination band (< 2× the corrected total, i.e. not a fresh legitimate double). Flags →
+    -- signing fallback, matching the full path's honest exclusion. Exactness is restored on the next full
+    -- rebuild; a follow-up value_before-propagation PR removes the approximation entirely.
+    EXISTS (
+      SELECT 1 FROM amendments am
+      WHERE am.unp = substr(c.tender_id, 3)
+        AND am.contract_number = c.contract_number
+        AND am.value_treatment IS NULL
+        AND am.value_before > 0
+        AND ABS(am.value_after - c.current_value) < 0.01
+        AND EXISTS (
+          SELECT 1 FROM amendments prev
+          WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+            AND prev.value_restated = 1
+            AND am.value_before > prev.value_after
+            AND am.value_before < 2 * prev.value_after
+        )
+        AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+          = COALESCE(NULLIF(c.currency, ''), 'BGN')
+    ) AS has_contaminated_base
   FROM contracts c
   JOIN tenders te ON te.id = c.tender_id
   WHERE (
@@ -1917,7 +1958,7 @@ WITH contract_base AS (
       WHEN c.value_flag NOT IN ('annex_suspect', 'annex_total_suspect')
         AND NOT (c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
           OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))))
-        AND NOT (c.current_value IS NOT NULL AND c.signing_value > 0 AND c.has_double)
+        AND NOT (c.current_value IS NOT NULL AND c.signing_value > 0 AND (c.has_double OR c.has_contaminated_base))
       THEN c.value_flag
       WHEN c.eff_eur > 2000000000 OR (c.proc_est_eur >= 1000 AND (c.eff_eur > 200 * c.proc_est_eur
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
@@ -1931,7 +1972,9 @@ WITH contract_base AS (
         OR (c.current_value / c.signing_value >= 5 AND c.has_step10)))) THEN 'annex_suspect'
       -- #305 single-annex value double-count: the driving annex more than doubled the contract in one
       -- step (ЗОП чл.116 caps a single amendment at +50%). has_double already ties to current_value.
-      WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND c.has_double THEN 'annex_total_suspect'
+      -- has_contaminated_base additionally catches a legitimate-looking later annex riding a doubled base
+      -- (#305 NEW-HIGH-1) — both fall back to signing.
+      WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND (c.has_double OR c.has_contaminated_base) THEN 'annex_total_suspect'
       WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
       ELSE 'ok'
     END AS new_value_flag

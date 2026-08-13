@@ -508,3 +508,154 @@ describe('#305 annex_total_suspect multi-annex value double-count', () => {
     });
   }
 });
+
+// #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and does NOT
+// propagate down a chain. A restated prior annex (doubled → corrected down) leaves a LATER annex still
+// computed by the feed on the contaminated (raw, doubled) base. The later annex's own step ratio is
+// legitimate (<2×) so the arithmetic gate misses it and the prior is text-treated (excluded) — yet
+// current_value inherited the doubled total. The new branch flags it → signing fallback, on both paths.
+describe('#305 NEW-HIGH-1 multi-annex chain contamination', () => {
+  // annex1 doubled 1M→2.4M, text-restated to 1.4M; annex2 is a real +15% the feed computed on the RAW 2.4M
+  // base (2.4M→2.76M). annex2's own ratio is 1.15× so the gate misses it; annex1 is treated so it is
+  // excluded. Without the fix, current_value serves the contaminated 2.76M.
+  const CONTAM: TreatedCase = {
+    unp: 'UNP-CHAIN-CONTAM',
+    signing: 1_000_000,
+    steps: [
+      {
+        before: 1_000_000,
+        after: 2_400_000,
+        publishedAt: '2026-06-10',
+        treatment: 'total_restated',
+        restatedAfter: 1_400_000,
+      },
+      {
+        before: 2_400_000,
+        after: 2_760_000,
+        publishedAt: '2026-06-20',
+        treatment: null,
+        restatedAfter: null,
+      },
+    ],
+  };
+  // Control: the same shape on an HONEST base — annex1 is a genuine +40% (no restatement), annex2 +15% on
+  // the clean 1.4M base. No treated prior, so the contamination branch must NOT fire; stays 'ok'.
+  const CLEAN: TreatedCase = {
+    unp: 'UNP-CHAIN-CLEAN',
+    signing: 1_000_000,
+    steps: [
+      {
+        before: 1_000_000,
+        after: 1_400_000,
+        publishedAt: '2026-06-10',
+        treatment: null,
+        restatedAfter: null,
+      },
+      {
+        before: 1_400_000,
+        after: 1_610_000,
+        publishedAt: '2026-06-20',
+        treatment: null,
+        restatedAfter: null,
+      },
+    ],
+  };
+
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: flags a later annex riding a restated prior's doubled base, and keeps a clean chain ok`, () => {
+      withEtlDb(label, (dbPath) => {
+        seedTreatedContracts(dbPath, [CONTAM, CLEAN]);
+        seedTreatedAmendments(dbPath, [CONTAM, CLEAN]);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const rows = rowsByUnp(dbPath);
+
+        const contam = rows.get('UNP-CHAIN-CONTAM');
+        expect(contam?.value_flag, 'contaminated later annex flagged').toBe('annex_total_suspect');
+        expect(contam?.amount_eur, 'falls back to signing, not the contaminated 2.76M').toBe(
+          Math.round(1_000_000 / 1.95583),
+        );
+        expect(contam?.current_value_eur, 'contaminated current_value suppressed').toBeNull();
+
+        const clean = rows.get('UNP-CHAIN-CLEAN');
+        expect(clean?.value_flag, 'honest two-step growth stays ok').toBe('ok');
+        expect(clean?.current_value_eur).toBe(Math.round(1_610_000 / 1.95583));
+      });
+    });
+  }
+
+  it('full-vs-slice parity: the contaminated chain gets the same flag on both paths', () => {
+    let fullFlag: string | undefined;
+    withEtlDb('parity-full', (dbPath) => {
+      seedTreatedContracts(dbPath, [CONTAM]);
+      seedTreatedAmendments(dbPath, [CONTAM]);
+      for (const p of [derivePath, normalizePath, promotePath, precomputePath])
+        readScript(dbPath, p);
+      fullFlag = rowsByUnp(dbPath).get('UNP-CHAIN-CONTAM')?.value_flag;
+    });
+
+    let sliceFlag: string | undefined;
+    withEtlDb('parity-slice', (dbPath) => {
+      seedTreatedContracts(dbPath, [CONTAM]);
+      seedTreatedAmendments(dbPath, [CONTAM]);
+      for (const p of [derivePath, refreshSlicePath, precomputePath]) readScript(dbPath, p);
+      sliceFlag = rowsByUnp(dbPath).get('UNP-CHAIN-CONTAM')?.value_flag;
+    });
+
+    expect(fullFlag).toBe('annex_total_suspect');
+    expect(sliceFlag).toBe('annex_total_suspect');
+  });
+});
+
+// #305 NEW-HIGH-2 (reconciliation parity): the slice reconciliation reads the CUMULATIVE served
+// `amendments`, whose value_after is RESTATED, while the full path anchors on RAW values. A restated prior
+// annex used to flip the anchor's "prev not itself a double" test (restated 1.4M < 2×1.2M passes; the raw
+// 2.4M would fail), flagging on the slice but not on the full rebuild. The `prev.value_restated = 0` guard
+// restores parity: both paths reach the same verdict for a restated-prior + doubled-later chain.
+describe('#305 NEW-HIGH-2 slice reconciliation parity', () => {
+  // annex1 doubled 1.2M→2.4M, restated to 1.4M; annex2 doubles the RESTATED 1.4M to 2.8M. On the full (raw)
+  // path annex2's value_before (1.4M) anchors to neither signing (1M) nor the raw prior total (2.4M) → 'ok'.
+  // Pre-guard the slice reconciliation matched the restated 1.4M and flagged — the flip. Post-guard: 'ok'.
+  const FLIP: TreatedCase = {
+    unp: 'UNP-RECON-FLIP',
+    signing: 1_000_000,
+    steps: [
+      {
+        before: 1_200_000,
+        after: 2_400_000,
+        publishedAt: '2026-06-10',
+        treatment: 'total_restated',
+        restatedAfter: 1_400_000,
+      },
+      {
+        before: 1_400_000,
+        after: 2_800_000,
+        publishedAt: '2026-06-20',
+        treatment: null,
+        restatedAfter: null,
+      },
+    ],
+  };
+
+  it('full and slice agree on a restated-prior + doubled-later chain (no flag flip)', () => {
+    let fullFlag: string | undefined;
+    withEtlDb('parity-full', (dbPath) => {
+      seedTreatedContracts(dbPath, [FLIP]);
+      seedTreatedAmendments(dbPath, [FLIP]);
+      for (const p of [derivePath, normalizePath, promotePath, precomputePath])
+        readScript(dbPath, p);
+      fullFlag = rowsByUnp(dbPath).get('UNP-RECON-FLIP')?.value_flag;
+    });
+
+    let sliceFlag: string | undefined;
+    withEtlDb('parity-slice', (dbPath) => {
+      seedTreatedContracts(dbPath, [FLIP]);
+      seedTreatedAmendments(dbPath, [FLIP]);
+      for (const p of [derivePath, refreshSlicePath, precomputePath]) readScript(dbPath, p);
+      sliceFlag = rowsByUnp(dbPath).get('UNP-RECON-FLIP')?.value_flag;
+    });
+
+    // The canonical full-rebuild verdict, matched by the slice (pre-guard the slice flipped to suspect).
+    expect(sliceFlag).toBe(fullFlag);
+  });
+});
