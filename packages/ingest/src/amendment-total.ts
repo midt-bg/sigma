@@ -32,6 +32,11 @@ export interface AmendmentValueInput {
   valueDelta: number | null;
   currency: string | null;
   texts: Array<string | null | undefined>;
+  // #305 — the text-free exact-2× rule leans on ЗОП чл.116 (a single amendment caps at +50%, so +100% is a
+  // defect not a real increase). чл.116 does NOT bind contracts procured outside ЗОП (exception contracts),
+  // where a genuine +100% is legal — so for those, only the text-confirmed rules may restate. NULL/false =
+  // in-scope of ЗОП (the safe default: apply the rule).
+  outsideZop?: boolean | null;
 }
 
 const REL_TOL = 0.005; // 0.5% — the text figure must be the SAME number as value_delta, allowing rounding.
@@ -121,7 +126,10 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
   //    non-value administrative annex). ЗОП чл.116 caps a single amendment at +50%, so an exact +100% is a
   //    definitional defect, not a real increase — restate to value_before. Text-free by design; rule 1
   //    already exonerated any genuinely-announced increment, so this cannot understate a real one.
-  if (approxEq(a, 2 * b)) {
+  //    Skipped for outside-ЗОП exception contracts: чл.116's cap does not bind them, so a real +100% is
+  //    legal there and a text-free restatement could erase a genuine doubling. They fall to the arithmetic
+  //    flag (exclude, don't rewrite) instead.
+  if (approxEq(a, 2 * b) && !input.outsideZop) {
     return { kind: 'unchanged_restated', correctedAfter: b };
   }
 

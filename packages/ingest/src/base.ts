@@ -395,6 +395,9 @@ export function mapBaseRecord(
       valueDelta: numOrNull(row.value_delta),
       currency: strOrNull(row.currency),
       texts: [strOrNull(row.description), strOrNull(row.reason), strOrNull(row.circumstances)],
+      // #305 — outside-ЗОП exception contracts (isExceptionContract) are not bound by чл.116's +50% cap,
+      // so the text-free exact-2× restatement must not fire on them (see amendment-total.ts rule 3).
+      outsideZop: numOrNull(row.outside_zop) === 1,
     });
     row.value_treatment = treatment.treatment;
     row.value_after_restated = treatment.restatedAfter;

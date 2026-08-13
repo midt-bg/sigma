@@ -154,6 +154,48 @@ describe('#305 amendment value double-count heuristic', () => {
     expect(t).toEqual({ kind: 'unchanged_restated', correctedAfter: 2685 });
   });
 
+  it('does NOT text-freely restate an exact-2× on an outside-ЗОП exception contract', () => {
+    // ЗОП чл.116's +50% cap does not bind exception contracts, so an exact +100% there can be a genuine
+    // increase — the text-free rule 3 must stand down and let the arithmetic flag exclude (not rewrite) it.
+    const base = mk(
+      2685,
+      5370,
+      2685,
+      'BGN',
+      'Променя се упълномощеното лице по договора. Несъществени промени.',
+    );
+    expect(classifyAmendmentValue({ ...base, outsideZop: true }).kind).toBe('none');
+    // …but the same row in-scope of ЗОП is still restated (guard is scoped to rule 3 only).
+    expect(classifyAmendmentValue({ ...base, outsideZop: false })).toEqual({
+      kind: 'unchanged_restated',
+      correctedAfter: 2685,
+    });
+  });
+
+  it('still applies the text-confirmed rules on an outside-ЗОП contract', () => {
+    // The double-count is a feed defect independent of ЗОП scope, so a text-confirmed total is corrected
+    // even for an exception contract — only the text-free exact-2× fallback is gated by outsideZop.
+    const total = {
+      ...mk(
+        442000,
+        981240,
+        539240,
+        'BGN',
+        'общата стойност на договора ще възлезе на 539 240.00 лв.',
+      ),
+      outsideZop: true,
+    };
+    expect(classifyAmendmentValue(total)).toEqual({
+      kind: 'total_restated',
+      correctedAfter: 539240,
+    });
+    const incr = {
+      ...mk(10226.85, 60226.85, 50000, 'EUR', 'Увеличава се ресурсът с 50 000 евро без ДДС.'),
+      outsideZop: true,
+    };
+    expect(isGenuineIncrement(incr)).toBe(true);
+  });
+
   it('ignores normal increases (< 2×) and non-self-consistent rows', () => {
     expect(classifyAmendmentValue(mk(100, 130, 30, 'BGN', 'обща стойност на 130 лв.')).kind).toBe(
       'none',
