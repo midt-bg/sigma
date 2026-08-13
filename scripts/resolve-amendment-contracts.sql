@@ -82,31 +82,35 @@ vmatch AS (
     AND (g.contractor_eik IS NULL OR c.contractor_eik IS NULL OR g.contractor_eik = c.contractor_eik)
   WHERE g.value_before IS NOT NULL AND g.value_before > 0
 ),
--- Per group (unp, annex_cnum): the only evidence-bearing anchors are the UNIQUE (n_match = 1) matches.
---   * one_target       — the single target the unique members agree on (NULL if none)
---   * distinct_targets — how many distinct targets the unique members point at
--- distinct_targets = 1 means "exactly one agreed anchor"; ≥2 means the unique members disagree (evidence
--- that value-matching mis-fired for at least one member) → refuse the whole group, voiding even the direct
--- hits (review nikimilenkov MEDIUM 1). 0 means no unique anchor at all → nothing to propagate.
-group_eval AS (
-  SELECT unp, annex_cnum,
-    MIN(CASE WHEN n_match = 1 THEN resolved_cnum END) AS one_target,
-    COUNT(DISTINCT CASE WHEN n_match = 1 THEN resolved_cnum END) AS distinct_targets
-  FROM vmatch
-  GROUP BY unp, annex_cnum
+-- `direct` — each member's OWN unique (n_match = 1) exact value match. This is trustworthy on its own
+-- (exact cent + unique on the whole procedure = the measured 99.99% precision), so a direct hit always
+-- applies. Crucially it is NOT voided when its annex-number siblings point elsewhere: an annex-side number
+-- can be a LOT-BASE shared across contracts (real corpus: `20РП-У50А015` → …-Л01 @ 22569.98 AND …-Л03 @
+-- 28557.50, each annex exactly-uniquely matching its own lot). The one disagreement group in the whole live
+-- corpus is exactly this benign multi-lot case — refusing it (an earlier revision, review nikimilenkov
+-- MEDIUM 1) dropped 2 confirmed-correct links and prevented zero wrong ones, so disagreement withholds
+-- PROPAGATION only, never the direct hits themselves.
+direct AS (
+  SELECT amendment_id, unp, annex_cnum, resolved_cnum FROM vmatch WHERE n_match = 1
 ),
-clean_group AS (
-  SELECT unp, annex_cnum, one_target AS resolved_cnum
-  FROM group_eval
-  WHERE distinct_targets = 1
+-- `group_target` — propagate ONE agreed target across a `(unp, annex-number)` chain to members that have no
+-- own unique match (value-less admin steps, or later steps whose cumulative value matches no signing_value),
+-- but only when the direct members AGREE (a lot-base spread disagrees → no propagation, and the direct hits
+-- still stand). So later chain steps link and `current_value` reflects the last step (review MEDIUM 2).
+group_target AS (
+  SELECT unp, annex_cnum, MIN(resolved_cnum) AS resolved_cnum
+  FROM direct GROUP BY unp, annex_cnum HAVING COUNT(DISTINCT resolved_cnum) = 1
 )
--- A member links to the group's agreed target iff the member is NOT itself value-ambiguous. Unique members
--- link to the (agreed) target; value-less members inherit it; a member that matched 2+ contracts carries its
--- own contradicting evidence and stays unlinked (review todorkolev #2). The chain identity (unp, annex_cnum)
--- makes propagation to value-less members sound while the anchor stays a full-corpus unique value match.
-SELECT g.amendment_id, cg.resolved_cnum
+-- A member links to its OWN unique match if it has one; else to the agreed group target — UNLESS the member
+-- is itself value-ambiguous (n_match >= 2), which carries its own contradicting evidence and never links,
+-- directly or by inheritance (review todorkolev #2). Members with neither a direct hit nor an agreed group
+-- target keep resolved_cnum NULL and stay unlinked.
+SELECT g.amendment_id,
+  COALESCE(
+    (SELECT d.resolved_cnum FROM direct d WHERE d.amendment_id = g.amendment_id),
+    (SELECT gt.resolved_cnum FROM group_target gt WHERE gt.unp = g.unp AND gt.annex_cnum = g.annex_cnum)
+  ) AS resolved_cnum
 FROM grp g
-JOIN clean_group cg ON cg.unp = g.unp AND cg.annex_cnum = g.annex_cnum
 WHERE NOT EXISTS (
   SELECT 1 FROM vmatch v WHERE v.amendment_id = g.amendment_id AND v.n_match >= 2
 );

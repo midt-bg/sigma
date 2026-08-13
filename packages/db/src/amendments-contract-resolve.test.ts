@@ -243,9 +243,44 @@ describe('#306 amendment→contract value-anchor resolver', () => {
     ).toEqual([{ annex_count: 1, current_value: 900 }]);
   });
 
-  it('refuses the WHOLE group when unique matches disagree, voiding even the direct hits (review MEDIUM 1)', () => {
-    // Annex 777 spans two annexes whose unique value matches point at DIFFERENT contracts (D-1 and D-2).
-    // Disagreement is evidence value-matching mis-fired for at least one member, so neither links.
+  it('links each annex of a lot-base group to its OWN lot by its own unique match (real 00026 shape)', () => {
+    // The annex-side number is a LOT-BASE shared across two lots (real corpus: 20РП-У50А015 → …-Л01 @
+    // 22569.98 AND …-Л03 @ 28557.50). Each annex exactly-uniquely matches its OWN lot, so BOTH link — the
+    // "disagreement" between siblings is benign and must NOT void the individually-trustworthy direct hits.
+    sqlite(
+      db,
+      `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
+         ('eop:contracts:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015-Л01',22569.98,'BGN'),
+         ('eop:contracts:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015-Л03',28557.5,'BGN');
+       INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
+         ('eop:annexes:2026-03-05','2026-03-05','00026-2020-0027','20РП-У50А015','2026-03-05','A1',22569.98,22000,'BGN'),
+         ('eop:annexes:2026-03-05','2026-03-06','00026-2020-0027','20РП-У50А015','2026-03-06','A2',28557.5,28000,'BGN');`,
+    );
+    runFullDerive(db);
+
+    expect(
+      sqliteJson<{ document_number: string; contract_number: string }>(
+        db,
+        "SELECT document_number, contract_number FROM raw_amendments WHERE unp='00026-2020-0027' ORDER BY document_number",
+      ),
+    ).toEqual([
+      { document_number: 'A1', contract_number: '20РП-У50А015-Л01' },
+      { document_number: 'A2', contract_number: '20РП-У50А015-Л03' },
+    ]);
+    expect(
+      sqliteJson<{ contract_number: string; annex_count: number }>(
+        db,
+        "SELECT contract_number, annex_count FROM raw_contracts WHERE unp='00026-2020-0027' ORDER BY contract_number",
+      ),
+    ).toEqual([
+      { contract_number: '20РП-У50А015-Л01', annex_count: 1 },
+      { contract_number: '20РП-У50А015-Л03', annex_count: 1 },
+    ]);
+  });
+
+  it('withholds PROPAGATION when the group disagrees, but keeps the direct hits (review MEDIUM 1, revised)', () => {
+    // Two direct hits disagree (lot-base spread), plus a value-less admin annex A3 sharing the number. The
+    // two direct hits still link to their own lots; A3 has no agreed target to inherit → stays unlinked.
     sqlite(
       db,
       `INSERT INTO raw_contracts (source, fetched_at, unp, contract_number, signing_value, currency) VALUES
@@ -253,23 +288,30 @@ describe('#306 amendment→contract value-anchor resolver', () => {
          ('eop:contracts:2026-03-05','2026-03-05','00060-2020-0001','D-2',200,'BGN');
        INSERT INTO raw_amendments (source, fetched_at, unp, contract_number, published_at, document_number, value_before, value_after, currency) VALUES
          ('eop:annexes:2026-03-05','2026-03-05','00060-2020-0001','777','2026-03-05','A1',100,90,'BGN'),
-         ('eop:annexes:2026-03-05','2026-03-06','00060-2020-0001','777','2026-03-06','A2',200,180,'BGN');`,
+         ('eop:annexes:2026-03-05','2026-03-06','00060-2020-0001','777','2026-03-06','A2',200,180,'BGN'),
+         ('eop:annexes:2026-03-05','2026-03-07','00060-2020-0001','777','2026-03-07','A3',NULL,NULL,'BGN');`,
     );
     runFullDerive(db);
 
-    // Both stay on the annex number — no direct hit survives the group contradiction.
     expect(
-      sqliteJson<{ contract_number: string }>(
+      sqliteJson<{ document_number: string; contract_number: string }>(
         db,
-        "SELECT DISTINCT contract_number FROM raw_amendments WHERE unp='00060-2020-0001'",
+        "SELECT document_number, contract_number FROM raw_amendments WHERE unp='00060-2020-0001' ORDER BY document_number",
       ),
-    ).toEqual([{ contract_number: '777' }]);
+    ).toEqual([
+      { document_number: 'A1', contract_number: 'D-1' }, // own unique match stands
+      { document_number: 'A2', contract_number: 'D-2' }, // own unique match stands
+      { document_number: 'A3', contract_number: '777' }, // no agreed target → no propagation
+    ]);
     expect(
-      sqliteJson<{ total: number }>(
+      sqliteJson<{ contract_number: string; annex_count: number }>(
         db,
-        "SELECT COALESCE(SUM(annex_count),0) AS total FROM raw_contracts WHERE unp='00060-2020-0001'",
+        "SELECT contract_number, annex_count FROM raw_contracts WHERE unp='00060-2020-0001' ORDER BY contract_number",
       ),
-    ).toEqual([{ total: 0 }]);
+    ).toEqual([
+      { contract_number: 'D-1', annex_count: 1 },
+      { contract_number: 'D-2', annex_count: 1 },
+    ]);
   });
 
   it('counts cumulative-staging duplicates of one contract as a SINGLE candidate (review HIGH 2)', () => {
