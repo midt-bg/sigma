@@ -432,6 +432,7 @@ interface AmendmentRow {
   document_number: string | null;
   description: string | null;
   value_restated: number | null;
+  value_suspect: number | null;
   fx_rate: number | null;
 }
 
@@ -456,7 +457,7 @@ export const AMENDMENTS_SQL = `SELECT am.value_before, am.value_after, am.value_
              AND f.rate_date <= am.published_at
              AND f.rate_date >= date(am.published_at, '-10 days')
            ORDER BY f.rate_date DESC LIMIT 1) AS fx_rate,
-        am.value_restated
+        am.value_restated, am.value_suspect
  FROM amendments am
  WHERE am.unp = ? AND am.contract_number = ?
  ORDER BY am.published_at, am.id`;
@@ -673,19 +674,28 @@ export async function getContract(
   const amendments: ContractDetail['amendments'] = amendmentRows.results.map((am) => {
     const beforeEur = eurFromNative(am.value_before, am.currency, am.fx_rate);
     const afterEur = eurFromNative(am.value_after, am.currency, am.fx_rate);
+    // #305 residual: a suspected double-count we could NOT correct from the основание text. Its
+    // value_after is the untrusted doubled figure, so suppress it (and the derived delta) rather than
+    // show a number we can't stand behind — the UI marks the row „непотвърден тотал".
+    const suspect = am.value_suspect === 1;
     return {
       date: am.published_at,
       documentNumber: am.document_number,
       description: am.description?.trim() || null,
-      valueAfterEur: afterEur,
+      valueAfterEur: suspect ? null : afterEur,
       // Compute delta from the SAME before/after we display, so the row is self-consistent (after −
       // before == delta) even when the source's recorded value_delta disagrees with them. When only
       // one of before/after is known, the recorded delta can't be reconciled against valueAfterEur —
       // show „—" rather than a figure that might not add up.
-      deltaEur: beforeEur != null && afterEur != null ? afterEur - beforeEur : null,
+      deltaEur: suspect
+        ? null
+        : beforeEur != null && afterEur != null
+          ? afterEur - beforeEur
+          : null,
       // #305 Tier-2: the served value_after was rewritten from the основание text (a double-count total
       // restated to the true value) — let the UI mark the corrected row.
       restated: am.value_restated === 1,
+      suspect,
     };
   });
 

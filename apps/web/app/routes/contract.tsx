@@ -267,11 +267,22 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   {c.amendments.map((a, i) => (
                     <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
                       <td>{a.date ? longDate(a.date) : '—'}</td>
+                      {/* #305 residual: an uncorrectable double-count — the source's value_after is the
+                          untrusted doubled figure, so show „—" and mark the row rather than a number we
+                          can't stand behind. */}
                       <td className="money">
-                        {a.valueAfterEur != null ? moneyBare(a.valueAfterEur) : '—'}
+                        {a.suspect ? (
+                          <>
+                            — <Chip>непотвърден тотал</Chip>
+                          </>
+                        ) : a.valueAfterEur != null ? (
+                          moneyBare(a.valueAfterEur)
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="money">
-                        {a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
+                        {!a.suspect && a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
                       </td>
                       <td className="annex-desc-cell">
                         <AnnexDescription text={a.description} />

@@ -1661,7 +1661,7 @@ WHERE source LIKE 'ocds:%'
 
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source, value_restated, value_treatment
+  published_at, document_number, description, source, value_restated, value_treatment, value_suspect
 )
 WITH keyed AS (
   SELECT
@@ -1703,7 +1703,25 @@ SELECT
   description,
   source,
   CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
-  value_treatment
+  value_treatment,
+  -- #305 residual: mark a suspected double-count that is NOT already text-treated so the UI suppresses
+  -- the untrusted value_after. Mirrors normalize-raw.sql's annex_total_suspect arithmetic gate, but
+  -- joined to raw_contracts for the contract's signing_value/currency (this served INSERT has no
+  -- contract row to read). value_treatment IS NULL keeps a restated/genuine row out (value_restated
+  -- already owns those). No current_value tie here: the tie in normalize-raw only decides whether the
+  -- CONTRACT is flagged; the per-row marker suppresses any row whose after is an unbridgeable double.
+  CASE WHEN value_treatment IS NULL
+        AND value_before > 0
+        AND value_after >= 2 * value_before AND value_after < 10 * value_before
+        AND EXISTS (
+          SELECT 1 FROM raw_contracts rc
+          WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
+            AND rc.signing_value > 0
+            AND ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+            AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
+              = COALESCE(NULLIF(rc.currency, ''), 'BGN')
+        )
+       THEN 1 ELSE 0 END
 FROM dedup
 WHERE rn = 1;
 

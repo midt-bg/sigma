@@ -24,6 +24,8 @@ const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).
 const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
+// #305 residual: served amendments gained value_suspect (promote + refresh-slice write it).
+const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const derivePath = resolve(root, 'scripts/derive-amendments.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
@@ -65,6 +67,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
     readScript(dbPath, migration6Path);
+    readScript(dbPath, migration7Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {
@@ -152,6 +155,152 @@ const rowsByUnp = (dbPath: string): Map<string, Row> => {
   for (const r of rows) out.set(r.id.split(':')[2]!, r);
   return out;
 };
+
+// #305 residual: seed raw_amendments including value_treatment + value_after_restated (the TS ingest
+// output) so the served value_suspect / value_restated marks can be asserted end-to-end.
+interface TreatedStep {
+  before: number | null;
+  after: number;
+  publishedAt: string;
+  treatment: string | null;
+  restatedAfter: number | null;
+}
+interface TreatedCase {
+  unp: string;
+  signing: number;
+  steps: TreatedStep[];
+}
+
+function seedTreatedContracts(dbPath: string, cases: TreatedCase[]): void {
+  seedContracts(
+    dbPath,
+    cases.map((c) => ({ unp: c.unp, signing: c.signing, steps: [] })),
+  );
+}
+
+function seedTreatedAmendments(dbPath: string, cases: TreatedCase[]): void {
+  const rows = cases
+    .flatMap((c) =>
+      c.steps.map(
+        (s, i) =>
+          `('eop:annexes:${c.unp}', '2026-06-01T00:00:00Z', 'A-${c.unp}-${i + 1}', '${c.unp}', 'C-${c.unp}', '${s.publishedAt}', ${s.before ?? 'NULL'}, ${s.after}, 'BGN', ${s.treatment === null ? 'NULL' : `'${s.treatment}'`}, ${s.restatedAfter ?? 'NULL'})`,
+      ),
+    )
+    .join(',\n');
+  if (!rows) return;
+  sqlite(
+    dbPath,
+    `INSERT INTO raw_amendments
+       (source, fetched_at, document_number, unp, contract_number, published_at,
+        value_before, value_after, currency, value_treatment, value_after_restated)
+     VALUES ${rows};`,
+  );
+}
+
+interface ServedAmendment {
+  unp: string;
+  value_after: number | null;
+  value_suspect: number | null;
+  value_restated: number | null;
+}
+const servedByUnp = (dbPath: string): Map<string, ServedAmendment> => {
+  const rows = sqliteJson<ServedAmendment>(
+    dbPath,
+    `SELECT unp, value_after, value_suspect, value_restated FROM amendments`,
+  );
+  const out = new Map<string, ServedAmendment>();
+  for (const r of rows) out.set(r.unp, r);
+  return out;
+};
+
+// (a) flag-only double: no основание signal (value_treatment NULL), before ≈ signing, value_after = 3×
+// before. We can't bridge the true total → mark value_suspect = 1, keep value_restated = 0, and the
+// served value_after stays the untrusted figure (the UI blanks it; the number is never rewritten).
+const FLAG_ONLY: TreatedCase = {
+  unp: 'UNP-FLAGONLY',
+  signing: 100,
+  steps: [
+    { before: 100, after: 300, publishedAt: '2026-06-10', treatment: null, restatedAfter: null },
+  ],
+};
+// (b) total_restated: text-treated → value_restated = 1, value_suspect = 0.
+const RESTATED: TreatedCase = {
+  unp: 'UNP-RESTATED',
+  signing: 442_000,
+  steps: [
+    {
+      before: 442_000,
+      after: 981_240,
+      publishedAt: '2026-06-10',
+      treatment: 'total_restated',
+      restatedAfter: 539_240,
+    },
+  ],
+};
+// (c) genuine_increment: text-confirmed real increase → both marks 0.
+const GENUINE: TreatedCase = {
+  unp: 'UNP-GENUINE',
+  signing: 10_226.85,
+  steps: [
+    {
+      before: 10_226.85,
+      after: 60_226.85,
+      publishedAt: '2026-06-10',
+      treatment: 'genuine_increment',
+      restatedAfter: null,
+    },
+  ],
+};
+
+describe('#305 residual: per-amendment value_suspect marker on the served row', () => {
+  for (const [label, scriptPaths] of etlRuns) {
+    it(`${label}: a flag-only double is marked value_suspect=1, value_restated=0, value_after untouched`, () => {
+      withEtlDb(label, (dbPath) => {
+        seedTreatedContracts(dbPath, [FLAG_ONLY, RESTATED, GENUINE]);
+        seedTreatedAmendments(dbPath, [FLAG_ONLY, RESTATED, GENUINE]);
+        for (const p of scriptPaths) readScript(dbPath, p);
+
+        const served = servedByUnp(dbPath);
+
+        const flagOnly = served.get('UNP-FLAGONLY');
+        expect(flagOnly?.value_suspect, 'flag-only double is marked suspect').toBe(1);
+        expect(flagOnly?.value_restated, 'flag-only double is NOT restated').toBe(0);
+        expect(flagOnly?.value_after, 'served value_after is never rewritten').toBe(300);
+
+        const restated = served.get('UNP-RESTATED');
+        expect(restated?.value_restated, 'total_restated row is marked restated').toBe(1);
+        expect(restated?.value_suspect, 'a restated row is never also suspect').toBe(0);
+
+        const genuine = served.get('UNP-GENUINE');
+        expect(genuine?.value_suspect, 'genuine increment is not suspect').toBe(0);
+        expect(genuine?.value_restated, 'genuine increment is not restated').toBe(0);
+      });
+    });
+  }
+
+  it('full-vs-slice parity: the flag-only double gets value_suspect=1 on both paths', () => {
+    let full: ServedAmendment | undefined;
+    withEtlDb('parity-full', (dbPath) => {
+      seedTreatedContracts(dbPath, [FLAG_ONLY]);
+      seedTreatedAmendments(dbPath, [FLAG_ONLY]);
+      for (const p of [derivePath, normalizePath, promotePath, precomputePath])
+        readScript(dbPath, p);
+      full = servedByUnp(dbPath).get('UNP-FLAGONLY');
+    });
+
+    let slice: ServedAmendment | undefined;
+    withEtlDb('parity-slice', (dbPath) => {
+      seedTreatedContracts(dbPath, [FLAG_ONLY]);
+      seedTreatedAmendments(dbPath, [FLAG_ONLY]);
+      for (const p of [derivePath, refreshSlicePath, precomputePath]) readScript(dbPath, p);
+      slice = servedByUnp(dbPath).get('UNP-FLAGONLY');
+    });
+
+    expect(full?.value_suspect).toBe(1);
+    expect(slice?.value_suspect).toBe(1);
+    expect(full?.value_suspect).toBe(slice?.value_suspect);
+  });
+});
 
 describe('#305 annex_total_suspect single-annex value double-count', () => {
   for (const [label, scriptPaths] of etlRuns) {

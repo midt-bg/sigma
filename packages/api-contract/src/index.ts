@@ -283,6 +283,7 @@ export interface AmendmentEntry {
   valueAfterEur: number | null; // the contract value after this annex
   deltaEur: number | null; // value_after − value_before
   restated: boolean; // #305 Tier-2: value_after was text-corrected from a double-counted total
+  suspect: boolean; // #305 residual: an uncorrectable double-count — value_after/delta suppressed, row marked
 }
 
 export interface ContractDetail {

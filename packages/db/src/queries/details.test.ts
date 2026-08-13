@@ -351,6 +351,38 @@ describe('getContract', () => {
     });
   });
 
+  it('#305 residual: suppresses value_after and delta for a suspect (uncorrectable double-count) annex', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-6' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 3000, // the source's untrusted doubled/tripled total
+            value_delta: 2000,
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: 'Изменение на стойността',
+            value_restated: 0,
+            value_suspect: 1,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: null, // suppressed — we don't stand behind the doubled figure
+      deltaEur: null,
+      suspect: true,
+      restated: false,
+      description: 'Изменение на стойността', // description still shown
+    });
+  });
+
   it('converts foreign-currency amendments to EUR via the annex fx rate', async () => {
     const detail = await getContract(
       fakeDb(
