@@ -732,7 +732,10 @@ INSERT OR IGNORE INTO contracts
 -- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
 WITH amendment_dedup AS (
   SELECT *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
+    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -1192,7 +1195,10 @@ CREATE TABLE IF NOT EXISTS pipeline_stats (
 DELETE FROM pipeline_stats;
 WITH amendment_dedup AS (
   SELECT *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
+    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),

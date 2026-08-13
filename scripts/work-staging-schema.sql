@@ -159,7 +159,9 @@ CREATE TABLE raw_amendments (
   fetched_at       TEXT NOT NULL,
   seq_no               TEXT,
   document_number      TEXT,
-  contract_number      TEXT,              -- ← link to raw_contracts
+  contract_number      TEXT,              -- ← link to raw_contracts (rewritten in place by the #306 value resolver)
+  contract_number_raw  TEXT,              -- #306: the annex-side number before the value resolver rewrote it (provenance; NULL = never rewritten)
+  link_method          TEXT,              -- #306: 'value_anchor' when the resolver linked this row by value; NULL = matched by number / unlinked
   contract_date        TEXT,
   published_at         TEXT,              -- amendment publication date (ordering key)
   unp                  TEXT,              -- ← link to raw_contracts

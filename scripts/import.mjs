@@ -285,6 +285,10 @@ function assertDeriveWindowSafe(mode, from) {
 }
 
 async function runFullDerive() {
+  // #306: link namespace-mismatched EOP annexes by value BEFORE derive-amendments.sql (its prefer-EOP
+  // dedup would otherwise resurrect OCDS twins — review todorkolev #1). Full-derive only: the slice path's
+  // windowed raw_contracts can't answer "unique on the procedure" safely (review nikimilenkov HIGH 1).
+  execSql(resolve(root, 'scripts/resolve-amendment-contracts.sql'));
   execSql(resolve(root, 'scripts/derive-amendments.sql'));
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);
   execSql(resolve(root, 'scripts/load-nuts.sql'));
@@ -362,6 +366,8 @@ async function runWorkBackfill() {
     `--out=${resolve(workDir, `${stem}.eop-load.sql`)}`,
     ...loadFlags,
   ]);
+  // #306: value-anchor resolver runs first on the full-derive path — see runFullDerive.
+  sqliteFile(workDb, resolve(root, 'scripts/resolve-amendment-contracts.sql'));
   sqliteFile(workDb, resolve(root, 'scripts/derive-amendments.sql'));
   run('node', [
     'scripts/load-fx.mjs',

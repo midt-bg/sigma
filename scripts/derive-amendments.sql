@@ -1,8 +1,9 @@
 -- Sigma — roll raw_amendments up onto raw_contracts.
 -- Run AFTER scripts/load-eop.mjs (which stages the EOP base + in-bucket OCDS amendments).
--- Re-runnable. First recovers the УНП for OCDS amendments via the tender.id bridge (#286), then
--- prefers the EOP annex over its OCDS twin (dropping the twin), then matches amendments by
--- (unp, contract_number).
+-- Re-runnable. On the full-derive path scripts/resolve-amendment-contracts.sql (#306) has already rewritten
+-- namespace-mismatched EOP annexes onto their target contract_number BEFORE this file runs. This file then
+-- recovers the УНП for OCDS amendments via the tender.id bridge (#286), prefers the EOP annex over its OCDS
+-- twin (dropping the twin), and matches amendments by (unp, contract_number).
 -- current_value = the after-value of the LATEST amendment; annex_count = how many.
 -- Contracts without amendments keep annex_count = 0 and current_value = NULL (the
 -- convention downstream is COALESCE(current_value, signing_value)).
@@ -110,87 +111,24 @@ WHERE source LIKE 'ocds:%'
       AND e.contract_number = raw_amendments.contract_number
   );
 
--- #306: link EOP annexes whose annex-side number is in a different namespace than the contract number.
--- The annex carries an internal number (e.g. 148846) while the contract on the same procedure carries the
--- buyer's filing number (e.g. Д-226), so the (unp, contract_number) join below drops ~7% of EOP annexes out
--- of every annex→contract→company/authority rollup. String normalisation recovers almost none of them
--- (measured), because the two numbers are genuinely unrelated identifiers. Resolve by VALUE instead: an
--- annex's value_before is the contract's value at amendment time, so it equals the target contract's
--- signing_value. Link only when value_before matches EXACTLY (< 0.5 стотинка), currency-matched, exactly
--- ONE contract on the procedure — measured 99.99% precision on the already-linked corpus (8348/8349). Rows
--- that match 2+ contracts (value-ambiguous) or none (target not yet ingested — the #249 class) are LEFT
--- unlinked: an honest gap beats a wrong contract on a transparency site. A chain of annexes shares one
--- annex-side number but only its FIRST carries value_before = signing_value (later steps carry the prior
--- cumulative), so once any sibling resolves, propagate that target across the whole (unp, annex-number)
--- group when the resolved members agree — otherwise the chain's later annexes stay unlinked and the
--- contract's current_value would stop at the first step. Rewrites raw_amendments.contract_number in place,
--- exactly like the УНП bridge above; the rollup below, promote-amendments.sql, and the serving join then
--- link with no further change. NOT under a byte-identical @…-lockstep marker: the slice path
--- (refresh-slice.sql) runs the same logic but also draws candidate contracts from the served `contracts`
--- table (its raw_contracts holds only the current window), so the two intentionally diverge — like the
--- prefer-EOP dedup above. See docs/implementation-plans and issue #306.
-DROP TABLE IF EXISTS amendment_contract_resolve;
-CREATE TABLE amendment_contract_resolve AS
-WITH unlinked AS (
-  SELECT a.id AS amendment_id, a.unp, a.contract_number AS annex_cnum, a.value_before, a.currency
-  FROM raw_amendments a
-  WHERE a.source LIKE 'eop:%'
-    AND a.unp IS NOT NULL AND a.contract_number IS NOT NULL
-    AND a.value_before IS NOT NULL AND a.value_before > 0
-    AND NOT EXISTS (
-      SELECT 1 FROM raw_contracts c
-      WHERE c.unp = a.unp AND c.contract_number = a.contract_number
-    )
-),
--- exact, currency-matched value anchor; COUNT(*) OVER distinguishes a unique hit from an ambiguous one.
-vmatch AS (
-  SELECT u.amendment_id, u.unp, u.annex_cnum, c.contract_number AS resolved_cnum,
-    COUNT(*) OVER (PARTITION BY u.amendment_id) AS n_match
-  FROM unlinked u
-  JOIN raw_contracts c
-    ON c.unp = u.unp
-    AND c.contract_number IS NOT NULL
-    AND c.signing_value IS NOT NULL AND c.signing_value > 0
-    AND ABS(c.signing_value - u.value_before) < 0.005
-    AND COALESCE(NULLIF(c.currency, ''), 'BGN') = COALESCE(NULLIF(u.currency, ''), 'BGN')
-),
-direct AS (
-  SELECT amendment_id, unp, annex_cnum, resolved_cnum FROM vmatch WHERE n_match = 1
-),
--- propagate one agreed target across a chain sharing the same annex-side number (refuse if they disagree).
-group_target AS (
-  SELECT unp, annex_cnum, MIN(resolved_cnum) AS resolved_cnum
-  FROM direct GROUP BY unp, annex_cnum HAVING COUNT(DISTINCT resolved_cnum) = 1
-)
-SELECT u.amendment_id,
-  COALESCE(
-    (SELECT d.resolved_cnum FROM direct d WHERE d.amendment_id = u.amendment_id),
-    (SELECT g.resolved_cnum FROM group_target g WHERE g.unp = u.unp AND g.annex_cnum = u.annex_cnum)
-  ) AS resolved_cnum
-FROM unlinked u;
-
-UPDATE raw_amendments
-SET contract_number = (
-  SELECT r.resolved_cnum FROM amendment_contract_resolve r WHERE r.amendment_id = raw_amendments.id
-)
-WHERE id IN (SELECT amendment_id FROM amendment_contract_resolve WHERE resolved_cnum IS NOT NULL);
-
--- #306 diagnostic (printed by wrangler): annexes linked by the value anchor, and those still unlinked.
-SELECT
-  (SELECT COUNT(*) FROM amendment_contract_resolve WHERE resolved_cnum IS NOT NULL) AS annexes_value_linked,
-  (SELECT COUNT(*) FROM raw_amendments a
-     WHERE a.source LIKE 'eop:%' AND a.unp IS NOT NULL AND a.contract_number IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM raw_contracts c
-                         WHERE c.unp = a.unp AND c.contract_number = a.contract_number)) AS eop_annexes_still_unlinked;
-
-DROP TABLE IF EXISTS amendment_contract_resolve;
+-- #306: the value-anchor resolver that links namespace-mismatched EOP annexes (annex-side number ≠ the
+-- contract's filing number) by rewriting raw_amendments.contract_number lives in
+-- scripts/resolve-amendment-contracts.sql and runs BEFORE this file on the full-derive path only (see that
+-- file's header for the ordering-blocker and slice-gating rationale — reviews todorkolev #1/#3, nikimilenkov
+-- HIGH 1). By the time this rollup runs, resolved annexes already carry their target contract_number (and
+-- keep the original annex number in contract_number_raw for the natural_key below), so the rollup links them
+-- with no further change.
 
 UPDATE raw_contracts SET annex_count = 0, current_value = NULL;
 
 WITH keyed AS (
   SELECT
     *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the ORIGINAL annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row, so a resolved annex keeps a stable identity and never collides with a native annex that shares
+    -- document_number on the target contract (review nikimilenkov MEDIUM 3). NULL raw → the plain number,
+    -- so unresolved rows and the slice path (which never resolves) produce byte-identical keys.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),

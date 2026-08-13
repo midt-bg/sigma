@@ -7,13 +7,17 @@
 DELETE FROM amendments;
 
 INSERT OR REPLACE INTO amendments (
-  id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
+  id, natural_key, contract_number, contract_number_raw, link_method, unp,
+  value_before, value_after, value_delta, currency,
   published_at, document_number, description, source
 )
 WITH keyed AS (
   SELECT
     *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — MUST match derive-amendments.sql's rollup key byte-for-byte, else annex_count and the served
+    -- timeline disagree (review nikimilenkov MEDIUM 3). NULL raw → the plain number.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -38,6 +42,8 @@ SELECT
   natural_key,
   natural_key,
   contract_number,
+  contract_number_raw,   -- #306 provenance: the annex-side number before the value resolver rewrote it
+  link_method,           -- #306 provenance: 'value_anchor' for value-linked rows, else NULL
   unp,
   value_before,
   value_after,
