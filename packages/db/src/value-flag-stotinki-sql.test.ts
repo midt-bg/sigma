@@ -20,6 +20,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// #306 provenance columns on served `amendments` — refresh-slice.sql now writes contract_number_raw/link_method.
+const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -49,6 +51,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, schemaPath);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
+    readScript(dbPath, migration8Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

@@ -286,8 +286,10 @@ function assertDeriveWindowSafe(mode, from) {
 
 async function runFullDerive() {
   // #306: link namespace-mismatched EOP annexes by value BEFORE derive-amendments.sql (its prefer-EOP
-  // dedup would otherwise resurrect OCDS twins — review todorkolev #1). Full-derive only: the slice path's
-  // windowed raw_contracts can't answer "unique on the procedure" safely (review nikimilenkov HIGH 1).
+  // dedup would otherwise resurrect OCDS twins — review todorkolev #1). This STANDALONE script is the
+  // full-derive form (candidates from the whole re-staged raw_contracts). The daily/slice + Worker path runs
+  // an equivalent value anchor inside refresh-slice.sql that draws candidates from the served `contracts`
+  // corpus instead of the window (so "unique on the procedure" is corpus-wide — review nikimilenkov HIGH 1).
   execSql(resolve(root, 'scripts/resolve-amendment-contracts.sql'));
   execSql(resolve(root, 'scripts/derive-amendments.sql'));
   run('node', ['scripts/load-fx.mjs', '--apply', ...passthru]);

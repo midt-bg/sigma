@@ -16,6 +16,11 @@ const migration3 = readFileSync(
   resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql'),
   'utf8',
 );
+// #306 provenance columns on served `amendments` — refresh-slice.sql now writes contract_number_raw/link_method.
+const migration8 = readFileSync(
+  resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -67,6 +72,7 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   db.exec(schema);
   db.exec(migration2);
   db.exec(migration3);
+  db.exec(migration8);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {

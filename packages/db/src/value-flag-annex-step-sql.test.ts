@@ -27,7 +27,7 @@ const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // #306 provenance columns on served `amendments`, referenced by promote-amendments.sql.
-const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_provenance.sql');
+const migration6Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const derivePath = resolve(root, 'scripts/derive-amendments.sql');
 const promotePath = resolve(root, 'scripts/promote-amendments.sql');

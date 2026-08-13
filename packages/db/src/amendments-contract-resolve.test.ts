@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const initSchema = resolve(root, 'packages/db/migrations/0000_init.sql');
-const provenanceMigration = resolve(root, 'packages/db/migrations/0006_amendment_provenance.sql');
+const provenanceMigration = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const resolveAmendments = resolve(root, 'scripts/resolve-amendment-contracts.sql');
 const deriveAmendments = resolve(root, 'scripts/derive-amendments.sql');

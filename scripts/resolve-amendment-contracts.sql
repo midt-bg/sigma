@@ -9,15 +9,16 @@
 -- linked corpus (9348/9349). Rows that match 2+ contracts (value-ambiguous) or none (target not yet
 -- ingested — the #249 class) are LEFT unlinked: an honest gap beats a wrong contract on a transparency site.
 --
--- FULL-PATH ONLY (review nikimilenkov HIGH 1 + todorkolev #3). This file runs from runFullDerive /
--- runWorkBackfill in scripts/import.mjs, BEFORE derive-amendments.sql. It is deliberately NOT run on the
--- slice path (runSliceDerive): the slice's raw_contracts holds only the current window, so "unique on the
--- procedure" would mean "unique in the window", not in the corpus — a corpus-ambiguous annex would look
--- unique in a narrow window and mislink, and the measured precision (a full-corpus number) would not carry.
--- Per the #286 "the full pipeline is authoritative" precedent, the full rebuild fixes the whole measured
--- backlog; go-forward namespace-mismatched annexes stay unlinked only until the next full rebuild. A slice-
--- safe resolver (candidates from served `contracts` + touched-target wiring) is a separate, carefully-tested
--- change — see docs/implementation-plans/306-amendment-contract-namespace-link.md §4.
+-- FULL-PATH FORM (review nikimilenkov HIGH 1 + todorkolev #3). This file runs from runFullDerive /
+-- runWorkBackfill in scripts/import.mjs, BEFORE derive-amendments.sql, with candidates drawn from the whole
+-- re-staged raw_contracts. It is deliberately NOT run on the slice path (runSliceDerive): the slice's
+-- raw_contracts holds only the current window, so "unique on the procedure" would mean "unique in the window",
+-- not in the corpus — a corpus-ambiguous annex would look unique in a narrow window and mislink. The daily/
+-- slice + Worker path instead runs a corpus-safe equivalent INSIDE scripts/refresh-slice.sql (search "#306:
+-- slice-safe value-anchor resolver"), whose candidates come from the served `contracts` table plus this
+-- window's raw_contracts, so uniqueness is asked corpus-wide and the measured precision carries. Both forms
+-- share the same value/currency/EIK anchor, chain rules, and provenance stamping; see
+-- docs/implementation-plans/306-amendment-contract-namespace-link.md §4.
 --
 -- ORDER (review todorkolev #1, the blocker): this runs BEFORE the #286 prefer-EOP dedup DELETE in
 -- derive-amendments.sql. Rewriting an EOP annex onto a contract that already kept an OCDS twin would

@@ -21,6 +21,7 @@ DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
 DROP TABLE IF EXISTS refresh_amendment_winners;
+DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
 CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
 CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
@@ -64,6 +65,136 @@ WHERE source LIKE 'ocds:%'
   );
 -- @bridge-lockstep end
 
+-- #306: slice-safe value-anchor resolver. Links EOP annexes whose annex-side number is in a different
+-- namespace than the contract's filing number (annex carries an internal number like 148846; the contract
+-- carries Д-226), by the exact value_before → signing_value anchor — the same 99.99%-precision link the
+-- full path applies in scripts/resolve-amendment-contracts.sql. It runs HERE, before the prefer-EOP dedup
+-- DELETE below and the amendment promotion further down, for the SAME reason the full path runs it before
+-- derive-amendments.sql's dedup: rewriting an EOP annex onto a contract that already kept an OCDS twin would
+-- resurrect the twin and trip amendment-twin-dedup (#303, review todorkolev #1).
+--
+-- The full path is gated OFF the slice because its candidates came from the WINDOWED raw_contracts, where
+-- "unique on the procedure" means "unique in the window" and a corpus-ambiguous annex would mislink (review
+-- nikimilenkov HIGH 1). This slice version closes that gap the way the deferred plan §4 prescribes: candidate
+-- contracts are drawn from the CUMULATIVE served `contracts` (the whole corpus) UNIONed with this window's
+-- raw_contracts, so uniqueness is asked over the corpus, not the window — the measured precision carries. It
+-- is intentionally NOT under a byte-identical lockstep marker with the full-path script: the candidate source
+-- differs by construction. Scans are bounded to the procedures that actually have an EOP annex in this window
+-- (window_unps), so the served-corpus read stays a keyed lookup, not a full scan (idx_contracts_tender_id).
+-- Resolved prior-window targets need no extra touch-wiring: the rewrite below lands the target contract_number
+-- on raw_amendments, and the existing `@refresh-batch amendments` touch join (raw_amendments → contracts on
+-- contract_number) then scopes those targets into refresh_touched_contracts for free (plan §4).
+DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
+CREATE TABLE refresh_amendment_contract_resolve AS
+WITH window_unps AS (
+  SELECT DISTINCT unp FROM raw_amendments
+  WHERE source LIKE 'eop:%' AND unp IS NOT NULL AND contract_number IS NOT NULL
+),
+-- One row per LOGICAL contract on the affected procedures. Two sources, deduped: (0) this window's
+-- raw_contracts — cumulative EOP buckets repeat a contract across days, so collapse to the latest source-day/
+-- id, mirroring normalize-raw; (1) the served `contracts` corpus (unp = the tender_id suffix, contractor ЕИК
+-- via the winning bidder). A contract present in BOTH is one logical contract — src_rank keeps the window row
+-- (freshest signing_value) and the COUNT below never double-counts it into a false ambiguity.
+contract_candidates AS (
+  SELECT unp, contract_number, signing_value, currency, contractor_eik FROM (
+    SELECT unp, contract_number, signing_value, currency, contractor_eik,
+      ROW_NUMBER() OVER (PARTITION BY unp, contract_number ORDER BY src_rank, ord DESC) AS rn
+    FROM (
+      SELECT c.unp, c.contract_number, c.signing_value, c.currency,
+        TRIM(CASE WHEN c.contractor_eik LIKE 'ЕИК %' THEN SUBSTR(c.contractor_eik, 5) ELSE c.contractor_eik END)
+          AS contractor_eik,
+        0 AS src_rank, c.id AS ord
+      FROM raw_contracts c
+      WHERE c.contract_number IS NOT NULL
+        AND c.signing_value IS NOT NULL AND c.signing_value > 0
+        AND c.unp IN (SELECT unp FROM window_unps)
+      UNION ALL
+      SELECT substr(c.tender_id, 3) AS unp, c.contract_number, c.signing_value, c.currency,
+        b.eik_normalized AS contractor_eik,
+        1 AS src_rank, '' AS ord
+      FROM contracts c
+      LEFT JOIN bidders b ON b.id = c.bidder_id
+      WHERE c.contract_number IS NOT NULL
+        AND c.signing_value IS NOT NULL AND c.signing_value > 0
+        AND c.tender_id IN (SELECT 't:' || unp FROM window_unps)
+    )
+  ) WHERE rn = 1
+),
+-- EOP annexes on the affected procedures that match NO candidate contract by (unp, contract_number) — the
+-- namespace-mismatch group. Value-less members (admin/term steps mid-chain) are included so they can inherit
+-- the chain's target (review nikimilenkov MEDIUM 2). The NOT EXISTS is over contract_candidates (the corpus),
+-- so an annex that DOES match a corpus contract directly is correctly excluded — it links by number, not value.
+grp AS (
+  SELECT a.id AS amendment_id, a.unp, a.contract_number AS annex_cnum,
+    a.value_before, a.currency,
+    TRIM(CASE WHEN a.contractor_eik LIKE 'ЕИК %' THEN SUBSTR(a.contractor_eik, 5) ELSE a.contractor_eik END)
+      AS contractor_eik
+  FROM raw_amendments a
+  WHERE a.source LIKE 'eop:%'
+    AND a.unp IS NOT NULL AND a.contract_number IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM contract_candidates c
+      WHERE c.unp = a.unp AND c.contract_number = a.contract_number
+    )
+),
+-- Exact, currency- and contractor-matched value anchor (< 0.5 стотинка). Currency must be EXPLICIT on both
+-- sides (no blank-vs-blank agreement via a default). The EIK guard is null-tolerant and refuses a value
+-- collision onto a different contractor's contract for free (review nikimilenkov LOW 1 / MEDIUM 5).
+vmatch AS (
+  SELECT g.amendment_id, g.unp, g.annex_cnum, c.contract_number AS resolved_cnum,
+    COUNT(*) OVER (PARTITION BY g.amendment_id) AS n_match
+  FROM grp g
+  JOIN contract_candidates c
+    ON c.unp = g.unp
+    AND ABS(c.signing_value - g.value_before) < 0.005
+    AND NULLIF(c.currency, '') IS NOT NULL
+    AND NULLIF(g.currency, '') IS NOT NULL
+    AND c.currency = g.currency
+    AND (g.contractor_eik IS NULL OR c.contractor_eik IS NULL OR g.contractor_eik = c.contractor_eik)
+  WHERE g.value_before IS NOT NULL AND g.value_before > 0
+),
+-- A member's OWN unique (n_match = 1) exact match — trustworthy on its own, so it always applies and is NOT
+-- voided when annex-number siblings point elsewhere (a lot-base number shared across contracts; review
+-- nikimilenkov MEDIUM 1). Propagation is withheld on disagreement, never the direct hits.
+direct AS (
+  SELECT amendment_id, unp, annex_cnum, resolved_cnum FROM vmatch WHERE n_match = 1
+),
+-- Propagate one AGREED target across a (unp, annex-number) chain to value-less members, only when the direct
+-- members agree on a single contract (review MEDIUM 2).
+group_target AS (
+  SELECT unp, annex_cnum, MIN(resolved_cnum) AS resolved_cnum
+  FROM direct GROUP BY unp, annex_cnum HAVING COUNT(DISTINCT resolved_cnum) = 1
+)
+-- Link to the own unique match, else the agreed group target — UNLESS the member is itself value-ambiguous
+-- (n_match >= 2), which never links directly or by inheritance (review todorkolev #2).
+SELECT g.amendment_id,
+  COALESCE(
+    (SELECT d.resolved_cnum FROM direct d WHERE d.amendment_id = g.amendment_id),
+    (SELECT gt.resolved_cnum FROM group_target gt WHERE gt.unp = g.unp AND gt.annex_cnum = g.annex_cnum)
+  ) AS resolved_cnum
+FROM grp g
+WHERE NOT EXISTS (
+  SELECT 1 FROM vmatch v WHERE v.amendment_id = g.amendment_id AND v.n_match >= 2
+);
+
+CREATE INDEX idx_refresh_amendment_contract_resolve_id
+  ON refresh_amendment_contract_resolve(amendment_id);
+
+-- Rewrite in place, preserving provenance: keep the annex-side number in contract_number_raw and stamp
+-- link_method so value-linked rows stay enumerable through promotion into served `amendments`. The raw number
+-- also keeps the amendment natural_key stable (see the promotion below and derive/promote on the full path),
+-- so a resolved row never collides with a native annex sharing document_number on the target (MEDIUM 3).
+UPDATE raw_amendments
+SET
+  contract_number_raw = contract_number,
+  link_method = 'value_anchor',
+  contract_number = (
+    SELECT r.resolved_cnum FROM refresh_amendment_contract_resolve r WHERE r.amendment_id = raw_amendments.id
+  )
+WHERE id IN (SELECT amendment_id FROM refresh_amendment_contract_resolve WHERE resolved_cnum IS NOT NULL);
+
+DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
+
 -- #286: prefer the EOP annex — drop OCDS twins so annex_count and the served timeline aren't doubled.
 -- The full path (derive-amendments.sql) only checks raw_amendments because it re-stages the whole corpus
 -- every run. The slice path must ALSO consult the cumulative served `amendments`: an EOP annex promoted by
@@ -90,7 +221,7 @@ WHERE source LIKE 'ocds:%'
 CREATE TABLE refresh_amendment_winners AS
 WITH keyed AS (
   SELECT *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''), NULLIF(correction_number, ''), NULLIF(seq_no, ''),
         'content:' || COALESCE(published_at, '') || ':' ||
@@ -1604,13 +1735,14 @@ WHERE source LIKE 'ocds:%'
   );
 
 INSERT OR REPLACE INTO amendments (
-  id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
+  id, natural_key, contract_number, contract_number_raw, link_method, unp,
+  value_before, value_after, value_delta, currency,
   published_at, document_number, description, source
 )
 WITH keyed AS (
   SELECT
     *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -1635,6 +1767,8 @@ SELECT
   natural_key,
   natural_key,
   contract_number,
+  contract_number_raw,   -- #306 provenance: the annex-side number before the value resolver rewrote it
+  link_method,           -- #306 provenance: 'value_anchor' for value-linked rows, else NULL
   unp,
   value_before,
   value_after,

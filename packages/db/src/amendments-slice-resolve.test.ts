@@ -174,22 +174,17 @@ describe('refresh-slice #306 value-anchor resolver', () => {
       db,
       "SELECT contract_number, contract_number_raw, link_method FROM amendments WHERE unp='UNP-NS'",
     );
-    expect(amendments).toHaveLength(1);
     // Rewritten onto the target contract's filing number, with the annex-side number kept as provenance.
-    expect(amendments[0]).toEqual({
-      contract_number: 'Д-226',
-      contract_number_raw: '148846',
-      link_method: 'value_anchor',
-    });
+    expect(amendments).toEqual([
+      { contract_number: 'Д-226', contract_number_raw: '148846', link_method: 'value_anchor' },
+    ]);
 
     // The prior-window target was touched and re-rolled: the annex now counts and drives current_value.
     const contract = sqliteJson<ContractRow>(
       db,
       "SELECT contract_number, annex_count, current_value FROM contracts WHERE tender_id='t:UNP-NS'",
     );
-    expect(contract).toHaveLength(1);
-    expect(contract[0].annex_count).toBe(1);
-    expect(contract[0].current_value).toBe(1200);
+    expect(contract).toEqual([{ contract_number: 'Д-226', annex_count: 1, current_value: 1200 }]);
   });
 
   it('leaves a corpus-ambiguous annex unlinked even when it is unique within the window', () => {
@@ -237,15 +232,15 @@ describe('refresh-slice #306 value-anchor resolver', () => {
       db,
       "SELECT contract_number, contract_number_raw, link_method FROM amendments WHERE unp='UNP-AMB'",
     );
-    expect(amendments).toHaveLength(1);
-    expect(amendments[0].contract_number).toBe('148846');
-    expect(amendments[0].link_method).toBeNull();
+    expect(amendments).toEqual([
+      { contract_number: '148846', contract_number_raw: null, link_method: null },
+    ]);
 
     // None of the three candidate contracts absorbed the annex.
     const amended = sqliteJson<{ n: number }>(
       db,
       "SELECT COUNT(*) AS n FROM contracts WHERE tender_id='t:UNP-AMB' AND annex_count > 0",
     );
-    expect(amended[0].n).toBe(0);
+    expect(amended).toEqual([{ n: 0 }]);
   });
 });
