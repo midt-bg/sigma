@@ -444,7 +444,9 @@ describe('#305 annex_total_suspect multi-annex value double-count', () => {
         const rows = rowsByUnp(dbPath);
 
         const multiDouble = rows.get('UNP-MULTI-DOUBLE');
-        expect(multiDouble?.value_flag, 'later-in-chain double flagged').toBe('annex_total_suspect');
+        expect(multiDouble?.value_flag, 'later-in-chain double flagged').toBe(
+          'annex_total_suspect',
+        );
         expect(multiDouble?.amount_eur, 'amount_eur falls back to signing').toBe(
           Math.round(1_000_000 / 1.95583),
         );
@@ -466,8 +468,20 @@ describe('#305 annex_total_suspect multi-annex value double-count', () => {
     unp: 'UNP-MULTI-SUSPECT',
     signing: 1_000_000,
     steps: [
-      { before: 1_000_000, after: 1_400_000, publishedAt: '2026-06-10', treatment: null, restatedAfter: null },
-      { before: 1_400_000, after: 2_800_000, publishedAt: '2026-06-20', treatment: null, restatedAfter: null },
+      {
+        before: 1_000_000,
+        after: 1_400_000,
+        publishedAt: '2026-06-10',
+        treatment: null,
+        restatedAfter: null,
+      },
+      {
+        before: 1_400_000,
+        after: 2_800_000,
+        publishedAt: '2026-06-20',
+        treatment: null,
+        restatedAfter: null,
+      },
     ],
   };
 

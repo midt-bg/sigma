@@ -1204,8 +1204,8 @@ FROM (
                 -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
                 AND am.value_treatment IS NULL
                 -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
-                -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
-                -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+                -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev
+                -- not itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
                 AND am.value_before > 0 AND (
                   ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                   OR EXISTS (
@@ -1213,6 +1213,9 @@ FROM (
                     WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                       AND prev.value_after > 0
                       AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                      -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                      -- so a compounding chain where every step doubles is left untouched, not restated.
+                      AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                   )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
@@ -1534,8 +1537,8 @@ FROM (
                 -- #305 Tier-2: skip text-treated annexes (restated total or confirmed-genuine increment).
                 AND am.value_treatment IS NULL
                 -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
-                -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
-                -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+                -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev
+                -- not itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
                 AND am.value_before > 0 AND (
                   ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                   OR EXISTS (
@@ -1543,6 +1546,9 @@ FROM (
                     WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                       AND prev.value_after > 0
                       AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                      -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                      -- so a compounding chain where every step doubles is left untouched, not restated.
+                      AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                   )
                 )
                 AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
@@ -1738,8 +1744,8 @@ SELECT
           WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
             AND rc.signing_value > 0
             -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
-            -- value_after), not signing. Anchor to signing OR any recorded prior total; a single ≥2×
-            -- step violates ЗОП чл.116 wherever it sits in the chain (see normalize-raw.sql).
+            -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev not
+            -- itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
             AND (
               ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
               OR EXISTS (
@@ -1747,6 +1753,8 @@ SELECT
                 WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
                   AND prev.value_after > 0
                   AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                  -- ...and that prior total was itself reached legitimately (prev not a ≥2× double).
+                  AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
               )
             )
             AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
@@ -1860,7 +1868,8 @@ WITH contract_base AS (
         AND am.value_treatment IS NULL
         AND am.value_before > 0 AND c.signing_value > 0
         -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
-        -- value_after), not signing — anchor to signing OR any recorded prior total (see normalize-raw.sql).
+        -- value_after), not signing — anchor to signing OR a legitimately-grown prior total, prev not
+        -- itself a double (see normalize-raw.sql).
         AND (
           ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
           OR EXISTS (
@@ -1868,6 +1877,9 @@ WITH contract_base AS (
             WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
               AND prev.value_after > 0
               AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+              -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+              -- so a compounding chain where every step doubles is left untouched, not restated.
+              AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
           )
         )
         AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before

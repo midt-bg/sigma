@@ -966,8 +966,8 @@ FROM (
               AND am.value_treatment IS NULL
               -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
               -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
-              -- OR any recorded prior total — a garbage value_before still fails to match, while a single
-              -- ≥2× step (ЗОП чл.116 caps one amendment at +50%) is a defect wherever it sits in the chain.
+              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
+              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
               AND am.value_before > 0 AND (
                 ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                 OR EXISTS (
@@ -975,6 +975,9 @@ FROM (
                   WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                     AND prev.value_after > 0
                     AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                    -- so a compounding chain where every step doubles is left untouched, not restated.
+                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                 )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
@@ -1339,8 +1342,8 @@ SELECT 1,
               AND am.value_treatment IS NULL
               -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
               -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
-              -- OR any recorded prior total — a garbage value_before still fails to match, while a single
-              -- ≥2× step (ЗОП чл.116 caps one amendment at +50%) is a defect wherever it sits in the chain.
+              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
+              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
               AND am.value_before > 0 AND (
                 ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
                 OR EXISTS (
@@ -1348,6 +1351,9 @@ SELECT 1,
                   WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
                     AND prev.value_after > 0
                     AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                    -- so a compounding chain where every step doubles is left untouched, not restated.
+                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
                 )
               )
               AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
