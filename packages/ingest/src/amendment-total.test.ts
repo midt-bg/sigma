@@ -249,6 +249,40 @@ describe('#305 amendment value double-count heuristic', () => {
     ).toBe('none');
   });
 
+  it('vetoes the QUALIFIED day/quantity unit, not just the bare word (#307 review — работни/календарни дни class)', () => {
+    // The unit almost never comes bare in real annexes ("работни дни", "календарни дни", "200 (двеста)
+    // дни", "кв.м"). Each of these is a duration/quantity that coincidentally == value_delta; none may
+    // overwrite the published 300 with 200. Tests the error CLASS, not one literal sentence.
+    const dayCounts = [
+      'Срокът се удължава на 200 работни дни, стойността остава 100 лв.',
+      'Срокът се удължава на 200 календарни дни, стойността остава 100 лв.',
+      'Срокът се удължава на 200 работни дни, без промяна в договорената сума в лв.',
+      'Срокът се удължава на 200 к.д., стойността остава 100 лв.',
+      'Срокът се удължава на 200 (двеста) дни, стойността остава 100 лв.',
+      'Срокът се удължава на 200 р.д., стойността остава 100 лв.',
+      'Площта се увеличава на 200 кв.м, стойността остава 100 лв.',
+      'Обемът се увеличава на 200 куб.м, стойността остава 100 лв.',
+    ];
+    for (const text of dayCounts) {
+      expect(classifyAmendmentValue(mk(100, 300, 200, 'BGN', text)).kind).toBe('none');
+    }
+  });
+
+  it('the wider unit veto does NOT swallow a real monetary total (#307 review — reverse direction)', () => {
+    // A qualified/adjacent-word unit veto must not fire on genuine money phrasings: the figure still
+    // restates to the announced total. Guards against the veto over-reaching.
+    const realTotals = [
+      'Общата стойност на договора възлиза на 200 лв. без ДДС.',
+      'Общата стойност на договора възлиза на 200 лева.',
+      'Новата обща стойност възлиза на 200 лв. за срок от 12 месеца.',
+      'Общата стойност се увеличава на 200 лева месечно.',
+      'Общата стойност възлиза на 200 лв. и срокът се удължава с 30 работни дни.',
+    ];
+    for (const text of realTotals) {
+      expect(restatedValueAfter(mk(100, 300, 200, 'BGN', text))).toBe(200);
+    }
+  });
+
   it('does NOT restate an exact-2× on a bare payment-in-euro clause (#307 в-евро narrowing)', () => {
     // "Плащанията…се извършват в евро…" is a payment-currency clause, NOT an unchanged-value signal — it
     // must not halve a real +100%. Only "X в евро" re-denomination phrasing may restate (see 189325).
