@@ -5,13 +5,19 @@ import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
-import { Section, Callout, ShareBar } from '../components/ui';
-import { ConflictCards } from '../components/ConflictCards';
+import { Section, Callout, ShareBar, Chip } from '../components/ui';
+import { DataTable, type Column } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { conflictHeadline } from '../lib/conflicts';
+import {
+  conflictHeadline,
+  fundsCellLabel,
+  groupByPerson,
+  officialHref,
+  type ConflictPersonRow,
+} from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
 
 // Свързани лица — office-holders who declared a material ownership stake, their OWN or a close relative's, in
@@ -40,6 +46,9 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
 // load whole and paginate in the client, so the summary totals the full set rather than one page. NB: hard
 // ceiling 1000 — switch to keyset LIMIT/OFFSET (see companies.tsx) if the eligible set ever nears it.
 const LEADERBOARD_MAX = 1000;
+// Persons per page. The list is one row per PERSON (#287, groupByPerson), so pagination counts collapsed
+// rows, not raw links — a person with N winners is one row, not N. The per-link corpus is ~98, fewer
+// persons, so a page is generous; the ceiling above still guards the loader's raw-link fetch.
 const PER_PAGE = 100;
 
 export async function loader({ context }: Route.LoaderArgs) {
@@ -54,13 +63,89 @@ export async function loader({ context }: Route.LoaderArgs) {
   );
 }
 
+// The six columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
+// (isRank); the person name+institution becomes the card heading (isTitle); the funds cell is a right-aligned
+// two-line lead-plus-„от" figure; the признаци chips live in a secondary column that drops on tablet.
+function personColumns(startRank: number): Column<ConflictPersonRow>[] {
+  return [
+    { key: 'rank', header: '№', isRank: true, cell: (_r, i) => startRank + i + 1 },
+    {
+      key: 'official',
+      header: 'Длъжностно лице',
+      isTitle: true,
+      cell: (r) => (
+        <>
+          <Link to={officialHref(r.officialSlug)}>{r.official}</Link>
+          {r.institution && (
+            <>
+              <br />
+              <span className="small muted">{r.institution}</span>
+            </>
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'companies',
+      header: 'Дружества',
+      // The winner's name when the person is linked to exactly one; otherwise the distinct-ЕИК count. No
+      // link — the person page (title column) is the way in; the winner names live there.
+      cell: (r) => (r.companyCount === 1 && r.soleCompany ? r.soleCompany.company : count(r.companyCount)),
+    },
+    { key: 'contracts', header: 'Договори', align: 'money', cell: (r) => count(r.contractCount) },
+    {
+      key: 'funds',
+      header: 'Публични средства',
+      align: 'money',
+      // Leads with the conflict-window sum (the „по време на конфликта" figure) and keeps the total beneath as
+      // „от <total>" — the same lead/total split fundsCellLabel encodes per link, here over the person's
+      // per-ЕИК-deduped sums. When nothing was signed in the window there is no split: show only the total.
+      cell: (r) => {
+        const cell = fundsCellLabel({
+          contemporaneousContractCount: r.hasContemporaneous ? 1 : 0,
+          contemporaneousValueEur: r.contemporaneousValueEur,
+          contractValueEur: r.contractValueEur,
+        } as Parameters<typeof fundsCellLabel>[0]);
+        return (
+          <>
+            {cell.primary}
+            {cell.total != null && (
+              <>
+                <br />
+                <span className="small muted">от {cell.total}</span>
+              </>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      key: 'signals',
+      header: 'Признаци',
+      secondary: true,
+      // Restrained monochrome chips (no new colour): the two nexus signals, OR-ed across the person's links.
+      cell: (r) => (
+        <>
+          {r.ownInstitution && <Chip>от собствената институция</Chip>}
+          {r.ownInstitution && r.hasContemporaneous && ' '}
+          {r.hasContemporaneous && <Chip>към момента на договор</Chip>}
+        </>
+      ),
+    },
+  ];
+}
+
 export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const { links } = loaderData;
   const headline = conflictHeadline(links);
   const [sp] = useSearchParams();
-  const pageCount = Math.max(1, Math.ceil(links.length / PER_PAGE));
+  // Collapse per-relationship links into one row per PERSON, then paginate over ROWS (#287): a person with
+  // three winners is one row, not three, so the page count and rank offset both count persons.
+  const persons = groupByPerson(links);
+  const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const page = Math.min(Math.max(1, Math.floor(Number(sp.get('page')) || 1)), pageCount);
-  const pageLinks = links.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const pageRows = persons.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
   const nav: PageNav = {
     page,
     pageCount,
@@ -140,13 +225,13 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
               title="Деклариран дял в компании изпълнители"
               hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
             >
-              <ConflictCards
-                links={pageLinks}
-                startRank={leaderboardRankOffset(page, PER_PAGE)}
-                totalCount={links.length}
+              <DataTable
+                columns={columns}
+                rows={pageRows}
+                getKey={(r) => r.officialSlug}
                 caption="Длъжностни лица с деклариран дял в компании изпълнители"
               />
-              {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="връзки" />}
+              {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="лица" />}
             </Section>
           </>
         )}
