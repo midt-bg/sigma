@@ -214,13 +214,13 @@ header плюс 36 обособени позиции.
 
 **Субстратът обаче е само две трети готов — това е най-важната задача за Фаза 1.** Таблицата
 `lots` е `(id, tender_id, title, cpv_code, estimated_value, value_amount, value_currency)` —
-**няма колона за място**, а INSERT-ът (`refresh-slice.sql:626-640`) записва само пет полета:
+**няма колона за място**, а INSERT-ът (`refresh-slice.sql:690-703`) записва само пет полета:
 
 | Нужно на ниво позиция | Състояние днес |
 |---|---|
 | CPV | ✅ `lots.cpv_code` |
 | стойност | ✅ `lots.estimated_value` |
-| наименование | ✅ `lots.title` ← `raw_tenders.lot_name` ← `lotTenderName` (`base.ts:262`) |
+| наименование | ✅ `lots.title` ← `raw_tenders.lot_name` ← `lotTenderName` (`base.ts:279`) |
 | **място (NUTS)** | ❌ **липсва** — не е в схемата и не се пренася през staging |
 | **срок** | ❌ липсва на ниво позиция; днес се взима от поръчката |
 
@@ -231,7 +231,7 @@ header плюс 36 обособени позиции.
 **Обхватът обаче е по-малък, отколкото изглежда — staging-ът вече го носи.** `raw_tenders` е
 lot-grained („one header row per УНП with lot_id NULL, plus one row per lot",
 `work-staging-schema.sql:90`) и вече има колона `place_of_performance`
-(`work-staging-schema.sql:137`), пълнена от `executionPlaceNuts` (`base.ts:261`). Тоест **промяна в
+(`work-staging-schema.sql:137`), пълнена от `executionPlaceNuts` (`base.ts:278`). Тоест **промяна в
 staging не е нужна.** Нужни са само трите неща от §6.1: колоната в `lots`, UPDATE batch и
 еднократен backfill.
 
@@ -250,7 +250,7 @@ staging не е нужна.** Нужни са само трите неща от 
 поръчки без позиции). Векторът на позицията е `lotTenderName + cpv_description`.
 
 Добрата новина: **това поле вече се зарежда.** `lot_name` се мапва от `lotTenderName`
-(`packages/ingest/src/base.ts:262`) и стига до `lots.title`, така че Фаза 3 няма нужда от нов
+(`packages/ingest/src/base.ts:279`) и стига до `lots.title`, така че Фаза 3 няма нужда от нов
 ingest — само от ембединг на съществуваща колона.
 
 **Агрегиране позиция → поръчка.** Когато N позиции на една поръчка съвпаднат, картата е една.
@@ -683,7 +683,7 @@ WHERE l.cpv_code >= :prefix AND l.cpv_code < :prefix_upper
 това е адитивна промяна, не рефакторинг.
 
 Миграциите следват плоската номерация в `packages/db/migrations/` — следващата свободна е
-`0006_*`.
+`0008_*`.
 
 ---
 
@@ -826,7 +826,7 @@ Workers AI предлага и `@cf/baai/bge-reranker-base` ($0.0031 на M вх
    редовете за позиции през staging до новата колона `lots.place_nuts3`.
 
    ⚠️ **Внимание — добавянето на колоната в INSERT-а НЕ е достатъчно.** Днешният statement е
-   `INSERT OR IGNORE INTO lots (...)` (`refresh-slice.sql:627`), тоест съществуващ ред **никога**
+   `INSERT OR IGNORE INTO lots (...)` (`refresh-slice.sql:690`), тоест съществуващ ред **никога**
    не се обновява. Ако само разширим списъка с колони, новото поле ще се попълни единствено за
    позиции, публикувани след промяната — целият исторически корпус остава `NULL` и регионалният
    филтър безшумно не намира нищо в миналото. Нужни са и трите:
@@ -850,7 +850,7 @@ Workers AI предлага и `@cf/baai/bge-reranker-base` ($0.0031 на M вх
    `authorities.nuts`/`ekatte` от ЕКАТТЕ (стъпка 2).
 4. **`embed-lots`** — **разделен на две, както вече е разделен ingest-ът.** Правилото е записано в
    кода: „голямото първоначално наваксване е работа на CLI, за да не се удрят лимитите на
-   D1/CPU/subrequest" (`apps/etl/src/index.ts:57-60`).
+   D1/CPU/subrequest" (`apps/etl/src/index.ts:59-60`).
    - **Backfill (еднократно, извън cron-а):** ~200 хил. позиции → ~2 000 извиквания на Workers AI
      (по 100 текста) → 200 upsert партиди по 1000. Курсор в D1, keyset страници — за да е
      възобновим. Една стъпка на партида: цикъл по всички 200 партиди в една стъпка **надхвърля
@@ -936,7 +936,7 @@ CPV поддърво + регион + стойност + срок, върху и
 
 ## 8. Отворени въпроси
 
-1. ~~Имаме ли отворени поръчки?~~ **Решено — да.** `scripts/refresh-slice.sql:561` задава
+1. ~~Имаме ли отворени поръчки?~~ **Решено — да.** `scripts/refresh-slice.sql:624` задава
    `status = CASE WHEN EXISTS (SELECT 1 FROM raw_contracts c WHERE c.unp = t.unp) THEN 'awarded'
    ELSE 'published' END`, без филтър, който да изключва невъзложените поръчки, а `deadline_at` се
    зарежда от `t.deadline`. Отворените поръчки са в D1 под `status = 'published'`, само че не се
