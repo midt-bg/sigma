@@ -175,7 +175,7 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- source_url is the office-holder's OWN public declaration. Family links surface too now (ADR-0032), but a
     -- relative's stake is declared IN the official's own asset declaration (parse.mjs reads it from that one
     -- document), so d.person_id = il.person_id resolves to the office-holder either way — the URL always names
-    -- the office-holder's document, never a relative's (ConflictCards renders it as „декларация").
+    -- the office-holder's document, never a relative's (ConflictDetail renders it as „декларация").
     (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
      WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
      ORDER BY d.declared_year DESC LIMIT 1) AS source_url,
@@ -277,8 +277,25 @@ export async function getConflictLeaderboard(db: D1Database, limit = 100): Promi
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
   ORDER BY ${NEXUS_ORDER}`;
 
-/** One office-holder's declared ownership links. Null when there are none (the page 404s rather than
- *  render an empty page under someone's name). */
+// Eagerly load every link's contracts for a detail page (#287): the person/company pages render the full
+// case (timeline, per-authority shares, contract split) with NO lazy per-row fetch, so the loader batches
+// getLinkContracts across the page's links up front. Volume is tiny — ~98 links corpus-wide and a handful
+// per person/company — so the fan-out of small correlated reads is immaterial. Each link's WHERE gate in
+// LINK_CONTRACTS_SQL is the same surface gate as LINK_SELECT, so a link that survived `sealed()` here
+// resolves to its real (possibly empty) contract set; a non-surfaced key would return []. Returns a
+// linkKey→contracts map the DTO carries alongside `links`.
+async function loadLinkContracts(
+  db: D1Database,
+  links: ConflictLink[],
+): Promise<Record<string, ConflictContract[]>> {
+  const entries = await Promise.all(
+    links.map(async (l) => [l.linkKey, await getLinkContracts(db, l.linkKey)] as const),
+  );
+  return Object.fromEntries(entries);
+}
+
+/** One office-holder's declared ownership links, with each link's contracts loaded eagerly. Null when there
+ *  are none (the page 404s rather than render an empty page under someone's name). */
 export async function getOfficialConflicts(
   db: D1Database,
   personId: string,
@@ -289,7 +306,8 @@ export async function getOfficialConflicts(
     const rows = sealed((await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
-    return { official: links[0]!.official, links };
+    const contracts = await loadLinkContracts(db, links);
+    return { official: links[0]!.official, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'official')) return null; // un-migrated env → 404, not a 500
     throw e;
@@ -299,7 +317,8 @@ export async function getOfficialConflicts(
 export const COMPANY_SQL = `${LINK_SELECT} AND il.eik = ?
   ORDER BY ${NEXUS_ORDER}`;
 
-/** Office-holders with a declared ownership stake in one winner (by ЕИК). Null when there are none. */
+/** Office-holders with a declared ownership stake in one winner (by ЕИК), with each link's contracts loaded
+ *  eagerly. Null when there are none. */
 export async function getCompanyConflicts(
   db: D1Database,
   eik: string,
@@ -307,7 +326,9 @@ export async function getCompanyConflicts(
   try {
     const rows = sealed((await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results);
     if (rows.length === 0) return null;
-    return { company: rows[0]!.company, eik, links: rows.map(toLink) };
+    const links = rows.map(toLink);
+    const contracts = await loadLinkContracts(db, links);
+    return { company: rows[0]!.company, eik, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'company')) return null; // un-migrated env → 404, not a 500
     throw e;

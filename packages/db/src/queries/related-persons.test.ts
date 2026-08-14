@@ -114,6 +114,66 @@ describe('related-persons queries', () => {
     expect(await getCompanyConflicts(fakeDb({}), '999')).toBeNull();
   });
 
+  // #287: the detail loaders now batch each link's contracts EAGERLY (no lazy per-row fetch on the
+  // person/company pages), keyed by linkKey. The fake binds the FIRST value, and getLinkContracts binds
+  // link_key first, so a contract row registered under a link_key is served for exactly that link.
+  it('official conflicts eager-load each link contracts, keyed by linkKey', async () => {
+    const db = fakeDb({
+      'person:ivan': [row({ link_key: 'a' }), row({ link_key: 'b' })],
+      // getLinkContracts('a'/'b') binds link_key first → these are its contract rows
+      a: [
+        {
+          id: 'c:e:a1',
+          signed_at: '2021-05-01',
+          authority: 'Община Пловдив',
+          authority_id: 'auth1',
+          authority_total_eur: 5_000_000,
+          contract_kind: 'Услуги',
+          contract_number: 'Д-1',
+          amount_eur: 1_000_000,
+          procedure_type: 'открита процедура',
+          subject: 'Ремонт',
+          temporal: 'contemporaneous',
+        },
+      ],
+      b: [],
+    });
+    const res = await getOfficialConflicts(db, 'person:ivan');
+    // both links carry a contracts entry; only 'a' has rows
+    expect(Object.keys(res!.contracts).sort()).toEqual(['a', 'b']);
+    expect(res!.contracts.a).toHaveLength(1);
+    expect(res!.contracts.a![0]!.contractSlug).toBe('e:a1'); // 'c:' prefix stripped
+    expect(res!.contracts.a![0]!.temporal).toBe('contemporaneous');
+    expect(res!.contracts.b).toEqual([]);
+  });
+
+  it('company conflicts eager-load each link contracts, keyed by linkKey', async () => {
+    const db = fakeDb({
+      '111': [row({ link_key: 'p1|111' }), row({ link_key: 'p2|111', official: 'Друг' })],
+      'p1|111': [
+        {
+          id: 'c:e:z9',
+          signed_at: '2022-01-01',
+          authority: 'Община Русе',
+          authority_id: 'auth2',
+          authority_total_eur: null,
+          contract_kind: null,
+          contract_number: 'Д-9',
+          amount_eur: 2_000_000,
+          procedure_type: null,
+          subject: 'Строеж',
+          temporal: 'before',
+        },
+      ],
+      'p2|111': [],
+    });
+    const res = await getCompanyConflicts(db, '111');
+    expect(Object.keys(res!.contracts).sort()).toEqual(['p1|111', 'p2|111']);
+    expect(res!.contracts['p1|111']).toHaveLength(1);
+    expect(res!.contracts['p1|111']![0]!.temporal).toBe('before');
+    expect(res!.contracts['p2|111']).toEqual([]);
+  });
+
   it('link contracts map the raw id to a URL slug and pass the temporal mark through', async () => {
     const db = fakeDb({
       'person:ivan|111': [

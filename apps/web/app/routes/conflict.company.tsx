@@ -5,7 +5,7 @@ import type { Route } from './+types/conflict.company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout, ExternalEikLink } from '../components/ui';
-import { ConflictCards } from '../components/ConflictCards';
+import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
@@ -42,7 +42,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
-  const { company, eik, links } = loaderData;
+  const { company, eik, links, contracts } = loaderData;
   return (
     <>
       <Breadcrumbs
@@ -80,11 +80,7 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
           title="Длъжностни лица с деклариран дял"
           hint="Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
         >
-          <ConflictCards
-            links={links}
-            caption={`Длъжностни лица с деклариран дял в ${company}`}
-            omit="company"
-          />
+          <ConflictDetail links={links} contracts={contracts} perspective="company" />
         </Section>
       </main>
     </>

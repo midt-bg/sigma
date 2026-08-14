@@ -4,7 +4,7 @@ import type { Route } from './+types/conflict.official';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout } from '../components/ui';
-import { ConflictCards } from '../components/ConflictCards';
+import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
@@ -40,7 +40,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
-  const { official, links } = loaderData;
+  const { official, links, contracts } = loaderData;
   // Family-AWARE, not family-blind: the page must not assert an own stake above cards that say „свързано
   // лице", and must not go vague where the stake really is the official's own (§2.6).
   const stake = declaredStakeNoun(links);
@@ -76,11 +76,7 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
           title="Деклариран дял в компании изпълнители"
           hint={`Дружества, спечелили обществени поръчки, за които лицето е декларирало ${stake}. Подредени по силата на връзката.`}
         >
-          <ConflictCards
-            links={links}
-            caption={`Деклариран дял на ${official} в компании изпълнители`}
-            omit="official"
-          />
+          <ConflictDetail links={links} contracts={contracts} perspective="official" />
         </Section>
       </main>
     </>

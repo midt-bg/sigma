@@ -744,15 +744,21 @@ export interface LinkContracts {
   contracts: ConflictContract[];
 }
 
-/** One office-holder's declared ownership links. */
+/** One office-holder's declared ownership links, with each link's contracts loaded EAGERLY. The detail
+ *  page renders the full case (timeline, per-authority shares, contract split) for every link with no lazy
+ *  fetch, so `contracts` carries the same ConflictContract[] the drill-down route serves, keyed by linkKey.
+ *  Corpus volume is tiny (~98 links total), so batching per-link contracts into the loader is safe. */
 export interface OfficialConflicts {
   official: string;
   links: ConflictLink[];
+  contracts: Record<string, ConflictContract[]>; // linkKey → its contracts (contemporaneous-first)
 }
 
-/** A winner's page: office-holders with a declared ownership stake in it. */
+/** A winner's page: office-holders with a declared ownership stake in it, with each link's contracts loaded
+ *  EAGERLY (keyed by linkKey), mirroring OfficialConflicts. */
 export interface CompanyConflicts {
   company: string;
   eik: string;
   links: ConflictLink[];
+  contracts: Record<string, ConflictContract[]>; // linkKey → its contracts (contemporaneous-first)
 }
