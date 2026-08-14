@@ -552,6 +552,12 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
 db.exec('COMMIT');
 
 // --- enrich each (person,eik) → interest_links (+ per-authority breakdown) -----------------------
+// THE WRITER of contract_count / contract_value_eur. Its join shape (contracts→tenders→authorities→
+// bidders) is mirrored by CONTRACT_JOIN in packages/db/src/queries/related-persons.ts, so that the
+// read-time subset can never exceed what was stored. `authorities` here IS projected (the per-authority
+// breakdown needs the name), unlike on the read side where it looks dead — that asymmetry is why the two
+// have to be pinned to each other rather than reasoned about separately. related-persons-sql.test.ts
+// asserts they agree; change one only by changing both, and re-baseline ADR-0033 §10 when you do.
 const contractStmt = db.prepare(
   "SELECT strftime('%Y', c.signed_at) yr, a.id auth_id, a.name authority, c.amount_eur eur FROM contracts c JOIN tenders t ON t.id=c.tender_id JOIN authorities a ON a.id=t.authority_id JOIN bidders b ON b.id=c.bidder_id WHERE b.eik_normalized=?",
 );

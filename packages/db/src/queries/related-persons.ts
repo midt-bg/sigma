@@ -92,6 +92,18 @@ interface LinkRow {
 // The winner's contracts, joined exactly as the ETL aggregate does (contracts→tenders→authorities→bidders,
 // matched by eik_normalized) so any read-time subset is a true subset of the stored contract_count/value.
 // Alias-distinct (cc/tt/aa/bb) so it composes as a correlated subquery under the LINK_SELECT `il`/`b` scope.
+//
+// `tt` and `aa` are NOT projected here, which makes both joins look dead and invites deleting them. They
+// are not dead — they are the SHAPE, and its counterpart is the WRITER at scripts/cacbg/load.mjs (the
+// per-winner contract query that fills contract_count / contract_value_eur). The two must stay identical.
+//
+// Removing them on the read side ALONE would widen the read to contracts the stored aggregate never
+// counted: `contemporaneous_contract_count` could then exceed `contract_count`, and the EXISTS gate below
+// (the one that decides whether a link surfaces at all) would publish links the I5 zero-contract gate had
+// excluded. Removing them on BOTH sides is defensible — an unresolvable authority currently drops a
+// contract from the money everywhere, consistently — but it changes published figures and so must be
+// re-baselined against ADR-0033 §10's control totals, not slipped in as a cleanup. Tracked as #226 §1.6.
+// `related-persons-sql.test.ts` pins this string to the writer's so neither can be "optimised" alone.
 const CONTRACT_JOIN = `FROM contracts cc
     JOIN tenders tt ON tt.id = cc.tender_id
     JOIN authorities aa ON aa.id = tt.authority_id

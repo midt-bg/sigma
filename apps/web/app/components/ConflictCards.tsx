@@ -193,6 +193,11 @@ function ConflictCard({
               <span className="small muted cc-evidence">
                 {registryEvidenceLabel(l)}
                 {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
+                {/* The entry NUMBER, not just its date: a date does not identify a record, and this is
+                    what a reader types to find the same act we read. Rendered only when present —
+                    a seat/ЕИК confirmation cites no act entry, and an empty „№" would read as missing
+                    data rather than as an inapplicable field. */}
+                {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
                 {l.registryLookupDate ? ` · справка ${l.registryLookupDate}` : ''}
               </span>
             </dd>

@@ -10,6 +10,7 @@ import {
   LEADERBOARD_SQL,
   LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
+  LINK_SELECT,
   OFFICIAL_SQL,
   SURFACED_OWNERSHIP,
 } from './queries/related-persons';
@@ -629,6 +630,39 @@ describe('свързани-лица SQL (real SQLite)', () => {
         expect(names.sort()).toEqual(['Иван Минев', 'Потвърден Тестов']);
       });
     });
+  });
+});
+
+// The read-time contract join and the WRITER that fills contract_count/contract_value_eur must use the
+// same join shape. On the read side `tenders`/`authorities` are never projected, so both joins read as
+// dead and a reviewer will eventually propose deleting them (one did — cefothe on #309). Deleting them
+// there alone widens the read past the stored aggregate: contemporaneous counts could exceed
+// contract_count, and the EXISTS gate would surface links the zero-contract gate excluded. Nothing but a
+// test can hold a TypeScript template string and a .mjs prepared statement to the same shape.
+describe('the read-time contract join matches the writer that stored the aggregate', () => {
+  const writer = readFileSync(resolve(root, 'scripts/cacbg/load.mjs'), 'utf8');
+  // The writer's per-winner contract query, located by its projection rather than by line number.
+  const writerJoin = /FROM contracts c JOIN tenders t ON[^"]*?WHERE b\.eik_normalized/.exec(
+    writer,
+  )?.[0];
+
+  it('the writer still joins contracts→tenders→authorities→bidders', () => {
+    expect(writerJoin, 'load.mjs per-winner contract query not found').toBeTruthy();
+    for (const rel of ['tenders', 'authorities', 'bidders']) expect(writerJoin).toContain(rel);
+  });
+
+  it('CONTRACT_JOIN joins the same four relations, in the same direction', () => {
+    // Compared by RELATION and join condition, not by text: the two are written in different languages
+    // and alias differently (cc/tt/aa/bb vs c/t/a/b), so only the shape is comparable.
+    const flat = LINK_SELECT.replace(/\s+/g, ' ');
+    expect(flat).toContain('FROM contracts cc');
+    expect(flat).toContain('JOIN tenders tt ON tt.id = cc.tender_id');
+    expect(flat).toContain('JOIN authorities aa ON aa.id = tt.authority_id');
+    expect(flat).toContain('JOIN bidders bb ON bb.id = cc.bidder_id');
+    // …and the writer's equivalents, so a change to either side fails here.
+    expect(writerJoin).toContain('JOIN tenders t ON t.id=c.tender_id');
+    expect(writerJoin).toContain('JOIN authorities a ON a.id=t.authority_id');
+    expect(writerJoin).toContain('JOIN bidders b ON b.id=c.bidder_id');
   });
 });
 

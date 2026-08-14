@@ -112,6 +112,30 @@ If a ship fails on any of these, fix the cause; do **not** empty the list or dro
 A rotated salt invalidates every existing fingerprint, so it is a coordinated change guarded by
 `key_version`: re-derive `fp` for each entry from its original `link_key` under the new salt (you need the
 plaintext keys, kept out-of-band, e.g. in the incident tickets), **bump every entry's `key_version`** to the
-new value, replace the file in one commit, and update both CI secrets (`SUPPRESSION_SALT` and
-`SUPPRESSION_KEY_VERSION`). Because the loader refuses any entry on a non-current `key_version`, a
-half-finished rotation fails the build loudly instead of silently un-suppressing.
+new value, replace the file in one commit, and update **both** CI settings — but note they are different
+kinds: `SUPPRESSION_SALT` is a repository **secret**, while `SUPPRESSION_KEY_VERSION` is a repository
+**variable** (`${{ vars.SUPPRESSION_KEY_VERSION || '1' }}` in `related-persons-data.yml`). The version is
+not sensitive — it is a counter — and looking for it under Secrets is a dead end during an incident.
+Because the loader refuses any entry on a non-current `key_version`, a half-finished rotation fails the
+build loudly instead of silently un-suppressing.
+
+## Verifying a takedown actually worked
+
+A takedown that silently failed looks exactly like one that succeeded: the entry sits in the list, the
+build is green, and the link is still public. The list is applied at LOAD time, so nothing changes on the
+served surface until the next data run ships — check the surface, not the commit.
+
+1. **The loader saw it.** The run refuses an entry matching no built link (the B3 unused-entry rail), so a
+   green run already proves the fingerprint matched something. A run that fails with „suppression matched
+   NO link" means the `link_key` was wrong — a family link needs its `|family` suffix.
+2. **The row is gone from the served D1**, which is the only copy a reader can reach:
+   ```
+   wrangler d1 execute "$SIGMA_D1_NAME" --remote \
+     --command "SELECT status FROM interest_links WHERE link_key = '<key>'"
+   ```
+   Expect `suppressed`, or no row at all. Anything else means the ship did not carry the decision.
+3. **The page is gone**, allowing for cache: the link's page must 404 and the official's page must not
+   list it. `publicCache(3600)` means a reader can still see it for up to an hour after the write — if it
+   is still there beyond that, the takedown did not land.
+4. **It stays gone.** Re-run the next scheduled load and repeat step 2: the list is what makes a takedown
+   survive a rebuild, and this is the only step that proves the survival rather than assuming it.

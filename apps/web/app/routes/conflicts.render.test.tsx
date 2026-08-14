@@ -268,6 +268,22 @@ describe('Trade Register evidence on the card (#279, ADR-0033)', () => {
     expect(text).toContain('лицето е вписано като съдружник/собственик');
     expect(text).toContain('вписване 2011-05-02'); // WHICH entry
     expect(text).toContain('справка 2026-08-05'); // and HOW FRESH it is
+    // The entry NUMBER is what makes the claim findable in the register — a date alone does not
+    // identify a record. It was carried to every client in the DTO and never rendered, which is the
+    // one payload that costs bytes and answers nothing (cefothe, #309).
+    expect(text).toContain('20110502101007');
+  });
+
+  it('omits the entry number rather than printing an empty label when there is none', async () => {
+    // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so
+    // the label must be absent entirely — not „· №" with nothing after it, which reads as missing data
+    // rather than as an inapplicable field. Scoped to the evidence label: „№" alone is the card RANK.
+    await renderConflicts([
+      link({ evidenceKind: 'confirmed', registryRole: null, registryEntryNumber: null }),
+    ]);
+    const text = container.textContent ?? '';
+    expect(text).toContain('Регистър');
+    expect(text).not.toContain('· №');
   });
 
   it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
