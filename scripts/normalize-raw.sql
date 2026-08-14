@@ -895,7 +895,16 @@ FROM (
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
+            -- The same dropped decimal point, but on a LOT of a multi-lot procedure: there the signature
+            -- is 100x the lot's OWN estimate, and the ratio to the whole procedure lands wherever the
+            -- lot's share puts it (issue #247 reports one at 89.8x). Measuring against the own-row
+            -- estimate alone would be unsafe - for framework and unit-price procedures it is a UNIT
+            -- price and a whole call-off legitimately dwarfs it - so it is paired with the procedure
+            -- level condition that already means "implausibly large for this procedure" (>= 10x, the
+            -- review threshold). A unit-price call-off sits at ~1x the procedure estimate and is spared.
+            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
+              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
           -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
           -- estimate. Large legitimate framework call-offs (small share of a huge ceiling but big in
           -- absolute terms) are NOT caught — the < 1000 EUR floor keeps them OUT of value_low.
@@ -1084,6 +1093,24 @@ FROM (
               LIMIT 1
             )
           END AS proc_est_eur,
+          -- Own-row (per-lot) estimate in EUR. The "too high" flags deliberately measure against the
+          -- PROCEDURE estimate, because for framework and unit-price procedures this per-row number is a
+          -- UNIT price and a whole call-off legitimately dwarfs it. It is computed here ONLY for the
+          -- стотинки band, which pairs it with a procedure-level condition for exactly that reason.
+          CASE
+            WHEN c.estimated_value IS NULL THEN NULL
+            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
+            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
+            ELSE c.estimated_value * (
+              SELECT f.eur_per_unit
+              FROM fx_rates f
+              WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
+                AND f.rate_date <= c.contract_date
+                AND f.rate_date >= date(c.contract_date, '-10 days')
+              ORDER BY f.rate_date DESC
+              LIMIT 1
+            )
+          END AS own_est_eur,
           t.estimated_value AS proc_est_native,
           aw.currency AS amendment_currency
         FROM raw_contracts c
@@ -1321,7 +1348,16 @@ SELECT 1,
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
+            -- The same dropped decimal point, but on a LOT of a multi-lot procedure: there the signature
+            -- is 100x the lot's OWN estimate, and the ratio to the whole procedure lands wherever the
+            -- lot's share puts it (issue #247 reports one at 89.8x). Measuring against the own-row
+            -- estimate alone would be unsafe - for framework and unit-price procedures it is a UNIT
+            -- price and a whole call-off legitimately dwarfs it - so it is paired with the procedure
+            -- level condition that already means "implausibly large for this procedure" (>= 10x, the
+            -- review threshold). A unit-price call-off sits at ~1x the procedure estimate and is spared.
+            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
+              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
           WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
           WHEN c.estimated_value > 0 AND c.signing_value IS NOT NULL AND (
             CASE
@@ -1500,6 +1536,24 @@ SELECT 1,
               LIMIT 1
             )
           END AS proc_est_eur,
+          -- Own-row (per-lot) estimate in EUR. The "too high" flags deliberately measure against the
+          -- PROCEDURE estimate, because for framework and unit-price procedures this per-row number is a
+          -- UNIT price and a whole call-off legitimately dwarfs it. It is computed here ONLY for the
+          -- стотинки band, which pairs it with a procedure-level condition for exactly that reason.
+          CASE
+            WHEN c.estimated_value IS NULL THEN NULL
+            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
+            WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
+            ELSE c.estimated_value * (
+              SELECT f.eur_per_unit
+              FROM fx_rates f
+              WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
+                AND f.rate_date <= c.contract_date
+                AND f.rate_date >= date(c.contract_date, '-10 days')
+              ORDER BY f.rate_date DESC
+              LIMIT 1
+            )
+          END AS own_est_eur,
           t.estimated_value AS proc_est_native,
           aw.currency AS amendment_currency
         FROM raw_contracts c

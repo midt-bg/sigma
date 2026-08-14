@@ -1283,7 +1283,15 @@ FROM (
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
+            -- The same dropped decimal point on a LOT of a multi-lot procedure: 100x the lot's OWN
+            -- estimate, while the ratio to the whole procedure lands wherever the lot's share puts it
+            -- (issue #247 reports one at 89.8x). The own-row estimate alone is unsafe - for framework
+            -- and unit-price procedures it is a UNIT price and a whole call-off legitimately dwarfs it -
+            -- so it is paired with the procedure-level condition that already means "implausibly large
+            -- for this procedure" (>= 10x, the review threshold).
+            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
+              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
             -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
             -- estimate. The < 1000 EUR floor keeps large legitimate framework call-offs OUT.
             WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
@@ -1443,6 +1451,23 @@ FROM (
                 LIMIT 1
               )
             END AS proc_est_eur,
+            -- Own-row (per-lot) estimate in EUR - see the note at the стотинки band below: used ONLY
+            -- there, paired with a procedure-level condition, because for framework and unit-price
+            -- procedures this number is a UNIT price.
+            CASE
+              WHEN c.estimated_value IS NULL THEN NULL
+              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
+              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
+              ELSE c.estimated_value * (
+                SELECT f.eur_per_unit
+                FROM fx_rates f
+                WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
+                  AND f.rate_date <= c.contract_date
+                  AND f.rate_date >= date(c.contract_date, '-10 days')
+                ORDER BY f.rate_date DESC
+                LIMIT 1
+              )
+            END AS own_est_eur,
             t.estimated_value AS proc_est_native
           FROM raw_contracts c
           JOIN contractor_identity ci
@@ -1631,7 +1656,15 @@ FROM (
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
+            -- The same dropped decimal point on a LOT of a multi-lot procedure: 100x the lot's OWN
+            -- estimate, while the ratio to the whole procedure lands wherever the lot's share puts it
+            -- (issue #247 reports one at 89.8x). The own-row estimate alone is unsafe - for framework
+            -- and unit-price procedures it is a UNIT price and a whole call-off legitimately dwarfs it -
+            -- so it is paired with the procedure-level condition that already means "implausibly large
+            -- for this procedure" (>= 10x, the review threshold).
+            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
+              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
             -- value_low: zero/negative, OR a tiny signed value (< 1000 EUR) that is also < 5% of the
             -- estimate. The < 1000 EUR floor keeps large legitimate framework call-offs OUT.
             WHEN COALESCE(c.current_value, c.signing_value) <= 0 THEN 'value_low'
@@ -1791,6 +1824,23 @@ FROM (
                 LIMIT 1
               )
             END AS proc_est_eur,
+            -- Own-row (per-lot) estimate in EUR - see the note at the стотинки band below: used ONLY
+            -- there, paired with a procedure-level condition, because for framework and unit-price
+            -- procedures this number is a UNIT price.
+            CASE
+              WHEN c.estimated_value IS NULL THEN NULL
+              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'EUR' THEN c.estimated_value
+              WHEN COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''), 'BGN') = 'BGN' THEN c.estimated_value / 1.95583
+              ELSE c.estimated_value * (
+                SELECT f.eur_per_unit
+                FROM fx_rates f
+                WHERE f.base_currency = COALESCE(NULLIF(c.procurement_currency, ''), NULLIF(c.currency, ''))
+                  AND f.rate_date <= c.contract_date
+                  AND f.rate_date >= date(c.contract_date, '-10 days')
+                ORDER BY f.rate_date DESC
+                LIMIT 1
+              )
+            END AS own_est_eur,
             t.estimated_value AS proc_est_native
           FROM raw_contracts c
           JOIN contractor_identity ci
@@ -2047,6 +2097,39 @@ WITH contract_base AS (
       ORDER BY rc.source DESC, rc.id DESC
       LIMIT 1
     ), te.estimated_value) AS classifier_estimated_value,
+    c.signed_at,
+    -- The contract row's OWN estimate and the currency it is denominated in, for the стотинки band's
+    -- own-row arm (#247). Deliberately WITHOUT the procedure fallback classifier_estimated_value carries:
+    -- the arm asks "is this 100× the row's own estimate", and a row with no own estimate has no answer.
+    -- Falling back would make the arm fire exactly where the procedure band already fires, i.e. mean
+    -- something other than its name. The four INSERT sites read raw_contracts.estimated_value the same way.
+    (
+      SELECT rc.estimated_value
+      FROM raw_contracts rc
+      WHERE rc.unp = substr(c.tender_id, 3)
+        AND rc.contract_number = c.contract_number
+        AND (
+          (c.id LIKE 'c:e:%' AND rc.source LIKE 'eop:%')
+          OR (c.id LIKE 'c:o:%' AND rc.source LIKE 'ocds:%')
+        )
+      ORDER BY rc.source DESC, rc.id DESC
+      LIMIT 1
+    ) AS own_est_native,
+    -- Same row, same order — the estimate's OWN currency chain, byte-for-byte the one the four INSERT
+    -- sites use (procurement_currency → currency → BGN). Reading it off contracts.currency instead would
+    -- convert a foreign-currency estimate at the contract's currency (review cefothe #4).
+    (
+      SELECT COALESCE(NULLIF(rc.procurement_currency, ''), NULLIF(rc.currency, ''), 'BGN')
+      FROM raw_contracts rc
+      WHERE rc.unp = substr(c.tender_id, 3)
+        AND rc.contract_number = c.contract_number
+        AND (
+          (c.id LIKE 'c:e:%' AND rc.source LIKE 'eop:%')
+          OR (c.id LIKE 'c:o:%' AND rc.source LIKE 'ocds:%')
+        )
+      ORDER BY rc.source DESC, rc.id DESC
+      LIMIT 1
+    ) AS own_est_currency,
     -- One annex step jumped ≥10× — half of the mis-keyed-annex conjunction below. Checked against
     -- the CUMULATIVE domain amendments, matching where this pass re-rolls current_value from.
     EXISTS (
@@ -2169,7 +2252,10 @@ WITH contract_base AS (
             -- Dropped decimal point: the value was entered in стотинки, so it lands at almost exactly
             -- 100x the procedure estimate. Real overruns spread out; this is an isolated cluster with
             -- nothing between 105x and 200x, so the band is narrow on purpose.
-            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur))) THEN 'value_suspect'
+            OR (c.eff_eur >= 95 * c.proc_est_eur AND c.eff_eur <= 105 * c.proc_est_eur)))
+            -- Own-row (per-lot) arm, mirroring the two INSERT-time copies above.
+            OR (c.own_est_eur >= 1000 AND c.proc_est_eur >= 1000 AND c.eff_eur >= 10 * c.proc_est_eur
+              AND c.eff_eur >= 95 * c.own_est_eur AND c.eff_eur <= 105 * c.own_est_eur) THEN 'value_suspect'
       WHEN c.current_value IS NOT NULL AND (c.current_value < 0 OR (c.signing_value > 0 AND (c.current_value / c.signing_value >= 100
         -- Mis-keyed annex: a single step jumped ≥10× AND the aggregate ended ≥5× over signing.
         -- The step alone is NOT enough — some chains have a huge step that a later annex pulls
@@ -2183,7 +2269,27 @@ WITH contract_base AS (
       WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
       ELSE 'ok'
     END AS new_value_flag
-  FROM contract_base c
+  FROM (
+    -- Per-lot estimate in EUR for the стотинки band's own-row arm (see the note at the band). Mirrors
+    -- the four INSERT sites: the row's OWN estimate (NULL when it has none), converted through the
+    -- estimate's own currency with a dated fx lookup — not through the contract's currency or fx_rate.
+    SELECT cb.*,
+      CASE
+        WHEN cb.own_est_native IS NULL THEN NULL
+        WHEN cb.own_est_currency = 'EUR' THEN cb.own_est_native
+        WHEN cb.own_est_currency = 'BGN' THEN cb.own_est_native / 1.95583
+        ELSE cb.own_est_native * (
+          SELECT f.eur_per_unit
+          FROM fx_rates f
+          WHERE f.base_currency = cb.own_est_currency
+            AND f.rate_date <= cb.signed_at
+            AND f.rate_date >= date(cb.signed_at, '-10 days')
+          ORDER BY f.rate_date DESC
+          LIMIT 1
+        )
+      END AS own_est_eur
+    FROM contract_base cb
+  ) c
 ), calc AS (
   SELECT id, new_value_flag, proc_est_eur,
     CASE new_value_flag
