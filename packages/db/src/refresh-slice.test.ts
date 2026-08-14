@@ -13,6 +13,12 @@ const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bid
 const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 // refresh-slice.sql / precompute.sql officials block reads interest_links (0003) — build it in every chain.
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// #305 Tier-2: served amendments gained value_restated/value_treatment (refresh-slice promotes them).
+const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
+// #305 residual: served amendments gained value_suspect (refresh-slice promotes it).
+const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
+// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
+const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
@@ -185,6 +191,9 @@ function initWorkDb(dbPath: string): void {
   readScript(dbPath, migration1Path);
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
+  readScript(dbPath, migration6Path);
+  readScript(dbPath, migration7Path);
+  readScript(dbPath, migration8Path);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -576,6 +585,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -658,6 +670,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
@@ -841,6 +856,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -892,6 +910,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -943,6 +964,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1080,6 +1104,9 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration1Path);
       readScript(dbPath, migration2Path);
       readScript(dbPath, migration3Path);
+      readScript(dbPath, migration6Path);
+      readScript(dbPath, migration7Path);
+      readScript(dbPath, migration8Path);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,

@@ -137,6 +137,54 @@ describe('base EOP mapper', () => {
     expect(baseSqlLiteral('annexes', 'value_delta', row?.value_delta)).toBe('-345.16');
   });
 
+  // #305 Tier-2: base.ts runs the validated основание-text heuristic (amendment-total.ts) for annexes and
+  // persists value_treatment + value_after_restated onto the raw row. A doubled value_after whose text
+  // announces the NEW TOTAL ("…на <total>") is restated to that true total; an untreated annex stays NULL.
+  it('populates value_treatment/value_after_restated for an annex whose text announces a new total', () => {
+    const row = mapBaseRecord(
+      'annexes',
+      {
+        uniqueProcurementNumber: '00224-2025-0009',
+        contractNumber: '990001',
+        publicationDate: '05.03.2026',
+        lastContractValue: '442000',
+        currentContractValue: '981240', // doubled: source put the new TOTAL in the change field
+        contractValueDifference: '539240',
+        contractCurrency: 'BGN',
+        changeReason: 'Общата стойност на договора се променя на 539 240 лв.',
+      },
+      { day: '2026-03-05', fetchedAt: '2026-03-05T00:00:00Z' },
+    );
+
+    expect(row?.value_after).toBe(981240); // raw after left as the source gave it
+    expect(row?.value_treatment).toBe('total_restated');
+    expect(row?.value_after_restated).toBe(539240); // the corrected true total
+    // The restated total must serialise as a bare number for the staging INSERT, not a quoted string.
+    expect(baseSqlLiteral('annexes', 'value_after_restated', row?.value_after_restated)).toBe(
+      '539240',
+    );
+  });
+
+  it('leaves value_treatment/value_after_restated NULL for a >2× annex with no text total (not exact-2×)', () => {
+    // 2.5× (not exact 2×) and no announced total in the text ⇒ no confident signal ⇒ left to the flag.
+    const row = mapBaseRecord(
+      'annexes',
+      {
+        uniqueProcurementNumber: '00224-2025-0010',
+        contractNumber: '990002',
+        publicationDate: '05.03.2026',
+        lastContractValue: '1000000',
+        currentContractValue: '2500000',
+        contractValueDifference: '1500000',
+        contractCurrency: 'BGN',
+      },
+      { day: '2026-03-05', fetchedAt: '2026-03-05T00:00:00Z' },
+    );
+
+    expect(row?.value_treatment).toBeNull();
+    expect(row?.value_after_restated).toBeNull();
+  });
+
   it('coerces signed reals without loosening the magnitude-only fields', () => {
     expect(toSignedReal('-345,16')).toBe(-345.16);
     expect(toSignedReal('-1 234,56')).toBe(-1234.56);

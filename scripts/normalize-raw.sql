@@ -732,7 +732,10 @@ INSERT OR IGNORE INTO contracts
 -- travels alongside the value it minted — computed ONCE over raw_amendments, not per-row).
 WITH amendment_dedup AS (
   SELECT *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
+    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -819,6 +822,7 @@ FROM (
     CASE y.value_flag
       WHEN 'value_suspect' THEN y.proc_est_native
       WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+      WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
       ELSE COALESCE(y.current_value, y.signing_value)
     END AS display_native,
     -- value_suspect is repaired directly from proc_est_eur in the outer amount_eur CASE; value_low and
@@ -826,6 +830,7 @@ FROM (
     CASE y.value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN COALESCE(y.signing_value, y.current_value)
+      WHEN 'annex_total_suspect' THEN COALESCE(y.signing_value, y.current_value)
       ELSE COALESCE(y.current_value, y.signing_value)
     END AS trusted_native,
     -- Keep the companion currency paired with the exact native value chosen above. In particular,
@@ -834,6 +839,10 @@ FROM (
     CASE y.value_flag
       WHEN 'value_suspect' THEN NULL
       WHEN 'annex_suspect' THEN CASE
+        WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
+        ELSE COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
+      END
+      WHEN 'annex_total_suspect' THEN CASE
         WHEN y.signing_value IS NOT NULL THEN COALESCE(NULLIF(y.currency, ''), 'BGN')
         ELSE COALESCE(NULLIF(y.amendment_currency, ''), NULLIF(y.currency, ''), 'BGN')
       END
@@ -952,6 +961,86 @@ FROM (
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                 AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
             ))))) THEN 'annex_suspect'
+          -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
+          -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
+          -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
+          -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
+          -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
+          -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+          -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+          -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
+          -- doubled annex later superseded by a correct one is NOT flagged.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
+              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
+              AND am.value_treatment IS NULL
+              -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
+              -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
+              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
+              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
+              AND am.value_before > 0 AND (
+                ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                OR EXISTS (
+                  SELECT 1 FROM raw_amendments prev
+                  WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                    AND prev.value_after > 0
+                    AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                    -- so a compounding chain where every step doubles is left untouched, not restated.
+                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
+                )
+                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
+                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
+                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
+                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
+                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
+                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
+                OR (
+                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                  AND NOT EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
+                )
+              )
+              AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
+              -- value_before + value_delta). If value_delta is present and contradicts that, the model
+              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
+              AND (am.value_delta IS NULL
+                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
+          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
+          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
+          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
+          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
+          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
+          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
+          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
+          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              AND am.value_treatment IS NULL
+              AND am.value_before > 0
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                  AND prev.value_after_restated IS NOT NULL
+                  AND prev.value_after_restated < prev.value_after
+                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+              )
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
           WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
           ELSE 'ok'
         END AS value_flag,
@@ -1219,7 +1308,10 @@ CREATE TABLE IF NOT EXISTS pipeline_stats (
 DELETE FROM pipeline_stats;
 WITH amendment_dedup AS (
   SELECT *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — must match derive-amendments.sql / promote-amendments.sql byte-for-byte (review nikimilenkov
+    -- MEDIUM 3). NULL raw → the plain number, so unresolved rows are unaffected.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -1319,6 +1411,86 @@ SELECT 1,
               WHERE am.unp = c.unp AND am.contract_number = c.contract_number
                 AND am.value_before > 0 AND am.value_after >= 10 * am.value_before
             ))))) THEN 'annex_suspect'
+          -- #305 value double-count: a driving annex reports a new TOTAL added to the old instead of
+          -- replacing it, so value_after ≈ 2× the OLD total. ЗОП чл.116 caps a single amendment at +50%,
+          -- so one step cannot legally more than double a contract — the ≥2× single step IS the defect
+          -- signal, wherever it sits in the chain. Scope: value_after in [2×,10×) a base that value_before
+          -- ties to a KNOWN prior total — signing_value OR a preceding annex's value_after (the multi-annex
+          -- case) — same currency. Slow legitimate climbs never reach ≥2× so stay untouched; the ≥10×
+          -- mis-key is #299's annex_suspect above; cross-currency doubles are an FX artefact ('review');
+          -- and the ABS(... - current_value) tie binds this to the annex that DRIVES current_value, so a
+          -- doubled annex later superseded by a correct one is NOT flagged.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              -- #305 Tier-2: a text-treated annex (restated total or confirmed-genuine increment) is NOT an
+              -- arithmetic suspect — value_treatment IS NOT NULL means the основание text already resolved it.
+              AND am.value_treatment IS NULL
+              -- #305 multi-annex: the doubled step need not be the FIRST annex. value_before may be a
+              -- prior cumulative total (a preceding annex's value_after), not signing. Anchor to signing
+              -- OR a legitimately-grown prior total (a prior annex that was itself not a double), while a
+              -- single ≥2× step (ЗОП чл.116 caps one amendment at +50%) is the defect wherever it sits.
+              AND am.value_before > 0 AND (
+                ABS(am.value_before - c.signing_value) < 0.01 * c.signing_value
+                OR EXISTS (
+                  SELECT 1 FROM raw_amendments prev
+                  WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                    AND prev.value_after > 0
+                    AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                    -- ...and that prior total was itself reached legitimately (prev not a ≥2× double),
+                    -- so a compounding chain where every step doubles is left untouched, not restated.
+                    AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
+                )
+                -- #305 84818-class: an EXACT single-step 2× (value_after ≈ 2× value_before) on an ORPHAN
+                -- base — value_before ties neither signing NOR any prior annex's value_after (e.g. contract
+                -- 84818, whose annex base 76.77M is unrelated to the contract's values). A legal +100% in one
+                -- amendment is impossible (ЗОП чл.116), so flag → signing fallback (EXCLUDE); never REWRITES
+                -- (that stays gated, #307 HIGH-2). The orphan guard leaves a legitimate compounding-doubling
+                -- chain (each step's base ties the prior step) untouched, exactly as the legit-prior arm does.
+                OR (
+                  ABS(am.value_after - 2 * am.value_before) < 0.005 * am.value_before
+                  AND NOT EXISTS (
+                    SELECT 1 FROM raw_amendments prev
+                    WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                      AND prev.value_after > 0
+                      AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+                  )
+                )
+              )
+              AND am.value_after >= 2 * am.value_before AND am.value_after < 10 * am.value_before
+              -- #305 M2: the double-count model presupposes a self-consistent row (value_after ≈
+              -- value_before + value_delta). If value_delta is present and contradicts that, the model
+              -- provably does not apply — do NOT flag (mirrors the TS classifier's a≈b+d precondition).
+              AND (am.value_delta IS NULL
+                   OR ABS(am.value_after - (am.value_before + am.value_delta)) < 0.01 * am.value_after)
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
+          -- #305 NEW-HIGH-1 (multi-annex chain contamination): the double-count correction is per-row and
+          -- does NOT propagate down a chain. When a PRIOR annex was double-count corrected (value_after was
+          -- doubled, restated down), a LATER annex still arrives from the feed computed on the CONTAMINATED
+          -- (raw, doubled) base. Its own step ratio is legitimate (<2×) so the gate above misses it, and the
+          -- prior annex is text-treated so it is excluded too — yet current_value inherited the doubled
+          -- total. Detect the driving annex whose value_before ties to a prior annex's RAW value_after where
+          -- that prior was restated to a lower total, and flag → signing fallback (an honest exclusion beats
+          -- a served overstatement) until per-chain value_before propagation (a follow-up) recomputes it.
+          WHEN c.current_value IS NOT NULL AND c.signing_value > 0 AND EXISTS (
+            SELECT 1 FROM raw_amendments am
+            WHERE am.unp = c.unp AND am.contract_number = c.contract_number
+              AND am.value_treatment IS NULL
+              AND am.value_before > 0
+              AND ABS(am.value_after - c.current_value) < 0.01
+              AND EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = am.unp AND prev.contract_number = am.contract_number
+                  AND prev.value_after_restated IS NOT NULL
+                  AND prev.value_after_restated < prev.value_after
+                  AND ABS(prev.value_after - am.value_before) < 0.01 * am.value_before
+              )
+              AND COALESCE(NULLIF(am.currency, ''), COALESCE(NULLIF(c.currency, ''), 'BGN'))
+                = COALESCE(NULLIF(c.currency, ''), 'BGN')
+          ) THEN 'annex_total_suspect'
           WHEN c.proc_est_eur > 0 AND c.eff_eur >= 10 * c.proc_est_eur THEN 'review'
           ELSE 'ok'
         END AS value_flag,
@@ -1403,6 +1575,7 @@ SELECT 1,
     ) c
     WHERE CASE c.value_flag
         WHEN 'annex_suspect' THEN COALESCE(c.signing_value, c.current_value)
+        WHEN 'annex_total_suspect' THEN COALESCE(c.signing_value, c.current_value)
         ELSE COALESCE(c.current_value, c.signing_value)
       END IS NOT NULL
       AND EXISTS (SELECT 1 FROM tenders te WHERE te.id = 't:' || c.unp)
@@ -1430,6 +1603,7 @@ SELECT
   (SELECT contract_candidates FROM pipeline_stats)                AS contract_candidates,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'value_suspect') AS value_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'annex_suspect') AS annex_suspect,
+  (SELECT COUNT(*) FROM contracts WHERE value_flag = 'annex_total_suspect') AS annex_total_suspect,
   (SELECT COUNT(*) FROM contracts WHERE value_flag = 'review')    AS review,
   (SELECT COUNT(*) FROM contracts WHERE fx_converted = 1)         AS fx_converted,
   (SELECT ROUND(SUM(amount_eur) / 1e9, 2) FROM contracts)        AS clean_total_eur_bn,

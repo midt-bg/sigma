@@ -1,8 +1,9 @@
 -- Sigma — roll raw_amendments up onto raw_contracts.
 -- Run AFTER scripts/load-eop.mjs (which stages the EOP base + in-bucket OCDS amendments).
--- Re-runnable. First recovers the УНП for OCDS amendments via the tender.id bridge (#286), then
--- prefers the EOP annex over its OCDS twin (dropping the twin), then matches amendments by
--- (unp, contract_number).
+-- Re-runnable. On the full-derive path scripts/resolve-amendment-contracts.sql (#306) has already rewritten
+-- namespace-mismatched EOP annexes onto their target contract_number BEFORE this file runs. This file then
+-- recovers the УНП for OCDS amendments via the tender.id bridge (#286), prefers the EOP annex over its OCDS
+-- twin (dropping the twin), and matches amendments by (unp, contract_number).
 -- current_value = the after-value of the LATEST amendment; annex_count = how many.
 -- Contracts without amendments keep annex_count = 0 and current_value = NULL (the
 -- convention downstream is COALESCE(current_value, signing_value)).
@@ -110,12 +111,24 @@ WHERE source LIKE 'ocds:%'
       AND e.contract_number = raw_amendments.contract_number
   );
 
+-- #306: the value-anchor resolver that links namespace-mismatched EOP annexes (annex-side number ≠ the
+-- contract's filing number) by rewriting raw_amendments.contract_number lives in
+-- scripts/resolve-amendment-contracts.sql and runs BEFORE this file on the full-derive path only (see that
+-- file's header for the ordering-blocker and slice-gating rationale — reviews todorkolev #1/#3, nikimilenkov
+-- HIGH 1). By the time this rollup runs, resolved annexes already carry their target contract_number (and
+-- keep the original annex number in contract_number_raw for the natural_key below), so the rollup links them
+-- with no further change.
+
 UPDATE raw_contracts SET annex_count = 0, current_value = NULL;
 
 WITH keyed AS (
   SELECT
     *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the ORIGINAL annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row, so a resolved annex keeps a stable identity and never collides with a native annex that shares
+    -- document_number on the target contract (review nikimilenkov MEDIUM 3). NULL raw → the plain number,
+    -- so unresolved rows and the slice path (which never resolves) produce byte-identical keys.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -144,8 +157,10 @@ SET
       AND a.contract_number = raw_contracts.contract_number
       AND a.rn = 1
   ),
+  -- #305 Tier-2: a text-confirmed double-count carries the corrected total in value_after_restated; use
+  -- it as the effective after so current_value reflects the true total, not the raw doubled value_after.
   current_value = (
-    SELECT a.value_after FROM dedup a
+    SELECT COALESCE(a.value_after_restated, a.value_after) FROM dedup a
     WHERE a.unp = raw_contracts.unp
       AND a.contract_number = raw_contracts.contract_number
       AND a.value_after IS NOT NULL

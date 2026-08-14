@@ -98,6 +98,12 @@ const LEGACY_TRANSIENT_STAGING_TABLES = [
   'raw_egov_amendments',
 ] as const;
 
+// Scratch tables that live only for the span of a single derive step. Each is DROP-guarded at the top of
+// its own script, so it self-heals on the next run; listing it here also sweeps it after an aborted run so
+// it never lingers in D1 (review nikimilenkov LOW 2 — #306's value-resolver scratch table). Not part of
+// work-staging-schema.sql, so it stays out of transientStagingStatements' recreate path.
+const SCRATCH_TABLES = ['amendment_contract_resolve'] as const;
+
 function touchesTransientStaging(statement: string): boolean {
   return TRANSIENT_STAGING_TABLES.some((table) => statement.includes(table));
 }
@@ -148,7 +154,7 @@ export function fullClearTables(normalizeRawSql: string): string[] {
 }
 
 export function dropTransientStagingStatements(): string[] {
-  return [...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
+  return [...SCRATCH_TABLES, ...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
     .reverse()
     .map((table) => `DROP TABLE IF EXISTS ${table}`);
 }

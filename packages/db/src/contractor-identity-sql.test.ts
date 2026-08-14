@@ -16,6 +16,21 @@ const migration3 = readFileSync(
   resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql'),
   'utf8',
 );
+// #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).
+const migration6 = readFileSync(
+  resolve(root, 'packages/db/migrations/0006_amendment_restated.sql'),
+  'utf8',
+);
+// #305 residual: served amendments gained value_suspect (promote + refresh-slice write it).
+const migration7 = readFileSync(
+  resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql'),
+  'utf8',
+);
+// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
+const migration8 = readFileSync(
+  resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -67,6 +82,9 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   db.exec(schema);
   db.exec(migration2);
   db.exec(migration3);
+  db.exec(migration6);
+  db.exec(migration7);
+  db.exec(migration8);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {
