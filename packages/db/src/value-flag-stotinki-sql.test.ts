@@ -23,7 +23,7 @@ const migration3Path = resolve(root, 'packages/db/migrations/0003_related_person
 // refresh-slice.sql's свързани-лица block reads interest_link_evidence (#279, ADR-0033), so the script
 // only parses against a DB that also has 0006 — without it sqlite3 aborts on „no such table" before it
 // ever reaches the value_flag CASE these tests are about.
-const migration6Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -53,7 +53,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, schemaPath);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
-    readScript(dbPath, migration6Path);
+    readScript(dbPath, migration9Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

@@ -11,8 +11,8 @@ const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-const migration6 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
-const migration7 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
+const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -133,7 +133,7 @@ describe('served migrations', () => {
       );
       readScript(dbPath, migration2);
       readScript(dbPath, migration3);
-      readScript(dbPath, migration6);
+      readScript(dbPath, migration9);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);
 
@@ -163,7 +163,7 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-0006-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      for (const m of [migration0, migration1, migration2, migration3, migration6])
+      for (const m of [migration0, migration1, migration2, migration3, migration9])
         readScript(dbPath, m);
 
       expect(
@@ -188,7 +188,7 @@ describe('served migrations', () => {
            (link_key, evidence_kind, matched_fact, lookup_date, rules_version, live_status)
          VALUES ('k', 'document', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live');`,
       );
-      readScript(dbPath, migration6); // idempotent re-apply
+      readScript(dbPath, migration9); // idempotent re-apply
       expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_link_evidence;').trim()).toBe('1');
 
       // The FK is real: a seal for a link that does not exist is rejected. D1 enforces foreign keys,
@@ -215,7 +215,7 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      for (const m of [migration0, migration3, migration6, migration7]) readScript(dbPath, m);
+      for (const m of [migration0, migration3, migration9, migration10]) readScript(dbPath, m);
 
       const seedLink = (status: string) =>
         sqlite(
@@ -315,11 +315,11 @@ describe('served migrations', () => {
     const legacy = resolve(dir, 'legacy.sqlite');
     try {
       // (1) fresh: the migration chain exactly as a new environment applies it.
-      for (const m of [migration0, migration3, migration6, migration7]) readScript(fresh, m);
+      for (const m of [migration0, migration3, migration9, migration10]) readScript(fresh, m);
 
       // (2) legacy: 0003 + 0006 as they were BEFORE this PR, then 0007 retrofits. `interest_links` is
       // recreated without constraints because that is the shape every already-deployed database holds.
-      for (const m of [migration0, migration3, migration6]) readScript(legacy, m);
+      for (const m of [migration0, migration3, migration9]) readScript(legacy, m);
       sqlite(
         legacy,
         `DROP TABLE interest_link_evidence;
@@ -341,7 +341,7 @@ describe('served migrations', () => {
            lookup_date TEXT NOT NULL, rules_version TEXT NOT NULL, live_status TEXT NOT NULL,
            sealed_at TEXT NOT NULL DEFAULT (datetime('now')));`,
       );
-      readScript(legacy, migration7);
+      readScript(legacy, migration10);
 
       const link = (db: string, id: string, status: string, cls = 'private_ownership') =>
         sqlite(
@@ -393,7 +393,7 @@ describe('served migrations', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-'));
     const dbPath = resolve(dir, 'test.sqlite');
     try {
-      for (const m of [migration0, migration3, migration6]) readScript(dbPath, m);
+      for (const m of [migration0, migration3, migration9]) readScript(dbPath, m);
       // Simulate a database provisioned BEFORE today: 0003 now declares the constraints, so the legacy
       // shape has to be recreated explicitly. This is the state every already-deployed environment is in
       // — `CREATE TABLE IF NOT EXISTS` never revisited it and ship-related-persons only wipes rows.
@@ -441,7 +441,7 @@ describe('served migrations', () => {
                  'private_ownership', 'published ');`,
       );
 
-      readScript(dbPath, migration7);
+      readScript(dbPath, migration10);
       // The valid rows survive — nothing is rebuilt, so nothing can be lost…
       expect(sqlite(dbPath, "SELECT id FROM declarations WHERE id='d:keep';").trim()).toBe(
         'd:keep',
@@ -490,7 +490,7 @@ describe('served migrations', () => {
 
       // Migrations here are applied by a bare `d1 execute --file` with no applied-migrations tracking,
       // so a second application MUST be a no-op rather than an error or a data loss.
-      readScript(dbPath, migration7);
+      readScript(dbPath, migration10);
       expect(sqlite(dbPath, 'SELECT COUNT(*) FROM interest_links;').trim()).toBe('2');
       expect(sqlite(dbPath, "SELECT id FROM declarations WHERE id='d:keep';").trim()).toBe(
         'd:keep',

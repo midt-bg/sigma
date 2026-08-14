@@ -12,7 +12,7 @@ const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_
 // refresh-slice.sql's officials block reads interest_links (0003); build it so the script doesn't fail.
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006, joined by the officials block for the Trade Register evidence gate (#279, ADR-0033).
-const migration6Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -42,7 +42,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, schemaPath);
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
-    readScript(dbPath, migration6Path);
+    readScript(dbPath, migration9Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {
