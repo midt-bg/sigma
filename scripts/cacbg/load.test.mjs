@@ -10,6 +10,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { fingerprint } from './suppressions.mjs';
+// The seal vocabulary is asserted with the PRODUCTION predicate, imported from the module that writes it.
+import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -1241,9 +1243,10 @@ test('every link carries an evidence seal, and no seal carries a name', () => {
   const seals = db.prepare('SELECT * FROM interest_link_evidence').all();
   assert.equal(seals.length, links.length, 'a seal for EVERY link, held and withdrawn included');
 
-  const CLOSED = /^(?:seat:[\p{Lu} -]+|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
+  // The PRODUCTION predicate, imported from the module that WRITES the vocabulary — a restated regex
+  // here was looser than the real one and would have passed a seat token carrying a full name.
   for (const s of seals) {
-    if (s.matched_fact != null) assert.match(s.matched_fact, CLOSED, s.matched_fact);
+    assert.ok(isSealedFact(s.matched_fact), s.matched_fact);
     assert.ok(s.rules_version.length > 0);
     assert.match(s.lookup_date, /^\d{4}-\d{2}-\d{2}$/);
   }

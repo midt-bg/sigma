@@ -6,7 +6,13 @@
 // ownership claim, it attaches a real official to the wrong company's ЕИК, contracts and money.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RULES_VERSION, evidenceVerdict, reconcileTermination } from './evidence.mjs';
+import {
+  RULES_VERSION,
+  evidenceVerdict,
+  reconcileTermination,
+  MATCHED_FACT_RE,
+  isSealedFact,
+} from './evidence.mjs';
 
 const container = (t) =>
   `<div class='record-container record-container--preview'><p class='field-text'>${t}</p></div>`;
@@ -452,8 +458,44 @@ test('a missing deed that is NOT marked outside-ТР is an error, not a silent h
 });
 
 // ── the seal ──────────────────────────────────────────────────────────────────
+test('MATCHED_FACT_RE bounds a settlement to two tokens — a NAME cannot wear the seat: prefix', () => {
+  // The rail tested DIRECTLY, not just through whatever verdicts the ladder happens to produce. Both
+  // seal tests previously restated this regex locally and got it WRONG in the permissive direction —
+  // `seat:` followed by unlimited uppercase tokens — so a three-part Bulgarian name (ЗГР чл. 9) wearing
+  // an allowed prefix passed them. That value is exactly what a mis-split of the seat field produces,
+  // and it is the one shape this rail exists to keep off a served column.
+  for (const ok of [
+    'seat:СОФИЯ',
+    'seat:ВЕЛИКО ТЪРНОВО', // a real two-token settlement must still pass
+    'seat:ГЕНЕРАЛ ТОШЕВО',
+    'seat:ЦАР-КАЛОЯН', // hyphenated is one token
+    'role:owner:CR_F_19_L',
+    'role:manager:CR_F_7_L',
+    'role:owner:CR_F_23_L',
+    'eik',
+  ])
+    assert.equal(MATCHED_FACT_RE.test(ok), true, `wrongly rejected: ${ok}`);
+
+  for (const bad of [
+    'seat:ИВАН ПЕТРОВ ГЕОРГИЕВ', // THE case: three tokens is a name, not a settlement
+    'seat:ИВАН ПЕТРОВ ГЕОРГИЕВ ДРУГ',
+    'ИВАН ПЕТРОВ ГЕОРГИЕВ', // a bare name with no prefix at all
+    'role:owner:ИВАН ПЕТРОВ', // a name where a field code belongs
+    'role:cashier:CR_F_19_L', // a role outside the vocabulary
+    'seat:', // an empty settlement asserts nothing
+    'eik:201122335', // the ЕИК itself is never stored, only the fact that one matched
+  ])
+    assert.equal(MATCHED_FACT_RE.test(bad), false, `wrongly accepted: ${bad}`);
+
+  // null is legal — a rung may match no fact — and that is isSealedFact's job, not the regex's.
+  assert.equal(isSealedFact(null), true);
+  assert.equal(isSealedFact('seat:ИВАН ПЕТРОВ ГЕОРГИЕВ'), false);
+});
+
 test('matched_fact stays inside the closed vocabulary — it can never carry a name', () => {
-  const CLOSED = /^(?:seat:[\p{Lu} -]+|role:(?:owner|manager):CR_F_\d+[a-z]?_L|eik)$/u;
+  // The PRODUCTION predicate, imported — never a local copy of it. A re-stated regex here was looser
+  // than `MATCHED_FACT_RE` (it allowed `seat:` + unlimited tokens), so this loop certified values the
+  // real rail rejects and could not fail on the regression it exists to catch (cefothe, #309).
   for (const v of [
     evidenceVerdict(base),
     evidenceVerdict({ ...base, deed: deed([fld('CR_F_7_L', container('ИВАН ПЕТРОВ ТЕСТОВ'))]) }),
@@ -468,7 +510,7 @@ test('matched_fact stays inside the closed vocabulary — it can never carry a n
     }),
   ]) {
     if (v.matchedFact == null) continue;
-    assert.match(v.matchedFact, CLOSED, `matched_fact escaped the vocabulary: ${v.matchedFact}`);
+    assert.ok(isSealedFact(v.matchedFact), `matched_fact escaped the vocabulary: ${v.matchedFact}`);
     assert.ok(!/ИВАН|ПЕТРОВ|ТЕСТОВ/.test(v.matchedFact), 'a NAME reached matched_fact');
   }
 });
