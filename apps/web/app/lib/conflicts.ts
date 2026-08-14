@@ -387,3 +387,141 @@ export function conflictHeadline(links: ConflictLink[]): {
     contemporaneousEur,
   };
 }
+
+/** One row of the /conflicts leaderboard: a whole PERSON, collapsed from their per-winner links. The list
+ *  renders one card per relationship today (a person with three winners = three cards); this shape is the
+ *  „one row per лице" the DataTable consumes (#287). Grouping stays in presentation — the loader keeps
+ *  returning raw `ConflictLink[]` (plan decision #5), mirroring how `conflictHeadline` also groups read-time.
+ *
+ *  Deliberately carries NO relative identity. A family link (relation 'related', ADR-0032) folds into the
+ *  person's counts and money exactly like a self link, but the relative is never named — this row exposes
+ *  only the OFFICIAL (their own public declaration), never who the свързано лице is. */
+export interface ConflictPersonRow {
+  /** The office-holder's name, from their strongest link (person grain is (name, institution), ADR-0026). */
+  official: string;
+  /** URL-safe person id → /conflicts/official/:slug — the group key. */
+  officialSlug: string;
+  /** The official's latest declared institution — disambiguates namesakes; from the strongest link. */
+  institution: string | null;
+  /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
+  companyCount: number;
+  /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
+  soleCompany: { company: string; eik: string } | null;
+  /** Sum of contractCount across the person's links, null-guarded (never NaN). */
+  contractCount: number;
+  /** Total public money to the person's winners — per-ЕИК-deduped „от" figure (a winner's € is company-level,
+   *  not per-link; reuses the `conflictHeadline` dedup). Nulls count as 0 — the money never reads as fabricated. */
+  contractValueEur: number;
+  /** Conflict-window subset of that money (the „по време на конфликта" lead figure), per-ЕИК-deduped (MAX). */
+  contemporaneousValueEur: number;
+  /** ≥1 of the person's links has a contract from the official's OWN institution — OR across links. */
+  ownInstitution: boolean;
+  /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
+  hasContemporaneous: boolean;
+}
+
+/** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's
+ *  `own_institution='exact' DESC, contemporaneous_contract_count>0 DESC, contemporaneous_value_eur DESC,
+ *  link_key` (`related-persons.ts`), so „strongest link" here means exactly what the query means by it. */
+function linkRank(l: ConflictLink): [number, number, number, string] {
+  return [
+    l.ownInstitution ? 1 : 0,
+    l.contemporaneousContractCount > 0 ? 1 : 0,
+    l.contemporaneousValueEur ?? 0,
+    l.linkKey,
+  ];
+}
+
+/** True when link `a` is STRICTLY stronger than `b` under NEXUS_ORDER (own-institution, then any-window,
+ *  then window-€; the link_key tiebreak is ascending — the smaller key is „stronger" only as a stable
+ *  deterministic tiebreak, matching the DB's `link_key` ASC). */
+function isStrongerLink(a: ConflictLink, b: ConflictLink): boolean {
+  const [ai, ac, av] = linkRank(a);
+  const [bi, bc, bv] = linkRank(b);
+  if (ai !== bi) return ai > bi;
+  if (ac !== bc) return ac > bc;
+  if (av !== bv) return av > bv;
+  return a.linkKey < b.linkKey; // ascending link_key is the DB's final tiebreak
+}
+
+/** Collapse per-relationship `ConflictLink[]` into one `ConflictPersonRow` per person for the /conflicts
+ *  leaderboard (#287). Grouped by `officialSlug`.
+ *
+ *  Correctness invariants (plan §3.1):
+ *  - Identity (official/slug/institution) comes from the person's STRONGEST link, computed explicitly via
+ *    NEXUS_ORDER — NOT `links[0]`. The DB returns links pre-sorted so `links[0]` is strongest in practice,
+ *    but this helper must be correct for ANY input order, so it never assumes the caller sorted.
+ *  - Money is per-ЕИК-deduped (reusing the `conflictHeadline` approach): a winner's total € is company-level
+ *    and constant within a ЕИК (exact dedup); the window € is a per-link subset, so take the MAX per ЕИК.
+ *    Within one person the ЕИК are already distinct after the upstream family collapse, but a duplicate ЕИК
+ *    must still not double-count — the dedup guarantees it. Nulls count as 0 (never NaN).
+ *  - `companyCount` = distinct ЕИК; `soleCompany` carries the name+ЕИК when that count is 1.
+ *  - `contractCount` = null-guarded sum across links.
+ *  - Flags are OR-ed across links; but the RANK is driven by the strongest SINGLE link, not the OR-ed flags
+ *    (else two weak links out-rank one strong link). Output rows are sorted by the strongest link's
+ *    NEXUS_ORDER: ownInstitution DESC, hasContemporaneous DESC, maxContemporaneousValueEur DESC, then a
+ *    stable tiebreak on `officialSlug`. */
+export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
+  const groups = new Map<string, { strongest: ConflictLink; links: ConflictLink[] }>();
+  for (const l of links) {
+    const g = groups.get(l.officialSlug);
+    if (!g) {
+      groups.set(l.officialSlug, { strongest: l, links: [l] });
+    } else {
+      g.links.push(l);
+      if (isStrongerLink(l, g.strongest)) g.strongest = l;
+    }
+  }
+
+  const rows: { row: ConflictPersonRow; strongest: ConflictLink }[] = [];
+  for (const { strongest, links: groupLinks } of groups.values()) {
+    // Per-ЕИК money dedup, mirroring conflictHeadline: total is constant within a ЕИК (MAX = the value),
+    // window € is a per-link subset so MAX per ЕИК is deterministic and never overstated. Nulls → 0.
+    const perEik = new Map<string, { total: number; contemporaneous: number }>();
+    for (const l of groupLinks) {
+      const prev = perEik.get(l.eik) ?? { total: 0, contemporaneous: 0 };
+      perEik.set(l.eik, {
+        total: Math.max(prev.total, l.contractValueEur ?? 0),
+        contemporaneous: Math.max(prev.contemporaneous, l.contemporaneousValueEur ?? 0),
+      });
+    }
+    let contractValueEur = 0;
+    let contemporaneousValueEur = 0;
+    for (const v of perEik.values()) {
+      contractValueEur += v.total;
+      contemporaneousValueEur += v.contemporaneous;
+    }
+
+    const companyCount = perEik.size;
+    // soleCompany takes the strongest link's winner when the person has exactly one distinct ЕИК — every
+    // link then shares that ЕИК, so the strongest link's company/eik is the right (and only) one to name.
+    const soleCompany =
+      companyCount === 1 ? { company: strongest.company, eik: strongest.eik } : null;
+
+    rows.push({
+      strongest,
+      row: {
+        official: strongest.official,
+        officialSlug: strongest.officialSlug,
+        institution: strongest.institution,
+        companyCount,
+        soleCompany,
+        contractCount: groupLinks.reduce((sum, l) => sum + (l.contractCount ?? 0), 0),
+        contractValueEur,
+        contemporaneousValueEur,
+        ownInstitution: groupLinks.some((l) => l.ownInstitution),
+        hasContemporaneous: groupLinks.some((l) => l.contemporaneousContractCount > 0),
+      },
+    });
+  }
+
+  // Rank is the strongest SINGLE link's NEXUS_ORDER — NOT the OR-ed row flags. A person with one strong link
+  // and one weak link must not sink below a person with only a medium link, so compare the STRONGEST links
+  // directly. Tiebreak on officialSlug for a stable, deterministic order.
+  rows.sort((a, b) => {
+    if (isStrongerLink(a.strongest, b.strongest)) return -1;
+    if (isStrongerLink(b.strongest, a.strongest)) return 1;
+    return a.row.officialSlug < b.row.officialSlug ? -1 : a.row.officialSlug > b.row.officialSlug ? 1 : 0;
+  });
+  return rows.map((r) => r.row);
+}
