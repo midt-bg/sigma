@@ -234,6 +234,78 @@ jobs:
               ;;
           esac
 
+      # #305 additive columns (migrations 0006/0007) must exist BEFORE the Worker serves: the contract-page
+      # query reads amendments.value_restated/value_suspect, and promote-amendments/refresh-slice also INSERT
+      # value_treatment — so all three must be present or the read AND the ETL write fail. Same rationale as
+      # the currency step above: the migration ledger is empty, so `d1 migrations apply` would collide on
+      # 0000. Probe the actual table and ALTER only the missing columns (SQLite has no ADD COLUMN IF NOT
+      # EXISTS). These are pure additions with safe defaults (INTEGER NOT NULL DEFAULT 0 / nullable TEXT), so
+      # no backfill or completion marker is needed — an ALTER populates every existing row. Malformed
+      # responses are fatal. This also makes 0006/0007 replay-safe when they were applied out-of-ledger.
+      # #306 folds in here rather than adding a second step of its own (as PR #308's own note asked):
+      # refresh-slice.sql and promote-amendments.sql write contract_number_raw + link_method into served
+      # `amendments`, so the first cron after release would crash on the missing columns. One probe, one
+      # mechanism — a second hand-written step is another chance for the alias bug #310 had to fix.
+      - name: Apply amendment restated/suspect + provenance columns
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          # Each alias below MUST be the column name itself: read_flag looks the row up by the very string
+          # ensure_column is called with. An alias that merely describes the column (has_restated) makes
+          # `Object.hasOwn(row, key)` false for every column, which the probe treats as an unreadable answer
+          # and turns into a hard failure — so the step could never succeed, on any database.
+          schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes --json \
+            --command "SELECT
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_restated') AS value_restated,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_treatment') AS value_treatment,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_suspect') AS value_suspect,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'contract_number_raw') AS contract_number_raw,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'link_method') AS link_method")"
+
+          read_flag() {
+            printf '%s' "$schema_json" | node -e '
+              const fs = require("fs");
+              let payload;
+              try {
+                payload = JSON.parse(fs.readFileSync(0, "utf8"));
+              } catch {
+                process.exit(2);
+              }
+              const result = Array.isArray(payload) ? payload[0] : payload;
+              const row = result && Array.isArray(result.results) ? result.results[0] : null;
+              const key = process.argv[1];
+              if (!row || !Object.hasOwn(row, key)) process.exit(2);
+              process.exit(Number(row[key]) === 1 ? 0 : 1);
+            ' "$1"
+          }
+
+          add_column() {
+            echo "amendments.$1 missing; adding it."
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --command "ALTER TABLE amendments ADD COLUMN $2"
+          }
+
+          ensure_column() {
+            set +e
+            read_flag "$1"
+            status="$?"
+            set -e
+            case "$status" in
+              0) echo "amendments.$1 already exists." ;;
+              1) add_column "$1" "$2" ;;
+              *) echo "::error::Could not determine whether amendments.$1 exists."; exit 1 ;;
+            esac
+          }
+
+          ensure_column value_restated  "value_restated INTEGER NOT NULL DEFAULT 0"
+          ensure_column value_treatment "value_treatment TEXT"
+          ensure_column value_suspect   "value_suspect INTEGER NOT NULL DEFAULT 0"
+          # #306 provenance: NULL on both = the row linked by contract_number directly (or is unlinked).
+          ensure_column contract_number_raw "contract_number_raw TEXT"
+          ensure_column link_method         "link_method TEXT"
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'

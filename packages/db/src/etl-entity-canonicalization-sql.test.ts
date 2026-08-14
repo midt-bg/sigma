@@ -13,6 +13,11 @@ const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006, joined by the officials block for the Trade Register evidence gate (#279, ADR-0033).
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).
+const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
+const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
+// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
+const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -43,6 +48,9 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, migration2Path);
     readScript(dbPath, migration3Path);
     readScript(dbPath, migration9Path);
+    readScript(dbPath, migration6Path);
+    readScript(dbPath, migration7Path);
+    readScript(dbPath, migration8Path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

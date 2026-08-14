@@ -1,6 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    // base.ts imports './amendment-total.ts' with an explicit .ts extension (the ETL runtime consumes this
+    // source under plain Node). allowImportingTsExtensions is set in tsconfig.base.json for every consumer.
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src"]
