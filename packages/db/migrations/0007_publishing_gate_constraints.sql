@@ -1,14 +1,17 @@
--- Retrofit the publishing-gate constraints onto an ALREADY-DEPLOYED database (#279 §2).
+-- The publishing-gate constraints, for EVERY database — freshly built and already-deployed alike (#279 §2).
 --
--- WHY THIS EXISTS AT ALL, given 0003 and 0006 now declare the same constraints:
---   `CREATE TABLE IF NOT EXISTS` is a no-op against a table that already exists, and
---   `scripts/ship-related-persons.mjs` wipes ROWS (`DELETE FROM`, WIPE_ORDER) and never table
---   definitions. So every environment that applied 0003 before today keeps the unconstrained shape
---   forever, no matter how many times the data is reloaded. Only a rebuild can change it.
+-- WHY THIS MIGRATION OWNS THEM RATHER THAN 0003 (todorkolev, #309). The obvious move is to add the CHECKs
+-- to `interest_links` in 0003, where the table is declared. That does not work and is worse than not
+-- trying: 0003 is ALREADY APPLIED everywhere, `CREATE TABLE IF NOT EXISTS` is a no-op against an existing
+-- table, and `ship-related-persons.mjs` wipes ROWS (`DELETE FROM`, WIPE_ORDER), never definitions. So an
+-- in-place CHECK would exist only on databases built after the edit — putting two different schemas under
+-- one name, with the constraint absent precisely on the served database. That is where a hand-run
+-- `UPDATE … SET status='published '` during an incident actually lands.
 --
--- WHY IT IS SAFE TO RE-RUN: migrations here are applied by a bare `wrangler d1 execute --file` with no
--- applied-migrations tracking (see related-persons-data.yml / deploy.yml), so re-application MUST be a
--- no-op. Everything below is `IF NOT EXISTS` over statements that converge.
+-- So 0003 stays byte-identical to what was applied, and enforcement lives here, reached by both paths:
+-- a fresh chain runs 0007 after 0003, and a deployed database gets it as a retrofit. One shape, one
+-- mechanism. `packages/db/src/migrations.test.ts` holds the two shapes to the same rejections and the same
+-- acceptances, so this stays true rather than merely intended.
 --
 -- WHY TRIGGERS AND NOT A TABLE REBUILD: SQLite cannot add a CHECK in place, so the textbook route is
 -- create-copy-drop-rename. That route is WRONG here, and a real `wrangler d1 migrations apply` proved it:
@@ -18,10 +21,14 @@
 -- child first would work mechanically but would strip every evidence seal, and since the read gate
 -- REQUIRES a seal that empties the public surface until the next monthly data run.
 --
--- A BEFORE INSERT/UPDATE trigger that RAISEs enforces the identical invariant for every writer —
--- including a hand-run UPDATE during an incident, which is when a bad value is most likely typed — with
--- no rebuild, no FK exposure and no seal loss. Freshly created databases still get true CHECK constraints
--- from 0003/0006; this is the retrofit path for databases that already exist.
+-- A BEFORE INSERT/UPDATE trigger that RAISEs enforces the identical invariant for every writer — including
+-- the hand-run UPDATE above, which no CHECK on a legacy table would ever have covered — with no rebuild,
+-- no FK exposure and no seal loss. 0006 keeps its own CHECKs: it is NEW in this change, has never been
+-- applied to a served environment, so declaring them there edits no applied history.
+--
+-- WHY IT IS SAFE TO RE-RUN: migrations here are applied by a bare `wrangler d1 execute --file` with no
+-- applied-migrations tracking (see related-persons-data.yml / deploy.yml), so re-application MUST be a
+-- no-op. Everything below is `IF NOT EXISTS` over statements that converge.
 
 -- ── declarations ────────────────────────────────────────────────────────────────────────────────────
 -- The table-level `UNIQUE (xml_file, control_hash)` did not constrain what it was written for. SQLite
@@ -36,10 +43,27 @@
 -- optional source field into a run-stopping loader failure, and a fabricated placeholder hash would
 -- assert an integrity check nobody performed.
 --
--- No table rebuild is needed for this one: dropping the old constraint means dropping the table it lives
--- on, but the same effect is had by creating the correct index — and the stale UNIQUE, being strictly
--- weaker, rejects nothing the new index accepts. Duplicates ALREADY stored under the old non-constraint
--- would block the new index, so they are collapsed first, keeping the earliest row per natural key.
+-- No table rebuild is needed for this one: the table-level `UNIQUE (xml_file, control_hash)` declared in
+-- 0003 STAYS (0003 is not edited — see the header), and the correct index is simply added alongside it.
+-- The stale constraint is strictly WEAKER than the index — it treats NULLs as distinct, so it accepts a
+-- superset — and therefore rejects nothing the index accepts. The index governs.
+--
+-- Duplicates ALREADY stored under the old non-constraint would block the index, so they are collapsed
+-- first, keeping the earliest row per natural key.
+--
+-- The DELETE below changes live data, so it ANNOUNCES itself first (cefothe, #309): the count is emitted
+-- before the rows go, and a run that removes nothing says so. Without it the only evidence a deployment
+-- silently dropped declarations would be a row count nobody recorded beforehand. It needs no explicit
+-- transaction — `wrangler d1 execute --file` runs the file as one implicit transaction, so a failure
+-- anywhere below rolls the DELETE back with it rather than leaving a half-collapsed table.
+-- The subtraction is parenthesised deliberately: `||` binds TIGHTER than `-` in SQLite, so without it
+-- this reads as ('…' || countA) - (countB || '…') — two strings coerced to numbers — and reports a
+-- meaningless figure instead of the row count. It did, before a real apply showed „notice: -2".
+SELECT 'migration 0007: collapsing ' ||
+       ((SELECT COUNT(*) FROM declarations) -
+        (SELECT COUNT(*) FROM (SELECT 1 FROM declarations
+                               GROUP BY xml_file, folder_year, COALESCE(control_hash, '')))) ||
+       ' duplicate declaration row(s) before the natural-key index' AS notice;
 DELETE FROM declarations WHERE id NOT IN (
   SELECT MIN(id) FROM declarations GROUP BY xml_file, folder_year, COALESCE(control_hash, '')
 );

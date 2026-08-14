@@ -29,24 +29,9 @@ CREATE TABLE IF NOT EXISTS declarations (
   category      TEXT,                       -- CACBG category (e.g. Народни представители)
   institution   TEXT,                       -- the body the official serves in
   position      TEXT,                       -- declared position
-  source_url    TEXT NOT NULL               -- register.cacbg.bg/<folder>/<xml_file> — provenance
+  source_url    TEXT NOT NULL,              -- register.cacbg.bg/<folder>/<xml_file> — provenance
+  UNIQUE (xml_file, control_hash)
 );
--- Re-import idempotence (#279 §2). This REPLACES a table-level `UNIQUE (xml_file, control_hash)`, which
--- did not constrain anything it was meant to:
---   1. SQLite counts NULLs as DISTINCT, and `control_hash` is genuinely optional at the source — the
---      register omits <ControlHash> on some declarations and parse.mjs carries that through as null. So
---      every hashless declaration was mutually unique and re-imported as a fresh row each run,
---      double-counting the stakes it carries. COALESCE folds them to one value.
---   2. `xml_file` is not unique ACROSS FOLDERS — the register splits years into suffixed folders and
---      reuses basenames — which load.mjs already knows, since it namespaces the declaration id by folder
---      for exactly this reason. Without folder_year here the two keys disagree, and the narrower one
---      would reject a second official's genuinely different declaration.
---
--- `control_hash` deliberately stays NULLABLE. NOT NULL was the other candidate, but it converts an
--- optional source field into a run-stopping loader failure, and fabricating a hash to satisfy it would
--- assert an integrity check we never performed.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_declarations_natural_key
-  ON declarations(xml_file, folder_year, COALESCE(control_hash, ''));
 -- Per-person lookup: audit.mjs scans a person's declarations, and LINK_SELECT's source_url subquery
 -- filters declarations by person_id — without this it's a full scan of the table.
 CREATE INDEX IF NOT EXISTS idx_declarations_person ON declarations(person_id);
@@ -90,12 +75,7 @@ CREATE TABLE IF NOT EXISTS interest_links (
   --   management_role   — self, relation manages, a single declarant (ambiguous: private manager or small board)
   -- Materiality: only CLOSELY-HELD forms (ООД/ЕООД/ЕТ/…) reach ownership classes; listed АД/ЕАД securities
   -- and management-only roles never become private_ownership/family_ownership (ADR-0022).
-  -- fail-closed: a NON-surfaced class, so a writer that sets status but forgets the class can't leak to
-  -- the public surface (load.mjs always sets it explicitly). CHECKed for the same reason as `status`:
-  -- the surface reads this as an enum, so a typo'd class is a gate failure, not a cosmetic one.
-  interest_class    TEXT NOT NULL DEFAULT 'management_role'
-                    CHECK (interest_class IN ('private_ownership','family_ownership',
-                                              'ex_officio_board','management_role')),
+  interest_class    TEXT NOT NULL DEFAULT 'management_role', -- fail-closed: a NON-surfaced class, so a writer that sets status but forgets the class can't leak to the public surface (load.mjs always sets it explicitly)
   contemporaneous   INTEGER NOT NULL DEFAULT 0,
   own_institution   TEXT NOT NULL DEFAULT 'none', -- exact (deterministic) | locality (heuristic) | none
   evidence_count    INTEGER NOT NULL DEFAULT 1,   -- # declared_interests supporting this link
@@ -107,12 +87,7 @@ CREATE TABLE IF NOT EXISTS interest_links (
   contract_value_eur  REAL,                        -- SUM(contracts.amount_eur); NULL if none summable
   first_contract_year TEXT,
   last_contract_year  TEXT,
-  -- CHECKed, not merely documented (#279 §2). The public surface is `status = 'published'`, so a value
-  -- that only LOOKS like one — 'published ' with a trailing space is the case the ticket names — passes
-  -- every writer and then fails the gate silently, or slips a LIKE. A CHECK binds every writer at once,
-  -- including a hand-run UPDATE during an incident, which is exactly when this is most likely typed.
-  status            TEXT NOT NULL DEFAULT 'held'
-                    CHECK (status IN ('published','internal','held','withdrawn','suppressed')),
+  status            TEXT NOT NULL DEFAULT 'held', -- published (public surface: private/family ownership) | internal (non-surfaced class) | held | withdrawn | suppressed
   verified_by       TEXT,
   verified_at       TEXT,
   created_at        TEXT NOT NULL DEFAULT (datetime('now'))

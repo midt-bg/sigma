@@ -299,6 +299,94 @@ describe('served migrations', () => {
     }
   });
 
+  // THE POINT OF 0007, stated as an executable claim rather than a comment (todorkolev, #309).
+  //
+  // 0003 is an ALREADY-APPLIED migration and is therefore never edited: `CREATE TABLE IF NOT EXISTS` is a
+  // no-op on a live database, so an in-place CHECK would exist only on freshly built ones. That would put
+  // two different schemas under one name — and the divergence would land precisely on the served database,
+  // which is where a hand-run `UPDATE status='published '` during an incident actually happens.
+  //
+  // So 0007 owns the enforcement for BOTH shapes, and this test is what keeps them one shape: a fresh
+  // 0000..0007 build and a legacy database retrofitted by 0007 must reject the SAME values and accept the
+  // SAME values. If either drifts, the parity assertions below fail rather than a reviewer noticing.
+  it('a fresh build and a retrofitted legacy database enforce the SAME gate', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-migrations-parity-'));
+    const fresh = resolve(dir, 'fresh.sqlite');
+    const legacy = resolve(dir, 'legacy.sqlite');
+    try {
+      // (1) fresh: the migration chain exactly as a new environment applies it.
+      for (const m of [migration0, migration3, migration6, migration7]) readScript(fresh, m);
+
+      // (2) legacy: 0003 + 0006 as they were BEFORE this PR, then 0007 retrofits. `interest_links` is
+      // recreated without constraints because that is the shape every already-deployed database holds.
+      for (const m of [migration0, migration3, migration6]) readScript(legacy, m);
+      sqlite(
+        legacy,
+        `DROP TABLE interest_link_evidence;
+         DROP TABLE interest_links;
+         CREATE TABLE interest_links (
+           id TEXT PRIMARY KEY, link_key TEXT NOT NULL UNIQUE,
+           person_id TEXT NOT NULL REFERENCES persons(id), bidder_id TEXT NOT NULL, eik TEXT NOT NULL,
+           entity_key TEXT NOT NULL, match_method TEXT, matcher_version TEXT NOT NULL,
+           publish_tier TEXT NOT NULL, relation TEXT NOT NULL,
+           interest_class TEXT NOT NULL DEFAULT 'management_role',
+           contemporaneous INTEGER NOT NULL DEFAULT 0, own_institution TEXT NOT NULL DEFAULT 'none',
+           evidence_count INTEGER NOT NULL DEFAULT 1, first_declared_year TEXT, last_declared_year TEXT,
+           contract_count INTEGER NOT NULL DEFAULT 0, contract_value_eur REAL, first_contract_year TEXT,
+           last_contract_year TEXT, status TEXT NOT NULL DEFAULT 'held', verified_by TEXT,
+           verified_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+         CREATE TABLE interest_link_evidence (
+           link_key TEXT PRIMARY KEY REFERENCES interest_links(link_key), evidence_kind TEXT NOT NULL,
+           registry_role TEXT, matched_fact TEXT, entry_number TEXT, entry_date TEXT,
+           lookup_date TEXT NOT NULL, rules_version TEXT NOT NULL, live_status TEXT NOT NULL,
+           sealed_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+      );
+      readScript(legacy, migration7);
+
+      const link = (db: string, id: string, status: string, cls = 'private_ownership') =>
+        sqlite(
+          db,
+          `INSERT INTO persons(id, name) VALUES ('person:a', 'А') ON CONFLICT DO NOTHING;
+           INSERT INTO interest_links
+             (id, link_key, person_id, bidder_id, eik, entity_key, matcher_version, publish_tier,
+              relation, interest_class, status)
+           VALUES ('il:${id}', '${id}', 'person:a', 'eik:1', '1', 'X', 't', 'document', 'owns',
+                   '${cls}', '${status}');`,
+        );
+      const seal = (db: string, key: string, kind: string) =>
+        sqlite(
+          db,
+          `INSERT INTO interest_link_evidence
+             (link_key, evidence_kind, lookup_date, rules_version, live_status)
+           VALUES ('${key}', '${kind}', '2026-08-14', 'tr-rules-1', 'live');`,
+        );
+
+      for (const [label, db] of [
+        ['fresh', fresh],
+        ['legacy', legacy],
+      ] as const) {
+        // REJECTED identically — 'published ' is #279 §2's named case, and it is the one a human types.
+        expect(() => link(db, `bad1-${label}`, 'published ')).toThrow(/CHECK/i);
+        expect(() => link(db, `bad2-${label}`, 'publushed')).toThrow(/CHECK/i);
+        expect(() => link(db, `bad3-${label}`, 'held', 'private_ownership ')).toThrow(/CHECK/i);
+        // ACCEPTED identically — the gate is a bound, not a blanket, on both shapes.
+        expect(() => link(db, `ok-${label}`, 'published')).not.toThrow();
+        expect(() => seal(db, `ok-${label}`, 'document')).not.toThrow();
+        expect(() => seal(db, `ok-${label}`, 'document_uncorroborated')).toThrow(/UNIQUE|CHECK/i);
+        // …and the evidence enum is enforced on both too.
+        expect(() => link(db, `k2-${label}`, 'held')).not.toThrow();
+        expect(() => seal(db, `k2-${label}`, 'document_uncorroberated')).toThrow(/CHECK/i);
+        // The UPDATE path is the one an incident actually uses, and no CHECK would ever cover it on a
+        // legacy table — only the trigger does.
+        expect(() =>
+          sqlite(db, `UPDATE interest_links SET status='published ' WHERE link_key='ok-${label}';`),
+        ).toThrow(/CHECK/i);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // The retrofit has to be safe on a LIVE D1: ship-related-persons wipes rows, never table definitions,
   // so a deployed database keeps its unconstrained 0003 shape until this migration rebuilds it.
   it('0007 retrofits a pre-existing database, keeps its rows, and re-applies as a no-op', () => {
