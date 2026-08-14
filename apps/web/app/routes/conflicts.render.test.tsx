@@ -218,9 +218,27 @@ describe('/conflicts route — render', () => {
 
   it('Дружества: 3 distinct winners → the count; a single winner → its name', async () => {
     await renderConflicts([
-      link({ officialSlug: 'multi', official: 'Много Тестов', eik: '1', company: 'А АД', linkKey: 'm1' }),
-      link({ officialSlug: 'multi', official: 'Много Тестов', eik: '2', company: 'Б АД', linkKey: 'm2' }),
-      link({ officialSlug: 'multi', official: 'Много Тестов', eik: '3', company: 'В АД', linkKey: 'm3' }),
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '1',
+        company: 'А АД',
+        linkKey: 'm1',
+      }),
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '2',
+        company: 'Б АД',
+        linkKey: 'm2',
+      }),
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '3',
+        company: 'В АД',
+        linkKey: 'm3',
+      }),
     ]);
     const multiRow = bodyRows().find((r) => r.textContent?.includes('Много Тестов'))!;
     const cell = multiRow.querySelector('td[data-label="Дружества"]')!;

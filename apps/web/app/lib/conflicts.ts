@@ -521,7 +521,11 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
   rows.sort((a, b) => {
     if (isStrongerLink(a.strongest, b.strongest)) return -1;
     if (isStrongerLink(b.strongest, a.strongest)) return 1;
-    return a.row.officialSlug < b.row.officialSlug ? -1 : a.row.officialSlug > b.row.officialSlug ? 1 : 0;
+    return a.row.officialSlug < b.row.officialSlug
+      ? -1
+      : a.row.officialSlug > b.row.officialSlug
+        ? 1
+        : 0;
   });
   return rows.map((r) => r.row);
 }

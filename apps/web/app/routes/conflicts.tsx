@@ -90,7 +90,8 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       header: 'Дружества',
       // The winner's name when the person is linked to exactly one; otherwise the distinct-ЕИК count. No
       // link — the person page (title column) is the way in; the winner names live there.
-      cell: (r) => (r.companyCount === 1 && r.soleCompany ? r.soleCompany.company : count(r.companyCount)),
+      cell: (r) =>
+        r.companyCount === 1 && r.soleCompany ? r.soleCompany.company : count(r.companyCount),
     },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (r) => count(r.contractCount) },
     {

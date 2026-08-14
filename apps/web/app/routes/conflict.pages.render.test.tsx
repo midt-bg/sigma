@@ -163,7 +163,9 @@ describe('/conflicts/official/:id — render', () => {
     // block that correctly says „свързано лице".
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
-      links: [link({ linkKey: 'k1', relation: 'related', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' })],
+      links: [
+        link({ linkKey: 'k1', relation: 'related', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' }),
+      ],
       contracts: { k1: [] },
     });
     expect(text()).not.toContain('собствен дял');
@@ -211,7 +213,12 @@ describe('/conflicts/company/:eik — render', () => {
       eik: '111',
       links: [
         link({ linkKey: 'k1' }),
-        link({ linkKey: 'k2', officialSlug: 's2', official: 'Втори Официал', institution: 'Община Друга' }),
+        link({
+          linkKey: 'k2',
+          officialSlug: 's2',
+          official: 'Втори Официал',
+          institution: 'Община Друга',
+        }),
       ],
       contracts: { k1: [contract()], k2: [] },
     });
