@@ -13,9 +13,9 @@ import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import {
   conflictHeadline,
-  fundsCellLabel,
   groupByPerson,
   officialHref,
+  personFundsCell,
   type ConflictPersonRow,
 } from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
@@ -102,11 +102,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       // „от <total>" — the same lead/total split fundsCellLabel encodes per link, here over the person's
       // per-ЕИК-deduped sums. When nothing was signed in the window there is no split: show only the total.
       cell: (r) => {
-        const cell = fundsCellLabel({
-          contemporaneousContractCount: r.hasContemporaneous ? 1 : 0,
-          contemporaneousValueEur: r.contemporaneousValueEur,
-          contractValueEur: r.contractValueEur,
-        } as Parameters<typeof fundsCellLabel>[0]);
+        const cell = personFundsCell(r);
         return (
           <>
             {cell.primary}

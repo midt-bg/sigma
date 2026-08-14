@@ -101,17 +101,33 @@ export function contractsCountLabel(link: ConflictLink): string {
     : count(link.contractCount);
 }
 
-/** Public-funds cell: leads with the conflict-window sum (the figure the „по време на конфликта" question
- *  is about) and keeps the total as context so the row still reconciles to the headline. When no contract
- *  was signed in the window, there is nothing to split — show only the total. */
-export function fundsCellLabel(link: ConflictLink): { primary: string; total: string | null } {
-  if (hasContemporaneousContracts(link) && link.contemporaneousValueEur != null) {
-    return {
-      primary: moneyBare(link.contemporaneousValueEur),
-      total: moneyBare(link.contractValueEur),
-    };
+export interface FundsCell {
+  primary: string;
+  total: string | null;
+}
+
+/** The lead/total funds split shared by the per-link cell and the per-person row: lead with the
+ *  conflict-window sum (the figure the „по време на конфликта" question is about) and keep the total as „от"
+ *  context so it still reconciles to the headline; when there is no in-window sum to split, show only the total. */
+function fundsSplit(
+  hasWindow: boolean,
+  windowEur: number | null,
+  totalEur: number | null,
+): FundsCell {
+  if (hasWindow && windowEur != null) {
+    return { primary: moneyBare(windowEur), total: moneyBare(totalEur) };
   }
-  return { primary: moneyBare(link.contractValueEur), total: null };
+  return { primary: moneyBare(totalEur), total: null };
+}
+
+/** Public-funds cell for a single link. Leads with the conflict-window sum and keeps the total as context so
+ *  the row still reconciles to the headline. When no contract was signed in the window, show only the total. */
+export function fundsCellLabel(link: ConflictLink): FundsCell {
+  return fundsSplit(
+    hasContemporaneousContracts(link),
+    link.contemporaneousValueEur,
+    link.contractValueEur,
+  );
 }
 
 /** Ratio of conflict-window money to the winner's total, for the magnitude bar — how much of the money
@@ -418,6 +434,18 @@ export interface ConflictPersonRow {
   ownInstitution: boolean;
   /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
   hasContemporaneous: boolean;
+}
+
+/** Public-funds cell for a collapsed person row (#287): the same lead/total split as the per-link
+ *  `fundsCellLabel`, but computed from the row's OR-ed window flag and per-ЕИК-deduped sums — no synthetic
+ *  `ConflictLink` and no cast, so it cannot silently drift if `fundsCellLabel` grows a new field read. */
+export function personFundsCell(
+  row: Pick<
+    ConflictPersonRow,
+    'hasContemporaneous' | 'contemporaneousValueEur' | 'contractValueEur'
+  >,
+): FundsCell {
+  return fundsSplit(row.hasContemporaneous, row.contemporaneousValueEur, row.contractValueEur);
 }
 
 /** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's

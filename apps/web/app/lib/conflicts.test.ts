@@ -20,6 +20,7 @@ import {
   linkContractsHref,
   officialHref,
   partitionContracts,
+  personFundsCell,
   relationLabel,
   temporalLabel,
   registryEvidenceLabel,
@@ -206,6 +207,25 @@ describe('contemporaneous split', () => {
       }),
     );
     expect(noValue.total).toBeNull();
+  });
+
+  it('personFundsCell mirrors the split over a collapsed person row — no synthetic link, no cast', () => {
+    // an in-window sum → the window figure leads, the total is kept as „от" context
+    const withWindow = personFundsCell({
+      hasContemporaneous: true,
+      contemporaneousValueEur: 3_000_000,
+      contractValueEur: 8_000_000,
+    });
+    expect(withWindow.primary).toBe(moneyBare(3_000_000));
+    expect(withWindow.total).toBe(moneyBare(8_000_000));
+    // nothing signed in the window → only the total, no split
+    const noWindow = personFundsCell({
+      hasContemporaneous: false,
+      contemporaneousValueEur: 0,
+      contractValueEur: 8_000_000,
+    });
+    expect(noWindow.primary).toBe(moneyBare(8_000_000));
+    expect(noWindow.total).toBeNull();
   });
 });
 
