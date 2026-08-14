@@ -226,12 +226,16 @@ jobs:
         if: steps.guard.outputs.ok == 'true'
         run: |
           node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          # Each alias below MUST be the column name itself: read_flag looks the row up by the very string
+          # ensure_column is called with. An alias that merely describes the column (has_restated) makes
+          # `Object.hasOwn(row, key)` false for every column, which the probe treats as an unreadable answer
+          # and turns into a hard failure — so the step could never succeed, on any database.
           schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
             --config wrangler.deploy.jsonc --remote --yes --json \
             --command "SELECT
-              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_restated') AS has_restated,
-              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_treatment') AS has_treatment,
-              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_suspect') AS has_suspect")"
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_restated') AS value_restated,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_treatment') AS value_treatment,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'value_suspect') AS value_suspect")"
 
           read_flag() {
             printf '%s' "$schema_json" | node -e '
