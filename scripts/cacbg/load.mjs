@@ -48,7 +48,7 @@ const MIGRATION = path.join(ROOT, 'packages/db/migrations/0003_related_persons_f
 // missing from the work DB would make every evidence write fail at ship time instead of at load.
 const MIGRATION_EVIDENCE = path.join(
   ROOT,
-  'packages/db/migrations/0006_interest_link_evidence.sql',
+  'packages/db/migrations/0009_interest_link_evidence.sql',
 );
 const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a

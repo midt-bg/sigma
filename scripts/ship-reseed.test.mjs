@@ -17,7 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MIG = resolve(HERE, '..', 'packages/db/migrations/0003_related_persons_foundation.sql');
 // 0006 adds interest_link_evidence, which references interest_links — so it is part of the FK graph
 // this test exists to police, and the wipe must clear it before its parent (#279, ADR-0033).
-const MIG_EVIDENCE = resolve(HERE, '..', 'packages/db/migrations/0006_interest_link_evidence.sql');
+const MIG_EVIDENCE = resolve(HERE, '..', 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 // Stub only the two 0000 tables 0002's FKs reference (bidders, authorities) — a PK column is all a FK needs —
 // then apply the real 0002 and seed one row down every FK chain so a parent delete has live children.

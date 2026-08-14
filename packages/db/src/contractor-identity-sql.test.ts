@@ -18,7 +18,7 @@ const migration3 = readFileSync(
 );
 // …and 0006, which those same blocks now join for the Trade Register evidence gate (#279, ADR-0033).
 const migration6 = readFileSync(
-  resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql'),
+  resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql'),
   'utf8',
 );
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');

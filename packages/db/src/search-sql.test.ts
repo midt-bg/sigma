@@ -16,7 +16,7 @@ import { SEARCH_HITS_SQL, SEARCH_HITS_SQL_NO_CONFLICT } from './queries/search';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-const migration6 = resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql');
+const migration6 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });

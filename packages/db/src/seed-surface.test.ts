@@ -21,7 +21,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migrations = [
   'packages/db/migrations/0000_init.sql',
   'packages/db/migrations/0003_related_persons_foundation.sql',
-  'packages/db/migrations/0006_interest_link_evidence.sql',
+  'packages/db/migrations/0009_interest_link_evidence.sql',
 ].map((m) => resolve(root, m));
 const seed = resolve(root, 'scripts/seed.sql');
 

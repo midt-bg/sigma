@@ -11,8 +11,8 @@ const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-const migration6 = resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql');
-const migration7 = resolve(root, 'packages/db/migrations/0007_publishing_gate_constraints.sql');
+const migration6 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const migration7 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 

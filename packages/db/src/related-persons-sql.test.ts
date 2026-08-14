@@ -26,7 +26,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006: SURFACED_OWNERSHIP now requires a Trade Register evidence seal (#279, ADR-0033).
-const migration6 = resolve(root, 'packages/db/migrations/0006_interest_link_evidence.sql');
+const migration6 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();

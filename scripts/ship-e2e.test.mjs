@@ -31,7 +31,7 @@ const MIG = resolve(ROOT, 'packages/db/migrations/0003_related_persons_foundatio
 // 0006 too: the evidence seal is one of the shipped tables (#279, ADR-0033), so it appears in the ship's
 // TABLES and WIPE_ORDER. A target built from 0003 alone makes the generated wipe abort on „no such table"
 // before a single row moves — the schema under test has to be the schema the ship writes.
-const MIG_EVIDENCE = resolve(ROOT, 'packages/db/migrations/0006_interest_link_evidence.sql');
+const MIG_EVIDENCE = resolve(ROOT, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const D1_NAME = 'sigma-test-local';
 
 // Derived from BOTH production constants, and the run below does NOT override either: one row past
