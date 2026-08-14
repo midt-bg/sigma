@@ -214,6 +214,59 @@ jobs:
               ;;
           esac
 
+      # #306: the daily/slice refresh (refresh-slice.sql) now writes contract_number_raw + link_method into the
+      # served `amendments` table, so the first cron AFTER release crashes on the missing columns unless they are
+      # added here, before the Worker deploys. The base schema was created out-of-band (`d1 execute --file`), so
+      # wrangler's ledger is empty and `d1 migrations apply` would collide on 0000 — probe the real table and
+      # ALTER only the columns that are missing. SQLite has no ADD COLUMN IF NOT EXISTS and a bare ALTER is not
+      # idempotent (a second deploy would fail "duplicate column name"), and the two columns are added
+      # independently so a first deploy that failed between them resumes cleanly. Malformed responses are fatal.
+      # If #307 merges first, fold these two columns into its provenance step instead of keeping this one.
+      - name: Apply amendment provenance columns (#306)
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
+          schema_json="$(pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes --json \
+            --command "SELECT
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'contract_number_raw') AS has_raw,
+              (SELECT COUNT(*) FROM pragma_table_info('amendments') WHERE name = 'link_method') AS has_method")"
+
+          set +e
+          columns="$(printf '%s' "$schema_json" | node -e '
+            const fs = require("fs");
+            let payload;
+            try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(2); }
+            const result = Array.isArray(payload) ? payload[0] : payload;
+            const row = result && Array.isArray(result.results) ? result.results[0] : null;
+            if (!row || !Object.hasOwn(row, "has_raw") || !Object.hasOwn(row, "has_method")) process.exit(2);
+            const raw = Number(row.has_raw);
+            const method = Number(row.has_method);
+            if (![0, 1].includes(raw) || ![0, 1].includes(method)) process.exit(2);
+            process.stdout.write(raw + " " + method);
+          ')"
+          probe_status="$?"
+          set -e
+
+          if [ "$probe_status" -ne 0 ]; then
+            echo "::error::Could not determine whether amendments provenance columns exist."
+            exit 1
+          fi
+
+          has_raw="${columns% *}"
+          has_method="${columns#* }"
+          if [ "$has_raw" = "0" ]; then
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --command "ALTER TABLE amendments ADD COLUMN contract_number_raw TEXT"
+          fi
+          if [ "$has_method" = "0" ]; then
+            pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+              --config wrangler.deploy.jsonc --remote --yes \
+              --command "ALTER TABLE amendments ADD COLUMN link_method TEXT"
+          fi
+          echo "amendments provenance columns ensured (had raw=$has_raw method=$has_method)."
+
       # `run deploy`, not `deploy` — bare `pnpm deploy` is a pnpm built-in, not our package script.
       - name: Deploy explorer (sigma)
         if: steps.guard.outputs.ok == 'true'

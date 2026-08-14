@@ -90,20 +90,37 @@ WITH window_unps AS (
   SELECT DISTINCT unp FROM raw_amendments
   WHERE source LIKE 'eop:%' AND unp IS NOT NULL AND contract_number IS NOT NULL
 ),
--- One row per LOGICAL contract on the affected procedures. Two sources, deduped: (0) this window's
--- raw_contracts — cumulative EOP buckets repeat a contract across days, so collapse to the latest source-day/
--- id, mirroring normalize-raw; (1) the served `contracts` corpus (unp = the tender_id suffix, contractor ЕИК
--- via the winning bidder). A contract present in BOTH is one logical contract — src_rank keeps the window row
--- (freshest signing_value) and the COUNT below never double-counts it into a false ambiguity.
+-- Every contract NUMBER that exists on the affected procedures — from BOTH this window's raw_contracts and the
+-- served corpus, REGARDLESS of signing_value. `grp` below asks this to decide "is the annex's number already a
+-- real contract on the procedure". It MUST be value-agnostic: the full path asks only "does such a contract
+-- exist" (NOT EXISTS over raw_contracts), so keying the slice question off contract_candidates (which requires
+-- signing_value > 0) would diverge — an annex that points to a ZERO-value contract by number would look
+-- namespace-mismatched and get value-linked to a neighbour, contradicting "links by number, not value" and
+-- making the two paths disagree (review todorkolev).
+all_contract_numbers AS (
+  SELECT unp, contract_number FROM raw_contracts
+  WHERE contract_number IS NOT NULL AND unp IN (SELECT unp FROM window_unps)
+  UNION
+  SELECT substr(tender_id, 3) AS unp, contract_number FROM contracts
+  WHERE contract_number IS NOT NULL AND tender_id IN (SELECT 't:' || unp FROM window_unps)
+),
+-- One row per LOGICAL contract on the affected procedures, for VALUE matching (signing_value > 0). Two sources,
+-- deduped: (0) this window's raw_contracts — cumulative EOP buckets repeat a contract across days, so collapse
+-- to the latest source-day then highest id, mirroring normalize-raw; (1) the served `contracts` corpus (unp =
+-- the tender_id suffix, contractor ЕИК via the winning bidder). A contract present in BOTH is one logical
+-- contract — src_rank keeps the window row (freshest signing_value) and the COUNT below never double-counts it
+-- into a false ambiguity.
 contract_candidates AS (
   SELECT unp, contract_number, signing_value, currency, contractor_eik FROM (
     SELECT unp, contract_number, signing_value, currency, contractor_eik,
-      ROW_NUMBER() OVER (PARTITION BY unp, contract_number ORDER BY src_rank, ord DESC) AS rn
+      ROW_NUMBER() OVER (
+        PARTITION BY unp, contract_number ORDER BY src_rank, cand_source DESC, ord DESC
+      ) AS rn
     FROM (
       SELECT c.unp, c.contract_number, c.signing_value, c.currency,
         TRIM(CASE WHEN c.contractor_eik LIKE 'ЕИК %' THEN SUBSTR(c.contractor_eik, 5) ELSE c.contractor_eik END)
           AS contractor_eik,
-        0 AS src_rank, c.id AS ord
+        0 AS src_rank, c.source AS cand_source, c.id AS ord
       FROM raw_contracts c
       WHERE c.contract_number IS NOT NULL
         AND c.signing_value IS NOT NULL AND c.signing_value > 0
@@ -111,7 +128,7 @@ contract_candidates AS (
       UNION ALL
       SELECT substr(c.tender_id, 3) AS unp, c.contract_number, c.signing_value, c.currency,
         b.eik_normalized AS contractor_eik,
-        1 AS src_rank, '' AS ord
+        1 AS src_rank, '' AS cand_source, '' AS ord
       FROM contracts c
       LEFT JOIN bidders b ON b.id = c.bidder_id
       WHERE c.contract_number IS NOT NULL
@@ -120,10 +137,12 @@ contract_candidates AS (
     )
   ) WHERE rn = 1
 ),
--- EOP annexes on the affected procedures that match NO candidate contract by (unp, contract_number) — the
+-- EOP annexes on the affected procedures that match NO REAL contract by (unp, contract_number) — the
 -- namespace-mismatch group. Value-less members (admin/term steps mid-chain) are included so they can inherit
--- the chain's target (review nikimilenkov MEDIUM 2). The NOT EXISTS is over contract_candidates (the corpus),
--- so an annex that DOES match a corpus contract directly is correctly excluded — it links by number, not value.
+-- the chain's target (review nikimilenkov MEDIUM 2). The NOT EXISTS is over all_contract_numbers (every real
+-- contract number on the procedure, value-agnostic), so an annex that DOES match a corpus contract directly is
+-- correctly excluded — it links by number, not value — even when that target has signing_value <= 0, matching
+-- the full path exactly (review todorkolev).
 grp AS (
   SELECT a.id AS amendment_id, a.unp, a.contract_number AS annex_cnum,
     a.value_before, a.currency,
@@ -133,7 +152,7 @@ grp AS (
   WHERE a.source LIKE 'eop:%'
     AND a.unp IS NOT NULL AND a.contract_number IS NOT NULL
     AND NOT EXISTS (
-      SELECT 1 FROM contract_candidates c
+      SELECT 1 FROM all_contract_numbers c
       WHERE c.unp = a.unp AND c.contract_number = a.contract_number
     )
 ),

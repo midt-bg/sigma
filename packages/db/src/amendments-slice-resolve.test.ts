@@ -243,4 +243,58 @@ describe('refresh-slice #306 value-anchor resolver', () => {
     );
     expect(amended).toEqual([{ n: 0 }]);
   });
+
+  it('keeps an annex on its zero-value contract it matches BY NUMBER (never value-links to a neighbour)', () => {
+    // The full path excludes an annex whose (unp, contract_number) is a real contract, regardless of that
+    // contract's value. The slice path must agree: Д-1 has signing_value 0, Д-2 has 5000; the annex is numbered
+    // Д-1 with value_before 5000. It matches Д-1 by number, so it must stay on Д-1 — NOT get value-linked to Д-2
+    // just because Д-1 fails the signing_value > 0 candidate filter (review todorkolev: the paths must agree).
+    seedTender(db, 'UNP-ZERO', '123456786');
+    seedContract(db, {
+      unp: 'UNP-ZERO',
+      cnum: 'Д-2',
+      signing: 5000,
+      authorityEik: '123456786',
+      contractorEik: '987654308',
+    });
+    readScript(db, refreshSlice);
+
+    // Window 2: the zero-value contract Д-1 arrives with the annex that carries its number.
+    resetStaging(db);
+    seedContract(db, {
+      unp: 'UNP-ZERO',
+      cnum: 'Д-1',
+      signing: 0,
+      authorityEik: '123456786',
+      contractorEik: '987654308',
+    });
+    seedAnnex(db, {
+      unp: 'UNP-ZERO',
+      annexCnum: 'Д-1',
+      valueBefore: 5000,
+      valueAfter: 9000,
+      authorityEik: '123456786',
+      contractorEik: '987654308',
+    });
+    readScript(db, refreshSlice);
+
+    // The annex stays on Д-1 by number — not rewritten to the value-neighbour Д-2.
+    const amendments = sqliteJson<AmendmentRow>(
+      db,
+      "SELECT contract_number, contract_number_raw, link_method FROM amendments WHERE unp='UNP-ZERO'",
+    );
+    expect(amendments).toEqual([
+      { contract_number: 'Д-1', contract_number_raw: null, link_method: null },
+    ]);
+
+    // Д-1 absorbs the annex; the value-neighbour Д-2 is untouched.
+    const perContract = sqliteJson<{ contract_number: string; annex_count: number }>(
+      db,
+      "SELECT contract_number, annex_count FROM contracts WHERE tender_id='t:UNP-ZERO' ORDER BY contract_number",
+    );
+    expect(perContract).toEqual([
+      { contract_number: 'Д-1', annex_count: 1 },
+      { contract_number: 'Д-2', annex_count: 0 },
+    ]);
+  });
 });
