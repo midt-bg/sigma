@@ -20,6 +20,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const initSchema = resolve(root, 'packages/db/migrations/0000_init.sql');
+// #305: promote-amendments.sql writes value_restated/value_treatment/value_suspect into served amendments.
+const restatedMigration = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
+const valueSuspectMigration = resolve(
+  root,
+  'packages/db/migrations/0007_amendment_value_suspect.sql',
+);
 const provenanceMigration = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const resolveAmendments = resolve(root, 'scripts/resolve-amendment-contracts.sql');
@@ -72,6 +78,8 @@ beforeEach(() => {
   dir = mkdtempSync(resolve(tmpdir(), 'amendments-resolve-'));
   db = resolve(dir, 'work.sqlite');
   readScript(db, initSchema);
+  readScript(db, restatedMigration);
+  readScript(db, valueSuspectMigration);
   readScript(db, provenanceMigration);
   readScript(db, workStagingSchema);
 });

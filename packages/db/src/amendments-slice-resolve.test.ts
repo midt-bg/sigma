@@ -23,6 +23,9 @@ const migrations = [
   'packages/db/migrations/0001_flow_pairs_bidder_index.sql',
   'packages/db/migrations/0002_current_value_currency.sql',
   'packages/db/migrations/0003_related_persons_foundation.sql',
+  // #305: refresh-slice.sql writes value_restated/value_treatment/value_suspect into served amendments.
+  'packages/db/migrations/0006_amendment_restated.sql',
+  'packages/db/migrations/0007_amendment_value_suspect.sql',
   'packages/db/migrations/0008_amendment_provenance.sql',
 ].map((p) => resolve(root, p));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
