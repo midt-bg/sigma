@@ -776,6 +776,18 @@ describe('groupByPerson', () => {
     expect(Number.isNaN(rows[0].contractCount)).toBe(false);
   });
 
+  it('dedupes contractCount per ЕИК too — a duplicate-ЕИК link never doubles the count (guardian symmetry)', () => {
+    // contract_count is a company-level winner total (constant within a ЕИК), so two links on the SAME ЕИК must
+    // count it ONCE — mirroring the money dedup, not a raw link sum (niki #312 MEDIUM 7). Plus a second winner
+    // to prove distinct ЕИК DO add.
+    const rows = groupByPerson([
+      link({ linkKey: 'p:a|111a', officialSlug: 'a', eik: '111', contractCount: 35 }),
+      link({ linkKey: 'p:a|111b', officialSlug: 'a', eik: '111', contractCount: 35 }),
+      link({ linkKey: 'p:a|222', officialSlug: 'a', eik: '222', contractCount: 4 }),
+    ]);
+    expect(rows[0].contractCount).toBe(39); // 35 once + 4 — NOT 35 + 35 + 4
+  });
+
   it('is empty for empty input', () => {
     expect(groupByPerson([])).toEqual([]);
   });

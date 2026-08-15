@@ -51,9 +51,31 @@ const LEADERBOARD_MAX = 1000;
 // persons, so a page is generous; the ceiling above still guards the loader's raw-link fetch.
 const PER_PAGE = 100;
 
+// Warn once the eligible set reaches this fraction of the ceiling — headroom to move grouping into SQL before
+// truncation actually corrupts a per-person aggregate (niki #312 MEDIUM 2, „alert at 800").
+const LEADERBOARD_WARN_AT = LEADERBOARD_MAX * 0.8;
+
 export async function loader({ context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
-  const links = await withDbRetry(() => getConflictLeaderboard(db, LEADERBOARD_MAX));
+  // Fetch ONE past the ceiling so truncation is DETECTABLE rather than silently capped. The leaderboard is
+  // ordered by NEXUS strength, NOT by person, so a person's links are scattered across the ordering — a cut at
+  // the ceiling can drop links for MANY persons at once, yielding partial per-person sums/companyCount and a
+  // wrong `soleCompany`. That also means we CANNOT fix it by dropping a single trailing partial group (there
+  // is no contiguous group to drop); the durable fix is grouping in SQL / server-side (tracked, LOW 3). Until
+  // then the guard is loud observability: warn as the set nears the ceiling so an operator moves the grouping
+  // BEFORE aggregates degrade, and slice deterministically so the render never depends on the +1 sentinel.
+  const raw = await withDbRetry(() => getConflictLeaderboard(db, LEADERBOARD_MAX + 1));
+  const truncated = raw.length > LEADERBOARD_MAX;
+  const links = truncated ? raw.slice(0, LEADERBOARD_MAX) : raw;
+  if (truncated) {
+    console.warn(
+      `conflicts leaderboard: eligible links exceed the ${LEADERBOARD_MAX} ceiling — per-person aggregates are now PARTIAL for boundary persons (sums/companyCount/soleCompany). Move grouping into SQL (MEDIUM 2 / LOW 3).`,
+    );
+  } else if (links.length >= LEADERBOARD_WARN_AT) {
+    console.warn(
+      `conflicts leaderboard: ${links.length}/${LEADERBOARD_MAX} eligible links — nearing the ceiling at which per-person aggregates degrade. Plan the SQL-side grouping before it is hit.`,
+    );
+  }
   // Never pin an empty render: just after a (re)ship the read can briefly return 0 rows while the write
   // propagates across D1; caching that for an hour + stale-while-revalidate is what made a refresh appear to
   // "lose" the data. Only cache once there is data to cache.

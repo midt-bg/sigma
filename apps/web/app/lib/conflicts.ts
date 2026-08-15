@@ -420,8 +420,8 @@ export function conflictHeadline(links: ConflictLink[]): {
 }
 
 /** One row of the /conflicts leaderboard: a whole PERSON, collapsed from their per-winner links. The list
- *  renders one card per relationship today (a person with three winners = three cards); this shape is the
- *  „one row per лице" the DataTable consumes (#287). Grouping stays in presentation — the loader keeps
+ *  USED to render one card per relationship (a person with three winners = three cards); since #287 it is a
+ *  DataTable this shape feeds — „one row per лице". Grouping stays in presentation — the loader keeps
  *  returning raw `ConflictLink[]` (plan decision #5), mirroring how `conflictHeadline` also groups read-time.
  *
  *  Deliberately carries NO relative identity. A family link (relation 'related', ADR-0032) folds into the
@@ -438,7 +438,8 @@ export interface ConflictPersonRow {
   companyCount: number;
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
-  /** Sum of contractCount across the person's links, null-guarded (never NaN). */
+  /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,
+   *  constant within a ЕИК, like the money), null-guarded (never NaN). */
   contractCount: number;
   /** Total public money to the person's winners — per-ЕИК-deduped „от" figure (a winner's € is company-level,
    *  not per-link; shares `dedupeMoneyPerEik`). NULL — not 0 — when no winner carries a summable value, so the
@@ -507,7 +508,7 @@ function isStrongerLink(a: ConflictLink, b: ConflictLink): boolean {
  *    not double-count — the dedup guarantees it. Null-preserving: a row with no summable € stays NULL (→ „—"),
  *    never a fabricated 0.
  *  - `companyCount` = distinct ЕИК; `soleCompany` carries the name+ЕИК when that count is 1.
- *  - `contractCount` = null-guarded sum across links.
+ *  - `contractCount` = per-ЕИК-deduped (company-level winner total, like the money), null-guarded.
  *  - Flags are OR-ed across links; but the RANK is driven by the strongest SINGLE link, not the OR-ed flags
  *    (else two weak links out-rank one strong link). Output rows are sorted by the strongest link's
  *    NEXUS_ORDER: ownInstitution DESC, hasContemporaneous DESC, maxContemporaneousValueEur DESC, then a
@@ -543,6 +544,20 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
     const soleCompany =
       companyCount === 1 ? { company: strongest.company, eik: strongest.eik } : null;
 
+    // contract_count is ALSO a company-level winner total (constant within a ЕИК, like contract_value_eur), so
+    // dedup it per ЕИК — not a raw link sum. NOT_REDUNDANT_FAMILY makes ≤1 link per (official, ЕИК) today, so
+    // sum == dedup in practice; deduping keeps the count defended against a duplicate ЕИК exactly as the money
+    // is, removing the guardian asymmetry (niki #312 MEDIUM 7). Null-guarded (never NaN).
+    const contractCountPerEik = new Map<string, number>();
+    for (const l of groupLinks) {
+      contractCountPerEik.set(
+        l.eik,
+        Math.max(contractCountPerEik.get(l.eik) ?? 0, l.contractCount ?? 0),
+      );
+    }
+    let contractCount = 0;
+    for (const n of contractCountPerEik.values()) contractCount += n;
+
     // Identity-free stake provenance: 'family' only when EVERY link is a relative's (relation 'related'),
     // 'self' when none is, 'mixed' otherwise. Mirrors declaredStakeNoun's split — never names the relative.
     const anyFamily = groupLinks.some((l) => l.relation === 'related');
@@ -561,7 +576,7 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         institution: strongest.institution,
         companyCount,
         soleCompany,
-        contractCount: groupLinks.reduce((sum, l) => sum + (l.contractCount ?? 0), 0),
+        contractCount,
         contractValueEur,
         contemporaneousValueEur,
         stakeKind,

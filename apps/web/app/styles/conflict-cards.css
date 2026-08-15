@@ -15,6 +15,33 @@
   gap: var(--s-3);
 }
 
+/* Detail-page block list (#287). The person/company pages render the case detail EAGERLY as one block per
+   link; each block reuses the .conflict-card shell, but the wrapper is an <ol> that must reset the default
+   list markers + indent and space the blocks (without this the classes were missing entirely — niki #312
+   MEDIUM 4: inherited indent + zero gap between blocks). The blocks ARE the detail, not links elsewhere, so
+   they take no hover lift. */
+.conflict-detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.conflict-detail {
+  transition: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .conflict-detail:hover {
+    transform: none;
+    border-color: var(--rule);
+    box-shadow: none;
+  }
+  .conflict-detail.has-conflict:hover {
+    border-left-color: var(--accent);
+  }
+}
+
 .conflict-card {
   position: relative;
   display: flex;
