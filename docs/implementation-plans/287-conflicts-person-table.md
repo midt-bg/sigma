@@ -63,15 +63,16 @@ Add a pure `groupByPerson(links: ConflictLink[]): ConflictPersonRow[]`. Per pers
 
 | field | derivation |
 |---|---|
-| `official`, `officialSlug`, `institution` | from the person's **strongest** link (`links[0]`, since the query returns NEXUS-sorted) |
+| `official`, `officialSlug`, `institution` | from the person's **strongest** link, computed explicitly via NEXUS_ORDER (**not** `links[0]` — the helper must be correct for any input order, so it never assumes the caller sorted) |
 | `companyCount` + `soleCompany` | distinct `eik`; carry the single company's name+eik when count === 1 (issue: „брой, или името, ако е едно") |
-| `contractCount` | sum of `contractCount` across links, null-guarded |
-| `contemporaneousValueEur` (lead) + `contractValueEur` (total, „от") | per-ЕИК-deduped sums — **reuse the dedup from `conflictHeadline` (`conflicts.ts:~325-347`)**; within one person the ЕИК are already distinct after the family collapse, so a straight sum is safe |
+| `contractCount` | per-ЕИК-deduped (company-level winner total, like the money), null-guarded |
+| `contemporaneousValueEur` (lead) + `contractValueEur` (total, „от") | per-ЕИК-deduped via the shared `dedupeMoneyPerEik`, **null-preserving** (a row with no summable € stays `null` → „—", never a fabricated 0). A duplicate ЕИК must still not double-count, so the dedup is unconditional — not a straight sum |
+| `stakeKind` | `'self'`/`'family'`/`'mixed'` (identity-free) — drives the „свързано лице" qualifier so a family-only row is not read as an own stake |
 | `ownInstitution` flag | OR across links |
 | `hasContemporaneous` flag | any link with `contemporaneousContractCount > 0` |
 | rank | driven by the strongest **single** link, **not** the OR-ed flags |
 
-**Rank invariant:** because the DB returns links NEXUS-sorted, `links[0]` per group is that person's strongest link. Sort person rows by the same comparator NEXUS_ORDER encodes (`ownInstitution DESC, hasContemporaneous DESC, maxContemporaneousValueEur DESC`, stable tiebreak on `officialSlug`). A person with a strong link must not sink because of a weak second link — lock this with a test.
+**Rank invariant:** compute each person's strongest link explicitly under NEXUS_ORDER and sort person rows by that link's key (`ownInstitution DESC, hasContemporaneous DESC, contemporaneousValueEur DESC, link_key ASC`, stable tiebreak on `officialSlug`) — **not** by the OR-ed row flags (two weak links must never out-rank one strong link), and **not** by assuming `links[0]` is strongest. A person with a strong link must not sink because of a weak second link — locked with a discriminating fixture (see `conflicts.test.ts`).
 
 Add a `ConflictPersonRow` type. Simplest: local to `lib/conflicts.ts` (grouping stays in the component like the existing `conflictHeadline` call, loader still returns raw `links`). Promote to `api-contract` only if the loader is changed to return grouped data.
 
@@ -120,7 +121,7 @@ Drop `aria-posinset/setsize`; pass a real `caption`. Pagination now counts **per
 
 **PR 1:** `apps/web/app/routes/conflict.official.tsx`, `conflict.company.tsx` (strings/comment), `conflict.pages.render.test.tsx`.
 
-**PR 2:** `apps/web/app/lib/conflicts.ts` (+ `.test.ts`), `routes/conflicts.tsx`, `components/ConflictCards.tsx` → new `components/ConflictDetail.tsx`, `routes/conflict.official.tsx`, `routes/conflict.company.tsx`, `packages/db/src/queries/related-persons.ts` (eager contracts in detail loaders), `packages/api-contract/src/index.ts` (`ConflictPersonRow` + contracts on detail DTOs), `routes/conflicts.render.test.tsx`, `routes/conflict.pages.render.test.tsx`.
+**PR 2:** `apps/web/app/lib/conflicts.ts` (+ `.test.ts`; `ConflictPersonRow` lives HERE, not in api-contract — see §6.5), `routes/conflicts.tsx`, `components/ConflictCards.tsx` → new `components/ConflictDetail.tsx`, `routes/conflict.official.tsx`, `routes/conflict.company.tsx`, `packages/db/src/queries/related-persons.ts` (eager contracts in detail loaders), `packages/api-contract/src/index.ts` (**contracts on the detail DTOs only** — `ConflictPersonRow` is NOT promoted here), `routes/conflicts.render.test.tsx`, `routes/conflict.pages.render.test.tsx`.
 
 ---
 
@@ -138,4 +139,17 @@ Drop `aria-posinset/setsize`; pass a real `caption`. Pagination now counts **per
 - The person/company pages carry the moved detail and are worth opening.
 - `NEXUS_ORDER` ordering preserved after grouping; rank = strongest link.
 - Existing render tests pass, with added grouping cases.
+
+---
+
+## 8. Post-merge reconciliation (#312 review)
+Where the shipped code intentionally differs from the plan above (corrected inline; summarised here so a reader trusts HEAD, not the first draft):
+
+- **Strongest link is computed, not `links[0]`.** `groupByPerson` derives each person's strongest link explicitly under NEXUS_ORDER; it does not assume the DB pre-sorted. The rank fixture was made discriminating (an OR-ed-flag ranking now fails it).
+- **Money & `contractCount` are unconditionally per-ЕИК-deduped and null-preserving**, via the shared `dedupeMoneyPerEik`. „No summable €" renders „—", never a fabricated 0 (`fundsCellLabel`'s `!= null` guard reproduced by `personFundsCell`). The „straight sum is safe" note was wrong — the collapse only makes ЕИК distinct per person *today*, and the dedup defends the sum regardless.
+- **`stakeKind` added** (`self`/`family`/`mixed`, identity-free) so a family-only row shows a neutral „свързано лице" qualifier and is never read as an own stake.
+- **`ConflictPersonRow` stays in `lib/conflicts.ts`** (§6.5) — it is NOT promoted to `api-contract`; only the detail DTOs gained the eager `contracts` map.
+- **Leaderboard ceiling guard.** The list is NEXUS-ordered, not person-ordered, so a cut at `LEADERBOARD_MAX` gives partial per-person aggregates. The loader fetches ceiling+1 to detect truncation and warns; the durable fix is grouping in SQL / server-side (tracked, not in #312).
+- **Corpus size:** „~98 links" is the current corpus; „~330 across 300+ people" is the post-#279 projection. The eager detail-page load is bounded by per-page N (small either way); the leaderboard fetch is separately ceiling-guarded, so neither figure gates the eager decision.
+- **Orphaned lazy route.** With eager detail loading, `conflict.contracts.tsx` (+ `linkContractsHref`) has no consumer. It is retained for now as the ready valve for a future large-page fallback (HIGH 2); if not adopted, retire it. ADR-0024's expanding-row detail is superseded by this eager-detail design.
 - Text-truth fix shipped (PR 1) ahead of the refactor.
