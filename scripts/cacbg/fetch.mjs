@@ -12,6 +12,7 @@
 //   node scripts/cacbg/fetch.mjs                        # all folders discovered from the register index
 //   node scripts/cacbg/fetch.mjs --folders 2021_nc,2025y # restrict to a subset
 //   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6
+//   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,10 +41,14 @@ export function parseCrawlOptions(argv) {
     return n;
   };
   const limitRaw = get('limit', '');
+  const deadlineRaw = get('deadline-minutes', '');
   return {
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
     concurrency: posInt(get('concurrency', '6'), 'concurrency'),
     folders: get('folders', ''),
+    // Wall-clock budget after which the crawl stops ENQUEUEING new work and returns normally. Absent by
+    // default — a hand-run crawl has no cap to respect. See run() for why a CI crawl needs one.
+    deadlineMinutes: deadlineRaw ? posInt(deadlineRaw, 'deadline-minutes') : Infinity,
     // A transparency platform must not silently publish a partial corpus. By default an incomplete crawl
     // (a set whose list.xml never loaded, or an announced declaration we failed to fetch for a non-404
     // reason) exits non-zero; the operator passes --allow-incomplete to proceed knowingly (#226, Todor #2).
@@ -139,11 +144,14 @@ async function discoverFolders(get = politeGet) {
   return [...seen];
 }
 
-async function pool(items, concurrency, worker) {
+// `shouldStop` is consulted before each item is handed to a worker, so a deadline stops the pool within one
+// in-flight request per worker instead of draining the whole folder. Items never handed out stay unattempted,
+// which is exactly what the completeness arithmetic needs to see.
+async function pool(items, concurrency, worker, shouldStop = () => false) {
   let i = 0;
   await Promise.all(
     Array.from({ length: concurrency }, async () => {
-      while (i < items.length) await worker(items[i++]);
+      while (i < items.length && !shouldStop()) await worker(items[i++]);
     }),
   );
 }
@@ -159,9 +167,31 @@ export async function run({
   rawDir = RAW,
   argv = process.argv,
   guard = assertScratchIgnored,
+  now = () => Date.now(),
 } = {}) {
   guard();
-  const { limit, concurrency, folders: override, allowIncomplete } = parseCrawlOptions(argv);
+  const {
+    limit,
+    concurrency,
+    folders: override,
+    allowIncomplete,
+    deadlineMinutes,
+  } = parseCrawlOptions(argv);
+
+  // WHY A SELF-IMPOSED DEADLINE. The full corpus is ~37 sets / ~281 000 declarations and does not fit in the
+  // related-persons-data job's 300-minute cap. When the cap fired mid-crawl (run 31889519937) the runner
+  // killed the STEP but not this process, which kept writing while the `always()` cache-save step ran `tar`
+  // over the same tree — „file changed as we read it", tar exit 1, and actions/cache/save downgrades a save
+  // failure to a WARNING, so the step went green having stored nothing. Five hours of polite crawling were
+  // lost and the next run started from an empty cache again.
+  //
+  // The fix is to stop before the axe rather than under it: past the deadline the crawl hands out no new
+  // work, lets in-flight requests land, and RETURNS. The tree is then quiet, tar succeeds, the cache holds
+  // what was fetched, and the next run resumes (a declaration already on disk is skipped). A full corpus
+  // therefore takes two runs rather than none.
+  const deadlineAt = Number.isFinite(deadlineMinutes) ? now() + deadlineMinutes * 60_000 : Infinity;
+  const pastDeadline = () => now() >= deadlineAt;
+  let deadlineHit = false;
 
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
@@ -173,6 +203,13 @@ export async function run({
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   for (const folder of folders) {
+    // Checked BEFORE mkdir/list.xml so an out-of-budget set leaves no trace at all — an empty directory
+    // and a cached list.xml would read, to the next run, like a set that had genuinely been visited.
+    if (pastDeadline()) {
+      deadlineHit = true;
+      console.log(`  deadline reached — stopping before ${folder} (not attempted)`);
+      break;
+    }
     const dir = path.join(rawDir, folder);
     fs.mkdirSync(dir, { recursive: true });
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
@@ -193,54 +230,82 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
-    await pool(rows, concurrency, async (row) => {
-      let xmlFile;
-      try {
-        xmlFile = safeXmlFile(row.xmlFile);
-      } catch {
-        fstat.errors++;
-        return;
-      }
-      const dest = path.join(dir, xmlFile);
-      if (fs.existsSync(dest)) {
-        fstat.cached++;
-        return;
-      }
-      let res;
-      try {
-        res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
-      } catch {
-        fstat.errors++;
-        consecutive = nextBreaker(consecutive, 'fail');
-        if (consecutive > BREAKER_TRIP)
-          throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
-        return;
-      }
-      if (res.status === 404) {
-        fstat.missing++;
-        consecutive = nextBreaker(consecutive, 'missing');
-        return;
-      } // listed-but-unpublished (source gap)
-      if (res.status !== 200) {
-        // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
-        // just network throws — so the crawl stops instead of hammering the register indefinitely.
-        fstat.errors++;
-        consecutive = nextBreaker(consecutive, 'fail');
-        if (consecutive > BREAKER_TRIP)
-          throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
-        return;
-      }
-      consecutive = nextBreaker(consecutive, 'ok');
-      atomicWrite(dest, res.body);
-      fstat.fetched++;
-      await sleep(15);
-    });
+    await pool(
+      rows,
+      concurrency,
+      async (row) => {
+        let xmlFile;
+        try {
+          xmlFile = safeXmlFile(row.xmlFile);
+        } catch {
+          fstat.errors++;
+          return;
+        }
+        const dest = path.join(dir, xmlFile);
+        if (fs.existsSync(dest)) {
+          fstat.cached++;
+          return;
+        }
+        let res;
+        try {
+          res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
+        } catch {
+          fstat.errors++;
+          consecutive = nextBreaker(consecutive, 'fail');
+          if (consecutive > BREAKER_TRIP)
+            throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
+          return;
+        }
+        if (res.status === 404) {
+          fstat.missing++;
+          consecutive = nextBreaker(consecutive, 'missing');
+          return;
+        } // listed-but-unpublished (source gap)
+        if (res.status !== 200) {
+          // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
+          // just network throws — so the crawl stops instead of hammering the register indefinitely.
+          fstat.errors++;
+          consecutive = nextBreaker(consecutive, 'fail');
+          if (consecutive > BREAKER_TRIP)
+            throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
+          return;
+        }
+        consecutive = nextBreaker(consecutive, 'ok');
+        atomicWrite(dest, res.body);
+        fstat.fetched++;
+        await sleep(15);
+      },
+      pastDeadline,
+    );
+    if (pastDeadline()) {
+      deadlineHit = true;
+      console.log(`  deadline reached inside ${folder} — stopping`);
+      break;
+    }
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
   console.log('\n=== crawl summary ===');
-  console.log(JSON.stringify({ folders: stats.folders, ...completeness }, null, 2));
+  console.log(JSON.stringify({ folders: stats.folders, ...completeness, deadlineHit }, null, 2));
   console.log(`raw cache → ${rawDir}`);
+
+  // A deadline stop is its OWN shortfall verdict and does not go through assessCompleteness, which can only
+  // reconcile the sets the crawl reached. Stopping exactly on a set boundary leaves every reached set fully
+  // obtained — arithmetically complete — while whole later years were never opened, so the gate would have
+  // certified a corpus missing 2015 through 2019 and exited 0.
+  //
+  // --allow-incomplete deliberately does NOT downgrade this. That flag means „I have seen this shortfall and
+  // accept it"; a deadline stop is a clock going off mid-sentence, with nobody having looked at what is
+  // missing. The operator re-runs to resume — the whole point of stopping cleanly — or crawls a chosen
+  // subset with --folders and accepts THAT knowingly.
+  if (deadlineHit) {
+    console.error(
+      `\n✖ CRAWL STOPPED ON ITS DEADLINE (--deadline-minutes ${deadlineMinutes}) — the corpus is partial ` +
+        `by construction: ${completeness.reachedSets} of ${folders.length} set(s) reached. The raw cache is ` +
+        `intact and consistent; re-run to resume from it (declarations already on disk are skipped).`,
+    );
+    return 1;
+  }
 
   // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
   // platform's job. Return a non-zero exit code unless the operator has explicitly accepted the shortfall.

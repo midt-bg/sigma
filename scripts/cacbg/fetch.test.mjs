@@ -26,6 +26,27 @@ test('parseCrawlOptions: valid overrides parse', () => {
   assert.equal(o.folders, '2021_nc,2025y');
 });
 
+// --- --deadline-minutes: absent means no cap (a hand-run crawl), and garbage must fail like the rest ---
+test('parseCrawlOptions: no --deadline-minutes → Infinity (an uncapped crawl)', () => {
+  assert.equal(parseCrawlOptions([]).deadlineMinutes, Infinity);
+});
+test('parseCrawlOptions: --deadline-minutes parses', () => {
+  assert.equal(parseCrawlOptions(['--deadline-minutes', '240']).deadlineMinutes, 240);
+});
+test('parseCrawlOptions: non-numeric --deadline-minutes throws (not NaN → uncapped crawl)', () => {
+  // NaN is not finite, so an unvalidated value would silently mean „no deadline" — the exact failure the
+  // deadline exists to prevent, restored by a typo.
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes', 'abc']),
+    /deadline-minutes must be a positive integer/,
+  );
+});
+test('parseCrawlOptions: zero/negative/fractional --deadline-minutes throws', () => {
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '0']), /deadline-minutes/);
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '-5']), /deadline-minutes/);
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '2.5']), /deadline-minutes/);
+});
+
 // --- the footgun: a bad concurrency must FAIL LOUD, not spin up zero workers and exit 0 ---
 test('parseCrawlOptions: non-numeric --concurrency throws (not NaN → 0 workers → silent no-op)', () => {
   assert.throws(

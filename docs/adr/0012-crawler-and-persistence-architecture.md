@@ -40,3 +40,16 @@ withdrawn/amended) must be expired, else a stale link implies a *current* confli
 - New infrastructure is honestly acknowledged: a rate-limited cached crawler, a JS resolver pass, a
   suppression/correction store, and upstream-schema-drift monitoring — none of which the base ETL had.
 - The raw cache is ~3 GB locally (git-ignored, deleted post-spike); in production it is R2, retained.
+
+### Measured 2026-08-15: a cold corpus does not fit in one CI job
+
+The estimate above (~135k declarations, 2017–2025) was low. The register's own index announces **37 sets
+spanning 2015–2026 and ~281 000 declarations** — the `*y` end-of-year republications and the compliance
+sets roughly double the naive year count. A cold `full_crawl` at concurrency 8 reached 36 of the 37 sets
+in the related-persons-data job's full 300-minute budget and was killed inside the last one.
+
+This does not change the decision, only its operating envelope: **a cold corpus is two runs, not one.**
+`fetch.mjs` therefore takes `--deadline-minutes`, stops handing out work when the budget is spent, and
+returns instead of being killed mid-write — a killed crawl keeps writing while the workflow's cache-save
+step reads the same tree, which loses the entire crawl (run 31889519937). Warm runs are unaffected: the
+resumability this ADR already specifies (skip if present) is what makes the second run cheap.
