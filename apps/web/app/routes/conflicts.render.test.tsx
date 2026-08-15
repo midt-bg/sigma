@@ -308,6 +308,17 @@ describe('/conflicts route — render', () => {
     const titleCell = row.querySelector('td.cell-title')!;
     const link = titleCell.querySelector('a')!;
     expect(link.getAttribute('href')).toContain('/conflicts/official/');
+    // …and the identity-free „свързано лице" qualifier, so a family-ONLY row is not read as an own stake
+    // (niki #312 MEDIUM 1). It states the kind, never who the relative is or the relationship type.
+    expect(titleCell.textContent).toContain('свързано лице');
+  });
+
+  it('a self-stake row carries no „свързано лице" qualifier — the wording is family-AWARE, not blanket', async () => {
+    // POSITIVE CONTROL for the qualifier: an own stake (relation 'owns') must NOT be tagged свързано лице,
+    // else every row reads as anonymized and the distinction the qualifier exists to draw is lost.
+    await renderConflicts([link()]);
+    const titleCell = bodyRows()[0].querySelector('td.cell-title')!;
+    expect(titleCell.textContent).not.toContain('свързано лице');
   });
 
   it('the rank column is a corner-badge cell and the title column carries data-label', async () => {

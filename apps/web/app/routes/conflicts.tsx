@@ -82,6 +82,15 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               <span className="small muted">{r.institution}</span>
             </>
           )}
+          {/* Identity-free qualifier: a family-ONLY row must not read as the official's own stake (ADR-0032).
+              The relative is never named and the relationship type never asserted — only that a свързано лице
+              declared the stake. 'mixed' rows keep the own-stake framing (they DO have one); 'self' → nothing. */}
+          {r.stakeKind === 'family' && (
+            <>
+              <br />
+              <Chip>свързано лице</Chip>
+            </>
+          )}
         </>
       ),
     },

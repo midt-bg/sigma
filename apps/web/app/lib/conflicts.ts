@@ -363,38 +363,53 @@ export function authorityShareDisplay(s: AuthorityShare): ShareDisplay {
   return { mode: 'bar', ratio: s.ratio };
 }
 
+/** MAX of two nullable numbers, treating null as ABSENT (not 0): the result is null only when BOTH are. */
+function maxNullable(a: number | null, b: number | null): number | null {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+}
+
+/** Per-ЕИК money dedup — the ONE copy of the invariant that guards a published sum (niki #312 MEDIUM 7).
+ *  Money is a COMPANY-level quantity keyed on ЕИК, not per-link. NOT_REDUNDANT_FAMILY collapses only a SAME
+ *  official's own + relative stake in one winner; TWO DIFFERENT officials linked to the same winner both reach
+ *  the link array, so a plain per-link sum double-counts that winner's € once per extra official (+8,1% /
+ *  ~7,9M € on the full corpus, #226). `contract_value_eur` is the winner's total (constant within a ЕИК → MAX
+ *  IS the value, exact dedup); `contemporaneous_value_eur` is a per-link WINDOW subset that can differ between
+ *  officials on the same winner (IN_WINDOW keys on the link's declared years), so MAX per ЕИК is deterministic
+ *  and never overstated. Null-aware: a ЕИК whose links carry only null values stays null, so a caller can tell
+ *  „no summable €" (render „—") from a real 0 — the money must never read as fabricated. `conflictHeadline`
+ *  (grand totals, nulls→0) and `groupByPerson` (row totals, null preserved) both reduce this one map. */
+export function dedupeMoneyPerEik(
+  links: Pick<ConflictLink, 'eik' | 'contractValueEur' | 'contemporaneousValueEur'>[],
+): Map<string, { total: number | null; contemporaneous: number | null }> {
+  const perEik = new Map<string, { total: number | null; contemporaneous: number | null }>();
+  for (const l of links) {
+    const prev = perEik.get(l.eik) ?? { total: null, contemporaneous: null };
+    perEik.set(l.eik, {
+      total: maxNullable(prev.total, l.contractValueEur),
+      contemporaneous: maxNullable(prev.contemporaneous, l.contemporaneousValueEur),
+    });
+  }
+  return perEik;
+}
+
 /** Leaderboard headline: total public money to linked winners and counts, over the whole published surface —
- *  self and family stakes alike (ADR-0032). A null contract value counts as 0 (never NaN) — the money figure
- *  must never read as fabricated. */
+ *  self and family stakes alike (ADR-0032). Grand totals coerce a missing winner value to 0 (never NaN) — a
+ *  leaderboard sum is always a number; linkCount/officialCount stay per-link/per-official. */
 export function conflictHeadline(links: ConflictLink[]): {
   linkCount: number;
   officialCount: number;
   totalEur: number;
   contemporaneousEur: number;
 } {
-  const officials = new Set<string>();
-  // Money is a COMPANY-level quantity keyed on ЕИК, not per-link. NOT_REDUNDANT_FAMILY collapses only a SAME
-  // official's own + relative stake in one winner; TWO DIFFERENT officials linked to the same winner both reach
-  // this array, so a plain per-link sum double-counts that winner's € once per extra official (+8,1% / ~7,9M €
-  // on the full corpus, #226). Aggregate per ЕИК: contract_value_eur is the winner's total (constant within a
-  // ЕИК → dedup is exact); contemporaneous_value_eur is a per-link WINDOW subset that can differ between
-  // officials on the same winner (IN_WINDOW keys on the link's declared years), so take the MAX per ЕИК —
-  // deterministic and never overstated (the money figure must never read as fabricated). linkCount/
-  // officialCount count links and people, so they stay per-link/per-official.
-  const perEik = new Map<string, { total: number; contemporaneous: number }>();
-  for (const l of links) {
-    officials.add(l.officialSlug);
-    const prev = perEik.get(l.eik) ?? { total: 0, contemporaneous: 0 };
-    perEik.set(l.eik, {
-      total: Math.max(prev.total, l.contractValueEur ?? 0),
-      contemporaneous: Math.max(prev.contemporaneous, l.contemporaneousValueEur ?? 0),
-    });
-  }
+  const officials = new Set(links.map((l) => l.officialSlug));
+  const perEik = dedupeMoneyPerEik(links);
   let totalEur = 0;
   let contemporaneousEur = 0;
   for (const v of perEik.values()) {
-    totalEur += v.total;
-    contemporaneousEur += v.contemporaneous;
+    totalEur += v.total ?? 0;
+    contemporaneousEur += v.contemporaneous ?? 0;
   }
   return {
     linkCount: links.length,
@@ -426,10 +441,17 @@ export interface ConflictPersonRow {
   /** Sum of contractCount across the person's links, null-guarded (never NaN). */
   contractCount: number;
   /** Total public money to the person's winners — per-ЕИК-deduped „от" figure (a winner's € is company-level,
-   *  not per-link; reuses the `conflictHeadline` dedup). Nulls count as 0 — the money never reads as fabricated. */
-  contractValueEur: number;
-  /** Conflict-window subset of that money (the „по време на конфликта" lead figure), per-ЕИК-deduped (MAX). */
-  contemporaneousValueEur: number;
+   *  not per-link; shares `dedupeMoneyPerEik`). NULL — not 0 — when no winner carries a summable value, so the
+   *  cell renders „—" like the per-link card rather than a fabricated „0" (niki #312 MEDIUM 3). */
+  contractValueEur: number | null;
+  /** Conflict-window subset of that money (the „по време на конфликта" lead figure), per-ЕИК-deduped (MAX).
+   *  NULL when the window carries no summable € (e.g. in-window contracts with NULL amounts), so `personFundsCell`
+   *  suppresses the split exactly as `fundsCellLabel`'s `!= null` guard does — never „0 … от 88 млн.". */
+  contemporaneousValueEur: number | null;
+  /** Whose declared stake(s) this row aggregates: 'self' (own only), 'family' (a close relative's only,
+   *  ADR-0032 — relative never named), or 'mixed' (both). Identity-free; drives the „свързано лице" qualifier
+   *  so a family-only row is never visually indistinguishable from an own stake (niki #312 MEDIUM 1). */
+  stakeKind: 'self' | 'family' | 'mixed';
   /** ≥1 of the person's links has a contract from the official's OWN institution — OR across links. */
   ownInstitution: boolean;
   /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
@@ -479,10 +501,11 @@ function isStrongerLink(a: ConflictLink, b: ConflictLink): boolean {
  *  - Identity (official/slug/institution) comes from the person's STRONGEST link, computed explicitly via
  *    NEXUS_ORDER — NOT `links[0]`. The DB returns links pre-sorted so `links[0]` is strongest in practice,
  *    but this helper must be correct for ANY input order, so it never assumes the caller sorted.
- *  - Money is per-ЕИК-deduped (reusing the `conflictHeadline` approach): a winner's total € is company-level
- *    and constant within a ЕИК (exact dedup); the window € is a per-link subset, so take the MAX per ЕИК.
- *    Within one person the ЕИК are already distinct after the upstream family collapse, but a duplicate ЕИК
- *    must still not double-count — the dedup guarantees it. Nulls count as 0 (never NaN).
+ *  - Money is per-ЕИК-deduped via the shared `dedupeMoneyPerEik`: a winner's total € is company-level and
+ *    constant within a ЕИК (exact dedup); the window € is a per-link subset, so take the MAX per ЕИК. Within
+ *    one person the ЕИК are already distinct after the upstream family collapse, but a duplicate ЕИК must still
+ *    not double-count — the dedup guarantees it. Null-preserving: a row with no summable € stays NULL (→ „—"),
+ *    never a fabricated 0.
  *  - `companyCount` = distinct ЕИК; `soleCompany` carries the name+ЕИК when that count is 1.
  *  - `contractCount` = null-guarded sum across links.
  *  - Flags are OR-ed across links; but the RANK is driven by the strongest SINGLE link, not the OR-ed flags
@@ -503,21 +526,15 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
 
   const rows: { row: ConflictPersonRow; strongest: ConflictLink }[] = [];
   for (const { strongest, links: groupLinks } of groups.values()) {
-    // Per-ЕИК money dedup, mirroring conflictHeadline: total is constant within a ЕИК (MAX = the value),
-    // window € is a per-link subset so MAX per ЕИК is deterministic and never overstated. Nulls → 0.
-    const perEik = new Map<string, { total: number; contemporaneous: number }>();
-    for (const l of groupLinks) {
-      const prev = perEik.get(l.eik) ?? { total: 0, contemporaneous: 0 };
-      perEik.set(l.eik, {
-        total: Math.max(prev.total, l.contractValueEur ?? 0),
-        contemporaneous: Math.max(prev.contemporaneous, l.contemporaneousValueEur ?? 0),
-      });
-    }
-    let contractValueEur = 0;
-    let contemporaneousValueEur = 0;
+    // Per-ЕИК money dedup (shared with conflictHeadline). Null-aware: a per-ЕИК value contributes only when
+    // non-null, and the row stays NULL when NO winner carries a summable value — so „—", not a fabricated „0".
+    const perEik = dedupeMoneyPerEik(groupLinks);
+    let contractValueEur: number | null = null;
+    let contemporaneousValueEur: number | null = null;
     for (const v of perEik.values()) {
-      contractValueEur += v.total;
-      contemporaneousValueEur += v.contemporaneous;
+      if (v.total != null) contractValueEur = (contractValueEur ?? 0) + v.total;
+      if (v.contemporaneous != null)
+        contemporaneousValueEur = (contemporaneousValueEur ?? 0) + v.contemporaneous;
     }
 
     const companyCount = perEik.size;
@@ -525,6 +542,16 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
     // link then shares that ЕИК, so the strongest link's company/eik is the right (and only) one to name.
     const soleCompany =
       companyCount === 1 ? { company: strongest.company, eik: strongest.eik } : null;
+
+    // Identity-free stake provenance: 'family' only when EVERY link is a relative's (relation 'related'),
+    // 'self' when none is, 'mixed' otherwise. Mirrors declaredStakeNoun's split — never names the relative.
+    const anyFamily = groupLinks.some((l) => l.relation === 'related');
+    const anySelf = groupLinks.some((l) => l.relation !== 'related');
+    const stakeKind: ConflictPersonRow['stakeKind'] = anyFamily
+      ? anySelf
+        ? 'mixed'
+        : 'family'
+      : 'self';
 
     rows.push({
       strongest,
@@ -537,6 +564,7 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         contractCount: groupLinks.reduce((sum, l) => sum + (l.contractCount ?? 0), 0),
         contractValueEur,
         contemporaneousValueEur,
+        stakeKind,
         ownInstitution: groupLinks.some((l) => l.ownInstitution),
         hasContemporaneous: groupLinks.some((l) => l.contemporaneousContractCount > 0),
       },

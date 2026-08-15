@@ -836,7 +836,9 @@ describe('groupByPerson', () => {
     expect(rows[0].contractCount).toBe(6);
     expect(rows[0].contractValueEur).toBe(13_000_000);
     // Anonymity: the row shape has ONLY the official's own identity — no relation/relative field of any kind.
+    // `stakeKind` is an identity-free enum ('self'|'family'|'mixed'), never a relative name or relationship type.
     expect(rows[0].official).toBe('Иван Минев');
+    expect(rows[0].stakeKind).toBe('mixed'); // one own + one family link
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
         'companyCount',
@@ -849,7 +851,53 @@ describe('groupByPerson', () => {
         'officialSlug',
         'ownInstitution',
         'soleCompany',
+        'stakeKind',
       ].sort(),
     );
+  });
+
+  it('stakeKind: family only when EVERY link is a relative stake; null money stays null (not 0)', () => {
+    // family-only person → 'family'; and with no summable € on any winner the row money is NULL, so the cell
+    // renders „—" like the per-link card, not a fabricated „0" (niki #312 MEDIUM 1 + MEDIUM 3).
+    const family = groupByPerson([
+      link({
+        linkKey: 'p:f|1',
+        officialSlug: 'f',
+        relation: 'related',
+        eik: '1',
+        contractValueEur: null,
+        contemporaneousValueEur: null,
+        contemporaneousContractCount: 0,
+      }),
+    ]);
+    expect(family[0].stakeKind).toBe('family');
+    expect(family[0].contractValueEur).toBeNull();
+    expect(family[0].contemporaneousValueEur).toBeNull();
+    expect(personFundsCell(family[0]).primary).toBe(moneyBare(null)); // „—", never „0"
+
+    // self-only person → 'self'
+    const self = groupByPerson([link({ linkKey: 'p:s|1', officialSlug: 's', relation: 'owns' })]);
+    expect(self[0].stakeKind).toBe('self');
+  });
+
+  it('preserves the window-null case: in-window contracts with NULL € show total-only, never „0 … от …"', () => {
+    // hasContemporaneous is true (a link has an in-window contract) but its window € is NULL, so the row window
+    // € must stay NULL and personFundsCell falls back to the total-only shape — the exact case fundsCellLabel
+    // guards per link, which a 0-coerced row could not reproduce (niki #312 MEDIUM 3).
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:a|1',
+        officialSlug: 'a',
+        eik: '1',
+        contemporaneousContractCount: 3,
+        contemporaneousValueEur: null,
+        contractValueEur: 88_000_000,
+      }),
+    ]);
+    expect(rows[0].hasContemporaneous).toBe(true);
+    expect(rows[0].contemporaneousValueEur).toBeNull();
+    const cell = personFundsCell(rows[0]);
+    expect(cell.primary).toBe(moneyBare(88_000_000));
+    expect(cell.total).toBeNull(); // no split — not „0 … от 88 млн."
   });
 });
