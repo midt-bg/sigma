@@ -639,10 +639,14 @@ describe('groupByPerson', () => {
   });
 
   it('does not let two weak links out-rank one strong link (rank ≠ OR-ed flags)', () => {
-    // Person C has TWO links: one own-institution, one contemporaneous — so BOTH row flags are true by OR.
-    // Person D has ONE link that is own-institution AND contemporaneous with a bigger window € than any of
-    // C's. If rank came from OR-ed flags, C and D would tie on flags and fall to the € tiebreak; but rank is
-    // the strongest SINGLE link, and D's one link dominates either of C's, so D must lead.
+    // Person C has TWO links: one own-institution (no window), one in-window (no own-institution) — so BOTH
+    // row flags are true by OR, yet NEITHER single link carries both. Person D has ONE link that carries both.
+    // Correct rank compares the strongest SINGLE link: D's [own+window] dominates either of C's by the FLAG
+    // hierarchy (own-institution first, then any-window), independent of €. The buggy rank (from OR-ed row
+    // flags) would tie C and D on flags [1,1] and fall to the row's summed window € — so C's window € is set
+    // ABOVE D's on purpose: under the bug C would sort FIRST (wrong), so asserting ['d','c'] catches it. The
+    // earlier fixture used C-window 1M < D 9M, where the € tiebreak ordered D first under BOTH schemes and the
+    // mutation survived (niki #312 HIGH 3).
     const rows = groupByPerson([
       link({
         linkKey: 'p:c|own',
@@ -660,7 +664,7 @@ describe('groupByPerson', () => {
         eik: '2',
         ownInstitution: false,
         contemporaneousContractCount: 5,
-        contemporaneousValueEur: 1_000_000,
+        contemporaneousValueEur: 20_000_000, // deliberately ABOVE D's window € — the discriminating value
       }),
       link({
         linkKey: 'p:d|both',
@@ -672,7 +676,11 @@ describe('groupByPerson', () => {
         contemporaneousValueEur: 9_000_000,
       }),
     ]);
+    // Strongest-single-link rank → D leads despite C's larger summed window €; an OR-flag rank would put C
+    // first. The person-level window € proves the tiebreak did NOT decide the order.
     expect(rows.map((r) => r.officialSlug)).toEqual(['d', 'c']);
+    expect(rows[0].contemporaneousValueEur).toBe(9_000_000); // D
+    expect(rows[1].contemporaneousValueEur).toBe(20_000_000); // C — larger €, yet ranked second
   });
 
   it('dedupes public funds per ЕИК: a duplicate-ЕИК link does not double the sum', () => {
@@ -770,6 +778,32 @@ describe('groupByPerson', () => {
 
   it('is empty for empty input', () => {
     expect(groupByPerson([])).toEqual([]);
+  });
+
+  it('keeps namesakes apart: same name, different institution → two rows (group key is person id, not name)', () => {
+    // The group key is officialSlug (= personSlug(person_id) = key(name)|key(institution), ADR-0026), NOT the
+    // display name — institution is the namesake disambiguator (api-contract). A mutation grouping by `official`
+    // would collapse these two distinct office-holders into one row (merging their winners and money under one
+    // name). Guard it explicitly: same name, different slug/institution ⇒ two rows (niki #312 MEDIUM 7c).
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:ivanov-sofia|1',
+        officialSlug: 'ivanov-sofia',
+        official: 'Иван Иванов',
+        institution: 'Община София',
+        eik: '111',
+      }),
+      link({
+        linkKey: 'p:ivanov-varna|2',
+        officialSlug: 'ivanov-varna',
+        official: 'Иван Иванов',
+        institution: 'Община Варна',
+        eik: '222',
+      }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.officialSlug).sort()).toEqual(['ivanov-sofia', 'ivanov-varna']);
+    expect(rows.map((r) => r.institution).sort()).toEqual(['Община Варна', 'Община София']);
   });
 
   it('carries a family link into the row without exposing any relative identity', () => {

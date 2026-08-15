@@ -206,6 +206,94 @@ describe('/conflicts/official/:id — render', () => {
   });
 });
 
+describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
+  // The registry-fact rung moved from the retired list card to ConflictDetail (#287). These render guards are
+  // ported 1:1 from the deleted card tests: the evidence label is a defamation-critical mapping — its failure
+  // mode is a false, NAMED claim that the register records this person as owner — so a unit test of
+  // registryEvidenceLabel is not enough; what the COMPONENT renders must be pinned (niki #312 HIGH 1).
+  const official = 'Кмет Тестов';
+
+  it('renders the registry fact the link rests on, so the block explains itself', async () => {
+    await mount(ConflictOfficial as never, {
+      official,
+      links: [link({ linkKey: 'k1', evidenceKind: 'document', registryRole: 'owner' })],
+      contracts: { k1: [] },
+    });
+    const t = text();
+    expect(t).toContain('Регистър');
+    expect(t).toContain('лицето е вписано като съдружник/собственик');
+    expect(t).toContain('вписване 2011-05-02'); // WHICH entry
+    expect(t).toContain('справка 2026-08-05'); // and HOW FRESH it is
+    // The entry NUMBER is what makes the claim findable in the register — a date alone does not identify a record.
+    expect(t).toContain('20110502101007');
+  });
+
+  it('omits the entry number rather than printing an empty „· №" when there is none', async () => {
+    // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so the label
+    // must be absent entirely — not „· №" with nothing after it, which reads as missing data.
+    await mount(ConflictOfficial as never, {
+      official,
+      links: [
+        link({
+          linkKey: 'k1',
+          evidenceKind: 'confirmed',
+          registryRole: null,
+          registryEntryNumber: null,
+        }),
+      ],
+      contracts: { k1: [] },
+    });
+    const t = text();
+    expect(t).toContain('Регистър');
+    expect(t).not.toContain('· №');
+  });
+
+  it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
+    await mount(ConflictOfficial as never, {
+      official,
+      links: [link({ linkKey: 'k1', evidenceKind: 'confirmed', registryRole: null })],
+      contracts: { k1: [] },
+    });
+    const t = text();
+    expect(t).toContain('самоличност, потвърдена по декларирани данни');
+    expect(t).not.toContain('вписано като');
+  });
+
+  it('a FAMILY block never carries a registry-role claim — the relative is not in the act we read', async () => {
+    // A relative's stake is registered to the RELATIVE, so `findPerson` never finds the official and the rung
+    // can only be confirmed/registryRole:null. „вписано като съдружник/собственик" here would assert that the
+    // named official is recorded as an owner of this company — a false, named, libel-shaped claim on the one
+    // block whose whole design keeps the stakeholder anonymous (ADR-0030/0032).
+    await mount(ConflictOfficial as never, {
+      official,
+      links: [
+        link({
+          linkKey: 'k1',
+          relation: 'related',
+          evidenceKind: 'confirmed',
+          registryRole: null,
+          registryEntryNumber: null,
+        }),
+      ],
+      contracts: { k1: [] },
+    });
+    const block = container.querySelector('.conflict-detail')!;
+    expect(block.textContent).toContain('деклариран дял на свързано лице');
+    expect(block.textContent).toContain('самоличност, потвърдена по декларирани данни');
+    expect(block.textContent).not.toContain('вписано като');
+  });
+
+  it('links out to the register so a reader can check the same act we read', async () => {
+    await mount(ConflictOfficial as never, {
+      official,
+      links: [link({ linkKey: 'k1', eik: '201122335' })],
+      contracts: { k1: [] },
+    });
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
+  });
+});
+
 describe('/conflicts/company/:eik — render', () => {
   it('heads each block by the official (institution sub-label + profile link), never repeats the company inside', async () => {
     await mount(ConflictCompany as never, {
