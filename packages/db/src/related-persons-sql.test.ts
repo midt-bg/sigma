@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   COMPANY_SQL,
+  EIK_CONTRACTS_SQL,
   LEADERBOARD_SQL,
   LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
@@ -442,6 +443,21 @@ describe('свързани-лица SQL (real SQLite)', () => {
       // so a drift here = the collapsed card contradicting its own detail — decoupled from fixture literals
       // above, this ties the two query paths directly and fails on any predicate skew between them.
       expect(inWindow).toHaveLength(Number(ivan.contemporaneous_contract_count));
+    });
+  });
+
+  it('EIK_CONTRACTS_SQL returns a winner’s full contract set by ЕИК — the same rows the gated per-link read serves (HIGH 2 dedup basis)', () => {
+    withDb((dbPath) => {
+      // The detail loaders read contracts ONCE per ЕИК (not once per link) and derive temporal in TS. Prove the
+      // ЕИК read is a faithful stand-in: the SAME contract set the gated per-link read returns for a surfaced
+      // link on that winner (niki #312 HIGH 2). Order/temporal differ (window-independent here), so compare ids.
+      const perLink = rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:ivan|111'));
+      const perEik = rows(dbPath, lit(EIK_CONTRACTS_SQL, '111'));
+      expect(perEik.map((r) => r.id).sort()).toEqual(perLink.map((r) => r.id).sort());
+      // The ЕИК read carries NO temporal column — that is per-link, derived in TS (markTemporal).
+      expect('temporal' in perEik[0]!).toBe(false);
+      // Window-independent order: signed_at DESC, then the undated row last (NULL sorts last under DESC).
+      expect(perEik.map((r) => r.contract_number)).toEqual(['Д-3', 'Д-2', 'Д-1', 'Д-4']);
     });
   });
 
