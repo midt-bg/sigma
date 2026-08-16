@@ -47,6 +47,26 @@ test('parseCrawlOptions: zero/negative/fractional --deadline-minutes throws', ()
   assert.throws(() => parseCrawlOptions(['--deadline-minutes', '2.5']), /deadline-minutes/);
 });
 
+// A flag present but valueless used to fall through to the DEFAULT, which for the deadline means „no
+// deadline at all" — the feature switched off by a typo, with nothing said. Same shape for the older flags.
+test('parseCrawlOptions: a valueless flag throws instead of silently defaulting', () => {
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes']),
+    /--deadline-minutes was given without/,
+  );
+  assert.throws(() => parseCrawlOptions(['--limit']), /--limit was given without/);
+  assert.throws(() => parseCrawlOptions(['--concurrency']), /--concurrency was given without/);
+  assert.throws(() => parseCrawlOptions(['--folders']), /--folders was given without/);
+});
+test('parseCrawlOptions: a flag swallowed by the NEXT flag throws too', () => {
+  // `--deadline-minutes --allow-incomplete` reads as „deadline = --allow-incomplete"; Number() of that is
+  // NaN, but only because posInt rejects it — the value must be refused before it is ever interpreted.
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes', '--allow-incomplete']),
+    /--deadline-minutes was given without/,
+  );
+});
+
 // --- the footgun: a bad concurrency must FAIL LOUD, not spin up zero workers and exit 0 ---
 test('parseCrawlOptions: non-numeric --concurrency throws (not NaN → 0 workers → silent no-op)', () => {
   assert.throws(

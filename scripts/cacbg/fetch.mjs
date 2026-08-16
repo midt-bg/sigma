@@ -30,9 +30,17 @@ const RAW = path.join(SCRATCH, 'raw');
 // and a bad `--limit` (NaN, non-finite) silently skips the slice and fetches the whole register. Both
 // must fail LOUD instead. Pure — takes argv, returns {limit, concurrency, folders} or throws.
 export function parseCrawlOptions(argv) {
+  // A flag PRESENT but valueless (`--deadline-minutes` at the end of argv, or followed by the next flag)
+  // used to fall through to the default — silently meaning „no deadline", „no limit", „6 workers". That is
+  // the same silent-no-op class the validation below exists to kill, so it throws rather than defaults: a
+  // default is what you get for not asking, not for asking badly.
   const get = (name, def) => {
     const i = argv.indexOf(`--${name}`);
-    return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
+    if (i < 0) return def;
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--'))
+      throw new Error(`--${name} was given without a value`);
+    return v;
   };
   const posInt = (raw, name) => {
     const n = Number(raw);
@@ -147,6 +155,11 @@ async function discoverFolders(get = politeGet) {
 // `shouldStop` is consulted before each item is handed to a worker, so a deadline stops the pool within one
 // in-flight request per worker instead of draining the whole folder. Items never handed out stay unattempted,
 // which is exactly what the completeness arithmetic needs to see.
+//
+// RETURNS whether work was actually withheld. The caller must not infer that from the clock: a pool whose
+// LAST request happens to land past the deadline handed out everything it was asked to and withheld nothing,
+// and treating that as a stop condemns a complete corpus. `i` is only ever advanced past the length check
+// within one synchronous step, so `i < items.length` here means exactly „rows nobody was given".
 async function pool(items, concurrency, worker, shouldStop = () => false) {
   let i = 0;
   await Promise.all(
@@ -154,6 +167,7 @@ async function pool(items, concurrency, worker, shouldStop = () => false) {
       while (i < items.length && !shouldStop()) await worker(items[i++]);
     }),
   );
+  return i < items.length;
 }
 
 // The crawl. Returns the intended process exit code (0 = complete, 1 = incomplete without an override) so the
@@ -230,7 +244,7 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
-    await pool(
+    const withheld = await pool(
       rows,
       concurrency,
       async (row) => {
@@ -277,7 +291,12 @@ export async function run({
       },
       pastDeadline,
     );
-    if (pastDeadline()) {
+    // Asked whether the pool WITHHELD work, not whether the clock has passed. A set whose final in-flight
+    // request lands one second past the budget is fully obtained and must not be called a deadline stop —
+    // otherwise the run that finally completes the corpus is the one declared partial and refused. If the
+    // clock is spent but this set finished, the next iteration's top-of-loop guard stops us; if this was
+    // the LAST set, there is nothing left to withhold and the corpus is complete.
+    if (withheld) {
       deadlineHit = true;
       console.log(`  deadline reached inside ${folder} — stopping`);
       break;

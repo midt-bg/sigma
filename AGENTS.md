@@ -48,6 +48,14 @@ No `develop`, no `staging`. Maintainers with write access work on short-lived fe
 - Do not delete branches you didn't create.
 - Do not edit files outside your change's intended scope. If you find an unrelated bug, note it separately; don't sneak the fix into your branch.
 
+## Investigations
+
+Work that traces who is behind a company, whether an award looks irregular, or whether parties are connected follows [docs/investigation-playbook.md](docs/investigation-playbook.md) — the order of steps, the traps in the data, and the evidence discipline (fact / indication / hypothesis). Read it before quoting any figure: the currency of post-2026 amendments and SQLite's case-blindness to Cyrillic both produce wrong numbers silently.
+
+Case material goes in `data/work/<case>/`, which is outside version control. Only the method belongs in `docs/`.
+
+Claude agents reach the same file through the `razsledvane` skill; Codex reads it from cwd. Keep the playbook the single copy — do not fork it per agent.
+
 ## Notes and decisions
 
 - Design decisions, plans, and the evolving specification live in [docs/](docs/) — not as scattered notes in the repo.

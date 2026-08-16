@@ -18,7 +18,7 @@ PII contained, and fits SIGMA's existing Cloudflare ETL rather than bolting on n
 
 - `fetch.mjs` — pure I/O. Discovers folders, fetches `list.xml` + every declaration into a git-ignored
   **raw cache** (`scratch/cacbg/raw/<year>/`). Resumable by file existence (immutable source ⇒ skip if
-  present), polite (concurrency ≤6, 403/429/5xx exponential backoff, circuit breaker, jitter), and
+  present), polite (bounded concurrency, 403/429/5xx exponential backoff, circuit breaker, jitter), and
   404-tolerant (listed-but-unpublished files are source gaps, not errors). Path-sanitizes every `xmlFile`.
 - `extract.mjs` — no network. Re-parses the raw cache into structured staging, so the parser can evolve
   without re-fetching. Splits public holdings from internal third-party data (ADR-0010).
@@ -48,8 +48,15 @@ spanning 2015–2026 and ~281 000 declarations** — the `*y` end-of-year republ
 sets roughly double the naive year count. A cold `full_crawl` at concurrency 8 reached 36 of the 37 sets
 in the related-persons-data job's full 300-minute budget and was killed inside the last one.
 
-This does not change the decision, only its operating envelope: **a cold corpus is two runs, not one.**
+This does not change the decision, only its operating envelope: **a cold corpus takes more than one run.**
 `fetch.mjs` therefore takes `--deadline-minutes`, stops handing out work when the budget is spent, and
 returns instead of being killed mid-write — a killed crawl keeps writing while the workflow's cache-save
 step reads the same tree, which loses the entire crawl (run 31889519937). Warm runs are unaffected: the
-resumability this ADR already specifies (skip if present) is what makes the second run cheap.
+resumability this ADR already specifies (skip if present) is what makes the next run cheap.
+
+Two is the measured expectation, not a guarantee — the second run's share depends on how much the first
+got through, and each resumption must be a **fresh dispatch**: GitHub's re-run keeps the same `run_id`,
+and an Actions cache entry is immutable, so a re-run cannot store what it crawled. The workflow keys the
+cache on `run_id`-`run_attempt` so that a re-run at least fails loudly instead of silently discarding its
+own work. The crawler's politeness envelope also drifted from this ADR in practice: the workflow runs at
+concurrency 8, and `parseCrawlOptions` enforces no upper bound at all.

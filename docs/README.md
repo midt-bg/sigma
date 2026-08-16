@@ -16,6 +16,7 @@
 =======
 - [`implementation-plans/305-amendment-value-double-count.md`](implementation-plans/305-amendment-value-double-count.md) — защо стойността на анекс се удвоява (ЦАИС ЕОП слага новия **тотал** в полето за промяна) и планът за откриване/поправка: `annex_total_suspect` флаг + текстова хеуристика за възстановяване на истинския тотал (#305).
 >>>>>>> origin/main
+- [`investigation-playbook.md`](investigation-playbook.md) — наръчник за задълбочено разследване (свързани лица, конфликт на интереси, схеми при възлагане): ред на стъпките, капани в данните, дисциплина на доказателството. Общ за Claude и Codex.
 - [`integrity-gate.md`](integrity-gate.md) — reconciliation gate-ът: hard asserts върху тоталите при import/CI.
 - [`anomaly-report.md`](anomaly-report.md) — cross-row аномалии при опресняване: какво `value_flag` не хваща на ниво отделен договор.
 - [`deploy.md`](deploy.md) — деплой към Cloudflare: двата Worker-а (`sigma`, `sigma-etl`) и споделеният D1 per environment.
