@@ -192,6 +192,26 @@ test('the deadline binds EVERY worker, not just the first (concurrency 8)', asyn
   assert.deepEqual(written, [], `no worker may fetch past the budget, got ${written.join(', ')}`);
 });
 
+// An entry-only deadline check passes every worker while the budget remains, then lets those workers drain
+// the folder after it expires. The clock must fall mid-folder, with both written and still-unhanded rows, to
+// distinguish that bug from a per-item check at production concurrency.
+test('deadline falls MID-folder at concurrency 8 → later rows stay unfetched (exit 1)', async () => {
+  const files = Array.from({ length: 24 }, (_, i) => `c${i}.xml`);
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(files) },
+    ...Object.assign({}, ...files.map((f) => ok(f))),
+  };
+  // list.xml leaves 50 s of the 60 s budget, so workers enter the pool before later requests spend it.
+  const code = await tickingGate(routes, 10_000, [], [FOLDER], '8');
+  const written = files.filter((f) => fs.existsSync(path.join(dir, FOLDER, f)));
+  assert.ok(written.length > 0, 'the deadline must fall after declaration work starts');
+  assert.ok(
+    written.length < files.length,
+    `the pool must withhold rows once the budget is spent — it wrote all ${files.length}`,
+  );
+  assert.equal(code, 1, 'a mid-folder deadline stop is a partial corpus and must exit 1');
+});
+
 // The comparison is `>=`, so a clock landing EXACTLY on the budget is spent, not still running. Off-by-one
 // here is invisible to every other test, which all land clear of the boundary.
 test('a clock landing exactly on the deadline is spent (exit 1)', async () => {
@@ -225,9 +245,13 @@ test('deadline inside a set → the remaining declarations stay unfetched (exit 
 // nobody having looked, so it must not be downgradable — otherwise the workflow's own flag could publish a
 // half-crawled corpus.
 test('--allow-incomplete does NOT downgrade a deadline stop (still exit 1)', async () => {
-  const code = await tickingGate({ ...list2, ...ok('a1.xml'), ...ok('a2.xml') }, 61_000, [
-    '--allow-incomplete',
-  ]);
+  // One remaining row equals the worker count. A pool that claims the row before checking the deadline
+  // mistakes an exhausted cursor for completed work, so the ordinary incomplete override wrongly exits 0.
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  const code = await tickingGate(routes, 61_000, ['--allow-incomplete']);
   assert.equal(code, 1);
 });
 
