@@ -9,6 +9,7 @@
 - [`etl.md`](etl.md) — ETL pipeline-ът и open-data емисията на ЦАИС ЕОП (`storage.eop.bg`): зареждане, опресняване и производни таблици.
 - [`etl-pipeline-state.md`](etl-pipeline-state.md) — анализ на текущото състояние на ETL pipeline-а.
 - [`etl-architecture.md`](etl-architecture.md) — целевата ETL архитектура (RFC): предложение за състоянието и реда на изпълнение.
+- [`discovery-layer-proposal.md`](discovery-layer-proposal.md) — discovery слоят (RFC): как всеки — без регистрация — намира релевантните за него поръчки, минали и отворени, чрез фасети, CPV йерархия и семантично търсене.
 - [`v1-implementation-plan.md`](v1-implementation-plan.md) — precompute слоят и пагинацията (защо rollup-и и keyset вместо per-request GROUP BY / OFFSET).
 - [`implementation-plans/286-ocds-amendment-unp.md`](implementation-plans/286-ocds-amendment-unp.md) — защо OCDS анексите не се свързват с договор (OCID вместо УНП) и планът за поправка през bridge-а `tender.id → УНП` + prefer-EOP dedup (#286).
 <<<<<<< HEAD
