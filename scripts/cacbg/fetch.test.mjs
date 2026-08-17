@@ -3,7 +3,13 @@
 // degrades to a no-op crawl, and (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCrawlOptions, nextBreaker, BREAKER_TRIP, assessCompleteness } from './fetch.mjs';
+import {
+  parseCrawlOptions,
+  nextBreaker,
+  BREAKER_TRIP,
+  MAX_CONCURRENCY,
+  assessCompleteness,
+} from './fetch.mjs';
 
 test('parseCrawlOptions: defaults — no limit, 6 workers', () => {
   const o = parseCrawlOptions([]);
@@ -80,6 +86,22 @@ test('parseCrawlOptions: zero/negative --concurrency throws', () => {
 });
 test('parseCrawlOptions: fractional --concurrency throws', () => {
   assert.throws(() => parseCrawlOptions(['--concurrency', '2.5']), /concurrency/);
+});
+
+// --concurrency had a floor but no roof: `--concurrency 500` was an accepted way to open five hundred
+// simultaneous connections to a state register, from the very script whose backoff and circuit breaker
+// exist to prevent that. The ceiling is what the workflow actually runs, so tuning DOWN stays free and
+// tuning up is a deliberate edit.
+test('parseCrawlOptions: --concurrency above the politeness ceiling throws', () => {
+  assert.throws(
+    () => parseCrawlOptions(['--concurrency', String(MAX_CONCURRENCY + 1)]),
+    /at most 8 — the register is a state server/,
+  );
+  assert.throws(() => parseCrawlOptions(['--concurrency', '500']), /at most 8/);
+});
+test('parseCrawlOptions: the ceiling itself is allowed — it is what the workflow runs', () => {
+  assert.equal(parseCrawlOptions(['--concurrency', String(MAX_CONCURRENCY)]).concurrency, 8);
+  assert.equal(MAX_CONCURRENCY, 8, 'the workflow passes --concurrency 8; keep them in lockstep');
 });
 
 // --- the other footgun: a bad --limit silently fetched EVERYTHING (NaN → not finite → no slice) ---

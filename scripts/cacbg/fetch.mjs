@@ -25,6 +25,13 @@ import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.
 const BASE = `https://${CACBG_HOST}`;
 const RAW = path.join(SCRATCH, 'raw');
 
+// The politeness ceiling on parallel requests to register.cacbg.bg. `--concurrency` had a floor but no
+// roof, so `--concurrency 500` was a valid way to ask a state server for five hundred simultaneous
+// connections — from a script whose whole design (backoff, circuit breaker, inter-request sleep) exists to
+// avoid exactly that. 8 is what the workflow runs and what the corpus measurement was taken at; ADR-0012's
+// original „≤6" predates it. Raising this is a deliberate edit with a server on the other end, not a flag.
+export const MAX_CONCURRENCY = 8;
+
 // Parse + VALIDATE crawl options. An unvalidated Number() lets `--concurrency abc/0` become NaN/0 →
 // `Array.from({length})` spawns zero workers → the crawl fetches nothing and exits 0 (a silent no-op),
 // and a bad `--limit` (NaN, non-finite) silently skips the slice and fetches the whole register. Both
@@ -50,9 +57,15 @@ export function parseCrawlOptions(argv) {
   };
   const limitRaw = get('limit', '');
   const deadlineRaw = get('deadline-minutes', '');
+  const concurrency = posInt(get('concurrency', '6'), 'concurrency');
+  if (concurrency > MAX_CONCURRENCY)
+    throw new Error(
+      `--concurrency must be at most ${MAX_CONCURRENCY} — the register is a state server, not a load target; ` +
+        `got ${concurrency}`,
+    );
   return {
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
-    concurrency: posInt(get('concurrency', '6'), 'concurrency'),
+    concurrency,
     folders: get('folders', ''),
     // Wall-clock budget after which the crawl stops ENQUEUEING new work and returns normally. Absent by
     // default — a hand-run crawl has no cap to respect. See run() for why a CI crawl needs one.

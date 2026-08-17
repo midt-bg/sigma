@@ -18,7 +18,7 @@ PII contained, and fits SIGMA's existing Cloudflare ETL rather than bolting on n
 
 - `fetch.mjs` — pure I/O. Discovers folders, fetches `list.xml` + every declaration into a git-ignored
   **raw cache** (`scratch/cacbg/raw/<year>/`). Resumable by file existence (immutable source ⇒ skip if
-  present), polite (bounded concurrency, 403/429/5xx exponential backoff, circuit breaker, jitter), and
+  present), polite (concurrency capped in code, 403/429/5xx exponential backoff, circuit breaker, jitter), and
   404-tolerant (listed-but-unpublished files are source gaps, not errors). Path-sanitizes every `xmlFile`.
 - `extract.mjs` — no network. Re-parses the raw cache into structured staging, so the parser can evolve
   without re-fetching. Splits public holdings from internal third-party data (ADR-0010).
@@ -58,5 +58,10 @@ Two is the measured expectation, not a guarantee — the second run's share depe
 got through, and each resumption must be a **fresh dispatch**: GitHub's re-run keeps the same `run_id`,
 and an Actions cache entry is immutable, so a re-run cannot store what it crawled. The workflow keys the
 cache on `run_id`-`run_attempt` so that a re-run at least fails loudly instead of silently discarding its
-own work. The crawler's politeness envelope also drifted from this ADR in practice: the workflow runs at
-concurrency 8, and `parseCrawlOptions` enforces no upper bound at all.
+own work.
+
+The politeness envelope above is restated to match practice: the ceiling is **8**, not the „≤6" this ADR
+originally wrote, and it is now enforced in `parseCrawlOptions` (`MAX_CONCURRENCY`) rather than merely
+described here. It had been describing an unenforced 6 while the workflow ran 8 and the flag accepted any
+positive integer — `--concurrency 500` was a legal way to ask a state register for five hundred parallel
+connections. Lowering it stays a flag; raising it is a code change, which is the point.
