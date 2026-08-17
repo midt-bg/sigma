@@ -1,6 +1,7 @@
 import type {
   ConflictLink,
   ConflictContract,
+  ConflictContractFacts,
   ConflictRelation,
   CompanyConflicts,
   OfficialConflicts,
@@ -274,46 +275,59 @@ export async function getConflictLeaderboard(db: D1Database, limit = 100): Promi
   }
 }
 
-// Cap the links a single detail page renders. A person/company with more surfaced links than this is well
-// past anything real (the whole leaderboard is capped at 1000), and without a LIMIT the eager contract load
-// below would fan out unbounded (niki #312 HIGH 2). NEXUS_ORDER keeps the strongest links when it bites.
-export const DETAIL_LINKS_LIMIT = 500;
+// Cap the links a single detail page renders — sized to what a page can meaningfully show, not to the corpus
+// ceiling (ydimitrof #312 MEDIUM 5). Each link is a rendered case block; past a few dozen the page is unusable
+// and the eager contract load (one ЕИК read per distinct winner) fans out too far. NEXUS_ORDER keeps the
+// strongest links when it bites. A company with >50 linked officials is far past anything real (the leaderboard
+// itself caps at 1000 links total); if one ever appears, the block count is what needs paging, not this number.
+export const DETAIL_LINKS_LIMIT = 50;
 
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
   ORDER BY ${NEXUS_ORDER} LIMIT ${DETAIL_LINKS_LIMIT}`;
 
-// Eagerly load each link's contracts for a detail page (#287), deduped by ЕИК (niki #312 HIGH 2). A winner's
-// contracts are a function of its ЕИК, NOT the link — the only per-link difference is the `temporal` mark,
-// which depends on that link's declared-year window. So we fetch each DISTINCT ЕИК's contracts ONCE and derive
-// `temporal` per link in TS: a COMPANY page (every link on one ЕИК) collapses N officials' identical 500-row
-// scans to a SINGLE read (measured 61× → 1×); an OFFICIAL page is one read per distinct winner. Links here are
-// already surfaced (sealed() + the LINK_SELECT gate), so the raw ЕИК read needs no per-link_key gate — the
-// gated `getLinkContracts` is kept only for the standalone lazy route. Each ЕИК read is capped at
-// LINK_CONTRACTS_LIMIT, so the page's contract cost is bounded by (distinct ЕИК × cap), not (links × cap).
+// The union declared window across the links on ONE ЕИК: [min firstDeclaredYear, max lastDeclaredYear]. The
+// ЕИК read orders contracts INSIDE this union first, so the LIMIT can never drop a contract that falls in ANY
+// of the winner's officials' declared windows — the truth bug ydimitrof #312 HIGH 2 caught (a dropped in-window
+// contract makes the detail page read „0 in window" under a headline that says „X от Y"). A null bound means
+// that side is absent → the ordering just falls back to signed_at DESC (no window to prioritise).
+function unionWindow(links: ConflictLink[]): { lo: number | null; hi: number | null } {
+  let lo: number | null = null;
+  let hi: number | null = null;
+  for (const l of links) {
+    const f = l.firstDeclaredYear == null ? null : Number(l.firstDeclaredYear);
+    const t = l.lastDeclaredYear == null ? null : Number(l.lastDeclaredYear);
+    if (f != null && Number.isFinite(f)) lo = lo == null ? f : Math.min(lo, f);
+    if (t != null && Number.isFinite(t)) hi = hi == null ? t : Math.max(hi, t);
+  }
+  return { lo, hi };
+}
+
+// Eagerly load each WINNER's contracts for a detail page (#287), deduped by ЕИК (ydimitrof #312 HIGH 1 + 2). A
+// winner's contracts are a function of its ЕИК, NOT the link — the only per-link difference is the `temporal`
+// mark (the link's declared window), which the detail component derives. So we fetch each DISTINCT ЕИК ONCE and
+// key the result by ЕИК: a COMPANY page (every link on one ЕИК) reads AND serialises the contract set a SINGLE
+// time (was N reads + N serialised copies); an OFFICIAL page is one entry per distinct winner. The read is
+// ordered union-declared-window-first so the LINK_CONTRACTS_LIMIT cap keeps the in-window contracts. Links here
+// are already surfaced (sealed() + the LINK_SELECT gate), so the raw ЕИК read needs no per-link_key gate — the
+// gated `getLinkContracts` is kept only for the standalone lazy route.
 async function loadLinkContracts(
   db: D1Database,
   links: ConflictLink[],
-): Promise<Record<string, ConflictContract[]>> {
-  const distinctEik = [...new Set(links.map((l) => l.eik))];
-  const rawByEik = new Map<string, EikContractRow[]>();
-  await Promise.all(
-    distinctEik.map(async (eik) => {
-      rawByEik.set(
-        eik,
-        (await db.prepare(EIK_CONTRACTS_SQL).bind(eik).all<EikContractRow>()).results,
-      );
+): Promise<Record<string, ConflictContractFacts[]>> {
+  const byEik = new Map<string, ConflictLink[]>();
+  for (const l of links) {
+    const g = byEik.get(l.eik);
+    if (g) g.push(l);
+    else byEik.set(l.eik, [l]);
+  }
+  const entries = await Promise.all(
+    [...byEik.entries()].map(async ([eik, eikLinks]) => {
+      const { lo, hi } = unionWindow(eikLinks);
+      const rows = (await db.prepare(EIK_CONTRACTS_SQL).bind(eik, lo, hi).all<EikContractRow>())
+        .results;
+      return [eik, rows.map(toFacts)] as const;
     }),
   );
-  const entries = links.map((l) => {
-    const raw = rawByEik.get(l.eik) ?? [];
-    // Mark each contract against THIS link's declared window, then stable-sort contemporaneous-first — the
-    // raw read is already signed_at DESC / amount DESC, so this reproduces LINK_CONTRACTS_SQL's ORDER BY.
-    const marked = raw.map((r) =>
-      toContract(r, markTemporal(r.signed_at, l.firstDeclaredYear, l.lastDeclaredYear)),
-    );
-    marked.sort((a, b) => temporalRank(a.temporal) - temporalRank(b.temporal));
-    return [l.linkKey, marked] as const;
-  });
   return Object.fromEntries(entries);
 }
 
@@ -376,38 +390,11 @@ interface ContractRow extends EikContractRow {
   temporal: ConflictContract['temporal'];
 }
 
-// A contract's year, or null when absent/unparseable — the TS mirror of `CAST(strftime('%Y', signed_at) AS
-// INTEGER)`. Data is ISO (YYYY-…), so slice(0,4) is the year; a malformed value returns null (→ 'unknown').
-function contractYearInt(s: string | null): number | null {
-  if (!s) return null;
-  const y = Number(s.slice(0, 4));
-  return Number.isFinite(y) ? y : null;
-}
-
-// The declared-window mark for one contract, computed in TS so a per-ЕИК read can serve many links (each with
-// its own window). Mirrors LINK_CONTRACTS_SQL's CASE / IN_WINDOW exactly: 'unknown' when any of signed year,
-// first- or last-declared year is missing; else 'before'/'after'/'contemporaneous' by inclusive [first,last].
-function markTemporal(
-  signedAt: string | null,
-  firstDeclaredYear: string | null,
-  lastDeclaredYear: string | null,
-): ConflictContract['temporal'] {
-  const y = contractYearInt(signedAt);
-  const lo = firstDeclaredYear == null ? null : Number(firstDeclaredYear);
-  const hi = lastDeclaredYear == null ? null : Number(lastDeclaredYear);
-  if (y == null || lo == null || hi == null || !Number.isFinite(lo) || !Number.isFinite(hi)) {
-    return 'unknown';
-  }
-  if (y < lo) return 'before';
-  if (y > hi) return 'after';
-  return 'contemporaneous';
-}
-
-// Contemporaneous first; everything else keeps the read's signed_at DESC / amount DESC order (stable sort).
-const temporalRank = (t: ConflictContract['temporal']): number => (t === 'contemporaneous' ? 0 : 1);
-
-// One row → DTO. `temporal` is supplied (SQL-computed for the gated link read, TS-computed for the ЕИК read).
-function toContract(r: EikContractRow, temporal: ConflictContract['temporal']): ConflictContract {
+// One row → the shared contract FACTS (no temporal). The eager ЕИК read returns these once per winner; the
+// detail component derives `temporal` per link (a winner's contracts are the same for every official linked to
+// it, only each official's declared window differs — so temporal is a per-link presentation concern, moved
+// client-side with `markContracts` in apps/web to keep the DTO one array per ЕИК, not one per link).
+function toFacts(r: EikContractRow): ConflictContractFacts {
   return {
     contractSlug: contractSlug(r.id),
     signedAt: r.signed_at,
@@ -421,8 +408,13 @@ function toContract(r: EikContractRow, temporal: ConflictContract['temporal']): 
     // query, so null here means "procedure unknown" → the UI omits it rather than showing a placeholder.
     procedureType: r.procedure_type,
     subject: r.subject,
-    temporal,
   };
+}
+
+// One row → the full DTO for the gated per-link lazy read, whose SQL computes `temporal` (the ЕИК eager read
+// does not — it derives temporal per link client-side). Shares the fact mapping with `toFacts`.
+function toContract(r: ContractRow): ConflictContract {
+  return { ...toFacts(r), temporal: r.temporal };
 }
 
 // Hard ceiling on one link's expanded contract list. A winner with thousands of contracts would otherwise
@@ -434,12 +426,15 @@ function toContract(r: EikContractRow, temporal: ConflictContract['temporal']): 
 // ponytail: fixed cap, not pagination — add keyset paging only if a real winner exceeds this in practice.
 export const LINK_CONTRACTS_LIMIT = 500;
 
-// A winner's contracts by ЕИК — the read `loadLinkContracts` shares across every link on that winner (niki
-// #312 HIGH 2). NO interest_links join and NO per-link gate: the set is a function of the ЕИК alone, and the
-// callers pass only ALREADY-surfaced links (sealed() + the LINK_SELECT gate), so re-gating would be redundant.
-// `temporal` is NOT computed here — it is per-link (markTemporal in TS) — so the same read serves all of a
-// winner's links. Window-independent order (signed_at DESC, amount DESC) + the same cap; the contemporaneous-
-// first ordering is applied per link in TS. The gated LINK_CONTRACTS_SQL below stays for the lazy route.
+// A winner's contracts by ЕИК — the read `loadLinkContracts` shares across every link on that winner
+// (ydimitrof #312 HIGH 1 + 2). NO interest_links join and NO per-link gate: the set is a function of the ЕИК
+// alone, and the callers pass only ALREADY-surfaced links (sealed() + the LINK_SELECT gate), so re-gating would
+// be redundant. `temporal` is NOT computed here — it is per-link, derived client-side — so the same read serves
+// every link on the winner. Binds are (ЕИК, unionLo, unionHi): the ORDER BY puts contracts whose signing year
+// falls in the UNION of the winner's officials' declared windows FIRST, so the LINK_CONTRACTS_LIMIT cap can
+// never drop an in-window contract (which would make a detail page read „0 in window" under a „X от Y" headline
+// — the truth bug). NULL bounds (no declared window on any link) make the CASE fall through to signed_at DESC.
+// The gated LINK_CONTRACTS_SQL below stays for the lazy route.
 export const EIK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS authority, aa.id AS authority_id,
     ath.spent_eur AS authority_total_eur, cc.contract_kind,
     cc.contract_number, cc.amount_eur,
@@ -451,7 +446,11 @@ export const EIK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS authori
     JOIN authorities aa ON aa.id = tt.authority_id
     LEFT JOIN authority_totals ath ON ath.authority_id = aa.id
   WHERE bb.eik_normalized = ?
-  ORDER BY cc.signed_at DESC, cc.amount_eur DESC
+  ORDER BY
+    (CASE WHEN cc.signed_at IS NOT NULL
+            AND CAST(strftime('%Y', cc.signed_at) AS INTEGER) BETWEEN ? AND ?
+          THEN 0 ELSE 1 END),
+    cc.signed_at DESC, cc.amount_eur DESC
   LIMIT ${LINK_CONTRACTS_LIMIT}`;
 
 // One published link's contracts, each marked against the declared-stake window. The WHERE gate reuses
@@ -499,5 +498,5 @@ export async function getLinkContracts(
     if (conflictSchemaAbsent(e, 'link-contracts')) return []; // un-migrated env → empty contracts, not a 500
     throw e;
   }
-  return rows.map((r) => toContract(r, r.temporal));
+  return rows.map(toContract);
 }

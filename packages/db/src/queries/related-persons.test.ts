@@ -147,45 +147,37 @@ describe('related-persons queries', () => {
     ...over,
   });
 
-  it('official conflicts eager-load each winner contracts by ЕИК; temporal derived from the link window', async () => {
-    // Two links on DIFFERENT winners (ЕИК 111, 222) — one contract read per distinct ЕИК; temporal computed in
-    // TS against the link's 2019–2023 window (2021 → contemporaneous, 2016 → before).
+  it('official conflicts eager-load each WINNER contracts keyed by ЕИК (facts only; temporal is derived client-side)', async () => {
+    // Two links on DIFFERENT winners (ЕИК 111, 222) — one read per distinct ЕИК, keyed by ЕИК. The rows are
+    // FACTS: no `temporal` column (it is per-link, derived in the component by markContracts).
     const db = fakeDb({
       'person:ivan': [row({ link_key: 'a', eik: '111' }), row({ link_key: 'b', eik: '222' })],
       'contracts:111': [eikContract()],
-      'contracts:222': [eikContract({ id: 'c:e:b1', signed_at: '2016-03-01' })], // before the window
+      'contracts:222': [eikContract({ id: 'c:e:b1', signed_at: '2016-03-01' })],
     });
     const res = await getOfficialConflicts(db, 'person:ivan');
-    expect(Object.keys(res!.contracts).sort()).toEqual(['a', 'b']);
-    expect(res!.contracts.a).toHaveLength(1);
-    expect(res!.contracts.a![0]!.contractSlug).toBe('e:a1'); // 'c:' prefix stripped
-    expect(res!.contracts.a![0]!.temporal).toBe('contemporaneous'); // 2021 ∈ [2019,2023]
-    expect(res!.contracts.b![0]!.temporal).toBe('before'); // 2016 < 2019 — marked in TS, not SQL
+    // keyed by ЕИК (one array per winner), NOT per linkKey
+    expect(Object.keys(res!.contracts).sort()).toEqual(['111', '222']);
+    expect(res!.contracts['111']).toHaveLength(1);
+    expect(res!.contracts['111']![0]!.contractSlug).toBe('e:a1'); // 'c:' prefix stripped
+    // facts carry NO temporal — that is a per-link presentation concern, derived by markContracts
+    expect('temporal' in res!.contracts['111']![0]!).toBe(false);
   });
 
-  it('company conflicts fetch the shared ЕИК contracts ONCE and serve them to every official (HIGH 2 dedup)', async () => {
-    // Two officials on the SAME winner (ЕИК 111), with DIFFERENT declared windows. The old code read the
-    // identical 500-row set once PER link (measured 61× on a real company); now the ЕИК is read once and both
-    // links get it, each marked for its own window. Links live under '111' (COMPANY_SQL), the shared contract
-    // set under 'contracts:111' (EIK_CONTRACTS_SQL).
+  it('company conflicts read the shared ЕИК contracts ONCE, keyed by ЕИК (HIGH 1 payload + HIGH 2 query dedup)', async () => {
+    // Two officials on the SAME winner (ЕИК 111). The old code read AND serialised the identical set once PER
+    // link (measured 61× on a real company); now the ЕИК is read once and the DTO carries it once, keyed by ЕИК
+    // — every official's block derives its own window split from the same shared facts client-side.
     const db = fakeDb({
-      '111': [
-        row({ link_key: 'p1|111', first_declared_year: '2019', last_declared_year: '2023' }),
-        row({
-          link_key: 'p2|111',
-          official: 'Друг',
-          first_declared_year: '2010',
-          last_declared_year: '2014',
-        }),
-      ],
-      'contracts:111': [eikContract()], // signed 2021 — in p1's window, after p2's
+      '111': [row({ link_key: 'p1|111' }), row({ link_key: 'p2|111', official: 'Друг' })],
+      'contracts:111': [eikContract()],
     });
     const res = await getCompanyConflicts(db, '111');
-    expect(Object.keys(res!.contracts).sort()).toEqual(['p1|111', 'p2|111']);
-    // Same shared contract, marked per each official's OWN window: 2021 ∈ [2019,2023] but > [2010,2014].
-    expect(res!.contracts['p1|111']![0]!.temporal).toBe('contemporaneous');
-    expect(res!.contracts['p2|111']![0]!.temporal).toBe('after');
-    // Dedup: EIK_CONTRACTS_SQL was bound for '111' exactly ONCE, though two links share that ЕИК.
+    // ONE contracts entry, keyed by the shared ЕИК — not one array per official (the payload dedup)
+    expect(Object.keys(res!.contracts)).toEqual(['111']);
+    expect(res!.contracts['111']).toHaveLength(1);
+    expect('temporal' in res!.contracts['111']![0]!).toBe(false);
+    // …and the ЕИК contract set was READ exactly once, though two links share it
     const eikReads = db.binds.filter((b) => b.sql === EIK_CONTRACTS_SQL && b.key === '111');
     expect(eikReads).toHaveLength(1);
   });

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { moneyBare } from '@sigma/shared';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import {
   authorityShareDisplay,
   authorityShares,
   companyConflictsHref,
   companyProfileHref,
   contractHref,
+  contractTemporal,
   contractTimeline,
   contractYear,
   contractYearsLabel,
@@ -17,7 +18,7 @@ import {
   conflictHeadline,
   groupByPerson,
   isHttpsUrl,
-  linkContractsHref,
+  markContracts,
   officialHref,
   partitionContracts,
   personFundsCell,
@@ -353,19 +354,6 @@ describe('contractTimeline', () => {
     expect(tl!.minYear).toBe(2024);
     expect(tl!.windowStartPct).toBe(50);
     expect(tl!.windowEndPct).toBe(50);
-  });
-});
-
-describe('linkContractsHref', () => {
-  it('keys on the URL-safe scope + slug + ЕИК; the scope MUST match the ETL link_key (ADR-0032)', () => {
-    // A self link → scope „self" (link_key pid|eik). A family link → scope „family" (link_key pid|eik|family);
-    // hardcoding 'self' there would fetch [] for every relative's-stake row. scope is a path segment.
-    expect(linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'owns' }))).toBe(
-      '/conflicts/link/self/c2VydA/111/contracts',
-    );
-    expect(
-      linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'related' })),
-    ).toBe('/conflicts/link/family/c2VydA/111/contracts');
   });
 });
 
@@ -911,5 +899,72 @@ describe('groupByPerson', () => {
     const cell = personFundsCell(rows[0]);
     expect(cell.primary).toBe(moneyBare(88_000_000));
     expect(cell.total).toBeNull(); // no split — not „0 … от 88 млн."
+  });
+});
+
+// A winner's contract FACTS as carried in the eager DTO (no temporal — derived per link). Minimal shape.
+function facts(over: Partial<ConflictContractFacts> = {}): ConflictContractFacts {
+  return {
+    contractSlug: 'e:c1',
+    signedAt: '2021-05-01',
+    authority: 'Община Тест',
+    authorityId: 'a:1',
+    authorityTotalEur: 5_000_000,
+    contractKind: 'Услуги',
+    procedureType: 'открита процедура',
+    subject: 'Ремонт',
+    contractNumber: 'Д-1',
+    amountEur: 1_000_000,
+    ...over,
+  };
+}
+
+describe('contractTemporal (per-link window mark, moved client-side #312 HIGH 1)', () => {
+  it('marks by inclusive [first, last] against the signing year', () => {
+    expect(contractTemporal('2021-05-01', '2019', '2023')).toBe('contemporaneous');
+    expect(contractTemporal('2019-01-01', '2019', '2023')).toBe('contemporaneous'); // inclusive lower
+    expect(contractTemporal('2023-12-31', '2019', '2023')).toBe('contemporaneous'); // inclusive upper
+    expect(contractTemporal('2016-01-01', '2019', '2023')).toBe('before');
+    expect(contractTemporal('2024-01-01', '2019', '2023')).toBe('after');
+  });
+
+  it("is 'unknown' when the signing date or either declared bound is missing (the branch a mutant would skip)", () => {
+    // ydimitrof #312 MEDIUM 4: without the null guards, `null < lo` is `true` and an undated contract would
+    // silently read as „before". Pin all three missing-input paths to 'unknown'.
+    expect(contractTemporal(null, '2019', '2023')).toBe('unknown'); // no signing date
+    expect(contractTemporal('2021-05-01', null, '2023')).toBe('unknown'); // no lower bound
+    expect(contractTemporal('2021-05-01', '2019', null)).toBe('unknown'); // no upper bound
+    expect(contractTemporal(null, null, null)).toBe('unknown');
+  });
+
+  it("treats a non-ISO / bogus date as 'unknown' (the >0 guard, matching strftime returning NULL)", () => {
+    // parseYear's `> 0` guard: a non-ISO date yields no valid year → 'unknown', NOT 'before'. This is the
+    // divergence from `strftime('%Y', …)` ydimitrof #312 MEDIUM 4 flagged; both now agree on „no year".
+    expect(contractTemporal('not-a-date', '2019', '2023')).toBe('unknown');
+    expect(contractTemporal('0000-01-01', '2019', '2023')).toBe('unknown');
+  });
+});
+
+describe('markContracts (derive per-link temporal + contemporaneous-first)', () => {
+  it('marks a winner’s shared facts against ONE link’s window and sorts in-window first', () => {
+    const shared = [
+      facts({ contractSlug: 'e:out', contractNumber: 'Д-3', signedAt: '2024-01-01' }), // after
+      facts({ contractSlug: 'e:in', contractNumber: 'Д-1', signedAt: '2020-01-01' }), // in-window
+      facts({ contractSlug: 'e:un', contractNumber: 'Д-4', signedAt: null }), // unknown
+    ];
+    const marked = markContracts(shared, '2019', '2023');
+    // contemporaneous first, then the rest in their read order (stable)
+    expect(marked.map((c) => [c.contractNumber, c.temporal])).toEqual([
+      ['Д-1', 'contemporaneous'],
+      ['Д-3', 'after'],
+      ['Д-4', 'unknown'],
+    ]);
+  });
+
+  it('marks the SAME shared facts differently for two links with different windows (the dedup payoff)', () => {
+    const shared = [facts({ signedAt: '2021-05-01' })];
+    // one official’s window includes 2021, another’s does not — same facts, different split
+    expect(markContracts(shared, '2019', '2023')[0]!.temporal).toBe('contemporaneous');
+    expect(markContracts(shared, '2010', '2014')[0]!.temporal).toBe('after');
   });
 });

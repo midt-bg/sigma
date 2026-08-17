@@ -41,14 +41,14 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
   return { 'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(3600) };
 }
 
-// All eligible published ownership links — self and family (ADR-0032). ~98 on the full 2015–2026 corpus
-// (77 self + 21 family; the per-declaration-type divest fix recovered 23 true links, #226). Small enough to
-// load whole and paginate in the client, so the summary totals the full set rather than one page. NB: hard
-// ceiling 1000 — switch to keyset LIMIT/OFFSET (see companies.tsx) if the eligible set ever nears it.
+// All eligible published ownership links — self and family (ADR-0032). ~337 on the full 2015–2026 corpus
+// after #279 (was ~98 pre-#279). Small enough to load whole and paginate in the client, so the summary totals
+// the full set rather than one page. NB: hard ceiling 1000 — reserve ~3× today — switch to keyset LIMIT/OFFSET
+// (see companies.tsx), or move grouping server-side, before the eligible set nears it.
 const LEADERBOARD_MAX = 1000;
 // Persons per page. The list is one row per PERSON (#287, groupByPerson), so pagination counts collapsed
-// rows, not raw links — a person with N winners is one row, not N. The per-link corpus is ~98, fewer
-// persons, so a page is generous; the ceiling above still guards the loader's raw-link fetch.
+// rows, not raw links — a person with N winners is one row, not N. The per-link corpus is ~337 (fewer
+// persons), so a page is generous; the ceiling above still guards the loader's raw-link fetch.
 const PER_PAGE = 100;
 
 // Warn once the eligible set reaches this fraction of the ceiling — headroom to move grouping into SQL before

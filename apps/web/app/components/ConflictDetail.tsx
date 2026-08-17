@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useId } from 'react';
 import { Link } from 'react-router';
 import { count, money, pct, plural } from '@sigma/shared';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import { Chip, ExternalEikLink, ShareBar } from './ui';
 import {
   authorityShares,
@@ -16,6 +16,7 @@ import {
   fundsMagnitude,
   hasContemporaneousContracts,
   isHttpsUrl,
+  markContracts,
   officialHref,
   partitionContracts,
   registryEvidenceLabel,
@@ -34,15 +35,17 @@ import {
 // sub-label + profile link). The other party is the page's own subject (named in the PageHeader), so it is
 // never repeated inside a block — mirroring the old `omit`.
 
-/** The eager list of per-link detail blocks for a person/company page. `contracts` is the linkKey→contracts
- *  map the loader batched; each block renders its full case with no lazy fetch. */
+/** The eager list of per-link detail blocks for a person/company page. `contracts` is the ЕИК→contract-facts
+ *  map the loader batched (one array per winner, not per link — #312 HIGH 1); each block marks its winner's
+ *  facts against its OWN declared window (`markContracts`) and renders its full case with no lazy fetch. On a
+ *  company page every link shares one ЕИК, so all blocks read the same facts array, each with its own split. */
 export function ConflictDetail({
   links,
   contracts,
   perspective,
 }: {
   links: ConflictLink[];
-  contracts: Record<string, ConflictContract[]>;
+  contracts: Record<string, ConflictContractFacts[]>;
   perspective: 'official' | 'company';
 }) {
   return (
@@ -51,7 +54,11 @@ export function ConflictDetail({
         <li key={l.linkKey}>
           <ConflictDetailBlock
             link={l}
-            contracts={contracts[l.linkKey] ?? []}
+            contracts={markContracts(
+              contracts[l.eik] ?? [],
+              l.firstDeclaredYear,
+              l.lastDeclaredYear,
+            )}
             perspective={perspective}
           />
         </li>

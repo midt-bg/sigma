@@ -1,4 +1,4 @@
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import { count, moneyBare } from '@sigma/shared';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -142,15 +142,6 @@ export function fundsMagnitude(link: ConflictLink): number | null {
   return Math.min(1, conflict / total);
 }
 
-/** The on-demand resource URL for a link's contracts (client-fetched by the expandable row). Keyed on the
- *  URL-safe :scope/:slug/:ЕИК — never the raw link_key, which carries '|' and ':'. :scope must match the
- *  ETL link_key: a family link (relation 'related', ADR-0032) has key `pid|eik|family`, so it MUST request
- *  scope 'family' — hardcoding 'self' would silently fetch [] for every relative's-stake row. */
-export function linkContractsHref(link: ConflictLink): string {
-  const scope = link.relation === 'related' ? 'family' : 'self';
-  return `/conflicts/link/${scope}/${encodeURIComponent(link.officialSlug)}/${encodeURIComponent(link.eik)}/contracts`;
-}
-
 // The declared YEARS are when the stake was DISCLOSED (declaration within a month of taking office, then
 // annually), NOT when it was acquired or sold — real ownership usually predates the first filing (ТР has the
 // true start). So a 'before' contract is not "before the person held the stake", only outside the DISCLOSED
@@ -191,6 +182,45 @@ function parseYear(s: string | null): number | null {
   if (!s) return null;
   const n = Number(s.slice(0, 4));
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The declared-window mark for one contract against ONE link's window — moved client-side (#312 HIGH 1) so
+ *  the eager DTO can carry a winner's contract FACTS once per ЕИК and each link derive its own `temporal`.
+ *  Mirrors the SQL `LINK_CONTRACTS_SQL` CASE / IN_WINDOW: 'unknown' when the signed year or either declared
+ *  bound is missing/unparseable (via `parseYear`'s NaN/≤0 guard — so a non-ISO date is 'unknown', matching
+ *  `strftime` returning NULL); else 'before'/'after'/'contemporaneous' by inclusive [first, last]. */
+export function contractTemporal(
+  signedAt: string | null,
+  firstDeclaredYear: string | null,
+  lastDeclaredYear: string | null,
+): ConflictContract['temporal'] {
+  const y = parseYear(signedAt);
+  const lo = parseYear(firstDeclaredYear);
+  const hi = parseYear(lastDeclaredYear);
+  if (y == null || lo == null || hi == null) return 'unknown';
+  if (y < lo) return 'before';
+  if (y > hi) return 'after';
+  return 'contemporaneous';
+}
+
+/** Mark a winner's shared contract FACTS against ONE link's declared window, contemporaneous-first — the
+ *  per-link view the detail block renders from the ЕИК-deduped facts. The facts arrive union-window-first from
+ *  the read (so the server cap kept the in-window ones); this stable sort promotes THIS link's in-window subset
+ *  to the top while preserving the read's signed_at DESC order within each group. */
+export function markContracts(
+  facts: ConflictContractFacts[],
+  firstDeclaredYear: string | null,
+  lastDeclaredYear: string | null,
+): ConflictContract[] {
+  return facts
+    .map((f) => ({
+      ...f,
+      temporal: contractTemporal(f.signedAt, firstDeclaredYear, lastDeclaredYear),
+    }))
+    .sort(
+      (a, b) =>
+        (a.temporal === 'contemporaneous' ? 0 : 1) - (b.temporal === 'contemporaneous' ? 0 : 1),
+    );
 }
 
 export interface TimelineMark {
@@ -588,7 +618,10 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
 
   // Rank is the strongest SINGLE link's NEXUS_ORDER — NOT the OR-ed row flags. A person with one strong link
   // and one weak link must not sink below a person with only a medium link, so compare the STRONGEST links
-  // directly. Tiebreak on officialSlug for a stable, deterministic order.
+  // directly. `isStrongerLink` already breaks every tie on `link_key` ASC (globally unique), so two distinct
+  // persons are ALWAYS strictly ordered — the `officialSlug` comparison below is an unreachable belt-and-braces
+  // fallback (it would only fire if two persons' strongest links shared a link_key, which cannot happen), kept
+  // so the comparator is total even under a future non-unique key (ydimitrof #312 LOW 1).
   rows.sort((a, b) => {
     if (isStrongerLink(a.strongest, b.strongest)) return -1;
     if (isStrongerLink(b.strongest, a.strongest)) return 1;

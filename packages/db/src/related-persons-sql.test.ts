@@ -446,18 +446,24 @@ describe('свързани-лица SQL (real SQLite)', () => {
     });
   });
 
-  it('EIK_CONTRACTS_SQL returns a winner’s full contract set by ЕИК — the same rows the gated per-link read serves (HIGH 2 dedup basis)', () => {
+  it('EIK_CONTRACTS_SQL returns a winner’s full set by ЕИК, in-window FIRST so the cap never drops an in-window contract (HIGH 1 dedup + HIGH 2 truth)', () => {
     withDb((dbPath) => {
-      // The detail loaders read contracts ONCE per ЕИК (not once per link) and derive temporal in TS. Prove the
-      // ЕИК read is a faithful stand-in: the SAME contract set the gated per-link read returns for a surfaced
-      // link on that winner (niki #312 HIGH 2). Order/temporal differ (window-independent here), so compare ids.
+      // The detail loaders read contracts ONCE per ЕИК (not once per link) and derive temporal client-side. Two
+      // proofs here: (a) the ЕИК read is a faithful stand-in — the SAME contract set the gated per-link read
+      // returns for a surfaced link on that winner; (b) it is ordered union-declared-window FIRST, so the
+      // LINK_CONTRACTS_LIMIT cap can never drop an in-window contract (the ydimitrof #312 HIGH 2 truth bug).
+      // Binds are (ЕИК, unionLo, unionHi); ivan|111's window is [2019, 2023].
       const perLink = rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:ivan|111'));
-      const perEik = rows(dbPath, lit(EIK_CONTRACTS_SQL, '111'));
+      const perEik = rows(dbPath, lit(EIK_CONTRACTS_SQL, '111', 2019, 2023));
+      // (a) same SET of contracts (compare by id; the ЕИК read carries no temporal column — per-link, derived
+      // client-side).
       expect(perEik.map((r) => r.id).sort()).toEqual(perLink.map((r) => r.id).sort());
-      // The ЕИК read carries NO temporal column — that is per-link, derived in TS (markTemporal).
       expect('temporal' in perEik[0]!).toBe(false);
-      // Window-independent order: signed_at DESC, then the undated row last (NULL sorts last under DESC).
-      expect(perEik.map((r) => r.contract_number)).toEqual(['Д-3', 'Д-2', 'Д-1', 'Д-4']);
+      // (b) window-FIRST: Д-1 (2020, IN window) precedes Д-3 (2024, OUT) despite being OLDER — a plain
+      // signed_at DESC read would have put Д-3 first and, at the cap boundary, dropped the in-window Д-1. The
+      // order also matches the gated read's contemporaneous-first order for this window.
+      expect(perEik.map((r) => r.contract_number)).toEqual(['Д-2', 'Д-1', 'Д-3', 'Д-4']);
+      expect(perEik.map((r) => r.contract_number)).toEqual(perLink.map((r) => r.contract_number));
     });
   });
 

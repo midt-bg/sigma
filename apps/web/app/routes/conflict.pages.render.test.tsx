@@ -111,7 +111,7 @@ describe('/conflicts/official/:id — render', () => {
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
       links: [l],
-      contracts: { k1: [contract({ authority: 'Община Тест' })] },
+      contracts: { '333': [contract({ authority: 'Община Тест' })] }, // keyed by ЕИК (#312 HIGH 1)
     });
     expect(text()).toContain('Кмет Тестов'); // page header names the official
     expect(text()).toContain('ЕВРОСТРОЙ 21 ЕООД'); // the winner heads the block
@@ -132,14 +132,14 @@ describe('/conflicts/official/:id — render', () => {
       official: 'Кмет Тестов',
       links: [l],
       contracts: {
-        k1: [
-          contract({ authority: 'Община Пловдив', temporal: 'contemporaneous' }),
+        // keyed by ЕИК; temporal is derived per link from the window (2019–2023): 2021 → in, 2016 → before.
+        '333': [
+          contract({ authority: 'Община Пловдив', signedAt: '2021-05-01' }),
           contract({
             contractSlug: 'e:out',
             contractNumber: 'Д-2',
             authority: 'Община Стара',
             signedAt: '2016-01-01',
-            temporal: 'before',
           }),
         ],
       },
@@ -166,7 +166,7 @@ describe('/conflicts/official/:id — render', () => {
       links: [
         link({ linkKey: 'k1', relation: 'related', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' }),
       ],
-      contracts: { k1: [] },
+      contracts: {},
     });
     expect(text()).not.toContain('собствен дял');
     expect(text()).toContain('деклариран дял на свързано лице');
@@ -178,7 +178,7 @@ describe('/conflicts/official/:id — render', () => {
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
       links: [link({ linkKey: 'k1', relation: 'owns', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' })],
-      contracts: { k1: [] },
+      contracts: {},
     });
     expect(text()).toContain('собствен дял');
   });
@@ -187,7 +187,7 @@ describe('/conflicts/official/:id — render', () => {
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
       links: [link({ linkKey: 'k1', relation: 'owns', eik: '333' })],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const t = text();
     expect(t).toContain('Източник и обхват'); // the callout heading is preserved
@@ -217,7 +217,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     await mount(ConflictOfficial as never, {
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'document', registryRole: 'owner' })],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const t = text();
     expect(t).toContain('Регистър');
@@ -241,7 +241,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
           registryEntryNumber: null,
         }),
       ],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const t = text();
     expect(t).toContain('Регистър');
@@ -252,7 +252,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     await mount(ConflictOfficial as never, {
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'confirmed', registryRole: null })],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const t = text();
     expect(t).toContain('самоличност, потвърдена по декларирани данни');
@@ -275,7 +275,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
           registryEntryNumber: null,
         }),
       ],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const block = container.querySelector('.conflict-detail')!;
     expect(block.textContent).toContain('деклариран дял на свързано лице');
@@ -287,7 +287,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     await mount(ConflictOfficial as never, {
       official,
       links: [link({ linkKey: 'k1', eik: '201122335' })],
-      contracts: { k1: [] },
+      contracts: {},
     });
     const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
     expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
@@ -308,7 +308,8 @@ describe('/conflicts/company/:eik — render', () => {
           institution: 'Община Друга',
         }),
       ],
-      contracts: { k1: [contract()], k2: [] },
+      // both officials share ЕИК 111 → ONE contracts entry keyed by ЕИК, shared by both blocks (#312 HIGH 1)
+      contracts: { '111': [contract()] },
     });
     expect(text()).toContain('ТРЕЙС ГРУП ХОЛД АД');
     expect(text()).toContain('111'); // ЕИК in the header
@@ -328,13 +329,13 @@ describe('/conflicts/company/:eik — render', () => {
       eik: '111',
       links: [link({ linkKey: 'k1' })],
       contracts: {
-        k1: [
-          contract({ authority: 'Община Пловдив', temporal: 'contemporaneous' }),
+        // keyed by ЕИК; temporal derived per link (window 2019–2023): 2021 → in-window, 2016 → before.
+        '111': [
+          contract({ authority: 'Община Пловдив', signedAt: '2021-05-01' }),
           contract({
             contractSlug: 'e:out',
             contractNumber: 'Д-2',
             signedAt: '2016-01-01',
-            temporal: 'before',
           }),
         ],
       },
