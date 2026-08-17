@@ -169,7 +169,7 @@ jobs:
 
       # Persist the raw XML corpus across runs. fetch.mjs writes to scratch/cacbg/raw/ and skips files
       # already on disk (source is immutable per year), so restoring a prior snapshot lets a re-run resume
-      # instead of re-crawling from 2017 — and makes full_crawl=false ("extract from existing raw cache")
+      # instead of re-crawling from 2015 — and makes full_crawl=false ("extract from existing raw cache")
       # meaningful. Each run saves under a unique key; restore-keys pulls the most recent snapshot.
       # (Cross-run only — durable incremental persistence is the sigma-etl Worker's R2 job per ADR-0006.
       # GitHub's 10 GB repo cache is the ceiling here.)

@@ -1,6 +1,10 @@
 // node:test — pure crawl-option + circuit-breaker helpers of the CACBG crawler. No I/O.
-// Guards two silent-failure footguns ydimitrof flagged: (1) an unvalidated --concurrency/--limit that
-// degrades to a no-op crawl, and (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall.
+// Every case here guards an option or counter that fails SILENTLY when it fails, which is why they are
+// worth unit tests at all: (1) an unvalidated --concurrency/--limit that degrades to a no-op crawl, and
+// (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall — both flagged by ydimitrof;
+// (3) --deadline-minutes, where a bad value means „no deadline" rather than an error; (4) a flag given
+// with no value at all, which used to read as „not given"; and (5) the politeness ceiling on concurrency,
+// which had a floor but no roof. The end-to-end behaviour of the deadline lives in fetch-gate.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {

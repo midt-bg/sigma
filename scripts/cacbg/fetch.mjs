@@ -11,7 +11,7 @@
 // Usage:
 //   node scripts/cacbg/fetch.mjs                        # all folders discovered from the register index
 //   node scripts/cacbg/fetch.mjs --folders 2021_nc,2025y # restrict to a subset
-//   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6
+//   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6  # concurrency is capped at MAX_CONCURRENCY
 //   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
 import fs from 'node:fs';
