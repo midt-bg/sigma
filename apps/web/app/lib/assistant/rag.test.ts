@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 import {
   buildSchemaChunks,
   embed,
@@ -40,8 +41,10 @@ describe('buildSchemaChunks', () => {
     const chunks = buildSchemaChunks();
     expect(chunks.some((c) => c.kind === 'query')).toBe(true);
     expect(chunks.some((c) => c.kind === 'table')).toBe(true);
-    // Indexing a trap would only let retrieval duplicate what hardTraps() already puts in the prompt.
-    expect(chunks.some((c) => (c.kind as string) === 'trap')).toBe(false);
+    // Exhaustive: the corpus is exactly the canonical queries + table docs — nothing else. This
+    // catches any re-added chunk source (traps under any id/kind included): indexing a trap would
+    // only let retrieval duplicate what hardTraps() already puts in every prompt.
+    expect(chunks).toHaveLength(CANONICAL_QUERIES.length + TABLES.length);
     expect(chunks.some((c) => c.id.startsWith('trap:'))).toBe(false);
   });
 });
@@ -67,22 +70,29 @@ describe('embed', () => {
 });
 
 describe('indexSchemaCorpus', () => {
-  it('upserts one vector per chunk in the schema namespace', async () => {
+  it('upserts one vector per chunk into the versioned native namespace, ids versioned too', async () => {
     const ai = fakeAI();
     const index = fakeIndex();
     const n = await indexSchemaCorpus(ai, index);
     expect(n).toBe(buildSchemaChunks().length);
     expect(index.upserted).toHaveLength(n);
-    expect((index.upserted[0] as { metadata: { ns: string } }).metadata.ns).toBe('schema');
+    const first = index.upserted[0] as { id: string; namespace: string; metadata: { ns: string } };
+    // Pin the literal, not SCHEMA_NS: a namespace bump must be a deliberate act that also updates
+    // this test (and triggers a re-index) — never an accidental constant edit.
+    expect(first.namespace).toBe('schema-v2');
+    expect(first.metadata.ns).toBe('schema-v2');
+    // Version in the id too: a re-index writes a NEW cohort instead of mutating the old one, so a
+    // Worker rollback keeps querying the old cohort untouched.
+    expect(first.id.startsWith('schema-v2:')).toBe(true);
   });
 });
 
 describe('retrieveSchemaContext', () => {
-  it('returns the matched chunk texts and queries the schema namespace', async () => {
+  it('returns the matched chunk texts and queries the versioned native namespace', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
       {
-        id: 'schema:table:home_totals',
+        id: 'schema-v2:table:home_totals',
         score: 0.9,
         metadata: { kind: 'table', text: 'home_totals (глобални суми): contracts, value_eur, …' },
       },
@@ -90,10 +100,17 @@ describe('retrieveSchemaContext', () => {
     expect(await retrieveSchemaContext(ai, index, 'обща сума')).toEqual([
       'home_totals (глобални суми): contracts, value_eur, …',
     ]);
-    // Pin the namespace filter — a swapped schema/entity filter would poison the prompt yet still map.
+    // Pin the NATIVE namespace and its literal value. The native namespace (not a metadata filter,
+    // which would need a provisioned metadata index) is what keeps stale cohorts — e.g. pre-v2
+    // `schema:trap:N` vectors — out of the topK entirely, so no trap can ever reach the prompt
+    // twice and no topK slot is wasted on a discarded match. Also pins against a schema/entity mixup.
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ filter: { ns: 'schema' } }),
+      expect.objectContaining({ namespace: 'schema-v2' }),
+    );
+    expect(index.query).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ filter: expect.anything() }),
     );
   });
 
@@ -111,25 +128,6 @@ describe('retrieveSchemaContext', () => {
     const ai = fakeAI();
     const index = fakeIndex([{ id: 'schema:table:x', score: 0.05, metadata: { text: 'x' } }]);
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
-  });
-
-  it('drops a legacy trap vector even at a high score (hardTraps already injects every trap)', async () => {
-    const ai = fakeAI();
-    // A pre-existing deployed index may still hold schema:trap:N vectors from before traps stopped
-    // being indexed. They must never come back as "context" — that would render the rule twice.
-    const index = fakeIndex([
-      {
-        id: 'schema:trap:0',
-        score: 0.99,
-        metadata: { kind: 'trap', text: 'СУМИРАЙ САМО amount_eur' },
-      },
-      {
-        id: 'schema:table:lots',
-        score: 0.6,
-        metadata: { kind: 'table', text: 'lots (позиция): …' },
-      },
-    ]);
-    expect(await retrieveSchemaContext(ai, index, 'обща сума')).toEqual(['lots (позиция): …']);
   });
 
   it('drops a match that arrives with no score at all (defensive — safe full-dictionary fallback)', async () => {

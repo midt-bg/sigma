@@ -4,10 +4,12 @@
 // with NO vector retrieval. RAG is added here deliberately (per the implementation request) where it
 // pays off most for a weak 27B model:
 //
-//   1. Schema/cookbook grounding (primary). Embed the data-dictionary trap-rules + canonical queries
+//   1. Schema/cookbook grounding (primary). Embed the data-dictionary canonical queries + table docs
 //      (describe-schema.ts) and retrieve the few MOST RELEVANT chunks for the user's question, to
 //      prepend to the system prompt. This is the retrieval-augmented form of spec §9 point 2 — the
 //      single highest-leverage lever on SQL correctness — instead of dumping the whole dictionary.
+//      (The imperative DATA_TRAPS are NOT part of this corpus — they enter every prompt
+//      unconditionally via hardTraps(), system-prompt.ts.)
 //   2. Semantic corpus search (`semantic_search` tool). Embed entity/contract titles into Vectorize
 //      so paraphrase/synonym queries ("детски градини" ~ "обединено детско заведение") match where
 //      the FTS `search_entities` keyword tool misses. Complements, does not replace, FTS.
@@ -32,6 +34,7 @@ export interface EmbeddingRunner {
 export interface VectorRecord {
   id: string;
   values: number[];
+  namespace?: string;
   metadata?: Record<string, unknown>;
 }
 export interface VectorIndex {
@@ -41,6 +44,7 @@ export interface VectorIndex {
     opts: {
       topK: number;
       returnMetadata?: boolean | 'all' | 'indexed';
+      namespace?: string;
       filter?: Record<string, unknown>;
     },
   ): Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
@@ -87,7 +91,20 @@ export function buildSchemaChunks(): SchemaChunk[] {
   ];
 }
 
-/** One-time / on-deploy: embed the schema chunks and upsert them into the `schema` namespace. */
+// Versioned NATIVE Vectorize namespace for the schema corpus. Bump the version on any breaking
+// corpus change (a chunk removed, renamed, or re-purposed — e.g. v2 dropped the trap chunks), then
+// re-run indexSchemaCorpus. Why this shape:
+//   - Native namespaces work without a metadata index and are applied before any metadata filter,
+//     so vectors from an older corpus generation (e.g. pre-v2 `schema:trap:N`) can NEVER reach
+//     retrieval — no per-query filtering, no topK slots wasted on stale matches.
+//   - The version is in the vector ids too, so a re-index writes a NEW cohort instead of mutating
+//     the old one: rolling the Worker back to a previous release keeps working against the old
+//     cohort untouched.
+//   - An environment that has not (re-)indexed yet returns zero matches, and buildSystemPrompt
+//     falls back to the full static dictionary — the module's documented safe outcome.
+export const SCHEMA_NS = 'schema-v2';
+
+/** On provisioning / after a SCHEMA_NS bump: embed the schema chunks and upsert them into SCHEMA_NS. */
 export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex): Promise<number> {
   const chunks = buildSchemaChunks();
   const vectors = await embed(
@@ -96,9 +113,10 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
   );
   await index.upsert(
     chunks.map((c, i) => ({
-      id: `schema:${c.id}`,
+      id: `${SCHEMA_NS}:${c.id}`,
       values: vectors[i]!,
-      metadata: { ns: 'schema', kind: c.kind, text: c.text },
+      namespace: SCHEMA_NS,
+      metadata: { ns: SCHEMA_NS, kind: c.kind, text: c.text },
     })),
   );
   return chunks.length;
@@ -122,17 +140,16 @@ export async function retrieveSchemaContext(
 ): Promise<string[]> {
   const [vec] = await embed(ai, [question]);
   if (!vec) return [];
+  // Native namespace, not a metadata filter: it needs no metadata index and excludes every vector
+  // outside SCHEMA_NS at the source — stale cohorts (e.g. pre-v2 trap chunks) cannot occupy topK
+  // slots, so retrieval always ranks topK eligible chunks.
   const { matches } = await index.query(vec, {
     topK,
     returnMetadata: 'all',
-    filter: { ns: 'schema' },
+    namespace: SCHEMA_NS,
   });
   return (
     matches
-      // Drop trap chunks a previously deployed index may still hold (they are no longer indexed, see
-      // buildSchemaChunks): every trap is already injected unconditionally via hardTraps(), so letting
-      // one through here would only render the same rule twice in the prompt.
-      .filter((m) => m.metadata?.kind !== 'trap')
       // Keep only matches at/above the relevance floor. `?? 0` is defensive, not decorative: our typed
       // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
       // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
