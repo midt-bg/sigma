@@ -142,16 +142,22 @@ describe('retrieveSchemaContext', () => {
 });
 
 describe('semanticSearch', () => {
-  it('maps matches into hits and pins the entity METADATA filter (не native namespace — виж rag.ts)', async () => {
+  it('maps matches into hits and queries the versioned native entity namespace', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
       { id: 'e1', score: 0.8, metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } },
     ]);
     const out = await semanticSearch(ai, index, 'детски градини');
     expect(out[0]).toMatchObject({ kind: 'company', ref: 'eik:1', title: 'Фирма', score: 0.8 });
+    // Pin the NATIVE namespace literal (a bump must be deliberate) and that no metadata filter is
+    // used anywhere anymore — filters need a provisioned metadata index this repo does not have.
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ filter: { ns: 'entity' } }),
+      expect.objectContaining({ namespace: 'entity-v1' }),
+    );
+    expect(index.query).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ filter: expect.anything() }),
     );
   });
 });

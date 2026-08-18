@@ -111,9 +111,10 @@ embed cap + проверка за брой, без raw D1 грешка към м
 - **Фаза 2 — устойчивост:** глобален budget + circuit-breaker / exponential backoff пред BgGPT
   (per-IP rate-limit и graceful degradation вече са налице — остава глобалният таван).
 - **Фаза 3:** глас (`/assistant/transcribe` → Whisper).
-- **`semantic_search` — `ns: 'entity'` е празен** докато не се добави entity indexer (ETL pipeline,
-  Фаза 2). Инструментът е регистриран и работи, но ще връща 0 попадения за всяко запитване, докато
-  pipeline-ът не напълни Vectorize с имена на компании/договори/възложители.
+- **`semantic_search` — namespace-ът `entity-v1` е празен** докато не се добави entity indexer (ETL
+  pipeline, Фаза 2). Инструментът е регистриран и работи, но ще връща 0 попадения за всяко запитване,
+  докато pipeline-ът не напълни Vectorize. Indexer-ът трябва да upsert-ва с `namespace: ENTITY_NS` и
+  версионирани id-та (правилото „WHEN TO BUMP" от `rag.ts` важи и тук).
 - **`eop_fetch` връща само БРОЙ редове на ден, не самите данни** (днес): инструментът сваля, капва и
   парсва файла, но връща „N реда" и не пуска `QueryResult` в `ctx.results`, така че моделът НЕ може да
   обвърже EOP стойност в `emit_report`. Засега е probe за наличие/свежест, не източник на данни (ревю #80).
