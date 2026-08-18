@@ -61,7 +61,9 @@ wrangler vectorize create sigma-assistant --dimensions=1024 --metric=cosine  # �
 wrangler r2 bucket create sigma-reports
 wrangler secret put BGGPT_API_KEY                                            # интерактивно; никога не се комитва
 # `AI` (Workers AI) не изисква създаване на ресурс — account capability; включи Workers AI за акаунта.
-# След като индексът съществува: indexSchemaCorpus(env.AI, env.VECTORIZE) пълни схема-корпуса.
+# След като индексът съществува: indexSchemaCorpus(embeddingRunnerFor(env.AI), env.VECTORIZE)
+# пълни схема-корпуса (embeddingRunnerFor е от lib/assistant/bindings.ts — env.AI не е директно
+# EmbeddingRunner и каст с `as unknown as` е точно това, което #316 премахна).
 ```
 
 **Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
