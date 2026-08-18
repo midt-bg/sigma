@@ -104,6 +104,9 @@ describe('retrieveSchemaContext', () => {
     // which would need a provisioned metadata index) is what keeps stale cohorts — e.g. pre-v2
     // `schema:trap:N` vectors — out of the topK entirely, so no trap can ever reach the prompt
     // twice and no topK slot is wasted on a discarded match. Also pins against a schema/entity mixup.
+    // Exactly ONE query: toHaveBeenCalledWith alone would stay green if a second, filter-based
+    // fallback query were ever added — the call count is what makes these assertions exhaustive.
+    expect(index.query).toHaveBeenCalledTimes(1);
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ namespace: 'schema-v2' }),
@@ -151,6 +154,8 @@ describe('semanticSearch', () => {
     expect(out[0]).toMatchObject({ kind: 'company', ref: 'eik:1', title: 'Фирма', score: 0.8 });
     // Pin the NATIVE namespace literal (a bump must be deliberate) and that no metadata filter is
     // used anywhere anymore — filters need a provisioned metadata index this repo does not have.
+    // Exactly ONE query, so a filter-based retry/fallback path cannot sneak back in green.
+    expect(index.query).toHaveBeenCalledTimes(1);
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ namespace: 'entity-v1' }),
@@ -159,5 +164,17 @@ describe('semanticSearch', () => {
       expect.anything(),
       expect.not.objectContaining({ filter: expect.anything() }),
     );
+  });
+
+  it('degrades a scoreless match to score 0 instead of leaking a non-number into the DTO', async () => {
+    const ai = fakeAI();
+    // Same backend anomaly the retrieveSchemaContext floor defends against: SemanticHit.score is
+    // typed number, and tools.ts calls score.toFixed — an undefined score must become 0 here, not
+    // a TypeError three layers later that presents as a total semantic-search outage.
+    const index = fakeIndex([
+      { id: 'e1', metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } } as unknown as Match,
+    ]);
+    const out = await semanticSearch(ai, index, 'детски градини');
+    expect(out[0]).toMatchObject({ kind: 'company', score: 0 });
   });
 });
