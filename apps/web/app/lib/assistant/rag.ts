@@ -18,7 +18,10 @@
 //
 // Bindings required at runtime (add to wrangler.jsonc; see assistant/README.md): `AI` (Workers AI)
 // and `VECTORIZE` (a 1024-dim, cosine Vectorize index). Typed structurally below so this module is
-// deploy-independent and unit-testable; `env.AI` / `env.VECTORIZE` satisfy these interfaces.
+// deploy-independent and unit-testable. NB: the structural types are a deliberately NARROWED view of
+// the real bindings, not assignability-checked against them — the route casts (`as unknown as`,
+// assistant.chat.tsx), so changes here must be verified by eye against worker-configuration.d.ts
+// (VectorizeIndex / VectorizeQueryOptions); tsc will not catch a drift through that cast.
 
 import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 
@@ -91,17 +94,19 @@ export function buildSchemaChunks(): SchemaChunk[] {
   ];
 }
 
-// Versioned NATIVE Vectorize namespace for the schema corpus. Bump the version on any breaking
-// corpus change (a chunk removed, renamed, or re-purposed — e.g. v2 dropped the trap chunks), then
-// re-run indexSchemaCorpus. Why this shape:
+// Versioned NATIVE Vectorize namespace for the schema corpus. Why this shape:
 //   - Native namespaces work without a metadata index and are applied before any metadata filter,
 //     so vectors from an older corpus generation (e.g. pre-v2 `schema:trap:N`) can NEVER reach
 //     retrieval — no per-query filtering, no topK slots wasted on stale matches.
-//   - The version is in the vector ids too, so a re-index writes a NEW cohort instead of mutating
-//     the old one: rolling the Worker back to a previous release keeps working against the old
-//     cohort untouched.
+//   - The version is in the vector ids too, so a BUMPED re-index writes a NEW cohort next to the
+//     old one: rolling the Worker back to a previous release keeps working against the old cohort.
 //   - An environment that has not (re-)indexed yet returns zero matches, and buildSystemPrompt
 //     falls back to the full static dictionary — the module's documented safe outcome.
+// WHEN TO BUMP (then re-run indexSchemaCorpus): any corpus change that removes, reorders, or
+// re-purposes chunk ids. Within a version, upsert mutates ids IN PLACE and never deletes — a
+// removal would leave an orphan vector forever eligible for topK, and `query:${i}` ids are
+// positional, so a mid-array insert re-points every later id at different content. Pure appends
+// and in-place refinements of an existing chunk's text are safe without a bump.
 export const SCHEMA_NS = 'schema-v2';
 
 /** On provisioning / after a SCHEMA_NS bump: embed the schema chunks and upsert them into SCHEMA_NS. */

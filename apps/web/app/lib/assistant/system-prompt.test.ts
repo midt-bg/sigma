@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DATA_TRAPS } from './describe-schema';
-import { buildSchemaChunks, EMBED_DIM, retrieveSchemaContext, SCHEMA_NS } from './rag';
+import {
+  buildSchemaChunks,
+  EMBED_DIM,
+  indexSchemaCorpus,
+  MIN_SCHEMA_SCORE,
+  retrieveSchemaContext,
+  type VectorRecord,
+} from './rag';
 import {
   buildSystemPrompt,
   DATA_TRUST_RULE,
@@ -62,28 +69,35 @@ describe('buildSystemPrompt', () => {
 
   it('renders every hard trap exactly once when the prompt is built from real retrieval output', async () => {
     // Composition test through the same seam the route uses (assistant.chat.tsx):
-    // retrieveSchemaContext → buildSystemPrompt. The index is seeded with the REAL corpus
-    // (buildSchemaChunks, as indexSchemaCorpus would write it), so if traps ever creep back into
-    // the corpus — under any id or kind — they get retrieved here and the exactly-once assertion
-    // catches the double-render (hardTraps + retrieved chunk) that this seam once produced.
+    // indexSchemaCorpus → (recording index) → retrieveSchemaContext → buildSystemPrompt. The write
+    // side runs for REAL, so the write→read metadata contract (`text` key, ids, namespace) is under
+    // test too — a rename on either side fails here, not in production as a silent [] fallback.
+    // topK covers the WHOLE corpus, so a trap chunk creeping back anywhere in buildSchemaChunks —
+    // under any id or kind, at any position — is retrieved and trips the exactly-once assertion
+    // (the double-render regression this seam once produced).
     const ai = {
       run: async (_m: string, inputs: { text: string[] }) => ({
         data: inputs.text.map(() => Array.from({ length: EMBED_DIM }, () => 0.1)),
       }),
     };
-    const corpus = buildSchemaChunks();
+    const stored: VectorRecord[] = [];
     const index = {
-      upsert: async () => ({}),
-      query: async (_v: number[], opts: { topK: number }) => ({
-        matches: corpus.slice(0, opts.topK).map((c) => ({
-          id: `${SCHEMA_NS}:${c.id}`,
-          score: 0.9,
-          metadata: { ns: SCHEMA_NS, kind: c.kind, text: c.text },
-        })),
+      upsert: async (vectors: VectorRecord[]) => {
+        stored.push(...vectors);
+      },
+      query: async (_v: number[], opts: { topK: number; namespace?: string }) => ({
+        matches: stored
+          .filter((r) => r.namespace === opts.namespace)
+          .slice(0, opts.topK)
+          // Score just above the floor: derived, so a MIN_SCHEMA_SCORE recalibration cannot
+          // silently flip this test onto the fallback branch.
+          .map((r) => ({ id: r.id, score: MIN_SCHEMA_SCORE + 0.01, metadata: r.metadata })),
       }),
     };
-    const schemaContext = await retrieveSchemaContext(ai, index, 'обща сума на договорите');
-    expect(schemaContext.length).toBeGreaterThan(0); // RAG branch, not the fallback
+    await indexSchemaCorpus(ai, index);
+    const topK = buildSchemaChunks().length;
+    const schemaContext = await retrieveSchemaContext(ai, index, 'обща сума на договорите', topK);
+    expect(schemaContext.length).toBe(topK); // RAG branch, full corpus retrieved via the real write path
 
     const ragPrompt = buildSystemPrompt({ schemaContext });
     const fallbackPrompt = buildSystemPrompt();
