@@ -20,12 +20,15 @@
 //
 // Bindings required at runtime (add to wrangler.jsonc; see assistant/README.md): `AI` (Workers AI)
 // and `VECTORIZE` (a 1024-dim, cosine Vectorize index). Typed structurally below so this module is
-// deploy-independent and unit-testable. The structural types are a deliberately NARROWED view of the
-// real bindings, kept ASSIGNABLE from them: the route binds `env.VECTORIZE` to VectorIndex with no
-// cast (tsc proves the contract), and `env.AI` goes through a typed adapter that calls the real
-// per-model overload (issue #316). Keep it that way — a member the real VectorizeIndex cannot
-// satisfy (e.g. a metadata `filter`, which also needs a provisioned metadata index) belongs in an
-// adapter at the route boundary, not here.
+// deploy-independent and unit-testable. Two different contracts, per interface (issue #316):
+//   - VectorIndex is a NARROWED view of VectorizeIndex kept structurally ASSIGNABLE from it — the
+//     route binds `env.VECTORIZE` with no cast, so tsc proves the contract. Keep it assignable: a
+//     member typed too loosely breaks that proof (the old `filter?: Record<string, unknown>` did —
+//     Vectorize's own filter type is the stricter VectorizeVectorMetadataFilter, and filtering
+//     additionally needs a provisioned metadata index, which this repo does not create).
+//   - EmbeddingRunner is NOT assignable from `Ai` (its run() is generic per-model and returns an
+//     output UNION); the one sanctioned bridge is embeddingRunnerFor() in bindings.ts, which calls
+//     the real @cf/baai/bge-m3 overload — also compiler-checked. Never bridge with `as unknown as`.
 
 import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 
@@ -36,7 +39,10 @@ export const EMBED_DIM = 1024;
 export const MAX_EMBED_CHARS = 2048;
 
 export interface EmbeddingRunner {
-  run(model: string, inputs: { text: string[] }): Promise<{ data: number[][] }>;
+  // `model` is the EMBED_MODEL literal, not string: the production adapter (bindings.ts) forwards
+  // it into the per-model-typed Ai.run overload, so a second, different-model call added here
+  // would be a compile error instead of silently embedding with the wrong model.
+  run(model: typeof EMBED_MODEL, inputs: { text: string[] }): Promise<{ data: number[][] }>;
 }
 // The metadata values Vectorize accepts (mirrors VectorizeVectorMetadataValue). Typed narrowly on
 // the WRITE side so VectorRecord[] stays assignable to VectorizeVector[] — that assignability is
