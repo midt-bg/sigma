@@ -29,14 +29,21 @@ const VALUE_BUCKETS = [
   { value: 'gt100m', label: 'Над 100 млн. €' },
 ];
 
-export function meta({ matches }: Route.MetaArgs) {
-  return seoMeta({
+export function meta({ matches, location }: Route.MetaArgs) {
+  const tags = seoMeta({
     matches,
     path: '/contracts',
     title: 'Договори — СИГМА',
     description:
       'Всеки сключен договор по обществена поръчка. Филтрите са в адреса, има и сваляне в CSV.',
   });
+  // GDPR/ЗЗЛД (#218 review): a risk-signal-filtered list (?flag=…) can surface named natural persons
+  // (sole-trader ЕТ) under a „сигнали за риск" heading. Keep such views out of search indexes, mirroring
+  // the noindex on sole-trader company profiles (company.tsx). The unfiltered /contracts stays indexable.
+  if (new URLSearchParams(location.search).has('flag')) {
+    tags.push({ name: 'robots', content: 'noindex' });
+  }
+  return tags;
 }
 
 export function headers() {

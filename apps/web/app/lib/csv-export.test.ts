@@ -335,6 +335,8 @@ describe('isUnfilteredCsvExport', () => {
     bidder: 'acme',
     q: 'rail',
     bids: 'one',
+    flags: ['no_competition'],
+    authorityTypes: ['министерство'],
     types: ['municipality'],
     kinds: ['company'],
     countBucket: '2-5',

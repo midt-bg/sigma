@@ -3,6 +3,7 @@ import { count, date, moneyBare } from '@sigma/shared';
 import { getHomeData, getDb } from '@sigma/db';
 import type { ContractListItem } from '@sigma/api-contract';
 import type { Route } from './+types/home';
+import type { RiskFlagType } from '../lib/riskLogic';
 import { PageHeader } from '../components/PageHeader';
 import { SmartSearch } from '../components/SmartSearch';
 import { TotalsStrip } from '../components/TotalsStrip';
@@ -33,13 +34,21 @@ export async function loader({ context }: Route.LoaderArgs) {
   return getHomeData(getDb(env));
 }
 
-function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHref: string }) {
+function SingleOfferTable({
+  items,
+  allHref,
+  caption = 'Поръчки с една оферта',
+}: {
+  items: ContractListItem[];
+  allHref: string;
+  caption?: string;
+}) {
   if (items.length === 0) return <p className="small muted">Няма данни за този изглед.</p>;
   return (
     <>
       <div className="table-wrap tbl-cards">
         <table>
-          <caption className="sr-only">Поръчки с една оферта</caption>
+          <caption className="sr-only">{caption}</caption>
           <thead>
             <tr>
               <th scope="col">Дата</th>
@@ -79,9 +88,21 @@ function SingleOfferTable({ items, allHref }: { items: ContractListItem[]; allHr
   );
 }
 
+// Bulgarian labels for the risk-signal types. `satisfies Record<RiskFlagType, string>` makes TypeScript
+// enforce that every signal type has a label (and none is misspelled) — a renamed/added RiskFlagType now
+// fails the build here instead of silently falling through to the raw key at runtime (#236 review).
+const FLAG_LABELS = {
+  no_competition: 'Липса на конкуренция',
+  eu_no_competition: 'Липса на конкуренция (със средства от ЕС)',
+  high_markup: 'Ръст на стойността чрез анекси',
+  anomalies: 'Стойностна или времева аномалия',
+} satisfies Record<RiskFlagType, string>;
+
 export default function Home({ loaderData }: Route.ComponentProps) {
   const {
     totals,
+    flagged,
+    topFlagged,
     topCompanies,
     topMinistries,
     topMunicipalities,
@@ -128,6 +149,89 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         Обхват: {coveragePartialNote(endYear)}
         {totals.asOf ? `, последен договор ${date(totals.asOf)}` : ''}.
       </p>
+
+      <section className="section flagged" aria-labelledby="flagged">
+        <h2 id="flagged">
+          Договори със <em>сигнали за риск</em>
+        </h2>
+        <p className="section-hint">
+          Обща стойност на договорите, при които СИГМА отбелязва поне един структурен сигнал — липса
+          на конкуренция, ръст на стойността чрез анекси или стойностна/времева аномалия. Сигналите
+          са ориентири за преглед, не присъда. <Link to="/methodology#flagged">Как ги четем →</Link>
+          {' · '}
+          <Link to="/methodology#contact">Смятате сигнал за грешен? →</Link>
+        </p>
+
+        <SingleOfferPortion
+          valueEur={flagged.totalEur}
+          totalEur={totals.valueEur}
+          scopeLabel="на всички договори"
+        />
+
+        <div className="flagged-cols">
+          <div>
+            <h3 className="flagged-h3">По вид сигнал</h3>
+            <ul className="flagged-list">
+              {flagged.byType
+                .filter((r) => r.contracts > 0)
+                .map((r) => (
+                  <li key={r.type}>
+                    <Link to={`/contracts?flag=${r.type}&sort=value-desc`}>
+                      <span>{FLAG_LABELS[r.type as RiskFlagType] ?? r.type}</span>
+                      <span className="flagged-val">
+                        {moneyBare(r.eur)} € · {count(r.contracts)}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+            <p className="small muted flagged-note">
+              Един договор може да носи няколко сигнала, затова редовете тук се застъпват и сборът
+              им надхвърля общата (де-дублирана) сума.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="flagged-h3">По сектор</h3>
+            <ul className="flagged-list">
+              {flagged.bySector.map((s) => (
+                <li key={s.code}>
+                  <Link to={`/contracts?flag=all&sector=${s.code}&sort=value-desc`}>
+                    <span>{s.label}</span>
+                    <span className="flagged-val">
+                      {moneyBare(s.eur)} € · {count(s.contracts)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h3 className="flagged-h3">По тип институция</h3>
+            <ul className="flagged-list">
+              {flagged.byAuthorityType.map((a) => (
+                <li key={a.typeGroup}>
+                  <Link
+                    to={`/contracts?flag=all&type=${encodeURIComponent(a.typeGroup)}&sort=value-desc`}
+                  >
+                    <span>{a.typeGroup}</span>
+                    <span className="flagged-val">
+                      {moneyBare(a.eur)} € · {count(a.contracts)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <SingleOfferTable
+          items={topFlagged}
+          caption="Договори с най-висока стойност със сигнали за риск"
+          allHref="/contracts?flag=all&sort=value-desc"
+        />
+      </section>
 
       <section className="section" aria-labelledby="find-yours">
         <h2 id="find-yours">

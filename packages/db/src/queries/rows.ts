@@ -29,6 +29,11 @@ export function typeLabel(typeGroup: string | null): string | null {
   return TYPE_LABELS[typeGroup] ?? typeGroup;
 }
 
+/** The closed set of authority `type_group` buckets. Used as the allow-list for the `?type=` filter so
+ *  a request can't mint unbounded distinct values — each distinct value is otherwise a separate edge
+ *  cache key AND an uncached full-table scan on /contracts (cache-cardinality / DoS guard, #218 review). */
+export const AUTHORITY_TYPE_GROUPS = Object.keys(TYPE_LABELS);
+
 export interface CompanyTotalsRow {
   bidder_id: string;
   name: string;
