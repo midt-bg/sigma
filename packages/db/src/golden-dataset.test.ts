@@ -15,7 +15,7 @@
 // rollups agree with the contracts they summarise; this test proves both equal the ABSOLUTE
 // numbers a human computed — so a misattribution that preserves grand totals still fails here.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assertIntegrity } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
+// Apply EVERY migration in the directory, not just 0000_init: the derive scripts read columns added by
+// later migrations (current_value_currency from 0002, which is what keeps the #245 euro annex from being
+// converted twice), so a pinned subset silently drifts out of the real served schema and dies on a
+// missing column. Sorted, so ordering stays by number — same pattern as precompute-cohort.test.ts.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrationPaths = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const workStagingSchemaPath = resolve(root, 'scripts/work-staging-schema.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
 const loadNutsPath = resolve(root, 'scripts/load-nuts.sql');
@@ -52,14 +60,16 @@ function readScript(dbPath: string, path: string): void {
 }
 
 // ── The fixture ──────────────────────────────────────────────────────────────────────────────
-// 2 authorities × 3 bidders × 9 contracts, sized so every total below is recomputable on paper.
+// 2 authorities × 3 bidders × 10 contracts, sized so every total below is recomputable on paper.
 //
 //   Authorities
 //     A1  eik 100000001  „Министерство на тестовата инфраструктура" → type_group 'министерство'
 //         (OCDS party row: locality София, NUTS BG411 → region „София (столица)" via load-nuts.sql)
 //     A2  eik 100000002  „Община Голдънво"                          → type_group 'община'
 //   Bidders
-//     B1  eik:111111111        „Голдън Строй ЕООД"   (valid ЕИК, private)
+//     B1  eik:111111113        „Голдън Строй ЕООД"   (private; control digit 3 so the ЕИК/Булстат
+//         checksum in normalize-raw.sql accepts it — a syntactically fine but checksum-invalid code
+//         like 111111111 gets eik_valid 0 and silently falls back to the name-keyed rung (#195))
 //     B2  eik:121396123        „Български пощи ЕАД"  (REAL state-owned EIK from seed-state-owned.sql)
 //     B3  name:SECRET WINNER LTD (ЕИК „не се публикува" → name-keyed, eik_valid 0)
 //
@@ -72,7 +82,8 @@ function readScript(dbPath: string, path: string): void {
 //     c6 A1→B2 BGN cpv45  signing 195.583, annex → current 19558.3  → annex_suspect    100.00 (100× signing ⇒ falls back to signing)
 //     c7 A1→B1 BGN cpv45  signing 0                                 → value_low           0.00 (kept in sums, labelled)
 //     c8 A2→B2 BGN cpv33  signing 39116.6, annex → current 58674.9  → ok             30000.00 (58674.9 ÷ 1.95583; 1.5× is a legit annex)
-//     c9 A2→B1 USD cpv33  signing 50000, est 60000 USD, signed 06-12 → ok            amount_eur NULL
+//     c9 A2→B1 USD cpv33  signing 50000, est 60000 USD, signed 06-12 → ok           amount_eur NULL
+//     c10 A1→B1 BGN cpv45 signing 195583, EUR annex → current 150000 → ok            150000.00 (EUR annex, as-is)
 //        The only USD fx_rate is dated 06-01; the derive carries a rate forward at most 10 days, so a
 //        06-12 signing sits ONE day past the window (date(06-12,'-10d')=06-02 > 06-01) → no bounded prior
 //        rate → amount_eur stays NULL. Exercises the 10-day carry-forward at its rejection boundary AND
@@ -80,6 +91,14 @@ function readScript(dbPath: string, path: string): void {
 //        tallies (home/facet/search/freshness COUNT(*)) but excluded from every value SUM and its paired
 //        count (company/authority/sector/flow), and it is 'ok' not value_suspect so the suspect KPI is
 //        untouched. Drop the predicate from the six rollups and this row leaks a NULL into a sum.
+//     c10 is the euro-annex double-conversion trap (#245): a BGN-signed contract whose 2026 amendment is
+//        denominated in EUR. `current_value` (150000) is already euros, so both amount_eur and
+//        current_value_eur must take it AS-IS. The derive keys the conversion off `current_value_currency`
+//        (the amendment's own currency, normalize-raw.sql) rather than `contracts.currency`; regress that to
+//        the contract currency and 150000 ÷ 1.95583 = 76693.09 — exactly half — leaks into the served
+//        headline, company/authority totals and the CSV export, which is what #245 reported in production.
+//        The 1.5× step is legitimate, so the row stays 'ok' and IS summed: the wrong number would be
+//        published, not suppressed. Signed 06-09 so the corpus as_of boundary stays c9's 06-12.
 const FIXTURE = `
 INSERT INTO fx_rates (base_currency, rate_date, eur_per_unit, source, fetched_at) VALUES
   ('USD', '2026-06-01', 0.9, 'test:fixed', '2026-06-09T00:00:00Z');
@@ -125,6 +144,10 @@ VALUES
   ('eop:tenders:2026-06-09', 2026, '2026-06-09T00:00:00Z', 'UNP-G9', 'TENDER-G9', 'open',
    'Golden tender 9', '33600000', 'Pharma', 'supplies', 60000, 'USD', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', '2026-05-30',
+   'notice', NULL, NULL, 1, 0, '2026-05-20'),
+  ('eop:tenders:2026-06-09', 2026, '2026-06-09T00:00:00Z', 'UNP-G10', 'TENDER-G10', 'open',
+   'Golden tender 10', '45000000', 'Construction', 'works', 100000, 'EUR', 'basis', 'lowest',
+   'Министерство на тестовата инфраструктура', '100000001', 'public', 'activity', '2026-05-30',
    'notice', NULL, NULL, 1, 0, '2026-05-20');
 
 INSERT INTO raw_contracts
@@ -141,7 +164,7 @@ VALUES
    'Construction', 'works', 200000, 'BGN', 'basis', 'lowest',
    'Министерство на тестовата инфраструктура', '100000001', 'public', 'activity', 'notice',
    NULL, 'CN-1', '2026-06-01', 195583, 'BGN', 'Golden contract 1',
-   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 3, 1, 0, 0, 30),
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 3, 1, 0, 0, 30),
   ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G2',
    '2026-06-02', 'UNP-G2', 'TENDER-G2', 'open', 'Golden tender 2', '45000000',
    'Construction', 'works', 60000, 'EUR', 'basis', 'lowest',
@@ -153,7 +176,7 @@ VALUES
    'Pharma', 'supplies', 60000, 'USD', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', 'notice',
    NULL, 'CN-3', '2026-06-03', 50000, 'USD', 'Golden contract 3',
-   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 3, 1, 0, 0, 30),
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 3, 1, 0, 0, 30),
   ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G4',
    '2026-06-04', 'UNP-G4', 'TENDER-G4', 'open', 'Golden tender 4', '33600000',
    'Pharma', 'supplies', 1000, 'EUR', 'basis', 'lowest',
@@ -165,7 +188,7 @@ VALUES
    'Pharma', 'supplies', 1000, 'EUR', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', 'notice',
    NULL, 'CN-5', '2026-06-05', 15000, 'EUR', 'Golden contract 5',
-   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 2, 1, 0, 0, 30),
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 2, 1, 0, 0, 30),
   ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G6',
    '2026-06-06', 'UNP-G6', 'TENDER-G6', 'open', 'Golden tender 6', '45000000',
    'Construction', 'works', NULL, 'BGN', 'basis', 'lowest',
@@ -177,7 +200,7 @@ VALUES
    'Construction', 'works', NULL, 'BGN', 'basis', 'lowest',
    'Министерство на тестовата инфраструктура', '100000001', 'public', 'activity', 'notice',
    NULL, 'CN-7', '2026-06-07', 0, 'BGN', 'Golden contract 7',
-   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 1, 1, 0, 0, 30),
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 1, 1, 0, 0, 30),
   ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G8',
    '2026-06-08', 'UNP-G8', 'TENDER-G8', 'open', 'Golden tender 8', '33600000',
    'Pharma', 'supplies', 100000, 'BGN', 'basis', 'lowest',
@@ -189,7 +212,13 @@ VALUES
    'Pharma', 'supplies', 60000, 'USD', 'basis', 'lowest',
    'Община Голдънво', '100000002', 'public', 'activity', 'notice',
    NULL, 'CN-9', '2026-06-12', 50000, 'USD', 'Golden contract 9',
-   0, '111111111', 'Голдън Строй ЕООД', 'BG', 'small', 0, 2, 1, 0, 0, 30);
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 2, 1, 0, 0, 30),
+  ('eop:contracts:2026-06-09', 2026, 'eop', '2026-06-09T00:00:00Z', 0, 'DOC-G10',
+   '2026-06-09', 'UNP-G10', 'TENDER-G10', 'open', 'Golden tender 10', '45000000',
+   'Construction', 'works', 100000, 'EUR', 'basis', 'lowest',
+   'Министерство на тестовата инфраструктура', '100000001', 'public', 'activity', 'notice',
+   NULL, 'CN-10', '2026-06-09', 195583, 'BGN', 'Golden contract 10',
+   0, '111111113', 'Голдън Строй ЕООД', 'BG', 'small', 0, 3, 1, 0, 0, 30);
 
 INSERT INTO raw_amendments
   (source, dataset_year, dataset_variant, fetched_at, seq_no, document_number,
@@ -203,7 +232,13 @@ VALUES
    195.583, 19558.3, 19362.717, 'BGN', 'Suspicious 100x increase'),
   ('eop:annexes:2026-06-12', 2026, 'eop', '2026-06-12T00:00:00Z', '1', 'AMD-G8',
    'CN-8', '2026-06-08', '2026-06-12', 'UNP-G8', '100000002', 'Община Голдънво',
-   'Golden tender 8', 'supplies', 39116.6, 58674.9, 19558.3, 'BGN', 'Legitimate 1.5x increase');
+   'Golden tender 8', 'supplies', 39116.6, 58674.9, 19558.3, 'BGN', 'Legitimate 1.5x increase'),
+  -- #245: a 2026 EUR annex on a BGN-signed contract. The 1.5x step is legitimate (no annex flag),
+  -- and the currency differs from the contract's, which is precisely the double-conversion trap.
+  ('eop:annexes:2026-06-13', 2026, 'eop', '2026-06-13T00:00:00Z', '1', 'AMD-G10',
+   'CN-10', '2026-06-09', '2026-06-13', 'UNP-G10', '100000001',
+   'Министерство на тестовата инфраструктура', 'Golden tender 10', 'works',
+   100000, 150000, 50000, 'EUR', 'Euro-denominated 1.5x increase');
 
 INSERT INTO raw_ocds_parties
   (source, fetched_at, ocid, party_id, eik, scheme, name, roles,
@@ -215,26 +250,41 @@ VALUES
 `;
 
 // ── Golden expected numbers (every figure hand-derived from the fixture above) ─────────────────
-const B1 = 'eik:111111111';
+const B1 = 'eik:111111113';
 const B2 = 'eik:121396123';
 const B3 = 'name:SECRET WINNER LTD';
 const A1 = 'auth:100000001';
 const A2 = 'auth:100000002';
 
 const GOLDEN = {
-  // Corpus shape after normalize: 9 tenders (one per УНП), 9 contracts, 3 bidders, 2 authorities,
-  // 2 promoted amendments. c9 lands in `contracts` (a real awarded row) despite its NULL amount_eur.
-  shape: { authorities: 2, tenders: 9, contracts: 9, bidders: 3, amendments: 2 },
+  // Corpus shape after normalize: 10 tenders (one per УНП), 10 contracts, 3 bidders, 2 authorities,
+  // 3 promoted amendments (c6, c8, c10). c9 lands in `contracts` (a real awarded row) despite its
+  // NULL amount_eur.
+  shape: { authorities: 2, tenders: 10, contracts: 10, bidders: 3, amendments: 3 },
 
   // Per-contract recount — the grain the reconciliation gate structurally cannot check.
   // amount_eur:      c1 195583÷1.95583=100000 | c2 50000 EUR as-is | c3 50000×0.9=45000
   //                  c4 repaired to est 1000  | c5 15000           | c6 falls back to signing 195.583÷1.95583=100
   //                  c7 0÷1.95583=0           | c8 58674.9÷1.95583=30000 (annexed current, 1.5× is legit)
   //                  c9 NULL (USD signed 1 day past the 10-day fx window → no bounded rate)
+  //                  c10 150000 — the annex is EUR, so its current is ALREADY euros (#245): as-is, NOT ÷1.95583
   // signing_value_eur: suppressed (NULL) only for value_suspect (c4); also NULL for c9 (no fx_rate → no EUR value).
-  // current_value_eur: only c8 has a trusted current (58674.9÷1.95583=30000); c6's annex is the
+  //                    c10 keeps the CONTRACT currency here: 195583 BGN ÷ 1.95583 = 100000.
+  // current_value_eur: c8 58674.9÷1.95583=30000 and c10 150000 as-is (EUR annex); c6's annex is the
   //                    suspect part so it is suppressed; the rest have no current_value.
+  // ORDER BY id is a STRING sort, so `…UNP-G10…` ('0' < ':') sorts ahead of `…UNP-G1:…` — c10 comes first.
   contracts: [
+    {
+      id: `c:e:UNP-G10:CN-10:_:${B1}:1`,
+      bidder_id: B1,
+      amount_eur: 150000,
+      value_flag: 'ok',
+      signing_value_eur: 100000,
+      current_value_eur: 150000,
+      fx_converted: 0,
+      fx_rate: null,
+      annex_count: 1,
+    },
     {
       id: `c:e:UNP-G1:CN-1:_:${B1}:1`,
       bidder_id: B1,
@@ -336,38 +386,41 @@ const GOLDEN = {
     },
   ],
 
-  // ok: c1,c2,c3,c8,c9 — every other flag exactly once. c9 is 'ok' (no over-value/annex/low trigger:
+  // ok: c1,c2,c3,c8,c9,c10 — every other flag exactly once. c9 is 'ok' (no over-value/annex/low trigger:
   // its eff_eur is NULL because the fx lookup misses, so no threshold comparison fires) yet unsummable.
+  // c10 is 'ok' too: 150000 EUR current is 1.5× the 100000 EUR procedure estimate, far under the 10×
+  // review bar, and the annex_total_suspect rules require the annex currency to MATCH the contract's.
   valueFlags: [
     { value_flag: 'annex_suspect', n: 1 },
-    { value_flag: 'ok', n: 5 },
+    { value_flag: 'ok', n: 6 },
     { value_flag: 'review', n: 1 },
     { value_flag: 'value_low', n: 1 },
     { value_flag: 'value_suspect', n: 1 },
   ],
 
-  // won_eur:  B1 = c1 100000 + c3 45000 + c5 15000 + c7 0            = 160000 (A1 via G1/G7, A2 via G3/G5 → 2 authorities)
+  // won_eur:  B1 = c1 100000 + c3 45000 + c5 15000 + c7 0 + c10 150000 = 310000 (A1 via G1/G7/G10, A2 via G3/G5 → 2 authorities)
   //           B2 = c2 50000 + c6 100 + c8 30000                       =  80100 (A1 via G2/G6, A2 via G8 → 2)
   //           B3 = c4 1000                                            =   1000
   //           c9 (also B1, via A2/G9) is NOT here: amount_eur IS NULL, so it is excluded from won_eur,
-  //           the contracts tally paired with it, and the authorities distinct-count — B1 stays 4/2.
-  // primary_sector: B1 cpv45 100000 > cpv33 60000 → '45'; B2 cpv45 50100 > cpv33 30000 → '45'; B3 → '33'.
+  //           the contracts tally paired with it, and the authorities distinct-count — B1 stays 5/2.
+  // primary_sector: B1 cpv45 250000 (c1+c7+c10) > cpv33 60000 → '45'; B2 cpv45 50100 > cpv33 30000 → '45'; B3 → '33'.
   // eu_eur: only c2 is eu_funded → B2 50000.
+  // B1 last_date moves to c10's 2026-06-09 (c9's later 06-12 signing is excluded with its NULL amount_eur).
   companyTotals: [
     {
       bidder_id: B1,
       name: 'Голдън Строй ЕООД',
       kind: 'company',
       ownership_kind: null,
-      eik: '111111111',
+      eik: '111111113',
       eik_valid: 1,
-      won_eur: 160000,
-      contracts: 4,
+      won_eur: 310000,
+      contracts: 5,
       authorities: 2,
       primary_sector: '45',
       eu_eur: 0,
       first_date: '2026-06-01',
-      last_date: '2026-06-07',
+      last_date: '2026-06-09',
     },
     {
       bidder_id: B2,
@@ -401,7 +454,7 @@ const GOLDEN = {
     },
   ],
 
-  // spent_eur: A1 = c1 100000 + c2 50000 + c6 100 + c7 0 = 150100; avg 150100/4 = 37525; suppliers {B1,B2} = 2
+  // spent_eur: A1 = c1 100000 + c2 50000 + c6 100 + c7 0 + c10 150000 = 300100; avg 300100/5 = 60020; suppliers {B1,B2} = 2
   //            A2 = c3 45000 + c4 1000 + c5 15000 + c8 30000 = 91000; avg 91000/4 = 22750; suppliers {B1,B2,B3} = 3
   // A1 settlement/region via its OCDS party (София / BG411) + the real load-nuts.sql row for BG411.
   authorityTotals: [
@@ -411,14 +464,14 @@ const GOLDEN = {
       type_group: 'министерство',
       settlement: 'София',
       region: 'София (столица)',
-      spent_eur: 150100,
-      contracts: 4,
+      spent_eur: 300100,
+      contracts: 5,
       suppliers: 2,
-      avg_eur: 37525,
+      avg_eur: 60020,
       primary_sector: '45',
       eu_eur: 50000,
       first_date: '2026-06-01',
-      last_date: '2026-06-07',
+      last_date: '2026-06-09',
     },
     {
       authority_id: A2,
@@ -437,18 +490,18 @@ const GOLDEN = {
     },
   ],
 
-  // cpv45 = c1 100000 + c2 50000 + c6 100 + c7 0 = 150100; cpv33 = c3 45000 + c4 1000 + c5 15000 + c8 30000 = 91000.
+  // cpv45 = c1 100000 + c2 50000 + c6 100 + c7 0 + c10 150000 = 300100; cpv33 = c3 45000 + c4 1000 + c5 15000 + c8 30000 = 91000.
   sectorTotals: [
     { division: '33', contracts: 4, value_eur: 91000 },
-    { division: '45', contracts: 4, value_eur: 150100 },
+    { division: '45', contracts: 5, value_eur: 300100 },
   ],
 
-  // value_eur = 150100 + 91000 = 241100 (c9 adds 0 — NULL amount_eur drops out of SUM); suspect counts
-  // value_suspect rows only (c4). contracts is a CORPUS COUNT(*) → 9 (c9 included). last_date/as_of are
+  // value_eur = 300100 + 91000 = 391100 (c9 adds 0 — NULL amount_eur drops out of SUM); suspect counts
+  // value_suspect rows only (c4). contracts is a CORPUS COUNT(*) → 10 (c9 included). last_date/as_of are
   // MAX(signed_at) over the corpus → c9's 2026-06-12, the latest signing, even though it is unsummable.
   homeTotals: {
-    contracts: 9,
-    value_eur: 241100,
+    contracts: 10,
+    value_eur: 391100,
     authorities: 2,
     bidders: 3,
     suspect: 1,
@@ -457,32 +510,32 @@ const GOLDEN = {
     as_of: '2026-06-12',
   },
 
-  // procedure: all 9 contracts are 'open'. eu: c2 alone is eu_funded (50000); the other 8 (incl. c9) are
-  // key '0'. facet_counts is NOT amount_eur-filtered, so c9 lifts both COUNT(*)s (eu '0' 7→8, procedure
-  // 9) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 8-contract eu '0' still sums 191100.
+  // procedure: all 10 contracts are 'open'. eu: c2 alone is eu_funded (50000); the other 9 (incl. c9) are
+  // key '0'. facet_counts is NOT amount_eur-filtered, so c9 lifts both COUNT(*)s (eu '0' 8→9, procedure
+  // 10) but adds 0 to the paired value_eur SUM (its amount_eur is NULL): the 9-contract eu '0' sums 341100.
   facetCounts: [
-    { facet: 'eu', key: '0', contracts: 8, value_eur: 191100 },
+    { facet: 'eu', key: '0', contracts: 9, value_eur: 341100 },
     { facet: 'eu', key: '1', contracts: 1, value_eur: 50000 },
-    { facet: 'procedure', key: 'open', contracts: 9, value_eur: 241100 },
+    { facet: 'procedure', key: 'open', contracts: 10, value_eur: 391100 },
   ],
 
-  // A1→B1 c1+c7 = 100000 | A1→B2 c2+c6 = 50100 | A2→B1 c3+c5 = 60000 | A2→B2 c8 = 30000 | A2→B3 c4 = 1000
+  // A1→B1 c1+c7+c10 = 250000 | A1→B2 c2+c6 = 50100 | A2→B1 c3+c5 = 60000 | A2→B2 c8 = 30000 | A2→B3 c4 = 1000
   // c9 (A2→B1) drops out (amount_eur IS NULL → excluded by flow_pairs' filter), so A2→B1 stays 60000 / 2 contracts.
   flowPairs: [
-    { authority_id: A1, bidder_id: B1, won_eur: 100000, contracts: 2 },
+    { authority_id: A1, bidder_id: B1, won_eur: 250000, contracts: 3 },
     { authority_id: A1, bidder_id: B2, won_eur: 50100, contracts: 2 },
     { authority_id: A2, bidder_id: B1, won_eur: 60000, contracts: 2 },
     { authority_id: A2, bidder_id: B2, won_eur: 30000, contracts: 1 },
     { authority_id: A2, bidder_id: B3, won_eur: 1000, contracts: 1 },
   ],
 
-  // 2 authorities + 3 companies + 9 contracts (all carry a subject; the FTS insert is gated on subject,
-  // NOT amount_eur, so c9 is indexed too — reachable by text even though it is unsummable) = 14 FTS rows.
-  searchIndexRows: 14,
+  // 2 authorities + 3 companies + 10 contracts (all carry a subject; the FTS insert is gated on subject,
+  // NOT amount_eur, so c9 is indexed too — reachable by text even though it is unsummable) = 15 FTS rows.
+  searchIndexRows: 15,
 
   // All fixture contracts are EOP-sourced. data_freshness is a COUNT(*)/MAX(signed_at) over the corpus
-  // (no amount_eur filter), so c9 lifts rows 8→9 and pushes as_of to its 2026-06-12 signing.
-  dataFreshness: [{ source: 'eop', as_of: '2026-06-12', rows: 9 }],
+  // (no amount_eur filter), so c9 lifts rows 9→10 and pushes as_of to its 2026-06-12 signing.
+  dataFreshness: [{ source: 'eop', as_of: '2026-06-12', rows: 10 }],
 } as const;
 
 describe('golden dataset (#99): hand-verified totals through the full derive pipeline', () => {
@@ -492,7 +545,7 @@ describe('golden dataset (#99): hand-verified totals through the full derive pip
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'sigma-golden-'));
     db = join(dir, 'golden.sqlite');
-    readScript(db, schemaPath);
+    for (const migration of migrationPaths) readScript(db, migration);
     readScript(db, workStagingSchemaPath);
     sqlite(db, FIXTURE);
     // Production full-derive order (scripts/import.mjs runFullDerive). load-fx.mjs is network-bound,
@@ -605,9 +658,14 @@ describe('golden dataset (#99): hand-verified totals through the full derive pip
     ).toEqual(GOLDEN.dataFreshness);
   });
 
-  it('passes the reconciliation gate (the two nets are complementary)', () => {
+  // assertIntegrity is async (its runner is a Promise on D1) — await it, or the assertions below run
+  // against a pending Promise and the queries land after afterAll has already removed the temp DB.
+  it('passes the reconciliation gate (the two nets are complementary)', async () => {
     const run = (sql: string) => sqliteJson<Record<string, unknown>>(db, sql);
-    const results = assertIntegrity(run, { label: 'golden-dataset', exit: false }) as Array<{
+    const results = (await assertIntegrity(run, {
+      label: 'golden-dataset',
+      exit: false,
+    })) as Array<{
       name: string;
       ok: boolean;
     }>;

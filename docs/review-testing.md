@@ -79,8 +79,10 @@ scripts/cacbg/*.test.mjs scripts/tr/*.test.mjs` — а гейтовете, пр�
 ## Golden dataset (#99)
 
 - `packages/db/src/golden-dataset.test.ts` прекарва малък синтетичен корпус (2 възложители × 3
-  изпълнители × 8 договора: всичките 5 `value_flag` изхода, трите валутни пътя BGN/EUR/чужда,
-  анекси, state-owned ЕИК) през **реалния** derive ред (`derive-amendments` → `normalize-raw` →
+  изпълнители × 10 договора: всичките 5 `value_flag` изхода, трите валутни пътя BGN/EUR/чужда,
+  анекси, state-owned ЕИК, плюс два гранични случая — чуждовалутен ред без FX курс в прозореца
+  (`amount_eur` NULL) и евро анекс върху лев договор (#245, не се конвертира втори път)) през
+  **реалния** derive ред (`derive-amendments` → `normalize-raw` →
   `promote-amendments` → `precompute`) и асъртва **абсолютни, ръчно сметнати** стойности на всяко
   зърно — по-договор, `company_totals`, `authority_totals`, `sector_totals`, `facet_counts`,
   `flow_pairs`, `home_totals`, разпределението на `value_flag`. Хваща каквото reconciliation
