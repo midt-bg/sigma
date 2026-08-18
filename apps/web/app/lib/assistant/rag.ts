@@ -155,16 +155,37 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
 // fallback. Below the floor we return fewer (or zero) chunks; zero makes buildSystemPrompt fall back to
 // the full static dictionary, which is the safe outcome. bge-m3 cosine puts genuinely relevant chunks
 // well above this; the value is deliberately conservative (review follow-up).
+// RECALIBRATION PENDING (issue #318): this value was tuned against the pre-v2 corpus, where 12 of
+// ~37 chunks were short imperative traps. The v2 corpus is 25 longer-form query/table chunks that
+// score differently under bge-m3 — measure real question scores (RetrievalStats makes the fallback
+// rate observable) before trusting the floor in the new regime.
 export const MIN_SCHEMA_SCORE = 0.35;
+
+// What retrieval saw for one question — the observability hook for issue #318. `matched` counts the
+// index's raw namespace-scoped matches; `kept` counts survivors above the relevance floor that
+// actually reached the prompt. kept=0 with matched>0 means the floor dropped everything (the silent
+// full-dictionary fallback); matched=0 means an empty/unindexed namespace.
+export interface RetrievalStats {
+  matched: number;
+  kept: number;
+}
+
+export interface RetrieveOptions {
+  topK?: number;
+  minScore?: number;
+  // Called once per query with the match counts. A callback, not a changed return shape, so the
+  // report is optional and the function's contract stays a plain chunk list.
+  onStats?: (stats: RetrievalStats) => void;
+}
 
 /** Retrieve the most relevant data-dictionary chunks for a question, to prepend to the prompt. */
 export async function retrieveSchemaContext(
   ai: EmbeddingRunner,
   index: VectorIndex,
   question: string,
-  topK = 6,
-  minScore = MIN_SCHEMA_SCORE,
+  opts: RetrieveOptions = {},
 ): Promise<string[]> {
+  const { topK = 6, minScore = MIN_SCHEMA_SCORE, onStats } = opts;
   const [vec] = await embed(ai, [question]);
   if (!vec) return [];
   // Native namespace, not a metadata filter: it needs no metadata index and excludes every vector
@@ -175,19 +196,17 @@ export async function retrieveSchemaContext(
     returnMetadata: 'all',
     namespace: SCHEMA_NS,
   });
-  return (
-    matches
-      // Keep only matches at/above the relevance floor. `?? 0` is defensive, not decorative: our typed
-      // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
-      // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
-      // buildSystemPrompt fall back to the full static dictionary, which is the safe outcome (review, ydimitrof).
-      // Number.isFinite, not `?? 0`: the drop must not depend on the floor's VALUE. With an explicit
-      // minScore = 0, `(undefined ?? 0) >= 0` would let a scoreless match through as context — the
-      // same rule the entity path below states, kept identical here (review f/u, ydimitrof).
-      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
-      .map((m) => String(m.metadata?.text ?? ''))
-      .filter(Boolean)
-  );
+  const kept = matches
+    // Keep only matches at/above the relevance floor. Number.isFinite, not `?? 0`: our typed contract
+    // promises a numeric `score`, but if an index backend ever omits it, a scoreless match must read
+    // as below the floor (dropped) — for EVERY minScore, including an explicit 0, where
+    // `(undefined ?? 0) >= 0` would let it through as unranked "context". Zero survivors makes
+    // buildSystemPrompt fall back to the full static dictionary, the safe outcome (review, ydimitrof).
+    .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
+    .map((m) => String(m.metadata?.text ?? ''))
+    .filter(Boolean);
+  onStats?.({ matched: matches.length, kept: kept.length });
+  return kept;
 }
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────

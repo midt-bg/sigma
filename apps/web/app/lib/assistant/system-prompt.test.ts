@@ -96,7 +96,9 @@ describe('buildSystemPrompt', () => {
     };
     await indexSchemaCorpus(ai, index);
     const topK = buildSchemaChunks().length;
-    const schemaContext = await retrieveSchemaContext(ai, index, 'обща сума на договорите', topK);
+    const schemaContext = await retrieveSchemaContext(ai, index, 'обща сума на договорите', {
+      topK,
+    });
     expect(schemaContext.length).toBe(topK); // RAG branch, full corpus retrieved via the real write path
 
     const ragPrompt = buildSystemPrompt({ schemaContext });
