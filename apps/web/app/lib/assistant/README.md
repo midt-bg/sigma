@@ -25,7 +25,8 @@
 | `agent.ts`                  | Vercel AI SDK glue: BgGPT през AI Gateway + `streamText`       | §2/§9.5      | typecheck |
 | `routes/assistant.chat.tsx` | Stateless chat ресурс route                                    | §2/§5        | typecheck |
 
-**Проверено:** `pnpm --filter web typecheck` → 0; **150 теста** преминават; `pnpm audit --audit-level=high`
+**Проверено:** `pnpm --filter web typecheck` → 0; целият тестов пакет на `apps/web` преминава (бройката
+расте с всяко ревю — не я кодираме тук, `pnpm --filter web test` я показва); `pnpm audit --audit-level=high`
 чист; Prettier чист. Чистите модули са unit-тествани и deploy-независими; agent loop-ът и route-ът са
 typecheck-проверени, но **не са runtime-проверени** (няма `BGGPT_API_KEY` / облачни bindings в тази среда).
 
@@ -64,12 +65,15 @@ wrangler secret put BGGPT_API_KEY                                            # �
 ```
 
 **Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
-на векторите носят версията. При всяка bump на версията (напр. `schema-v2`, когато trap-правилата
-отпаднаха от корпуса) `indexSchemaCorpus` трябва да се пусне отново: пише се НОВ кохорт вектори, старият
-остава непокътнат (rollback на Worker-а продължава да работи срещу него), а среда без ре-индекс просто
-връща 0 чънка и асистентът пада към пълния статичен речник (безопасно, но без RAG grounding). Старите
-кохорти може да се чистят по желание с `wrangler vectorize delete-vectors` — не е задължително,
-retrieval-ът ги игнорира чрез namespace-а.
+на векторите носят версията. Версията се bump-ва при всяка промяна, която маха, размества или
+пре-осмисля chunk id-та (виж правилото „WHEN TO BUMP" в `rag.ts`; чисто добавяне или редакция на
+текста на съществуващ chunk минава без bump). След bump `indexSchemaCorpus` се пуска отново: пише се
+НОВ кохорт вектори, старият остава непокътнат (rollback на Worker-а продължава да работи срещу него),
+а среда без ре-индекс просто връща 0 чънка и асистентът пада към пълния статичен речник (безопасно,
+но без RAG grounding). Стар кохорт се чисти чак когато rollback прозорецът към неговия release е
+затворен — изтриеш ли го по-рано, rollback-ът остава без RAG. Чисти се с
+`wrangler vectorize delete-vectors` (иска изричен списък id-та — възстанови ги от git историята на
+`buildSchemaChunks`); не е задължително, retrieval-ът игнорира старите кохорти чрез namespace-а.
 
 Докато бекендът не е напълно осигурен, `/assistant/chat` връща контролирано **503**, а грешка по време на
 streaming се показва като четим текст — не като счупена връзка или 500 (graceful degradation, §7).
