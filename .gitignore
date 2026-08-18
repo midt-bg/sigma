@@ -14,6 +14,11 @@ coverage/
 # rendered by scripts/check-coverage.mjs for the CI artifact/PR comment
 /coverage-summary.md
 
+# Playwright E2E (#95)
+playwright-report/
+test-results/
+/apps/web/playwright/.cache/
+
 # Cloudflare / wrangler
 .wrangler/
 .dev.vars
