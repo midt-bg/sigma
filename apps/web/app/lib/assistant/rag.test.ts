@@ -36,11 +36,13 @@ function fakeIndex(matches: Match[] = []) {
 }
 
 describe('buildSchemaChunks', () => {
-  it('includes traps, queries and tables', () => {
+  it('includes queries and tables but NOT traps (traps are always injected via hardTraps)', () => {
     const chunks = buildSchemaChunks();
-    expect(chunks.some((c) => c.kind === 'trap')).toBe(true);
     expect(chunks.some((c) => c.kind === 'query')).toBe(true);
     expect(chunks.some((c) => c.kind === 'table')).toBe(true);
+    // Indexing a trap would only let retrieval duplicate what hardTraps() already puts in the prompt.
+    expect(chunks.some((c) => (c.kind as string) === 'trap')).toBe(false);
+    expect(chunks.some((c) => c.id.startsWith('trap:'))).toBe(false);
   });
 });
 
@@ -79,10 +81,14 @@ describe('retrieveSchemaContext', () => {
   it('returns the matched chunk texts and queries the schema namespace', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
-      { id: 'schema:trap:0', score: 0.9, metadata: { text: 'СУМИРАЙ САМО amount_eur' } },
+      {
+        id: 'schema:table:home_totals',
+        score: 0.9,
+        metadata: { kind: 'table', text: 'home_totals (глобални суми): contracts, value_eur, …' },
+      },
     ]);
     expect(await retrieveSchemaContext(ai, index, 'обща сума')).toEqual([
-      'СУМИРАЙ САМО amount_eur',
+      'home_totals (глобални суми): contracts, value_eur, …',
     ]);
     // Pin the namespace filter — a swapped schema/entity filter would poison the prompt yet still map.
     expect(index.query).toHaveBeenCalledWith(
@@ -105,6 +111,25 @@ describe('retrieveSchemaContext', () => {
     const ai = fakeAI();
     const index = fakeIndex([{ id: 'schema:table:x', score: 0.05, metadata: { text: 'x' } }]);
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
+  });
+
+  it('drops a legacy trap vector even at a high score (hardTraps already injects every trap)', async () => {
+    const ai = fakeAI();
+    // A pre-existing deployed index may still hold schema:trap:N vectors from before traps stopped
+    // being indexed. They must never come back as "context" — that would render the rule twice.
+    const index = fakeIndex([
+      {
+        id: 'schema:trap:0',
+        score: 0.99,
+        metadata: { kind: 'trap', text: 'СУМИРАЙ САМО amount_eur' },
+      },
+      {
+        id: 'schema:table:lots',
+        score: 0.6,
+        metadata: { kind: 'table', text: 'lots (позиция): …' },
+      },
+    ]);
+    expect(await retrieveSchemaContext(ai, index, 'обща сума')).toEqual(['lots (позиция): …']);
   });
 
   it('drops a match that arrives with no score at all (defensive — safe full-dictionary fallback)', async () => {
