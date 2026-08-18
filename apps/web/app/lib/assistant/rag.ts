@@ -12,7 +12,9 @@
 //      unconditionally via hardTraps(), system-prompt.ts.)
 //   2. Semantic corpus search (`semantic_search` tool). Embed entity/contract titles into Vectorize
 //      so paraphrase/synonym queries ("детски градини" ~ "обединено детско заведение") match where
-//      the FTS `search_entities` keyword tool misses. Complements, does not replace, FTS.
+//      keyword search misses. Intended to COMPLEMENT keyword/FTS lookup, not replace it — note the
+//      spec's `search_entities` FTS tool is NOT implemented yet, and the entity corpus itself is
+//      still unindexed (see README "Какво остава"): today this tool returns 0 hits by design.
 //
 // Embedding model: @cf/baai/bge-m3 — multilingual (Bulgarian-capable), 1024-dim, runs on Workers AI.
 //
@@ -121,6 +123,9 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
       id: `${SCHEMA_NS}:${c.id}`,
       values: vectors[i]!,
       namespace: SCHEMA_NS,
+      // `ns` in metadata is FORENSIC only (wrangler vectorize get / debugging which cohort a
+      // vector belongs to). It is NOT filterable — no metadata index exists (#317); all scoping
+      // goes through the native `namespace` above. Do not re-arm metadata filtering on it.
       metadata: { ns: SCHEMA_NS, kind: c.kind, text: c.text },
     })),
   );
@@ -167,12 +172,15 @@ export async function retrieveSchemaContext(
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────
 
-// Versioned NATIVE Vectorize namespace for the entity corpus — same discipline as SCHEMA_NS, and it
-// removes the module's last metadata `filter`, which Vectorize only honours on properties with a
-// provisioned metadata index (none exists in this repo — issue #317). No entity vectors have ever
-// been indexed (the entity indexer is a "Какво остава" item), so there is no legacy cohort to
-// migrate: the future indexer must simply upsert with `namespace: ENTITY_NS` and versioned ids,
-// and bump the version under the same WHEN TO BUMP rule as SCHEMA_NS.
+// Versioned NATIVE Vectorize namespace for the entity corpus — it removes the module's last
+// metadata `filter`, which Vectorize only honours on properties with a provisioned metadata index
+// (none exists in this repo — issue #317). No entity vectors have ever been indexed (the entity
+// indexer is a "Какво остава" item), so there is no legacy cohort to migrate: the future indexer
+// must upsert with `namespace: ENTITY_NS`. NB for that indexer: the SCHEMA_NS "WHEN TO BUMP" rule
+// does NOT transfer — it assumes a hand-authored, append-only, code-resident corpus. The entity
+// corpus is DATA-DERIVED: entities genuinely disappear (dedup, re-attribution, quarantine), so the
+// indexer needs a real reconciliation/delete path of its own (and must track its ids — Vectorize
+// deletes only by explicit id list); versioning alone would force a full re-embed per removal.
 export const ENTITY_NS = 'entity-v1';
 
 export interface SemanticHit {
@@ -200,6 +208,9 @@ export async function semanticSearch(
     kind: String(m.metadata?.kind ?? ''),
     ref: String(m.metadata?.ref ?? ''),
     title: String(m.metadata?.title ?? ''),
-    score: m.score,
+    // Same defence as retrieveSchemaContext's floor: the typed contract promises a numeric score,
+    // but a backend anomaly must degrade to 0, not surface later as a TypeError in the tool layer
+    // (tools.ts renders `score.toFixed`).
+    score: m.score ?? 0,
   }));
 }
