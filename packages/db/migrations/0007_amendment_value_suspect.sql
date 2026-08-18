@@ -1,0 +1,14 @@
+-- #305 residual: a contract flagged value_flag = 'annex_total_suspect' has its current_value excluded
+-- from every aggregate, but the served amendments row still carried the DOUBLED value_after — so the
+-- amendment timeline kept showing the untrusted figure. Only text-corrected rows (value_restated) had
+-- their served value rewritten; the ~183 flag-only doubles (non-exact >2×, no основание signal) did not.
+-- We do NOT know their true total, so we MARK the row and let the UI SUPPRESS the untrusted figure —
+-- never invent a number.
+--
+--   value_suspect = 1 when the served amendment is a suspected double-count NOT already text-treated
+--                   (value_treatment IS NULL), else 0. A restated/genuine row (value_treatment set) is
+--                   never also suspect. The UI blanks value_after/delta for a suspect row.
+-- Additive column. Applied on the live stage DB by the column probe in .github/workflows/deploy.yml (ALTER
+-- only when missing); on a fresh ledger `d1 migrations apply` runs it once. SQLite has no `ADD COLUMN IF
+-- NOT EXISTS`, so do not replay this file against a DB that already has the column.
+ALTER TABLE amendments ADD COLUMN value_suspect INTEGER NOT NULL DEFAULT 0;

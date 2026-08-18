@@ -1,0 +1,55 @@
+name: Script unit tests
+
+# Unit tests for the standalone helpers in scripts/ (ship-related-persons, emit-refresh-group, load-eop,
+# check-docs, …) plus the свързани-лица CACBG pipeline. These are plain node:test files outside the
+# workspace packages, so `pnpm test` (turbo) does not cover them — they run in their own workflow here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: scripts-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # node:test only — the scripts under test import nothing outside node built-ins and each other,
+      # so no `pnpm install` is required. The one external dependency is the `sqlite3` binary, which
+      # ship-e2e.test.mjs drives as the real target its fake wrangler writes into; it ships with the
+      # ubuntu-latest image, and the test fails loudly (never skips) if it is ever absent.
+      - run: node --test scripts/*.test.mjs
+
+  # свързани-лица pipeline tests — the CACBG leg (parse/classify/load/audit/extract) and the
+  # Търговски регистър leg (scripts/tr: ЕИК checksum, HTTP client, deed cache). These use node:sqlite
+  # (DatabaseSync) and import the shared companyNameKey .ts via the register-ts resolve hook, so they
+  # need Node 24 (node:sqlite + native TS type-stripping, no experimental flag) rather than the Node 22
+  # above. The libel-critical resolution logic gates merges here.
+  cacbg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # parse.mjs imports fast-xml-parser (a workspace dep), so this job needs node_modules — unlike
+      # the plain-node scripts above. Install before the scraper tests run.
+      - run: pnpm install --frozen-lockfile
+      # Both legs, or the glob silently excludes a whole module: scripts/tr/*.test.mjs matched NO job
+      # until this line existed, so every test in it would have been decorative.
+      - run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/*.test.mjs scripts/tr/*.test.mjs

@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# Least-privilege default token; no job in this workflow writes to the repo.
+# Least-privilege default token; the only write anywhere is the coverage-comment
+# job's pull-requests:write, scoped to that job (and it never runs for fork PRs).
 permissions:
   contents: read
 
@@ -29,7 +30,7 @@ jobs:
     container:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Static analysis (semgrep)
         run: semgrep scan --config p/security-audit --config p/secrets --config p/typescript --metrics=off --error
 
@@ -54,7 +55,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Pinned to an exact minor: node:sqlite bundles SQLite, whose version (and thus the EXPLAIN
@@ -96,13 +97,31 @@ jobs:
       # any read-only / injection defence blocks merge (launch gate §9.9, issue #83).
       - name: Test
         if: ${{ !cancelled() }}
-        run: pnpm test
+        run: pnpm test -- --coverage
       # Launch gate §9.9 (issue #83): replays the golden report fixtures through the real bind/reconcile
       # pipeline and asserts A–E2 (canonical amount_eur, default filters, rollup reconciliation, no prose
       # figures). Blocking, so a model / schema / prompt change can't silently regress a published report.
       - name: Golden reports
         if: ${{ !cancelled() }}
         run: pnpm test:golden
+      # Coverage ratchet (#93): per-workspace lines/branches may not drop below
+      # coverage-baseline.json (0.5pp tolerance). The checker self-tests first,
+      # so the gate is itself gated — same pattern as the docs check below.
+      - name: Coverage ratchet
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm check:coverage:test
+          pnpm check:coverage
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          retention-days: 14
+          path: |
+            coverage-summary.md
+            apps/*/coverage/coverage-summary.json
+            packages/*/coverage/coverage-summary.json
       # Docs integrity (#102): fail on a dangling docs reference in source or an
       # unindexed doc. The checker self-tests first, so the gate is itself gated.
       - name: Docs integrity
@@ -116,3 +135,48 @@ jobs:
       - name: Script tests
         if: ${{ !cancelled() }}
         run: node --test scripts/*.test.mjs
+
+  # Sticky PR comment with the coverage table (#93). Same-repo PRs only: fork
+  # PRs get a read-only token no matter what `permissions:` says, so for them
+  # the table lives in the step summary + artifact instead. `always()` so the
+  # comment still updates when the ratchet fails; continue-on-error so a
+  # comment hiccup never gates a merge.
+  coverage-comment:
+    needs: check
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+      - name: Sticky coverage comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f coverage-summary.md ]; then
+            echo "coverage-summary.md missing from artifact; nothing to post"
+            exit 0
+          fi
+          marker='<!-- coverage-report -->'
+          # Two steps, not a pipeline: `gh api | head -1` under the runner's
+          # default `pipefail` can surface gh's SIGPIPE (exit 141) as failure.
+          gh api "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" > comment-ids.txt
+          existing=$(head -1 comment-ids.txt)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${GH_REPO}/issues/comments/${existing}" \
+              -F body=@coverage-summary.md > /dev/null
+            echo "updated comment ${existing}"
+          else
+            gh api --method POST "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+              -F body=@coverage-summary.md > /dev/null
+            echo "created comment"
+          fi

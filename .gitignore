@@ -11,6 +11,8 @@ build/
 .react-router/
 .turbo/
 coverage/
+# rendered by scripts/check-coverage.mjs for the CI artifact/PR comment
+/coverage-summary.md
 
 # Cloudflare / wrangler
 .wrangler/
@@ -46,3 +48,5 @@ worker-configuration.d.ts
 
 # Playwright MCP session artifacts (screenshots / a11y snapshots)
 .playwright-mcp/
+# Phase-0 „свързани лица" spike scratch — scraped declaration PII, local DB, derived JSON (never commit)
+scratch/

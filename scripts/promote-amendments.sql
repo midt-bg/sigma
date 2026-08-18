@@ -7,13 +7,18 @@
 DELETE FROM amendments;
 
 INSERT OR REPLACE INTO amendments (
-  id, natural_key, contract_number, unp, value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source
+  id, natural_key, contract_number, contract_number_raw, link_method, unp,
+  value_before, value_after, value_delta, currency,
+  published_at, document_number, description, source,
+  value_restated, value_treatment, value_suspect
 )
 WITH keyed AS (
   SELECT
     *,
-    'am:' || COALESCE(unp, '') || ':' || COALESCE(contract_number, '') || ':' ||
+    -- #306: key on the original annex-side number (contract_number_raw) when the value resolver rewrote a
+    -- row — MUST match derive-amendments.sql's rollup key byte-for-byte, else annex_count and the served
+    -- timeline disagree (review nikimilenkov MEDIUM 3). NULL raw → the plain number.
+    'am:' || COALESCE(unp, '') || ':' || COALESCE(NULLIF(contract_number_raw, ''), contract_number, '') || ':' ||
       COALESCE(
         NULLIF(document_number, ''),
         NULLIF(correction_number, ''),
@@ -38,15 +43,66 @@ SELECT
   natural_key,
   natural_key,
   contract_number,
+  contract_number_raw,   -- #306 provenance: the annex-side number before the value resolver rewrote it
+  link_method,           -- #306 provenance: 'value_anchor' for value-linked rows, else NULL
   unp,
   value_before,
-  value_after,
-  value_delta,
+  -- #305 Tier-2: serve the effective (text-corrected) after and a self-consistent delta; a restated
+  -- annex carries the true total, an untreated one is unchanged.
+  COALESCE(value_after_restated, value_after),
+  COALESCE(value_after_restated, value_after) - value_before,
   currency,
   published_at,
   document_number,
   description,
-  source
+  source,
+  CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
+  value_treatment,
+  -- #305 residual: mark a suspected double-count that is NOT already text-treated so the UI suppresses
+  -- the untrusted value_after. Mirrors normalize-raw.sql's annex_total_suspect arithmetic gate, but
+  -- joined to raw_contracts for the contract's signing_value/currency (this served INSERT has no
+  -- contract row to read). value_treatment IS NULL keeps a restated/genuine row out (value_restated
+  -- already owns those). No current_value tie here: the tie in normalize-raw only decides whether the
+  -- CONTRACT is flagged; the per-row marker suppresses any row whose after is an unbridgeable double.
+  CASE WHEN value_treatment IS NULL
+        AND value_before > 0
+        AND value_after >= 2 * value_before AND value_after < 10 * value_before
+        -- #305 M2 self-consistency: skip when value_delta is present and a ≉ b + d (model N/A).
+        AND (value_delta IS NULL OR ABS(value_after - (value_before + value_delta)) < 0.01 * value_after)
+        AND EXISTS (
+          SELECT 1 FROM raw_contracts rc
+          WHERE rc.unp = dedup.unp AND rc.contract_number = dedup.contract_number
+            AND rc.signing_value > 0
+            -- #305 multi-annex: value_before may be a prior cumulative total (a preceding annex's
+            -- value_after), not signing. Anchor to signing OR a legitimately-grown prior total (prev not
+            -- itself a double); a single ≥2× step violates ЗОП чл.116 wherever it sits (see normalize-raw.sql).
+            AND (
+              ABS(dedup.value_before - rc.signing_value) < 0.01 * rc.signing_value
+              OR EXISTS (
+                SELECT 1 FROM raw_amendments prev
+                WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
+                  AND prev.value_after > 0
+                  AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                  -- ...and that prior total was itself reached legitimately (prev not a ≥2× double).
+                  AND prev.value_before > 0 AND prev.value_after < 2 * prev.value_before
+              )
+              -- #305 84818-class: EXACT single-step 2× on an ORPHAN base (value_before ties neither signing
+              -- nor any prior annex) — mark the row suspect; never rewrites (see normalize-raw.sql). The
+              -- orphan guard leaves compounding chains untouched.
+              OR (
+                ABS(dedup.value_after - 2 * dedup.value_before) < 0.005 * dedup.value_before
+                AND NOT EXISTS (
+                  SELECT 1 FROM raw_amendments prev
+                  WHERE prev.unp = dedup.unp AND prev.contract_number = dedup.contract_number
+                    AND prev.value_after > 0
+                    AND ABS(prev.value_after - dedup.value_before) < 0.01 * dedup.value_before
+                )
+              )
+            )
+            AND COALESCE(NULLIF(dedup.currency, ''), COALESCE(NULLIF(rc.currency, ''), 'BGN'))
+              = COALESCE(NULLIF(rc.currency, ''), 'BGN')
+        )
+       THEN 1 ELSE 0 END
 FROM dedup
 WHERE rn = 1;
 

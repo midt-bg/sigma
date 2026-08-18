@@ -24,7 +24,7 @@
 
 ## Чеклист
 
-- [ ] Комитите следват [conventional commits](https://www.conventionalcommits.org) и **нямат** `Co-Authored-By:` trailer
+- [ ] Комитите следват [conventional commits](https://www.conventionalcommits.org) и **нямат** `Co-Authored-By:` trailer, който сочи към агент (Claude Code, Codex, Cursor, Copilot). Трейлъри с **хора** са наред и не се махат — те са начинът заслугата на сътрудника да оцелее при squash
 - [ ] PR-ът е с **един логически обхват** и е от форк към `midt-bg/sigma:main`
 - [ ] `pnpm typecheck` минава
 - [ ] `pnpm test` (поне за засегнатите пакети) минава

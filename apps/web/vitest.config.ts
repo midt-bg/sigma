@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import { testAlias } from './vitest.alias';
+import { sharedCoverage } from '../../vitest.shared';
 
 // Two projects so the environment is chosen by file type:
 //   *.test.ts  → node (pure logic + workers)
@@ -30,5 +31,6 @@ export default defineConfig({
         },
       },
     ],
+    coverage: sharedCoverage(['app/**', 'workers/**']),
   },
 });
