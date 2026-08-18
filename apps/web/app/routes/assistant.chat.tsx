@@ -121,11 +121,15 @@ export async function action({ request, context }: Route.ActionArgs) {
   if (ai && vectorize && question) {
     try {
       schemaContext = await retrieveSchemaContext(ai, vectorize, question, {
-        onStats: ({ matched, kept }) =>
-          console.log(`[assistant] rag: ${matched} matched, ${kept} kept`),
+        // Structured JSON, one line per turn — same aggregation discipline as workers/request-log.ts
+        // (queryable fields, no free-text scraping). Counts only; never the question text.
+        onStats: (stats) => console.log(JSON.stringify({ evt: 'assistant.rag', ...stats })),
       });
     } catch (error) {
-      console.error('[assistant] rag retrieval failed — full-dictionary fallback', error);
+      // Message only, never the raw error object: a Workers AI/Vectorize error could echo the
+      // embedded input, and the user's question must not land in logs (cf. request-log.ts q_len).
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[assistant] rag retrieval failed — full-dictionary fallback: ${message}`);
       schemaContext = undefined;
     }
   }
