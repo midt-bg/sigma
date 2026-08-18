@@ -7,9 +7,11 @@ import {
   indexSchemaCorpus,
   MAX_EMBED_CHARS,
   MIN_ENTITY_SCORE,
+  MIN_SCHEMA_SCORE,
   retrieveSchemaContext,
   semanticSearch,
   type EmbeddingRunner,
+  type RetrievalStats,
   type VectorIndex,
 } from './rag';
 
@@ -134,17 +136,65 @@ describe('retrieveSchemaContext', () => {
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
   });
 
-  it('reports matched vs kept counts through onStats (the #318 observability hook)', async () => {
+  it('reports matched/aboveFloor/kept through onStats (the #318 observability hook)', async () => {
+    const ai = fakeAI();
+    // Scores DERIVED from the floor (± epsilon), not hardcoded — the pending recalibration (#318)
+    // must not silently flip this test's fixtures across the floor. The third match is above-floor
+    // but text-less: kept < aboveFloor is the metadata-bug signal, distinct from a floor drop.
+    const index = fakeIndex([
+      {
+        id: 'schema-v2:table:lots',
+        score: MIN_SCHEMA_SCORE + 0.05,
+        metadata: { text: 'релевантно' },
+      },
+      {
+        id: 'schema-v2:table:parties',
+        score: MIN_SCHEMA_SCORE - 0.05,
+        metadata: { text: 'под флора' },
+      },
+      { id: 'schema-v2:table:bez-text', score: MIN_SCHEMA_SCORE + 0.05, metadata: {} },
+    ]);
+    const stats: RetrievalStats[] = [];
+    const out = await retrieveSchemaContext(ai, index, 'въпрос', { onStats: (s) => stats.push(s) });
+    expect(stats).toEqual([{ matched: 3, aboveFloor: 2, kept: 1 }]);
+    // The counters must describe the actual return value, not a parallel computation.
+    expect(out).toEqual(['релевантно']);
+  });
+
+  it('a throwing onStats sink never costs the turn its chunks (reporting is best-effort)', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
-      { id: 'schema-v2:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
-      { id: 'schema-v2:table:parties', score: 0.1, metadata: { text: 'под флора' } },
+      {
+        id: 'schema-v2:table:lots',
+        score: MIN_SCHEMA_SCORE + 0.05,
+        metadata: { text: 'релевантно' },
+      },
     ]);
-    const stats: unknown[] = [];
-    await retrieveSchemaContext(ai, index, 'въпрос', { onStats: (s) => stats.push(s) });
-    // matched = raw namespace-scoped matches; kept = floor survivors. The gap between the two IS
-    // the signal: kept=0 with matched>0 would mean the silent full-dictionary fallback fired.
-    expect(stats).toEqual([{ matched: 2, kept: 1 }]);
+    const out = await retrieveSchemaContext(ai, index, 'въпрос', {
+      onStats: () => {
+        throw new Error('metrics sink down');
+      },
+    });
+    expect(out).toEqual(['релевантно']);
+  });
+
+  it('reports zeros when embedding yields no query vector (no silent stats gap)', async () => {
+    // A provider anomaly that survives embed()'s count check (right length, unusable vector)
+    // takes the !vec early return — that path must still report, else this degradation is
+    // indistinguishable in the logs from "stats not wired at all".
+    const emptyAi = {
+      run: vi.fn(async (_m: string, inputs: { text: string[] }) => ({
+        data: inputs.text.map(() => undefined as unknown as number[]),
+      })),
+    } satisfies EmbeddingRunner;
+    const index = fakeIndex([]);
+    const stats: RetrievalStats[] = [];
+    const out = await retrieveSchemaContext(emptyAi, index, 'въпрос', {
+      onStats: (s) => stats.push(s),
+    });
+    expect(out).toEqual([]);
+    expect(stats).toEqual([{ matched: 0, aboveFloor: 0, kept: 0 }]);
+    expect(index.query).not.toHaveBeenCalled();
   });
 
   it('drops a match that arrives with no score at all (defensive — safe full-dictionary fallback)', async () => {
