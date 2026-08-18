@@ -52,7 +52,7 @@ prompt безусловно (`hardTraps()`), а RAG извлича най-рел
 Това PR добавя bindings към Cloudflare ресурси, които трябва да **съществуват преди deploy** — иначе
 `wrangler deploy` се проваля и блокира CD за целия екип (бележка от ревюто на #80). Преди мърдж/deploy на
 средата с асистента осигурете: `BGGPT_API_KEY` (secret, `wrangler secret put`), Vectorize индекс
-`sigma-assistant`, R2 кофа `sigma-reports`, и еднократно индексиране на схема-корпуса (`indexSchemaCorpus`).
+`sigma-assistant`, R2 кофа `sigma-reports`, и индексиране на схема-корпуса (`indexSchemaCorpus`).
 
 ```bash
 # Веднъж на средата, ПРЕДИ `wrangler deploy` (иначе deploy-ът пада и блокира CD на целия екип):
@@ -60,8 +60,16 @@ wrangler vectorize create sigma-assistant --dimensions=1024 --metric=cosine  # �
 wrangler r2 bucket create sigma-reports
 wrangler secret put BGGPT_API_KEY                                            # интерактивно; никога не се комитва
 # `AI` (Workers AI) не изисква създаване на ресурс — account capability; включи Workers AI за акаунта.
-# След като индексът съществува, еднократно: indexSchemaCorpus(env.AI, env.VECTORIZE) пълни схема-корпуса.
+# След като индексът съществува: indexSchemaCorpus(env.AI, env.VECTORIZE) пълни схема-корпуса.
 ```
+
+**Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
+на векторите носят версията. При всяка bump на версията (напр. `schema-v2`, когато trap-правилата
+отпаднаха от корпуса) `indexSchemaCorpus` трябва да се пусне отново: пише се НОВ кохорт вектори, старият
+остава непокътнат (rollback на Worker-а продължава да работи срещу него), а среда без ре-индекс просто
+връща 0 чънка и асистентът пада към пълния статичен речник (безопасно, но без RAG grounding). Старите
+кохорти може да се чистят по желание с `wrangler vectorize delete-vectors` — не е задължително,
+retrieval-ът ги игнорира чрез namespace-а.
 
 Докато бекендът не е напълно осигурен, `/assistant/chat` връща контролирано **503**, а грешка по време на
 streaming се показва като четим текст — не като счупена връзка или 500 (graceful degradation, §7).
