@@ -81,8 +81,8 @@ describe('indexSchemaCorpus', () => {
     // this test (and triggers a re-index) — never an accidental constant edit.
     expect(first.namespace).toBe('schema-v2');
     expect(first.metadata.ns).toBe('schema-v2');
-    // Version in the id too: a re-index writes a NEW cohort instead of mutating the old one, so a
-    // Worker rollback keeps querying the old cohort untouched.
+    // Version in the id too: a BUMPED re-index writes a NEW cohort next to the old one, so a
+    // Worker rollback keeps querying the old cohort untouched (see the WHEN TO BUMP rule in rag.ts).
     expect(first.id.startsWith('schema-v2:')).toBe(true);
   });
 });
@@ -117,8 +117,8 @@ describe('retrieveSchemaContext', () => {
   it('drops matches below the relevance floor (so an off-topic top-K falls back to the full dictionary)', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
-      { id: 'schema:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
-      { id: 'schema:table:parties', score: 0.1, metadata: { text: 'нерелевантно' } },
+      { id: 'schema-v2:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
+      { id: 'schema-v2:table:parties', score: 0.1, metadata: { text: 'нерелевантно' } },
     ]);
     // Only the above-floor chunk survives; the 0.1 match is discarded rather than injected as "context".
     expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual(['релевантно']);
@@ -126,7 +126,7 @@ describe('retrieveSchemaContext', () => {
 
   it('returns [] when every match is below the floor (buildSystemPrompt then uses the full dictionary)', async () => {
     const ai = fakeAI();
-    const index = fakeIndex([{ id: 'schema:table:x', score: 0.05, metadata: { text: 'x' } }]);
+    const index = fakeIndex([{ id: 'schema-v2:table:x', score: 0.05, metadata: { text: 'x' } }]);
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
   });
 
@@ -135,14 +135,14 @@ describe('retrieveSchemaContext', () => {
     // Simulate an index backend that omits `score` on a match: it must read as below the floor (dropped),
     // not injected as unranked context. Cast because our typed contract promises a numeric score.
     const index = fakeIndex([
-      { id: 'schema:table:x', metadata: { text: 'x' } } as unknown as Match,
+      { id: 'schema-v2:table:x', metadata: { text: 'x' } } as unknown as Match,
     ]);
     expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual([]);
   });
 });
 
 describe('semanticSearch', () => {
-  it('maps matches into hits and queries the entity namespace', async () => {
+  it('maps matches into hits and pins the entity METADATA filter (не native namespace — виж rag.ts)', async () => {
     const ai = fakeAI();
     const index = fakeIndex([
       { id: 'e1', score: 0.8, metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } },
