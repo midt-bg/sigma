@@ -125,13 +125,13 @@ CREATE TABLE contracts (
   bids_received    INTEGER,
   contract_kind    TEXT,                   -- Доставки / Услуги / Строителство
   awarded_to_group INTEGER,                -- this AWARD went to an обединение (per-contract, distinct from bidders.is_consortium)
-  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | value_low | value_suspect | annex_suspect (data-quality verdict; assigned in scripts/normalize-raw.sql)
+  value_flag       TEXT NOT NULL DEFAULT 'ok',  -- ok | review | value_low | value_suspect | annex_suspect | annex_total_suspect (data-quality verdict; assigned in scripts/normalize-raw.sql)
   date_flag        TEXT NOT NULL DEFAULT 'ok',  -- ok | signed_after_publication (non-destructive date-quality verdict)
   amount_eur       REAL,                   -- canonical EUR, SAFE TO SUM; populated for all flags (value_suspect repaired to the procedure estimate); NULL only when no trustworthy EUR figure (FX-rateless foreign / value_suspect w/o estimate / no signing+current)
   fx_converted     INTEGER NOT NULL DEFAULT 0,  -- 1 = amount_eur came from a foreign-currency market rate
   fx_rate          REAL,                   -- EUR per 1 unit of `currency` for foreign rows (amount × fx_rate = amount_eur)
   signing_value_eur REAL,                  -- signing_value in EUR (peg/fx); NULL for value_suspect — for the contract value timeline
-  current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect (suspect annex suppressed)
+  current_value_eur REAL,                  -- current_value in EUR; NULL for value_suspect/annex_suspect/annex_total_suspect (suspect annex suppressed)
   lot_id           TEXT,                   -- domain lot id ('lot:'||УНП||':'||raw) when the award is lot-scoped; soft-links lots(id)
   document_number  TEXT,                   -- Номер на документ
   published_at     TEXT,                   -- Публикуван на

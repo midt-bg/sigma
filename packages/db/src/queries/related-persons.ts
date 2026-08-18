@@ -19,6 +19,9 @@ const CONFLICT_TABLES = [
   'declared_interests',
   'interest_link_authorities',
   'related_persons_internal',
+  // 0006 (#279, ADR-0033). Listed here for the same reason as the rest: on an environment where 0006
+  // has not been applied yet, the evidence join must degrade to an empty surface rather than a 500.
+  'interest_link_evidence',
 ];
 // „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
 const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;
@@ -79,11 +82,28 @@ interface LinkRow {
   first_contract_year: string | null;
   last_contract_year: string | null;
   source_url: string | null;
+  evidence_kind: string | null;
+  registry_role: string | null;
+  entry_number: string | null;
+  entry_date: string | null;
+  lookup_date: string | null;
 }
 
 // The winner's contracts, joined exactly as the ETL aggregate does (contracts→tenders→authorities→bidders,
 // matched by eik_normalized) so any read-time subset is a true subset of the stored contract_count/value.
 // Alias-distinct (cc/tt/aa/bb) so it composes as a correlated subquery under the LINK_SELECT `il`/`b` scope.
+//
+// `tt` and `aa` are NOT projected here, which makes both joins look dead and invites deleting them. They
+// are not dead — they are the SHAPE, and its counterpart is the WRITER at scripts/cacbg/load.mjs (the
+// per-winner contract query that fills contract_count / contract_value_eur). The two must stay identical.
+//
+// Removing them on the read side ALONE would widen the read to contracts the stored aggregate never
+// counted: `contemporaneous_contract_count` could then exceed `contract_count`, and the EXISTS gate below
+// (the one that decides whether a link surfaces at all) would publish links the I5 zero-contract gate had
+// excluded. Removing them on BOTH sides is defensible — an unresolvable authority currently drops a
+// contract from the money everywhere, consistently — but it changes published figures and so must be
+// re-baselined against ADR-0033 §10's control totals, not slipped in as a cleanup. Tracked as #226 §1.6.
+// `related-persons-sql.test.ts` pins this string to the writer's so neither can be "optimised" alone.
 const CONTRACT_JOIN = `FROM contracts cc
     JOIN tenders tt ON tt.id = cc.tender_id
     JOIN authorities aa ON aa.id = tt.authority_id
@@ -116,8 +136,15 @@ export const NEXUS_ORDER = `(il.own_institution = 'exact') DESC, (contemporaneou
 // The two surfaced ownership classes (ADR-0032): the official's own stake (private_ownership) and a close
 // relative's (family_ownership). Anchored once here + in LINK_CONTRACTS_SQL so the read gate and the
 // drill-down never drift.
+// …and the identity must rest on a Trade Register fact (#279, ADR-0033). `status='published'` already
+// encodes the loader's decision, so this EXISTS is belt-and-braces: it makes the read path refuse a link
+// whose seal is missing or whose evidence is a withholding rung, even if a future writer sets status
+// wrongly. 'document' and 'confirmed' are the only two rungs that publish; bar_joint_stock, unknown,
+// refuted and outside_tr never reach a reader.
 export const SURFACED_OWNERSHIP = `il.status = 'published'
-    AND il.interest_class IN ('private_ownership', 'family_ownership')`;
+    AND il.interest_class IN ('private_ownership', 'family_ownership')
+    AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))`;
 // Redundant-family collapse (ADR-0032, per todorkolev review). A family link is DROPPED when the SAME official
 // already has a published OWN stake in the SAME winner. Rendering both a self row and a family row for one
 // (official, ЕИК) is a de-anonymisation vector: the office-holder is himself in that company's Търговски
@@ -156,8 +183,13 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
     -- leaderboard is ≤1000 rows and hourly-cached, so the extra scan is immaterial.
     (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-     ORDER BY d.declared_year DESC LIMIT 1) AS institution
+     ORDER BY d.declared_year DESC LIMIT 1) AS institution,
+    -- The evidence the link rests on, so the card can explain itself (ADR-0033 decision 7). LEFT JOIN
+    -- rather than an inner one: SURFACED_OWNERSHIP already requires a publishing seal, and an inner join
+    -- here would silently re-filter rather than surface a contradiction.
+    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date
   FROM interest_links il
+  LEFT JOIN interest_link_evidence ev ON ev.link_key = il.link_key
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
   WHERE ${SURFACED_OWNERSHIP}
@@ -169,6 +201,25 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     AND EXISTS (SELECT 1 ${CONTRACT_JOIN} WHERE bb.eik_normalized = il.eik)
     -- …and drop a family link redundant with the official's own stake in the same winner (de-anon guard).
     AND ${NOT_REDUNDANT_FAMILY}`;
+
+// The two rungs that license a public claim (ADR-0033 decision 1), and the ONLY two the card knows how
+// to render. Anything else — 'refuted', 'unknown', 'bar_joint_stock', 'outside_tr', a rung added by a
+// later rules_version, a typo, or NULL from a row with no seal — is withheld, never mapped.
+//
+// The mapper used to read `kind === 'confirmed' ? 'confirmed' : 'document'`, which turned every one of
+// those into 'document' — the STRONGEST claim on the surface, rendering „лицето е вписано като
+// съдружник/собственик": that the register names this specific person in this specific company. The SQL
+// gate makes it unreachable today, but the direction was wrong, and this is the one mapping in the
+// codebase where a default is a defamatory statement about a named human being rather than a glitch.
+// The LEFT JOIN in LINK_SELECT is deliberately not an inner one so a contradiction SURFACES here; the
+// old fallback then converted exactly that contradiction into the strongest possible label.
+const PUBLISHING_EVIDENCE = new Set(['document', 'confirmed']);
+
+/** Rows whose seal licenses a public claim. Withholding is silent by design — the SQL already filters
+ *  these out, so anything reaching here is a contradiction to drop, not a condition to report per row. */
+function sealed(rows: LinkRow[]): LinkRow[] {
+  return rows.filter((r) => PUBLISHING_EVIDENCE.has(String(r.evidence_kind)));
+}
 
 // own_institution is a 4-value verdict; only the deterministic 'exact' surfaces as true (the
 // name_contains/locality heuristics are disclosed elsewhere, never asserted as fact).
@@ -193,6 +244,18 @@ function toLink(r: LinkRow): ConflictLink {
     firstContractYear: r.first_contract_year,
     lastContractYear: r.last_contract_year,
     sourceUrl: r.source_url,
+    // Narrowed, not defaulted — `sealed()` above has already dropped every other value, so this asserts
+    // what the filter guarantees instead of inventing a rung the row never carried.
+    evidenceKind: r.evidence_kind as 'document' | 'confirmed',
+    registryRole:
+      r.registry_role === 'owner' || r.registry_role === 'manager' ? r.registry_role : null,
+    registryEntryNumber: r.entry_number,
+    registryEntryDate: r.entry_date,
+    // Narrowed for the same reason as evidenceKind, not defaulted. `lookup_date` is NOT NULL in
+    // migration 0006 and the row only reaches here through the seal filter, so `?? ''` was a branch
+    // that could not run — and if the invariant ever broke it would have shipped an empty string as a
+    // date, which reads as a valid-but-blank provenance rather than as the contradiction it is.
+    registryLookupDate: r.lookup_date as string,
   };
 }
 
@@ -203,7 +266,7 @@ export const LEADERBOARD_SQL = `${LINK_SELECT}
  *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value). */
 export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
   try {
-    const rows = (await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results;
+    const rows = sealed((await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results);
     return rows.map(toLink);
   } catch (e) {
     if (conflictSchemaAbsent(e, 'leaderboard')) return []; // un-migrated env → empty surface, not a 500
@@ -221,7 +284,9 @@ export async function getOfficialConflicts(
   personId: string,
 ): Promise<OfficialConflicts | null> {
   try {
-    const rows = (await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results;
+    // Filtered BEFORE the emptiness check, so a person whose every link is withheld 404s rather than
+    // rendering an empty page under their name.
+    const rows = sealed((await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
     return { official: links[0]!.official, links };
@@ -240,7 +305,7 @@ export async function getCompanyConflicts(
   eik: string,
 ): Promise<CompanyConflicts | null> {
   try {
-    const rows = (await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results;
+    const rows = sealed((await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     return { company: rows[0]!.company, eik, links: rows.map(toLink) };
   } catch (e) {

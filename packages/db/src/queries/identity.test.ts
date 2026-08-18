@@ -129,6 +129,14 @@ describe('person slug (свързани лица)', () => {
   it('returns null for an undecodable slug rather than throwing', () => {
     expect(personIdFromSlug('!!!not base64!!!')).toBeNull();
   });
+  it('encodes a bare name key the same as its prefixed form (the prefix is stripped, not required)', () => {
+    // Callers hand it either shape — a row's person_id carries the prefix, a freshly computed name key
+    // does not. Encoding the literal 'person:' into one of them would mint two different URLs for the
+    // same human, and only one of them would round-trip.
+    expect(personSlug('ИВАН ПЕТРОВ')).toBe(personSlug('person:ИВАН ПЕТРОВ'));
+    // Decoding always canonicalises to the prefixed id, so both inputs land on the same person.
+    expect(personIdFromSlug(personSlug('ИВАН ПЕТРОВ'))).toBe('person:ИВАН ПЕТРОВ');
+  });
 });
 
 describe('hrefForEntity', () => {

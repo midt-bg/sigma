@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,11 @@ import {
   LEADERBOARD_SQL,
   LINK_CONTRACTS_LIMIT,
   LINK_CONTRACTS_SQL,
+  LINK_SELECT,
   OFFICIAL_SQL,
+  SURFACED_OWNERSHIP,
 } from './queries/related-persons';
+import { SEARCH_HITS_SQL } from './queries/search';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
 // use a fake D1 and never run the aggregation; this runs the EXACT exported SQL against a real SQLite
@@ -22,6 +25,8 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+// …and 0006: SURFACED_OWNERSHIP now requires a Trade Register evidence seal (#279, ADR-0033).
+const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' }).trim();
@@ -122,6 +127,13 @@ INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, co
 -- Rollup row for the awarding body — the per-authority capture-share denominator the read query LEFT JOINs.
 INSERT INTO authority_totals (authority_id, name, spent_eur, contracts, suppliers, avg_eur) VALUES
   ('a:1','ОБЩИНА ТЕСТ',50000000,10,4,5000000);
+
+-- Every link carries a Trade Register evidence seal (#279, ADR-0033). SURFACED_OWNERSHIP now requires
+-- one, so a fixture without seals renders an EMPTY surface and every assertion below passes vacuously.
+-- Derived from interest_links itself, so a row added to the fixture later is sealed automatically and
+-- cannot silently drop off the surface.
+INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+  SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links;
 `;
 
 describe('свързани-лица SQL (real SQLite)', () => {
@@ -131,6 +143,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
     try {
       readScript(dbPath, migration0);
       readScript(dbPath, migration2);
+      readScript(dbPath, migration9);
       sqlite(dbPath, FIXTURE);
       return fn(dbPath);
     } finally {
@@ -193,7 +206,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO persons (id, name) VALUES ('person:zero','Нула Тестов');
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'published');`,
+           ('il:zerofam','person:zero|666|family','person:zero','eik:666','666','НУЛА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2021',0,0,NULL,NULL,'published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);`,
       );
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.some((r) => r.official === 'Нула Тестов')).toBe(false); // no live contracts → gated out
@@ -217,6 +232,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:alen','person:alen|701','person:alen','eik:701','701','АЛЕН КО ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',1,1000000,'2021','2021','published'),
            ('il:boyan','person:boyan|702','person:boyan','eik:702','702','БОЯН КО ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',1,10000000,'2021','2021','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES
            ('t:71','unp71','Обект А','a:1','открита процедура'),('t:72','unp72','Обект Б','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
@@ -322,6 +339,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:dubl-self','person:dubl|800','person:dubl','eik:800','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published'),
            ('il:dubl-fam','person:dubl|800|family','person:dubl','eik:800b','800','ДУБЪЛ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,60000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:80','unp80','Обект Дубъл','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:80','t:80','eik:800',60000,'EUR','2021-05-01','Д-80',60000);`,
       );
@@ -350,6 +369,8 @@ describe('свързани-лица SQL (real SQLite)', () => {
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
            ('il:asim-self-held','person:asim|850','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','held'),
            ('il:asim-fam','person:asim|850|family','person:asim','eik:850','850','АСИМ ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',2,40000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);
          INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES ('t:85','unp85','Обект Асим','a:1','открита процедура');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES ('c:85','t:85','eik:850',40000,'EUR','2021-05-01','Д-85',40000);`,
       );
@@ -475,7 +496,9 @@ describe('свързани-лица SQL (real SQLite)', () => {
          INSERT INTO persons (id, name) VALUES ('person:praz','Празен Тестов');
          INSERT INTO interest_links
            (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-           ('il:praz','person:praz|900','person:praz','eik:900','900','ПРАЗЕН ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2022',7,7000000,'2021','2022','published');`,
+           ('il:praz','person:praz|900','person:praz','eik:900','900','ПРАЗЕН ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2020','2022',7,7000000,'2021','2022','published');
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+           SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links WHERE link_key NOT IN (SELECT link_key FROM interest_link_evidence);`,
       );
       const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
       expect(board.some((r) => r.official === 'Празен Тестов')).toBe(false); // gated out — no live contracts
@@ -503,5 +526,174 @@ describe('свързани-лица SQL (real SQLite)', () => {
         LINK_CONTRACTS_LIMIT,
       );
     });
+  });
+
+  // ── the evidence seal gate (#279, ADR-0033 decision 1) ──────────────────────
+  //
+  // This block exists because the gate had NO test pressure at all: deleting the entire
+  // `EXISTS (… interest_link_evidence …)` clause out of SURFACED_OWNERSHIP left the whole db suite
+  // green (361/361), because every fixture above seals every link 'document'. That clause is the only
+  // SQL between a WITHHELD link and a named public claim that a specific official owns a specific
+  // company, so an untested one is the most expensive kind of dead rail.
+  //
+  // Each rung below is a REAL withholding outcome of evidence.mjs, not an invented value:
+  //   refuted          — the register contradicts the declared stake
+  //   bar_joint_stock  — an АД/ЕАД, where a declared parcel of shares is not a material conflict
+  //   unknown          — no rung reached; the deed proves nothing either way
+  //   outside_tr       — ДЗЗД/BULSTAT, not in the Trade Register at all
+  // …plus a link with NO seal row whatsoever, which is what a half-loaded run produces.
+  describe('a link withheld by its evidence seal never reaches any public query', () => {
+    // All six share the SAME winner (eik 111, which has live contracts) and the same shape, so the
+    // ONLY thing that differs is the seal. Without that, an absent row could be absent for an unrelated
+    // reason and every assertion here would pass vacuously — which is exactly the bug being fixed.
+    const WITHHELD = [
+      ['refuted', 'person:ref', 'Оборен Тестов'],
+      ['bar_joint_stock', 'person:bar', 'Акционер Тестов'],
+      ['unknown', 'person:unk', 'Неясен Тестов'],
+      ['outside_tr', 'person:out', 'Извън Тестов'],
+    ] as const;
+
+    function seedRungs(dbPath: string): void {
+      const people: [string, string][] = [
+        ...WITHHELD.map(([, id, name]) => [id, name] as [string, string]),
+        ['person:none', 'Безпечатен Тестов'],
+        ['person:ok', 'Потвърден Тестов'],
+      ];
+      const links: string[] = [...WITHHELD.map(([, id]) => id), 'person:none', 'person:ok'];
+      sqlite(
+        dbPath,
+        `INSERT INTO persons (id, name) VALUES ${people.map(([id, n]) => `('${id}','${n}')`).join(',')};
+         INSERT INTO interest_links
+           (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
+           ${links
+             .map(
+               (p) =>
+                 `('il:${p.split(':')[1]}','${p}|111','${p}','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2019','2023',3,1000,'2020','2021','published')`,
+             )
+             .join(',')};
+         INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status) VALUES
+           ${WITHHELD.map(([kind, id]) => `('${id}|111','${kind}',NULL,NULL,'2026-08-05','tr-rules-1','live')`).join(',')},
+           ('person:ok|111','confirmed',NULL,'seat:СОФИЯ','2026-08-05','tr-rules-1','live');`,
+      );
+      // person:none deliberately gets NO evidence row at all.
+    }
+
+    it('the POSITIVE CONTROL surfaces — so every absence below is caused by the seal, not the fixture', () => {
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+        expect(board.some((r) => r.official === 'Потвърден Тестов')).toBe(true);
+        expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:ok'))).toHaveLength(1);
+      });
+    });
+
+    for (const [kind, personId, name] of WITHHELD) {
+      it(`'${kind}' is withheld from the leaderboard, the official page, the company page and the drill-down`, () => {
+        withDb((dbPath) => {
+          seedRungs(dbPath);
+          const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+          expect(board.some((r) => r.official === name)).toBe(false);
+          expect(board.some((r) => r.link_key === `${personId}|111`)).toBe(false);
+          // The official's own page must 404 rather than render a withheld claim under their name…
+          expect(rows(dbPath, lit(OFFICIAL_SQL, personId))).toHaveLength(0);
+          // …the company page must not list them among that winner's office-holders…
+          expect(rows(dbPath, lit(COMPANY_SQL, '111')).some((r) => r.official === name)).toBe(
+            false,
+          );
+          // …and the drill-down must not enumerate the contracts of a link it may not name.
+          expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, `${personId}|111`))).toHaveLength(0);
+        });
+      });
+    }
+
+    it('a link with NO seal row at all is withheld too — a half-loaded run must not publish', () => {
+      // The LEFT JOIN in LINK_SELECT would happily return this row with NULL evidence columns; only the
+      // EXISTS gate keeps it off the surface. This is the case a partial load actually produces.
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const board = rows(dbPath, lit(LEADERBOARD_SQL, 100));
+        expect(board.some((r) => r.official === 'Безпечатен Тестов')).toBe(false);
+        expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:none'))).toHaveLength(0);
+        expect(
+          rows(dbPath, lit(COMPANY_SQL, '111')).some((r) => r.official === 'Безпечатен Тестов'),
+        ).toBe(false);
+        expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:none|111'))).toHaveLength(0);
+      });
+    });
+
+    it('the company page shows ONLY the sealed office-holders of that winner', () => {
+      // Four withheld links and one confirmed link all point at eik 111, alongside the base fixture's
+      // Иван. A gate that let any withheld rung through would show up here as an extra name.
+      withDb((dbPath) => {
+        seedRungs(dbPath);
+        const names = rows(dbPath, lit(COMPANY_SQL, '111')).map((r) => r.official);
+        expect(names.sort()).toEqual(['Иван Минев', 'Потвърден Тестов']);
+      });
+    });
+  });
+});
+
+// The read-time contract join and the WRITER that fills contract_count/contract_value_eur must use the
+// same join shape. On the read side `tenders`/`authorities` are never projected, so both joins read as
+// dead and a reviewer will eventually propose deleting them (one did — cefothe on #309). Deleting them
+// there alone widens the read past the stored aggregate: contemporaneous counts could exceed
+// contract_count, and the EXISTS gate would surface links the zero-contract gate excluded. Nothing but a
+// test can hold a TypeScript template string and a .mjs prepared statement to the same shape.
+describe('the read-time contract join matches the writer that stored the aggregate', () => {
+  const writer = readFileSync(resolve(root, 'scripts/cacbg/load.mjs'), 'utf8');
+  // The writer's per-winner contract query, located by its projection rather than by line number.
+  const writerJoin = /FROM contracts c JOIN tenders t ON[^"]*?WHERE b\.eik_normalized/.exec(
+    writer,
+  )?.[0];
+
+  it('the writer still joins contracts→tenders→authorities→bidders', () => {
+    expect(writerJoin, 'load.mjs per-winner contract query not found').toBeTruthy();
+    for (const rel of ['tenders', 'authorities', 'bidders']) expect(writerJoin).toContain(rel);
+  });
+
+  it('CONTRACT_JOIN joins the same four relations, in the same direction', () => {
+    // Compared by RELATION and join condition, not by text: the two are written in different languages
+    // and alias differently (cc/tt/aa/bb vs c/t/a/b), so only the shape is comparable.
+    const flat = LINK_SELECT.replace(/\s+/g, ' ');
+    expect(flat).toContain('FROM contracts cc');
+    expect(flat).toContain('JOIN tenders tt ON tt.id = cc.tender_id');
+    expect(flat).toContain('JOIN authorities aa ON aa.id = tt.authority_id');
+    expect(flat).toContain('JOIN bidders bb ON bb.id = cc.bidder_id');
+    // …and the writer's equivalents, so a change to either side fails here.
+    expect(writerJoin).toContain('JOIN tenders t ON t.id=c.tender_id');
+    expect(writerJoin).toContain('JOIN authorities a ON a.id=t.authority_id');
+    expect(writerJoin).toContain('JOIN bidders b ON b.id=c.bidder_id');
+  });
+});
+
+// The evidence-seal gate has FOUR copies, and they must say the same thing. Reviewers found the fourth
+// (the company-search badge) checking `status='published'` alone, so search advertised a свързани-лица
+// claim about a named official that the detail page correctly withheld. `refresh-slice.sql` matters for a
+// different reason: it runs on the 6-hourly cron, so drift there silently keeps officials in the search
+// index whose links no longer surface. Nothing but a test binds SQL in three languages and two file types.
+describe('the evidence-seal gate is identical in all four places it is written', () => {
+  const sources: [string, string][] = [
+    ['related-persons.ts (SURFACED_OWNERSHIP)', SURFACED_OWNERSHIP],
+    ['search.ts (company badge)', SEARCH_HITS_SQL],
+    ['precompute.sql', readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8')],
+    ['refresh-slice.sql', readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')],
+  ];
+
+  it.each(sources)('%s requires a publishing evidence seal', (_label, sql) => {
+    // Whitespace-insensitive: the four are formatted for their own file, and a line break is not drift.
+    const flat = sql.replace(/\s+/g, ' ');
+    expect(flat).toMatch(
+      /EXISTS \( ?SELECT 1 FROM interest_link_evidence e WHERE e\.link_key = il\.link_key AND e\.evidence_kind IN \('document','confirmed'\) ?\)/,
+    );
+  });
+
+  it.each(sources)('%s admits exactly the two publishing rungs', (_label, sql) => {
+    // The rung list is the gate. A future rung added to one copy and not the others either leaks an
+    // unproven claim or silently drops a proven one, depending on which copy gained it.
+    const kinds = [...sql.matchAll(/evidence_kind IN \(([^)]*)\)/g)].map((m) =>
+      m[1]!.replace(/\s|'/g, ''),
+    );
+    expect(kinds.length).toBeGreaterThan(0);
+    for (const k of kinds) expect(k).toBe('document,confirmed');
   });
 });

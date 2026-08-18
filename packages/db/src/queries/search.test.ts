@@ -96,7 +96,10 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
         async first<T>() {
           // The свързани-лица table probe drives which hits SQL search() runs. Report present/absent per the
           // fixture flag so both the with-conflict path and the un-migrated fallback are exercisable.
-          if (sql.includes('sqlite_master')) return (hasConflictTable ? { n: 1 } : null) as T;
+          // BOTH свързани-лица tables must be present (n === 2) for the conflict-aware hits SQL to run;
+          // the fixture reports the real count, not a truthy stand-in, or it would silently exercise the
+          // un-migrated fallback while claiming to cover the badge path.
+          if (sql.includes('sqlite_master')) return (hasConflictTable ? { n: 2 } : null) as T;
           return null as T;
         },
         async all<T>() {
@@ -257,5 +260,117 @@ describe('search — empty query and href fallback', () => {
   it('searchMoreHref falls back to /search for an unrecognised kind', () => {
     const href = searchMoreHref('nope' as unknown as Parameters<typeof searchMoreHref>[0], 'q');
     expect(href.startsWith('/search?q=')).toBe(true);
+  });
+});
+
+// A search DB that reports an arbitrary свързани-лица table count and can starve one group of hits.
+// `sqlCapture` collects every prepared statement so the test can tell which hits SQL actually ran (the
+// probe statement itself names the tables, so it is filtered out before asserting — see hitsSql below).
+const hitsSql = (captured: string[]) => captured.filter((s) => !s.includes('sqlite_master'));
+
+function probeDb(
+  tableCount: number | null,
+  sqlCapture: string[],
+  starvedKind: string | null = null,
+): D1Database {
+  return {
+    prepare(sql: string) {
+      sqlCapture.push(sql);
+      let bound: unknown[] = [];
+      return {
+        bind(...args: unknown[]) {
+          bound = args;
+          return this;
+        },
+        async first<T>() {
+          if (sql.includes('sqlite_master'))
+            return (tableCount === null ? null : { n: tableCount }) as T;
+          return null as T;
+        },
+        async all<T>() {
+          if (sql.includes('COUNT(*) AS n')) {
+            return {
+              results: [
+                { kind: 'official', n: 2 },
+                { kind: 'company', n: 7 },
+              ] as T[],
+            };
+          }
+          if (bound[0] === starvedKind) return { results: [] as T[] };
+          if (bound[0] === 'official') {
+            return {
+              results: [
+                {
+                  ref: 'person:ИВАН МИНЕВ',
+                  title: 'Иван Минев',
+                  ident: null,
+                  subtitle: 'Община Русе',
+                  amount: 500000,
+                  entity_kind: null,
+                  ownership_kind: null,
+                  eik_valid: null,
+                  has_conflict: 0,
+                  rank: -6,
+                },
+              ] as T[],
+            };
+          }
+          return {
+            results: [
+              {
+                ref: 'eik:111111113',
+                title: 'ТЕСТ ООД',
+                ident: '111111113',
+                subtitle: null,
+                amount: 1000,
+                entity_kind: 'company',
+                ownership_kind: null,
+                eik_valid: 1,
+                has_conflict: 1,
+                rank: -5,
+              },
+            ] as T[],
+          };
+        },
+      };
+    },
+  } as D1Database;
+}
+
+describe('search — свързани-лица migration probe and count/hits divergence', () => {
+  it('runs the conflict-aware hits SQL only when BOTH tables are present', async () => {
+    const both: string[] = [];
+    await search(probeDb(2, both), 'тест');
+    expect(hitsSql(both).some((s) => s.includes('interest_links'))).toBe(true);
+
+    // 0003 applied but not 0006: the join would reference a table that isn't there and 500 every
+    // search, so a partial migration must read the same as no migration at all.
+    const partial: string[] = [];
+    await search(probeDb(1, partial), 'тест');
+    expect(hitsSql(partial).some((s) => s.includes('interest_links'))).toBe(false);
+  });
+
+  it('treats a probe that returns no row at all as un-migrated', async () => {
+    const none: string[] = [];
+    await search(probeDb(null, none), 'тест');
+    expect(hitsSql(none).some((s) => s.includes('interest_links'))).toBe(false);
+  });
+
+  it('keeps a group whose count is non-zero but whose hits come back empty', async () => {
+    // The count and the hits are two separate FTS reads; they can disagree (index churn between them).
+    // The group must survive with its real total and an intact „виж всички" link rather than vanish.
+    const results = await search(probeDb(2, [], 'company'), 'тест');
+    const company = results.groups.find((g) => g.kind === 'company');
+    expect(company).toMatchObject({ total: 7, hits: [] });
+    expect(company!.moreHref).not.toBeNull();
+    expect(results.empty).toBe(false); // a real total, so the „нищо не е намерено" state stays off
+  });
+
+  it('does not let a hitless group out-rank a real match in the placement gate', async () => {
+    // A group with no rows has no bm25 rank at all. Reading one out of an empty result set (rather than
+    // standing it off at Infinity) would hand it the strongest possible score and sink „Свързани лица"
+    // below a group that matched nothing — the exact placement the minister's ask reverses.
+    const groups = (await search(probeDb(2, [], 'company'), 'тест')).groups;
+    expect(groups[0]!.kind).toBe('official');
   });
 });

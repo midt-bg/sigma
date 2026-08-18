@@ -20,6 +20,7 @@ import {
   officialHref,
   partitionContracts,
   relationLabel,
+  registryEvidenceLabel,
   temporalLabel,
 } from '../lib/conflicts';
 
@@ -179,6 +180,26 @@ function ConflictCard({
               ) : (
                 <span className="muted">—</span>
               )}
+            </dd>
+          </div>
+          {/* The Trade Register fact the link's identity rests on (#279, ADR-0033). This is what makes
+              „every shown link explains itself" true rather than a promise: a reader can open the same act
+              we read and check it. The wording is careful — the register records a ROLE, it does not
+              certify the ownership claim, which comes from the official's own declaration. */}
+          <div className="cc-stat">
+            <dt>Регистър</dt>
+            <dd>
+              <ExternalEikLink eik={l.eik} />
+              <span className="small muted cc-evidence">
+                {registryEvidenceLabel(l)}
+                {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
+                {/* The entry NUMBER, not just its date: a date does not identify a record, and this is
+                    what a reader types to find the same act we read. Rendered only when present —
+                    a seat/ЕИК confirmation cites no act entry, and an empty „№" would read as missing
+                    data rather than as an inapplicable field. */}
+                {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
+                {l.registryLookupDate ? ` · справка ${l.registryLookupDate}` : ''}
+              </span>
             </dd>
           </div>
         </dl>

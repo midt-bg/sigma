@@ -9,7 +9,7 @@ import { ConflictCards } from '../components/ConflictCards';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { companyProfileHref } from '../lib/conflicts';
+import { companyProfileHref, declaredStakeNoun } from '../lib/conflicts';
 
 // Officials with a published declared interest in one winner (by ЕИК). Reads interest_links only. 404 when
 // no official has a published link to this company — never an empty page under a company's name.
@@ -59,7 +59,7 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
             </>
           }
           title={company}
-          lede={`Длъжностни лица, декларирали собствен дял в това дружество пред КПКОНПИ. ${count(links.length)} ${plural(links.length, 'връзка', 'връзки')} — всяка е точно съвпадение по фирмено име.`}
+          lede={`Длъжностни лица, декларирали ${declaredStakeNoun(links)} в това дружество пред КПКОНПИ. ${count(links.length)} ${plural(links.length, 'връзка', 'връзки')} — всяка почива на проверим факт от Търговския регистър.`}
         />
 
         <Callout titleAs="h2" title="Източник и обхват">

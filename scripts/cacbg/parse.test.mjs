@@ -249,3 +249,35 @@ test('parseList: only values shaped like a declaration filename are announced', 
   assert.equal(shape('Уведомление'), 0, 'a title slotted into the filename field');
   assert.equal(shape('AAAA.pdf'), 0, 'not a declaration document');
 });
+
+test('§1.4: an UNRESOLVABLE holder column is unknown, not an own stake', () => {
+  // `colNum` always returns a fallback, so a table that renumbers the holder column away resolves it to a
+  // column that is not there: `by[cHolder]` is undefined → '' → classifyHolder('') → 'self'. A RELATIVE's
+  // stake then enters the OWN-only path and publishes as the official's private_ownership — the surface's
+  // worst failure, since the official did not declare that stake as theirs.
+  //
+  // The required distinction is column RESOLVABLE-BUT-EMPTY (→ self, a blank cell means the declarant)
+  // versus column NOT RESOLVABLE (→ unknown, we have not read the holder at all).
+  const renumbered = `<Row>
+    <Cell Num="1" Description="Ном. по ред">1</Cell>
+    <Cell Num="4" Description="Наименование на дружеството">"РЕНОМЕР" ЕООД</Cell>
+    <Cell Num="9" Description="Титуляр на дяловете">Мария Спасова Роднинска</Cell></Row>`;
+  const d = parseDeclaration(assetDecl({ rows: renumbered }), 'REN.xml');
+  const it = d.interests.find((i) => i.entity === '"РЕНОМЕР" ЕООД');
+  assert.equal(it.holderRelation, 'unknown');
+
+  // POSITIVE CONTROL 1 — the column resolves and the cell is genuinely EMPTY: still the declarant's own
+  // stake. Collapsing both cases to 'unknown' would silently drop every stake declared this way.
+  const blankHolder = `<Row>
+    <Cell Num="1" Description="Ном. по ред">1</Cell>
+    <Cell Num="4" Description="Наименование на дружеството">"ПРАЗНА" ЕООД</Cell>
+    <Cell Num="7" Description="Име: собствено, бащино, фамилно"></Cell></Row>`;
+  const blank = parseDeclaration(assetDecl({ rows: blankHolder }), 'BLK.xml');
+  assert.equal(blank.interests[0].holderRelation, 'self');
+
+  // POSITIVE CONTROL 2 — a resolvable column still classifies a relative and the declarant correctly, so
+  // the change bounds one case rather than blanketing the parser.
+  const ok = parseDeclaration(assetDecl({ rows: selfRow + familyRow }), 'OK.xml');
+  assert.equal(ok.interests.find((i) => i.entity === '"ТЕСТ АГРО" ЕООД').holderRelation, 'self');
+  assert.equal(ok.interests.find((i) => i.entity === '"ФАМИЛНА" ЕООД').holderRelation, 'related');
+});

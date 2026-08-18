@@ -252,6 +252,9 @@ export interface ContractValueTimeline {
   currentEur: number | null;
   deltaPct: number | null; // (current − signing) / signing, when both present
   suspect: boolean; // value_/annex_suspect/review → render with an unverified-value label
+  // annex_total_suspect → the current value is a KNOWN exact 2× double-count. currentEur is blanked (—)
+  // rather than shown as a labelled doubled figure — a known-wrong number is worse than an honest gap (#307).
+  currentValueDoubled: boolean;
 }
 
 export interface ContractLotRow {
@@ -282,6 +285,8 @@ export interface AmendmentEntry {
   description: string | null; // recorded reason/notes, when the source carries them
   valueAfterEur: number | null; // the contract value after this annex
   deltaEur: number | null; // value_after − value_before
+  restated: boolean; // #305 Tier-2: value_after was text-corrected from a double-counted total
+  suspect: boolean; // #305 residual: an uncorrectable double-count — value_after/delta suppressed, row marked
 }
 
 export interface ContractDetail {
@@ -705,6 +710,15 @@ export interface ConflictLink {
   firstContractYear: string | null;
   lastContractYear: string | null;
   sourceUrl: string | null; // a representative declaration URL — provenance, never a fabricated value
+  // Trade Register evidence (#279, ADR-0033). A link only reaches this DTO when its identity rests on a
+  // checkable registry fact, so these describe WHICH fact — the surface's whole point is that every shown
+  // link can explain itself. `registryRole` is the role the register records, NOT a claim about who owns
+  // what: the ownership claim comes from the official's own declaration.
+  evidenceKind: 'document' | 'confirmed'; // the only two rungs that publish
+  registryRole: 'owner' | 'manager' | null; // set only for evidenceKind='document'
+  registryEntryNumber: string | null; // TEXT — a fieldEntryNumber exceeds the exact-integer range
+  registryEntryDate: string | null; // the registry entry the evidence rests on
+  registryLookupDate: string; // when the deed was read — the freshness bound on the claim
 }
 
 /** One contract of a linked winner, marked by whether it was signed during the declared-stake window.

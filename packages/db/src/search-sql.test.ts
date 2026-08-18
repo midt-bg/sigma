@@ -16,6 +16,7 @@ import { SEARCH_HITS_SQL, SEARCH_HITS_SQL_NO_CONFLICT } from './queries/search';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
@@ -44,17 +45,26 @@ INSERT INTO bidders (id, name, eik_normalized, eik_valid, kind) VALUES
   ('eik:333','ГАМА ООД','333333333',1,'company'),
   ('eik:444','ДЕЛТА ООД','444444444',1,'company'),
   ('eik:555','ЕПСИЛОН ООД','555555555',1,'company'),
-  ('eik:666','ЗЕТА ООД','666666666',1,'company');
+  ('eik:666','ЗЕТА ООД','666666666',1,'company'),
+  -- #279: two winners with a PUBLISHED link that must not badge. ЙОТА's link carries NO evidence seal at
+  -- all (a legacy row, a partial run, or a loader bug); КАПА's seal is a WITHHOLDING rung. The detail page
+  -- refuses both via SURFACED_OWNERSHIP; the badge has to agree, or search advertises an unproven claim
+  -- about a named official on a page that then shows nothing.
+  ('eik:777','ЙОТА ООД','777777777',1,'company'),
+  ('eik:888','КАПА ООД','888888888',1,'company');
 INSERT INTO company_totals (bidder_id, name, kind, eik, eik_valid, won_eur, contracts, authorities) VALUES
   ('eik:111','АЛФА ООД','company','111111111',1,1000000,1,1),
   ('eik:222','БЕТА ООД','company','222222222',1,500000,1,1),
   ('eik:333','ГАМА ООД','company','333333333',1,200000,1,1),
   ('eik:444','ДЕЛТА ООД','company','444444444',1,300000,1,1),
   ('eik:555','ЕПСИЛОН ООД','company','555555555',1,700000,1,1),
-  ('eik:666','ЗЕТА ООД','company','666666666',1,900000,1,1);
+  ('eik:666','ЗЕТА ООД','company','666666666',1,900000,1,1),
+  ('eik:777','ЙОТА ООД','company','777777777',1,400000,1,1),
+  ('eik:888','КАПА ООД','company','888888888',1,600000,1,1);
 INSERT INTO persons (id, name) VALUES
   ('person:ИВАН МИНЕВ','Иван Минев'),('person:ГЕОРГИ ПЕТРОВ','Георги Петров'),
-  ('person:ДАНА ФАМ','Дана Фам'),('person:БОРИС БОРД','Борис Борд'),('person:ДВОЕН ТЕСТ','Двоен Тест');
+  ('person:ДАНА ФАМ','Дана Фам'),('person:БОРИС БОРД','Борис Борд'),('person:ДВОЕН ТЕСТ','Двоен Тест'),
+  ('person:БЕЗ ПЕЧАТ','Без Печат'),('person:ЗАДЪРЖАН ПЕЧАТ','Задържан Печат');
 INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, declared_year, template, category, institution, position, source_url) VALUES
   ('decl:i','person:ИВАН МИНЕВ','i.xml','H1','2024','2023','assets','','ОБЩИНА РУСЕ','', 'https://register.cacbg.bg/2024/i.xml'),
   ('decl:g','person:ГЕОРГИ ПЕТРОВ','g.xml','H2','2024','2023','assets','','МИНИСТЕРСТВО Х','', 'https://register.cacbg.bg/2024/g.xml'),
@@ -75,15 +85,30 @@ INSERT INTO interest_links
   -- so the redundant-family collapse (ADR-0032) DROPS the family link from the index; the winner's €50k counts
   -- ONCE, not €100k — no de-anonymization vector, no double-count.
   ('il:ds','person:ДВОЕН ТЕСТ|666','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published'),
-  ('il:dfam','person:ДВОЕН ТЕСТ|666|family','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published');
+  ('il:dfam','person:ДВОЕН ТЕСТ|666|family','person:ДВОЕН ТЕСТ','eik:666','666666666','ЗЕТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2023',1,50000,'2021','2021','published'),
+  -- published, ownership class, live contracts — and NO seal. Everything the badge used to check, passed.
+  ('il:no','person:БЕЗ ПЕЧАТ|777','person:БЕЗ ПЕЧАТ','eik:777','777777777','ЙОТА ООД','exact_name_key','v1','document','owns','private_ownership',0,'none',1,'2020','2023',1,400000,'2021','2021','published'),
+  -- published, and sealed with a rung that WITHHOLDS (ADR-0035). A seal existing is not a seal permitting.
+  ('il:un','person:ЗАДЪРЖАН ПЕЧАТ|888','person:ЗАДЪРЖАН ПЕЧАТ','eik:888','888888888','КАПА ООД','exact_name_key','v1','document_uncorroborated','owns','private_ownership',0,'none',1,'2020','2023',1,600000,'2021','2021','published');
+INSERT INTO interest_link_evidence (link_key, evidence_kind, lookup_date, rules_version, live_status) VALUES
+  ('person:ИВАН МИНЕВ|111','document','2026-08-12','tr-rules-1','live'),
+  ('person:ИВАН МИНЕВ|333','confirmed','2026-08-12','tr-rules-1','live'),
+  ('person:ДАНА ФАМ|444','confirmed','2026-08-12','tr-rules-1','live'),
+  ('person:БОРИС БОРД|555','document','2026-08-12','tr-rules-1','live'),
+  ('person:ДВОЕН ТЕСТ|666','document','2026-08-12','tr-rules-1','live'),
+  ('person:ДВОЕН ТЕСТ|666|family','document','2026-08-12','tr-rules-1','live'),
+  ('person:ЗАДЪРЖАН ПЕЧАТ|888','document_uncorroborated','2026-08-12','tr-rules-1','live');
 INSERT INTO authorities (id, name) VALUES ('a:1','ВЕДОМСТВО ТЕСТ');
 INSERT INTO tenders (id, source_id, title, authority_id, procedure_type) VALUES
-  ('t:1','s1','Т1','a:1','open'),('t:3','s3','Т3','a:1','open'),('t:4','s4','Т4','a:1','open'),('t:6','s6','Т6','a:1','open');
+  ('t:1','s1','Т1','a:1','open'),('t:3','s3','Т3','a:1','open'),('t:4','s4','Т4','a:1','open'),
+  ('t:6','s6','Т6','a:1','open'),('t:7','s7','Т7','a:1','open'),('t:8','s8','Т8','a:1','open');
 INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
   ('c:1','t:1','eik:111',1000000,'EUR','2021-05-01','N1',1000000),
   ('c:3','t:3','eik:333',200000,'EUR','2021-05-01','N3',200000),
   ('c:4','t:4','eik:444',300000,'EUR','2021-05-01','N4',300000),
-  ('c:6','t:6','eik:666',50000,'EUR','2021-05-01','N6',50000);
+  ('c:6','t:6','eik:666',50000,'EUR','2021-05-01','N6',50000),
+  ('c:7','t:7','eik:777',400000,'EUR','2021-05-01','N7',400000),
+  ('c:8','t:8','eik:888',600000,'EUR','2021-05-01','N8',600000);
 `;
 
 // Search-index population — a STRUCTURAL proxy for scripts/precompute.sql's officials block: it exercises the
@@ -116,6 +141,7 @@ function withDb(fn: (dbPath: string) => void): void {
   try {
     readScript(dbPath, migration0);
     readScript(dbPath, migration2);
+    readScript(dbPath, migration9);
     exec(dbPath, FIXTURE);
     exec(dbPath, POPULATE_INDEX);
     fn(dbPath);
@@ -148,6 +174,27 @@ describe('search свързани-лица SQL', () => {
       const beta = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'бета*', 10));
       expect(beta).toHaveLength(1);
       expect(beta[0]!.has_conflict).toBe(0);
+    });
+  });
+
+  it('the badge requires an evidence SEAL, not merely status=published (#279)', () => {
+    // The detail page gate is belt-and-braces — status AND a publishing seal (SURFACED_OWNERSHIP). The
+    // badge checked status alone, so an evidence-less published row advertised a свързани-лица claim on a
+    // named official in search while the page it links to correctly withheld it. Search is the wider
+    // surface of the two: it is what a reader sees before deciding to look.
+    withDb((dbPath) => {
+      // NO seal at all — the legacy/partial-run/loader-bug shape.
+      const iota = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'йота*', 10));
+      expect(iota).toHaveLength(1);
+      expect(iota[0]!.has_conflict).toBe(0);
+      // Sealed, but with a rung that WITHHOLDS. A seal existing is not a seal permitting.
+      const kapa = rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'капа*', 10));
+      expect(kapa).toHaveLength(1);
+      expect(kapa[0]!.has_conflict).toBe(0);
+      // POSITIVE CONTROL — a properly sealed link still badges, on both publishing rungs. Without this a
+      // gate that rejected everything would satisfy the two assertions above.
+      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'алфа*', 10))[0]!.has_conflict).toBe(1);
+      expect(rows(dbPath, lit(SEARCH_HITS_SQL, 'company', 'гама*', 10))[0]!.has_conflict).toBe(1);
     });
   });
 

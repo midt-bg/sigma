@@ -1,6 +1,7 @@
 # ADR-0007: Scope and certainty bar
 
 - Status: Accepted
+- Amended by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) — решения 2 и 3 (изричното изключение за „евристика, която твърди")
 - Date: 2026-07-05
 - Deciders: lb (Head of AI, ИО), Claude
 - Related: spec §1–2, §8

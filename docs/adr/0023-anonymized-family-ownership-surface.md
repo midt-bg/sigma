@@ -1,8 +1,9 @@
 # ADR-0023: Anonymized close-relative (family) ownership surface
 
-- Status: Accepted
+- Status: Superseded by [ADR-0030](0030-family-ownership-withheld-nameless-aggregate.md)
 - Date: 2026-07-07
 - Deciders: lb, Claude
+- Superseded by: [ADR-0030](0030-family-ownership-withheld-nameless-aggregate.md)
 - Related: [ADR-0007](0007-scope-and-certainty-bar.md), [ADR-0010](0010-pii-posture.md), [ADR-0019](0019-private-interest-vs-ex-officio-classification.md), [ADR-0022](0022-public-surface-private-ownership-only.md); `scripts/cacbg/parse.mjs`, `scripts/cacbg/load.mjs`, `packages/db/src/queries/related-persons.ts`, `apps/web/app/routes/conflict*.tsx`
 
 ## Context

@@ -112,15 +112,23 @@ interface HitRow {
 
 // One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
 // published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published, self OR family
-// stake, AND the winner must have LIVE contracts (the same read-time N9 gate LINK_SELECT applies), so search
-// flags exactly the companies the /conflicts surface shows and never one whose page would 404. A family-only
-// winner badges — the /conflicts page already publishes that link by name, so the badge discloses nothing the
-// surface doesn't. Binds: kind, match, limit.
+// stake, backed by a Trade Register evidence SEAL, AND the winner must have LIVE contracts (the same
+// read-time N9 gate LINK_SELECT applies), so search flags exactly the companies the /conflicts surface shows
+// and never one whose page would 404. A family-only winner badges — the /conflicts page already publishes
+// that link by name, so the badge discloses nothing the surface doesn't. Binds: kind, match, limit.
+//
+// The seal EXISTS clause is the same one SURFACED_OWNERSHIP applies (related-persons.ts), and it belongs
+// here for a sharper reason than symmetry: search is the WIDER surface. A published row whose seal is
+// missing or withholding — a legacy row, a partial run, a loader bug — would badge a свързани-лица claim
+// about a named official to every searcher, while the page behind the badge correctly showed nothing.
+// Four copies of this predicate now exist (here, SURFACED_OWNERSHIP, precompute.sql, refresh-slice.sql);
+// related-persons-sql.test.ts pins them to each other.
 // Exported so search-sql.test runs the EXACT SQL (not a copy).
-// Built with or without the interest_links conflict join. The join is on the свързани-лица migration (0003);
-// on an env where it has not been applied yet the join would make the ENTIRE search 500 with „no such table:
-// interest_links". search() detects the table once per request and picks the no-conflict variant when absent,
-// so search degrades to has_conflict=0 rather than breaking (ADR-0031 robustness ask).
+// Built with or without the conflict join. The join reads BOTH свързани-лица migrations — interest_links
+// (0003) and interest_link_evidence (0006) — and on an env where either is unapplied it would make the
+// ENTIRE search 500 with „no such table". search() detects both tables once per request and picks the
+// no-conflict variant when either is absent, so search degrades to has_conflict=0 rather than breaking
+// (ADR-0031 robustness ask).
 const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, search_index.title,
         search_index.ident, search_index.subtitle, search_index.amount, rank,
         ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
@@ -133,6 +141,8 @@ const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, sea
      ? `LEFT JOIN (
    SELECT DISTINCT il.eik FROM interest_links il
    WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+     AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                 WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
      AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
                  WHERE bb.eik_normalized = il.eik)
  ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident`
@@ -161,12 +171,21 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
     .all<{ kind: SearchKind; n: number }>();
   const counts = new Map(countRows.results.map((r) => [r.kind, r.n]));
 
-  // Pick the hits SQL once: on an env where the свързани-лица migration (0003) is not applied, the conflict
-  // join would 500 the whole search — fall back to the no-conflict variant (has_conflict=0) instead.
+  // Pick the hits SQL once: on an env where the свързани-лица migrations are not applied, the conflict join
+  // would 500 the whole search — fall back to the no-conflict variant (has_conflict=0) instead.
+  //
+  // BOTH tables are required, not just interest_links: the join now also reads interest_link_evidence
+  // (0006), so an env with 0003 but not 0006 would break every search on every kind. Requiring both also
+  // gives the right answer on such an env — with no seal table nothing is provably sealed, so nothing
+  // should badge.
   const hasConflictTable =
-    (await db
-      .prepare("SELECT 1 AS n FROM sqlite_master WHERE type='table' AND name='interest_links'")
-      .first<{ n: number }>()) != null;
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('interest_links','interest_link_evidence')",
+        )
+        .first<{ n: number }>()
+    )?.n === 2;
   const hitsSql = hasConflictTable ? SEARCH_HITS_SQL : SEARCH_HITS_SQL_NO_CONFLICT;
 
   const built = await Promise.all(

@@ -22,8 +22,9 @@
 -- signing/current in EUR for the contract page's estimated→signing→current strip.
 -- BGN at the fixed peg (÷1.95583), EUR as-is, foreign at the row's stored fx_rate (eur_per_unit).
 -- Display rule: NULL where the figure is suspect, so the caller renders „данните се преглеждат",
--- never a fabricated number. signing suppressed for value_suspect; current suppressed for value_ or
--- annex_suspect (the suspect annex is the bad part). estimated_value_eur is derived per-request on
+-- never a fabricated number. signing suppressed for value_suspect; current suppressed for value_,
+-- annex_suspect or annex_total_suspect (#305; the suspect annex is the bad part). estimated_value_eur
+-- is derived per-request on
 -- the contract detail loader from the tender (procurement-level, shared across a multi-lot prepiska).
 UPDATE contracts SET
   signing_value_eur = CASE
@@ -33,7 +34,7 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN signing_value * fx_rate
     ELSE NULL END,
   current_value_eur = CASE
-    WHEN value_flag IN ('value_suspect','annex_suspect') OR current_value IS NULL THEN NULL
+    WHEN value_flag IN ('value_suspect','annex_suspect','annex_total_suspect') OR current_value IS NULL THEN NULL
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
@@ -245,6 +246,13 @@ FROM interest_links il JOIN persons p ON p.id = il.person_id
 --       rendering both re-identifies the relative via a ТР owner lookup, and the company is already surfaced
 --       by the self row.
 WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  -- …and the identity rests on a Trade Register fact (#279, ADR-0033). This predicate is the THIRD copy
+  -- of the surface gate — the other two are SURFACED_OWNERSHIP in packages/db/src/queries/related-persons.ts
+  -- and the sibling block in the other of precompute.sql / refresh-slice.sql. All three must move
+  -- together: this one feeds the officials search index, so omitting it would keep officials findable
+  -- whose links no longer surface.
+  AND EXISTS (SELECT 1 FROM interest_link_evidence e
+              WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
   AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
               WHERE bb.eik_normalized = il.eik)
   AND NOT (il.interest_class = 'family_ownership' AND EXISTS (

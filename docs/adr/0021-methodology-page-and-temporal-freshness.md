@@ -1,6 +1,7 @@
 # ADR-0021: Public methodology/corrections page (E10) + temporal freshness & divestment expiry (E11)
 
 - Status: Accepted
+- Amended by: [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) — E11 (етикетите за настояще време се отлагат за фаза 2)
 - Date: 2026-07-06
 - Deciders: lb, Claude
 - Related: [ADR-0007](0007-scope-and-certainty-bar.md), [ADR-0019](0019-private-interest-vs-ex-officio-classification.md), [ADR-0020](0020-conflict-explorer-surface-posture.md); spec §5/§8/§9; `scripts/cacbg/load.mjs`, `apps/web/app/routes/conflict.methodology.tsx`, `packages/db/src/queries/related-persons.ts`

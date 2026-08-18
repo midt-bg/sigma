@@ -24,8 +24,43 @@ const RELATION_LABEL: Record<string, string> = {
 };
 
 /** Bulgarian label for a declared relation. Unknown values pass through — never invent a stronger claim. */
+/**
+ * How the company's identity was established, in the register's own terms (#279, ADR-0033).
+ *
+ * Deliberately does NOT say the official owns anything: „вписан съдружник/собственик" reports what the
+ * act RECORDS, while the ownership claim itself comes from the official's own declaration and is
+ * rendered separately as „дялово участие". „Потвърдено" means the company was identified by a fact the
+ * official declared — the seat or the ЕИК — not that anybody was found in the act.
+ */
+export function registryEvidenceLabel(l: {
+  evidenceKind: 'document' | 'confirmed';
+  registryRole: 'owner' | 'manager' | null;
+}): string {
+  if (l.evidenceKind === 'confirmed') return 'самоличност, потвърдена по декларирани данни';
+  return l.registryRole === 'manager'
+    ? 'лицето е вписано като управител'
+    : 'лицето е вписано като съдружник/собственик';
+}
+
 export function relationLabel(relation: string): string {
   return RELATION_LABEL[relation] ?? relation;
+}
+
+/**
+ * How to describe a PAGE's set of links in prose (#279 §2.6). The card labels above are already
+ * family-aware; the surrounding page copy was not, and asserted „собствен дял" — an OWN stake — above
+ * cards that correctly read „свързано лице". On a family-only page that is a false claim about the named
+ * official, and it is the second source of truth the card-label fix set out to remove.
+ *
+ * Derived from the links themselves rather than passed in, so a page cannot describe a set it isn't
+ * rendering. Mixed sets get the neutral wording: it is the only phrasing true of every card.
+ */
+export function declaredStakeNoun(links: { relation: string }[]): string {
+  const anyFamily = links.some((l) => l.relation === 'related');
+  const anySelf = links.some((l) => l.relation !== 'related');
+  if (anyFamily && !anySelf) return 'дял на свързано лице';
+  if (anyFamily && anySelf) return 'деклариран дял — собствен или на свързано лице';
+  return 'собствен дял';
 }
 
 // Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either

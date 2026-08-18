@@ -20,6 +20,9 @@ const migrations = [
   '0000_init.sql',
   '0001_flow_pairs_bidder_index.sql',
   '0003_related_persons_foundation.sql',
+  // The officials batch now joins the Trade Register evidence seal (#279, ADR-0033) — without 0006 the
+  // real refresh-slice.sql this test executes cannot parse.
+  '0009_interest_link_evidence.sql',
 ].map((f) => resolve(root, 'packages/db/migrations', f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 
@@ -67,6 +70,11 @@ INSERT INTO interest_links
   -- her — dropping the s.status='published' guard would collapse it behind an invisible self stake (false neg).
   ('il:ys','person:ЯНА|444','person:ЯНА','eik:444','444','ДЕЛТА ООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2020','2023',1,20000,'2021','2021','held'),
   ('il:yf','person:ЯНА|444|family','person:ЯНА','eik:444','444','ДЕЛТА ООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'none',1,'2020','2023',1,20000,'2021','2021','published');
+-- Every link carries an evidence seal (#279, ADR-0033): the officials batch requires a publishing rung,
+-- so a fixture without seals indexes NOBODY and every assertion below passes vacuously. Derived from
+-- interest_links, so a row added later is sealed automatically.
+INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status)
+  SELECT link_key, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-1', 'live' FROM interest_links;
 `;
 
 describe('ETL refresh-slice officials batch (the live parse-then-execute path)', () => {

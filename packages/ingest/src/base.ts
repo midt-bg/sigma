@@ -1,5 +1,7 @@
 // Base EOP plain-JSON adapter helpers. Pure and Worker-safe: no Node APIs.
 
+import { amendmentValueTreatment } from './amendment-total.ts';
+
 export type BaseCategory = 'contracts' | 'tenders' | 'annexes';
 export type BaseCoercionKind =
   | 'text'
@@ -7,6 +9,7 @@ export type BaseCoercionKind =
   | 'real'
   | 'bool'
   | 'date'
+  | 'real_signed'
   | 'secured_inverse'
   | 'variants_enum';
 export type BaseStagingValue = string | number | null;
@@ -94,6 +97,19 @@ export function toReal(v: unknown): number | null {
   return Number.isFinite(n) && n >= 0 && n <= MAX_PLAUSIBLE_VALUE ? n : null;
 }
 
+// contractValueDifference is the one published figure that is legitimately negative - an annex can
+// reduce a contract, and ЦАИС ЕОП publishes that as e.g. "-345,16". Every other REAL column here is a
+// magnitude (values, estimates, subcontracting), where a minus sign means corrupt input, so toReal
+// keeps rejecting negatives rather than being loosened for all of them.
+export function toSignedReal(v: unknown): number | null {
+  const s = clean(v);
+  if (s === null) return null;
+  const compact = s.replace(/\s/g, '');
+  if (!compact.startsWith('-')) return toReal(compact);
+  const magnitude = toReal(compact.slice(1));
+  return magnitude === null ? null : -magnitude;
+}
+
 export function toBool(v: unknown): number | null {
   const s = clean(v);
   if (s === null) return null;
@@ -131,6 +147,7 @@ function toVariants(v: unknown): number | null {
 export function coerce(kind: BaseCoercionKind, v: unknown): BaseStagingValue {
   if (kind === 'int') return toInt(v);
   if (kind === 'real') return toReal(v);
+  if (kind === 'real_signed') return toSignedReal(v);
   if (kind === 'bool') return toBool(v);
   if (kind === 'date') return toISODate(v);
   if (kind === 'secured_inverse') return toSecuredFinancing(v);
@@ -297,7 +314,7 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('contract_date', 'contractDate', 'date'),
       field('value_before', 'lastContractValue', 'real'),
       field('value_after', 'currentContractValue', 'real'),
-      field('value_delta', 'contractValueDifference', 'real'),
+      field('value_delta', 'contractValueDifference', 'real_signed'),
       field('currency', 'contractCurrency', 'text'),
       field('contract_subject', 'contractSubject', 'text'),
       field('awarded_to_group', 'awardedToGroup', 'bool'),
@@ -311,6 +328,10 @@ export const BASE_CATEGORIES: Record<BaseCategory, BaseCategoryConfig> = {
       field('description', 'changeDescription', 'text'),
       field('reason', 'changeReason', 'text'),
       field('circumstances', 'changeReasonDescription', 'text'),
+      // #305 Tier-2 — computed from the основание text after the generic mapping (see mapBaseRecord), not
+      // read from a source key. key=null keeps the generic loop from touching them; mapBaseRecord sets them.
+      field('value_treatment', null, 'text'),
+      field('value_after_restated', null, 'real'),
       field('outside_zop', 'isExceptionContract', 'bool'),
       field('exemption_legal_basis', 'directAwardJustification', 'text'),
       field('correction_number', null, 'text'),
@@ -364,7 +385,32 @@ export function mapBaseRecord(
   if (!cfg.keep(record)) return null;
   const row: BaseStagingRow = fixedValues(cat, meta);
   for (const f of cfg.fields) row[f.column] = f.key === null ? null : coerce(f.kind, record[f.key]);
+  // #305 Tier-2 — EOP annexes only: classify value_delta from the основание free text (the validated
+  // heuristic in amendment-total.ts) and persist the treatment label + corrected total onto the raw row.
+  // OCDS annexes never reach here (ocds.ts stages them, and they carry value_after = null anyway).
+  if (cat === 'annexes') {
+    const treatment = amendmentValueTreatment({
+      valueBefore: numOrNull(row.value_before),
+      valueAfter: numOrNull(row.value_after),
+      valueDelta: numOrNull(row.value_delta),
+      currency: strOrNull(row.currency),
+      texts: [strOrNull(row.description), strOrNull(row.reason), strOrNull(row.circumstances)],
+      // #305 — outside-ЗОП exception contracts (isExceptionContract) are not bound by чл.116's +50% cap,
+      // so the text-free exact-2× restatement must not fire on them (see amendment-total.ts rule 3).
+      outsideZop: numOrNull(row.outside_zop) === 1,
+    });
+    row.value_treatment = treatment.treatment;
+    row.value_after_restated = treatment.restatedAfter;
+  }
   return row;
+}
+
+function numOrNull(v: BaseStagingValue | undefined): number | null {
+  return typeof v === 'number' ? v : null;
+}
+
+function strOrNull(v: BaseStagingValue | undefined): string | null {
+  return typeof v === 'string' ? v : null;
 }
 
 // Hard ceiling on a single text literal's character length. EOP/registry text fields
@@ -432,7 +478,7 @@ export function baseSqlLiteral(
 ): string {
   if (value === null || value === undefined) return 'NULL';
   const kind = baseColumnKind(cat, column);
-  if (['int', 'real', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
+  if (['int', 'real', 'real_signed', 'bool', 'secured_inverse', 'variants_enum'].includes(kind)) {
     return String(value);
   }
   return escapeSqlText(String(value));

@@ -126,7 +126,8 @@ describe('transient staging statements', () => {
   });
 
   it('drops every transient + legacy table in reverse of the declared order', () => {
-    // [...current, ...legacy].reverse() → legacy first, then current back-to-front.
+    // [...scratch, ...current, ...legacy].reverse() → legacy first, then current back-to-front, and
+    // the derive-step scratch table last.
     expect(dropTransientStagingStatements()).toEqual([
       'DROP TABLE IF EXISTS raw_egov_amendments',
       'DROP TABLE IF EXISTS raw_egov_tenders',
@@ -136,6 +137,7 @@ describe('transient staging statements', () => {
       'DROP TABLE IF EXISTS raw_amendments',
       'DROP TABLE IF EXISTS raw_tenders',
       'DROP TABLE IF EXISTS raw_contracts',
+      'DROP TABLE IF EXISTS amendment_contract_resolve',
     ]);
   });
 });

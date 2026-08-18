@@ -9,8 +9,15 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SCRATCH = path.join(ROOT, 'scratch', 'cacbg');
 
-export function assertScratchIgnored() {
-  const probe = path.join('scratch', 'cacbg', '.probe');
+/**
+ * Assert that a `scratch/<subdir>` tree is git-ignored, before anything writes PII into it.
+ * Parameterised rather than copied: the Trade Register leg needs the identical rail for its deed
+ * cache (owner names, company addresses — ADR-0033 decision 5), and a second copy of a safety rail
+ * drifts from the original. Existing no-argument callers are unaffected.
+ * @param {string} [subdir] directory under scratch/ to probe
+ */
+export function assertScratchIgnored(subdir = 'cacbg') {
+  const probe = path.join('scratch', subdir, '.probe');
   try {
     execFileSync('git', ['check-ignore', '-q', probe], { cwd: ROOT });
   } catch {

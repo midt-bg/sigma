@@ -15,6 +15,9 @@ import { wipeSql, TABLES } from './ship-related-persons.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIG = resolve(HERE, '..', 'packages/db/migrations/0003_related_persons_foundation.sql');
+// 0006 adds interest_link_evidence, which references interest_links — so it is part of the FK graph
+// this test exists to police, and the wipe must clear it before its parent (#279, ADR-0033).
+const MIG_EVIDENCE = resolve(HERE, '..', 'packages/db/migrations/0009_interest_link_evidence.sql');
 
 // Stub only the two 0000 tables 0002's FKs reference (bidders, authorities) — a PK column is all a FK needs —
 // then apply the real 0002 and seed one row down every FK chain so a parent delete has live children.
@@ -25,6 +28,7 @@ function newPopulatedDb() {
 CREATE TABLE bidders(id TEXT PRIMARY KEY);
 CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${MIG}
+.read ${MIG_EVIDENCE}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');
 INSERT INTO persons(id,name) VALUES('p1','П Тест');
@@ -33,6 +37,7 @@ INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VAL
 INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matcher_version,publish_tier,relation,status) VALUES('il1','p1|1','p1','eik:1','1','e','v1','B_distinctive','owns','published');
 INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('p1|1','auth:1','A');
 INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind) VALUES('rp1','d1','X','related_person');
+INSERT INTO interest_link_evidence(link_key,evidence_kind,matched_fact,lookup_date,rules_version,live_status) VALUES('p1|1','document','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live');
 `;
   execFileSync('sqlite3', ['-bail', db], { input: setup, stdio: 'pipe' });
   return { dir, db };
