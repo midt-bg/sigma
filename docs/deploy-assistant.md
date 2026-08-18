@@ -46,7 +46,7 @@ Gateway `sigma-assistant`, споделен между чат и глас, с д
    Пълният път е `.../{gateway}/custom-bggpt/v1` (виж `AI_GATEWAY_BASE_URL`).
 3. **Гласов провайдър** `bggpt-voice` → URL сегмент `custom-bggpt-voice`:
    `node scripts/ensure-voice-provider.mjs --apply` (dry-run без `--apply`). Виж
-   [ADR-0013](adr/0013-voice-via-ai-gateway.md) защо провайдър-endpoint, а не dynamic route.
+   [ADR-0042](adr/0042-voice-via-ai-gateway.md) защо провайдър-endpoint, а не dynamic route.
 4. **Whisper fallback** — вграденият провайдър `workers-ai`, без provisioning.
 
 ## 3. Тайни (secrets)
@@ -58,7 +58,7 @@ Gateway `sigma-assistant`, споделен между чат и глас, с д
 | Secret | Задължителен | Роля |
 |---|---|---|
 | `ASSISTANT_API_KEY` | да | Ключ за чат-модела (BgGPT). Липсва → чатът връща `503`. |
-| `ASSISTANT_HMAC_KEY` | да | Подпис на транскрипта (§9.3 / [ADR-0011](adr/0011-transcript-hmac-signing.md), [ADR-0012](adr/0012-transcript-hmac-enforcement.md)). |
+| `ASSISTANT_HMAC_KEY` | да | Подпис на транскрипта (§9.3 / [ADR-0040](adr/0040-transcript-hmac-signing.md), [ADR-0041](adr/0041-transcript-hmac-enforcement.md)). |
 | `TURNSTILE_SECRET` | да | Сървърна проверка на Turnstile. Липсва → `403`. |
 | `LOG_IP_KEY` | да | HMAC на IP в лога на заявките (поверителност). |
 | `VOICE_ASSISTANT_API_KEY` | опц. (глас) | Ключ за гласовия STT провайдър. **При липса пада към `ASSISTANT_API_KEY`.** |

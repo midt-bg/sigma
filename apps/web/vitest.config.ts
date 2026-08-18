@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import { testAlias } from './vitest.alias';
+import { sharedCoverage } from '../../vitest.shared';
 
 // Two projects so the environment is chosen by file type:
 //   *.test.ts  → node (pure logic + workers)
@@ -8,6 +9,15 @@ import { testAlias } from './vitest.alias';
 // fails loudly (no `document`/`render`) — a self-correcting mistake, not a silent pass.
 // The golden replay suite (*.golden.test.ts) is isolated to its own task (vitest.golden.config.ts), so the
 // node project excludes it here to keep `pnpm test` and `pnpm test:golden` separate.
+//
+// Coverage exclude extends the shared preset: the assistant ships a large data corpus under app/** —
+// the golden replay fixtures (app/lib/assistant/golden/fixtures/*.json) and R2 report fixtures — which
+// are pure data, not executable source. The v8 `include: ['app/**']` would otherwise count every one at
+// 0% lines and sink the coverage ratchet (upstream's tree has no such corpus, so its shared preset never
+// needed the filter). JSON has no lines/branches/functions to execute, so excluding it is correct, not a
+// coverage dodge; real untested source (e.g. components) stays counted.
+const webCoverage = sharedCoverage(['app/**', 'workers/**']);
+
 export default defineConfig({
   test: {
     projects: [
@@ -30,5 +40,6 @@ export default defineConfig({
         },
       },
     ],
+    coverage: { ...webCoverage, exclude: [...(webCoverage?.exclude ?? []), '**/*.json'] },
   },
 });

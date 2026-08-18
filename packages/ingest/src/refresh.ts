@@ -98,6 +98,12 @@ const LEGACY_TRANSIENT_STAGING_TABLES = [
   'raw_egov_amendments',
 ] as const;
 
+// Scratch tables that live only for the span of a single derive step. Each is DROP-guarded at the top of
+// its own script, so it self-heals on the next run; listing it here also sweeps it after an aborted run so
+// it never lingers in D1 (review nikimilenkov LOW 2 — #306's value-resolver scratch table). Not part of
+// work-staging-schema.sql, so it stays out of transientStagingStatements' recreate path.
+const SCRATCH_TABLES = ['amendment_contract_resolve'] as const;
+
 function touchesTransientStaging(statement: string): boolean {
   return TRANSIENT_STAGING_TABLES.some((table) => statement.includes(table));
 }
@@ -108,8 +114,47 @@ export function transientStagingStatements(workStagingSchemaSql: string): string
   );
 }
 
+const FULL_CLEAR_MARKER = /^--\s*@full-clear\b/i;
+// All three SQLite quoting styles, not just the bare identifier. Rewriting one line as
+// `DELETE FROM "search_index";` is a valid, invisible formatting change — and with a bare-only
+// matcher it would drop that table out of the guard's list and quietly reopen the hole this parser
+// exists to close.
+const DELETE_FROM =
+  /^DELETE\s+FROM\s+(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))\s*;?\s*$/i;
+
+/**
+ * The tables `scripts/normalize-raw.sql` empties before rebuilding the domain from staging, read out
+ * of the SQL rather than restated in JS. The guard that consumes this list used to ask about
+ * `contracts` alone while the clear had grown to fourteen tables — a hardcoded copy of a destructive
+ * list is a data-loss bug on a timer, so the list has exactly one home.
+ *
+ * Scoped to the `@full-clear` block on purpose: the same file later resets `data_freshness` and
+ * `pipeline_stats`, which are per-run metadata. Counting those as corpus would make the guard refuse
+ * every full derive, including the initial backfill it is supposed to let through.
+ */
+export function fullClearTables(normalizeRawSql: string): string[] {
+  const tables: string[] = [];
+  let inBlock = false;
+  for (const line of normalizeRawSql.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (FULL_CLEAR_MARKER.test(trimmed)) {
+      inBlock = true;
+      continue;
+    }
+    if (!inBlock) continue;
+    const hit = trimmed.match(DELETE_FROM);
+    if (hit) {
+      tables.push((hit[1] ?? hit[2] ?? hit[3] ?? hit[4])!);
+      continue;
+    }
+    // Comments and the DROP TABLEs share the block; a blank line ends it.
+    if (trimmed === '') break;
+  }
+  return tables;
+}
+
 export function dropTransientStagingStatements(): string[] {
-  return [...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
+  return [...SCRATCH_TABLES, ...TRANSIENT_STAGING_TABLES, ...LEGACY_TRANSIENT_STAGING_TABLES]
     .reverse()
     .map((table) => `DROP TABLE IF EXISTS ${table}`);
 }

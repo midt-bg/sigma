@@ -21,3 +21,4 @@ export * from './search';
 export * from './details';
 export * from './sitemaps';
 export * from './weekly';
+export * from './related-persons';

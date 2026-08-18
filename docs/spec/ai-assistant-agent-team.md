@@ -30,12 +30,12 @@
 >   `BgGptCircuitBreaker` DO (`idFromName('global')`, fail-closed in prod) — exactly base §7's "Durable
 >   Object" mechanism. AI Gateway does routing/observability + a defensive mid-stream 429 path, but does
 >   **not** enforce the cap. Lines below that say the cap "moved to AI Gateway / replaces the DO breaker"
->   are superseded — see [`../adr/0009-global-bggpt-cap-is-a-durable-object.md`](../adr/0009-global-bggpt-cap-is-a-durable-object.md).
+>   are superseded — see [`../adr/0038-global-bggpt-cap-is-a-durable-object.md`](../adr/0038-global-bggpt-cap-is-a-durable-object.md).
 > - **The role team + Orchestrator DO are forward-looking.** Phase 1 ships a single agent loop with the
 >   deterministic SQL guard (③) and the LLM Verifier (④); there is no Orchestrator DO and no separate
 >   Router/Analyst/Composer runtime yet. The role decomposition below is the design target, not the
 >   current runtime. RAG (schema grounding + `semantic_search`) is shipped and adopted — see
->   [`../adr/0008-rag-adopted-not-a-deviation.md`](../adr/0008-rag-adopted-not-a-deviation.md).
+>   [`../adr/0037-rag-adopted-not-a-deviation.md`](../adr/0037-rag-adopted-not-a-deviation.md).
 
 ## 0. Why a team, and the constraint that shapes it
 

@@ -14,11 +14,41 @@
 | [0004](0004-style-src-unsafe-inline.md) | `style-src` запазва `'unsafe-inline'` (CSP) | Прието |
 | [0005](0005-blue-green-d1-rollback.md) | Blue/green D1 слотове за rollback на refresh | Прието |
 | [0006](0006-eop-wins-dedup.md) | Dedup на два източника: EOP печели по `contract_number` | Прието |
-| [0007](0007-report-dedup-settled-periods-only.md) | Report dedup (Lane F) само за изрично разрешени, приключени периоди | Прието (уточнено от [0010](0010-dedup-gates-on-stable-bounds.md)) |
-| [0008](0008-rag-adopted-not-a-deviation.md) | RAG е приет слой на асистента, не отклонение от спецификацията | Прието |
-| [0009](0009-global-bggpt-cap-is-a-durable-object.md) | Глобалният BgGPT лимит се налага от Durable Object, не от AI Gateway | Прието |
-| [0010](0010-dedup-gates-on-stable-bounds.md) | Dedup гейт по стабилни граници (не recency) + разпознаване на ISO диапазони | Прието |
-| [0011](0011-transcript-hmac-signing.md) | Интегритет на транскрипта чрез HMAC-подпис на сървърните съобщения (§9.3) | Прието |
-| [0012](0012-transcript-hmac-enforcement.md) | Налагане на HMAC по живия път: filter-on-ingest (sanitize), ENVIRONMENT-gating, ключ и ротация | Прието |
-| [0013](0013-voice-via-ai-gateway.md) | Voice lane през AI Gateway — provider endpoints (без dynamic routes) | Прието |
+| [0007](0007-scope-and-certainty-bar.md) | Свързани лица: обхват и праг на сигурност (само 100% детерминистични съвпадения) | Прието |
+| [0008](0008-deterministic-name-to-eik-resolution.md) | Детерминистично разрешаване име→ЕИК (авто-публикуване; ръчна опашка само при двусмислие) | Прието |
+| [0009](0009-name-uniqueness-guard-and-publish-tiers.md) | Пазач за уникалност на името + нива на публикуване (A_seat / B_distinctive / C_hold) | Заменено от [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) |
+| [0010](0010-pii-posture.md) | Позиция за лични данни: без ЕГН/адреси; третите лица — само за вътрешна проверка | Прието |
+| [0011](0011-host-scoped-tls-pinning.md) | TLS pinning само за хоста (счупена верига на register.cacbg.bg), не глобален байпас | Прието |
+| [0012](0012-crawler-and-persistence-architecture.md) | Архитектура на обхождането и съхранението (resumable; кеш по xml_file + ControlHash) | Прието |
+| [0013](0013-two-declaration-templates.md) | Два шаблона декларации (имущество + интереси) в един парсер | Прието |
+| [0014](0014-match-output-layers-and-interpretation.md) | Слоеве на съвпадението и тълкуване (собственост/контрол, времеви, собствена институция) | Прието |
+| [0015](0015-tr-name-uniqueness-census.md) | Преброяване за уникалност на имена от ТР — промотира глобално уникални tier-C връзки | Заменено от [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) |
+| [0016](0016-free-text-entity-resolution.md) | Разрешаване на субекти от свободен текст (деклариран ЕИК + извличане от проза) | Прието |
+| [0017](0017-name-collision-tier-gate.md) | Гейт срещу колизия на имена извън отличаващото ниво | Заменено от [ADR-0033](0033-registry-evidence-replaces-name-distinctiveness.md) |
+| [0018](0018-folder-discovery-and-republication-dedup.md) | Откриване на папки от индекса + dedup на препубликувани декларации (ControlHash) | Прието |
+| [0019](0019-private-interest-vs-ex-officio-classification.md) | Разделяне на частен финансов интерес от служебни борд-роли (multi-declarant tell) | Прието |
+| [0020](0020-conflict-explorer-surface-posture.md) | Повърхност на експлорера — само interest_links, noindex до одобрение, произход на всеки ред | Прието |
+| [0021](0021-methodology-page-and-temporal-freshness.md) | Публична страница методология/поправки (E10) + времево датиране и изтичане при освобождаване (E11) | Прието |
+| [0022](0022-public-surface-private-ownership-only.md) | Публичната повърхност показва само деклариран частен дял (маха служебния списък; „длъжностно лице") | Прието |
+| [0023](0023-anonymized-family-ownership-surface.md) | Анонимизирана повърхност за дял на свързано лице: свързаното лице неназовано, материалност = затворена форма, подредба по силата на връзката | Заменено от [ADR-0030](0030-family-ownership-withheld-nameless-aggregate.md) |
+| [0024](0024-contemporaneous-contract-split.md) | Договори в момент на конфликт: времеви подсбор и списък, изведени при четене (без миграция/ETL) | Прието |
+| [0025](0025-xml-parser-supply-chain.md) | Верига на доставки за XML парсера (fast-xml-parser): одит на транзитивното дърво + заключен lockfile | Прието |
+| [0026](0026-person-grain-name-institution.md) | Идентичност на лицето: (име, ведомство), не голо име — без сливане на съименници, стабилно за E11 divestment | Прието |
+| [0027](0027-overmerge-gate-is-telemetry-not-a-gate.md) | Load-time гейтът за over-merge е телеметрия, не порта (strictKey беше структурна фалшива нула); доказателството е етикетираният тест | Прието |
+| [0028](0028-declared-eik-is-a-determining-identifier.md) | Деклариран ЕИК е определящ идентификатор — ниво `A_eik`, освободено от ТР-преброяването (ЕИК-ът е самоличността, не името) | Прието |
 | [0029](0029-worker-native-fx-load.md) | Worker-native FX зареждане в cron refresh-а и режим на отказ | Прието |
+| [0030](0030-family-ownership-withheld-nameless-aggregate.md) | Дял на свързано лице не влиза в поименната повърхност (v1): събира се и се одитира, но се отчита само като безименен сбор (GDPR C-37/20; заменя ADR-0023) | Заменено от [ADR-0032](0032-family-ownership-published-under-public-interest.md) |
+| [0031](0031-suppressions-version-controlled-fingerprinted.md) | Свалянията на връзки са версиониран списък с HMAC-отпечатък (salt = CI secret), прилаган при зареждане — не служебна таблица; не изтича сигнала „кой е свален" към прод | Прието |
+| [0032](0032-family-ownership-published-under-public-interest.md) | Дял на свързано лице се публикува на поименната повърхност наравно със собствения — на основание надделяващ обществен интерес (ЗДОИ чл. 41и; C-184/20 забранява само поименните данни); близкият никога не се назовава, връзката не се твърди; заменя ADR-0030 | Прието |
+| [0033](0033-registry-evidence-replaces-name-distinctiveness.md) | Връзка се публикува само срещу проверим факт от Търговския регистър — доказателственият ред заменя нивата по отличителност на името; евристиката вече обосновава твърдение (изрично изключение от ADR-0007), барът за акционерни форми е обединение от три сигнала, монотонността е гейт, не хранилище; заменя ADR-0009/0015/0017 | Прието (дизайн) |
+| [0034](0034-registry-lookups-and-decisions-share-one-monthly-run.md) | Справките в ТР и решенията текат в едно месечно задание — суровите актове не преживяват изпълнителя, а решението не може да се вземе без тях; заменя твърдението за каденцията в ADR-0033 | Прието |
+| [0035](0035-registry-evidence-must-also-establish-the-company.md) | Стъпало 2 („Документ") публикува само ако извън фирменото наименование нещо установи, че дружеството е декларираното — деклариран ЕИК, съвпадащо седалище или отличителна фирма; иначе `document_uncorroborated`, което се брои; заменя твърдението в ADR-0033, че стъпало 2 не е гейтнато | Прието |
+| [0036](0036-report-dedup-settled-periods-only.md) | Report dedup (Lane F) само за изрично разрешени, приключени периоди | Прието (уточнено от [0039](0039-dedup-gates-on-stable-bounds.md)) |
+| [0037](0037-rag-adopted-not-a-deviation.md) | RAG е приет слой на асистента, не отклонение от спецификацията | Прието |
+| [0038](0038-global-bggpt-cap-is-a-durable-object.md) | Глобалният BgGPT лимит се налага от Durable Object, не от AI Gateway | Прието |
+| [0039](0039-dedup-gates-on-stable-bounds.md) | Dedup гейт по стабилни граници (не recency) + разпознаване на ISO диапазони | Прието |
+| [0040](0040-transcript-hmac-signing.md) | Интегритет на транскрипта чрез HMAC-подпис на сървърните съобщения (§9.3) | Прието |
+| [0041](0041-transcript-hmac-enforcement.md) | Налагане на HMAC по живия път: filter-on-ingest (sanitize), ENVIRONMENT-gating, ключ и ротация | Прието |
+| [0042](0042-voice-via-ai-gateway.md) | Voice lane през AI Gateway — provider endpoints (без dynamic routes) | Прието |
+
+Свързан проектен документ: [spec/related-persons-foundation.md](../spec/related-persons-foundation.md).

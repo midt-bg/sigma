@@ -195,7 +195,33 @@ describe('getContract', () => {
       expect(detail?.value.suspect).toBe(true);
       expect(detail?.value.signingEur).toBe(256.49);
       expect(detail?.value.currentEur).toBe(flag === 'annex_suspect' ? 1025.96 : 256.49);
+      expect(detail?.value.currentValueDoubled).toBe(false);
     }
+  });
+
+  it('#307 blanks the current value for a KNOWN 2× double-count (annex_total_suspect)', async () => {
+    const detail = await getContract(
+      fakeDb(
+        {
+          ...baseContractRow,
+          signing_value: 256.49,
+          current_value: 512.98, // the doubled native figure — must NOT resurface
+          signing_value_eur: 256.49,
+          current_value_eur: null, // excluded from aggregates upstream
+          value_flag: 'annex_total_suspect',
+        },
+        [],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.value.suspect).toBe(true);
+    expect(detail?.value.currentValueDoubled).toBe(true);
+    // Blanked (—), never the doubled 512.98 nor a fabricated fallback.
+    expect(detail?.value.currentEur).toBeNull();
+    expect(detail?.value.deltaPct).toBeNull();
+    // The trustworthy signing value is still shown.
+    expect(detail?.value.signingEur).toBe(256.49);
   });
 
   // Exercises the real cohort path end-to-end (baseContractRow is clean-value, CPV '72', amount 5000).
@@ -348,6 +374,38 @@ describe('getContract', () => {
       valueAfterEur: null, // renders „—"
       deltaEur: null,
       description: 'Удължаване на срока',
+    });
+  });
+
+  it('#305 residual: suppresses value_after and delta for a suspect (uncorrectable double-count) annex', async () => {
+    const detail = await getContract(
+      fakeDb(
+        { ...baseContractRow, contract_number: 'C-6' },
+        [],
+        [
+          {
+            value_before: 1000,
+            value_after: 3000, // the source's untrusted doubled/tripled total
+            value_delta: 2000,
+            currency: 'EUR',
+            published_at: '2024-03-01',
+            document_number: 'A1',
+            description: 'Изменение на стойността',
+            value_restated: 0,
+            value_suspect: 1,
+            fx_rate: null,
+          },
+        ],
+      ),
+      'c:1',
+    );
+
+    expect(detail?.amendments[0]).toMatchObject({
+      valueAfterEur: null, // suppressed — we don't stand behind the doubled figure
+      deltaEur: null,
+      suspect: true,
+      restated: false,
+      description: 'Изменение на стойността', // description still shown
     });
   });
 

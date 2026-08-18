@@ -347,7 +347,7 @@ Auth е уреден (публично, без акаунти — виж #5). О
 - **Глобален circuit-breaker** — rolling-minute брояч (Durable Object или KV) на BgGPT
   извикванията; когато наближи `BGGPT_RATE_LIMIT_RPM` (по подразбиране 120), shed/queue с „опитайте
   пак след малко", за да не взривим споделената upstream quota. Доставено като `BgGptCircuitBreaker`
-  DO (#135), не в AI Gateway — [ADR-0009](../adr/0009-global-bggpt-cap-is-a-durable-object.md).
+  DO (#135), не в AI Gateway — [ADR-0038](../adr/0038-global-bggpt-cap-is-a-durable-object.md).
 - **Concurrency cap** + лимитът **`maxSteps`** (#2) ограничават разхода на ход. Всички прагове са
   config `[vars]`.
 
