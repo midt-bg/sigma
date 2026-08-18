@@ -167,6 +167,14 @@ export async function retrieveSchemaContext(
 
 // ── Semantic corpus search (the `semantic_search` tool) ─────────────────────────────────────────────
 
+// Versioned NATIVE Vectorize namespace for the entity corpus — same discipline as SCHEMA_NS, and it
+// removes the module's last metadata `filter`, which Vectorize only honours on properties with a
+// provisioned metadata index (none exists in this repo — issue #317). No entity vectors have ever
+// been indexed (the entity indexer is a "Какво остава" item), so there is no legacy cohort to
+// migrate: the future indexer must simply upsert with `namespace: ENTITY_NS` and versioned ids,
+// and bump the version under the same WHEN TO BUMP rule as SCHEMA_NS.
+export const ENTITY_NS = 'entity-v1';
+
 export interface SemanticHit {
   kind: string;
   ref: string;
@@ -186,7 +194,7 @@ export async function semanticSearch(
   const { matches } = await index.query(vec, {
     topK,
     returnMetadata: 'all',
-    filter: { ns: 'entity' },
+    namespace: ENTITY_NS,
   });
   return matches.map((m) => ({
     kind: String(m.metadata?.kind ?? ''),
