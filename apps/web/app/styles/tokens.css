@@ -74,6 +74,12 @@
   --max: 1280px;
   --max-narrow: 880px;
   --gutter: 64px;
+
+  /* Card surface — both values reuse existing sitewide precedent rather than importing SaaS-generic
+     chrome: 3px is the only radius already used (home.css .tile); the shadow is the smart-search
+     popover's lift (chrome.css:445) verbatim, so a card hover reads as an established affordance. */
+  --radius-card: 3px;
+  --shadow-elevate: 0 18px 40px -24px rgb(0 0 0 / 0.45);
 }
 
 @media (max-width: 880px) {

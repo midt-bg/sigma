@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { sharedCoverage } from '../../vitest.shared';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -29,7 +30,11 @@ export default defineConfig({
       'cloudflare:workflows': resolve(here, 'src/test/cloudflare-workflows-stub.ts'),
     },
   },
-  // The refresh Workflow test runs the full refresh-slice.sql derive against a real SQLite —
-  // generous headroom for loaded CI runners, same rationale as packages/db/vitest.config.ts.
-  test: { testTimeout: 120_000 },
+  test: {
+    environment: 'node',
+    // The refresh Workflow test runs the full refresh-slice.sql derive against a real SQLite —
+    // generous headroom for loaded CI runners, same rationale as packages/db/vitest.config.ts.
+    testTimeout: 120_000,
+    coverage: sharedCoverage(['src/**']),
+  },
 });

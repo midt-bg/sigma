@@ -22,8 +22,9 @@
 -- signing/current in EUR for the contract page's estimated→signing→current strip.
 -- BGN at the fixed peg (÷1.95583), EUR as-is, foreign at the row's stored fx_rate (eur_per_unit).
 -- Display rule: NULL where the figure is suspect, so the caller renders „данните се преглеждат",
--- never a fabricated number. signing suppressed for value_suspect; current suppressed for value_ or
--- annex_suspect (the suspect annex is the bad part). estimated_value_eur is derived per-request on
+-- never a fabricated number. signing suppressed for value_suspect; current suppressed for value_,
+-- annex_suspect or annex_total_suspect (#305; the suspect annex is the bad part). estimated_value_eur
+-- is derived per-request on
 -- the contract detail loader from the tender (procurement-level, shared across a multi-lot prepiska).
 UPDATE contracts SET
   signing_value_eur = CASE
@@ -33,7 +34,7 @@ UPDATE contracts SET
     WHEN fx_rate IS NOT NULL THEN signing_value * fx_rate
     ELSE NULL END,
   current_value_eur = CASE
-    WHEN value_flag IN ('value_suspect','annex_suspect') OR current_value IS NULL THEN NULL
+    WHEN value_flag IN ('value_suspect','annex_suspect','annex_total_suspect') OR current_value IS NULL THEN NULL
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'EUR' THEN current_value
     WHEN COALESCE(NULLIF(current_value_currency, ''), NULLIF(currency, ''), 'BGN') = 'BGN' THEN current_value / 1.95583
     WHEN fx_rate IS NOT NULL THEN current_value * fx_rate
@@ -214,6 +215,51 @@ SELECT 'contract', c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title),
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
+-- Свързани лица: one row per official with a PUBLISHED ownership conflict link — self OR a relative's stake
+-- (ADR-0032) — so a NAME search reaches their /conflicts/official profile. ref = person_id (→ personSlug at
+-- read), title = name, subtitle = latest declared institution (disambiguates homonyms), amount = contract €
+-- of their linked winners, each winner counted once. Published-only inherits the surface's expiry — a
+-- withdrawn/left-office official drops out.
+INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
+SELECT 'official', il.person_id, p.name, NULL,
+  (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
+   ORDER BY d.declared_year DESC LIMIT 1),
+  -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), the same
+  -- per-link subquery as LINK_SELECT.contemporaneous_value_eur, summed across the official's SURFACED links.
+  -- The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no winner's €
+  -- is double-counted. family_ownership reaches the index identically to self (ADR-0032) — the office-holder
+  -- is searchable, the relative never named. Never the lifetime total.
+  SUM((SELECT SUM(cc.amount_eur) FROM contracts cc
+         JOIN tenders tt ON tt.id = cc.tender_id
+         JOIN authorities aa ON aa.id = tt.authority_id
+         JOIN bidders bb ON bb.id = cc.bidder_id
+       WHERE bb.eik_normalized = il.eik
+         AND il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
+         AND cc.signed_at IS NOT NULL
+         AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
+             BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
+FROM interest_links il JOIN persons p ON p.id = il.person_id
+-- Self OR family stake (ADR-0032). Two guards mirror the /conflicts read layer (related-persons.ts):
+--  (N9) index only a link whose winner has LIVE contracts, so a stale-zero-contract link never becomes a dead
+--       search hit that 404s on click;
+--  (collapse) drop a family link when the SAME official already has a published OWN stake in that winner —
+--       rendering both re-identifies the relative via a ТР owner lookup, and the company is already surfaced
+--       by the self row.
+WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  -- …and the identity rests on a Trade Register fact (#279, ADR-0033). This predicate is the THIRD copy
+  -- of the surface gate — the other two are SURFACED_OWNERSHIP in packages/db/src/queries/related-persons.ts
+  -- and the sibling block in the other of precompute.sql / refresh-slice.sql. All three must move
+  -- together: this one feeds the officials search index, so omitting it would keep officials findable
+  -- whose links no longer surface.
+  AND EXISTS (SELECT 1 FROM interest_link_evidence e
+              WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
+  AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
+              WHERE bb.eik_normalized = il.eik)
+  AND NOT (il.interest_class = 'family_ownership' AND EXISTS (
+    SELECT 1 FROM interest_links s
+    WHERE s.person_id = il.person_id AND s.eik = il.eik
+      AND s.status = 'published' AND s.interest_class = 'private_ownership'))
+GROUP BY il.person_id, p.name;
 
 -- Summary (last result set printed by `wrangler d1 execute`)
 SELECT

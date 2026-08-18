@@ -4,6 +4,20 @@
 // validation) live here once so the two implementations cannot drift; the Worker-native loader and
 // its coverage guard are D1-based and pure-fetch, safe for workerd (no Node APIs).
 
+// A response body that is never read keeps its stream - and the connection behind it - open for the
+// rest of the invocation; the collector is not a substitute. Deliberately NOT awaited: cancelling only
+// needs to be INITIATED for the runtime to release the stream, and awaiting it would make the caller
+// hostage to a cancel() that never settles. Kept private here rather than shared with apps/etl: this
+// file is also loaded as raw TypeScript by the Node CLI (scripts/load-fx.mjs), where an extensionless
+// relative import does not resolve and a `.ts` one needs allowImportingTsExtensions repo-wide.
+function discardBody(res: Response): void {
+  try {
+    void res.body?.cancel().catch(() => {});
+  } catch {
+    // Already consumed, locked, or errored - there is nothing left to release either way.
+  }
+}
+
 // Canonical host. The legacy api.frankfurter.app now 301-redirects here — with host-pinned
 // fetches (assertSameFinalHost) the legacy host would fail closed, so point at the target
 // directly. Same response shape; the /v1 prefix is required on the .dev host.
@@ -220,15 +234,25 @@ export async function loadFxRates(db: D1Database, opts: LoadFxOptions): Promise<
     try {
       const url = fxSeriesUrl(gap.currency, start, end, api);
       const res = await fetchFn(url);
-      assertSameFinalHost(url, res.url);
+      try {
+        assertSameFinalHost(url, res.url);
+      } catch (err) {
+        discardBody(res);
+        throw err;
+      }
       if (res.status === 404) {
         // Frankfurter answers 404 for a base currency it does not serve — permanent, not
         // transient: warn and move on (CLI parity), never brick the cron on one odd currency.
+        // The body still has to be released — this `continue` is the most-travelled path here.
+        discardBody(res);
         load.status = 'unsupported';
         summary.warnings.push(`currency ${gap.currency} not served by frankfurter`);
         continue;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        discardBody(res);
+        throw new Error(`HTTP ${res.status}`);
+      }
       const { rows, warnings } = parseFxSeries(await res.json(), gap.currency, `${start}..${end}`);
       summary.warnings.push(...warnings);
       await upsertFxRates(db, rows, opts.fetchedAt);

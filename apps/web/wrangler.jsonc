@@ -112,8 +112,9 @@
     // Runtime deploy-env for the §9.3 transcript-HMAC gate (ADR-0012). The gate requires a signing key
     // ONLY when this is "production" or "staging" (public, unauthenticated → fail-closed); "preview"/
     // "development" fail OPEN (UI-only without the key). Committed "development" so local `wrangler dev`
-    // is fail-open; wrangler-render stamps the real target (SIGMA_ENVIRONMENT) at deploy. Deliberately
-    // NOT derived from import.meta.env.PROD, which Vite inlines true for the staging build too.
+    // and any deploy that doesn't override it stay fail-open; a deployment opts a public env in by setting
+    // ENVIRONMENT to its name. Deliberately NOT derived from import.meta.env.PROD, which Vite inlines true
+    // for the staging build too.
     "ENVIRONMENT": "development",
   },
   "unsafe": {
@@ -155,14 +156,25 @@
       },
       {
         // Per-IP throttle for POST /assistant/transcribe — each call runs a paid Workers AI Whisper
-        // transcription. Separate binding from the chat limiter so voice abuse can't
-        // drain the chat budget. Tighter (5/60): one call ≈ one audio-minute of paid inference.
+        // transcription. Separate binding from the chat limiter so voice abuse can't drain the chat
+        // budget. Tighter (5/60): one call ≈ one audio-minute of paid inference. 1001–1006 taken
+        // (csv/agg/search/health/assistant/conflicts); transcribe takes 1007. Must stay unique — a duplicate
+        // silently disables one limiter with no deploy error.
         "name": "TRANSCRIBE_RATE_LIMITER",
         "type": "ratelimit",
-        // 1001–1005 taken (csv/agg/search/health/assistant); transcribe takes 1006. Must stay unique —
-        // a duplicate silently disables one limiter with no deploy error.
-        "namespace_id": "1006",
+        "namespace_id": "1007",
         "simple": { "limit": 5, "period": 60 },
+      },
+      {
+        // Per-IP throttle for the /conflicts* subtree (personal-names surface + its .data twins). Higher
+        // than the aggregation limit because a single page view triggers a follow-up .data fetch and the
+        // leaderboard's cache HITs bypass this entirely — only distinct uncached URLs (the scrape pattern)
+        // consume it. 40/min throttles enumerating ~1000 official slugs to a crawl without touching normal
+        // browsing. namespace_id 1006 (1001–1005 taken; 1004 = /health per #118).
+        "name": "CONFLICTS_RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1006",
+        "simple": { "limit": 40, "period": 60 },
       },
     ],
   },

@@ -214,3 +214,57 @@ describe('RefreshWorkflow FX loading (#158)', () => {
     expect(usd.amount_eur).toBeCloseTo(EXPECTED_USD_EUR, 2);
   });
 });
+
+// The Workers runtime logs an error on every *successful* instance of this Workflow, so the absence
+// of errors proves nothing about whether the cron actually ran. A finished refresh has to announce
+// itself — and, just as importantly, a failed one must not.
+describe('RefreshWorkflow completion signal', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function captureLogs(): () => Record<string, unknown>[] {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    return () =>
+      lines.flatMap((line) => {
+        try {
+          return [JSON.parse(line) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      });
+  }
+
+  it('announces a finished refresh with the run summary', async () => {
+    const db = freshServedDb();
+    stubFetchRoutes();
+    const logs = captureLogs();
+
+    const result = await runRefresh(makeWorkflow(db));
+
+    const done = logs().find((e) => e.event === 'etl_refresh_complete');
+    expect(done).toBeDefined();
+    expect(done?.staged).toBe(result.staged);
+    expect(done?.derived).toBe(result.derived);
+    expect(done?.to).toBe(TODAY);
+  });
+
+  it('stays silent when the refresh throws', async () => {
+    const db = freshServedDb();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('storage.eop.bg unreachable');
+      }) as unknown as typeof fetch,
+    );
+    const logs = captureLogs();
+
+    await expect(runRefresh(makeWorkflow(db))).rejects.toThrow(/storage\.eop\.bg unreachable/);
+
+    expect(logs().some((e) => e.event === 'etl_refresh_complete')).toBe(false);
+  });
+});

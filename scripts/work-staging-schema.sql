@@ -159,7 +159,9 @@ CREATE TABLE raw_amendments (
   fetched_at       TEXT NOT NULL,
   seq_no               TEXT,
   document_number      TEXT,
-  contract_number      TEXT,              -- ← link to raw_contracts
+  contract_number      TEXT,              -- ← link to raw_contracts (rewritten in place by the #306 value resolver)
+  contract_number_raw  TEXT,              -- #306: the annex-side number before the value resolver rewrote it (provenance; NULL = never rewritten)
+  link_method          TEXT,              -- #306: 'value_anchor' when the resolver linked this row by value; NULL = matched by number / unlinked
   contract_date        TEXT,
   published_at         TEXT,              -- amendment publication date (ordering key)
   unp                  TEXT,              -- ← link to raw_contracts
@@ -174,6 +176,13 @@ CREATE TABLE raw_amendments (
   value_before     REAL,                  -- Стойност преди изменението
   value_after      REAL,                  -- Стойност след изменението  → current_value
   value_delta      REAL,                  -- Изменение на стойността
+  -- #305 Tier-2 text-based value correction (computed in TS ingest, packages/ingest/src/amendment-total.ts):
+  -- value_treatment labels how the основание text reads value_delta ('total_restated' / 'unchanged_restated'
+  -- / 'genuine_increment', NULL when no signal); value_after_restated is the corrected (true) total when a
+  -- double-count was confirmed, else NULL. Derive/normalize use COALESCE(value_after_restated, value_after)
+  -- as the effective after, and skip the arithmetic annex_total_suspect flag when value_treatment IS NOT NULL.
+  value_treatment      TEXT,
+  value_after_restated REAL,
   currency         TEXT,
   description      TEXT,                  -- Описание на измененията
   reason           TEXT,                  -- Причини за изменение (ЗОП основание)
