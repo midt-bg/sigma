@@ -176,7 +176,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Playwright browser
         run: pnpm --filter @sigma/web exec playwright install --with-deps chromium
-      # test:e2e is self-contained: e2e/global-setup.ts migrates + seeds a hermetic D1 and Playwright
+      # test:e2e is self-contained: `node e2e/seed.mjs` migrates + seeds a hermetic D1, then Playwright
       # starts the dev server itself.
       - name: E2E (Playwright + axe)
         run: pnpm --filter @sigma/web test:e2e

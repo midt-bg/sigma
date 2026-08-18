@@ -42,8 +42,10 @@ for (const { name, path } of STATIC_PAGES) {
 
 test('a11y smoke: contract detail', async ({ page }) => {
   await page.goto('/contracts');
+  // The seed always carries contracts, so assert the row is there — skipping here would hide a broken
+  // row selector behind a green run instead of failing on it.
   const firstTitle = page.locator('.contract-row .title').first();
-  test.skip((await firstTitle.count()) === 0, 'no contracts in the sample seed');
+  await expect(firstTitle).toBeVisible();
 
   await firstTitle.click();
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();

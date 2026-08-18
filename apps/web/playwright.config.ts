@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // E2E runs against the Worker served by `react-router dev` (Cloudflare Vite plugin → miniflare) under
-// E2E=1: a hermetic D1 (seeded by e2e/global-setup.ts) and a dedicated port that won't clash with a
-// running `pnpm dev`. Just run `pnpm test:e2e` — setup, server and teardown are all handled here.
+// E2E=1: a hermetic D1 (seeded by e2e/seed.mjs) and a dedicated port that won't clash with a running
+// `pnpm dev`. Just run `pnpm test:e2e` — it seeds first, then Playwright starts and stops the server.
 const PORT = 5273;
 const BASE_URL = `http://localhost:${PORT}`;
 
@@ -39,7 +39,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Runs in this package's dir (apps/web). Assumes the local D1 is already seeded (`pnpm setup`).
+    // Runs in this package's dir (apps/web). The hermetic D1 in .wrangler/e2e-state is already seeded
+    // by the `node e2e/seed.mjs` step of `test:e2e`, which runs before Playwright starts this server.
     // E2E=1 disables remote bindings (Workers AI / Vectorize) so the server needs no CF login.
     command: 'pnpm dev',
     env: { E2E: '1' },
