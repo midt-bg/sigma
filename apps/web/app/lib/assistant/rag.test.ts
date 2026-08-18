@@ -134,6 +134,19 @@ describe('retrieveSchemaContext', () => {
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
   });
 
+  it('reports matched vs kept counts through onStats (the #318 observability hook)', async () => {
+    const ai = fakeAI();
+    const index = fakeIndex([
+      { id: 'schema-v2:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
+      { id: 'schema-v2:table:parties', score: 0.1, metadata: { text: 'под флора' } },
+    ]);
+    const stats: unknown[] = [];
+    await retrieveSchemaContext(ai, index, 'въпрос', { onStats: (s) => stats.push(s) });
+    // matched = raw namespace-scoped matches; kept = floor survivors. The gap between the two IS
+    // the signal: kept=0 with matched>0 would mean the silent full-dictionary fallback fired.
+    expect(stats).toEqual([{ matched: 2, kept: 1 }]);
+  });
+
   it('drops a match that arrives with no score at all (defensive — safe full-dictionary fallback)', async () => {
     const ai = fakeAI();
     // Simulate an index backend that omits `score` on a match: it must read as below the floor (dropped),
