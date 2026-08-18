@@ -7,6 +7,7 @@ import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import {
+  EMBED_MODEL,
   retrieveSchemaContext,
   type EmbeddingRunner,
   type VectorIndex,
@@ -87,8 +88,21 @@ export async function action({ request, context }: Route.ActionArgs) {
     console.error('[assistant] BGGPT_API_KEY is not set — endpoint not provisioned');
     return Response.json({ error: 'Асистентът все още не е конфигуриран.' }, { status: 503 });
   }
-  const ai = env.AI as unknown as EmbeddingRunner | undefined;
-  const vectorize = env.VECTORIZE as unknown as VectorIndex | undefined;
+  // Both bindings are typed, not blind-cast (issue #316). VECTORIZE satisfies the narrowed
+  // VectorIndex structurally — this assignment is the compile-time proof, so a drift between
+  // rag.ts and worker-configuration.d.ts fails `tsc`, not production. AI cannot satisfy
+  // EmbeddingRunner structurally (its run() returns a per-model output UNION), so the adapter
+  // calls the real @cf/baai/bge-m3 overload — also compiler-checked — and surfaces only the
+  // embeddings member; embed() fail-fasts unless `data` is a well-formed vector list.
+  const vectorize: VectorIndex | undefined = env.VECTORIZE;
+  const ai: EmbeddingRunner | undefined = env.AI
+    ? {
+        run: async (_model, inputs) => {
+          const out = await env.AI.run(EMBED_MODEL, { text: inputs.text });
+          return { data: 'data' in out && out.data ? out.data : [] };
+        },
+      }
+    : undefined;
   // The latest user message text — used both to RAG-ground the prompt and as the server-authoritative
   // report question, so the model's echo can never smuggle an unbound number into the question slot
   // (review #80).
