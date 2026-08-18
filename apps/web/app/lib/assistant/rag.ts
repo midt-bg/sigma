@@ -18,7 +18,7 @@
 // and `VECTORIZE` (a 1024-dim, cosine Vectorize index). Typed structurally below so this module is
 // deploy-independent and unit-testable; `env.AI` / `env.VECTORIZE` satisfy these interfaces.
 
-import { CANONICAL_QUERIES, DATA_TRAPS, TABLES } from './describe-schema';
+import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 
 export const EMBED_MODEL = '@cf/baai/bge-m3';
 export const EMBED_DIM = 1024;
@@ -63,15 +63,17 @@ export async function embed(ai: EmbeddingRunner, texts: string[]): Promise<numbe
 // ── Schema/cookbook grounding ─────────────────────────────────────────────────────────────────────
 
 // Stable chunks from the data dictionary. `text` is what gets embedded + retrieved into the prompt.
+// DATA_TRAPS are deliberately NOT indexed: buildSystemPrompt injects every trap unconditionally
+// (hardTraps(), system-prompt.ts), so a retrieved trap chunk could only ever duplicate prompt text —
+// retrieval's job is picking the tables/example-queries relevant to the question (review, ydimitrof).
 export interface SchemaChunk {
   id: string;
-  kind: 'trap' | 'query' | 'table';
+  kind: 'query' | 'table';
   text: string;
 }
 
 export function buildSchemaChunks(): SchemaChunk[] {
   return [
-    ...DATA_TRAPS.map((t, i) => ({ id: `trap:${i}`, kind: 'trap' as const, text: t })),
     ...CANONICAL_QUERIES.map((q, i) => ({
       id: `query:${i}`,
       kind: 'query' as const,
@@ -127,6 +129,10 @@ export async function retrieveSchemaContext(
   });
   return (
     matches
+      // Drop trap chunks a previously deployed index may still hold (they are no longer indexed, see
+      // buildSchemaChunks): every trap is already injected unconditionally via hardTraps(), so letting
+      // one through here would only render the same rule twice in the prompt.
+      .filter((m) => m.metadata?.kind !== 'trap')
       // Keep only matches at/above the relevance floor. `?? 0` is defensive, not decorative: our typed
       // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
       // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
