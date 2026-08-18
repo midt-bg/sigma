@@ -76,4 +76,23 @@ scripts/cacbg/*.test.mjs scripts/tr/*.test.mjs` — а гейтовете, пр�
   upstream EOP емисията дават WARN — не чупят дневния импорт, но се сурфейсват шумно (вж.
   [`integrity-gate.md`](integrity-gate.md)).
 
+## Golden dataset (#99)
+
+- `packages/db/src/golden-dataset.test.ts` прекарва малък синтетичен корпус (2 възложители × 3
+  изпълнители × 10 договора: всичките 5 `value_flag` изхода, трите валутни пътя BGN/EUR/чужда,
+  анекси, state-owned ЕИК, плюс два гранични случая — чуждовалутен ред без FX курс в прозореца
+  (`amount_eur` NULL) и евро анекс върху лев договор (#245, не се конвертира втори път)) през
+  **реалния** derive ред (`derive-amendments` → `normalize-raw` →
+  `promote-amendments` → `precompute`) и асъртва **абсолютни, ръчно сметнати** стойности на всяко
+  зърно — по-договор, `company_totals`, `authority_totals`, `sector_totals`, `facet_counts`,
+  `flow_pairs`, `home_totals`, разпределението на `value_flag`. Хваща каквото reconciliation
+  gate-ът структурно не може: дрейф, който запазва грандтотала (вж.
+  [`integrity-gate.md`](integrity-gate.md), „Limits of the guarantee").
+- **Процедура при умишлена промяна на golden числата.** Когато промяна в правилата легитимно мести
+  стойности (нов праг на `value_flag`, нова стойностна база): (1) прочетете кой асърт е червен и
+  защо; (2) пресметнете засегнатите очаквания **на ръка от fixture-а и новите правила** — никога не
+  копирайте изхода на pipeline-а в константите (така бихте благословили точно бъга, който тестът
+  пази); (3) обновете `GOLDEN` заедно с деривационните коментари; (4) обяснете дрейфа в PR
+  описанието. Умишлено няма `--update` скрипт.
+
 Свързано: [`review-accuracy.md`](review-accuracy.md).
