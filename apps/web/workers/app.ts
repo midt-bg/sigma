@@ -9,7 +9,14 @@ import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { rateLimitTranscribeRoute } from './transcribe-rate-limit';
 import { withRequestLog } from './request-log';
+
+// Durable Objects for the AI assistant. Both must be named exports of the worker entry so their
+// wrangler.jsonc bindings + migrations resolve the classes: ReportSingleFlight (Lane F report dedup) and
+// BgGptCircuitBreaker (#135 account-wide RPM cap in front of the paid model call).
+export { ReportSingleFlight } from './assistant/report-single-flight';
+export { BgGptCircuitBreaker } from './assistant/bggpt-circuit-breaker';
 
 declare module 'react-router' {
   export interface AppLoadContext {
@@ -156,6 +163,12 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   );
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
 
+  const transcribeRateLimitResponse = await rateLimitTranscribeRoute(
+    request,
+    env,
+    import.meta.env.PROD,
+  );
+  if (transcribeRateLimitResponse) return transcribeRateLimitResponse;
   // /conflicts* names public officials and its .data twin serves each loader — throttle the subtree so it
   // can't be bulk-scraped into a names export. After the cache check, so cached leaderboard hits are free.
   const conflictsRateLimitResponse = await rateLimitConflictsRoute(

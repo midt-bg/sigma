@@ -10,7 +10,7 @@ import { contractSlug, hrefForEntity } from '@sigma/db';
 // `asNumber` is the SHARED decimal-only coercion (defined in report-schema.ts and used by the binder). A
 // previous local copy here had to be kept byte-identical by hand to preserve the §9.1 "rendered value
 // equals cited cell" rule; importing the one definition removes that drift risk (review #80, follow-up).
-import { asNumber, type CellFormat, type EntityKind } from './report-schema';
+import { asNumber, isImplausibleRatio, type CellFormat, type EntityKind } from './report-schema';
 
 /**
  * Format a resolved cell by its hint, delegating to the site's shared formatters so units/magnitude
@@ -24,7 +24,10 @@ export function formatCell(value: string | number | null, format: CellFormat): s
     case 'number':
       return count(asNumber(value));
     case 'percent':
-      return pct(asNumber(value));
+      // Last-resort guard (the binder rejects these for the model path, but the fallback path guesses
+      // formats by column name): a percent value whose magnitude can't be a 0..1 ratio is a mistagged
+      // raw sum/count — render the em-dash instead of an absurd „…%".
+      return isImplausibleRatio(value) ? '—' : pct(asNumber(value));
     case 'date':
       return date(value == null ? null : String(value));
     case 'text':

@@ -1,0 +1,56 @@
+{
+  "id": "18-spend-by-procedure",
+  "prompt": "Разход по вид процедура",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT t.procedure_type AS procedure_type, COUNT(*) AS contracts, SUM(c.amount_eur) AS value_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' GROUP BY t.procedure_type ORDER BY value_eur DESC LIMIT 5",
+      "result": {
+        "rows": [
+          {
+            "procedure_type": "открита",
+            "contracts": 100,
+            "value_eur": 5000000
+          },
+          {
+            "procedure_type": "договаряне",
+            "contracts": 40,
+            "value_eur": 1500000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по процедура",
+    "question": "Разход по вид процедура",
+    "blocks": [
+      {
+        "type": "table",
+        "resultId": "R1",
+        "columns": [
+          {
+            "key": "procedure_type",
+            "header": "Процедура",
+            "format": "text"
+          },
+          {
+            "key": "contracts",
+            "header": "Договори",
+            "align": "right",
+            "format": "number"
+          },
+          {
+            "key": "value_eur",
+            "header": "Стойност (EUR)",
+            "align": "right",
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

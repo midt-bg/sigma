@@ -1,0 +1,41 @@
+{
+  "id": "19-top-authorities-bar",
+  "prompt": "Топ възложители (стълбовидна)",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT a.name AS name, t.spent_eur AS spent_eur FROM authority_totals t JOIN authorities a ON a.id = t.authority_id ORDER BY t.spent_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "name": "Община София",
+            "spent_eur": 1234567
+          },
+          {
+            "name": "МРРБ",
+            "spent_eur": 987654
+          },
+          {
+            "name": "АПИ",
+            "spent_eur": 456789
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Топ възложители по похарчено",
+    "question": "Топ възложители (стълбовидна)",
+    "blocks": [
+      {
+        "type": "bar",
+        "resultId": "R1",
+        "labelCol": "name",
+        "valueCol": "spent_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}

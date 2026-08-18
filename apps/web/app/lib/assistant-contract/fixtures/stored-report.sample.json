@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "r_8KQ2mZ7v",
+  "createdAt": "2026-06-21T09:30:00Z",
+  "report": {
+    "title": "Топ 5 строителни компании по сума (2023)",
+    "question": "Сравни топ 5 строителни компании по обща стойност на договорите за 2023",
+    "blocks": [
+      {
+        "type": "text",
+        "md": "Петте най-големи изпълнители в строителството (CPV 45) за 2023 г. по обща стойност на подписаните договори. *Примерни данни — измислени компании.*"
+      },
+      {
+        "type": "totals",
+        "items": [
+          { "label": "Обща стойност (топ 5)", "value": 412300000, "format": "money" },
+          { "label": "Брой договори", "value": 882, "format": "number" }
+        ]
+      },
+      {
+        "type": "table",
+        "columns": [
+          {
+            "key": "company",
+            "header": "Компания",
+            "align": "left",
+            "format": "text",
+            "link": { "kind": "company", "idCol": "eik" }
+          },
+          { "key": "eik", "header": "ЕИК", "align": "left", "format": "text" },
+          { "key": "total_eur", "header": "Обща стойност", "align": "right", "format": "money" },
+          { "key": "contracts", "header": "Договори", "align": "right", "format": "number" }
+        ],
+        "rows": [
+          { "cells": ["Компания А", "000000001", 142000000, 312] },
+          { "cells": ["Компания Б", "000000002", 98500000, 205] },
+          { "cells": ["Компания В", "000000003", 71200000, 150] },
+          { "cells": ["Компания Г", "000000004", 58900000, 118] },
+          { "cells": ["Компания Д", "000000005", 41700000, 97] }
+        ]
+      },
+      {
+        "type": "bar",
+        "points": [
+          { "label": "Компания А", "value": 142000000 },
+          { "label": "Компания Б", "value": 98500000 },
+          { "label": "Компания В", "value": 71200000 },
+          { "label": "Компания Г", "value": 58900000 },
+          { "label": "Компания Д", "value": 41700000 }
+        ]
+      },
+      {
+        "type": "callout",
+        "title": "Как е изчислено",
+        "md": "Броим amount_eur по подписани договори за CPV 45*, signed_at в 2023. Изключени договори с непотвърдена стойност (value_suspect). Примерни данни — измислени компании."
+      }
+    ],
+    "watermark": "ai-generated"
+  },
+  "provenance": {
+    "question": "Сравни топ 5 строителни компании по обща стойност на договорите за 2023",
+    "sources": [
+      {
+        "handle": "R1",
+        "tool": "run_sql",
+        "sql": "WITH c AS (SELECT b.name AS company, b.eik AS eik, SUM(ct.amount_eur) AS total_eur, COUNT(*) AS contracts FROM contracts ct JOIN bidders b ON b.id = ct.bidder_id JOIN tenders t ON t.id = ct.tender_id WHERE ct.amount_eur IS NOT NULL AND substr(t.cpv_code,1,2) = '45' AND strftime('%Y', ct.signed_at) = '2023' GROUP BY b.eik ORDER BY total_eur DESC LIMIT 5) SELECT company, eik, total_eur, contracts FROM c"
+      }
+    ],
+    "snapshot": [
+      {
+        "handle": "R1",
+        "columns": ["company", "eik", "total_eur", "contracts"],
+        "rows": [
+          ["Компания А", "000000001", 142000000, 312],
+          ["Компания Б", "000000002", 98500000, 205],
+          ["Компания В", "000000003", 71200000, 150],
+          ["Компания Г", "000000004", 58900000, 118],
+          ["Компания Д", "000000005", 41700000, 97]
+        ],
+        "truncated": false
+      }
+    ],
+    "freshness": [
+      { "source": "admin", "asOf": "2026-06-18" },
+      { "source": "ocds", "asOf": "2026-06-17" }
+    ],
+    "model": "bggpt-gemma-3-27b-fp8",
+    "promptVersion": "2026-06-20"
+  }
+}

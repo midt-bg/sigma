@@ -36,6 +36,10 @@ const migration8 = readFileSync(
   resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'),
   'utf8',
 );
+const migrationSynthetic = readFileSync(
+  resolve(root, 'packages/db/migrations/0012_contracts_is_synthetic.sql'),
+  'utf8',
+);
 const staging = readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8');
 const normalize = readFileSync(resolve(root, 'scripts/normalize-raw.sql'), 'utf8');
 const precompute = readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8');
@@ -80,6 +84,23 @@ VALUES
   ('eop:contracts:test', '2026-07-18T00:00:00Z', 'UNP-GUARD-SPACE', 'C-GUARD-SPACE', '2026-07-01',
    '2026-07-02', '123456786', 'Тестов възложител', 'Пази интервала', 10, 10, 'EUR',
    '', '„Марица Изток"');
+-- Real (procedure_type='open') tender headers for each UNP so the derived contracts are NON-synthetic
+-- and therefore included in company_totals — this test is about contractor-identity resolution, not the
+-- synthetic-exclusion behavior (covered by refresh-slice.test's synthetic-orphan test), so the fixture
+-- carries real headers to exercise the raw → contracts → company_totals value flow end to end.
+INSERT INTO raw_tenders (source, fetched_at, unp, procedure_type, authority_eik, authority_name, published_at)
+VALUES
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-VALID', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-TYPO', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-EMPTY', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-NULL', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-1', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-2', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-FOLD-3', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-DASH-EN', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-DASH-ASCII', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-GUARD-HYPHEN', 'open', '123456786', 'Тестов възложител', '2026-07-01'),
+  ('eop:tenders:test', '2026-07-18T00:00:00Z', 'UNP-GUARD-SPACE', 'open', '123456786', 'Тестов възложител', '2026-07-01');
 `;
 
 function build(path: 'normalize' | 'refresh'): DatabaseSync {
@@ -90,6 +111,7 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   db.exec(migration6);
   db.exec(migration7);
   db.exec(migration8);
+  db.exec(migrationSynthetic);
   db.exec(staging);
   db.exec(seed);
   if (path === 'normalize') {

@@ -1,0 +1,50 @@
+{
+  "id": "12-eu-funded-share",
+  "prompt": "Какъв дял от разходите е с европейско финансиране?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END) AS eu_eur, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна'",
+      "result": {
+        "rows": [
+          {
+            "eu_eur": 600000,
+            "total_eur": 2000000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Европейско финансиране",
+    "question": "Какъв дял от разходите е с европейско финансиране?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "С евро финансиране (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "eu_eur"
+            },
+            "format": "money"
+          },
+          {
+            "label": "Общо (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

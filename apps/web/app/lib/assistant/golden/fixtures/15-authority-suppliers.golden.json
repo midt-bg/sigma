@@ -1,0 +1,50 @@
+{
+  "id": "15-authority-suppliers",
+  "prompt": "Колко доставчици има възложител №2?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT COUNT(DISTINCT c.bidder_id) AS suppliers, COUNT(*) AS contracts FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND t.authority_id = 2",
+      "result": {
+        "rows": [
+          {
+            "suppliers": 12,
+            "contracts": 48
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Доставчици на възложител",
+    "question": "Колко доставчици има възложител №2?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Доставчици",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "suppliers"
+            },
+            "format": "number"
+          },
+          {
+            "label": "Договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            },
+            "format": "number"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

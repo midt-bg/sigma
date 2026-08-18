@@ -66,6 +66,7 @@ export interface EmitBar {
   resultId: string;
   labelCol: string;
   valueCol: string;
+  format?: CellFormat;
 }
 export interface EmitFlows {
   type: 'flows';
@@ -79,6 +80,7 @@ export interface EmitTimeseries {
   resultId: string;
   periodCol: string;
   valueCol: string;
+  format?: CellFormat;
 }
 export type EmitBlock =
   | EmitText
@@ -121,7 +123,12 @@ export type ResolvedBlock =
       rows: ResolvedRow[];
       truncated?: boolean;
     }
-  | { type: 'bar'; points: { label: string | number | null; value: number }[]; truncated?: boolean }
+  | {
+      type: 'bar';
+      points: { label: string | number | null; value: number }[];
+      truncated?: boolean;
+      format?: CellFormat;
+    }
   | {
       type: 'flows';
       edges: { from: string; to: string; valueEur: number }[];
@@ -131,6 +138,7 @@ export type ResolvedBlock =
       type: 'timeseries';
       points: { period: string | number | null; value: number }[];
       truncated?: boolean;
+      format?: CellFormat;
     };
 
 export interface ResolvedReport {
@@ -140,7 +148,9 @@ export interface ResolvedReport {
   watermark: 'ai-generated'; // renderer always shows the „AI-генерирано, неофициално" label (§9.12)
 }
 
-export type BindResult = { ok: true; report: ResolvedReport } | { ok: false; errors: string[] };
+export type BindResult =
+  | { ok: true; report: ResolvedReport; warnings: string[] }
+  | { ok: false; errors: string[] };
 
 export interface BindOptions {
   // Server-authoritative question text (the actual latest user message), set by the chat route. When
@@ -202,11 +212,33 @@ export function sanitizeProse(md: string): string {
   return out.trim();
 }
 
+// Our synthetic entity-id scheme (identity.ts) is internal plumbing, never a user-facing value. Two shapes:
+//   • whole-cell id — `auth:ЕИК` (authority) / `eik:ЕИК` / `name:NAME` (company)
+//   • composite contract id — `c:e:<УНП>:<contract_number>:<date>` / `c:o:<ocid>:…`, which additionally
+//     EMBEDS the bidder token mid-string (live: `c:e:00042-2025-0016:237236:1:eik:175405647:1`)
+// When the model SELECTs an id column as a *display* column (Q17/Q46), the scheme would surface in the public
+// report. A whole-cell id → strip the scheme prefix, leaving its real-world value (ЕИК / name). A composite
+// contract id → show ONLY the head segment (the user-facing УНП/ocid); this drops the embedded `…:eik:…`
+// bidder token entirely — anchoring the strip at `^` alone would leave it. A plain text cell that merely
+// contains a colon (a subject line) is left intact. Entity LINKS are unaffected — bindReport binds them from
+// the raw row value on a separate path, before sanitizeCell.
+export function stripEntityIdPrefix(v: string): string {
+  const noContractPrefix = v.replace(/^(?:c:e:|c:o:|c:)/, '');
+  // A composite id: it carried a `c:*` prefix, OR it embeds a scheme token after a colon (`…:eik:ЕИК:…`).
+  const isComposite = noContractPrefix !== v || /:(?:auth|eik|name):/.test(v);
+  if (isComposite) {
+    const colon = noContractPrefix.indexOf(':');
+    return colon === -1 ? noContractPrefix : noContractPrefix.slice(0, colon);
+  }
+  return v.replace(/^(?:auth:|eik:|name:)/, '');
+}
+
 // Data cells carry submitter-influenceable text (company/authority names, contract subjects). Tag-strip
 // string values so no markup survives into the public report even if a renderer forgets to escape —
-// defence-in-depth on top of React's default escaping (spec §7). Numbers/null are never markup.
+// defence-in-depth on top of React's default escaping (spec §7). Numbers/null are never markup. Also
+// strips the internal entity-id scheme (above) so a raw id column never leaks as a visible cell.
 export function sanitizeCell(v: string | number | null): string | number | null {
-  return typeof v === 'string' ? sanitizeProse(v) : v;
+  return typeof v === 'string' ? sanitizeProse(stripEntityIdPrefix(v)) : v;
 }
 
 // Guardrail E2 (spec addendum): a DETERMINISTIC check that model prose carries no material number —
@@ -226,16 +258,25 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   /(?:€|eur)\s*\d[\d.,\s]{0,40}/giu, // €1234, EUR 1 234 (currency-first)
   /\d[\d.,\s]{0,40}(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
   /\d[\d.,\s]{0,40}(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
-  /\d{1,3}(?:[.,\s'’٫٬]\d{3})+/gu, // grouped: 1 234, 1,234,567, 12'000'000, 2٬500٬000 (Arabic sep)
+  // Grouped thousands: 1 234, 1,234,567, 12'000'000, 2٬500٬000 (Arabic sep). The trailing `(?!\d)`
+  // requires each group to be EXACTLY three digits — so a four-digit run is not read as a group. Without
+  // it a `MM.YYYY` / `DD.MM.YYYY` date (`01.2026`, `01.02.2026`) false-matched as "01.202" (`01` + the
+  // first three digits of the year) and rejected legitimate freshness/period prose (date notation is not
+  // a material number). A real grouped amount always ends on a 3-digit group, so nothing valid is lost.
+  /\d{1,3}(?:[.,\s'’٫٬]\d{3})+(?!\d)/gu,
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
   // Spelled-out magnitudes / percentages / ratios bypassed the digit-only patterns above — a model could
-  // write "12 милиарда", "два милиарда", "5 милиона", "95%", "деветдесет процента", "12 на сто",
+  // write "12 милиарда", "3 трилиона", "5 милиона", "95%", "деветдесет процента", "12 на сто",
   // "3,5 пъти" and land an unbound quantity on the public report (review #80). Flag the unit words too.
   // NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches after a
   // space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
-  /милиард|милион|хиляд/giu, // spelled magnitudes (incl. word-only "два милиарда", "триста хиляди")
-  /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
+  /милиард|милион|хиляд|трилион|билион|квадрилион/giu, // spelled magnitudes (incl. "два милиарда", "3 трилиона", "триста хиляди")
+  // Percentages: %, процент-stem, or the idiom "на сто" (= per hundred). The trailing `(?!\p{L})` pins
+  // "сто" as a STANDALONE word — without it "на сто" matched the whole "сто" word-family and rejected
+  // ordinary procurement prose: "на стойност" (to the value of — ubiquitous), the entity "Столична
+  // община", "на стотици". Those are not percentages; "12 на сто" / "на сто%" still match.
+  /%|процент|(?<!\p{L})на\s+сто(?!\p{L})/giu,
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
   // "9999 USD", "$1 000") otherwise slips every digit pattern (review #80, follow-up).
@@ -345,6 +386,30 @@ export function asNumber(v: string | number | null): number | null {
   return null;
 }
 
+// A `percent`-formatted cell is a 0..1 ratio by site convention (render-format.formatCell → pct()). A weak
+// model sometimes binds a raw euro SUM or a COUNT into a percent-tagged slot (e.g. „Дял по стойност" bound
+// to the single-offer euro total instead of its share of the whole), which renders as an absurd
+// „1342360573264,6%". This is the SHARED magnitude threshold the binder (reject → model retries) and the
+// renderer (safe em-dash) both use, so the two layers can't drift. Generous (10000%) so a legitimate large
+// percentage *change* isn't rejected — only values that cannot possibly be a ratio.
+export const MAX_RATIO_MAGNITUDE = 100;
+export function isImplausibleRatio(v: string | number | null): boolean {
+  const n = asNumber(v);
+  return n !== null && Math.abs(n) > MAX_RATIO_MAGNITUDE;
+}
+
+// Map a raw domain id to its entity kind by prefix (the packages/db identity.ts id scheme: `auth:` →
+// authority, `eik:`/`name:` → company, `c:` → contract). Returns null for a prefixless id, which carries
+// no domain signal. Used by the table binder to reject a model-declared link.kind that contradicts the
+// id's own domain — a mismatched kind would render a wrong-collection href (e.g. /companies/<authority-id>)
+// on a citation-bearing report (review, nedda).
+function entityKindOfId(id: string): EntityKind | null {
+  if (id.startsWith('auth:')) return 'authority';
+  if (id.startsWith('eik:') || id.startsWith('name:')) return 'company';
+  if (id.startsWith('c:')) return 'contract';
+  return null;
+}
+
 /**
  * Re-bind a model-emitted report against the server's own result sets. Every number on the page is
  * sourced here from `results`; the model's blocks only select/label/shape. Returns validation
@@ -356,6 +421,10 @@ export function bindReport(
   opts: BindOptions = {},
 ): BindResult {
   const errors: string[] = [];
+  // Non-fatal issues: missing columns and out-of-range rows render as null rather than blocking the
+  // report. The model referenced a valid handle but the column/row wasn't in the actual DB result —
+  // the report displays with null in those slots rather than forcing a retry.
+  const warnings: string[] = [];
   const byHandle = new Map(results.map((r) => [r.handle, r]));
 
   const cell = (ref: CellRef, where: string): string | number | null => {
@@ -390,7 +459,20 @@ export function bindReport(
     return r ?? null;
   };
 
-  const requireCols = (r: QueryResult, cols: string[], where: string): boolean => {
+  // Table display columns: warn on missing so the block still renders with null cells rather than
+  // blocking the whole report. Returns true so the table is always built when called.
+  const requireCols = (r: QueryResult, cols: string[], where: string): true => {
+    for (const c of cols) {
+      if (!r.columns.includes(c)) {
+        warnings.push(`${where}: result "${r.handle}" has no column "${c}" — rendered as null`);
+      }
+    }
+    return true;
+  };
+
+  // Chart columns (bar, flows, timeseries): a missing valueCol produces all-null coercions →
+  // zero points → an empty chart that shows nothing useful. Force a model retry instead.
+  const requireChartCols = (r: QueryResult, cols: string[], where: string): boolean => {
     let ok = true;
     for (const c of cols) {
       if (!r.columns.includes(c)) {
@@ -431,9 +513,30 @@ export function bindReport(
               `${at}: material number in totals label — put it in a value slot`,
               errors,
             );
+            const value = sanitizeCell(cell(it.ref, at));
+            // A percent slot must reference a 0..1 ratio column, not a raw euro sum/count. Reject an
+            // impossible magnitude so the model retries with a real share column (or format 'number').
+            if (it.format === 'percent' && isImplausibleRatio(value)) {
+              errors.push(
+                `${at}: totals item "${it.label}" is format 'percent' but its value (${value}) is not a 0..1 ratio — reference a share column or use format 'number'`,
+              );
+            }
+            // A `totals` item is a HEADLINE aggregate — one "big number". It MUST reference a single-row
+            // result (a one-row SUM/COUNT). Binding it to a row of a MULTI-row result silently presents one
+            // data point as the whole: the live „Разход по години" report showed „Общ разход 2020–2026:
+            // 762,1 млн. €", which was merely the 2020 row — ~61× below the real ~46,6 млрд. € sum. The value
+            // is a genuine cell, so no other gate catches it; reject here so the model runs a proper
+            // aggregate (SELECT SUM/COUNT …) or moves the figure to a table/timeseries. Highlighting a
+            // specific row of a series is what `facts` is for — that block is intentionally exempt.
+            const totalsResult = byHandle.get(it.ref.resultId);
+            if (totalsResult && totalsResult.rows.length > 1) {
+              errors.push(
+                `${at}: totals item "${it.label}" references row ${it.ref.row} of a ${totalsResult.rows.length}-row result — a totals figure must come from a single-row aggregate (run a SELECT SUM/COUNT), or present the series as a table/timeseries instead`,
+              );
+            }
             return {
               label: sanitizeProse(it.label),
-              value: sanitizeCell(cell(it.ref, at)),
+              value,
               format: it.format,
             };
           }),
@@ -474,23 +577,39 @@ export function bindReport(
             // (a legitimate "no results" answer; review #80).
             blocks.push({ type: 'table', columns, rows: [], truncated: r.truncated ?? false });
           } else {
-            // Require both the display columns AND the link id columns to exist — without the latter an
-            // immutable report could not reconstruct its entity links.
-            const needed = [
-              ...b.columns.map((c) => c.key),
-              ...b.columns.flatMap((c) => (c.link ? [c.link.idCol] : [])),
-            ];
-            if (requireCols(r, needed, at)) {
+            // Link id columns are structural — an immutable report needs them to reconstruct
+            // entity links (spec §4). Missing → hard error so the model retries with the right name.
+            const linkIdCols = b.columns.flatMap((c) => (c.link ? [c.link.idCol] : []));
+            const missingLinks = linkIdCols.filter((c) => !r.columns.includes(c));
+            for (const c of missingLinks)
+              errors.push(`${at}: result "${r.handle}" has no column "${c}"`);
+            if (missingLinks.length === 0) {
+              // Display columns: warn if missing (renders null in that slot) so a partially-missing
+              // result still produces a viewable report instead of forcing a retry.
+              requireCols(
+                r,
+                b.columns.map((c) => c.key),
+                at,
+              );
               const idx = b.columns.map((c) => r.columns.indexOf(c.key));
-              const linkIdx = b.columns.map((c) => (c.link ? r.columns.indexOf(c.link.idCol) : -1));
+              const linkMeta = b.columns.map((c) =>
+                c.link ? { idx: r.columns.indexOf(c.link.idCol), kind: c.link.kind } : null,
+              );
               blocks.push({
                 type: 'table',
                 columns,
                 rows: r.rows.map((row) => ({
                   cells: idx.map((i) => sanitizeCell(row[i] ?? null)),
-                  links: linkIdx.map((i) => {
-                    const v = i < 0 ? null : row[i];
-                    return v == null ? null : String(v);
+                  links: linkMeta.map((m) => {
+                    if (!m || m.idx < 0) return null;
+                    const v = row[m.idx];
+                    if (v == null) return null;
+                    const id = String(v);
+                    // Drop a link whose id domain contradicts the model-declared kind (a `company` kind on
+                    // an `auth:` id would render /companies/<authority-id> — a wrong citation on a
+                    // transparency report). A prefixless id carries no domain signal → trust the kind.
+                    const domain = entityKindOfId(id);
+                    return domain !== null && domain !== m.kind ? null : id;
                   }),
                 })),
                 truncated: r.truncated ?? false, // surfaced by the renderer; result hit the byte cap (#80)
@@ -502,7 +621,7 @@ export function bindReport(
       }
       case 'bar': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.labelCol, b.valueCol], at))) {
+        if (r && (r.rows.length === 0 || requireChartCols(r, [b.labelCol, b.valueCol], at))) {
           const labels = colValues(r, b.labelCol);
           const vals = colValues(r, b.valueCol);
           const points: { label: string | number | null; value: number }[] = [];
@@ -510,13 +629,16 @@ export function bindReport(
             const value = asNumber(vals[i] ?? null);
             if (value !== null) points.push({ label: sanitizeCell(labels[i] ?? null), value });
           }
-          blocks.push({ type: 'bar', points, truncated: r.truncated ?? false });
+          blocks.push({ type: 'bar', points, truncated: r.truncated ?? false, format: b.format });
         }
         break;
       }
       case 'flows': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.fromCol, b.toCol, b.valueCol], at))) {
+        if (
+          r &&
+          (r.rows.length === 0 || requireChartCols(r, [b.fromCol, b.toCol, b.valueCol], at))
+        ) {
           const from = colValues(r, b.fromCol);
           const to = colValues(r, b.toCol);
           const val = colValues(r, b.valueCol);
@@ -536,7 +658,7 @@ export function bindReport(
       }
       case 'timeseries': {
         const r = requireResult(b.resultId, at);
-        if (r && (r.rows.length === 0 || requireCols(r, [b.periodCol, b.valueCol], at))) {
+        if (r && (r.rows.length === 0 || requireChartCols(r, [b.periodCol, b.valueCol], at))) {
           const period = colValues(r, b.periodCol);
           const vals = colValues(r, b.valueCol);
           const points: { period: string | number | null; value: number }[] = [];
@@ -544,7 +666,12 @@ export function bindReport(
             const value = asNumber(vals[i] ?? null);
             if (value !== null) points.push({ period: sanitizeCell(period[i] ?? null), value });
           }
-          blocks.push({ type: 'timeseries', points, truncated: r.truncated ?? false });
+          blocks.push({
+            type: 'timeseries',
+            points,
+            truncated: r.truncated ?? false,
+            format: b.format,
+          });
         }
         break;
       }
@@ -577,5 +704,6 @@ export function bindReport(
       blocks,
       watermark: 'ai-generated',
     },
+    warnings,
   };
 }

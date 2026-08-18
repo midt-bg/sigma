@@ -7,7 +7,8 @@
 // `--config`. Optional deploy-time name env vars (`SIGMA_WEB_NAME`, `SIGMA_ETL_NAME`,
 // `SIGMA_WORKFLOW_NAME`, `SIGMA_D1_NAME`, `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`,
 // `SIGMA_VECTORIZE_NAME`) explicitly override resource names for alternate environments while
-// leaving committed names unchanged when unset.
+// leaving committed names unchanged when unset. Deploy-time freshness/kill-switch/gate overrides
+// (`SIGMA_BUILD_ID`, `SIGMA_ASSISTANT_ENABLED`, `SIGMA_ENVIRONMENT`) stamp the assistant's committed defaults.
 //
 // usage: node scripts/wrangler-render.mjs <path/to/wrangler.toml|jsonc>
 
@@ -18,6 +19,9 @@ import { basename, dirname, extname, join } from 'node:path';
 // the values come from the environment at deploy time. Add a row to extend (e.g. a future KV).
 const SENTINELS = {
   '00000000-0000-0000-0000-000000000000': 'SIGMA_D1_ID', // D1 database_id (UUID v4 shape)
+  // DEDUP_KV namespace id (32-hex shape). Provisioned idempotently in CI by scripts/ensure-kv-namespace.mjs
+  // (one namespace per env — dev shared with previews, staging, prod), which exports SIGMA_DEDUP_KV_ID.
+  '00000000000000000000000000000000': 'SIGMA_DEDUP_KV_ID',
 };
 
 // Required at deploy: every rate limiter the worker relies on must be bound, and Cloudflare requires
@@ -67,13 +71,43 @@ if (ext === '.json' || ext === '.jsonc') {
     csvCacheName: process.env.SIGMA_CSV_CACHE_NAME || '',
     reportsName: process.env.SIGMA_REPORTS_NAME || '',
     vectorizeName: process.env.SIGMA_VECTORIZE_NAME || '',
+    // Per-build dedup freshness `c` (commit sha at deploy). Committed value is the constant "dev"; without
+    // a real per-build value the dedup cache's code-version leg is dead — a report-shape/FX code change
+    // wouldn't bust cached reports, and dev + every preview (which share ONE sigma-dedup-dev namespace and
+    // the same dev D1 data version) would compute identical freshness tokens and cross-serve each other's
+    // reports. Injecting the sha makes each build's keys distinct, so the shared namespace is safe.
+    buildId: process.env.SIGMA_BUILD_ID || '',
+    // Master kill switch override (#83). Committed value is "false" (fail dark); an environment opts the
+    // assistant IN by setting SIGMA_ASSISTANT_ENABLED (preview + dev = "true"). Unset → committed "false"
+    // stays, so staging/production remain dark until deliberately flipped at go-live.
+    assistantEnabled: process.env.SIGMA_ASSISTANT_ENABLED || '',
+    // Runtime deploy-env binding for the §9.3 HMAC gate (ADR-0012). The gate (gateTranscript) requires a
+    // signing key ONLY when ENVIRONMENT ∈ {production, staging} — NOT off import.meta.env.PROD, which Vite
+    // inlines true for staging too. Committed value is "development" (fail-open); each target stamps its
+    // own name (preview="preview", staging="staging", production="production"). Unset → committed
+    // "development" stays, so local `wrangler dev` (no render step) is fail-open by construction.
+    environment: process.env.SIGMA_ENVIRONMENT || '',
+    // AI-Gateway account id (account-scoped). The committed AI_GATEWAY_BASE_URL / BGGPT_STT_BASE_URL
+    // embed one account's id; a target on a DIFFERENT Cloudflare account (e.g. the dev/preview account)
+    // stamps its own id here. Unset → the committed URLs are left byte-identical, so production/staging
+    // on the original account are unchanged.
+    aiGatewayAccount: process.env.SIGMA_AI_GATEWAY_ACCOUNT || '',
+    // Public Turnstile site key. Account-bound (the widget lives in one Cloudflare account), so a target
+    // on a different account (dev/preview → b2abee…) stamps its own widget's key here. Unset → committed
+    // key stays (prod/staging invariant). Pairs with the TURNSTILE_SECRET worker secret for that widget.
+    turnstileSiteKey: process.env.SIGMA_TURNSTILE_SITE_KEY || '',
   };
   if (
     names.webName ||
     names.d1Name ||
     names.csvCacheName ||
     names.reportsName ||
-    names.vectorizeName
+    names.vectorizeName ||
+    names.buildId ||
+    names.assistantEnabled ||
+    names.environment ||
+    names.aiGatewayAccount ||
+    names.turnstileSiteKey
   ) {
     out = renderJson(out, names);
   }
@@ -97,9 +131,15 @@ const outPath = join(dirname(input), basename(input).replace(/^wrangler\./, 'wra
 writeFileSync(outPath, out);
 console.log(`wrangler-render: ${input} → ${outPath}`);
 
+// wrangler.jsonc is JSONC: strip full-line comments AND trailing commas before JSON.parse. Both
+// renderJson and assertRateLimiters must use this — a plain JSON.parse throws on the committed file's
+// trailing commas (this previously crashed renderJson on every renamed-resource deploy).
+function parseJsonc(text) {
+  return JSON.parse(stripJsonLineComments(text).replace(/,(\s*[}\]])/g, '$1'));
+}
+
 function assertRateLimiters(text, source) {
-  // wrangler.jsonc is JSONC: strip line comments and trailing commas before JSON.parse.
-  const obj = JSON.parse(stripJsonLineComments(text).replace(/,(\s*[}\]])/g, '$1'));
+  const obj = parseJsonc(text);
   const limiters = (obj.unsafe?.bindings ?? []).filter((b) => b?.type === 'ratelimit');
   const errors = [];
 
@@ -129,17 +169,19 @@ function assertRateLimiters(text, source) {
 }
 
 function renderJson(text, names) {
-  // JSONC: strip line comments AND trailing commas before JSON.parse (mirrors assertRateLimiters).
-  const obj = JSON.parse(stripJsonLineComments(text).replace(/,(\s*[}\]])/g, '$1'));
+  const obj = parseJsonc(text);
   if (names.webName) obj.name = names.webName;
   if (names.d1Name && Array.isArray(obj.d1_databases)) {
     for (const db of obj.d1_databases) {
       if (db && typeof db === 'object') db.database_name = names.d1Name;
     }
   }
-  if (Array.isArray(obj.r2_buckets)) {
-    // Target buckets by BINDING, not blanket: a single name var must not rename every bucket
-    // (e.g. staging's SIGMA_CSV_CACHE_NAME would otherwise clobber the REPORTS bucket too).
+  // Rename R2 buckets by BINDING, not position. The web worker now binds two buckets (CSV_CACHE +
+  // REPORTS); a blanket loop over r2_buckets would rename BOTH to the CSV value, collapsing REPORTS
+  // onto the cache bucket and silently breaking report snapshots. Match each binding to its own env
+  // var; an unset var leaves that bucket's committed name untouched (e.g. dev renames CSV_CACHE to
+  // sigma-csv-cache-dev but shares the single sigma-reports bucket, so SIGMA_REPORTS_NAME stays unset).
+  if ((names.csvCacheName || names.reportsName) && Array.isArray(obj.r2_buckets)) {
     for (const bucket of obj.r2_buckets) {
       if (!bucket || typeof bucket !== 'object') continue;
       if (names.csvCacheName && bucket.binding === 'CSV_CACHE')
@@ -147,11 +189,37 @@ function renderJson(text, names) {
       if (names.reportsName && bucket.binding === 'REPORTS') bucket.bucket_name = names.reportsName;
     }
   }
+  // Rename the Vectorize index per environment (upstream): isolate each env's index by name.
   if (names.vectorizeName && Array.isArray(obj.vectorize)) {
     for (const index of obj.vectorize) {
       if (index && typeof index === 'object') index.index_name = names.vectorizeName;
     }
   }
+  // Stamp the real per-build dedup freshness `c` over the committed "dev" constant.
+  if (names.buildId && obj.vars && typeof obj.vars === 'object') obj.vars.BUILD_ID = names.buildId;
+  // Opt this environment's assistant IN over the committed fail-dark "false".
+  if (names.assistantEnabled && obj.vars && typeof obj.vars === 'object')
+    obj.vars.ASSISTANT_ENABLED = names.assistantEnabled;
+  // Stamp the runtime deploy-env over the committed "development" so the HMAC gate can tell a public
+  // env (production/staging → key required) from an ephemeral one (preview/dev → fail-open).
+  if (names.environment && obj.vars && typeof obj.vars === 'object')
+    obj.vars.ENVIRONMENT = names.environment;
+  // Re-point the AI-Gateway account id in the gateway URLs when deploying to a different account.
+  // Swaps only the 32-hex account segment after `.../v1/`, leaving the gateway slug + path intact, so
+  // it is agnostic to which account id is committed. Unset → URLs untouched (prod/staging byte-identity).
+  if (names.aiGatewayAccount && obj.vars && typeof obj.vars === 'object') {
+    for (const key of ['AI_GATEWAY_BASE_URL', 'BGGPT_STT_BASE_URL']) {
+      if (typeof obj.vars[key] === 'string') {
+        obj.vars[key] = obj.vars[key].replace(
+          /(gateway\.ai\.cloudflare\.com\/v1\/)[0-9a-f]{32}/,
+          `$1${names.aiGatewayAccount}`,
+        );
+      }
+    }
+  }
+  // Stamp the per-account Turnstile site key over the committed one (account-bound widget).
+  if (names.turnstileSiteKey && obj.vars && typeof obj.vars === 'object')
+    obj.vars.TURNSTILE_SITE_KEY = names.turnstileSiteKey;
   return `${JSON.stringify(obj, null, 2)}\n`;
 }
 
