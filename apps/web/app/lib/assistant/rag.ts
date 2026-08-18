@@ -20,10 +20,12 @@
 //
 // Bindings required at runtime (add to wrangler.jsonc; see assistant/README.md): `AI` (Workers AI)
 // and `VECTORIZE` (a 1024-dim, cosine Vectorize index). Typed structurally below so this module is
-// deploy-independent and unit-testable. NB: the structural types are a deliberately NARROWED view of
-// the real bindings, not assignability-checked against them — the route casts (`as unknown as`,
-// assistant.chat.tsx), so changes here must be verified by eye against worker-configuration.d.ts
-// (VectorizeIndex / VectorizeQueryOptions); tsc will not catch a drift through that cast.
+// deploy-independent and unit-testable. The structural types are a deliberately NARROWED view of the
+// real bindings, kept ASSIGNABLE from them: the route binds `env.VECTORIZE` to VectorIndex with no
+// cast (tsc proves the contract), and `env.AI` goes through a typed adapter that calls the real
+// per-model overload (issue #316). Keep it that way — a member the real VectorizeIndex cannot
+// satisfy (e.g. a metadata `filter`, which also needs a provisioned metadata index) belongs in an
+// adapter at the route boundary, not here.
 
 import { CANONICAL_QUERIES, TABLES } from './describe-schema';
 
@@ -36,11 +38,17 @@ export const MAX_EMBED_CHARS = 2048;
 export interface EmbeddingRunner {
   run(model: string, inputs: { text: string[] }): Promise<{ data: number[][] }>;
 }
+// The metadata values Vectorize accepts (mirrors VectorizeVectorMetadataValue). Typed narrowly on
+// the WRITE side so VectorRecord[] stays assignable to VectorizeVector[] — that assignability is
+// what lets the route bind `env.VECTORIZE` without a cast (issue #316). Reads stay `unknown`:
+// consuming code must not trust index contents structurally.
+export type VectorMetadataValue = string | number | boolean | string[];
+
 export interface VectorRecord {
   id: string;
   values: number[];
   namespace?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, VectorMetadataValue>;
 }
 export interface VectorIndex {
   upsert(vectors: VectorRecord[]): Promise<unknown>;
@@ -50,7 +58,6 @@ export interface VectorIndex {
       topK: number;
       returnMetadata?: boolean | 'all' | 'indexed';
       namespace?: string;
-      filter?: Record<string, unknown>;
     },
   ): Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
 }
