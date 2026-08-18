@@ -161,21 +161,36 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
 // rate observable) before trusting the floor in the new regime.
 export const MIN_SCHEMA_SCORE = 0.35;
 
-// What retrieval saw for one question — the observability hook for issue #318. `matched` counts the
-// index's raw namespace-scoped matches; `kept` counts survivors above the relevance floor that
-// actually reached the prompt. kept=0 with matched>0 means the floor dropped everything (the silent
-// full-dictionary fallback); matched=0 means an empty/unindexed namespace.
+// What retrieval saw for one question — the observability hook for issue #318. Three counters so
+// the two distinct failure classes stay distinguishable (they have opposite fixes):
+//   matched    — the index's raw namespace-scoped matches (0 = empty/unindexed namespace, or an
+//                embed that produced no query vector; both report zeros rather than staying silent);
+//   aboveFloor — matches at/above MIN_SCHEMA_SCORE (matched > aboveFloor = the floor is dropping);
+//   kept       — chunks that actually reached the prompt (aboveFloor > kept = matches carried
+//                missing/empty `metadata.text`, i.e. a write→read metadata bug, NOT a floor issue).
+// kept=0 with matched>0 is the silent full-dictionary fallback the counters exist to expose.
 export interface RetrievalStats {
   matched: number;
+  aboveFloor: number;
   kept: number;
 }
 
 export interface RetrieveOptions {
   topK?: number;
   minScore?: number;
-  // Called once per query with the match counts. A callback, not a changed return shape, so the
-  // report is optional and the function's contract stays a plain chunk list.
+  // Called once per retrieval with the match counters. A callback, not a changed return shape, so
+  // the report is optional and the function's contract stays a plain chunk list. Reporting must
+  // never affect the served result: the callback is invoked inside its own try/catch (same
+  // invariant as workers/request-log.ts) — a throwing stats sink cannot cost the turn its chunks.
   onStats?: (stats: RetrievalStats) => void;
+}
+
+function reportStats(onStats: RetrieveOptions['onStats'], stats: RetrievalStats): void {
+  try {
+    onStats?.(stats);
+  } catch {
+    // Observability is best-effort by contract — never let it degrade retrieval.
+  }
 }
 
 /** Retrieve the most relevant data-dictionary chunks for a question, to prepend to the prompt. */
@@ -187,7 +202,12 @@ export async function retrieveSchemaContext(
 ): Promise<string[]> {
   const { topK = 6, minScore = MIN_SCHEMA_SCORE, onStats } = opts;
   const [vec] = await embed(ai, [question]);
-  if (!vec) return [];
+  if (!vec) {
+    // No query vector (embed produced nothing usable): still report, as zeros — a silent branch
+    // here would make this degradation indistinguishable from "stats not wired" (issue #318).
+    reportStats(onStats, { matched: 0, aboveFloor: 0, kept: 0 });
+    return [];
+  }
   // Native namespace, not a metadata filter: it needs no metadata index and excludes every vector
   // outside SCHEMA_NS at the source — stale cohorts (e.g. pre-v2 trap chunks) cannot occupy topK
   // slots, so retrieval always ranks topK eligible chunks.
@@ -196,16 +216,18 @@ export async function retrieveSchemaContext(
     returnMetadata: 'all',
     namespace: SCHEMA_NS,
   });
-  const kept = matches
-    // Keep only matches at/above the relevance floor. Number.isFinite, not `?? 0`: our typed contract
-    // promises a numeric `score`, but if an index backend ever omits it, a scoreless match must read
-    // as below the floor (dropped) — for EVERY minScore, including an explicit 0, where
-    // `(undefined ?? 0) >= 0` would let it through as unranked "context". Zero survivors makes
-    // buildSystemPrompt fall back to the full static dictionary, the safe outcome (review, ydimitrof).
-    .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
-    .map((m) => String(m.metadata?.text ?? ''))
-    .filter(Boolean);
-  onStats?.({ matched: matches.length, kept: kept.length });
+  // Keep only matches at/above the relevance floor. Number.isFinite, not `?? 0`: our typed contract
+  // promises a numeric `score`, but if an index backend ever omits it, a scoreless match must read as
+  // below the floor (dropped) — for EVERY minScore, including an explicit 0, where
+  // `(undefined ?? 0) >= 0` would let it through as unranked "context". Zero survivors makes
+  // buildSystemPrompt fall back to the full static dictionary, the safe outcome (review, ydimitrof).
+  const aboveFloor = matches.filter((m) => Number.isFinite(m.score) && m.score >= minScore);
+  const kept = aboveFloor.map((m) => String(m.metadata?.text ?? '')).filter(Boolean);
+  reportStats(onStats, {
+    matched: matches.length,
+    aboveFloor: aboveFloor.length,
+    kept: kept.length,
+  });
   return kept;
 }
 
