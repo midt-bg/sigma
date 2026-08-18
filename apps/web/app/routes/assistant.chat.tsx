@@ -113,12 +113,19 @@ export async function action({ request, context }: Route.ActionArgs) {
   };
 
   // RAG grounding (best-effort): the most relevant schema chunks for the latest question; on any
-  // failure the system prompt falls back to the full static dictionary.
+  // failure the system prompt falls back to the full static dictionary. Both degradation paths are
+  // LOGGED (issue #318): without the log lines, "retrieval found nothing" and "retrieval crashed"
+  // are operationally indistinguishable from RAG working — the fallback rate must be observable
+  // before MIN_SCHEMA_SCORE can be recalibrated.
   let schemaContext: string[] | undefined;
   if (ai && vectorize && question) {
     try {
-      schemaContext = await retrieveSchemaContext(ai, vectorize, question);
-    } catch {
+      schemaContext = await retrieveSchemaContext(ai, vectorize, question, {
+        onStats: ({ matched, kept }) =>
+          console.log(`[assistant] rag: ${matched} matched, ${kept} kept`),
+      });
+    } catch (error) {
+      console.error('[assistant] rag retrieval failed — full-dictionary fallback', error);
       schemaContext = undefined;
     }
   }
