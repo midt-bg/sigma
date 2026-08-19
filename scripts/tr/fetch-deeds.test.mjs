@@ -16,6 +16,8 @@ import {
   MIN_INTERVAL_MS,
   BREAKER_TRIP,
   TRIES_PER_EIK,
+  RATE_LIMIT_COOLDOWN_MS,
+  MAX_COOLDOWNS,
 } from './fetch-deeds.mjs';
 
 const DEED = (uic) => ({
@@ -79,14 +81,16 @@ const eiksFile = (dir, eiks) => {
 };
 
 /** Drive run() with a recording transport. `routes` maps ЕИК → response (or a function of attempt). */
-function harness(c, eiks, routes, extraArgv = []) {
+function harness(c, eiks, routes, extraArgv = [], now = () => new Date('2026-08-05T12:00:00Z')) {
   const calls = [];
   const waits = [];
   const httpGet = async (url) => {
     const eik = url.split('/').pop();
     calls.push(eik);
     const r = routes[eik];
-    return typeof r === 'function' ? r(calls.filter((e) => e === eik).length) : (r ?? status(404));
+    if (typeof r === 'function') return r(calls.filter((e) => e === eik).length);
+    if (r instanceof Error) throw r;
+    return r ?? status(404);
   };
   return {
     calls,
@@ -94,7 +98,7 @@ function harness(c, eiks, routes, extraArgv = []) {
     promise: run({
       httpGet,
       sleep: async (ms) => void waits.push(ms),
-      now: () => new Date('2026-08-05T12:00:00Z'),
+      now,
       guard: () => {},
       dbFile: c.dbFile,
       rawDir: c.rawDir,
@@ -118,6 +122,18 @@ test('parseTrOptions: defaults are the documented polite pace', () => {
   assert.equal(o.limit, Infinity);
   assert.equal(o.minIntervalMs, MIN_INTERVAL_MS);
   assert.ok(MIN_INTERVAL_MS >= 3000, 'the documented pace is 1 request / 3 s');
+});
+
+test('parseTrOptions: --max-runtime-min is absent by default and parses to milliseconds', () => {
+  const base = ['node', 'x', '--eiks-file', '/tmp/e.txt'];
+  assert.equal(parseTrOptions(base).maxRuntimeMs, Infinity, 'no ceiling unless asked for');
+  assert.equal(parseTrOptions([...base, '--max-runtime-min', '90']).maxRuntimeMs, 90 * 60_000);
+  for (const bad of ['0', '-5', 'abc', '1.5'])
+    assert.throws(
+      () => parseTrOptions([...base, '--max-runtime-min', bad]),
+      /max-runtime-min/i,
+      bad,
+    );
 });
 
 test('parseTrOptions: rejects a pace FASTER than the documented one', () => {
@@ -152,18 +168,97 @@ test('requests are sequential and spaced by at least the documented interval', a
   }
 });
 
-// ── 429 ───────────────────────────────────────────────────────────────────────
-test('a 429 ends the run with exit 2 and marks NOTHING', async () => {
+// ── 429 is a cooldown (ADR-0036) ──────────────────────────────────────────────
+test('a 429 that clears is a cooldown, not a stop: the SAME ЕИК is re-requested', async () => {
+  const c = ctx();
+  try {
+    // B answers 429 once, then normally — the rhythm ADR-0036 measured (~161s and it clears).
+    const h = harness(c, [A, B, C], {
+      [A]: ok(A),
+      [B]: (attempt) => (attempt === 1 ? status(429) : ok(B)),
+      [C]: ok(C),
+    });
+    assert.equal(await h.promise, 0, 'a cleared block is not a failed run');
+    assert.deepEqual(
+      h.calls,
+      [A, B, B, C],
+      'B is retried after the cooldown, and C is still reached',
+    );
+    assert.equal(
+      h.waits.filter((w) => w === RATE_LIMIT_COOLDOWN_MS).length,
+      1,
+      'exactly one cooldown was waited out',
+    );
+    assert.deepEqual(
+      rows(c.dbFile).map((r) => r.eik),
+      [A, B, C].sort(),
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('a block outlasting every cooldown ends the run with exit 2 and marks NOTHING', async () => {
   const c = ctx();
   try {
     const h = harness(c, [A, B, C], { [A]: ok(A), [B]: status(429), [C]: ok(C) });
-    assert.equal(await h.promise, 2, 'a rate-limit block is its own exit code');
-    assert.deepEqual(h.calls, [A, B], 'stops AT the 429 — C is never requested');
+    assert.equal(await h.promise, 2, 'a sustained block keeps its own exit code');
+    // One initial attempt plus one per cooldown, then give up. C is never requested: the run stops,
+    // it does not skip past the block and keep spending the register's budget.
+    assert.deepEqual(h.calls, [A, ...Array(MAX_COOLDOWNS + 1).fill(B)]);
+    assert.equal(h.waits.filter((w) => w === RATE_LIMIT_COOLDOWN_MS).length, MAX_COOLDOWNS);
     // B must not be recorded at all: it is unknown, not absent, and certainly not outside the register.
     assert.deepEqual(
       rows(c.dbFile).map((r) => r.eik),
       [A],
     );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('a STALL during a cooldown is the block talking, not five fresh attempts', async () => {
+  const c = ctx();
+  try {
+    // The block's second face (ADR-0036): once cooling down, the connection hangs instead of
+    // answering 429. Without the tries=1 narrowing each of those would cost TRIES_PER_EIK attempts.
+    const h = harness(c, [A, B], {
+      [A]: ok(A),
+      [B]: (attempt) => {
+        if (attempt === 1) return status(429);
+        throw new Error('timeout after 20000ms');
+      },
+    });
+    assert.equal(await h.promise, 2);
+    const bCalls = h.calls.filter((e) => e === B).length;
+    assert.equal(
+      bCalls,
+      MAX_COOLDOWNS + 1,
+      `one attempt per cooldown, not ${TRIES_PER_EIK} — got ${bCalls}`,
+    );
+    assert.ok(
+      bCalls < 1 + MAX_COOLDOWNS * TRIES_PER_EIK,
+      'a stall must not be fed the full retry budget',
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('the cooldown counter resets on success, so a slow crawl never trips it', async () => {
+  const c = ctx();
+  try {
+    // Every ЕИК meets the limiter once. That is the ordinary rhythm at 5-per-window, and it must not
+    // accumulate into an exit 2 — the counter is CONSECUTIVE cooldowns without a success.
+    const once = (eik) => (attempt) => (attempt === 1 ? status(429) : ok(eik));
+    const h = harness(c, [A, B, C], { [A]: once(A), [B]: once(B), [C]: once(C) });
+    assert.equal(await h.promise, 0);
+    assert.equal(
+      h.waits.filter((w) => w === RATE_LIMIT_COOLDOWN_MS).length,
+      3,
+      'one each, no give-up',
+    );
+    assert.equal(rows(c.dbFile).length, 3);
   } finally {
     c.cleanup();
   }
@@ -177,6 +272,57 @@ test('after a 429 the run resumes exactly where it stopped', async () => {
     const second = harness(c, [A, B, C], { [A]: ok(A), [B]: ok(B), [C]: ok(C) });
     assert.equal(await second.promise, 0);
     assert.deepEqual(second.calls, [B, C], 'A is already cached — not re-requested');
+  } finally {
+    c.cleanup();
+  }
+});
+
+// ── runtime budget ────────────────────────────────────────────────────────────
+test('the runtime budget stops the run cleanly, leaving the rest for the next one', async () => {
+  const c = ctx();
+  const routes = { [A]: ok(A), [B]: ok(B), [C]: ok(C) };
+  // A clock that advances a minute per read. The exact call count is an implementation detail, so the
+  // control run below — same routes, same clock, no budget — is what makes this a real assertion.
+  const ticking = () => {
+    let t = Date.parse('2026-08-05T12:00:00Z');
+    return () => new Date((t += 60_000));
+  };
+  try {
+    const bounded = harness(c, [A, B, C], routes, ['--max-runtime-min', '2'], ticking());
+    assert.equal(await bounded.promise, 0, 'running out of time is not a failure');
+    assert.ok(
+      bounded.calls.length < 3,
+      `expected the budget to stop the run early, got ${bounded.calls.length} requests`,
+    );
+    // Whatever it did reach is cached — that is the whole licence for stopping early.
+    assert.deepEqual(
+      rows(c.dbFile).map((r) => r.eik),
+      bounded.calls.slice().sort(),
+    );
+  } finally {
+    c.cleanup();
+  }
+
+  const c2 = ctx();
+  try {
+    const control = harness(c2, [A, B, C], routes, [], ticking());
+    assert.equal(await control.promise, 0);
+    assert.equal(
+      control.calls.length,
+      3,
+      'without the budget the same clock reaches every candidate',
+    );
+  } finally {
+    c2.cleanup();
+  }
+});
+
+test('a candidate we asked about and could not resolve still fails the run, budget or not', async () => {
+  const c = ctx();
+  try {
+    // „Ran out of time" must not launder a real failure into a green run: B was ATTEMPTED and lost.
+    const h = harness(c, [A, B], { [A]: ok(A), [B]: status(500) }, ['--max-runtime-min', '600']);
+    assert.equal(await h.promise, 1);
   } finally {
     c.cleanup();
   }
