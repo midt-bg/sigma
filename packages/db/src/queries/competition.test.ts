@@ -308,9 +308,16 @@ describe('getCompetition', () => {
     expect(data.scope.year).toBe(2024); // year scoped through Number()
   });
 
-  it('caps the leaderboard size at MAX_TOP when top=50 is requested', async () => {
-    const { scope } = await getCompetition(fakeDb(), { top: 50 });
-    expect(scope.top).toBe(50); // p.top === MAX_TOP branch
+  it('offers exactly two leaderboard sizes — MAX_TOP on an exact request, otherwise the default', async () => {
+    // Not a clamp: the source is `p.top === MAX_TOP ? MAX_TOP : DEFAULT_TOP`, so anything that is not
+    // exactly 50 falls back to 20 rather than being reduced to 50. That fallback is the half that
+    // matters — it is what stops a caller from naming its own leaderboard size (and its own LIMIT).
+    expect((await getCompetition(fakeDb(), { top: 50 })).scope.top).toBe(50);
+
+    for (const top of [999, 51, 35, 0, -1, Number.NaN]) {
+      expect((await getCompetition(fakeDb(), { top })).scope.top).toBe(20);
+    }
+    expect((await getCompetition(fakeDb(), {})).scope.top).toBe(20); // omitted → default
   });
 
   it('scopes every panel by EU funding', async () => {

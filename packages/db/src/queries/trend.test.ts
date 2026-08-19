@@ -184,6 +184,10 @@ describe('getSpendingTrend — zero-spend prior year and empty coverage', () => 
             return this;
           },
           async all<T>() {
+            // Dispatch on the query, like the other fakes in this file: returning the period series for
+            // the sector_totals read too would hand the sector resolver rows of the wrong shape
+            // (period/value_eur instead of division) the moment a test starts asserting `sectors`.
+            if (sql.includes('FROM sector_totals')) return { results: [] as T[] };
             return { results: series as T[] };
           },
           async first<T>() {

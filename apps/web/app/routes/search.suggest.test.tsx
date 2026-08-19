@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SearchGroup, SearchResults } from '@sigma/api-contract';
 
 const { searchMock } = vi.hoisted(() => ({ searchMock: vi.fn() }));
-// The route now wraps the env in getDb() before calling search (upstream #…); stub it as a pass-through
-// so search still receives a non-null handle and the call-args assertions hold.
+// The route now wraps the env in getDb() before calling search (#225, the read-only D1 chokepoint for
+// #199); stub it as a pass-through so search still receives a non-null handle and the call-args
+// assertions hold.
 vi.mock('@sigma/db', () => ({ search: searchMock, getDb: (env: unknown) => env }));
 
 import { loader, trimGroup } from './search.suggest';
