@@ -33,4 +33,14 @@ describe('embeddingRunnerFor', () => {
       /ключове: няма/,
     );
   });
+
+  it('rejects an EMPTY data array for a non-empty input instead of reading [] as success', async () => {
+    // `[]` is truthy: a presence-only check would return { data: [] } and embed()'s count error
+    // would then blame "0 embeddings" instead of the real cause — a provider answering with an
+    // empty batch. The adapter names that case explicitly (review f/u, ydimitrof).
+    const { ai } = fakeBinding({ data: [] });
+    await expect(embeddingRunnerFor(ai).run(EMBED_MODEL, { text: ['а'] })).rejects.toThrow(
+      /празен data масив/,
+    );
+  });
 });
