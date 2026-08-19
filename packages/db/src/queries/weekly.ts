@@ -3,17 +3,26 @@
 // wrapping `signed_at` in `strftime(...)` is NON-SARGABLE — the planner cannot use `idx_contracts_signed`
 // and does a full `contracts` scan per indicator. Acceptable today: this runs cron-only (once/week), off
 // the request path. FOLLOW-UP as the corpus grows: rewrite to a sargable range bound
-// (`signed_at >= :monday AND signed_at < :nextMonday`) so the index applies. Money figures follow the
-// site-wide clean basis (amount_eur IS NOT NULL) used by the rollups (home_totals / sector_totals /
-// authority_totals) wherever the indicator sums money (a/e/g/h); b/c/d/f intentionally do not add that
-// filter — see each function's comment.
+// (`signed_at >= :monday AND signed_at < :nextMonday`) so the index applies. Every indicator excludes
+// synthetic orphan contracts (`is_synthetic != 1`, via WEEK_FILTER below) to match the canonical rollups.
+// Money figures additionally follow the site-wide clean basis (amount_eur IS NOT NULL) wherever the
+// indicator sums money (a/e/g/h); b/c/d/f intentionally do not add the amount filter — see each
+// function's comment.
 
 import { authoritySlug, companySlug, contractSlug } from './identity';
 
-// `strftime('%G-W%V', signed_at)` returns the ISO week for signed_at, and IS NULL when signed_at
-// itself is NULL — the explicit `signed_at IS NOT NULL` just makes the "undated rows never appear
-// in a weekly digest" behaviour readable without knowing that SQLite detail.
-const WEEK_FILTER = `strftime('%G-W%V', c.signed_at) = ?1 AND c.signed_at IS NOT NULL`;
+// The shared row-eligibility predicate for EVERY weekly indicator (all 8 queries below use it), so a
+// row that must not reach any digit is excluded in exactly one place:
+//   • `strftime('%G-W%V', signed_at) = ?1` buckets the row into the ISO week; it IS NULL when signed_at
+//     itself is NULL, so the explicit `signed_at IS NOT NULL` just makes "undated rows never appear in a
+//     weekly digest" readable without knowing that SQLite detail.
+//   • `is_synthetic != 1` drops synthetic orphan contracts — those whose parent is a `неизвестна`
+//     placeholder tender (~11k УНП, `title='(без предмет)'`, per 0006_contracts_is_synthetic.sql). They
+//     can carry a non-NULL `amount_eur` with `value_flag='ok'`, so without this a synthetic row could
+//     inflate a sum, become the week's „Най-голяма поръчка", or make the volume count non-zero and slip
+//     past the zero-row publish gate. The canonical rollups exclude them the same way (precompute.sql:
+//     sector_totals/authority_totals/company_totals all filter `is_synthetic != 1`).
+const WEEK_FILTER = `strftime('%G-W%V', c.signed_at) = ?1 AND c.signed_at IS NOT NULL AND c.is_synthetic != 1`;
 
 // ── a) Total spend ──────────────────────────────────────────────────────────────────────────────
 
@@ -37,8 +46,9 @@ export async function getWeeklyTotal(db: D1Database, isoWeek: string): Promise<W
 // ── b) Volume ────────────────────────────────────────────────────────────────────────────────────
 
 export interface WeeklyCounts {
-  /** Raw activity volume: every signed contract in the week, clean or not. Do NOT render this beside a
-   *  money sum — it counts rows the sum excludes. The zero-row publish gate keys on this. */
+  /** Raw activity volume: every real (non-synthetic) signed contract in the week, clean or not. Do NOT
+   *  render this beside a money sum — it counts rows the sum excludes. The zero-row publish gate keys on
+   *  this, so synthetic rows are excluded (WEEK_FILTER) or a placeholder-only week would falsely publish. */
   contracts: number;
   /** COUNT of the rows behind `getWeeklyTotal` (`amount_eur IS NOT NULL`). Pair a money figure with
    *  THIS, never with `contracts` — see precompute.sql's COUNT/SUM CONSISTENCY rule. */
@@ -503,10 +513,12 @@ export interface WeeklyReconciliation {
 
 /**
  * Log-only sanity check: a single week's clean spend can never exceed the all-time `home_totals`
- * total (both sum the same `amount_eur IS NOT NULL` basis, so they're directly comparable) — unlike
- * `contracts`, whose corpus count does NOT cover the same set as `value_eur` (see home_totals'
- * schema comment). Never throws; the producer logs the anomaly and ships the digest regardless, since
- * a reconciliation mismatch means the rollup is stale, not that the week's own numbers are wrong.
+ * total. The week's rows are a strict subset of `home_totals.value_eur`'s — the week is one ISO week and
+ * additionally drops synthetic rows (WEEK_FILTER), whereas `home_totals.value_eur` is `SUM(amount_eur)`
+ * over ALL contracts, all-time, and does NOT itself filter `is_synthetic` (precompute.sql). So `week ≤
+ * home` is a valid loose upper bound, not an equal-basis comparison. Never throws; the producer logs the
+ * anomaly and ships the digest regardless, since a reconciliation mismatch means the rollup is stale, not
+ * that the week's own numbers are wrong.
  */
 export async function reconcileWeeklyTotal(
   db: D1Database,

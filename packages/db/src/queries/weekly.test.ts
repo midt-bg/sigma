@@ -394,3 +394,48 @@ describe('reconcileWeeklyTotal (#167)', () => {
     warn.mockRestore();
   });
 });
+
+// A synthetic orphan contract: its parent tender is a `неизвестна` placeholder, so `is_synthetic=1` and
+// the tender's title is '(без предмет)'. It can still carry a non-NULL amount_eur with value_flag='ok',
+// so without WEEK_FILTER's `is_synthetic != 1` guard it would inflate the week sum, become the week's
+// largest/top contract, and make the volume count non-zero — bypassing the zero-row publish gate for a
+// week that should not publish. The base seed inserts only real (default is_synthetic=0) rows, so this
+// row discriminates the guard. Matches how precompute.sql's rollups exclude synthetic rows.
+const SYNTHETIC_HI_ROW = `INSERT INTO contracts
+  (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur, is_synthetic) VALUES
+  ('c:SYNTH_HI', 't:A', 'eik:200000001', 9000, 'EUR', '2024-01-04', 1, 'ok', 9000, 1);`;
+// The same shape, but the ONLY row of an otherwise-empty week — proves the zero-row gate stays at 0.
+const SYNTHETIC_EMPTY_WEEK_ROW = `INSERT INTO contracts
+  (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur, is_synthetic) VALUES
+  ('c:SYNTH_EMPTY', 't:A', 'eik:200000001', 5000, 'EUR', '2030-01-02', 1, 'ok', 5000, 1);`;
+
+describe('synthetic orphan contracts are excluded from every indicator (accuracy, review of #80)', () => {
+  it('does not inflate the week total (indicator a) with a synthetic amount', async () => {
+    const db = realDb();
+    open!.exec(SYNTHETIC_HI_ROW);
+    const { totalEur } = await getWeeklyTotal(db, TARGET_WEEK);
+    expect(totalEur).toBe(3000); // 1000 (c:MON) + 2000 (c:SUN); c:SYNTH_HI (9000) excluded by is_synthetic != 1
+  });
+
+  it('does not let a synthetic row become the week largest (indicator c) despite the highest amount', async () => {
+    const db = realDb();
+    open!.exec(SYNTHETIC_HI_ROW);
+    const largest = await getWeeklyLargestContract(db, TARGET_WEEK);
+    expect(largest!.contractSlug).toBe('SUN'); // NOT c:SYNTH_HI (9000, value_flag='ok') — filtered by is_synthetic
+    expect(largest!.amountEur).toBe(2000);
+  });
+
+  it('excludes a synthetic row from the top-contracts surface (indicator f)', async () => {
+    const db = realDb();
+    open!.exec(SYNTHETIC_HI_ROW);
+    const top = await getWeeklyTopContracts(db, TARGET_WEEK);
+    expect(top.map((c) => c.contractSlug)).toEqual(['SUN', 'MON']); // the synthetic 9000 never appears
+  });
+
+  it('keeps the zero-row publish gate at 0 for a week whose only row is synthetic (indicator b)', async () => {
+    const db = realDb();
+    open!.exec(SYNTHETIC_EMPTY_WEEK_ROW);
+    const counts = await getWeeklyCounts(db, EMPTY_WEEK);
+    expect(counts.contracts).toBe(0); // the synthetic row must not make an otherwise-empty week publishable
+  });
+});
