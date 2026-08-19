@@ -18,14 +18,21 @@ export function embeddingRunnerFor(ai: Ai): EmbeddingRunner {
   return {
     run: async (model, inputs) => {
       const out = await ai.run(model, { text: inputs.text });
-      if ('data' in out && out.data) return { data: out.data };
+      // `data.length > 0` too, not just presence: an empty `data: []` is truthy and would read as
+      // "success" here for a NON-empty input (embed() never calls the adapter with empty texts) —
+      // the inverse failure of the missing-key case, named separately for the operator (review
+      // f/u, ydimitrof). embed()'s count check would still throw, but with a message that blames
+      // "0 embeddings" instead of the real cause: a provider that answered with an empty batch.
+      if ('data' in out && Array.isArray(out.data) && out.data.length > 0) {
+        return { data: out.data };
+      }
       // Preserve the diagnostic a blind cast used to lose: name the unexpected shape. KEYS ONLY —
       // an error envelope could echo the embedded input, and user text must not land in logs.
-      throw new Error(
-        `embeddings: неочаквана форма на отговора от ${EMBED_MODEL} (ключове: ${
-          Object.keys(out).join(', ') || 'няма'
-        })`,
-      );
+      const shape =
+        'data' in out && Array.isArray(out.data)
+          ? 'празен data масив за непразен вход'
+          : `ключове: ${Object.keys(out).join(', ') || 'няма'}`;
+      throw new Error(`embeddings: неочаквана форма на отговора от ${EMBED_MODEL} (${shape})`);
     },
   };
 }
