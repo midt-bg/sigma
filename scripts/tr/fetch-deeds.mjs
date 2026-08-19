@@ -41,7 +41,6 @@ import {
   splitLinkRecord,
   upsertVerdict,
   pendingVerdictEiks,
-  verdictCoverage,
 } from './cache.mjs';
 import { evidenceVerdict, reconcileTermination, RULES_VERSION } from './evidence.mjs';
 import {
@@ -189,6 +188,10 @@ export function readLinksFile(file) {
 export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
   let decided = 0;
   let refused = 0;
+  // Counted, not merely stored. `shortName`/`latinInName` are the ladder's own record of names it
+  // could not assert on; columns written and never read are a claim nobody checks.
+  let shortName = 0;
+  let latinInName = 0;
   for (const link of links) {
     if (link.eik !== eik) continue;
     try {
@@ -220,6 +223,8 @@ export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
         reconLabel: recon.label,
         decidedAt: now.toISOString(),
       });
+      if (verdict.shortName) shortName++;
+      if (verdict.latinInName) latinInName++;
       decided++;
     } catch (err) {
       console.error(
@@ -228,7 +233,7 @@ export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
       refused++;
     }
   }
-  return { decided, refused };
+  return { decided, refused, shortName, latinInName };
 }
 
 function atomicWrite(file, buf) {
@@ -342,6 +347,9 @@ export async function run({
     );
 
     let unresolved = 0;
+    let undecided = 0;
+    let shortNames = 0;
+    let latinNames = 0;
     let consecutive = 0;
     let first = true;
     let deadlineHit = 0;
@@ -397,17 +405,29 @@ export async function run({
       // transient. Getting this backwards either caches a false negative forever or leaves ~4 ЕИК
       // permanently unresolved so the run can never exit 0.
       if (res.status === 200 && res.body.length === 0) {
-        markOutsideTr(db, eik, 'HTTP 200, empty body — no deed in the Търговски регистър', now());
         // „Outside the register" is a decidable answer, not an absence of one — evidenceVerdict turns
-        // it into a held link. Recording it here is what stops the next run re-asking the register a
-        // question it has already answered.
-        if (linksFile)
+        // it into a held link, and recording it stops the next run re-asking a question already
+        // answered. But only on the SECOND identical observation, which is what the measurement behind
+        // this actually says: an empty body is also what a misbehaving edge returns, and one of those
+        // must not become a 30-day negative for a real company.
+        const confirmed = markOutsideTr(
+          db,
+          eik,
+          'HTTP 200, empty body — no deed in the Търговски регистър',
+          now(),
+        );
+        if (confirmed && linksFile)
           decideLinks(db, { eik, deed: null, outsideTr: true, links: wanted, now: now() });
+        if (!confirmed)
+          console.log(`  ${eik}: empty 200 — provisional, awaiting a second observation`);
         consecutive = 0;
         continue;
       }
       if (res.status === 404) {
-        markOutsideTr(db, eik, 'HTTP 404 — not in the Търговски регистър (BULSTAT/ДЗЗД?)', now());
+        // A 404 says „not here" on its own, in a way an empty body does not — one look is enough.
+        markOutsideTr(db, eik, 'HTTP 404 — not in the Търговски регистър (BULSTAT/ДЗЗД?)', now(), {
+          unambiguous: true,
+        });
         if (linksFile)
           decideLinks(db, { eik, deed: null, outsideTr: true, links: wanted, now: now() });
         consecutive = 0;
@@ -436,9 +456,17 @@ export async function run({
         // the wrong company (R8).
         assertUicEcho(deed, eik);
 
-        // The raw response is the ONLY place names live; it stays under git-ignored scratch. Written
-        // only after the echo check, so a deed for the wrong company never lands on disk.
-        atomicWrite(deedPath(eik, rawDir), res.body);
+        // In links mode the deed NEVER reaches the disk. It is parsed from the response body and
+        // decided a few lines below, and nothing else reads the file — so writing it would create a
+        // window with no upside: a crash between the write and the delete left a raw deed on disk
+        // under a FRESH verdict, which means the next run skips that ЕИК, the purge sees neither an
+        // orphan nor an expired row, and third-party names sit there for the full retention period.
+        // Not writing beats deleting quickly.
+        //
+        // Without --links-file the file is still the point: it is the only place the decision can be
+        // made from later. Written after the echo check either way, so a deed for the wrong company
+        // never lands on disk.
+        if (!linksFile) atomicWrite(deedPath(eik, rawDir), res.body);
         const seat = registrySeat(deed);
         const form = registryLegalForm(deed);
         upsertDeed(db, {
@@ -446,7 +474,7 @@ export async function run({
           status: 'fetched',
           httpStatus: 200,
           fetchedAt: now().toISOString(),
-          rawPath: path.relative(rawDir, deedPath(eik, rawDir)),
+          rawPath: linksFile ? null : path.relative(rawDir, deedPath(eik, rawDir)),
           bodySha256: crypto.createHash('sha256').update(res.body).digest('hex'),
           legalFormCode: form.code,
           legalFormVerdict: form.verdict,
@@ -456,19 +484,25 @@ export async function run({
         });
 
         // Decide NOW, while the deed is in hand — the decision outlives the run, the deed must not
-        // (ADR-0037). Then drop the raw body immediately: the end-of-job `rm -rf` stays as the
-        // backstop, but a deed deleted the moment it has served its purpose cannot be left behind by
-        // a failure between here and there.
+        // (ADR-0037).
         if (linksFile) {
-          const { decided, refused } = decideLinks(db, {
+          const out = decideLinks(db, {
             eik,
             deed,
             outsideTr: false,
             links: wanted,
             now: now(),
           });
-          if (refused) unresolved++;
-          fs.rmSync(deedPath(eik, rawDir), { force: true });
+          const { decided, refused } = out;
+          shortNames += out.shortName;
+          latinNames += out.latinInName;
+          // Counted, and deliberately NOT as `unresolved`. A link whose evidence cannot be read is a
+          // fact about that LINK; the ЕИК was reached and everything else on it was decided. Folding
+          // the two together made one deterministically unparseable deed exit 1 → the workflow stop
+          // before load.mjs → the same failure next run, for ever. The old load.mjs said exactly this
+          // before the code moved: „one malformed deed out of ~400 deciding the fate of every other
+          // link… loud, per link, fail-closed." The link simply has no verdict, and is held.
+          undecided += refused;
           if (decided === 0 && refused === 0) {
             console.error(
               `  ${eik}: fetched but no link claimed it — candidate set is inconsistent`,
@@ -484,6 +518,21 @@ export async function run({
       consecutive = 0;
     }
 
+    if (shortNames || latinNames) {
+      // The ladder refuses to assert on a name it cannot read as three Cyrillic tokens. Reported so the
+      // recall cost of that rule is a number somebody can see, rather than a column nobody reads.
+      console.log(
+        `evidence telemetry: ${shortNames} link(s) with a short declarant name, ` +
+          `${latinNames} with Latin characters — both withhold rather than guess`,
+      );
+    }
+    if (undecided > 0) {
+      // Loud, and not fatal. These links are held for want of readable evidence — the same end state
+      // an uncrawled ЕИК produces — and the run's other work stands.
+      console.error(
+        `${undecided} link(s) undecided — their evidence could not be read; they stay held`,
+      );
+    }
     if (unresolved > 0) {
       // Deliberately still exit 1. „Ran out of time" is not a failure (the candidates were never
       // attempted, and the next run takes them), but a candidate we ASKED about and could not resolve

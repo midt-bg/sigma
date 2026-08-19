@@ -22,7 +22,13 @@ import {
   closelyHeldForm,
   nameDistinctiveness,
 } from './classify.mjs';
-import { openCache, coverage, readVerdict, splitLinkRecord } from '../tr/cache.mjs';
+import {
+  openCache,
+  coverage,
+  readVerdict,
+  splitLinkRecord,
+  verdictIsCurrent,
+} from '../tr/cache.mjs';
 import { TR_DB } from '../tr/paths.mjs';
 // evidenceVerdict and reconcileTermination are deliberately NOT imported any more: both need the deed,
 // and by the time this pass runs the deed is gone by design (ADR-0037). The crawler calls them; this
@@ -680,17 +686,29 @@ console.log(
 // published and audit.mjs hard-fails on exactly that, with the rules_version escape for a deliberate
 // bump. Two gates for one duty was the redundancy; the weaker one goes.
 //
-// What stays is the COLD-START floor. With no prior published set there is nothing for monotonicity to
-// compare against, so a first run could publish a fragment unopposed. Below the floor it refuses.
-const COLD_START_FLOOR = 0.95;
-const linksAwaitingVerdict = candidateLinks.filter((l) => {
-  const row = readVerdict(trCache, l.linkKey);
-  return !(
-    row != null &&
-    row.rulesVersion === RULES_VERSION &&
-    row.inputsHash === splitLinkRecord(l).inputsHash
-  );
-});
+// What stays is a floor on how much of the surface may rest on no verdict at all — and it applies to
+// EVERY run, not only a first one. Keying it on „is there a prior published set" left a 95% floor that
+// a single leftover published row switched off entirely: monotonicity would then protect that one row
+// while a decimated surface shipped past the ship floor of 50 beneath it.
+//
+// Always-on is affordable because the currency test below deliberately ignores AGE — a verdict stops
+// being current only when the rules move or the declaration changes. Steady state is therefore ~100%,
+// and the two ways to fall below it are the two where refusing is right: a cold start, and a rules
+// bump whose re-crawl has not caught up (publishing then would mean publishing on a ladder this code
+// no longer speaks). `--allow-partial-tr` remains the stated override for a smaller surface.
+const VERDICT_FLOOR = 0.95;
+// `verdictIsCurrent`, not a hand-rolled copy. There were two copies of this predicate here and both
+// could be deleted with every test still green — on the LAST fail-closed check before publishing a
+// claim about a named person. The duplication is why the cache-side test could not kill the loader-side
+// mutation; one definition means one thing to test.
+//
+// `maxAgeDays` is deliberately omitted: age governs what the CRAWLER re-asks, not what may be
+// published. Withholding on age would delete a true claim the moment a rate limit delayed its refresh,
+// and `purgeExpired` already bounds how stale a stored lookup can get.
+const verdictCurrency = { rulesVersion: RULES_VERSION };
+const linksAwaitingVerdict = candidateLinks.filter(
+  (l) => !verdictIsCurrent(readVerdict(trCache, l.linkKey), splitLinkRecord(l), verdictCurrency),
+);
 const verdictsCurrent = candidateLinks.length - linksAwaitingVerdict.length;
 const verdictRatio = candidateLinks.length === 0 ? 1 : verdictsCurrent / candidateLinks.length;
 console.log(
@@ -706,15 +724,15 @@ if (linksAwaitingVerdict.length) {
       (eiks.length > 20 ? ` … and ${eiks.length - 20} more` : ''),
   );
 }
-if (priorPublished.length === 0 && verdictRatio < COLD_START_FLOOR && !ALLOW_PARTIAL_TR) {
+if (verdictRatio < VERDICT_FLOOR && !ALLOW_PARTIAL_TR) {
   trCache.close();
   db.close();
   throw new Error(
-    `REFUSE TO LOAD: first published run, and only ${verdictsCurrent} of ${candidateLinks.length} ` +
-      `link(s) carry a current registry verdict (${(verdictRatio * 100).toFixed(1)}% < ` +
-      `${COLD_START_FLOOR * 100}%). With nothing published before, the monotonicity gate has no ` +
-      `prior set to protect, so a fragment would ship unopposed. Re-run the crawler until the cache ` +
-      `fills — it resumes — or pass --allow-partial-tr to state that a smaller surface is intended.` +
+    `REFUSE TO LOAD: only ${verdictsCurrent} of ${candidateLinks.length} link(s) carry a current ` +
+      `registry verdict (${(verdictRatio * 100).toFixed(1)}% < ${VERDICT_FLOOR * 100}%). Publishing ` +
+      `now would rest the surface on evidence most of it does not have. Re-run the crawler until the ` +
+      `cache fills — it resumes — or pass --allow-partial-tr to state that a smaller surface is ` +
+      `intended.` +
       `\nAwaiting a verdict (ЕИК): ${[...new Set(linksAwaitingVerdict.map((l) => l.eik))]
         .sort()
         .slice(0, 20)
@@ -821,9 +839,7 @@ for (const rec of agg.values()) {
   const linkRecord = linkRecordFor(rec);
   const cached = linkRecord ? readVerdict(trCache, linkRecord.linkKey) : null;
   const usable =
-    cached != null &&
-    cached.rulesVersion === RULES_VERSION &&
-    cached.inputsHash === splitLinkRecord(linkRecord).inputsHash;
+    cached != null && verdictIsCurrent(cached, splitLinkRecord(linkRecord), verdictCurrency);
   if (!usable && cached != null) {
     console.error(
       `  ${rec.eik}: verdict is stale (rules or declaration moved) — link held until re-crawled`,

@@ -1188,46 +1188,67 @@ test('a MISSING Trade Register cache refuses the whole load', () => {
   );
 });
 
-test('a partial cache at COLD START refuses — a fragment must not ship unopposed', () => {
-  // The shape a resumed-but-unfinished crawl leaves behind. Before ADR-0037 any gap refused outright;
-  // now the refusal is scoped to the case where refusing is the ONLY protection there is — a first
-  // published run, where §8's monotonicity gate has no prior surface to compare against.
-  const partialDb = path.join(dir, 'partial-cache.sqlite');
-  const partialRaw = path.join(dir, 'partial-deeds');
-  buildTrCache(
-    partialDb,
-    partialRaw,
-    { 111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] } },
-    { omit: ['444444447', '777777773'] },
-  );
-  // Cold start: wipe the prior published surface the earlier tests built, so nothing protects it.
-  const wipe = new DatabaseSync(DB);
-  wipe.exec('DELETE FROM interest_links');
-  wipe.close();
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
-  );
-  runLoad(); // restore the full built state for any later reader
-});
+test('a verdict from an OLDER rules version is held, never published', () => {
+  // The last fail-closed check before publishing a claim about a named person, and it was untested:
+  // both `rules_version` comparisons could be deleted with all 273 tests still green. Without it a
+  // forgotten RULES_VERSION bump means a correction to the evidence ladder does not withdraw the
+  // claims the old ladder made — for as long as the verdict cache keeps them.
+  const staleDb = path.join(dir, 'stale-rules.sqlite');
+  const staleRaw = path.join(dir, 'stale-rules-deeds');
+  buildTrCache(staleDb, staleRaw, { 111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] } });
 
-test('a partial cache with a surface ALREADY published proceeds — monotonicity takes the duty', () => {
-  // The change that makes an incremental crawl possible at all. A run whose crawl was cut short by the
-  // rate limiter must be able to publish what it has; the protection against a shrinking surface is
-  // audit.mjs's monotonicity gate, which sees the prior published set and hard-fails on a vanished
-  // claim. Two gates for one duty was the redundancy — this asserts the weaker one is gone.
-  const partialDb = path.join(dir, 'partial-warm.sqlite');
-  const partialRaw = path.join(dir, 'partial-warm-deeds');
-  buildTrCache(partialDb, partialRaw, {}, { omit: ['444444447', '777777773'] });
-  runLoad(); // a full run first, so a published surface exists for the gate to protect
-  const published = () => {
+  const before = (() => {
+    runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw });
     const db = open();
     const n = db.prepare(`SELECT COUNT(*) n FROM interest_links WHERE status='published'`).get().n;
     db.close();
     return n;
-  };
-  assert.ok(published() > 0, 'the fixture must publish something for this to mean anything');
+  })();
+  assert.ok(before > 0, 'the fixture must publish something for this to prove anything');
+
+  // Age the LADDER, not the lookup: same inputs, same freshness, a version the code no longer speaks.
+  const cache = new DatabaseSync(staleDb);
+  cache.exec(`UPDATE verdicts SET rules_version = 'tr-rules-0'`);
+  cache.close();
+
+  assert.throws(
+    () => runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw }),
+    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+    'not one claim may ride a ladder version this code no longer speaks — and the run says so loudly',
+  );
+  runLoad(); // restore the full built state for any later reader
+});
+
+test('a MOSTLY complete cache still publishes — an incremental crawl has to be able to', () => {
+  // The change that makes an incremental crawl possible at all: a run whose crawl was cut short must
+  // still publish. Note what „incomplete" now means — a verdict merely past its refresh age is still
+  // usable, because the loader's currency test ignores age deliberately. Only a link that has NEVER
+  // been decided counts against the floor, and a few of those are tolerable.
+  const partialDb = path.join(dir, 'partial-warm.sqlite');
+  const partialRaw = path.join(dir, 'partial-warm-deeds');
+  buildTrCache(partialDb, partialRaw, {}, { omit: ['121212129'] });
   assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  runLoad(); // restore the full built state for any later reader
+});
+
+test('a substantially incomplete cache refuses EVEN WITH a prior published surface', () => {
+  // The floor used to switch off entirely the moment anything had ever been published — so one
+  // leftover row from a partial ship, or from the direct UPDATE the suppression runbook sanctions,
+  // disabled it. Monotonicity would then dutifully protect that single row while a decimated surface
+  // shipped past the ship floor of 50 underneath it.
+  const partialDb = path.join(dir, 'partial-cold.sqlite');
+  const partialRaw = path.join(dir, 'partial-cold-deeds');
+  buildTrCache(partialDb, partialRaw, {}, { omit: ['444444447', '777777773', '666666665'] });
+  const db = open();
+  const prior = db
+    .prepare(`SELECT COUNT(*) n FROM interest_links WHERE status='published'`)
+    .get().n;
+  db.close();
+  assert.ok(prior > 0, 'there must be a prior surface for this to prove anything');
+  assert.throws(
+    () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
+    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+  );
   runLoad(); // restore the full built state for any later reader
 });
 

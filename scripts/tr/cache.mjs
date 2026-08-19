@@ -21,11 +21,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeEik } from './paths.mjs';
+import { isSealedFact } from './evidence.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS deeds (
   eik                  TEXT PRIMARY KEY,
-  status               TEXT NOT NULL,     -- fetched | outside_tr
+  status               TEXT NOT NULL,     -- fetched | outside_tr_pending | outside_tr
   http_status          INTEGER,
   fetched_at           TEXT NOT NULL,
   raw_path             TEXT,              -- relative to the raw dir; the ONLY place names live
@@ -75,9 +76,48 @@ const VERDICT_ADDED_COLUMNS = [
   ['recon_label', 'TEXT'],
 ];
 
-/** Open (creating if absent) the cache at `file`. Idempotent — never wipes an existing cache. */
+/**
+ * Can this file be opened and read as our cache? `PRAGMA integrity_check` catches structural damage;
+ * the table probe catches a file that is valid sqlite but not this schema.
+ */
+function cacheIsUsable(file) {
+  let db;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+    if (db.prepare('PRAGMA integrity_check').get()?.integrity_check !== 'ok') return false;
+    db.prepare('SELECT COUNT(*) FROM deeds').get();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      /* a file too damaged to close is a file we have already refused */
+    }
+  }
+}
+
+/**
+ * Open (creating if absent) the cache at `file`. Idempotent — never wipes a HEALTHY existing cache.
+ *
+ * A corrupt one is a different matter, and it became one the moment this cache started travelling
+ * between runs (ADR-0037): a truncated restore would throw here, the workflow's `if: always()` save
+ * would then store that same corrupt file under a NEWER key, and every later run would restore it in
+ * preference to the good one. Self-perpetuating, with no way out but a human deleting the cache. So an
+ * unusable file is moved aside and the run starts empty — losing progress, which is recoverable,
+ * rather than the pipeline, which by then is not.
+ */
 export function openCache(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file) && !cacheIsUsable(file)) {
+    const quarantined = `${file}.corrupt-${Date.now()}`;
+    fs.renameSync(file, quarantined);
+    console.error(
+      `TR cache at ${file} failed its integrity check — moved to ${quarantined}, starting empty. ` +
+        `Progress is lost; the crawl resumes from scratch rather than compounding the damage.`,
+    );
+  }
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
@@ -167,19 +207,33 @@ export function upsertDeed(db, d) {
 }
 
 /**
- * Mark an ЕИК as not present in the Trade Register (ДЗЗД, БУЛСТАT associations).
+ * Observe an empty-200 „not in the register" answer, and mark it permanent only on the SECOND one.
  *
- * PERMANENT BY INTENT, so the caller must only reach here on a DOCUMENTED positive response. A 429,
- * a 5xx or a timeout is transient and must never be cached as a negative — that is how a temporary
- * wall becomes permanent data (R6).
+ * PERMANENT BY INTENT, so the caller must only reach here on a DOCUMENTED positive response — a 429, a
+ * 5xx or a timeout is transient and must never be cached as a negative (R6). But the measurement this
+ * rests on is „empty on two consecutive requests", and the code used to mark on the first: a single
+ * anomalous empty 200 — from an edge, say, of the kind that already answers our 429s with zero bytes —
+ * would have become a 30-day negative for a real company.
+ *
+ * The second observation costs nothing extra in the steady state: a provisional row writes no verdict,
+ * so the ЕИК stays pending and the next run re-asks it in place of the refresh it would have spent
+ * anyway. Returns whether the mark is now final, so the caller knows whether it may decide the links.
+ *
+ * `unambiguous` is for a status that says „not here" on its own — a 404 — where a second look adds
+ * nothing. The empty body is the case that needs corroboration, because an empty body is also what a
+ * misbehaving edge produces.
  */
-export function markOutsideTr(db, eik, reason, now = new Date()) {
+export function markOutsideTr(db, eik, reason, now = new Date(), { unambiguous = false } = {}) {
+  const prior = readDeed(db, eik);
+  const confirming =
+    unambiguous || prior?.status === 'outside_tr_pending' || prior?.status === 'outside_tr';
   upsertDeed(db, {
     eik,
-    status: 'outside_tr',
+    status: confirming ? 'outside_tr' : 'outside_tr_pending',
     fetchedAt: now.toISOString(),
-    outsideReason: reason,
+    outsideReason: confirming ? reason : `${reason} (awaiting a second observation)`,
   });
+  return confirming;
 }
 
 /** One row by ЕИК, camelCased, or null. */
@@ -265,6 +319,26 @@ export function splitLinkRecord(rec) {
 }
 
 /**
+ * The closed vocabularies a stored verdict may use, enforced at WRITE.
+ *
+ * `load.mjs` already refuses to seal a matched_fact outside the vocabulary — but that runs a month
+ * later, on a row that has by then crossed into a cache which travels between runs (ADR-0037). The
+ * schema's promise is „a ROLE, never the person holding it"; a promise checked only by the eventual
+ * reader is a promise the writer never made. Sourced from evidence.mjs so there is one definition:
+ * `isSealedFact` for the fact, and these two for the columns beside it.
+ */
+const VERDICT_KINDS = new Set([
+  'bar_joint_stock',
+  'confirmed',
+  'document',
+  'document_uncorroborated',
+  'outside_tr',
+  'refuted',
+  'unknown',
+]);
+const REGISTRY_ROLES = new Set(['owner', 'manager']);
+
+/**
  * Record the decision for one link. Replaces on re-decision so a refresh never duplicates a row.
  *
  * Screened by the same ЕГН rail as `upsertDeed` — the verdict crosses a run boundary, which makes it
@@ -273,6 +347,20 @@ export function splitLinkRecord(rec) {
 export function upsertVerdict(db, v) {
   const eik = safeEik(v.eik);
   for (const [f, val] of Object.entries(v)) if (!EGN_EXEMPT.has(f)) assertNoEgnShape(val, f);
+  if (!VERDICT_KINDS.has(String(v.kind)))
+    throw new Error(
+      `REFUSE TO STORE: verdict kind ${JSON.stringify(v.kind)} is outside the ladder`,
+    );
+  if (!isSealedFact(v.matchedFact))
+    throw new Error(
+      `REFUSE TO STORE: matched_fact ${JSON.stringify(v.matchedFact)} is outside the closed ` +
+        `vocabulary — a name may have leaked out of a deed (#279 §9, ADR-0033 decision 5)`,
+    );
+  if (v.registryRole != null && !REGISTRY_ROLES.has(String(v.registryRole)))
+    throw new Error(
+      `REFUSE TO STORE: registry_role ${JSON.stringify(v.registryRole)} is not a role — this column ` +
+        `holds an office, never the person filling it`,
+    );
   db.prepare(
     `INSERT INTO verdicts (link_key, eik, rules_version, inputs_hash, kind, publishable,
         registry_role, matched_fact, entry_number, entry_date, short_name, latin_in_name,
@@ -361,21 +449,52 @@ export function verdictCoverage(db, links, opts) {
 }
 
 /**
- * The ЕИК that still need a deed fetched, because at least one link on them has no current verdict.
+ * The ЕИК that still need a deed fetched, because at least one link on them has no current verdict —
+ * **oldest first**, never-decided before that.
+ *
+ * The ordering is load-bearing, not cosmetic. A run bounded by `--max-runtime-min` consumes this list
+ * from the front and stops; sorted by ЕИК it would serve the SAME prefix every time and the tail would
+ * never be decided at all, then lose its rows to the purge and take the published links with it. Sorted
+ * by staleness the queue rotates: whatever waited longest goes first, so every ЕИК comes round.
  *
  * Deliberately keyed on links rather than on ЕИК: one company can carry several links, and a rules
- * bump invalidates them independently of when the deed was last seen.
+ * bump invalidates them independently of when the deed was last seen. A company's position is its
+ * WORST link's — the one waiting longest — so a company is never held back by its freshest claim.
  */
 export function pendingVerdictEiks(db, links, opts) {
-  const out = new Set();
+  const oldest = new Map();
   for (const link of links) {
-    if (!verdictIsCurrent(readVerdict(db, link.linkKey), link, opts)) out.add(safeEik(link.eik));
+    const row = readVerdict(db, link.linkKey);
+    if (verdictIsCurrent(row, link, opts)) continue;
+    const eik = safeEik(link.eik);
+    // '' for never-decided, so it sorts ahead of every ISO timestamp: a link that has never had a
+    // verdict is further from being publishable than one whose verdict merely went stale.
+    const waitingSince = row?.decidedAt ?? '';
+    const prev = oldest.get(eik);
+    if (prev === undefined || waitingSince < prev) oldest.set(eik, waitingSince);
   }
-  return [...out].sort();
+  // Tie-broken on ЕИК so the order is total and a run is reproducible.
+  return [...oldest.entries()]
+    .sort((a, b) => (a[1] === b[1] ? (a[0] < b[0] ? -1 : 1) : a[1] < b[1] ? -1 : 1))
+    .map(([eik]) => eik);
 }
 
-/** ADR-0033 decision 5: one monthly refresh cycle plus slack. See purgeExpired. */
+/**
+ * Deed retention. ADR-0033 decision 5 — a PRIVACY obligation over third-party personal data, and the
+ * reason this number exists at all. One refresh cycle plus slack. See purgeExpired.
+ */
 export const RETENTION_DAYS = 35;
+
+/**
+ * Verdict retention, and deliberately a DIFFERENT number for a different reason.
+ *
+ * A verdict holds no personal data (ADR-0037), so nothing obliges us to delete it on a privacy clock;
+ * what the number bounds is how stale a published claim's evidence may be. It must therefore exceed
+ * the time it takes for a link to come round again — `--max-age-days` (30) plus one cadence gap (7)
+ * plus queue slack — or the purge would delete verdicts before the crawl could refresh them, and the
+ * surface would shrink on its own schedule. 45 carries that margin.
+ */
+export const VERDICT_RETENTION_DAYS = 45;
 
 /**
  * Which of `wanted` still need a request — the resumability primitive.
@@ -388,10 +507,16 @@ export const RETENTION_DAYS = 35;
 export function pendingEiks(db, wanted, { maxAgeDays = null, now = new Date() } = {}) {
   const cutoff = maxAgeDays == null ? null : now.getTime() - maxAgeDays * 86_400_000;
   const out = [];
-  const stmt = db.prepare('SELECT fetched_at FROM deeds WHERE eik = ?');
+  const stmt = db.prepare('SELECT fetched_at, status FROM deeds WHERE eik = ?');
   for (const raw of wanted) {
     const row = stmt.get(safeEik(raw));
     if (!row) {
+      out.push(String(raw));
+      continue;
+    }
+    // A provisional negative is an observation, not an answer — it must be re-asked regardless of how
+    // fresh it is, or the second look that confirms it would never happen.
+    if (row.status === 'outside_tr_pending') {
       out.push(String(raw));
       continue;
     }
@@ -412,8 +537,10 @@ export function coverage(db, wanted) {
   for (const raw of wanted) {
     const row = stmt.get(safeEik(raw));
     if (!row) continue;
+    // A provisional negative is NOT covered: it is one observation short of an answer.
     if (row.status === 'outside_tr') outsideTr++;
-    else fetched++;
+    else if (row.status !== 'outside_tr_pending') fetched++;
+    else continue;
   }
   const covered = fetched + outsideTr;
   return {
@@ -447,9 +574,15 @@ export function coverage(db, wanted) {
 export function purgeExpired(
   db,
   rawDir,
-  { retentionDays = RETENTION_DAYS, now = new Date(), unlink = fs.unlinkSync } = {},
+  {
+    retentionDays = RETENTION_DAYS,
+    verdictRetentionDays = VERDICT_RETENTION_DAYS,
+    now = new Date(),
+    unlink = fs.unlinkSync,
+  } = {},
 ) {
   const cutoff = new Date(now.getTime() - retentionDays * 86_400_000).toISOString();
+  const verdictCutoff = new Date(now.getTime() - verdictRetentionDays * 86_400_000).toISOString();
   const expired = db.prepare('SELECT eik, raw_path FROM deeds WHERE fetched_at < ?').all(cutoff);
 
   let files = 0;
@@ -481,7 +614,10 @@ export function purgeExpired(
       .map((r) => `${r.eik}.json`),
   );
   for (const name of names) {
-    if (!name.endsWith('.json') || known.has(name)) continue;
+    // `.tmp-<pid>` files are atomicWrite's half-written deeds. A crash between write and rename leaves
+    // one holding third-party names under a name no `.json` filter ever sees — so sweep those too.
+    const isTemp = /\.tmp-\d+$/.test(name);
+    if ((!name.endsWith('.json') && !isTemp) || known.has(name)) continue;
     // The same ENOENT tolerance the expired loop above has, and for a sharper reason here: this loop
     // runs AFTER the DB DELETE has committed, so an unguarded throw half-purges — rows gone, files
     // still on disk — and reports the whole run as failed. The listing is a snapshot, so a name can
@@ -496,14 +632,15 @@ export function purgeExpired(
     }
   }
 
-  // Verdicts age out on the same clock. They hold no third-party name (ADR-0037), so this is not the
-  // privacy rail the deed purge is — it is the promise that a published claim rests on a lookup made
-  // inside the retention window, which is what the methodology page states. A verdict outliving that
-  // window would keep publishing against evidence we no longer hold.
+  // Verdicts age out on their OWN clock, longer than the deeds'. They hold no third-party name
+  // (ADR-0037), so this is not the privacy rail the deed purge is — it is the promise that a published
+  // claim rests on a lookup made inside a stated window. Sharing the deed's 35 days would delete
+  // verdicts faster than a budget-bounded crawl can refresh them, and the surface would then shrink
+  // for no reason but the clock.
   const verdicts = db
     .prepare('SELECT COUNT(*) AS n FROM verdicts WHERE decided_at < ?')
-    .get(cutoff);
-  db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(cutoff);
+    .get(verdictCutoff);
+  db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(verdictCutoff);
 
   return { rows: expired.length, files, orphans, verdicts: verdicts?.n ?? 0 };
 }

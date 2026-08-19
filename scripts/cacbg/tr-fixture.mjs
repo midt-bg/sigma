@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openCache, upsertDeed, markOutsideTr } from '../tr/cache.mjs';
+import { openCache, upsertDeed, markOutsideTr, readDeed } from '../tr/cache.mjs';
 import { readLinksFile, decideLinks } from '../tr/fetch-deeds.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -65,15 +65,18 @@ export function seedVerdicts({
         decideLinks(db, { eik, deed: null, outsideTr: true, links, now });
         continue;
       }
-      upsertDeed(db, {
-        eik,
-        status: 'fetched',
-        httpStatus: 200,
-        fetchedAt: now.toISOString(),
-        legalFormCode: entry.deed.legalForm ?? null,
-        seatNormalized: entry.seatNormalized ?? null,
-        latestOwnEntryDate: entry.latestOwnEntryDate ?? null,
-      });
+      // Only when the fixture has not already written the row. Re-upserting here would overwrite the
+      // columns the caller populated by hand with NULLs — harmless while nothing reads them, and a trap
+      // the moment something does.
+      if (!readDeed(db, eik)) {
+        upsertDeed(db, {
+          eik,
+          status: 'fetched',
+          httpStatus: 200,
+          fetchedAt: now.toISOString(),
+          legalFormCode: entry.deed.legalForm ?? null,
+        });
+      }
       decideLinks(db, { eik, deed: entry.deed, outsideTr: false, links, now });
     }
   } finally {

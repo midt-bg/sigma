@@ -20,6 +20,7 @@ import {
   RATE_LIMIT_COOLDOWN_MS,
   MAX_COOLDOWNS,
 } from './fetch-deeds.mjs';
+import { VERDICT_RETENTION_DAYS } from './cache.mjs';
 
 const DEED = (uic) => ({
   uic,
@@ -167,6 +168,24 @@ test('requests are sequential and spaced by at least the documented interval', a
   } finally {
     c.cleanup();
   }
+});
+
+test('the cooldown constants are pinned to the measurement, not merely imported', () => {
+  // Every other assertion in this file follows the imported constant, so 3→1 and 3→100 both passed the
+  // whole suite — the budget was tautological. Pin the VALUES, the way MIN_INTERVAL_MS already is.
+  assert.equal(
+    MAX_COOLDOWNS,
+    3,
+    'three cooldowns before giving up; changing this changes the deal',
+  );
+  assert.ok(
+    RATE_LIMIT_COOLDOWN_MS >= 161_000,
+    `the cooldown must cover the ~161s recovery measured in ADR-0036, got ${RATE_LIMIT_COOLDOWN_MS}`,
+  );
+  assert.ok(
+    RATE_LIMIT_COOLDOWN_MS <= 600_000,
+    'and must not be so long a run spends itself waiting',
+  );
 });
 
 // ── 429 is a cooldown (ADR-0036) ──────────────────────────────────────────────
@@ -500,6 +519,57 @@ test('two links on ONE company are both decided from a single request', async ()
   }
 });
 
+test('an undecidable link is held, and does NOT fail the run for every other link', async () => {
+  const c = ctx();
+  try {
+    // The deed is perfectly readable; it is THIS LINK's declaration side that is unusable
+    // (`declaredSeats` is not a list, so the ladder throws on it). That is the case H3 is about: the
+    // ЕИК was reached, its deed indexed, and one link cannot be reasoned about. Folding that into
+    // `unresolved` made it exit 1 → the workflow stop before load.mjs → the same failure every run,
+    // for ever, with no operator escape.
+    const bad = linkRec(B, { linkKey: `person:ИВАН|СЧУПЕН|${B}`, declaredSeats: 'София' });
+    const h = linksHarness(c, [linkRec(A), bad], { [A]: ok(A), [B]: ok(B) });
+    assert.equal(await h.promise, 0, 'one undecidable link must not fail the whole run');
+    assert.deepEqual(
+      verdictRows(c.dbFile).map((r) => r.eik),
+      [A],
+      'the readable link is decided; the other is simply held',
+    );
+
+    // And it re-pends rather than caching a fabricated hold, so a corrected record is picked up next
+    // run. A verdict invented here would be a hold nothing ever revisits.
+    const again = linksHarness(c, [linkRec(A), bad], { [A]: ok(A), [B]: ok(B) });
+    assert.equal(await again.promise, 0);
+    assert.deepEqual(again.calls, [B], 'only the undecided one is re-asked');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('in links mode the raw deed never reaches the disk at all', async () => {
+  const c = ctx();
+  try {
+    // Not „written then deleted": never written. A crash between the write and the delete used to
+    // leave a deed on disk under a fresh verdict — skipped by the next run, invisible to the purge,
+    // and full of third-party names for the whole retention window.
+    const seen = [];
+    const h = linksHarness(c, [linkRec(A)], {
+      [A]: () => {
+        // Sampled DURING the run, between the response and the decision.
+        seen.push(fs.existsSync(path.join(c.rawDir, `${A}.json`)));
+        return ok(A);
+      },
+    });
+    assert.equal(await h.promise, 0);
+    assert.deepEqual(seen, [false]);
+    assert.ok(!fs.existsSync(path.join(c.rawDir, `${A}.json`)), 'and none after');
+    const [row] = verdictRows(c.dbFile);
+    assert.ok(row, 'the verdict is still stored — the deed was simply never needed on disk');
+  } finally {
+    c.cleanup();
+  }
+});
+
 // ── runtime budget ────────────────────────────────────────────────────────────
 test('the runtime budget stops the run cleanly, leaving the rest for the next one', async () => {
   const c = ctx();
@@ -565,17 +635,41 @@ test('a re-run over a complete cache makes ZERO requests', async () => {
 });
 
 // ── permanence ────────────────────────────────────────────────────────────────
-test('an empty 200 is the register saying „no deed" and is cached as outside-ТР', async () => {
+test('an empty 200 becomes „outside ТР" only on the SECOND observation', async () => {
   // MEASURED against the live API: an ЕИК that is not a търговец (Община София, 000696327) answers
-  // HTTP 200 with a ZERO-BYTE body — not the 404 or HTML #279 §3 predicts. Reproduced twice, with a
+  // HTTP 200 with a ZERO-BYTE body — not the 404 or HTML #279 §3 predicts. Reproduced TWICE, with a
   // real company returning its full deed in the same window, so it is an answer and not an outage.
+  // „Twice" is the evidence, so twice is what the code now requires: a single anomalous empty 200 —
+  // from an edge of the sort that already answers our 429s with zero bytes — must not become a
+  // 30-day negative for a real company.
   const c = ctx();
   try {
     const empty = { status: 200, headers: {}, body: Buffer.alloc(0) };
     assert.equal(await harness(c, [A], { [A]: empty }).promise, 0);
+    assert.equal(rows(c.dbFile)[0].status, 'outside_tr_pending', 'one look is not an answer');
+
+    // Provisional leaves the ЕИК pending, so the next run re-asks it — in place of the refresh it
+    // would have spent anyway, which is why the second look costs nothing in the steady state.
+    const second = harness(c, [A], { [A]: empty });
+    assert.equal(await second.promise, 0);
+    assert.deepEqual(
+      second.calls,
+      [A],
+      'a provisional negative is re-asked, not treated as settled',
+    );
     const [row] = rows(c.dbFile);
     assert.equal(row.status, 'outside_tr');
     assert.match(row.outside_reason, /empty body/i);
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('a 404 is permanent on ONE observation — it says „not here" on its own', async () => {
+  const c = ctx();
+  try {
+    assert.equal(await harness(c, [A], { [A]: status(404) }).promise, 0);
+    assert.equal(rows(c.dbFile)[0].status, 'outside_tr');
   } finally {
     c.cleanup();
   }
@@ -701,6 +795,89 @@ function validEiks(n) {
   }
   return out;
 }
+
+// ── convergence (ADR-0037) ────────────────────────────────────────────────────
+// The property the whole incremental design rests on, and the one whose absence let a version ship
+// that could never publish: with a per-run budget smaller than the candidate set, repeated runs must
+// still reach FULL coverage — and keep it as verdicts age out. That needs two things working
+// together, so both are asserted here rather than argued in an ADR:
+//   • a queue ordered by staleness, so a bounded run drains a rotating set and never re-serves one
+//     prefix while the tail starves;
+//   • a refresh window that comes round faster than the retention window empties it.
+
+// Rotation itself — oldest-first when the whole set goes stale together — is pinned at the unit level
+// in cache.test.mjs, where a lexicographic implementation actually fails. On a cold cache every ЕИК is
+// equally undecided, so this one proves the weaker but still necessary property: consecutive bounded
+// runs make PROGRESS rather than re-serving what they already decided.
+test('consecutive budget-bounded runs make progress instead of re-serving the same ЕИК', async () => {
+  const c = ctx();
+  try {
+    const eiks = validEiks(9);
+    const recs = eiks.map((e) => linkRec(e));
+    const routes = Object.fromEntries(eiks.map((e) => [e, ok(e)]));
+    const first = linksHarness(c, recs, routes, ['--limit', '3']);
+    assert.equal(await first.promise, 0);
+    const second = linksHarness(c, recs, routes, ['--limit', '3']);
+    assert.equal(await second.promise, 0);
+
+    assert.equal(first.calls.length, 3);
+    assert.equal(second.calls.length, 3);
+    assert.deepEqual(
+      first.calls.filter((e) => second.calls.includes(e)),
+      [],
+      'sorted by ЕИК this would re-serve the same prefix for ever and the tail would never decide',
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('repeated bounded runs converge to FULL coverage, and hold it', async () => {
+  const c = ctx();
+  try {
+    const eiks = validEiks(9);
+    const recs = eiks.map((e) => linkRec(e));
+    const routes = Object.fromEntries(eiks.map((e) => [e, ok(e)]));
+    const BUDGET = 2;
+
+    // Ceiling of 9/2, plus one run of slack — if it needs more than that something is starving.
+    let runs = 0;
+    let lastCalls = 1;
+    while (lastCalls > 0 && runs < 10) {
+      const h = linksHarness(c, recs, routes, ['--limit', String(BUDGET)]);
+      assert.equal(await h.promise, 0);
+      lastCalls = h.calls.length;
+      runs++;
+    }
+    assert.ok(runs <= Math.ceil(9 / BUDGET) + 1, `converged in ${runs} runs, expected ≤ 6`);
+    assert.equal(verdictRows(c.dbFile).length, 9, 'every link decided');
+
+    // Held: a further run over the settled cache asks the register for nothing at all.
+    const settled = linksHarness(c, recs, routes, ['--limit', String(BUDGET)]);
+    assert.equal(await settled.promise, 0);
+    assert.deepEqual(settled.calls, [], 'coverage stays at 1.0 without further requests');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('the refresh window comes round faster than retention empties it', () => {
+  // The three constants are ONE convergence condition, and the version this replaced set them so that
+  // it could never be met: everything expired between monthly runs, so each run re-faced the whole set
+  // and covered barely half of it, for ever. Asserted here because it is a property of the numbers,
+  // not of any one function.
+  const CADENCE_DAYS = 7; // related-persons-data.yml cron
+  const MAX_AGE_DAYS = 30; // the workflow's tr_max_age_days default
+  assert.ok(
+    VERDICT_RETENTION_DAYS > MAX_AGE_DAYS + CADENCE_DAYS,
+    `a verdict must not be purged before its turn comes round: retention ${VERDICT_RETENTION_DAYS} ` +
+      `must exceed max-age ${MAX_AGE_DAYS} + one cadence gap ${CADENCE_DAYS}`,
+  );
+  assert.ok(
+    MAX_AGE_DAYS > CADENCE_DAYS,
+    'and a link must not come due every single run, or every run re-faces the whole set',
+  );
+});
 
 test('the ЕИК generator used by the breaker test really produces valid codes', () => {
   const eiks = validEiks(15);
