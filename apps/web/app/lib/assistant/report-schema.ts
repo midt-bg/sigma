@@ -235,12 +235,16 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // words too. NB: no `\b` adjacent to Cyrillic — JS `\b` is ASCII-`\w`-only, so `\bмилиард` never matches
   // after a space. Match the distinctive stem (covers all inflections: милиард/милиарда/милиарди, …).
   // The magnitude family shares two suffixes: -ИЛИОН (милион, билион, трилион, квадрилион, квинтилион,
-  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард, билиард, …; "мил-иард" ⊃ "илиард").
+  // секстилион, … — note "мил-ион" ⊃ "илион") and -ИЛИАРД (милиард; "мил-иард" ⊃ "илиард").
   // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
   // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
   // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
-  // "Илион" (Troy) is the only near-collision; for a gate that must fail TOWARD flagging an unbound figure,
-  // over-flagging is the safe direction anyway. Digit forms are already caught by `\d{5,}` above.
+  // Near-collisions exist only on the -лион side ("Илион"/Троя — or any other word ending in -лион)
+  // and are ACCEPTED: for a gate that must fail TOWARD flagging an unbound figure, over-flagging is
+  // the safe direction, and the procurement/currency register rarely contains such words. If
+  // legitimate reports ever get rejected over this, reach for a `\p{L}` lookaround word boundary
+  // (JS `\b` is ASCII-only) rather than growing an exception list (review f/u, ydimitrof).
+  // Digit forms are already caught by `\d{5,}` above.
   /илион|илиард|хиляд/giu, // spelled magnitudes: милион/милиард/…/квинтилион + inflections; хиляд(а/и)
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
