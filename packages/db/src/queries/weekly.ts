@@ -17,7 +17,7 @@ import { authoritySlug, companySlug, contractSlug } from './identity';
 //     itself is NULL, so the explicit `signed_at IS NOT NULL` just makes "undated rows never appear in a
 //     weekly digest" readable without knowing that SQLite detail.
 //   • `is_synthetic != 1` drops synthetic orphan contracts — those whose parent is a `неизвестна`
-//     placeholder tender (~11k УНП, `title='(без предмет)'`, per 0006_contracts_is_synthetic.sql). They
+//     placeholder tender (~11k УНП, `title='(без предмет)'`, per 0012_contracts_is_synthetic.sql). They
 //     can carry a non-NULL `amount_eur` with `value_flag='ok'`, so without this a synthetic row could
 //     inflate a sum, become the week's „Най-голяма поръчка", or make the volume count non-zero and slip
 //     past the zero-row publish gate. The canonical rollups exclude them the same way (precompute.sql:

@@ -31,7 +31,7 @@ R2 key: `weeks/{ISO}.json` (deterministic). Update the fixture to be the golden 
 - **Tests first**: moved suites pass unchanged (drift proof); `persist.ts` validated vs fixture; ISO-week util tested on W52/W53/W01 boundaries.
 
 ### T2 — DB migration + weekly queries (Plan Phase 2) ~1.5d
-- `packages/db/migrations/0007_weekly_digests.sql`: table = **archive index**, `weekly_digests(iso_week TEXT PK, as_of TEXT, refreshed_at TEXT, status TEXT, total_eur REAL)`. **Do not** store the full report payload here (R2 is source of truth; avoid two copies).
+- `packages/db/migrations/0013_weekly_digests.sql`: table = **archive index**, `weekly_digests(iso_week TEXT PK, as_of TEXT, refreshed_at TEXT, status TEXT, total_eur REAL)`. **Do not** store the full report payload here (R2 is source of truth; avoid two copies).
 - `packages/db/src/queries/weekly.ts`: one fn per indicator a–h, `async (db: D1Database, isoWeek: string) => …`, `.prepare().bind(isoWeek).all<Row>()`, money guarded `WHERE amount_eur IS NOT NULL`, sector `substr(cpv_code,1,2)`, single-bid `bids_received=1` (≥20 sample floor), largest-contract outlier guard, top-10 with ids for links.
 - Reconciliation helper: compare week `SUM(amount_eur)` vs `home_totals.value_eur` (log-only tripwire). **Caveat**: `home_totals.contracts` is COUNT(*) over *all* rows ≠ the clean-amount count — compare value vs `value_eur`, never equate counts.
 - **Tests first**: real-SQLite fixture with seeded Mon–Sun week + boundary days (Sun 23:59 vs Mon 00:00); zero-row week returns empty; NULL amounts excluded.
