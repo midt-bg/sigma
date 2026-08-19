@@ -1,9 +1,10 @@
 // node:test — the Trade Register HTTP client. Offline: every test drives an injected getter.
 //
-// The load-bearing behaviour here is what the client REFUSES to do. The register rate-limits, and
-// when it does the block is sustained (an earlier spike saw HTTP 429 at ~50 cumulative requests, then
-// 429 to every subsequent call including ones that had just worked — no Retry-After, no quota header).
-// So a 429 is an instruction to stop, not a transient to retry through. ADR-0033 decision 7.
+// The load-bearing behaviour here is what the client REFUSES to do. The register rate-limits after
+// FIVE requests, by IP, with no Retry-After and no quota header, and the block clears in ~161s
+// (measured 2026-08-19; ADR-0036). So a 429 is a cooldown — but the transport does not decide how
+// long to wait: it reports the fact as RateLimitError and never folds it into the retry budget, which
+// is what these tests pin. The wait-and-resume policy is fetch-deeds.mjs's, and is tested there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
