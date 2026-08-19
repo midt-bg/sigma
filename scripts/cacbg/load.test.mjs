@@ -15,6 +15,8 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
+import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
@@ -114,6 +116,20 @@ function buildTrCache(dbFile, rawDir, spec = {}, { omit = [] } = {}) {
       );
   }
   cache.close();
+
+  // The deeds alone decide nothing now: since ADR-0037 the verdict is reached by the crawler and the
+  // loader only reads it. Run the REAL decision over these fixture deeds, so these tests keep
+  // exercising the evidence ladder end to end instead of hand-written verdict rows.
+  seedVerdicts({
+    workDb: DB,
+    staging: STAGING,
+    trDb: dbFile,
+    deedFor: (eik) => {
+      if (omit.includes(eik)) return null; // never reached — no verdict, an incomplete cache
+      if ((spec[eik] ?? {}).outsideTr) return { outsideTr: true };
+      return readFixtureDeed(rawDir, eik);
+    },
+  });
 }
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
@@ -1172,20 +1188,47 @@ test('a MISSING Trade Register cache refuses the whole load', () => {
   );
 });
 
-test('a PARTIAL cache refuses the load rather than publishing a decimated surface', () => {
+test('a partial cache at COLD START refuses — a fragment must not ship unopposed', () => {
+  // The shape a resumed-but-unfinished crawl leaves behind. Before ADR-0037 any gap refused outright;
+  // now the refusal is scoped to the case where refusing is the ONLY protection there is — a first
+  // published run, where §8's monotonicity gate has no prior surface to compare against.
   const partialDb = path.join(dir, 'partial-cache.sqlite');
   const partialRaw = path.join(dir, 'partial-deeds');
-  // Cover everything EXCEPT two winners — the shape a resumed-but-unfinished crawl leaves behind.
   buildTrCache(
     partialDb,
     partialRaw,
     { 111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] } },
     { omit: ['444444447', '777777773'] },
   );
+  // Cold start: wipe the prior published surface the earlier tests built, so nothing protects it.
+  const wipe = new DatabaseSync(DB);
+  wipe.exec('DELETE FROM interest_links');
+  wipe.close();
   assert.throws(
     () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*covers \d+ of \d+/,
+    /REFUSE TO LOAD[\s\S]*current registry verdict/,
   );
+  runLoad(); // restore the full built state for any later reader
+});
+
+test('a partial cache with a surface ALREADY published proceeds — monotonicity takes the duty', () => {
+  // The change that makes an incremental crawl possible at all. A run whose crawl was cut short by the
+  // rate limiter must be able to publish what it has; the protection against a shrinking surface is
+  // audit.mjs's monotonicity gate, which sees the prior published set and hard-fails on a vanished
+  // claim. Two gates for one duty was the redundancy — this asserts the weaker one is gone.
+  const partialDb = path.join(dir, 'partial-warm.sqlite');
+  const partialRaw = path.join(dir, 'partial-warm-deeds');
+  buildTrCache(partialDb, partialRaw, {}, { omit: ['444444447', '777777773'] });
+  runLoad(); // a full run first, so a published surface exists for the gate to protect
+  const published = () => {
+    const db = open();
+    const n = db.prepare(`SELECT COUNT(*) n FROM interest_links WHERE status='published'`).get().n;
+    db.close();
+    return n;
+  };
+  assert.ok(published() > 0, 'the fixture must publish something for this to mean anything');
+  assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  runLoad(); // restore the full built state for any later reader
 });
 
 test('--allow-partial-tr is the deliberate, stated override', () => {

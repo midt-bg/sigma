@@ -329,6 +329,17 @@ test('the ЕГН guard screens a verdict too — it is the row that CROSSES a ru
     assert.throws(() => upsertVerdict(db, VERDICT({ matchedFact: '8011129876' })), /ЕГН/);
   }));
 
+test('inputsHash is exempt from the ЕГН guard — a digit run in a digest is arithmetic', () =>
+  withCache((db) => {
+    // Screened, this refused roughly one verdict in fourteen at random: a standalone ten-digit run
+    // occurs in ~7% of sha256 digests (the same measurement that exempts bodySha256). The failure was
+    // not loud — it was a recall hole spread evenly across the surface, which is worse.
+    const digestWithTenDigits = `ab1234567890${'c'.repeat(52)}`;
+    assert.equal(digestWithTenDigits.length, 64);
+    assert.doesNotThrow(() => upsertVerdict(db, VERDICT({ inputsHash: digestWithTenDigits })));
+    assert.equal(readVerdict(db, VERDICT().linkKey).inputsHash, digestWithTenDigits);
+  }));
+
 test('purgeExpired ages verdicts out on the same clock as deeds', () =>
   withCache((db, dir) => {
     upsertVerdict(db, VERDICT({ decidedAt: '2026-01-01T00:00:00.000Z' }));

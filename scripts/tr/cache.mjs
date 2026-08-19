@@ -57,11 +57,23 @@ CREATE TABLE IF NOT EXISTS verdicts (
   entry_date    TEXT,
   short_name    INTEGER NOT NULL DEFAULT 0,
   latin_in_name INTEGER NOT NULL DEFAULT 0,
+  -- reconcileTermination's answer, cached for the same reason as the verdict: it too is a question
+  -- about the deed (is this declarant still a registered owner?) whose answer is a boolean and a role
+  -- label. Without it a divested self stake would fall to deed == null, be read as terminated and get
+  -- WITHDRAWN — a silent recall regression rather than a fail-closed hold.
+  recon_terminated INTEGER,
+  recon_label      TEXT,
   decided_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_verdicts_eik ON verdicts(eik);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
+
+/** Columns added to `verdicts` after it first shipped. See openCache. */
+const VERDICT_ADDED_COLUMNS = [
+  ['recon_terminated', 'INTEGER'],
+  ['recon_label', 'TEXT'],
+];
 
 /** Open (creating if absent) the cache at `file`. Idempotent — never wipes an existing cache. */
 export function openCache(file) {
@@ -69,6 +81,19 @@ export function openCache(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  // CREATE TABLE IF NOT EXISTS is a no-op on an existing cache, and this cache now SURVIVES between
+  // runs (ADR-0037) — so a restored older one would meet a query naming a column it does not have.
+  // Added idempotently rather than by recreating the table, because recreating it would throw away
+  // exactly the progress the cache exists to keep.
+  const have = new Set(
+    db
+      .prepare(`SELECT name FROM pragma_table_info('verdicts')`)
+      .all()
+      .map((r) => r.name),
+  );
+  for (const [col, type] of VERDICT_ADDED_COLUMNS) {
+    if (!have.has(col)) db.exec(`ALTER TABLE verdicts ADD COLUMN ${col} ${type}`);
+  }
   return db;
 }
 
@@ -99,7 +124,10 @@ function assertNoEgnShape(value, field) {
 //                 (18% unanchored, both measured), so screening it would refuse roughly one deed in
 //                 fourteen for no privacy gain. A digest is not personal data; it exists precisely so
 //                 that no deed content reaches the index.
-const EGN_EXEMPT = new Set(['eik', 'bodySha256']);
+//   inputsHash  — the same object, for the same reason. Exempting it is not a convenience: screened,
+//                 it refused ~1 verdict in 14 at random, which is a silent recall hole spread evenly
+//                 across the surface rather than a visible failure.
+const EGN_EXEMPT = new Set(['eik', 'bodySha256', 'inputsHash']);
 
 /**
  * Record a fetched deed. Replaces on re-fetch so a refresh never duplicates a row.
@@ -225,6 +253,18 @@ export function verdictInputsHash(input) {
 }
 
 /**
+ * Split a link record into its routing keys and its decision inputs, and hash the latter.
+ *
+ * The ONE definition of what a link record is. Both sides of the boundary go through it — the crawler
+ * reading the emitted JSONL, and the loader looking a verdict up — because a hash computed over even
+ * slightly different objects would miss every cache entry and silently re-crawl the whole register.
+ */
+export function splitLinkRecord(rec) {
+  const { linkKey, eik, ...input } = rec;
+  return { linkKey, eik, input, inputsHash: verdictInputsHash(input) };
+}
+
+/**
  * Record the decision for one link. Replaces on re-decision so a refresh never duplicates a row.
  *
  * Screened by the same ЕГН rail as `upsertDeed` — the verdict crosses a run boundary, which makes it
@@ -235,14 +275,16 @@ export function upsertVerdict(db, v) {
   for (const [f, val] of Object.entries(v)) if (!EGN_EXEMPT.has(f)) assertNoEgnShape(val, f);
   db.prepare(
     `INSERT INTO verdicts (link_key, eik, rules_version, inputs_hash, kind, publishable,
-        registry_role, matched_fact, entry_number, entry_date, short_name, latin_in_name, decided_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        registry_role, matched_fact, entry_number, entry_date, short_name, latin_in_name,
+        recon_terminated, recon_label, decided_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(link_key) DO UPDATE SET
         eik=excluded.eik, rules_version=excluded.rules_version, inputs_hash=excluded.inputs_hash,
         kind=excluded.kind, publishable=excluded.publishable, registry_role=excluded.registry_role,
         matched_fact=excluded.matched_fact, entry_number=excluded.entry_number,
         entry_date=excluded.entry_date, short_name=excluded.short_name,
-        latin_in_name=excluded.latin_in_name, decided_at=excluded.decided_at`,
+        latin_in_name=excluded.latin_in_name, recon_terminated=excluded.recon_terminated,
+        recon_label=excluded.recon_label, decided_at=excluded.decided_at`,
   ).run(
     String(v.linkKey),
     eik,
@@ -256,6 +298,8 @@ export function upsertVerdict(db, v) {
     v.entryDate ?? null,
     v.shortName ? 1 : 0,
     v.latinInName ? 1 : 0,
+    v.reconTerminated == null ? null : v.reconTerminated ? 1 : 0,
+    v.reconLabel ?? null,
     v.decidedAt,
   );
 }
@@ -277,6 +321,8 @@ export function readVerdict(db, linkKey) {
     entryDate: r.entry_date,
     shortName: r.short_name === 1,
     latinInName: r.latin_in_name === 1,
+    reconTerminated: r.recon_terminated == null ? null : r.recon_terminated === 1,
+    reconLabel: r.recon_label,
     decidedAt: r.decided_at,
   };
 }

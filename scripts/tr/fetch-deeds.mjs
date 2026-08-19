@@ -38,12 +38,12 @@ import {
   pendingEiks,
   purgeExpired,
   RETENTION_DAYS,
-  verdictInputsHash,
+  splitLinkRecord,
   upsertVerdict,
   pendingVerdictEiks,
   verdictCoverage,
 } from './cache.mjs';
-import { evidenceVerdict, RULES_VERSION } from './evidence.mjs';
+import { evidenceVerdict, reconcileTermination, RULES_VERSION } from './evidence.mjs';
 import {
   assertUicEcho,
   registryLegalForm,
@@ -170,10 +170,10 @@ export function readLinksFile(file) {
       throw new Error(`${file}:${i + 1}: not JSON — ${e.message}`);
     }
     if (!rec.linkKey || !rec.eik) throw new Error(`${file}:${i + 1}: needs both linkKey and eik`);
-    const { linkKey, eik, ...input } = rec;
-    // Hashed at read time, from the SAME object the decision will be computed with — never from a
-    // subset assembled later, which is how a stale verdict would slip past invalidation.
-    links.push({ linkKey, eik: safeEik(eik), input, inputsHash: verdictInputsHash(input) });
+    // Split and hashed through the SAME helper the loader uses — never a subset assembled locally,
+    // which is how the two sides would drift and every cache lookup would miss.
+    const link = splitLinkRecord(rec);
+    links.push({ ...link, eik: safeEik(link.eik) });
   }
   return links;
 }
@@ -193,6 +193,16 @@ export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
     if (link.eik !== eik) continue;
     try {
       const verdict = evidenceVerdict({ ...link.input, deed, outsideTr });
+      // The SECOND question the deed answers, and it must be asked here for the same reason: §7's
+      // divestment reconciliation checks whether the declarant is still a registered owner, and with
+      // no deed it falls to „terminated" — which WITHDRAWS a live link instead of holding it. Computed
+      // unconditionally because whether it is consulted depends on declaration state the crawler does
+      // not have; it is pure, cheap, and short-circuits for family scope without reading the deed.
+      const recon = reconcileTermination({
+        deed,
+        declarantName: link.input.declarantName,
+        scope: link.input.scope,
+      });
       upsertVerdict(db, {
         linkKey: link.linkKey,
         eik,
@@ -206,6 +216,8 @@ export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
         entryDate: verdict.entryDate,
         shortName: verdict.shortName,
         latinInName: verdict.latinInName,
+        reconTerminated: recon.terminated,
+        reconLabel: recon.label,
         decidedAt: now.toISOString(),
       });
       decided++;
