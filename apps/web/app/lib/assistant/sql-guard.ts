@@ -177,8 +177,14 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // memory before capRows sees the row; no analytics query needs any of them (review #80, red-team R2;
   // printf/format + aggregate + string_agg alias f/u, ydimitrof). NB: this denylist is inherently a
   // catch-up game against new aliases — a positive function allowlist is the durable fix (tracked separately).
+  // The optional quote class after the name closes the QUOTED-identifier bypass: SQLite resolves
+  // `"group_concat"(x)`, `[group_concat](x)` and `` `group_concat`(x) `` to the same built-in, while
+  // the bare-name regex saw only `group_concat"(` and never matched (review f/u, ydimitrof). `\b`
+  // before the name still anchors after an OPENING quote (quote chars are non-word). An identifier
+  // padded inside the quotes (`" group_concat"`) is a DIFFERENT identifier to SQLite — resolves to
+  // no built-in, so it needs no handling here.
   if (
-    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|json_group_array|json_group_object)\s*\(/i.test(
+    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|json_group_array|json_group_object)["'\]`]?\s*\(/i.test(
       sql,
     )
   ) {
