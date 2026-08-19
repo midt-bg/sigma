@@ -547,14 +547,18 @@ export async function run({
     // The purge step ADR-0033 decision 5 puts „in the same job" — in `finally`, and that placement is
     // the point. Retention is an obligation about other people's data, not a reward for a clean run,
     // so it must also happen on the paths that leave early: a 429 (exit 2), a tripped breaker, an
-    // unresolved candidate. Under normal operation it removes nothing, because the monthly refresh
+    // unresolved candidate. Under normal operation it removes nothing, because the weekly refresh
     // rewrites each row well inside the window; anything it does delete is residue — a company that
     // left the candidate set, or a refresh that never landed.
     try {
       const purged = purgeExpired(db, rawDir, { retentionDays, now: now() });
-      if (purged.rows || purged.files || purged.orphans) {
+      if (purged.rows || purged.files || purged.orphans || purged.verdicts) {
+        // Verdicts included deliberately: a purged verdict DROPS coverage, and coverage is what the
+        // 95% floor refuses on. Left out of this condition, the one event that best explains a
+        // surprising refusal next run was the one event that never printed.
         console.log(
-          `purged ${purged.rows} row(s), ${purged.files} raw deed(s), ${purged.orphans} orphan(s) past ${retentionDays}d retention`,
+          `purged ${purged.rows} deed row(s), ${purged.files} raw deed(s), ${purged.orphans} orphan(s) ` +
+            `past ${retentionDays}d; ${purged.verdicts} verdict(s) past their own window`,
         );
       }
     } catch (e) {

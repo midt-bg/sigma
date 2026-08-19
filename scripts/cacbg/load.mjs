@@ -671,7 +671,7 @@ if (!fs.existsSync(TR_CACHE_DB)) {
 const trCache = openCache(TR_CACHE_DB);
 const trCoverage = coverage(trCache, candidateEiks);
 console.log(
-  `TR cache: ${trCoverage.covered}/${trCoverage.wanted} covered ` +
+  `TR deeds: ${trCoverage.covered}/${trCoverage.wanted} ЕИК covered ` +
     `(fetched ${trCoverage.fetched}, outside ТР ${trCoverage.outsideTr}, missing ${trCoverage.missing})`,
 );
 

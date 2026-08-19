@@ -13,8 +13,10 @@
 //      unanchored match would refuse every клон. ЕГН was absent from every payload examined; this is
 //      the rail for the day one leaks.
 //
-// Resumability is the other job: the register throttles hard and a 429 ends the run (client.mjs), so a
-// crawl must be able to pick up exactly where it stopped without re-requesting what it already has.
+// Resumability is the other job, and it now spans runs rather than just interruptions. The register
+// allows ~5 requests per window and the block clears in ~161s (ADR-0036), so a crawl is bounded by
+// wall-clock rather than finished in one pass: it must pick up exactly where it stopped without
+// re-requesting what it already holds. That is what the verdict rows below are for (ADR-0037).
 
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
