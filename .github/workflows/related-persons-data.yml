@@ -33,9 +33,10 @@ on:
   # decision would therefore mean ~400 daily requests against somebody else's register, which is what
   # spec §3.3 exists to prevent — so the cadence follows the deeds, not the other way round.
   #
-  # Restoring a daily decision needs the crawl to emit the per-(link, ЕИК) match verdict, so only
-  # booleans cross a run boundary and nothing has to hold a name. That is a design change, not a
-  # schedule change, and it is deliberately not folded in here.
+  # ADR-0037 has since made the crawl emit that per-(link, ЕИК) verdict, so booleans DO cross the run
+  # boundary now and no name has to. A daily decision is therefore no longer blocked by the design —
+  # but it is still a separate choice with its own cost to the register, and it is deliberately not
+  # taken here. The cadence stays monthly until someone argues for changing it on its own merits.
   #
   # A scheduled run takes the same path as a manual one, with two differences:
   #   • it targets STAGING (the environment default below). Production stays manual, so the
@@ -66,9 +67,13 @@ on:
         type: boolean
         default: false
       tr_max_age_days:
-        description: Re-fetch deeds older than this many days (default 30). Use a large value to force a full refresh.
+        description: Re-decide links whose registry lookup is older than this many days (default 30). Use a large value to force a full refresh.
         type: string
         default: '30'
+      tr_max_runtime_min:
+        description: Wall-clock ceiling for the register crawl (default 180). Spending it stops the crawl cleanly; the next run resumes from the cached verdicts.
+        type: string
+        default: '180'
       tr_limit:
         description: Stop after this many registry lookups (blank = all pending). Bound a first run while watching for a 429.
         type: string
@@ -79,8 +84,13 @@ permissions:
   contents: read
 
 concurrency:
-  # Never let two data-foundation writes to the same environment overlap; do not cancel one in flight.
-  group: related-persons-data-${{ inputs.environment || 'staging' }}
+  # Never let two data-foundation runs overlap, and deliberately NOT keyed on the environment. Two
+  # writes to different D1 slots cannot collide, but both crawl the SAME public register — a staging
+  # and a production run in parallel would double the effective request rate against it, which at the
+  # measured 5-per-window limiter (ADR-0036) is both rude and self-defeating. The shared resource is
+  # the register, so the group is global. Never cancel one in flight: a killed run loses whatever the
+  # crawl had not yet committed.
+  group: related-persons-data
   cancel-in-progress: false
 
 jobs:
@@ -240,12 +250,15 @@ jobs:
           done
 
       # ── Trade Register lookups ────────────────────────────────────────────────────────────────────
-      # In THIS job, deliberately, and not in a workflow of their own. The decision run needs the raw
-      # deeds (evidenceVerdict matches declarant names against the register's own text, which is exactly
-      # the data the index refuses to store), and those deeds carry the names and addresses of co-owners
-      # and managers who hold no public office. Handing them between runners means persisting them —
-      # an Actions cache entry survives on GitHub's storage under a restore-keys chain, where the 35-day
-      # retention ADR-0033 decision 5 promises cannot reach it. Same runner, same job, deleted with it.
+      # In THIS job, deliberately, and not in a workflow of their own. The raw deeds carry the names and
+      # addresses of co-owners and managers who hold no public office, and handing them between runners
+      # means persisting them — an Actions cache entry survives on GitHub's storage under a restore-keys
+      # chain, where the 35-day retention ADR-0033 decision 5 promises cannot reach it. So the deeds
+      # live and die inside one job.
+      #
+      # What DOES cross the boundary is the verdict (ADR-0037): a kind, a role, an entry reference and
+      # booleans, keyed on a link whose name is the declaring official's — someone this surface
+      # publishes by design. That is strictly less than the CACBG corpus cached a few steps above.
       #
       # The previous split also could not work on its own terms: the crawl job gated on a candidate list
       # only the decision job produced, the decision job refused without a cache only the crawl job
@@ -253,35 +266,66 @@ jobs:
       - name: Emit the candidate ЕИК list for the crawler
         run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs --emit-candidates
 
-      # ALWAYS, on every run that reaches here — not conditionally. The deeds do not survive the runner,
-      # so „decide without crawling" is not a state this job can be in: load.mjs's coverage gate below
-      # would refuse the empty cache and the run would fail. Skipping the crawl is only meaningful once
-      # the crawl emits verdicts rather than deeds (see the note on the schedule above).
+      # ALWAYS, on every run that reaches here — not conditionally. With the verdict cache restored the
+      # crawl is usually cheap (a complete cache costs zero requests), and what it does spend goes on
+      # links whose lookup has aged out or whose declaration moved. A run that reaches here with a full
+      # cache makes no requests at all; one that starts cold makes as many as its budget allows.
       #
+      # Restore the VERDICT cache — booleans, a role and an entry reference per link, and no name of
+      # anyone without public office (ADR-0037). That is what makes this restorable at all: the raw
+      # deeds it was derived from carry third-party names and are never cached, never uploaded, and
+      # deleted the moment the crawler has decided. Without this the crawl restarts at `cached 0` every
+      # month and, at 5 requests per window, never finishes (ADR-0036).
+      - name: Restore the Trade Register verdict cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: scratch/tr/tr-cache.sqlite
+          key: tr-verdicts-${{ github.run_id }}
+          restore-keys: |
+            tr-verdicts-
+
       # Pace and refusals live in scripts/tr/fetch-deeds.mjs and are not configurable here on purpose:
-      # 1 request / 3 s, sequential, a closed candidate set, and a 429 ends the run without marking
-      # anything. Spec §3.3 permits a bounded per-ЕИК lookup and forbids bulk scraping; the limiter is
-      # the operator's only way to state a rate preference, so we do not tune around it.
-      - name: Refresh the Trade Register deed cache
+      # 1 request / 3 s, sequential, a closed candidate set, and a 429 that cools down rather than
+      # ending the run (ADR-0036). Spec §3.3 permits a bounded per-ЕИК lookup and forbids bulk
+      # scraping; the limiter is the operator's only way to state a rate preference, so we wait it out
+      # instead of tuning around it.
+      #
+      # --links-file, not --eiks-file: the crawler decides each link beside the deed and stores only the
+      # verdict, so the deed never has to survive this step (ADR-0037).
+      - name: Refresh the Trade Register verdicts
         env:
           MAX_AGE: ${{ inputs.tr_max_age_days || '30' }}
           LIMIT: ${{ inputs.tr_limit }}
+          # Leaves room for resolve/audit/ship inside the job's 300-minute ceiling. Spending it is not a
+          # failure: whatever was decided is cached, and the next run continues from there.
+          MAX_RUNTIME: ${{ inputs.tr_max_runtime_min || '180' }}
         run: |
           set -euo pipefail
-          ARGS=(--eiks-file scratch/cacbg/staging/candidate-eiks.txt --max-age-days "$MAX_AGE")
+          ARGS=(--links-file scratch/cacbg/staging/candidate-links.jsonl \
+                --max-age-days "$MAX_AGE" --max-runtime-min "$MAX_RUNTIME")
           [ -n "$LIMIT" ] && ARGS+=(--limit "$LIMIT")
           set +e
           node scripts/tr/fetch-deeds.mjs "${ARGS[@]}"
           code=$?
           set -e
-          # Exit 2 is the rate limiter, and it is NOT a build failure: the run stopped politely, marked
-          # nothing, and the partial cache is valid. It is not a licence to publish either — load.mjs's
-          # coverage gate below refuses a partial cache on its own, which is where that decision belongs.
+          # Exit 2 now means the block outlasted every cooldown — not that we met one 429. Still not a
+          # build failure: the run stopped politely, marked nothing for the ЕИК that hit it, and the
+          # partial cache is valid and resumable. Whether a partial cache may PUBLISH is load.mjs's
+          # decision, not this step's.
           if [ "$code" -eq 2 ]; then
-            echo "::warning::The register rate-limited us; the crawl stopped and the cache is resumable."
+            echo "::warning::The register blocked us past every cooldown; the crawl stopped and the cache is resumable."
             exit 0
           fi
           exit "$code"
+
+      # Saved on always(): a run cut short by the rate limiter or the runtime budget is exactly the one
+      # whose progress must survive, and it is also the one most likely to fail a later step.
+      - name: Save the Trade Register verdict cache
+        if: ${{ always() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: scratch/tr/tr-cache.sqlite
+          key: tr-verdicts-${{ github.run_id }}
 
       - name: Resolve → build domain in a work sqlite (libel gate must pass)
         run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs

@@ -659,7 +659,7 @@ if (!fs.existsSync(TR_CACHE_DB)) {
   throw new Error(
     `REFUSE TO LOAD: no Trade Register cache at ${TR_CACHE_DB}. Every publishing decision now rests ` +
       `on a registry fact (ADR-0033); without the cache there is no evidence to rest on. Run ` +
-      `scripts/tr/fetch-deeds.mjs --eiks-file ${path.join(STAGING, 'candidate-eiks.txt')} first.`,
+      `scripts/tr/fetch-deeds.mjs --links-file ${path.join(STAGING, 'candidate-links.jsonl')} first.`,
   );
 }
 const trCache = openCache(TR_CACHE_DB);
