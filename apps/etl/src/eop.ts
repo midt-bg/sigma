@@ -70,12 +70,30 @@ const dayUrl = (baseUrl: string, day: string): string =>
 const objectUrl = (bucketUrl: string, key: string): string =>
   `${bucketUrl}${encodeURIComponent(key)}`;
 
-function assertAllowedFinalHost(requestUrl: string, responseUrl: string): void {
+function disallowedFinalHost(requestUrl: string, responseUrl: string): string | null {
   const requested = new URL(requestUrl);
   const final = new URL(responseUrl || requestUrl);
-  if (final.host !== requested.host) {
-    throw new Error(`blocked redirected EOP fetch from ${requested.host} to ${final.host}`);
+  if (final.host === requested.host) return null;
+  return `blocked redirected EOP fetch from ${requested.host} to ${final.host}`;
+}
+
+// A response body that is never read keeps its stream open for the rest of the invocation; the
+// collector is not a substitute for releasing it. Every path below that walks away from a response
+// without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it here.
+// Deliberately NOT awaited: cancelling only needs to be INITIATED for the runtime to release the
+// stream, and awaiting it would make every caller hostage to a cancel() that never settles, which
+// is precisely the failure mode this file exists to reduce.
+function discardBody(res: Response): void {
+  try {
+    void res.body?.cancel().catch(() => {});
+  } catch {
+    // Already consumed, locked, or errored - there is nothing left to release either way.
   }
+}
+
+function releaseAndFail(res: Response, message: string): never {
+  discardBody(res);
+  throw new Error(message);
 }
 
 function decodeXml(s: string): string {
@@ -175,9 +193,13 @@ export async function listBucketForDay(
 ): Promise<BucketListing | null> {
   const bucketUrl = dayUrl(opts.baseUrl ?? DEFAULT_BASE_URL, day);
   const res = await fetch(bucketUrl);
-  assertAllowedFinalHost(bucketUrl, res.url);
-  if (res.status === 403 || res.status === 404) return null;
-  if (!res.ok) throw new Error(`bucket ${day}: HTTP ${res.status}`);
+  const blocked = disallowedFinalHost(bucketUrl, res.url);
+  if (blocked) return releaseAndFail(res, blocked);
+  if (res.status === 403 || res.status === 404) {
+    discardBody(res);
+    return null;
+  }
+  if (!res.ok) return releaseAndFail(res, `bucket ${day}: HTTP ${res.status}`);
 
   const keys: BucketKeys = {};
   for (const key of parseBucketKeys(await res.text())) {
@@ -189,8 +211,9 @@ export async function listBucketForDay(
 
 async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url);
-  assertAllowedFinalHost(url, res.url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const blocked = disallowedFinalHost(url, res.url);
+  if (blocked) return releaseAndFail(res, blocked);
+  if (!res.ok) return releaseAndFail(res, `${url}: HTTP ${res.status}`);
   return res.json();
 }
 

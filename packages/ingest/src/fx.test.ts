@@ -209,6 +209,65 @@ describe('loadFxRates', () => {
     await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow(/HTTP 500/);
   });
 
+  // Same defect class as the EOP reads: a body that is never read holds its stream open for the rest
+  // of the invocation. The 404 path is the most-travelled one here — Frankfurter answers 404 for any
+  // base currency it does not serve, and the loader deliberately continues past it.
+  it('releases the body of every response it walks away from', async () => {
+    const openBody = () => {
+      let cancelled = false;
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('x'));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return { body, cancelled: () => cancelled };
+    };
+
+    // 404 — unsupported currency, the loader warns and moves on.
+    {
+      const { db, d1 } = fxDb();
+      stageContract(db, 'USD', '2026-07-08');
+      const b = openBody();
+      const fetchFn = vi.fn(
+        async () => new Response(b.body, { status: 404 }),
+      ) as unknown as typeof fetch;
+      const summary = await loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn });
+      expect(summary.warnings.join(' ')).toMatch(/not served by frankfurter/);
+      expect(b.cancelled()).toBe(true);
+    }
+
+    // Non-OK — the loader throws.
+    {
+      const { db, d1 } = fxDb();
+      stageContract(db, 'USD', '2026-07-08');
+      const b = openBody();
+      const fetchFn = vi.fn(
+        async () => new Response(b.body, { status: 500 }),
+      ) as unknown as typeof fetch;
+      await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow(/HTTP 500/);
+      expect(b.cancelled()).toBe(true);
+    }
+
+    // Redirected to another host — the host pin throws.
+    {
+      const { db, d1 } = fxDb();
+      stageContract(db, 'USD', '2026-07-08');
+      const b = openBody();
+      const fetchFn = vi.fn(async () => {
+        const res = new Response(b.body, { status: 200 });
+        Object.defineProperty(res, 'url', {
+          value: 'https://evil.example/v1/2026-07-01..2026-07-08',
+        });
+        return res;
+      }) as unknown as typeof fetch;
+      await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow();
+      expect(b.cancelled()).toBe(true);
+    }
+  });
+
   it('keeps successfully loaded currencies when another currency fails', async () => {
     const { db, d1 } = fxDb();
     stageContract(db, 'USD', '2026-07-08');

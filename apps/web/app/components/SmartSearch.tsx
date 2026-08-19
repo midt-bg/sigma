@@ -6,6 +6,9 @@ import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 const KIND_LABEL: Record<SearchHit['kind'], string> = {
+  // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
+  // never the official themselves; mislabeling the official that way is a category error (todorkolev #226 — C14).
+  official: 'длъжностно лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',
@@ -205,7 +208,14 @@ export function SmartSearch({
                 {g.hits.map((hit) => {
                   runningIndex += 1;
                   const i = runningIndex;
-                  const meta = hit.ident || hit.subtitle;
+                  const baseMeta = hit.ident || hit.subtitle;
+                  // A conflict-flagged company gets a compact trailing marker on its meta line.
+                  const meta =
+                    hit.kind === 'company' && hit.hasConflict
+                      ? baseMeta
+                        ? `${baseMeta} · свързани лица`
+                        : 'свързани лица'
+                      : baseMeta;
                   return (
                     <li
                       key={hit.slug + hit.title}

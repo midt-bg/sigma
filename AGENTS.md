@@ -24,7 +24,7 @@ No `develop`, no `staging`. Maintainers with write access work on short-lived fe
 
 - Use [conventional commits](https://www.conventionalcommits.org): `<type>(<scope>): <subject>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `perf`, `style`. Subject is lowercase imperative, no trailing period.
 - Use the `/smart-commit` and `/suggest-commit` skills when drafting messages. They produce the canonical format for this repo.
-- **Never include `Co-Authored-By:` trailers.** Keep the history clean; CI may grep for this.
+- **Never credit a coding agent in a `Co-Authored-By:` trailer** (Claude Code, Codex, Cursor, Copilot). Trailers naming **people** are fine and must not be stripped — GitHub generates them from the PR's commit authors on squash, and they are what keeps a contributor's credit on `main`, since the squash commit's own author is always the PR opener.
 - Small, focused commits are encouraged. Commit as you go — not all at the end. Easier to review and revert. Don't mix unrelated changes in one commit.
 
 ## Pull requests

@@ -16,6 +16,8 @@
     "lint": "prettier --check .",
     "check:docs": "node scripts/check-docs.mjs",
     "check:docs:test": "node --test scripts/check-docs.test.mjs",
+    "check:coverage": "node scripts/check-coverage.mjs",
+    "check:coverage:test": "node --test scripts/check-coverage.test.mjs",
     "format": "prettier --write .",
     "setup": "node scripts/setup.mjs",
     "import": "node scripts/import.mjs",
@@ -27,22 +29,13 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",
+    "@vitest/coverage-v8": "^4.1.7",
     "@types/node": "^25.9.1",
+    "fast-xml-parser": "5.10.1",
     "prettier": "^3.8.3",
     "turbo": "^2.9.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
     "wrangler": "^4.93.1"
-  },
-  "pnpm": {
-    "//": "Security pins for transitive dev deps flagged by osv-scanner (CI Dependency audit). Adding the sharp override triggers a full pnpm re-resolve that would otherwise pull older esbuild/undici/ws subtrees back in, so pin those to their already-resolved patched floors too. All are build/test-tool transitives (wrangler/miniflare/vite), not shipped code.",
-    "overrides": {
-      "sharp@<0.35.0": ">=0.35.0",
-      "esbuild@<0.28.1": ">=0.28.1",
-      "undici": "^7.29.0",
-      "ws@<8.21.0": ">=8.21.0",
-      "postcss@<8.5.18": ">=8.5.18",
-      "valibot@<1.4.2": ">=1.4.2"
-    }
   }
 }

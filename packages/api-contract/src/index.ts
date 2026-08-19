@@ -252,6 +252,9 @@ export interface ContractValueTimeline {
   currentEur: number | null;
   deltaPct: number | null; // (current − signing) / signing, when both present
   suspect: boolean; // value_/annex_suspect/review → render with an unverified-value label
+  // annex_total_suspect → the current value is a KNOWN exact 2× double-count. currentEur is blanked (—)
+  // rather than shown as a labelled doubled figure — a known-wrong number is worse than an honest gap (#307).
+  currentValueDoubled: boolean;
 }
 
 export interface ContractLotRow {
@@ -282,6 +285,8 @@ export interface AmendmentEntry {
   description: string | null; // recorded reason/notes, when the source carries them
   valueAfterEur: number | null; // the contract value after this annex
   deltaEur: number | null; // value_after − value_before
+  restated: boolean; // #305 Tier-2: value_after was text-corrected from a double-counted total
+  suspect: boolean; // #305 residual: an uncorrectable double-count — value_after/delta suppressed, row marked
 }
 
 export interface ContractDetail {
@@ -637,7 +642,7 @@ export interface CompetitionData {
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
-  kind: 'authority' | 'company' | 'contract';
+  kind: 'authority' | 'company' | 'contract' | 'official';
   slug: string;
   href: string;
   title: string;
@@ -646,13 +651,14 @@ export interface SearchHit {
   hasEik?: boolean;
   ownershipKind?: OwnershipKind | null;
   memberCount?: number | null;
+  hasConflict?: boolean; // company: has ≥1 PUBLISHED свързани-лица link → badge linking on to /conflicts/company/:eik
   subtitle: string | null;
   amountEur: number | null;
-  amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност"
+  amountLabel: string; // „общо похарчено" / „общо спечелено" / „стойност" / „по договори"
 }
 
 export interface SearchGroup {
-  kind: 'authority' | 'company' | 'contract';
+  kind: 'authority' | 'company' | 'contract' | 'official';
   label: string;
   total: number;
   hits: SearchHit[];
@@ -663,4 +669,90 @@ export interface SearchResults {
   query: string;
   groups: SearchGroup[];
   empty: boolean;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Свързани лица (related-persons / conflict-of-interest) DTOs — deterministic office-holder↔winner
+// links built from public asset declarations. The public surface shows ONLY declared PRIVATE OWNERSHIP
+// (the person declared a stake): management/board roles without a stake are not a private interest and
+// are never surfaced. Every link is a PUBLISHED, certainty-1.0 match, dated to its declaration years.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+// 'related' = a CLOSE RELATIVE's declared stake (family_ownership). The official is named (their own
+// public declaration), the company is named (public winner), but the relative is anonymized — shown only
+// as „свързано лице", their name/relationship never stored or transmitted. self stakes are owns/manages.
+export type ConflictRelation = 'owns' | 'manages' | 'owns+manages' | 'related';
+
+/** One office-holder↔company ownership link with its contract facts and a provenance URL. */
+export interface ConflictLink {
+  linkKey: string;
+  officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
+  official: string; // declarant (office-holder) name as declared
+  institution: string | null; // the official's latest declared institution — disambiguates namesakes
+  //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct
+  //   people, so the surface must SHOW the body rather than render two identical bare names.
+  company: string; // winner company name as registered
+  eik: string; // winner ЕИК
+  relation: ConflictRelation; // 'related' ⇒ the stake is a close relative's (anonymized), not the official's own
+  contemporaneous: boolean; // stake declared in a year overlapping a contract award
+  ownInstitution: boolean; // ≥1 contract from the official's OWN institution (deterministic 'exact' only)
+  firstDeclaredYear: string | null; // declared span — the link is DATED, never asserted "current"
+  lastDeclaredYear: string | null; // divested links (later filing omits the company) are withdrawn upstream
+  matchMethod: string;
+  contractCount: number;
+  contractValueEur: number | null;
+  // Contemporaneous split: the subset of the winner's contracts SIGNED while the declared stake was held
+  // (signing year within [firstDeclaredYear, lastDeclaredYear]). This is the actual conflict window — the
+  // full contractValueEur is the company's total procurement, NOT only the conflict period. Count/value are
+  // an exact decomposition of the `contemporaneous` flag (count>0 ⇔ contemporaneous), computed read-time.
+  contemporaneousContractCount: number;
+  contemporaneousValueEur: number | null; // SUM(amount_eur) of the in-window contracts; null if none summable
+  firstContractYear: string | null;
+  lastContractYear: string | null;
+  sourceUrl: string | null; // a representative declaration URL — provenance, never a fabricated value
+  // Trade Register evidence (#279, ADR-0033). A link only reaches this DTO when its identity rests on a
+  // checkable registry fact, so these describe WHICH fact — the surface's whole point is that every shown
+  // link can explain itself. `registryRole` is the role the register records, NOT a claim about who owns
+  // what: the ownership claim comes from the official's own declaration.
+  evidenceKind: 'document' | 'confirmed'; // the only two rungs that publish
+  registryRole: 'owner' | 'manager' | null; // set only for evidenceKind='document'
+  registryEntryNumber: string | null; // TEXT — a fieldEntryNumber exceeds the exact-integer range
+  registryEntryDate: string | null; // the registry entry the evidence rests on
+  registryLookupDate: string; // when the deed was read — the freshness bound on the claim
+}
+
+/** One contract of a linked winner, marked by whether it was signed during the declared-stake window.
+ *  Only `temporal === 'contemporaneous'` is claimed as "в конфликт"; before/after/unknown are shown but
+ *  never asserted as a conflict (libel-safe: a contract outside the declared window is not the conflict). */
+export interface ConflictContract {
+  contractSlug: string; // URL segment for /contracts/:id (the contract detail page)
+  signedAt: string | null; // ISO date as recorded; null when the source has no signing date
+  authority: string; // awarding public body (public record)
+  authorityId: string; // stable id of the awarding body — groups contracts per authority (name can collide)
+  authorityTotalEur: number | null; // that body's total recorded procurement (authority_totals.spent_eur); null when un-rolled-up. Denominator for the per-authority capture share.
+  contractKind: string | null; // Доставки / Услуги / Строителство (what KIND of contract)
+  procedureType: string | null; // award procedure verbatim (открита процедура / договаряне без обявление…); null = unknown/synthetic. HOW it was awarded — the competition signal.
+  subject: string | null; // tender subject (предмет) as recorded — what the contract was FOR
+  contractNumber: string | null;
+  amountEur: number | null; // canonical SAFE-to-sum EUR; null when no trustworthy figure
+  temporal: 'contemporaneous' | 'before' | 'after' | 'unknown';
+}
+
+/** The on-demand per-link contract list (the expandable row on /conflicts). */
+export interface LinkContracts {
+  linkKey: string;
+  contracts: ConflictContract[];
+}
+
+/** One office-holder's declared ownership links. */
+export interface OfficialConflicts {
+  official: string;
+  links: ConflictLink[];
+}
+
+/** A winner's page: office-holders with a declared ownership stake in it. */
+export interface CompanyConflicts {
+  company: string;
+  eik: string;
+  links: ConflictLink[];
 }
