@@ -245,7 +245,10 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // legitimate reports ever get rejected over this, reach for a `\p{L}` lookaround word boundary
   // (JS `\b` is ASCII-only) rather than growing an exception list (review f/u, ydimitrof).
   // Digit forms are already caught by `\d{5,}` above.
-  /илион|илиард|хиляд/giu, // spelled magnitudes: милион/милиард/…/квинтилион + inflections; хиляд(а/и)
+  // млрд/млн are stems too: "дванадесет млрд." has neither a digit (the \d…млрд pattern above needs
+  // one) nor a full-word suffix — the abbreviation must flag on its own (review f/u, ydimitrof).
+  // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
+  /илион|илиард|хиляд|млрд|млн/giu, // spelled magnitudes + inflections; хиляд(а/и); млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",

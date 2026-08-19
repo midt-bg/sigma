@@ -504,6 +504,10 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('5 милиона')).not.toHaveLength(0);
     expect(findProseNumbers('12 милиарда')).not.toHaveLength(0);
     expect(findProseNumbers('триста хиляди')).not.toHaveLength(0);
+    // Spelled-out numeral + ABBREVIATED magnitude has neither a digit (for the \d…млрд pattern) nor
+    // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
+    expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
   });
 
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {
