@@ -18,6 +18,12 @@ import {
   coverage,
   purgeExpired,
   RETENTION_DAYS,
+  verdictInputsHash,
+  upsertVerdict,
+  readVerdict,
+  verdictIsCurrent,
+  verdictCoverage,
+  pendingVerdictEiks,
 } from './cache.mjs';
 
 function tmpDb() {
@@ -28,7 +34,7 @@ const withCache = (fn) => {
   const { dir, file } = tmpDb();
   const db = openCache(file);
   try {
-    return fn(db);
+    return fn(db, dir);
   } finally {
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -158,6 +164,180 @@ test('the schema exposes no column that could hold a person name', () =>
       assert.ok(!cols.includes(forbidden), `deeds.${forbidden} must not exist (PII rail)`);
     // A hash, never an excerpt — an excerpt of a deed is third-party personal data.
     assert.ok(cols.includes('body_sha256'));
+  }));
+
+// ── verdicts (ADR-0037) ───────────────────────────────────────────────────────
+const RULES = 'ev-1';
+const INPUT = {
+  declarantName: 'ИВАН ПЕТРОВ ТЕСТОВ',
+  declaredSeats: ['Пловдив', 'София'],
+  declaredEik: false,
+  firstDeclaredYear: 2019,
+  scope: 'self',
+  nameGloballyUnique: true,
+  companyNameDistinctive: true,
+};
+const VERDICT = (over = {}) => ({
+  linkKey: 'person:ИВАН|МВР|201122335',
+  eik: '201122335',
+  rulesVersion: RULES,
+  inputsHash: verdictInputsHash(INPUT),
+  kind: 'confirmed',
+  publishable: true,
+  registryRole: 'управител',
+  matchedFact: 'name',
+  entryNumber: '20110502101007',
+  entryDate: '2011-05-02',
+  shortName: false,
+  latinInName: false,
+  decidedAt: '2026-08-19T00:00:00.000Z',
+  ...over,
+});
+
+test('verdictInputsHash is stable, and blind to the order a Set happened to iterate in', () => {
+  assert.equal(verdictInputsHash(INPUT), verdictInputsHash({ ...INPUT }));
+  assert.equal(
+    verdictInputsHash(INPUT),
+    verdictInputsHash({ ...INPUT, declaredSeats: ['София', 'Пловдив'] }),
+    'declaredSeats comes from a Set spread — insertion order must not look like a change',
+  );
+  // The deed side is not hashed: a changed deed is caught by freshness and re-decided outright.
+  assert.equal(verdictInputsHash({ ...INPUT, deed: { a: 1 } }), verdictInputsHash(INPUT));
+  for (const k of Object.keys(INPUT)) {
+    const changed = { ...INPUT, [k]: typeof INPUT[k] === 'boolean' ? !INPUT[k] : 'CHANGED' };
+    assert.notEqual(
+      verdictInputsHash(changed),
+      verdictInputsHash(INPUT),
+      `${k} must move the hash`,
+    );
+  }
+});
+
+test('verdictInputsHash REFUSES an input it does not know', () => {
+  // The failure mode of a missed input is a stale decision about a real person, published silently.
+  // So a new evidenceVerdict argument must fail the run until someone decides where it belongs.
+  assert.throws(
+    () => verdictInputsHash({ ...INPUT, someNewSignal: true }),
+    /unrecognised.*someNewSignal/i,
+  );
+});
+
+test('a verdict round-trips, booleans and all', () =>
+  withCache((db) => {
+    upsertVerdict(db, VERDICT());
+    const got = readVerdict(db, 'person:ИВАН|МВР|201122335');
+    assert.equal(got.kind, 'confirmed');
+    assert.equal(got.publishable, true, 'stored as INTEGER, read back as a boolean');
+    assert.equal(got.registryRole, 'управител');
+    assert.equal(got.shortName, false);
+    assert.equal(readVerdict(db, 'person:NOBODY|X|201122335'), null);
+  }));
+
+test('upsertVerdict replaces on re-decision rather than duplicating', () =>
+  withCache((db) => {
+    upsertVerdict(db, VERDICT());
+    upsertVerdict(db, VERDICT({ kind: 'refuted', publishable: false }));
+    const n = db.prepare('SELECT COUNT(*) AS n FROM verdicts').get().n;
+    assert.equal(n, 1);
+    assert.equal(readVerdict(db, 'person:ИВАН|МВР|201122335').kind, 'refuted');
+  }));
+
+test('a verdict is stale when the rules moved, the declaration moved, or it simply aged', () =>
+  withCache((db) => {
+    upsertVerdict(db, VERDICT());
+    const row = readVerdict(db, 'person:ИВАН|МВР|201122335');
+    const link = { linkKey: row.linkKey, eik: row.eik, inputsHash: verdictInputsHash(INPUT) };
+    const at = (iso) => new Date(iso);
+
+    assert.ok(verdictIsCurrent(row, link, { rulesVersion: RULES }), 'unchanged = a cache hit');
+    assert.ok(!verdictIsCurrent(row, link, { rulesVersion: 'ev-2' }), 'rules bump re-decides');
+    assert.ok(
+      !verdictIsCurrent(row, { ...link, inputsHash: 'other' }, { rulesVersion: RULES }),
+      'a changed declaration re-decides',
+    );
+    assert.ok(
+      !verdictIsCurrent(row, link, {
+        rulesVersion: RULES,
+        maxAgeDays: 30,
+        now: at('2026-10-19T00:00:00Z'),
+      }),
+      'an old lookup re-decides',
+    );
+    assert.ok(!verdictIsCurrent(null, link, { rulesVersion: RULES }), 'absent is not current');
+  }));
+
+test('coverage and pending are computed over LINKS, because one company carries several', () =>
+  withCache((db) => {
+    const hash = verdictInputsHash(INPUT);
+    const links = [
+      { linkKey: 'a', eik: '201122335', inputsHash: hash },
+      { linkKey: 'b', eik: '201122335', inputsHash: hash },
+      { linkKey: 'c', eik: '203445566', inputsHash: hash },
+    ];
+    upsertVerdict(db, VERDICT({ linkKey: 'a' }));
+    const opts = { rulesVersion: RULES };
+
+    const cov = verdictCoverage(db, links, opts);
+    assert.deepEqual(
+      { wanted: cov.wanted, current: cov.current, missing: cov.missing },
+      {
+        wanted: 3,
+        current: 1,
+        missing: 2,
+      },
+    );
+    // 'b' has no verdict yet, so its company must still be fetched even though 'a' on the SAME ЕИК is
+    // decided — a rules bump invalidates links independently of when the deed was last seen.
+    assert.deepEqual(pendingVerdictEiks(db, links, opts), ['201122335', '203445566']);
+
+    upsertVerdict(db, VERDICT({ linkKey: 'b' }));
+    upsertVerdict(db, VERDICT({ linkKey: 'c', eik: '203445566' }));
+    assert.equal(verdictCoverage(db, links, opts).missing, 0);
+    assert.deepEqual(
+      pendingVerdictEiks(db, links, opts),
+      [],
+      'a complete cache costs zero requests',
+    );
+  }));
+
+test('the verdicts schema exposes no column that could hold a third party name', () =>
+  withCache((db) => {
+    const cols = db
+      .prepare(`SELECT name FROM pragma_table_info('verdicts')`)
+      .all()
+      .map((r) => r.name);
+    for (const forbidden of [
+      'name',
+      'person',
+      'owner',
+      'manager',
+      'holder',
+      'full_name',
+      'declarant',
+    ])
+      assert.ok(!cols.includes(forbidden), `verdicts.${forbidden} must not exist (ADR-0037)`);
+    // A ROLE is not a person: „управител" names an office, and the office is the published claim.
+    assert.ok(cols.includes('registry_role'));
+  }));
+
+test('the ЕГН guard screens a verdict too — it is the row that CROSSES a run boundary', () =>
+  withCache((db) => {
+    assert.throws(
+      () => upsertVerdict(db, VERDICT({ registryRole: 'управител 8011129876' })),
+      /ЕГН/,
+    );
+    assert.throws(() => upsertVerdict(db, VERDICT({ matchedFact: '8011129876' })), /ЕГН/);
+  }));
+
+test('purgeExpired ages verdicts out on the same clock as deeds', () =>
+  withCache((db, dir) => {
+    upsertVerdict(db, VERDICT({ decidedAt: '2026-01-01T00:00:00.000Z' }));
+    upsertVerdict(db, VERDICT({ linkKey: 'fresh', decidedAt: '2026-08-18T00:00:00.000Z' }));
+    const out = purgeExpired(db, path.join(dir, 'deeds'), {
+      now: new Date('2026-08-19T00:00:00Z'),
+    });
+    assert.equal(out.verdicts, 1, 'the old lookup goes; the published claim may not outlive it');
+    assert.ok(readVerdict(db, 'fresh'), 'the in-window one stays');
   }));
 
 test('markOutsideTr is permanent-by-intent and records WHY', () =>

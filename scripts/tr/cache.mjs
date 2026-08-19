@@ -17,6 +17,7 @@
 // crawl must be able to pick up exactly where it stopped without re-requesting what it already has.
 
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeEik } from './paths.mjs';
@@ -38,6 +39,27 @@ CREATE TABLE IF NOT EXISTS deeds (
   outside_reason       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_deeds_status ON deeds(status);
+-- The decision itself, per (link, ЕИК) — ADR-0037. This is what survives a run boundary while the
+-- deed that produced it does not: a role, an entry reference and booleans. link_key is
+-- person:<name>|<institution>|<eik>[|family], so it carries the OFFICIAL's name — a person the
+-- surface publishes by design — and never the relative's (ADR-0032 never names them) nor any
+-- co-owner's. That is strictly less than scratch/cacbg/raw, which already crosses this boundary.
+CREATE TABLE IF NOT EXISTS verdicts (
+  link_key      TEXT PRIMARY KEY,
+  eik           TEXT NOT NULL,
+  rules_version TEXT NOT NULL,     -- evidence.mjs RULES_VERSION at decision time
+  inputs_hash   TEXT NOT NULL,     -- over the declaration-side arguments; see verdictInputsHash
+  kind          TEXT NOT NULL,
+  publishable   INTEGER NOT NULL,
+  registry_role TEXT,              -- a ROLE ('управител'), never the person holding it
+  matched_fact  TEXT,
+  entry_number  TEXT,
+  entry_date    TEXT,
+  short_name    INTEGER NOT NULL DEFAULT 0,
+  latin_in_name INTEGER NOT NULL DEFAULT 0,
+  decided_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_verdicts_eik ON verdicts(eik);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
@@ -151,6 +173,159 @@ export function readDeed(db, eik) {
     attempts: r.attempts,
     outsideReason: r.outside_reason,
   };
+}
+
+// ── verdicts (ADR-0037) ───────────────────────────────────────────────────────
+
+/**
+ * The declaration-side arguments of `evidenceVerdict`, in the order they are hashed.
+ *
+ * DEED-side inputs (`deed`, `outsideTr`) are deliberately absent: they are not what this hash
+ * invalidates against. A changed deed is caught by `--max-age-days` freshness, and re-fetching
+ * recomputes and overwrites the verdict outright.
+ */
+const HASHED_INPUTS = [
+  'declarantName',
+  'declaredSeats',
+  'declaredEik',
+  'firstDeclaredYear',
+  'scope',
+  'nameGloballyUnique',
+  'companyNameDistinctive',
+];
+const DEED_SIDE_INPUTS = new Set(['deed', 'outsideTr']);
+
+/**
+ * Canonical hash of everything on the declaration side of one `evidenceVerdict` call.
+ *
+ * A cached decision is only as trustworthy as its invalidation, and the failure mode of a missed
+ * input is silent: a stale verdict about a real person, published. So this REFUSES an argument object
+ * carrying a key it does not know — adding an input to `evidenceVerdict` without deciding whether it
+ * belongs in the hash fails the run instead of quietly publishing yesterday's answer.
+ *
+ * @param {object} input the exact object handed to `evidenceVerdict`
+ */
+export function verdictInputsHash(input) {
+  const unknown = Object.keys(input).filter(
+    (k) => !HASHED_INPUTS.includes(k) && !DEED_SIDE_INPUTS.has(k),
+  );
+  if (unknown.length) {
+    throw new Error(
+      `verdictInputsHash: unrecognised evidenceVerdict input(s) ${unknown.join(', ')} — decide ` +
+        `whether each belongs in HASHED_INPUTS before a cached verdict can be trusted`,
+    );
+  }
+  const canonical = HASHED_INPUTS.map((k) => {
+    const v = input[k];
+    // Sorted, because `declaredSeats` arrives from a Set spread: iteration order is an accident of
+    // insertion and must not make an unchanged input look changed.
+    return [k, Array.isArray(v) ? [...v].map(String).sort() : (v ?? null)];
+  });
+  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+/**
+ * Record the decision for one link. Replaces on re-decision so a refresh never duplicates a row.
+ *
+ * Screened by the same ЕГН rail as `upsertDeed` — the verdict crosses a run boundary, which makes it
+ * the surface most worth screening, not least.
+ */
+export function upsertVerdict(db, v) {
+  const eik = safeEik(v.eik);
+  for (const [f, val] of Object.entries(v)) if (!EGN_EXEMPT.has(f)) assertNoEgnShape(val, f);
+  db.prepare(
+    `INSERT INTO verdicts (link_key, eik, rules_version, inputs_hash, kind, publishable,
+        registry_role, matched_fact, entry_number, entry_date, short_name, latin_in_name, decided_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(link_key) DO UPDATE SET
+        eik=excluded.eik, rules_version=excluded.rules_version, inputs_hash=excluded.inputs_hash,
+        kind=excluded.kind, publishable=excluded.publishable, registry_role=excluded.registry_role,
+        matched_fact=excluded.matched_fact, entry_number=excluded.entry_number,
+        entry_date=excluded.entry_date, short_name=excluded.short_name,
+        latin_in_name=excluded.latin_in_name, decided_at=excluded.decided_at`,
+  ).run(
+    String(v.linkKey),
+    eik,
+    String(v.rulesVersion),
+    String(v.inputsHash),
+    String(v.kind),
+    v.publishable ? 1 : 0,
+    v.registryRole ?? null,
+    v.matchedFact ?? null,
+    v.entryNumber ?? null,
+    v.entryDate ?? null,
+    v.shortName ? 1 : 0,
+    v.latinInName ? 1 : 0,
+    v.decidedAt,
+  );
+}
+
+/** One verdict by link key, camelCased and re-booleaned, or null. */
+export function readVerdict(db, linkKey) {
+  const r = db.prepare('SELECT * FROM verdicts WHERE link_key = ?').get(String(linkKey));
+  if (!r) return null;
+  return {
+    linkKey: r.link_key,
+    eik: r.eik,
+    rulesVersion: r.rules_version,
+    inputsHash: r.inputs_hash,
+    kind: r.kind,
+    publishable: r.publishable === 1,
+    registryRole: r.registry_role,
+    matchedFact: r.matched_fact,
+    entryNumber: r.entry_number,
+    entryDate: r.entry_date,
+    shortName: r.short_name === 1,
+    latinInName: r.latin_in_name === 1,
+    decidedAt: r.decided_at,
+  };
+}
+
+/**
+ * Is the stored decision for `link` still the one today's rules and inputs would produce?
+ *
+ * Three ways to be stale, and all three must re-decide: the evidence rules moved, the declaration
+ * behind the link moved, or the lookup is simply old. Anything else is a cache hit worth zero
+ * requests — which is the entire point of ADR-0037.
+ */
+export function verdictIsCurrent(row, link, { rulesVersion, maxAgeDays = null, now = new Date() }) {
+  if (!row) return false;
+  if (row.rulesVersion !== rulesVersion) return false;
+  if (row.inputsHash !== link.inputsHash) return false;
+  if (maxAgeDays != null && Date.parse(row.decidedAt) < now.getTime() - maxAgeDays * 86_400_000)
+    return false;
+  return true;
+}
+
+/**
+ * How much of `links` the verdict cache currently covers — the input to the incremental load gate.
+ * `links` are `{linkKey, eik, inputsHash}`.
+ */
+export function verdictCoverage(db, links, opts) {
+  let current = 0;
+  for (const link of links) {
+    if (verdictIsCurrent(readVerdict(db, link.linkKey), link, opts)) current++;
+  }
+  return {
+    wanted: links.length,
+    current,
+    missing: links.length - current,
+    ratio: links.length === 0 ? 1 : current / links.length,
+  };
+}
+
+/**
+ * The ЕИК that still need a deed fetched, because at least one link on them has no current verdict.
+ *
+ * Deliberately keyed on links rather than on ЕИК: one company can carry several links, and a rules
+ * bump invalidates them independently of when the deed was last seen.
+ */
+export function pendingVerdictEiks(db, links, opts) {
+  const out = new Set();
+  for (const link of links) {
+    if (!verdictIsCurrent(readVerdict(db, link.linkKey), link, opts)) out.add(safeEik(link.eik));
+  }
+  return [...out].sort();
 }
 
 /** ADR-0033 decision 5: one monthly refresh cycle plus slack. See purgeExpired. */
@@ -274,5 +449,15 @@ export function purgeExpired(
       if (e.code !== 'ENOENT') throw e;
     }
   }
-  return { rows: expired.length, files, orphans };
+
+  // Verdicts age out on the same clock. They hold no third-party name (ADR-0037), so this is not the
+  // privacy rail the deed purge is — it is the promise that a published claim rests on a lookup made
+  // inside the retention window, which is what the methodology page states. A verdict outliving that
+  // window would keep publishing against evidence we no longer hold.
+  const verdicts = db
+    .prepare('SELECT COUNT(*) AS n FROM verdicts WHERE decided_at < ?')
+    .get(cutoff);
+  db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(cutoff);
+
+  return { rows: expired.length, files, orphans, verdicts: verdicts?.n ?? 0 };
 }
