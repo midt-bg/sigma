@@ -130,6 +130,23 @@ describe('assertReadOnlySelect', () => {
     }
   });
 
+  it('rejects QUOTED denylisted function names — SQLite resolves "group_concat"(x) as the function (review f/u)', () => {
+    // Modern SQLite (D1) resolves a double-quoted, bracketed, or backticked identifier in call
+    // position to the same built-in, so `"group_concat"(name)` reached the aggregate while the
+    // bare-name regex saw only `group_concat"(` and let it through (review, ydimitrof).
+    for (const sql of [
+      'SELECT "group_concat"(name) FROM bidders',
+      'SELECT [group_concat](name) FROM bidders',
+      'SELECT `group_concat`(name) FROM bidders',
+      'SELECT "printf"(\'%1000000d\', id) FROM contracts',
+      'SELECT "string_agg" (name, \',\') FROM bidders',
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
     // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
     // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).
