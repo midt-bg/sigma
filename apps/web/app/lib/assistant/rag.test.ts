@@ -6,6 +6,7 @@ import {
   EMBED_DIM,
   indexSchemaCorpus,
   MAX_EMBED_CHARS,
+  MIN_ENTITY_SCORE,
   retrieveSchemaContext,
   semanticSearch,
   type EmbeddingRunner,
@@ -166,16 +167,35 @@ describe('semanticSearch', () => {
     );
   });
 
-  it('degrades a scoreless match to score 0 instead of leaking a non-number into the DTO', async () => {
+  it('drops matches below the relevance floor (off-topic neighbours never reach the model as hits)', async () => {
     const ai = fakeAI();
-    // Same backend anomaly the retrieveSchemaContext floor defends against: SemanticHit.score is
-    // typed number, and tools.ts calls score.toFixed — an undefined score must become 0 here, not
-    // a TypeError three layers later that presents as a total semantic-search outage.
+    // Scores derived from the floor (± epsilon), same discipline as the schema tests: a future
+    // recalibration must not silently flip these fixtures across the floor.
+    const index = fakeIndex([
+      {
+        id: 'e1',
+        score: MIN_ENTITY_SCORE + 0.05,
+        metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' },
+      },
+      {
+        id: 'e2',
+        score: MIN_ENTITY_SCORE - 0.05,
+        metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' },
+      },
+    ]);
+    const out = await semanticSearch(ai, index, 'детски градини');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ ref: 'eik:1' });
+  });
+
+  it('drops a scoreless match (reads as below the floor — same defensive rule as the schema path)', async () => {
+    const ai = fakeAI();
+    // A backend anomaly omitting `score` must not surface as an unranked "hit" (nor, later, as a
+    // TypeError in tools.ts's score.toFixed) — below-floor is the safe reading.
     const index = fakeIndex([
       { id: 'e1', metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } } as unknown as Match,
     ]);
-    const out = await semanticSearch(ai, index, 'детски градини');
-    expect(out[0]).toMatchObject({ kind: 'company', score: 0 });
+    expect(await semanticSearch(ai, index, 'детски градини')).toEqual([]);
   });
 });
 

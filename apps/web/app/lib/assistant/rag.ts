@@ -183,6 +183,14 @@ export async function retrieveSchemaContext(
 // deletes only by explicit id list); versioning alone would force a full re-embed per removal.
 export const ENTITY_NS = 'entity-v1';
 
+// Relevance floor for an entity match — symmetric with MIN_SCHEMA_SCORE (see its rationale): once
+// the entity corpus is populated, top-K always returns its K least-distant neighbours EVEN when all
+// are off-topic, and without a floor they would reach the model as real "hits" (tools.ts renders
+// them with score.toFixed). Zero survivors is the honest outcome for an off-topic query. Scoreless
+// matches read as below the floor (dropped) — the same defensive rule as the schema path.
+// (review f/u on #319, ydimitrof)
+export const MIN_ENTITY_SCORE = 0.35;
+
 export interface SemanticHit {
   kind: string;
   ref: string;
@@ -196,6 +204,7 @@ export async function semanticSearch(
   index: VectorIndex,
   query: string,
   topK = 8,
+  minScore = MIN_ENTITY_SCORE,
 ): Promise<SemanticHit[]> {
   const [vec] = await embed(ai, [query]);
   if (!vec) return [];
@@ -204,13 +213,14 @@ export async function semanticSearch(
     returnMetadata: 'all',
     namespace: ENTITY_NS,
   });
-  return matches.map((m) => ({
-    kind: String(m.metadata?.kind ?? ''),
-    ref: String(m.metadata?.ref ?? ''),
-    title: String(m.metadata?.title ?? ''),
-    // Same defence as retrieveSchemaContext's floor: the typed contract promises a numeric score,
-    // but a backend anomaly must degrade to 0, not surface later as a TypeError in the tool layer
-    // (tools.ts renders `score.toFixed`).
-    score: m.score ?? 0,
-  }));
+  return matches
+    .filter((m) => (m.score ?? 0) >= minScore)
+    .map((m) => ({
+      kind: String(m.metadata?.kind ?? ''),
+      ref: String(m.metadata?.ref ?? ''),
+      title: String(m.metadata?.title ?? ''),
+      // The floor guarantees a numeric score here for any minScore > 0; `?? 0` keeps the DTO total
+      // (score stays a number, never a TypeError in tools.ts) even if a caller passes minScore = 0.
+      score: m.score ?? 0,
+    }));
 }
