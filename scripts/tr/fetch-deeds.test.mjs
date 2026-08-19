@@ -12,6 +12,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   parseTrOptions,
+  readLinksFile,
   run,
   MIN_INTERVAL_MS,
   BREAKER_TRIP,
@@ -272,6 +273,228 @@ test('after a 429 the run resumes exactly where it stopped', async () => {
     const second = harness(c, [A, B, C], { [A]: ok(A), [B]: ok(B), [C]: ok(C) });
     assert.equal(await second.promise, 0);
     assert.deepEqual(second.calls, [B, C], 'A is already cached — not re-requested');
+  } finally {
+    c.cleanup();
+  }
+});
+
+// ── links mode: the crawl decides (ADR-0037) ──────────────────────────────────
+
+/** A deed naming BOTH the declarant and a co-owner who holds no public office. */
+const DEED_WITH_COOWNER = (uic) => ({
+  uic,
+  fullName: '"АЛФА СТРОЙ" ООД',
+  legalForm: 4,
+  sections: [
+    {
+      subDeeds: [
+        {
+          groups: [
+            {
+              fields: [
+                {
+                  nameCode: 'CR_F_19_L',
+                  htmlData:
+                    `<div class='record-container'><p class='field-text'>ИВАН ПЕТРОВ ТЕСТОВ</p></div>` +
+                    `<div class='record-container'><p class='field-text'>МАРИЯ ГЕОРГИЕВА СЪДРУЖНИК</p></div>`,
+                  fieldEntryNumber: '20110502101007',
+                  fieldEntryDate: '2011-05-02T00:00:00',
+                },
+                {
+                  nameCode: 'CR_F_5_L',
+                  htmlData: `<div class='record-container'><p class='field-text'>Населено място: гр. Пловдив</p></div>`,
+                  fieldEntryNumber: '20110502101008',
+                  fieldEntryDate: '2011-05-02T00:00:00',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
+const okCoowner = (uic) => ({
+  status: 200,
+  headers: {},
+  body: Buffer.from(JSON.stringify(DEED_WITH_COOWNER(uic)), 'utf8'),
+});
+
+const linksFileFor = (dir, records) => {
+  const f = path.join(dir, 'links.jsonl');
+  fs.writeFileSync(f, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return f;
+};
+const linkRec = (eik, over = {}) => ({
+  linkKey: `person:ИВАН|МВР|${eik}`,
+  eik,
+  declarantName: 'ИВАН ПЕТРОВ ТЕСТОВ',
+  declaredSeats: ['Пловдив'],
+  declaredEik: false,
+  firstDeclaredYear: 2019,
+  scope: 'self',
+  nameGloballyUnique: true,
+  companyNameDistinctive: true,
+  ...over,
+});
+/** Drive run() in links mode. Mirrors `harness`, but the closed set carries the decision inputs. */
+function linksHarness(c, records, routes, extraArgv = []) {
+  const calls = [];
+  const waits = [];
+  return {
+    calls,
+    waits,
+    promise: run({
+      httpGet: async (url) => {
+        const eik = url.split('/').pop();
+        calls.push(eik);
+        const r = routes[eik];
+        if (typeof r === 'function') return r(calls.filter((e) => e === eik).length);
+        return r ?? status(404);
+      },
+      sleep: async (ms) => void waits.push(ms),
+      now: () => new Date('2026-08-19T12:00:00Z'),
+      guard: () => {},
+      dbFile: c.dbFile,
+      rawDir: c.rawDir,
+      argv: ['node', 'x', '--links-file', linksFileFor(c.dir, records), ...extraArgv],
+    }),
+  };
+}
+const verdictRows = (dbFile) => {
+  const db = openCacheRO(dbFile);
+  const r = db.prepare('SELECT * FROM verdicts ORDER BY link_key').all();
+  db.close();
+  return r;
+};
+
+test('parseTrOptions: exactly one closed set, and they are not interchangeable', () => {
+  assert.throws(() => parseTrOptions(['node', 'x']), /links-file.*eiks-file/i);
+  assert.throws(
+    () => parseTrOptions(['node', 'x', '--eiks-file', '/e', '--links-file', '/l']),
+    /mutually exclusive/i,
+  );
+  assert.equal(parseTrOptions(['node', 'x', '--links-file', '/l']).linksFile, '/l');
+});
+
+test('readLinksFile hashes each record from the SAME object the decision will use', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tr-links-'));
+  try {
+    const f = linksFileFor(dir, [linkRec(A), linkRec(B)]);
+    const links = readLinksFile(f);
+    assert.equal(links.length, 2);
+    assert.ok(!('linkKey' in links[0].input), 'the routing keys are not decision inputs');
+    assert.ok(!('eik' in links[0].input), 'nor is the company — the deed answers for that');
+    // Same declaration inputs on two different companies hash the same, and that is correct: the hash
+    // is only ever compared against the verdict stored under the SAME link_key.
+    assert.equal(links[0].inputsHash, links[1].inputsHash);
+    const [moved] = readLinksFile(linksFileFor(dir, [linkRec(A, { declaredSeats: ['Варна'] })]));
+    assert.notEqual(moved.inputsHash, links[0].inputsHash, 'a changed input moves the hash');
+    fs.writeFileSync(f, '{"eik":"201122335"}\n');
+    assert.throws(() => readLinksFile(f), /linkKey/);
+    fs.writeFileSync(f, 'not json\n');
+    assert.throws(() => readLinksFile(f), /not JSON/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('links mode decides every link and caches the verdict, not the deed', async () => {
+  const c = ctx();
+  try {
+    const h = linksHarness(c, [linkRec(A)], { [A]: ok(A) });
+    assert.equal(await h.promise, 0);
+    const [v] = verdictRows(c.dbFile);
+    assert.equal(v.link_key, `person:ИВАН|МВР|${A}`);
+    assert.equal(v.eik, A);
+    assert.ok(v.kind, 'a decision was reached');
+    assert.ok(v.decided_at && v.inputs_hash && v.rules_version);
+    // The deed served its purpose and left with it.
+    assert.ok(!fs.existsSync(path.join(c.rawDir, `${A}.json`)), 'the raw deed is dropped at once');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('NO third-party name reaches the verdict row — the whole licence for caching it', async () => {
+  const c = ctx();
+  try {
+    // МАРИЯ ГЕОРГИЕВА СЪДРУЖНИК holds no public office. She appears in the deed and must appear
+    // nowhere that outlives the runner. ADR-0037 rests on this being true, so it is asserted rather
+    // than argued: every column of every row, against the whole cache file for good measure.
+    const h = linksHarness(c, [linkRec(A)], { [A]: okCoowner(A) });
+    assert.equal(await h.promise, 0);
+    const rows_ = verdictRows(c.dbFile);
+    // Pinned so the proof cannot quietly become vacuous: a run that degraded to a null „unknown"
+    // verdict would satisfy every assertion below while proving nothing at all.
+    assert.equal(rows_.length, 1);
+    assert.equal(rows_[0].kind, 'document');
+    assert.equal(rows_[0].publishable, 1);
+    assert.equal(rows_[0].registry_role, 'owner', 'a role IS stored — that is the claim');
+    assert.equal(rows_[0].entry_number, '20110502101007');
+    for (const row of rows_)
+      for (const [col, val] of Object.entries(row))
+        assert.ok(
+          !String(val ?? '').includes('СЪДРУЖНИК'),
+          `verdicts.${col} carries a co-owner's name: ${val}`,
+        );
+    const blob = fs.readFileSync(c.dbFile);
+    assert.ok(!blob.includes(Buffer.from('СЪДРУЖНИК', 'utf8')), 'nor anywhere else in the cache');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('an outside-ТР answer is a decision too, so the next run does not re-ask', async () => {
+  const c = ctx();
+  try {
+    const first = linksHarness(c, [linkRec(A)], { [A]: status(404) });
+    assert.equal(await first.promise, 0);
+    assert.equal(verdictRows(c.dbFile)[0].kind, 'outside_tr');
+    assert.equal(verdictRows(c.dbFile)[0].publishable, 0, 'held, never published');
+    const second = linksHarness(c, [linkRec(A)], { [A]: status(404) });
+    assert.equal(await second.promise, 0);
+    assert.deepEqual(second.calls, [], 'already answered');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('a complete verdict cache costs zero requests; a changed declaration re-pends its ЕИК', async () => {
+  const c = ctx();
+  try {
+    assert.equal(
+      await linksHarness(c, [linkRec(A), linkRec(B)], { [A]: ok(A), [B]: ok(B) }).promise,
+      0,
+    );
+    const again = linksHarness(c, [linkRec(A), linkRec(B)], { [A]: ok(A), [B]: ok(B) });
+    assert.equal(await again.promise, 0);
+    assert.deepEqual(again.calls, [], 'nothing left to decide');
+
+    // The deed is untouched and fresh — it is the DECLARATION that moved, and deed freshness alone
+    // would have skipped this company entirely.
+    const moved = linksHarness(c, [linkRec(A, { declaredSeats: ['Варна'] }), linkRec(B)], {
+      [A]: ok(A),
+      [B]: ok(B),
+    });
+    assert.equal(await moved.promise, 0);
+    assert.deepEqual(moved.calls, [A], 'only the link whose inputs changed is re-decided');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('two links on ONE company are both decided from a single request', async () => {
+  const c = ctx();
+  try {
+    const recs = [
+      linkRec(A, { linkKey: `person:ИВАН|МВР|${A}` }),
+      linkRec(A, { linkKey: `person:ИВАН|МОН|${A}` }),
+    ];
+    const h = linksHarness(c, recs, { [A]: ok(A) });
+    assert.equal(await h.promise, 0);
+    assert.deepEqual(h.calls, [A], 'one company, one request');
+    assert.equal(verdictRows(c.dbFile).length, 2, 'both links decided');
   } finally {
     c.cleanup();
   }

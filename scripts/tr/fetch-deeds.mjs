@@ -38,7 +38,12 @@ import {
   pendingEiks,
   purgeExpired,
   RETENTION_DAYS,
+  verdictInputsHash,
+  upsertVerdict,
+  pendingVerdictEiks,
+  verdictCoverage,
 } from './cache.mjs';
+import { evidenceVerdict, RULES_VERSION } from './evidence.mjs';
 import {
   assertUicEcho,
   registryLegalForm,
@@ -93,8 +98,15 @@ export function parseTrOptions(argv) {
     return n;
   };
 
+  // Two ways to name the closed set, and they are not interchangeable. --links-file also carries the
+  // declaration side of each decision, which is what lets the crawl emit verdicts (ADR-0037);
+  // --eiks-file only names companies, so it can fetch deeds but never decide. Exactly one is required.
   const eiksFile = get('eiks-file', '');
-  if (!eiksFile) throw new Error('--eiks-file is required (the closed candidate set)');
+  const linksFile = get('links-file', '');
+  if (!eiksFile && !linksFile)
+    throw new Error('one of --links-file (decides) or --eiks-file (fetches only) is required');
+  if (eiksFile && linksFile)
+    throw new Error('--links-file and --eiks-file are mutually exclusive — pass one closed set');
 
   const limitRaw = get('limit', '');
   const intervalRaw = get('min-interval-ms', '');
@@ -118,6 +130,7 @@ export function parseTrOptions(argv) {
   const runtimeRaw = get('max-runtime-min', '');
   return {
     eiksFile,
+    linksFile,
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
     minIntervalMs,
     maxAgeDays: maxAgeRaw ? posInt(maxAgeRaw, 'max-age-days') : null,
@@ -133,6 +146,77 @@ export function readEiksFile(file) {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l !== '' && !l.startsWith('#'));
+}
+
+/**
+ * Read the closed LINK set: one JSON object per line, each the `evidenceVerdict` input for one link
+ * plus the `linkKey` and `eik` it belongs to (ADR-0037).
+ *
+ * The declaration side of the decision travels in this file, which is why it exists at all: the crawl
+ * can only emit a verdict if it knows what question to ask of the deed. It carries declarant names —
+ * public officials, already published by the source register and by our own surface — and never a
+ * relative or a co-owner.
+ */
+export function readLinksFile(file) {
+  const links = [];
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  for (const [i, raw] of lines.entries()) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch (e) {
+      throw new Error(`${file}:${i + 1}: not JSON — ${e.message}`);
+    }
+    if (!rec.linkKey || !rec.eik) throw new Error(`${file}:${i + 1}: needs both linkKey and eik`);
+    const { linkKey, eik, ...input } = rec;
+    // Hashed at read time, from the SAME object the decision will be computed with — never from a
+    // subset assembled later, which is how a stale verdict would slip past invalidation.
+    links.push({ linkKey, eik: safeEik(eik), input, inputsHash: verdictInputsHash(input) });
+  }
+  return links;
+}
+
+/**
+ * Decide every link on one ЕИК against its deed and record the verdicts.
+ *
+ * Runs while the deed is still in hand, which is the whole of ADR-0037: the decision outlives the run,
+ * the deed does not. A link whose evidence cannot be read is left WITHOUT a verdict rather than given
+ * a false one — an absent verdict re-pends the ЕИК next run, while a fabricated „unknown" would cache
+ * a hold that nothing ever revisits.
+ */
+export function decideLinks(db, { eik, deed, outsideTr, links, now }) {
+  let decided = 0;
+  let refused = 0;
+  for (const link of links) {
+    if (link.eik !== eik) continue;
+    try {
+      const verdict = evidenceVerdict({ ...link.input, deed, outsideTr });
+      upsertVerdict(db, {
+        linkKey: link.linkKey,
+        eik,
+        rulesVersion: verdict.rulesVersion ?? RULES_VERSION,
+        inputsHash: link.inputsHash,
+        kind: verdict.kind,
+        publishable: verdict.publishable,
+        registryRole: verdict.registryRole,
+        matchedFact: verdict.matchedFact,
+        entryNumber: verdict.entryNumber,
+        entryDate: verdict.entryDate,
+        shortName: verdict.shortName,
+        latinInName: verdict.latinInName,
+        decidedAt: now.toISOString(),
+      });
+      decided++;
+    } catch (err) {
+      console.error(
+        `  ${eik}: link ${link.linkKey} UNDECIDED — ${err instanceof Error ? err.message : err}`,
+      );
+      refused++;
+    }
+  }
+  return { decided, refused };
 }
 
 function atomicWrite(file, buf) {
@@ -210,10 +294,11 @@ export async function run({
   argv = process.argv,
 } = {}) {
   guard();
-  const { eiksFile, limit, minIntervalMs, maxAgeDays, retentionDays, maxRuntimeMs } =
+  const { eiksFile, linksFile, limit, minIntervalMs, maxAgeDays, retentionDays, maxRuntimeMs } =
     parseTrOptions(argv);
 
-  const requested = readEiksFile(eiksFile);
+  const links = linksFile ? readLinksFile(linksFile) : [];
+  const requested = linksFile ? [...new Set(links.map((l) => l.eik))] : readEiksFile(eiksFile);
   // A shape- or checksum-invalid code is dropped BEFORE any request: it cannot name a real company,
   // so asking about it would spend the register's budget to learn nothing.
   const candidates = [];
@@ -230,10 +315,18 @@ export async function run({
 
   const db = openCache(dbFile);
   try {
-    const pending = pendingEiks(db, candidates, { maxAgeDays, now: now() });
+    // In links mode the question is „which links still need deciding", not „which deeds are missing":
+    // a rules bump re-pends a company whose deed is perfectly fresh, and a link added to a company we
+    // already fetched re-pends it too. Falling back to deed freshness would silently skip both.
+    const valid = new Set(candidates);
+    const wanted = linksFile ? links.filter((l) => valid.has(l.eik)) : [];
+    const pending = linksFile
+      ? pendingVerdictEiks(db, wanted, { rulesVersion: RULES_VERSION, maxAgeDays, now: now() })
+      : pendingEiks(db, candidates, { maxAgeDays, now: now() });
     const todo = Number.isFinite(limit) ? pending.slice(0, limit) : pending;
     console.log(
-      `candidates ${candidates.length} · invalid ${invalid} · cached ${candidates.length - pending.length} · to fetch ${todo.length}`,
+      `candidates ${candidates.length} · invalid ${invalid} · cached ${candidates.length - pending.length} · to fetch ${todo.length}` +
+        (linksFile ? ` · links ${wanted.length}` : ''),
     );
 
     let unresolved = 0;
@@ -293,11 +386,18 @@ export async function run({
       // permanently unresolved so the run can never exit 0.
       if (res.status === 200 && res.body.length === 0) {
         markOutsideTr(db, eik, 'HTTP 200, empty body — no deed in the Търговски регистър', now());
+        // „Outside the register" is a decidable answer, not an absence of one — evidenceVerdict turns
+        // it into a held link. Recording it here is what stops the next run re-asking the register a
+        // question it has already answered.
+        if (linksFile)
+          decideLinks(db, { eik, deed: null, outsideTr: true, links: wanted, now: now() });
         consecutive = 0;
         continue;
       }
       if (res.status === 404) {
         markOutsideTr(db, eik, 'HTTP 404 — not in the Търговски регистър (BULSTAT/ДЗЗД?)', now());
+        if (linksFile)
+          decideLinks(db, { eik, deed: null, outsideTr: true, links: wanted, now: now() });
         consecutive = 0;
         continue;
       }
@@ -342,6 +442,27 @@ export async function run({
           seatEntryDate: seat.entryDate,
           latestOwnEntryDate: latestOwnershipEntryDate(deed),
         });
+
+        // Decide NOW, while the deed is in hand — the decision outlives the run, the deed must not
+        // (ADR-0037). Then drop the raw body immediately: the end-of-job `rm -rf` stays as the
+        // backstop, but a deed deleted the moment it has served its purpose cannot be left behind by
+        // a failure between here and there.
+        if (linksFile) {
+          const { decided, refused } = decideLinks(db, {
+            eik,
+            deed,
+            outsideTr: false,
+            links: wanted,
+            now: now(),
+          });
+          if (refused) unresolved++;
+          fs.rmSync(deedPath(eik, rawDir), { force: true });
+          if (decided === 0 && refused === 0) {
+            console.error(
+              `  ${eik}: fetched but no link claimed it — candidate set is inconsistent`,
+            );
+          }
+        }
       } catch (err) {
         console.error(`  ${eik}: REFUSED — ${err instanceof Error ? err.message : err}`);
         unresolved++;
