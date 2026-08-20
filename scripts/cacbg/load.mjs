@@ -1015,6 +1015,7 @@ db.exec('COMMIT');
 // mechanism exists to prevent. Fail the build (non-zero exit) instead of shipping a silent un-suppression.
 const unusedSupp = [...suppressedFp].filter((fp) => !usedSuppressions.has(fp));
 if (unusedSupp.length > 0) {
+  trCache.close();
   db.close();
   throw new Error(
     `${unusedSupp.length} suppression(s) matched NO built link — a stale/mis-keyed takedown would silently ` +
@@ -1188,6 +1189,9 @@ console.log(
     : "✓ §2 ал.3 canary: all material family holdings sourced from 'assets' declarations (rail #3, ADR-0032)",
 );
 console.log(`report → ${REPORT}`);
+// Both handles, on every path that leaves this file — the verdict-floor refusal above already closes
+// the pair, and a cache left open on the other two would be the same intent kept only half the time.
+trCache.close();
 db.close();
 // No exit code is tied to ambiguity — it is expected, quarantined, and safe. The over-merge libel proof
 // is the labelled company-name-key.test.ts; the loader fails only on an actual exception.

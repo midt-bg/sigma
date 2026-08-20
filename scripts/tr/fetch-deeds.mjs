@@ -503,6 +503,11 @@ export async function run({
           // before the code moved: „one malformed deed out of ~400 deciding the fate of every other
           // link… loud, per link, fail-closed." The link simply has no verdict, and is held.
           undecided += refused;
+          // Unreachable as the crawl is wired: readLinksFile normalizes every link.eik through
+          // safeEik, and the queue is derived from those same links, so every ЕИК reached here has at
+          // least one link that matches it exactly. It stays as the canary for that invariant
+          // breaking — the queue compares safeEik(link.eik) where decideLinks compares link.eik raw,
+          // and a caller that assembled links without readLinksFile would decide nothing, silently.
           if (decided === 0 && refused === 0) {
             console.error(
               `  ${eik}: fetched but no link claimed it — candidate set is inconsistent`,

@@ -67,6 +67,49 @@ test('openCache is idempotent — re-opening an existing cache preserves rows', 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// A cache that survives between runs (ADR-0037) can arrive damaged, and the failure mode is
+// self-perpetuating: a truncated restore that openCache trusted would be saved back under a NEWER
+// key, and every later run would restore it in preference to the good one. The test above is the
+// control — a HEALTHY cache must never be quarantined — and these two are the two ways it can fail.
+test('openCache quarantines a corrupt cache and starts empty rather than compounding the damage', () => {
+  const { dir, file } = tmpDb();
+  fs.writeFileSync(file, 'a truncated restore, not a database');
+  const db = openCache(file);
+
+  const aside = fs.readdirSync(dir).filter((n) => n.startsWith('tr-cache.sqlite.corrupt-'));
+  assert.equal(
+    aside.length,
+    1,
+    'moved aside, never deleted — losing progress, not the evidence of why',
+  );
+  // Losing the progress is the point of the trade: the run continues on a working cache.
+  assert.equal(coverage(db, ['115536179']).fetched, 0);
+  upsertDeed(db, deed());
+  assert.equal(readDeed(db, '115536179')?.eik, '115536179', 'and the fresh one is usable');
+
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('openCache quarantines a file that is valid sqlite but not THIS cache', () => {
+  const { dir, file } = tmpDb();
+  let db = openCache(file);
+  upsertDeed(db, deed());
+  // Structurally perfect sqlite, wrong shape — PRAGMA integrity_check passes it, so only the table
+  // probe catches it. Without that probe the run would meet the missing table mid-crawl instead.
+  db.exec('DROP TABLE deeds');
+  db.close();
+
+  db = openCache(file);
+  assert.equal(
+    fs.readdirSync(dir).filter((n) => n.startsWith('tr-cache.sqlite.corrupt-')).length,
+    1,
+  );
+  assert.equal(coverage(db, ['115536179']).fetched, 0, 'started empty, not half-migrated');
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('upsertDeed replaces on re-fetch rather than duplicating', () =>
   withCache((db) => {
     upsertDeed(db, deed());
@@ -436,6 +479,42 @@ test('upsertVerdict enforces the closed vocabulary where the row CROSSES a run b
     );
     assert.doesNotThrow(() => upsertVerdict(db, VERDICT({ registryRole: 'manager' })));
   }));
+
+const verdictColumns = (db) =>
+  db
+    .prepare(`SELECT name FROM pragma_table_info('verdicts')`)
+    .all()
+    .map((r) => r.name);
+
+test('openCache adds the columns an older cache lacks WITHOUT throwing its rows away', () => {
+  const { dir, file } = tmpDb();
+  let db = openCache(file);
+  upsertVerdict(db, VERDICT());
+  // The older shape is synthesized from the current one rather than copied from the old CREATE TABLE:
+  // a hand-written fixture drifts from SCHEMA the moment a column is added, and would then stop
+  // testing the migration it was written for.
+  for (const [col] of [['recon_terminated'], ['recon_label']])
+    db.exec(`ALTER TABLE verdicts DROP COLUMN ${col}`);
+  assert.equal(
+    verdictColumns(db).includes('recon_terminated'),
+    false,
+    'the fixture really is the pre-migration shape',
+  );
+  db.close();
+
+  db = openCache(file); // the restore
+  const cols = verdictColumns(db);
+  assert.ok(cols.includes('recon_terminated') && cols.includes('recon_label'), 'migrated in place');
+  // The whole reason for ALTER TABLE over recreating the table: recreating it would discard exactly
+  // the progress the cache exists to carry between runs.
+  assert.ok(readVerdict(db, VERDICT().linkKey), 'and the row survived the migration');
+  db.close();
+
+  db = openCache(file); // a non-idempotent migration would throw here on the duplicate column
+  assert.ok(readVerdict(db, VERDICT().linkKey));
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 test('an empty-body negative needs a SECOND observation before it becomes permanent', () =>
   withCache((db) => {

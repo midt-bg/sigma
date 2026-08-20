@@ -639,10 +639,9 @@ export function purgeExpired(
   // claim rests on a lookup made inside a stated window. Sharing the deed's 35 days would delete
   // verdicts faster than a budget-bounded crawl can refresh them, and the surface would then shrink
   // for no reason but the clock.
-  const verdicts = db
-    .prepare('SELECT COUNT(*) AS n FROM verdicts WHERE decided_at < ?')
-    .get(verdictCutoff);
-  db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(verdictCutoff);
+  // Counted off the DELETE itself rather than a SELECT COUNT(*) before it. Two statements asking one
+  // question can only ever agree or be wrong; `changes` is what was actually deleted, by construction.
+  const verdicts = db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(verdictCutoff);
 
-  return { rows: expired.length, files, orphans, verdicts: verdicts?.n ?? 0 };
+  return { rows: expired.length, files, orphans, verdicts: verdicts.changes };
 }
