@@ -2,7 +2,7 @@ name = "sigma-etl"
 main = "src/index.ts"
 compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
+workers_dev = false
 
 # Cron-first: NO public route, NO custom domain, workers_dev = false above — so in production this
 # worker is effectively scheduled()-only. It DOES define a fetch() handler (the on-demand digest
@@ -38,7 +38,7 @@ DIGEST_CRON = "0 7 * * 1"
 # DIGEST_TRIGGER_TOKEN secret is set, the worker's fetch() handler runs the digest immediately on an
 # authenticated POST (optional ?week=YYYY-Www). Committed "false". DIGEST_TRIGGER_TOKEN is a SECRET
 # (`wrangler secret put DIGEST_TRIGGER_TOKEN`), never committed; without it the endpoint stays 404.
-DIGEST_TRIGGER_ENABLED = "true"
+DIGEST_TRIGGER_ENABLED = "false"
 
 # DIAGNOSTIC (dev-only): logs the generated narrative + the verifier's raw response so a verifier-strip
 # can be attributed. Fail-dark — absent/false → no model prose in logs. Kept OFF in the committed config;
