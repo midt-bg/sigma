@@ -11,6 +11,7 @@ import {
   retrieveSchemaContext,
   semanticSearch,
   type EmbeddingRunner,
+  type SemanticSearchStats,
   type RetrievalStats,
   type VectorIndex,
 } from './rag';
@@ -259,6 +260,29 @@ describe('semanticSearch', () => {
       { id: 'e1', metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } } as unknown as Match,
     ]);
     expect(await semanticSearch(ai, index, 'детски градини')).toEqual([]);
+  });
+
+  it('reports matched/kept through onStats (entity-side #318 symmetry, best-effort)', async () => {
+    const ai = fakeAI();
+    const index = fakeIndex([
+      {
+        id: 'e1',
+        score: MIN_ENTITY_SCORE + 0.05,
+        metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' },
+      },
+      {
+        id: 'e2',
+        score: MIN_ENTITY_SCORE - 0.05,
+        metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' },
+      },
+    ]);
+    const stats: SemanticSearchStats[] = [];
+    const out = await semanticSearch(ai, index, 'детски градини', undefined, undefined, (s) =>
+      stats.push(s),
+    );
+    // kept must describe the actual return value; matched=0 would mean empty/unindexed namespace.
+    expect(stats).toEqual([{ matched: 2, kept: 1 }]);
+    expect(out).toHaveLength(1);
   });
 
   it('drops a scoreless match even with an explicit minScore = 0 (Number.isFinite, not ?? 0)', async () => {
