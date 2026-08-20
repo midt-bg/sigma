@@ -136,6 +136,7 @@ function makeWorkflow(db: DatabaseSync): RefreshWorkflow {
   const env: Env = {
     DB: d1FromSqlite(db),
     REFRESH: undefined as unknown as Workflow,
+    REPORTS: undefined as unknown as R2Bucket,
     EOP_OPEN_DATA_BASE_URL: 'https://storage.eop.bg',
   };
   const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;

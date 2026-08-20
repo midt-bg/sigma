@@ -1,0 +1,19 @@
+{
+  "name": "@sigma/report",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sigma/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "*"
+  }
+}

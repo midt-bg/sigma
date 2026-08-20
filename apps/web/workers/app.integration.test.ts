@@ -101,6 +101,27 @@ describe('handleRequest — .data twins are throttled before the loader runs (#1
   });
 });
 
+describe('handleRequest — X-Robots-Tag on the digest detail page + its .data twin (#81 PII)', () => {
+  it('sets X-Robots-Tag: noindex on /weeks/:iso', async () => {
+    const res = await workerFetch(new Request('http://local/weeks/2026-W25'), env(underLimit), ctx);
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+  });
+
+  it('sets X-Robots-Tag: noindex on the /weeks/:iso.data twin (meta noindex cannot reach JSON)', async () => {
+    const res = await workerFetch(
+      new Request('http://local/weeks/2026-W25.data'),
+      env(underLimit),
+      ctx,
+    );
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+  });
+
+  it('does NOT noindex the archive /weeks (ranges + totals, no names) — stays discoverable', async () => {
+    const res = await workerFetch(new Request('http://local/weeks'), env(underLimit), ctx);
+    expect(res.headers.get('X-Robots-Tag')).toBeNull();
+  });
+});
+
 // The worker is the single source of the noindex signal for /conflicts (a personal-names surface). It must
 // stamp X-Robots-Tag on BOTH the HTML and the single-fetch `.data` twin — the twin is JSON with no <head> to
 // carry a route <meta robots>, and a resource route's loader `data(..., {headers})` doesn't propagate to it.

@@ -7,3 +7,30 @@
 
 # Web worker privacy-preserving request log IP HMAC key.
 LOG_IP_KEY=dev-only-log-ip-key-change-me
+
+# ── AI assistant (docs/spec/ai-assistant.md) ───────────────────────────────────────────────────────
+# Provider API key (OpenRouter today) — SECRET. Without it /assistant/chat returns a controlled 503
+# (endpoint unprovisioned). In the cloud set via `wrangler secret put ASSISTANT_API_KEY --name <worker>`,
+# never committed.
+# ASSISTANT_API_KEY=
+#
+# All model traffic MUST transit the Cloudflare AI Gateway (fail closed): without AI_GATEWAY_BASE_URL the
+# assistant returns 503 rather than calling the provider directly. Set both to your gateway (account
+# f6308e22233e69cba80ed57bdb6d5f44); AI_GATEWAY_ID is the gateway slug used to route Workers AI embeddings.
+# ASSISTANT_MODEL is the provider-scoped model id — swap models by editing it alone.
+# AI_GATEWAY_BASE_URL=https://gateway.ai.cloudflare.com/v1/f6308e22233e69cba80ed57bdb6d5f44/<gateway>/openrouter/v1
+# AI_GATEWAY_ID=<gateway>
+# ASSISTANT_MODEL=google/gemma-4-31b-it   # append ':free' for the rate-limited free tier
+#
+# NOTE: Workers AI (`AI`) and Vectorize (`VECTORIZE`) have NO local miniflare emulation, and
+# vite.config.ts configures no remote bindings — so under a plain `pnpm dev` the assistant route
+# degrades (RAG grounding/semantic_search no-op, then 503 without a key). To exercise the assistant
+# locally, run with remote bindings (`wrangler dev --remote`) against the dev account's resources.
+#
+# Optional: enables the one-shot schema-corpus seed route POST /assistant/reindex (off when unset).
+# High-entropy value; sent as `Authorization: Bearer <token>`. See app/lib/assistant/README.md.
+# ASSISTANT_SEED_TOKEN=
+#
+# Transcript signing key (HMAC-SHA-256 over server-emitted messages).
+# Prod: `wrangler secret put ASSISTANT_HMAC_KEY`. Never commit the real value.
+ASSISTANT_HMAC_KEY=dev-only-assistant-hmac-key-change-me

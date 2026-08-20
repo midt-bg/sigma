@@ -1,0 +1,31 @@
+{
+  "_note": "A sample useChat() turn (Path-B / report). This file is a {_note, messages} WRAPPER, not a bare UIMessage[]. Text deltas and `tool-*` parts are STANDARD Vercel AI SDK v6 UIMessage parts — `type: 'tool-<name>'` with `state` and `input`/`output` (NOT the v4 `tool-invocation` shape); build the dock against useChat, not this literal. The custom contract is the `data-report-ready` part on the assistant message. The `tool-run_sql` output payload is illustrative — pin it to #80's tools.ts.",
+  "messages": [
+    {
+      "id": "m1",
+      "role": "user",
+      "parts": [{ "type": "text", "text": "Сравни топ 5 строителни компании по сума за 2023" }]
+    },
+    {
+      "id": "m2",
+      "role": "assistant",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Ето петте най-големи строителни компании по обща стойност на договорите за 2023 г."
+        },
+        {
+          "type": "tool-run_sql",
+          "toolCallId": "call_1",
+          "state": "output-available",
+          "input": { "sql": "WITH c AS (… SUM(amount_eur) … CPV 45 … 2023 …) SELECT …" },
+          "output": { "handle": "R1", "rowCount": 5, "truncated": false }
+        },
+        {
+          "type": "data-report-ready",
+          "data": { "reportId": "r_8KQ2mZ7v", "title": "Топ 5 строителни компании по сума (2023)" }
+        }
+      ]
+    }
+  ]
+}

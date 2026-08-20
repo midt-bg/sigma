@@ -1,0 +1,103 @@
+/* „Седмицата в пари" — weekly digest (routes /weeks, /weeks/:iso). Digest-specific classes ONLY —
+   nothing here may redefine a class assistant.css already owns (this file is imported last, so it would
+   win globally and leak onto /reports). The digest reuses the site's .totals/.facts/.table-wrap/.callout/
+   .page-header, the shared ReportBlockRenderer (.report-blocks, .report-bar*), and the shared
+   ReportAiWatermark (.report-watermark*) — all styled by assistant.css, not here. */
+
+/* Weekly ghost-bar chart: solid bars = this week, faint bars = the previous week (currentColor). */
+.ghost-bars-svg {
+  width: 100%;
+  height: auto;
+  color: var(--ink);
+}
+.ghost-bars-svg .gb-bar {
+  color: var(--accent);
+}
+.ghost-bars-svg .gb-ghost {
+  color: var(--ink-soft);
+}
+.ghost-bars-svg .grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.ghost-bars-svg .label {
+  fill: var(--ink-soft);
+  font-size: 11px;
+}
+
+/* Key for the ghost-bar chart: solid swatch = this week, faint swatch = the prior week. Swatch colours
+   mirror the SVG bars (.gb-bar = --accent @ .72, .gb-ghost = --ink-soft @ .18). */
+.gb-legend {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+}
+.gb-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.gb-legend__swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  flex: none;
+}
+.gb-legend__swatch--current {
+  background: var(--accent);
+  opacity: 0.72;
+}
+.gb-legend__swatch--ghost {
+  background: var(--ink-soft);
+  opacity: 0.35; /* a touch stronger than the chart's 0.18 ghost bars so the swatch stays legible */
+  border: 1px solid var(--rule-soft);
+}
+
+/* Per-section heading above a digest chart/table (e.g. „Стойност по сектори", „Конкуренция",
+   „Най-големи договори") so each section is self-labelling. Sized on the site's h3 scale so the section
+   titles are clearly noticed; extra top space sets each section off from the block above it. */
+.report-block-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.report-block__heading {
+  margin: 0;
+  font-size: clamp(20px, 2vw, 26px);
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Digest provenance footer. */
+.digest-footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+.digest-footer p {
+  margin: 0.25rem 0;
+}
+
+/* „Разгледай сам" deep-links section (spec §3.10). */
+.digest-explore {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+.digest-explore h2 {
+  margin: 0 0 0.25rem;
+}
+.digest-explore-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}

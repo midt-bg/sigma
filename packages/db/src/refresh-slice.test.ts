@@ -21,6 +21,10 @@ const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_rest
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
 // #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
 const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
+const migrationSyntheticPath = resolve(
+  root,
+  'packages/db/migrations/0012_contracts_is_synthetic.sql',
+);
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
 const deriveAmendmentsPath = resolve(root, 'scripts/derive-amendments.sql');
@@ -197,6 +201,7 @@ function initWorkDb(dbPath: string): void {
   readScript(dbPath, migration6Path);
   readScript(dbPath, migration7Path);
   readScript(dbPath, migration8Path);
+  readScript(dbPath, migrationSyntheticPath);
   readScript(dbPath, workStagingSchemaPath);
 }
 
@@ -592,6 +597,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopBaseDay(dbPath);
 
@@ -624,9 +630,15 @@ describe('refresh-slice EOP base derivation', () => {
       expect(ocdsContract?.current_value).toBe(1300);
       expect(ocdsContract?.amount_eur).toBeCloseTo(1300 / 1.95583, 6);
 
+      // company_totals excludes synthetic orphan headers: the OCDS contract (OCDS-CO-1) has no real
+      // tender header, so refresh-slice mints a 'неизвестна' tender and flags the contract synthetic —
+      // its bidder (Bidder CO) drops out. Only the real EOP bidder (Bidder CE) remains.
       expect(
-        sqliteJson<{ n: number }>(dbPath, 'SELECT COUNT(*) AS n FROM company_totals')[0]?.n,
-      ).toBe(2);
+        sqliteJson<{ n: number; name: string }>(
+          dbPath,
+          'SELECT COUNT(*) AS n, MIN(name) AS name FROM company_totals',
+        )[0],
+      ).toEqual({ n: 1, name: 'Bidder CE' });
       expect(
         sqliteJson<{ n: number }>(dbPath, 'SELECT COUNT(*) AS n FROM authority_totals')[0]?.n,
       ).toBe(1);
@@ -680,6 +692,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
 
       // An EOP procedure (tender + base contract) with УНП UNP-SLICE / tender.id TENDER-SLICE. An
@@ -867,6 +880,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
       seedEopOnlySharedNumber(dbPath);
       readScript(dbPath, refreshSlicePath);
@@ -922,6 +936,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -977,6 +992,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1118,6 +1134,7 @@ describe('refresh-slice EOP base derivation', () => {
       readScript(dbPath, migration6Path);
       readScript(dbPath, migration7Path);
       readScript(dbPath, migration8Path);
+      readScript(dbPath, migrationSyntheticPath);
       readScript(dbPath, workStagingSchemaPath);
       sqlite(
         dbPath,
@@ -1367,6 +1384,93 @@ describe('refresh-slice EOP base derivation', () => {
     }
   });
 
+  it('flags synthetic orphan contracts and excludes them from the reconcilable rollups', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
+    const dbPath = resolve(dir, 'test.sqlite');
+    try {
+      initWorkDb(dbPath);
+      seedSyntheticAuthority(dbPath);
+      // A REAL tender header (procedure_type='open') + its contract, in CPV division 77.
+      sqlite(
+        dbPath,
+        `INSERT INTO raw_tenders
+          (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+           cpv_code, cpv_description, contract_kind, estimated_value, currency, legal_basis,
+           award_criteria, authority_name, authority_eik, authority_type, main_activity, deadline,
+           notice_type, lot_id, lot_name, num_lots, eu_funded, published_at)
+        VALUES
+          ('eop:tenders:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-REALSEC', 'TENDER-REALSEC',
+           'open', 'Real sec tender', '77000000', 'Health', 'works', 100, 'BGN', 'basis',
+           'lowest', 'Authority Synthetic', '623456789', 'public', 'activity', '2026-06-10', 'notice',
+           NULL, NULL, 1, 0, '2026-06-01');`,
+      );
+      seedSyntheticWindow(dbPath, {
+        unp: 'UNP-REALSEC',
+        source: 'eop:contracts:real',
+        subject: 'Real',
+        cpv: '77000000',
+        estimated: 100,
+        currency: 'BGN',
+      });
+      // A SYNTHETIC orphan (no tender header) in the SAME division, same authority + bidder.
+      seedSyntheticWindow(dbPath, {
+        unp: 'UNP-SYNSEC',
+        source: 'eop:contracts:syn',
+        subject: 'Syn',
+        cpv: '77000000',
+        estimated: 100,
+        currency: 'BGN',
+      });
+
+      readScript(dbPath, refreshSlicePath);
+
+      // is_synthetic is denormalized from the parent tender's procedure_type on the refresh path.
+      expect(
+        sqliteJson<{ tender_id: string; is_synthetic: number }>(
+          dbPath,
+          'SELECT tender_id, is_synthetic FROM contracts ORDER BY tender_id',
+        ),
+      ).toEqual([
+        { tender_id: 't:UNP-REALSEC', is_synthetic: 0 },
+        { tender_id: 't:UNP-SYNSEC', is_synthetic: 1 },
+      ]);
+
+      // The synthetic contract is excluded from every reconcilable rollup: each counts only the real
+      // contract, so a synthetic-excluded live aggregate reconciles instead of tripping E4/Guard B.
+      expect(
+        sqliteJson<{ contracts: number }>(
+          dbPath,
+          "SELECT contracts FROM sector_totals WHERE division = '77'",
+        )[0],
+      ).toEqual({ contracts: 1 });
+      expect(
+        sqliteJson<{ contracts: number }>(
+          dbPath,
+          "SELECT contracts FROM company_totals WHERE bidder_id = 'eik:667777777'",
+        )[0],
+      ).toEqual({ contracts: 1 });
+      expect(
+        sqliteJson<{ contracts: number }>(
+          dbPath,
+          "SELECT contracts FROM authority_totals WHERE authority_id = 'auth:623456789'",
+        )[0],
+      ).toEqual({ contracts: 1 });
+
+      // The ETL rollup-reconciliation invariant still holds (attributed sums also exclude synthetic).
+      const results = await assertIntegrity(
+        (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql),
+        {
+          label: 'test-synthetic',
+          exit: false,
+        },
+      );
+      expect(results.every((r) => r.ok)).toBe(true);
+      expect(results.find((r) => r.name === 'rollup-reconciliation')?.skipped).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the raw EOP tenderId on real and synthetic tenders', () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-refresh-slice-'));
     const realDb = resolve(dir, 'real.sqlite');
@@ -1567,8 +1671,11 @@ describe('refresh-slice EOP base derivation', () => {
 });
 
 // Same contract_number+unp+lot, two windows. The bidder regression changes the contractor while
-// holding authority constant; the authority regression promotes the same synthetic tender to a real
-// header with a different authority.
+// holding authority constant; the authority regression moves the contract to a different authority.
+// A real tender header (procedure_type='open', authority via the params) keeps the derived contract
+// NON-synthetic — otherwise is_synthetic=1 would (correctly) drop it from the reconcilable
+// authority_totals/company_totals and defeat the re-attribution assertion, which is orthogonal to the
+// synthetic-exclusion behavior.
 function seedReattrContract(
   dbPath: string,
   source: string,
@@ -1576,7 +1683,27 @@ function seedReattrContract(
   name: string,
   authorityEik = '923456783',
   authorityName = 'Reattr authority',
+  seedHeader = true,
 ): void {
+  // A real (procedure_type='open') tender header keeps the derived contract NON-synthetic, so it counts
+  // in the is_synthetic-filtered rollups (the bidder re-attribution test needs the value to land in
+  // company_totals). Pass seedHeader=false to leave the tender synthetic — the synthetic-promotion test
+  // relies on a *later* real header (seedReattrTender) to promote the UNP and only then have it count.
+  if (seedHeader) {
+    sqlite(
+      dbPath,
+      `INSERT INTO raw_tenders
+      (source, dataset_year, fetched_at, unp, tender_id, procedure_type, procurement_subject,
+       cpv_code, cpv_description, contract_kind, estimated_value, currency, legal_basis,
+       award_criteria, authority_name, authority_eik, authority_type, main_activity, deadline,
+       notice_type, lot_id, lot_name, num_lots, eu_funded, published_at)
+     VALUES
+      ('eop:tenders:2026-06-01', 2026, '2026-06-07T00:00:00Z', 'UNP-REATTR', 'TENDER-REATTR',
+       'open', 'Reattr tender', '45000000', 'Construction', 'works', 1000, 'BGN', 'basis',
+       'lowest', ${sqlValue(authorityName)}, ${sqlValue(authorityEik)}, 'public', 'activity', '2026-06-10', 'notice',
+       NULL, NULL, 1, 0, '2026-06-01');`,
+    );
+  }
   sqlite(
     dbPath,
     `INSERT INTO raw_contracts
@@ -1658,7 +1785,7 @@ describe('refresh-slice integrity gate', () => {
     }
   });
 
-  it('stays green after a tender authority re-attribution (old + new rollups both rebuilt)', async () => {
+  it('stays green when a synthetic contract is promoted to a real tender authority', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'sigma-slice-authority-gate-'));
     const dbPath = resolve(dir, 'test.sqlite');
     const run = (sql: string) => sqliteJson<Record<string, unknown>>(dbPath, sql);
@@ -1669,7 +1796,11 @@ describe('refresh-slice integrity gate', () => {
       )[0]?.spent_eur ?? 0;
     try {
       initWorkDb(dbPath);
-      // window 1: a contract-derived synthetic tender attributed to authority A
+      // window 1: a header-less contract → SYNTHETIC tender under authority A. The rollups exclude
+      // synthetic rows (is_synthetic != 1), so A carries no spend yet; reconciliation still holds because
+      // the attributed sums exclude synthetic too — that invariant is what this gate protects. (A real
+      // tender's authority is immutable, so authority re-attribution only ever happens as this
+      // synthetic→real promotion; hence seedHeader=false to keep window 1 synthetic.)
       seedReattrContract(
         dbPath,
         'eop:contracts:2026-06-02',
@@ -1677,11 +1808,16 @@ describe('refresh-slice integrity gate', () => {
         'Company A',
         '333333333',
         'Authority A',
+        false,
       );
       readScript(dbPath, refreshSlicePath);
-      expect(spentEur('333333333')).toBeGreaterThan(0);
+      expect(spentEur('333333333')).toBe(0);
+      const w1 = await assertIntegrity(run, { label: 'test-slice-authority-w1', exit: false });
+      expect(w1.every((r) => r.ok)).toBe(true);
 
-      // window 2: the real tender header promotes the same UNP under authority B
+      // window 2: a real tender header promotes the same UNP to authority B → the tender is no longer
+      // synthetic, so the contract now counts under B while A stays at zero. Both scoped authority rollups
+      // are rebuilt and the reconciliation holds on the slice-built DB.
       resetRawStaging(dbPath);
       seedReattrTender(dbPath, 'eop:tenders:2026-06-05', '444444444', 'Authority B');
       seedReattrContract(
@@ -1691,6 +1827,7 @@ describe('refresh-slice integrity gate', () => {
         'Company A',
         '444444444',
         'Authority B',
+        false,
       );
       readScript(dbPath, refreshSlicePath);
 

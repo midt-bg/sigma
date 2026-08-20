@@ -21,6 +21,10 @@
       "lines": 86.3,
       "branches": 80.4
     },
+    "packages/report": {
+      "lines": 96.3,
+      "branches": 86.9
+    },
     "packages/shared": {
       "lines": 95.5,
       "branches": 80.8

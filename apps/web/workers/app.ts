@@ -9,7 +9,14 @@ import { cspNonce, hashTrustedInlineScripts } from './csp';
 import { rateLimitCsvExport } from './csv-rate-limit';
 import { optionsResponse, redirectCleartextHttp, setAllowHeader } from './http';
 import { rateLimitSearchRoute } from './search-rate-limit';
+import { rateLimitTranscribeRoute } from './transcribe-rate-limit';
 import { withRequestLog } from './request-log';
+
+// Durable Objects for the AI assistant. Both must be named exports of the worker entry so their
+// wrangler.jsonc bindings + migrations resolve the classes: ReportSingleFlight (Lane F report dedup) and
+// BgGptCircuitBreaker (#135 account-wide RPM cap in front of the paid model call).
+export { ReportSingleFlight } from './assistant/report-single-flight';
+export { BgGptCircuitBreaker } from './assistant/bggpt-circuit-breaker';
 
 declare module 'react-router' {
   export interface AppLoadContext {
@@ -42,6 +49,18 @@ const edgeCache = (caches as unknown as { default: Cache }).default;
 declare const __SIGMA_DEPLOY_TAG__: string | undefined;
 const DEPLOY_TAG =
   typeof __SIGMA_DEPLOY_TAG__ !== 'undefined' ? __SIGMA_DEPLOY_TAG__ : Date.now().toString(36);
+
+// The weekly-digest pages — the archive `/weeks` and each detail `/weeks/:iso` (e.g. `/weeks/2026-W25`)
+// — matched to opt them OUT of the per-colo edge cache below. Both read straight from R2, which the
+// producer mutates in place (a corrected week, or a new/removed week in the archive listing), and the
+// edge key is URL+deploy-tag not data-version, so caching serves a stale list/page after such a change.
+// Does NOT match deeper paths like `/weeks/x/y`.
+const DIGEST_PATH = /^\/weeks(?:\/[^/]+)?\/?$/;
+// The DETAIL page only (`/weeks/:iso`, incl. its React Router `/weeks/:iso.data` twin — `[^/]+` absorbs
+// the `.data` suffix). Gets `X-Robots-Tag: noindex` because it names winning bidders (possible natural
+// persons); the meta noindex on the HTML doesn't cover the `.data` JSON response, this header does. The
+// archive `/weeks` (ranges + totals, no names) is deliberately NOT matched, so it stays indexable.
+const DIGEST_DETAIL_PATH = /^\/weeks\/[^/]+\/?$/;
 
 function applySecurityHeaders(headers: Headers, security: Headers): void {
   for (const [key, value] of security) headers.set(key, value);
@@ -124,7 +143,17 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // (publicCache() in apps/web/app/lib/cache.ts). Deterministic and independent of platform
   // HTML-cache heuristics on *.workers.dev; TTL is driven by s-maxage. The X-Edge-Cache:
   // HIT|MISS|BYPASS header lets `curl -I` verify which path a request took.
-  const key = request.method === 'GET' ? cacheKey(request, DEPLOY_TAG) : null;
+  //
+  // Exception — the weekly-digest pages (`/weeks` archive + `/weeks/:iso` detail) are never edge-cached:
+  // each reads straight from R2, which the producer OVERWRITES in place (a corrected week; a new/removed
+  // week in the listing — spec §10.4/§11), and a data-only change does not bust an edge key (keyed by
+  // path + deploy tag, not data version). Caching serves a stale page/list for the whole
+  // stale-while-revalidate window. Rendering fresh is a single R2 read/list — cheap enough to always be
+  // correct (#81).
+  const pathname = new URL(request.url).pathname;
+  // Only GETs are edge-cached, so skip the digest-path test for other methods.
+  const key =
+    request.method === 'GET' && !DIGEST_PATH.test(pathname) ? cacheKey(request, DEPLOY_TAG) : null;
   if (key) {
     const cached = await edgeCache.match(key);
     if (cached) {
@@ -156,6 +185,12 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   );
   if (assistantRateLimitResponse) return assistantRateLimitResponse;
 
+  const transcribeRateLimitResponse = await rateLimitTranscribeRoute(
+    request,
+    env,
+    import.meta.env.PROD,
+  );
+  if (transcribeRateLimitResponse) return transcribeRateLimitResponse;
   // /conflicts* names public officials and its .data twin serves each loader — throttle the subtree so it
   // can't be bulk-scraped into a names export. After the cache check, so cached leaderboard hits are free.
   const conflictsRateLimitResponse = await rateLimitConflictsRoute(
@@ -182,5 +217,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (isNoindexNamesPath(request)) hardened.headers.set('X-Robots-Tag', 'noindex');
   if (cacheable) ctx.waitUntil(edgeCache.put(key, hardened.clone()));
   hardened.headers.set('X-Edge-Cache', cacheable ? 'MISS' : 'BYPASS');
+  // Keep the winning-bidder names on /weeks/:iso out of search indexes at the HTTP layer — covers both
+  // the HTML page and its `.data` twin (the meta noindex reaches only the HTML). Archive stays indexable.
+  if (DIGEST_DETAIL_PATH.test(pathname)) hardened.headers.set('X-Robots-Tag', 'noindex');
   return hardened;
 }

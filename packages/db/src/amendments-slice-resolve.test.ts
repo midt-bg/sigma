@@ -29,6 +29,8 @@ const migrations = [
   'packages/db/migrations/0008_amendment_provenance.sql',
   // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
   'packages/db/migrations/0009_interest_link_evidence.sql',
+  // refresh-slice.sql reads contracts.is_synthetic; without it sqlite3 aborts on „no such column".
+  'packages/db/migrations/0012_contracts_is_synthetic.sql',
 ].map((p) => resolve(root, p));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const refreshSlice = resolve(root, 'scripts/refresh-slice.sql');

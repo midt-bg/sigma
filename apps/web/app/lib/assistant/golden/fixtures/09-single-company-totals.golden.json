@@ -1,0 +1,64 @@
+{
+  "id": "09-single-company-totals",
+  "prompt": "Колко е спечелила фирма №7?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT COUNT(*) AS contracts, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND c.bidder_id = 7",
+      "result": {
+        "rows": [
+          {
+            "contracts": 15,
+            "total_eur": 543210
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Профил на изпълнител",
+    "question": "Колко е спечелила фирма №7?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Брой договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            },
+            "format": "number"
+          },
+          {
+            "label": "Спечелено (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true,
+    "rollup": {
+      "target": "company_totals",
+      "grain": {
+        "bidder_id": "7"
+      },
+      "aggregate": {
+        "count": 15,
+        "sumEur": 543210
+      },
+      "rollupRow": {
+        "count": 15,
+        "sumEur": 543210
+      }
+    }
+  }
+}

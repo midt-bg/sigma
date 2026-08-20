@@ -40,18 +40,19 @@ describe('rateLimitAssistantRoute', () => {
     expect(response?.status).toBe(429);
   });
 
-  it('still limits the single-fetch /assistant/chat.data twin (#184)', async () => {
-    // The paid, failClosed limiter must fire on the `.data` form too, else it is trivially bypassed.
+  it('limits the single-fetch twin POST /assistant/chat.data (strict review 2026-07)', async () => {
+    // RR v7 dispatches `/assistant/chat.data` to the SAME action; normalizedPathname now strips `.data`
+    // so the per-IP limiter fires on the twin instead of being bypassed (a single-source DoW/DoS).
     const { limiter, limit } = rateLimiter(false);
     const response = await rateLimitAssistantRoute(
       new Request('http://local/assistant/chat.data', {
         method: 'POST',
-        headers: { 'CF-Connecting-IP': '203.0.113.44' },
+        headers: { 'CF-Connecting-IP': '203.0.113.42' },
       }),
       { ASSISTANT_RATE_LIMITER: limiter },
       false,
     );
-    expect(limit).toHaveBeenCalled();
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.42' });
     expect(response?.status).toBe(429);
   });
 

@@ -1,0 +1,78 @@
+{
+  "id": "91-neg-home-totals-target",
+  "prompt": "Колко договори има възложител №1?",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT COUNT(*) AS contracts, SUM(c.amount_eur) AS total_eur FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND t.authority_id = 1",
+      "result": {
+        "rows": [
+          {
+            "contracts": 42,
+            "total_eur": 1234567
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Профил на възложител",
+    "question": "Колко договори има възложител №1?",
+    "blocks": [
+      {
+        "type": "totals",
+        "items": [
+          {
+            "label": "Брой договори",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "contracts"
+            },
+            "format": "number"
+          },
+          {
+            "label": "Обща стойност (EUR)",
+            "ref": {
+              "resultId": "R1",
+              "row": 0,
+              "col": "total_eur"
+            },
+            "format": "money"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true,
+    "reconcile": {
+      "target": "home_totals",
+      "grain": {
+        "authority_id": "1"
+      },
+      "rollupQuery": "SELECT contracts, total_eur FROM home_totals WHERE authority_id = 1",
+      "rollupResult": {
+        "rows": [
+          {
+            "contracts": 42,
+            "total_eur": 1234567
+          }
+        ]
+      },
+      "aggregate": {
+        "resultId": "R1",
+        "row": 0,
+        "countCol": "contracts",
+        "sumCol": "total_eur"
+      },
+      "rollup": {
+        "resultId": "R2",
+        "row": 0,
+        "countCol": "contracts",
+        "sumCol": "total_eur"
+      }
+    }
+  },
+  "negative": "home-totals"
+}

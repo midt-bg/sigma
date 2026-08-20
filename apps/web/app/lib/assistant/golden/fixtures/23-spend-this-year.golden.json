@@ -1,0 +1,31 @@
+{
+  "id": "23-spend-this-year",
+  "prompt": "Дай ми поръчките за тази година",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT substr(c.signed_at, 1, 7) AS period, SUM(c.amount_eur) AS total_eur, COUNT(*) AS contracts FROM contracts c JOIN tenders t ON t.id = c.tender_id WHERE c.amount_eur IS NOT NULL AND t.procedure_type != 'неизвестна' AND substr(c.signed_at, 1, 4) GLOB '[0-9][0-9][0-9][0-9]' AND c.signed_at >= '2026-01-01' AND c.signed_at < '2026-07-03' GROUP BY period ORDER BY period LIMIT 12",
+      "result": {
+        "rows": [
+          { "period": "2026-01", "total_eur": 1200000, "contracts": 18 },
+          { "period": "2026-02", "total_eur": 980000, "contracts": 14 }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Поръчки за 2026",
+    "question": "Дай ми поръчките за тази година",
+    "blocks": [
+      {
+        "type": "timeseries",
+        "resultId": "R1",
+        "periodCol": "period",
+        "valueCol": "total_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": true
+  }
+}

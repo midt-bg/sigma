@@ -4,8 +4,10 @@ compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 
-# Intentionally cron-only: NO public route, NO custom domain, NO HTTP trigger - this is a scheduled()-only Worker
-# (workers_dev = false above).
+# Cron-first: NO public route, NO custom domain, workers_dev = false above — so in production this
+# worker is effectively scheduled()-only. It DOES define a fetch() handler (the on-demand digest
+# trigger for testing), but that is unreachable without a route/workers_dev and is itself fail-dark +
+# bearer-token gated (see src/digest-trigger.ts) — off by default.
 
 # Bundle the scoped re-derive script (scripts/refresh-slice.sql) as a text module the Workflow runs.
 # fallthrough keeps wrangler's default text rules (.txt/.html) active alongside this one.
@@ -19,6 +21,29 @@ port = 8789
 
 [vars]
 EOP_OPEN_DATA_BASE_URL = "https://storage.eop.bg"
+# AI Gateway (mirrors apps/web/wrangler.jsonc's assistant vars — BgGPT via the same Custom Provider).
+# ASSISTANT_API_KEY is a SECRET (`wrangler secret put ASSISTANT_API_KEY`), never committed — the SAME
+# secret name apps/web uses, so both workers share one BgGPT credential name. Empty AI_GATEWAY_BASE_URL
+# fails closed in weekly-digest.ts's model builder, same posture as apps/web's buildModel.
+AI_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1/f6308e22233e69cba80ed57bdb6d5f44/sigma-assistant/custom-bggpt/v1"
+ASSISTANT_MODEL = "bggpt-gemma4-31b-it-bg-gptq-w4a16"
+# Master kill switch (mirrors ASSISTANT_ENABLED's fail-dark posture): committed "false" so a deploy
+# never starts publishing weekly digests until an operator deliberately opts an environment in.
+DIGEST_ENABLED = "false"
+# Digest cron schedule the scheduled() handler matches. Configurable per environment: the deploy
+# renderer's SIGMA_DIGEST_CRON rewrites BOTH this var and the [triggers] crons entry below, so they
+# stay in sync (change this literal for local `wrangler dev`). Unset SIGMA_DIGEST_CRON → this default.
+DIGEST_CRON = "0 7 * * 1"
+# On-demand HTTP trigger for TESTING (fail-dark, like DIGEST_ENABLED). When "true" AND the
+# DIGEST_TRIGGER_TOKEN secret is set, the worker's fetch() handler runs the digest immediately on an
+# authenticated POST (optional ?week=YYYY-Www). Committed "false". DIGEST_TRIGGER_TOKEN is a SECRET
+# (`wrangler secret put DIGEST_TRIGGER_TOKEN`), never committed; without it the endpoint stays 404.
+DIGEST_TRIGGER_ENABLED = "false"
+
+# DIAGNOSTIC (dev-only): logs the generated narrative + the verifier's raw response so a verifier-strip
+# can be attributed. Fail-dark — absent/false → no model prose in logs. Kept OFF in the committed config;
+# flip to "true" locally when debugging a strip, never commit it on.
+DIGEST_DEBUG = "false"
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -33,8 +58,19 @@ binding = "REFRESH"
 name = "sigma-refresh"
 class_name = "RefreshWorkflow"
 
+# Weekly Digest producer (#167A T3): immutable StoredReport snapshots at weeks/{ISO}.json. Shares the
+# `sigma-reports` bucket apps/web already binds as REPORTS — same bucket_name, no SIGMA_REPORTS_NAME
+# rename hook in wrangler-render.mjs's TOML path (that renamer only exists for etl's own worker `name`
+# + D1/Workflow names; extending it for R2 risked the two workers' REPORTS bindings drifting to
+# different bucket names across environments, which would silently break weeks/{ISO}.json publish/read.
+# Lower-risk choice: commit the literal name here, matching apps/web/wrangler.jsonc's committed REPORTS
+# binding verbatim.
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "sigma-reports"
+
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 */6 * * *", "0 6 * * 1", "0 7 * * 1"]
 
 [observability]
 enabled = true

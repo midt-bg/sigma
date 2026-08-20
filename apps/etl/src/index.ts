@@ -10,13 +10,31 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
+import { DIGEST_CRON, PROMPTS_CRON, REFRESH_CRON } from './crons';
 import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { generateSuggestedPrompts } from './suggested-prompts';
+import { digestEnabled, generateWeeklyDigest } from './weekly-digest';
+import { handleDigestTrigger } from './digest-trigger';
 import { runServedIntegrityGate } from './integrity';
 
 export interface Env {
   DB: D1Database;
   REFRESH: Workflow;
+  REPORTS: R2Bucket;
   EOP_OPEN_DATA_BASE_URL?: string;
+  AI_GATEWAY_BASE_URL?: string;
+  ASSISTANT_MODEL?: string;
+  /** BgGPT provider key (same secret name as apps/web's assistant), forwarded through the AI Gateway. */
+  ASSISTANT_API_KEY?: string;
+  /** Master kill switch (mirrors apps/web's ASSISTANT_ENABLED): fail-dark unless explicitly "true". */
+  DIGEST_ENABLED?: string;
+  /** Digest cron schedule the scheduled() handler matches. Falls back to crons.ts's DIGEST_CRON when
+   *  unset. The deploy renderer (SIGMA_DIGEST_CRON) keeps this and the [triggers] crons entry in sync. */
+  DIGEST_CRON?: string;
+  /** Fail-dark enable flag for the on-demand HTTP trigger (see digest-trigger.ts). Committed "false". */
+  DIGEST_TRIGGER_ENABLED?: string;
+  /** Bearer-token secret for the on-demand trigger. A `wrangler secret`; unset → the trigger 404s. */
+  DIGEST_TRIGGER_TOKEN?: string;
 }
 
 interface RefreshParams {
@@ -167,6 +185,27 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         refreshDerivedContractCount(this.env.DB),
       );
 
+      // Keep the dock's starter chips in step with the freshly-derived slice. The weekly PROMPTS_CRON is a
+      // coarse fallback; regenerating here means the chip numbers track each 6-hourly refresh instead of
+      // lagging up to a week behind the data the assistant recomputes live. That skew is the S3 defect: a
+      // chip computed on partial data showed „140 договора за 21,6 млн €" while the live query returned
+      // 278 / 61,5 млн for the SAME window once late-arriving contracts backfilled. Best-effort — the slice
+      // is already committed, so a prompts failure is logged, not fatal to the refresh.
+      await step.do('refresh-suggested-prompts', async () => {
+        try {
+          await generateSuggestedPrompts(this.env.DB);
+        } catch (error) {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'etl_prompts_failed',
+              phase: 'refresh',
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      });
+
       // Reconciliation gate (#97) on the served D1 the refresh just wrote — the CLI paths gate every
       // derive, but this steady-state path did not. POST-COMMIT alarm: the slice is already applied
       // and served, so a violation fails the step + surfaces in observability, it does not un-serve
@@ -199,9 +238,80 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
 }
 
 export default {
-  // Cron entrypoint: kick one durable refresh run. No public route or HTTP trigger is configured.
-  async scheduled(_controller, env): Promise<void> {
-    const instance = await env.REFRESH.create();
-    console.log(JSON.stringify({ level: 'info', event: 'etl_scheduled_refresh', id: instance.id }));
+  // Primarily a cron worker: three triggers share it — the 6-hourly data refresh kicks a durable
+  // Workflow run, the Monday prompts cron rebuilds the assistant starter prompts, and the Monday
+  // digest cron publishes the weekly digest. Branch on the cron string (named constants above) — an
+  // unrecognised cron logs `etl_unknown_cron` rather than misrouting.
+  async scheduled(controller, env, ctx): Promise<void> {
+    if (controller.cron === PROMPTS_CRON) {
+      // Surface a failure as a structured event rather than an anonymous unhandled rejection. The job
+      // degrades safely (the prior rows stay served), so this is observability, not a fatal path.
+      ctx.waitUntil(
+        generateSuggestedPrompts(env.DB).catch((error) =>
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'etl_prompts_failed',
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+    if (controller.cron === REFRESH_CRON) {
+      const instance = await env.REFRESH.create();
+      console.log(
+        JSON.stringify({ level: 'info', event: 'etl_scheduled_refresh', id: instance.id }),
+      );
+      return;
+    }
+    // The digest schedule is configurable per environment via the DIGEST_CRON var (kept in sync with
+    // the [triggers] crons entry by the deploy renderer); fall back to the committed constant when unset.
+    if (controller.cron === (env.DIGEST_CRON?.trim() || DIGEST_CRON)) {
+      if (!digestEnabled(env.DIGEST_ENABLED)) {
+        console.log(JSON.stringify({ level: 'info', event: 'etl_digest_disabled' }));
+        return;
+      }
+      // Same degrade-safe posture as PROMPTS_CRON: a failure is a structured event, not an unhandled
+      // rejection — the prior week's artifact (if any) stays served.
+      ctx.waitUntil(
+        generateWeeklyDigest(env).catch((error) =>
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'etl_digest_failed',
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+    console.log(
+      JSON.stringify({ level: 'warn', event: 'etl_unknown_cron', cron: controller.cron }),
+    );
+  },
+
+  // On-demand digest trigger (testing). This worker has no committed route and `workers_dev = false`,
+  // so in production this handler is unreachable; where a preview env opts in, digest-trigger.ts gates
+  // it behind a fail-dark flag + bearer token. Everything else is a 404. The try/catch is a backstop:
+  // handleDigestTrigger already catches the generation path, so this only fires on an unexpected throw.
+  async fetch(request, env): Promise<Response> {
+    try {
+      return await handleDigestTrigger(request, env);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          event: 'etl_digest_trigger_error',
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return new Response(JSON.stringify({ error: 'internal' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      });
+    }
   },
 } satisfies ExportedHandler<Env>;

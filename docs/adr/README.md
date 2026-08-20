@@ -43,5 +43,12 @@
 | [0033](0033-registry-evidence-replaces-name-distinctiveness.md) | Връзка се публикува само срещу проверим факт от Търговския регистър — доказателственият ред заменя нивата по отличителност на името; евристиката вече обосновава твърдение (изрично изключение от ADR-0007), барът за акционерни форми е обединение от три сигнала, монотонността е гейт, не хранилище; заменя ADR-0009/0015/0017 | Прието (дизайн) |
 | [0034](0034-registry-lookups-and-decisions-share-one-monthly-run.md) | Справките в ТР и решенията текат в едно месечно задание — суровите актове не преживяват изпълнителя, а решението не може да се вземе без тях; заменя твърдението за каденцията в ADR-0033 | Прието |
 | [0035](0035-registry-evidence-must-also-establish-the-company.md) | Стъпало 2 („Документ") публикува само ако извън фирменото наименование нещо установи, че дружеството е декларираното — деклариран ЕИК, съвпадащо седалище или отличителна фирма; иначе `document_uncorroborated`, което се брои; заменя твърдението в ADR-0033, че стъпало 2 не е гейтнато | Прието |
+| [0036](0036-report-dedup-settled-periods-only.md) | Report dedup (Lane F) само за изрично разрешени, приключени периоди | Прието (уточнено от [0039](0039-dedup-gates-on-stable-bounds.md)) |
+| [0037](0037-rag-adopted-not-a-deviation.md) | RAG е приет слой на асистента, не отклонение от спецификацията | Прието |
+| [0038](0038-global-bggpt-cap-is-a-durable-object.md) | Глобалният BgGPT лимит се налага от Durable Object, не от AI Gateway | Прието |
+| [0039](0039-dedup-gates-on-stable-bounds.md) | Dedup гейт по стабилни граници (не recency) + разпознаване на ISO диапазони | Прието |
+| [0040](0040-transcript-hmac-signing.md) | Интегритет на транскрипта чрез HMAC-подпис на сървърните съобщения (§9.3) | Прието |
+| [0041](0041-transcript-hmac-enforcement.md) | Налагане на HMAC по живия път: filter-on-ingest (sanitize), ENVIRONMENT-gating, ключ и ротация | Прието |
+| [0042](0042-voice-via-ai-gateway.md) | Voice lane през AI Gateway — provider endpoints (без dynamic routes) | Прието |
 
 Свързан проектен документ: [spec/related-persons-foundation.md](../spec/related-persons-foundation.md).

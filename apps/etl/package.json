@@ -11,6 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sigma/ingest": "workspace:*"
+    "@ai-sdk/openai": "^3.0.73",
+    "@sigma/config": "workspace:*",
+    "@sigma/db": "workspace:*",
+    "@sigma/ingest": "workspace:*",
+    "@sigma/report": "workspace:*",
+    "@sigma/shared": "workspace:*",
+    "ai": "6.0.208"
   }
 }

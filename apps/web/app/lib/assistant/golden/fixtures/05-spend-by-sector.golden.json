@@ -1,0 +1,41 @@
+{
+  "id": "05-spend-by-sector",
+  "prompt": "Разпределение на разходите по CPV сектор",
+  "steps": [
+    {
+      "tool": "run_sql",
+      "sql": "SELECT s.division AS division, s.value_eur AS value_eur FROM sector_totals s ORDER BY s.value_eur DESC LIMIT 3",
+      "result": {
+        "rows": [
+          {
+            "division": "45",
+            "value_eur": 3000000
+          },
+          {
+            "division": "72",
+            "value_eur": 2000000
+          },
+          {
+            "division": "33",
+            "value_eur": 1500000
+          }
+        ]
+      }
+    }
+  ],
+  "emit": {
+    "title": "Разход по CPV сектор",
+    "question": "Разпределение на разходите по CPV сектор",
+    "blocks": [
+      {
+        "type": "bar",
+        "resultId": "R1",
+        "labelCol": "division",
+        "valueCol": "value_eur"
+      }
+    ]
+  },
+  "expect": {
+    "queriesContracts": false
+  }
+}
