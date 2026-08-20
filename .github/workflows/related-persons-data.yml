@@ -209,7 +209,8 @@ jobs:
       #
       # The crawl exits non-zero on a deadline stop (the corpus IS partial) and the cache carries what it
       # fetched, so the next run resumes rather than restarting. Budget two runs for a cold corpus, one
-      # thereafter — and see the cache key above on why that must be a fresh dispatch, not „Re-run".
+      # thereafter. Either „Re-run failed jobs" or a fresh dispatch resumes: the key carries run_attempt,
+      # which a re-run increments, so the save lands on a new key while restore-keys still finds the old one.
       - name: Crawl CACBG (full corpus)
         if: ${{ inputs.full_crawl }}
         run: node scripts/cacbg/fetch.mjs --concurrency 8 --deadline-minutes 240

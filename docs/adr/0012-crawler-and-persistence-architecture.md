@@ -55,10 +55,12 @@ step reads the same tree, which loses the entire crawl (run 31889519937). Warm r
 resumability this ADR already specifies (skip if present) is what makes the next run cheap.
 
 Two is the measured expectation, not a guarantee — the second run's share depends on how much the first
-got through, and each resumption must be a **fresh dispatch**: GitHub's re-run keeps the same `run_id`,
-and an Actions cache entry is immutable, so a re-run cannot store what it crawled. The workflow keys the
-cache on `run_id`-`run_attempt` so that a re-run at least fails loudly instead of silently discarding its
-own work.
+got through. **Either a re-run or a fresh dispatch resumes**, because the cache key carries
+`run_id`-`run_attempt` and GitHub increments `run_attempt` on a re-run: the save therefore lands on a key
+that does not exist yet, while `restore-keys: cacbg-raw-` still returns the previous attempt's snapshot.
+Keyed on `run_id` alone a re-run could not store what it crawled — the save would be refused onto an
+immutable entry, downgraded to a warning, and the verify step would then certify the loss by finding the
+earlier attempt. That is why `run_attempt` belongs in the key, and not merely in a diagnostic.
 
 The politeness envelope above is restated to match practice: the ceiling is **8**, not the „≤6" this ADR
 originally wrote, and it is now enforced in `parseCrawlOptions` (`MAX_CONCURRENCY`) rather than merely
