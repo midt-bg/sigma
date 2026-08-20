@@ -135,14 +135,26 @@ const semanticSearchTool: AssistantTool = {
   async execute(args, ctx) {
     if (!ctx.ai || !ctx.vectorize) return 'Семантичното търсене не е налично в момента.';
     try {
-      const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query));
+      const hits = await semanticSearch(
+        ctx.ai,
+        ctx.vectorize,
+        str(args.query),
+        undefined,
+        undefined,
+        // Same structured, counts-only discipline as the route's assistant.rag line (issue #318):
+        // kept=0 with matched>0 = the floor dropped everything; matched=0 = empty/unindexed
+        // namespace. Never the query text.
+        (stats) => console.log(JSON.stringify({ evt: 'assistant.semantic', ...stats })),
+      );
       if (hits.length === 0) return 'Няма семантични съвпадения.';
       return hits.map((h) => `${h.kind} ${h.ref} — ${h.title} (${h.score.toFixed(3)})`).join('\n');
     } catch (e) {
       // embed() throws on an AI-provider error or a vector-count mismatch; degrade to a friendly,
       // retry-able message instead of surfacing the raw error to the model (consistent with run_sql
-      // and the route's retrieveSchemaContext fallback — review #80).
-      console.error('[assistant] semantic_search failed', e);
+      // and the route's retrieveSchemaContext fallback — review #80). Message only, never the raw
+      // error object: a provider error envelope could echo the embedded query text into the logs.
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[assistant] semantic_search failed: ${message}`);
       return 'Семантичното търсене не е налично в момента.';
     }
   },
