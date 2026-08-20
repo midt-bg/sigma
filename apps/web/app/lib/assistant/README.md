@@ -74,6 +74,9 @@ wrangler secret put BGGPT_API_KEY                                            # �
 затворен — изтриеш ли го по-рано, rollback-ът остава без RAG. Чисти се с
 `wrangler vectorize delete-vectors` (иска изричен списък id-та — възстанови ги от git историята на
 `buildSchemaChunks`); не е задължително, retrieval-ът игнорира старите кохорти чрез namespace-а.
+NB за първите среди: „стар кохорт" включва и ОРИГИНАЛНИЯ pre-namespace кохорт (id-та `schema:query:N`
+/ `schema:table:<име>` / `schema:trap:N`, записани в DEFAULT namespace-а с metadata `ns` преди
+версионирането) — той също е orphan след прехода и също се чисти по желание, по същия начин.
 
 Докато бекендът не е напълно осигурен, `/assistant/chat` връща контролирано **503**, а грешка по време на
 streaming се показва като четим текст — не като счупена връзка или 500 (graceful degradation, §7).

@@ -213,14 +213,17 @@ export async function semanticSearch(
     returnMetadata: 'all',
     namespace: ENTITY_NS,
   });
-  return matches
-    .filter((m) => (m.score ?? 0) >= minScore)
-    .map((m) => ({
-      kind: String(m.metadata?.kind ?? ''),
-      ref: String(m.metadata?.ref ?? ''),
-      title: String(m.metadata?.title ?? ''),
-      // The floor guarantees a numeric score here for any minScore > 0; `?? 0` keeps the DTO total
-      // (score stays a number, never a TypeError in tools.ts) even if a caller passes minScore = 0.
-      score: m.score ?? 0,
-    }));
+  return (
+    matches
+      // Number.isFinite, not `?? 0`: a scoreless match must be dropped for EVERY minScore, including
+      // an explicit 0 (where `(undefined ?? 0) >= 0` would smuggle it through as a "hit"). After this
+      // filter the score is a real number, so the DTO below needs no fallback (review f/u, ydimitrof).
+      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
+      .map((m) => ({
+        kind: String(m.metadata?.kind ?? ''),
+        ref: String(m.metadata?.ref ?? ''),
+        title: String(m.metadata?.title ?? ''),
+        score: m.score,
+      }))
+  );
 }

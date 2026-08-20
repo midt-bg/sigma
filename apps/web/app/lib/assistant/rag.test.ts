@@ -197,4 +197,17 @@ describe('semanticSearch', () => {
     ]);
     expect(await semanticSearch(ai, index, 'детски градини')).toEqual([]);
   });
+
+  it('drops a scoreless match even with an explicit minScore = 0 (Number.isFinite, not ?? 0)', async () => {
+    const ai = fakeAI();
+    // The `?? 0` form would smuggle a scoreless match through a zero floor (0 >= 0): scoreless must
+    // mean "dropped" for EVERY floor, while a genuine score of 0 stays a legitimate hit at floor 0.
+    const index = fakeIndex([
+      { id: 'e1', metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } } as unknown as Match,
+      { id: 'e2', score: 0, metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' } },
+    ]);
+    const out = await semanticSearch(ai, index, 'детски градини', 8, 0);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ ref: 'eik:2', score: 0 });
+  });
 });
