@@ -185,7 +185,7 @@ export interface RetrieveOptions {
   onStats?: (stats: RetrievalStats) => void;
 }
 
-function reportStats(onStats: RetrieveOptions['onStats'], stats: RetrievalStats): void {
+function reportStats<S>(onStats: ((stats: S) => void) | undefined, stats: S): void {
   try {
     onStats?.(stats);
   } catch {
@@ -217,10 +217,10 @@ export async function retrieveSchemaContext(
     namespace: SCHEMA_NS,
   });
   // Keep only matches at/above the relevance floor. Number.isFinite, not `?? 0`: our typed contract
-  // promises a numeric `score`, but if an index backend ever omits it, a scoreless match must read as
-  // below the floor (dropped) — for EVERY minScore, including an explicit 0, where
-  // `(undefined ?? 0) >= 0` would let it through as unranked "context". Zero survivors makes
-  // buildSystemPrompt fall back to the full static dictionary, the safe outcome (review, ydimitrof).
+  // promises a numeric `score`, but if an index backend ever omits it, a scoreless match must read
+  // as below the floor for EVERY minScore — including an explicit 0, where `(undefined ?? 0) >= 0`
+  // would smuggle it through as unranked "context". Zero survivors makes buildSystemPrompt fall back
+  // to the full static dictionary, which is the safe outcome (review f/u, ydimitrof).
   const aboveFloor = matches.filter((m) => Number.isFinite(m.score) && m.score >= minScore);
   const kept = aboveFloor.map((m) => String(m.metadata?.text ?? '')).filter(Boolean);
   reportStats(onStats, {
@@ -259,6 +259,17 @@ export interface SemanticHit {
   score: number;
 }
 
+// Observability counters for one semantic_search call — the entity-side sibling of RetrievalStats
+// (issue #318): matched = raw namespace-scoped matches (0 = empty/unindexed `entity-v1`), kept =
+// hits above the relevance floor that reached the model. There is no third counter: unlike the
+// schema path, hits carry no extracted text stage that could drop them. Without these, "floor
+// dropped everything" and "empty namespace" are operationally indistinguishable once the entity
+// indexer (Фаза 2) populates the corpus.
+export interface SemanticSearchStats {
+  matched: number;
+  kept: number;
+}
+
 /** Vector search over indexed entity/contract titles — complements the FTS keyword tool. */
 export async function semanticSearch(
   ai: EmbeddingRunner,
@@ -266,25 +277,31 @@ export async function semanticSearch(
   query: string,
   topK = 8,
   minScore = MIN_ENTITY_SCORE,
+  // Same best-effort contract as RetrieveOptions.onStats: invoked in reportStats' try/catch, so a
+  // throwing sink can never cost the tool its hits.
+  onStats?: (stats: SemanticSearchStats) => void,
 ): Promise<SemanticHit[]> {
   const [vec] = await embed(ai, [query]);
-  if (!vec) return [];
+  if (!vec) {
+    reportStats(onStats, { matched: 0, kept: 0 });
+    return [];
+  }
   const { matches } = await index.query(vec, {
     topK,
     returnMetadata: 'all',
     namespace: ENTITY_NS,
   });
-  return (
-    matches
-      // Number.isFinite, not `?? 0`: a scoreless match must be dropped for EVERY minScore, including
-      // an explicit 0 (where `(undefined ?? 0) >= 0` would smuggle it through as a "hit"). After this
-      // filter the score is a real number, so the DTO below needs no fallback (review f/u, ydimitrof).
-      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
-      .map((m) => ({
-        kind: String(m.metadata?.kind ?? ''),
-        ref: String(m.metadata?.ref ?? ''),
-        title: String(m.metadata?.title ?? ''),
-        score: m.score,
-      }))
-  );
+  const hits = matches
+    // Number.isFinite, not `?? 0`: a scoreless match must be dropped for EVERY minScore, including
+    // an explicit 0 (where `(undefined ?? 0) >= 0` would smuggle it through as a "hit"). After this
+    // filter the score is a real number, so the DTO below needs no fallback (review f/u, ydimitrof).
+    .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
+    .map((m) => ({
+      kind: String(m.metadata?.kind ?? ''),
+      ref: String(m.metadata?.ref ?? ''),
+      title: String(m.metadata?.title ?? ''),
+      score: m.score,
+    }));
+  reportStats(onStats, { matched: matches.length, kept: hits.length });
+  return hits;
 }
