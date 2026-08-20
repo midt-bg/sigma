@@ -25,15 +25,18 @@ export function sharedCoverage(include: string[]): NonNullable<ViteUserConfig['t
       // include glob is a bare directory (verified — removing them moves no workspace's number).
       '**/fixtures/**',
       '**/*.d.ts',
-      // Test-support helpers (SQLite D1 shims, cloudflare:workers/workflows stubs) live under src/test/.
-      // They exist only to drive the suites — instrumenting them measures test scaffolding, not product
-      // code, so they belong with fixtures on the exclude list.
+      // Test-support scaffolding: the SQLite D1 shim and the cloudflare:workers/workflows stubs that
+      // apps/etl/vitest.config.ts aliases the real modules to. They exist only to drive the suites, so
+      // instrumenting them measures test scaffolding rather than product code.
       //
-      // This glob is wide on purpose but narrow in contract: src/test/ is for test HELPERS only. Product
-      // code placed there would leave the coverage denominator silently, which is the one way this list
-      // can hide an untested module rather than an uncoverable file. Review any new src/test/ entry on
-      // that basis (review ydimitrof, #254).
-      '**/src/test/**',
+      // Listed file by file, NOT as `**/src/test/**` (review ydimitrof, #254). A directory glob is the
+      // one entry on this list that could hide an untested product MODULE rather than an uncoverable
+      // file: anything later dropped into src/test/ would leave the coverage denominator silently. With
+      // an explicit list, a new file there is counted until someone deliberately adds it here — which is
+      // a reviewable act rather than a side effect of its location.
+      '**/src/test/cloudflare-workers-stub.ts',
+      '**/src/test/cloudflare-workflows-stub.ts',
+      '**/src/test/d1-sqlite.ts',
     ],
     reporter: ['text', 'json-summary'],
     reportsDirectory: './coverage',

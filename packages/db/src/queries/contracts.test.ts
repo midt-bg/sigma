@@ -443,7 +443,7 @@ describe('streamContractsCsv', () => {
   });
 });
 
-describe('getContractFacets', () => {
+describe('getContractFacets — sector, year and authority facets', () => {
   it('counts sectors from the same CPV division expression used by list filters', async () => {
     const seenSql: string[] = [];
     const db = {

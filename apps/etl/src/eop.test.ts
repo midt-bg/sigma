@@ -331,11 +331,9 @@ describe('ingestBucketWindow', () => {
     expect(results).toEqual([expect.objectContaining({ day: '2026-06-01', found: false })]);
   });
 });
-describe('EOP responses the ingest walks away from', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
+describe('EOP responses the ingest walks away from', () => {
+  // No local afterEach: the file-level one above already unstubs globals after every test.
   it('releases the body of a missing bucket instead of leaving the stream open', async () => {
     const { response, cancelled } = openBodyResponse({ status: 403 });
     vi.stubGlobal('fetch', vi.fn(async () => response) as unknown as typeof fetch);
