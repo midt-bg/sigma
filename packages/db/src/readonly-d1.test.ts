@@ -1,33 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { recordingD1, type FakeD1Call } from '@sigma/test-support';
 import { readonlyD1 } from './readonly-d1';
 
-// Minimal fake D1 that records prepared/exec SQL and returns canned rows — same approach as the query
-// unit tests. The wrapper only inspects SQL text, so no real engine is needed; the passthrough tests
-// prove it forwards to the underlying handle unchanged.
-function fakeDb(): { db: D1Database; calls: string[] } {
-  const calls: string[] = [];
-  const db = {
-    prepare(sql: string) {
-      calls.push(`prepare:${sql}`);
-      return {
-        bind(...args: unknown[]) {
-          calls.push(`bind:${JSON.stringify(args)}`);
-          return this;
-        },
-        async all() {
-          return { results: [{ id: 'c:1' }], success: true, meta: {} };
-        },
-        async first() {
-          return { id: 'c:1' };
-        },
-      };
-    },
-    async exec(sql: string) {
-      calls.push(`exec:${sql}`);
-      return { count: 0, duration: 0 };
-    },
-  } as unknown as D1Database;
-  return { db, calls };
+// A recording D1 that answers anything and logs every statement: readonlyD1 is a *wrapper*, so what
+// is under test is which calls reach the handle underneath and with what SQL — not what comes back.
+// The canned row is there so the passthrough tests have something to compare.
+function fakeDb(): { db: D1Database; calls: FakeD1Call[] } {
+  const fake = recordingD1([{ when: [], all: [{ id: 'c:1' }], first: { id: 'c:1' } }]);
+  return { db: fake.db, calls: fake.calls };
 }
 
 describe('readonlyD1 — write rejection', () => {
@@ -47,7 +27,7 @@ describe('readonlyD1 — read passthrough', () => {
   it('delegates a SELECT to the underlying prepare with the exact SQL', () => {
     const { db, calls } = fakeDb();
     readonlyD1(db).prepare('SELECT id FROM contracts');
-    expect(calls).toEqual(['prepare:SELECT id FROM contracts']);
+    expect(calls).toEqual([{ sql: 'SELECT id FROM contracts', binds: [], via: 'prepare' }]);
   });
 
   it('returns rows identical to the unwrapped handle for .all()', async () => {
@@ -65,7 +45,9 @@ describe('readonlyD1 — read passthrough', () => {
   it('passes .bind() args through to the underlying statement unchanged', () => {
     const { db, calls } = fakeDb();
     readonlyD1(db).prepare('SELECT id FROM contracts WHERE id = ?').bind('c:1');
-    expect(calls).toEqual(['prepare:SELECT id FROM contracts WHERE id = ?', 'bind:["c:1"]']);
+    expect(calls).toEqual([
+      { sql: 'SELECT id FROM contracts WHERE id = ?', binds: ['c:1'], via: 'prepare' },
+    ]);
   });
 });
 
@@ -73,7 +55,7 @@ describe('readonlyD1 — exec (multi-statement)', () => {
   it('allows a read-only multi-statement exec', async () => {
     const { db, calls } = fakeDb();
     await readonlyD1(db).exec('SELECT 1; SELECT 2;');
-    expect(calls).toEqual(['exec:SELECT 1; SELECT 2;']);
+    expect(calls).toEqual([{ sql: 'SELECT 1; SELECT 2;', binds: [], via: 'exec' }]);
   });
 
   it('throws when the second statement in exec writes', () => {

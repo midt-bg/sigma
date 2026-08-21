@@ -99,6 +99,11 @@ describe('fakeD1 — routing', () => {
     await expect(db.prepare('SELECT * FROM contracts').all()).rejects.toThrow(/no route matched/i);
   });
 
+  it('matches any query when a route constrains nothing', async () => {
+    const { db } = fakeD1([{ when: [], all: ROWS }]);
+    await expect(db.prepare('LITERALLY ANYTHING').all()).resolves.toMatchObject({ results: ROWS });
+  });
+
   it('takes the first matching route, so a specific one can precede a general one', async () => {
     const specific = [{ id: 'specific' }];
     const general = [{ id: 'general' }];
@@ -148,8 +153,8 @@ describe('fakeD1 — recording', () => {
     await fake.db.prepare('SELECT a').bind(1).all();
     await fake.db.prepare('SELECT b').all();
     expect(fake.calls).toEqual([
-      { sql: 'SELECT a', binds: [1] },
-      { sql: 'SELECT b', binds: [] },
+      { sql: 'SELECT a', binds: [1], via: 'prepare' },
+      { sql: 'SELECT b', binds: [], via: 'prepare' },
     ]);
   });
 
@@ -204,7 +209,7 @@ describe('fakeD1 — first() and run()', () => {
       success: true,
       meta: {},
     });
-    expect(seen).toEqual([{ sql: 'DELETE FROM staging WHERE id = ?', binds: [7] }]);
+    expect(seen).toEqual([{ sql: 'DELETE FROM staging WHERE id = ?', binds: [7], via: 'prepare' }]);
   });
 
   it('rejects an unmatched run()', async () => {
@@ -251,7 +256,7 @@ describe('throwingD1', () => {
       .all()
       .catch(() => undefined);
     expect(fake.calls).toEqual([
-      { sql: 'SELECT * FROM interest_links WHERE link_key = ?', binds: ['p1|111'] },
+      { sql: 'SELECT * FROM interest_links WHERE link_key = ?', binds: ['p1|111'], via: 'prepare' },
     ]);
   });
 });
@@ -281,6 +286,13 @@ describe('recordingD1', () => {
       'SELECT c',
       'SELECT c',
     ]);
+  });
+
+  it('distinguishes an exec() from a prepare() carrying the same text', async () => {
+    const fake = recordingD1();
+    fake.db.prepare('SELECT 1');
+    await fake.db.exec('SELECT 1');
+    expect(fake.calls.map((call) => call.via)).toEqual(['prepare', 'exec']);
   });
 
   it('serves a registered route while still allowing anything else through', async () => {

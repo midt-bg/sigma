@@ -10,15 +10,24 @@
 // node:sqlite database. This one is for unit tests of the TypeScript logic *around* a query, where
 // the SQL itself is not under test. scripts/check-fake-d1.mjs keeps both of them the only two.
 
-/** One `prepare()` — the SQL, and whatever `bind()` put on it. */
+/** One statement the double was handed — the SQL, whatever `bind()` put on it, and how it arrived. */
 export interface FakeD1Call {
   sql: string;
   binds: unknown[];
+  /**
+   * Which entry point recorded it. Tests of a *wrapper* over D1 need this: `prepare` and `exec`
+   * carry the same text, so without it a wrapper that sent an exec down the prepare path would
+   * produce an identical log and the test could not tell.
+   */
+  via: 'prepare' | 'exec' | 'batch';
 }
 
 /**
  * A marker set and the response it serves. Every string in `when` must appear in the SQL for the
  * route to match, and the first matching route wins — so a specific route can precede a general one.
+ *
+ * `when: []` constrains nothing and therefore matches any query. Use it last, and only where the
+ * test genuinely does not care which statement ran — asserting on the call log, say.
  */
 export interface FakeD1Route {
   when: string | string[];
@@ -91,8 +100,8 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   const sql: string[] = [];
   const bound = new WeakMap<object, FakeD1Call>();
 
-  const record = (statement: string): FakeD1Call => {
-    const call: FakeD1Call = { sql: statement, binds: [] };
+  const record = (statement: string, via: FakeD1Call['via']): FakeD1Call => {
+    const call: FakeD1Call = { sql: statement, binds: [], via };
     calls.push(call);
     sql.push(statement);
     return call;
@@ -146,11 +155,11 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   };
 
   const db = {
-    prepare(sql: string) {
-      return statement(record(sql));
+    prepare(statement_: string) {
+      return statement(record(statement_, 'prepare'));
     },
-    async exec(sql: string) {
-      record(sql);
+    async exec(statement_: string) {
+      record(statement_, 'exec');
       return { count: 0, duration: 0 };
     },
     async batch(statements: object[]) {
@@ -160,7 +169,7 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         // A statement not made by this double has no recorded SQL; re-recording an empty string
         // would quietly corrupt the call log, so refuse rather than guess.
         if (!call) throw new Error('fake D1: batch() received a statement from another database');
-        record(call.sql);
+        record(call.sql, 'batch');
         results.push({ results: [], success: true, meta: {} });
       }
       return results;
@@ -204,7 +213,7 @@ export function throwingD1(error: Error = new Error('D1_ERROR: statement failed'
   const sql: string[] = [];
   const db = {
     prepare(statement: string) {
-      calls.push({ sql: statement, binds: [] });
+      calls.push({ sql: statement, binds: [], via: 'prepare' });
       sql.push(statement);
       const self = {
         bind(...args: unknown[]) {
