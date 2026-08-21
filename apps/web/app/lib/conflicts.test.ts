@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { moneyBare } from '@sigma/shared';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import {
   authorityShareDisplay,
   authorityShares,
   companyConflictsHref,
   companyProfileHref,
   contractHref,
+  contractTemporal,
   contractTimeline,
   contractYear,
   contractYearsLabel,
@@ -15,10 +16,12 @@ import {
   fundsMagnitude,
   hasContemporaneousContracts,
   conflictHeadline,
+  groupByPerson,
   isHttpsUrl,
-  linkContractsHref,
+  markContracts,
   officialHref,
   partitionContracts,
+  personFundsCell,
   relationLabel,
   temporalLabel,
   registryEvidenceLabel,
@@ -206,6 +209,25 @@ describe('contemporaneous split', () => {
     );
     expect(noValue.total).toBeNull();
   });
+
+  it('personFundsCell mirrors the split over a collapsed person row — no synthetic link, no cast', () => {
+    // an in-window sum → the window figure leads, the total is kept as „от" context
+    const withWindow = personFundsCell({
+      hasContemporaneous: true,
+      contemporaneousValueEur: 3_000_000,
+      contractValueEur: 8_000_000,
+    });
+    expect(withWindow.primary).toBe(moneyBare(3_000_000));
+    expect(withWindow.total).toBe(moneyBare(8_000_000));
+    // nothing signed in the window → only the total, no split
+    const noWindow = personFundsCell({
+      hasContemporaneous: false,
+      contemporaneousValueEur: 0,
+      contractValueEur: 8_000_000,
+    });
+    expect(noWindow.primary).toBe(moneyBare(8_000_000));
+    expect(noWindow.total).toBeNull();
+  });
 });
 
 describe('fundsMagnitude', () => {
@@ -332,19 +354,6 @@ describe('contractTimeline', () => {
     expect(tl!.minYear).toBe(2024);
     expect(tl!.windowStartPct).toBe(50);
     expect(tl!.windowEndPct).toBe(50);
-  });
-});
-
-describe('linkContractsHref', () => {
-  it('keys on the URL-safe scope + slug + ЕИК; the scope MUST match the ETL link_key (ADR-0032)', () => {
-    // A self link → scope „self" (link_key pid|eik). A family link → scope „family" (link_key pid|eik|family);
-    // hardcoding 'self' there would fetch [] for every relative's-stake row. scope is a path segment.
-    expect(linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'owns' }))).toBe(
-      '/conflicts/link/self/c2VydA/111/contracts',
-    );
-    expect(
-      linkContractsHref(link({ officialSlug: 'c2VydA', eik: '111', relation: 'related' })),
-    ).toBe('/conflicts/link/family/c2VydA/111/contracts');
   });
 });
 
@@ -556,5 +565,406 @@ describe('registryEvidenceLabel', () => {
     expect(registryEvidenceLabel({ evidenceKind: 'confirmed', registryRole: 'owner' })).not.toMatch(
       /собственик/,
     );
+  });
+});
+
+describe('groupByPerson', () => {
+  // Collapses per-relationship links into one row per PERSON for the /conflicts leaderboard (#287). The DB
+  // returns links NEXUS-sorted, but the helper must be correct for ANY input order — it computes the
+  // strongest link explicitly and sorts rows itself.
+
+  it('collapses N links for one person into a single row, naming the person once', () => {
+    // Same officialSlug, three DISTINCT winners → one row (not three cards). The person appears once.
+    const rows = groupByPerson([
+      link({ linkKey: 'p:a|1', officialSlug: 'a', official: 'Иван Минев', eik: '1' }),
+      link({ linkKey: 'p:a|2', officialSlug: 'a', official: 'Иван Минев', eik: '2' }),
+      link({ linkKey: 'p:a|3', officialSlug: 'a', official: 'Иван Минев', eik: '3' }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].officialSlug).toBe('a');
+    expect(rows[0].official).toBe('Иван Минев');
+    expect(rows[0].companyCount).toBe(3);
+  });
+
+  it('ranks by the STRONGEST single link, so a strong+weak person outranks a medium-only person', () => {
+    // Person A: one STRONG link (own-institution) + one WEAK link (nothing). Person B: one MEDIUM link
+    // (has a contemporaneous window, but not own-institution). By strongest-link NEXUS_ORDER, A > B.
+    // A naive per-link or flag-OR sort that let A's weak link drag it down would sink A below B — this
+    // must go red if the sort becomes per-link rather than strongest-link.
+    const rows = groupByPerson([
+      // B first in input so a stable/pre-sorted assumption can't accidentally pass the test.
+      link({
+        linkKey: 'p:b|9',
+        officialSlug: 'b',
+        official: 'Бета',
+        eik: '9',
+        ownInstitution: false,
+        contemporaneousContractCount: 4,
+        contemporaneousValueEur: 3_000_000,
+      }),
+      link({
+        linkKey: 'p:a|weak',
+        officialSlug: 'a',
+        official: 'Алфа',
+        eik: '7',
+        ownInstitution: false,
+        contemporaneousContractCount: 0,
+        contemporaneousValueEur: null,
+      }),
+      link({
+        linkKey: 'p:a|strong',
+        officialSlug: 'a',
+        official: 'Алфа',
+        eik: '8',
+        ownInstitution: true,
+        contemporaneousContractCount: 1,
+        contemporaneousValueEur: 100,
+      }),
+    ]);
+    expect(rows.map((r) => r.officialSlug)).toEqual(['a', 'b']);
+    // A's strongest link is own-institution → its rank flag is set; the weak second link does not sink it.
+    expect(rows[0].ownInstitution).toBe(true);
+  });
+
+  it('does not let two weak links out-rank one strong link (rank ≠ OR-ed flags)', () => {
+    // Person C has TWO links: one own-institution (no window), one in-window (no own-institution) — so BOTH
+    // row flags are true by OR, yet NEITHER single link carries both. Person D has ONE link that carries both.
+    // Correct rank compares the strongest SINGLE link: D's [own+window] dominates either of C's by the FLAG
+    // hierarchy (own-institution first, then any-window), independent of €. The buggy rank (from OR-ed row
+    // flags) would tie C and D on flags [1,1] and fall to the row's summed window € — so C's window € is set
+    // ABOVE D's on purpose: under the bug C would sort FIRST (wrong), so asserting ['d','c'] catches it. The
+    // earlier fixture used C-window 1M < D 9M, where the € tiebreak ordered D first under BOTH schemes and the
+    // mutation survived (niki #312 HIGH 3).
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:c|own',
+        officialSlug: 'c',
+        official: 'Цета',
+        eik: '1',
+        ownInstitution: true,
+        contemporaneousContractCount: 0,
+        contemporaneousValueEur: null,
+      }),
+      link({
+        linkKey: 'p:c|window',
+        officialSlug: 'c',
+        official: 'Цета',
+        eik: '2',
+        ownInstitution: false,
+        contemporaneousContractCount: 5,
+        contemporaneousValueEur: 20_000_000, // deliberately ABOVE D's window € — the discriminating value
+      }),
+      link({
+        linkKey: 'p:d|both',
+        officialSlug: 'd',
+        official: 'Делта',
+        eik: '3',
+        ownInstitution: true,
+        contemporaneousContractCount: 9,
+        contemporaneousValueEur: 9_000_000,
+      }),
+    ]);
+    // Strongest-single-link rank → D leads despite C's larger summed window €; an OR-flag rank would put C
+    // first. The person-level window € proves the tiebreak did NOT decide the order.
+    expect(rows.map((r) => r.officialSlug)).toEqual(['d', 'c']);
+    expect(rows[0].contemporaneousValueEur).toBe(9_000_000); // D
+    expect(rows[1].contemporaneousValueEur).toBe(20_000_000); // C — larger €, yet ranked second
+  });
+
+  it('dedupes public funds per ЕИК: a duplicate-ЕИК link does not double the sum', () => {
+    // Two links on the SAME winner (same ЕИК) for one person — total € is company-level (constant within a
+    // ЕИК) so it counts once; the window € is a per-link subset so the MAX is taken. Plus a second distinct
+    // winner to prove distinct ЕИК DO add.
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:a|111self',
+        officialSlug: 'a',
+        eik: '111',
+        contractValueEur: 88_000_000,
+        contemporaneousValueEur: 40_000_000,
+      }),
+      link({
+        linkKey: 'p:a|111fam',
+        officialSlug: 'a',
+        eik: '111',
+        contractValueEur: 88_000_000,
+        contemporaneousValueEur: 25_000_000,
+      }),
+      link({
+        linkKey: 'p:a|222',
+        officialSlug: 'a',
+        eik: '222',
+        contractValueEur: 10_000_000,
+        contemporaneousValueEur: 5_000_000,
+      }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].contractValueEur).toBe(98_000_000); // 88M once + 10M — NOT 88 + 88 + 10
+    expect(rows[0].contemporaneousValueEur).toBe(45_000_000); // max(40M, 25M) for ЕИК 111 + 5M
+    expect(rows[0].companyCount).toBe(2); // two distinct winners, despite three links
+  });
+
+  it('companyCount counts distinct ЕИК (3 → count); soleCompany carries the name when it is 1', () => {
+    const three = groupByPerson([
+      link({ linkKey: 'p:a|1', officialSlug: 'a', eik: '1' }),
+      link({ linkKey: 'p:a|2', officialSlug: 'a', eik: '2' }),
+      link({ linkKey: 'p:a|3', officialSlug: 'a', eik: '3' }),
+    ]);
+    expect(three[0].companyCount).toBe(3);
+    expect(three[0].soleCompany).toBeNull(); // >1 winner → no single name to carry
+
+    const one = groupByPerson([
+      link({
+        linkKey: 'p:a|9',
+        officialSlug: 'a',
+        eik: '999',
+        company: 'ТРЕЙС ГРУП ХОЛД АД',
+      }),
+    ]);
+    expect(one[0].companyCount).toBe(1);
+    expect(one[0].soleCompany).toEqual({ company: 'ТРЕЙС ГРУП ХОЛД АД', eik: '999' });
+  });
+
+  it('sets a признак flag sourced only from a SECOND link', () => {
+    // The strongest (first) link carries neither flag; a weaker second link carries both. The OR-ed row
+    // flags must still be true — a flag on any link surfaces on the row, even one that is not the strongest.
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:a|lead',
+        officialSlug: 'a',
+        eik: '1',
+        ownInstitution: false,
+        contemporaneousContractCount: 0,
+      }),
+      link({
+        linkKey: 'p:a|second',
+        officialSlug: 'a',
+        eik: '2',
+        ownInstitution: true,
+        contemporaneousContractCount: 3,
+      }),
+    ]);
+    expect(rows[0].ownInstitution).toBe(true);
+    expect(rows[0].hasContemporaneous).toBe(true);
+  });
+
+  it('sums contractCount null-guarded — a null/0-contract link never yields NaN', () => {
+    const rows = groupByPerson([
+      link({ linkKey: 'p:a|1', officialSlug: 'a', eik: '1', contractCount: 5 }),
+      // TS types contractCount as number, but a malformed row could arrive null; the guard must hold.
+      link({
+        linkKey: 'p:a|2',
+        officialSlug: 'a',
+        eik: '2',
+        contractCount: null as unknown as number,
+      }),
+      link({ linkKey: 'p:a|3', officialSlug: 'a', eik: '3', contractCount: 0 }),
+    ]);
+    expect(rows[0].contractCount).toBe(5);
+    expect(Number.isNaN(rows[0].contractCount)).toBe(false);
+  });
+
+  it('dedupes contractCount per ЕИК too — a duplicate-ЕИК link never doubles the count (guardian symmetry)', () => {
+    // contract_count is a company-level winner total (constant within a ЕИК), so two links on the SAME ЕИК must
+    // count it ONCE — mirroring the money dedup, not a raw link sum (niki #312 MEDIUM 7). Plus a second winner
+    // to prove distinct ЕИК DO add.
+    const rows = groupByPerson([
+      link({ linkKey: 'p:a|111a', officialSlug: 'a', eik: '111', contractCount: 35 }),
+      link({ linkKey: 'p:a|111b', officialSlug: 'a', eik: '111', contractCount: 35 }),
+      link({ linkKey: 'p:a|222', officialSlug: 'a', eik: '222', contractCount: 4 }),
+    ]);
+    expect(rows[0].contractCount).toBe(39); // 35 once + 4 — NOT 35 + 35 + 4
+  });
+
+  it('is empty for empty input', () => {
+    expect(groupByPerson([])).toEqual([]);
+  });
+
+  it('keeps namesakes apart: same name, different institution → two rows (group key is person id, not name)', () => {
+    // The group key is officialSlug (= personSlug(person_id) = key(name)|key(institution), ADR-0026), NOT the
+    // display name — institution is the namesake disambiguator (api-contract). A mutation grouping by `official`
+    // would collapse these two distinct office-holders into one row (merging their winners and money under one
+    // name). Guard it explicitly: same name, different slug/institution ⇒ two rows (niki #312 MEDIUM 7c).
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:ivanov-sofia|1',
+        officialSlug: 'ivanov-sofia',
+        official: 'Иван Иванов',
+        institution: 'Община София',
+        eik: '111',
+      }),
+      link({
+        linkKey: 'p:ivanov-varna|2',
+        officialSlug: 'ivanov-varna',
+        official: 'Иван Иванов',
+        institution: 'Община Варна',
+        eik: '222',
+      }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.officialSlug).sort()).toEqual(['ivanov-sofia', 'ivanov-varna']);
+    expect(rows.map((r) => r.institution).sort()).toEqual(['Община Варна', 'Община София']);
+  });
+
+  it('carries a family link into the row without exposing any relative identity', () => {
+    // A family stake (relation 'related', ADR-0032) folds into the person's counts and money exactly like a
+    // self stake — but the row must expose ONLY the official, never the свързано лице. Assert the row shape
+    // carries no relative-identity field and the values include the family link's contribution.
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:a|self',
+        officialSlug: 'a',
+        official: 'Иван Минев',
+        eik: '111',
+        relation: 'owns',
+        contractCount: 4,
+        contractValueEur: 10_000_000,
+      }),
+      link({
+        linkKey: 'p:a|family',
+        officialSlug: 'a',
+        official: 'Иван Минев',
+        eik: '222',
+        relation: 'related',
+        contractCount: 2,
+        contractValueEur: 3_000_000,
+      }),
+    ]);
+    expect(rows).toHaveLength(1);
+    // The family link contributed: 2 winners, both contract counts and both € summed.
+    expect(rows[0].companyCount).toBe(2);
+    expect(rows[0].contractCount).toBe(6);
+    expect(rows[0].contractValueEur).toBe(13_000_000);
+    // Anonymity: the row shape has ONLY the official's own identity — no relation/relative field of any kind.
+    // `stakeKind` is an identity-free enum ('self'|'family'|'mixed'), never a relative name or relationship type.
+    expect(rows[0].official).toBe('Иван Минев');
+    expect(rows[0].stakeKind).toBe('mixed'); // one own + one family link
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      [
+        'companyCount',
+        'contemporaneousValueEur',
+        'contractCount',
+        'contractValueEur',
+        'hasContemporaneous',
+        'institution',
+        'official',
+        'officialSlug',
+        'ownInstitution',
+        'soleCompany',
+        'stakeKind',
+      ].sort(),
+    );
+  });
+
+  it('stakeKind: family only when EVERY link is a relative stake; null money stays null (not 0)', () => {
+    // family-only person → 'family'; and with no summable € on any winner the row money is NULL, so the cell
+    // renders „—" like the per-link card, not a fabricated „0" (niki #312 MEDIUM 1 + MEDIUM 3).
+    const family = groupByPerson([
+      link({
+        linkKey: 'p:f|1',
+        officialSlug: 'f',
+        relation: 'related',
+        eik: '1',
+        contractValueEur: null,
+        contemporaneousValueEur: null,
+        contemporaneousContractCount: 0,
+      }),
+    ]);
+    expect(family[0].stakeKind).toBe('family');
+    expect(family[0].contractValueEur).toBeNull();
+    expect(family[0].contemporaneousValueEur).toBeNull();
+    expect(personFundsCell(family[0]).primary).toBe(moneyBare(null)); // „—", never „0"
+
+    // self-only person → 'self'
+    const self = groupByPerson([link({ linkKey: 'p:s|1', officialSlug: 's', relation: 'owns' })]);
+    expect(self[0].stakeKind).toBe('self');
+  });
+
+  it('preserves the window-null case: in-window contracts with NULL € show total-only, never „0 … от …"', () => {
+    // hasContemporaneous is true (a link has an in-window contract) but its window € is NULL, so the row window
+    // € must stay NULL and personFundsCell falls back to the total-only shape — the exact case fundsCellLabel
+    // guards per link, which a 0-coerced row could not reproduce (niki #312 MEDIUM 3).
+    const rows = groupByPerson([
+      link({
+        linkKey: 'p:a|1',
+        officialSlug: 'a',
+        eik: '1',
+        contemporaneousContractCount: 3,
+        contemporaneousValueEur: null,
+        contractValueEur: 88_000_000,
+      }),
+    ]);
+    expect(rows[0].hasContemporaneous).toBe(true);
+    expect(rows[0].contemporaneousValueEur).toBeNull();
+    const cell = personFundsCell(rows[0]);
+    expect(cell.primary).toBe(moneyBare(88_000_000));
+    expect(cell.total).toBeNull(); // no split — not „0 … от 88 млн."
+  });
+});
+
+// A winner's contract FACTS as carried in the eager DTO (no temporal — derived per link). Minimal shape.
+function facts(over: Partial<ConflictContractFacts> = {}): ConflictContractFacts {
+  return {
+    contractSlug: 'e:c1',
+    signedAt: '2021-05-01',
+    authority: 'Община Тест',
+    authorityId: 'a:1',
+    authorityTotalEur: 5_000_000,
+    contractKind: 'Услуги',
+    procedureType: 'открита процедура',
+    subject: 'Ремонт',
+    contractNumber: 'Д-1',
+    amountEur: 1_000_000,
+    ...over,
+  };
+}
+
+describe('contractTemporal (per-link window mark, moved client-side #312 HIGH 1)', () => {
+  it('marks by inclusive [first, last] against the signing year', () => {
+    expect(contractTemporal('2021-05-01', '2019', '2023')).toBe('contemporaneous');
+    expect(contractTemporal('2019-01-01', '2019', '2023')).toBe('contemporaneous'); // inclusive lower
+    expect(contractTemporal('2023-12-31', '2019', '2023')).toBe('contemporaneous'); // inclusive upper
+    expect(contractTemporal('2016-01-01', '2019', '2023')).toBe('before');
+    expect(contractTemporal('2024-01-01', '2019', '2023')).toBe('after');
+  });
+
+  it("is 'unknown' when the signing date or either declared bound is missing (the branch a mutant would skip)", () => {
+    // ydimitrof #312 MEDIUM 4: without the null guards, `null < lo` is `true` and an undated contract would
+    // silently read as „before". Pin all three missing-input paths to 'unknown'.
+    expect(contractTemporal(null, '2019', '2023')).toBe('unknown'); // no signing date
+    expect(contractTemporal('2021-05-01', null, '2023')).toBe('unknown'); // no lower bound
+    expect(contractTemporal('2021-05-01', '2019', null)).toBe('unknown'); // no upper bound
+    expect(contractTemporal(null, null, null)).toBe('unknown');
+  });
+
+  it("treats a non-ISO / bogus date as 'unknown' (the >0 guard, matching strftime returning NULL)", () => {
+    // parseYear's `> 0` guard: a non-ISO date yields no valid year → 'unknown', NOT 'before'. This is the
+    // divergence from `strftime('%Y', …)` ydimitrof #312 MEDIUM 4 flagged; both now agree on „no year".
+    expect(contractTemporal('not-a-date', '2019', '2023')).toBe('unknown');
+    expect(contractTemporal('0000-01-01', '2019', '2023')).toBe('unknown');
+  });
+});
+
+describe('markContracts (derive per-link temporal + contemporaneous-first)', () => {
+  it('marks a winner’s shared facts against ONE link’s window and sorts in-window first', () => {
+    const shared = [
+      facts({ contractSlug: 'e:out', contractNumber: 'Д-3', signedAt: '2024-01-01' }), // after
+      facts({ contractSlug: 'e:in', contractNumber: 'Д-1', signedAt: '2020-01-01' }), // in-window
+      facts({ contractSlug: 'e:un', contractNumber: 'Д-4', signedAt: null }), // unknown
+    ];
+    const marked = markContracts(shared, '2019', '2023');
+    // contemporaneous first, then the rest in their read order (stable)
+    expect(marked.map((c) => [c.contractNumber, c.temporal])).toEqual([
+      ['Д-1', 'contemporaneous'],
+      ['Д-3', 'after'],
+      ['Д-4', 'unknown'],
+    ]);
+  });
+
+  it('marks the SAME shared facts differently for two links with different windows (the dedup payoff)', () => {
+    const shared = [facts({ signedAt: '2021-05-01' })];
+    // one official’s window includes 2021, another’s does not — same facts, different split
+    expect(markContracts(shared, '2019', '2023')[0]!.temporal).toBe('contemporaneous');
+    expect(markContracts(shared, '2010', '2014')[0]!.temporal).toBe('after');
   });
 });

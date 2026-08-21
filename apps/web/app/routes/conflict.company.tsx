@@ -5,14 +5,16 @@ import type { Route } from './+types/conflict.company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout, ExternalEikLink } from '../components/ui';
-import { ConflictCards } from '../components/ConflictCards';
+import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { companyProfileHref, declaredStakeNoun } from '../lib/conflicts';
 
-// Officials with a published declared interest in one winner (by ЕИК). Reads interest_links only. 404 when
-// no official has a published link to this company — never an empty page under a company's name.
+// Officials with a published declared interest in one winner (by ЕИК). Reads published interest_links,
+// which per ADR-0032 include a stake declared for a close relative alongside the official's own — the
+// relative is never named and the relationship never asserted. 404 when no official has a published link to
+// this company — never an empty page under a company's name.
 export function meta({ data, matches, params }: Route.MetaArgs) {
   const name = data?.company ?? 'Дружество';
   const tags = seoMeta({
@@ -40,7 +42,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
-  const { company, eik, links } = loaderData;
+  const { company, eik, links, contracts } = loaderData;
   return (
     <>
       <Breadcrumbs
@@ -64,8 +66,9 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
 
         <Callout titleAs="h2" title="Източник и обхват">
           <p className="m-0">
-            Връзките са от декларациите на самите длъжностни лица (публичен регистър на КПКОНПИ),
-            съпоставени точно с този изпълнител. Виж и{' '}
+            Връзките са от декларациите на длъжностните лица пред КПКОНПИ (публичен регистър) —
+            деклариран дял, собствен или на свързано лице; името на близкия не се показва и видът на
+            връзката не се твърди. Съпоставени са точно с този изпълнител. Виж и{' '}
             <Link to={companyProfileHref(eik)}>профила на дружеството</Link> в обществените поръчки.
             Сигнал за неточност:{' '}
             <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
@@ -77,11 +80,7 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
           title="Длъжностни лица с деклариран дял"
           hint="Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
         >
-          <ConflictCards
-            links={links}
-            caption={`Длъжностни лица с деклариран дял в ${company}`}
-            omit="company"
-          />
+          <ConflictDetail links={links} contracts={contracts} perspective="company" />
         </Section>
       </main>
     </>
