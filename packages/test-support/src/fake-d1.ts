@@ -36,6 +36,11 @@ export interface FakeD1Route {
   // silently lose its parameter type. A D1 row is an object or nothing, so this is also the truth.
   first?: object | null | ((call: FakeD1Call) => object | null);
   run?: (call: FakeD1Call) => void;
+  /**
+   * The `meta` D1 returns beside the rows. Defaults to `{}`; set it where the test is about what
+   * meta carries — `rows_read` and `total_attempts` drive the assistant's rows-read budget.
+   */
+  meta?: Record<string, unknown> | ((call: FakeD1Call) => Record<string, unknown>);
 }
 
 export interface FakeD1 {
@@ -125,12 +130,16 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         return self;
       },
       async all() {
-        const rows = responder('all', call);
-        if (rows === undefined) {
+        const hit = routes.find((r) => r.all !== undefined && matches(r, call.sql));
+        if (!hit?.all) {
           if (!lenient) throw unmatched('all', call.sql, routes);
           return { results: [], success: true, meta: {} };
         }
-        return { results: resolve(rows, call), success: true, meta: {} };
+        return {
+          results: resolve(hit.all, call),
+          success: true,
+          meta: resolve(hit.meta ?? {}, call),
+        };
       },
       async first() {
         const row = responder('first', call);
@@ -213,12 +222,14 @@ export function throwingD1(error: Error = new Error('D1_ERROR: statement failed'
   const sql: string[] = [];
   const db = {
     prepare(statement: string) {
-      calls.push({ sql: statement, binds: [], via: 'prepare' });
+      // Capture this statement's own record: reading back the last entry would attribute a bind() to
+      // whichever statement was prepared most recently, not the one it was called on.
+      const call: FakeD1Call = { sql: statement, binds: [], via: 'prepare' };
+      calls.push(call);
       sql.push(statement);
       const self = {
         bind(...args: unknown[]) {
-          const call = calls.at(-1);
-          if (call) call.binds = args;
+          call.binds = args;
           return self;
         },
         all(): Promise<never> {

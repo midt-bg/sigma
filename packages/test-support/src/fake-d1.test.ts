@@ -120,6 +120,21 @@ describe('fakeD1 — routing', () => {
   });
 });
 
+describe('fakeD1 — result metadata', () => {
+  it('returns an empty meta by default', async () => {
+    const { db } = fakeD1([{ when: 'SELECT', all: ROWS }]);
+    await expect(db.prepare('SELECT 1').all()).resolves.toMatchObject({ meta: {} });
+  });
+
+  it('returns the meta a route declares — rows_read drives a real budget', async () => {
+    const { db } = fakeD1([
+      { when: 'SELECT', all: ROWS, meta: { rows_read: 250, total_attempts: 3 } },
+    ]);
+    const out = await db.prepare('SELECT 1').all();
+    expect(out.meta).toMatchObject({ rows_read: 250, total_attempts: 3 });
+  });
+});
+
 describe('fakeD1 — bound arguments', () => {
   it('hands the bound arguments to a function response', async () => {
     const { db } = fakeD1([
@@ -246,6 +261,15 @@ describe('throwingD1', () => {
     await expect(db.prepare('SELECT 1').all()).rejects.toThrow('D1_ERROR: no such table');
     await expect(db.prepare('SELECT 1').first()).rejects.toThrow('D1_ERROR: no such table');
     await expect(db.prepare('SELECT 1').run()).rejects.toThrow('D1_ERROR: no such table');
+  });
+
+  it('attributes bind() to its own statement, not the most recent one', async () => {
+    const fake = throwingD1();
+    const a = fake.db.prepare('SELECT a WHERE x = ?');
+    const b = fake.db.prepare('SELECT b WHERE y = ?');
+    b.bind('B');
+    a.bind('A');
+    expect(fake.calls.map((call) => call.binds)).toEqual([['A'], ['B']]);
   });
 
   it('records the statement that failed, with its bound arguments', async () => {
