@@ -9,8 +9,8 @@ export function TotalsStrip({ totals, label }: { totals: Total[]; label?: string
     <dl className="totals" aria-label={label}>
       {totals.map((t) => (
         <div className="cell" key={t.label}>
-          <span className="num">{t.num}</span>
-          <span className="label">{t.label}</span>
+          <dt className="label">{t.label}</dt>
+          <dd className="num">{t.num}</dd>
         </div>
       ))}
     </dl>
