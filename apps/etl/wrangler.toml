@@ -70,7 +70,7 @@ binding = "REPORTS"
 bucket_name = "sigma-reports"
 
 [triggers]
-crons = ["0 */6 * * *", "0 6 * * 1", "0 7 * * 1"]
+crons = ["0 */6 * * *", "5 6 * * 1", "0 7 * * 1"]
 
 [observability]
 enabled = true

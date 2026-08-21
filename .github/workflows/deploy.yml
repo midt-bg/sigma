@@ -122,6 +122,12 @@ jobs:
       # use, so every BgGPT call (web assistant + etl digest narrative) fails. preview.yml already passes
       # this; deploy.yml was missing it, so the dev etl/web workers kept the prod URL.
       SIGMA_AI_GATEWAY_ACCOUNT: ${{ vars.SIGMA_AI_GATEWAY_ACCOUNT }}
+      # Turnstile SITE key (public, domain-bound), per-environment. wrangler-render stamps this over the
+      # committed prod key; unset (prod) → committed key stays. Without it the swap is a no-op and the
+      # prod (domain-bound) site key ships to dev/staging too, so the moment SIGMA_ASSISTANT_ENABLED=true
+      # there, the bot-gate (useTurnstileGate) fails to validate on the non-prod domain. Same missing-var
+      # class as SIGMA_AI_GATEWAY_ACCOUNT above.
+      SIGMA_TURNSTILE_SITE_KEY: ${{ vars.SIGMA_TURNSTILE_SITE_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
