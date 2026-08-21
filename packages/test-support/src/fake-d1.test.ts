@@ -160,6 +160,14 @@ describe('fakeD1 — recording', () => {
     expect(fake.sql).toEqual(['SELECT a', 'SELECT b']);
   });
 
+  it('keeps `sql` live after destructuring — `const { db, sql } = fakeD1(...)`', async () => {
+    // A getter here would hand back an empty snapshot at destructure time and never fill in, so
+    // every later assertion would read nothing and pass for the wrong reason.
+    const { db, sql } = fakeD1([{ when: 'SELECT', all: [] }]);
+    await db.prepare('SELECT a').all();
+    expect(sql).toEqual(['SELECT a']);
+  });
+
   it('records a statement that goes on to throw, so the offending SQL is inspectable', async () => {
     const fake = fakeD1([{ when: 'FROM contracts', all: [] }]);
     await fake.db
@@ -220,20 +228,31 @@ describe('fakeD1 — first() and run()', () => {
 });
 
 describe('throwingD1', () => {
-  it('throws from prepare() itself, for the error paths', () => {
+  it('rejects when the statement executes, not when it is prepared', async () => {
+    // D1's prepare() is lazy: a missing table surfaces on all()/first(), and a double that threw
+    // earlier would let a test pass an error-handling path it never actually reaches.
     const { db } = throwingD1();
-    expect(() => db.prepare('SELECT 1')).toThrow();
+    const statement = db.prepare('SELECT 1');
+    await expect(statement.all()).rejects.toThrow();
   });
 
-  it('throws the supplied error, so a test can assert on its message', () => {
+  it('rejects the supplied error from all(), first() and run() alike', async () => {
     const { db } = throwingD1(new Error('D1_ERROR: no such table'));
-    expect(() => db.prepare('SELECT 1')).toThrow('D1_ERROR: no such table');
+    await expect(db.prepare('SELECT 1').all()).rejects.toThrow('D1_ERROR: no such table');
+    await expect(db.prepare('SELECT 1').first()).rejects.toThrow('D1_ERROR: no such table');
+    await expect(db.prepare('SELECT 1').run()).rejects.toThrow('D1_ERROR: no such table');
   });
 
-  it('exposes an empty call log, so it is substitutable for the other doubles', () => {
+  it('records the statement that failed, with its bound arguments', async () => {
     const fake = throwingD1();
-    expect(fake.calls).toEqual([]);
-    expect(fake.sql).toEqual([]);
+    await fake.db
+      .prepare('SELECT * FROM interest_links WHERE link_key = ?')
+      .bind('p1|111')
+      .all()
+      .catch(() => undefined);
+    expect(fake.calls).toEqual([
+      { sql: 'SELECT * FROM interest_links WHERE link_key = ?', binds: ['p1|111'] },
+    ]);
   });
 });
 

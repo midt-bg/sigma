@@ -34,7 +34,11 @@ export interface FakeD1 {
   db: D1Database;
   /** Every `prepare()`, in order, with the arguments `bind()` gave it. */
   calls: FakeD1Call[];
-  /** The executed SQL strings — `calls.map(c => c.sql)`, for assertions that only care about text. */
+  /**
+   * The executed SQL strings, for assertions that only care about text. A live array kept in step
+   * with `calls`, not a getter: `const { db, sql } = fake()` is the natural way to use this, and a
+   * getter would hand back an empty snapshot that never fills in.
+   */
   sql: string[];
 }
 
@@ -84,11 +88,13 @@ function resolve<T>(value: T | ((call: FakeD1Call) => T), call: FakeD1Call): T {
 function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   const lenient = options.onUnmatched === 'empty';
   const calls: FakeD1Call[] = [];
+  const sql: string[] = [];
   const bound = new WeakMap<object, FakeD1Call>();
 
-  const record = (sql: string): FakeD1Call => {
-    const call: FakeD1Call = { sql, binds: [] };
+  const record = (statement: string): FakeD1Call => {
+    const call: FakeD1Call = { sql: statement, binds: [] };
     calls.push(call);
+    sql.push(statement);
     return call;
   };
 
@@ -161,13 +167,7 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
     },
   } as unknown as D1Database;
 
-  return {
-    db,
-    calls,
-    get sql() {
-      return calls.map((call) => call.sql);
-    },
-  };
+  return { db, calls, sql };
 }
 
 /**
@@ -193,18 +193,37 @@ export function recordingD1(routes: FakeD1Route[] = []): FakeD1 {
   return build(routes, { onUnmatched: 'empty' });
 }
 
-/** A double whose every `prepare()` throws — for the error paths. */
-export function throwingD1(error: Error = new Error('fake D1: prepare() failed')): FakeD1 {
+/**
+ * A double whose statements fail when they execute — for the error paths (an un-migrated
+ * environment, a missing table). It fails at execution rather than at `prepare()` because that is
+ * where D1 itself surfaces these: `prepare()` is lazy and never touches the database. The statement
+ * is still recorded, so the SQL that failed is inspectable.
+ */
+export function throwingD1(error: Error = new Error('D1_ERROR: statement failed')): FakeD1 {
   const calls: FakeD1Call[] = [];
-  return {
-    db: {
-      prepare(): never {
-        throw error;
-      },
-    } as unknown as D1Database,
-    calls,
-    get sql() {
-      return calls.map((call) => call.sql);
+  const sql: string[] = [];
+  const db = {
+    prepare(statement: string) {
+      calls.push({ sql: statement, binds: [] });
+      sql.push(statement);
+      const self = {
+        bind(...args: unknown[]) {
+          const call = calls.at(-1);
+          if (call) call.binds = args;
+          return self;
+        },
+        all(): Promise<never> {
+          return Promise.reject(error);
+        },
+        first(): Promise<never> {
+          return Promise.reject(error);
+        },
+        run(): Promise<never> {
+          return Promise.reject(error);
+        },
+      };
+      return self;
     },
-  };
+  } as unknown as D1Database;
+  return { db, calls, sql };
 }
