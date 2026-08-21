@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertReadOnly, isReadOnlySql } from './readonly-sql';
+import { assertReadOnly, assertReadOnlyExec, isReadOnlySql } from './readonly-sql';
 
 // Statements that MUST be treated as writes (rejected). One row per construct. The CTE-prefixed and
 // RETURNING rows are the bypasses a naive `^(select|with)` check would miss; the stacked and
@@ -94,5 +94,21 @@ describe('assertReadOnly', () => {
 
   it('does not throw for a legitimate SELECT', () => {
     expect(() => assertReadOnly('SELECT id FROM contracts')).not.toThrow();
+  });
+});
+
+describe('assertReadOnlyExec — multi-statement .exec() strings', () => {
+  it('rejects a string that carries no statement at all', () => {
+    // `.exec('')` and a comment-only body both reduce to zero statements. Falling through silently would
+    // let the guard report "nothing to object to" on input it never actually inspected; the empty case is
+    // refused explicitly so a caller cannot probe the handle with a body the splitter cannot see.
+    expect(() => assertReadOnlyExec('')).toThrow(/empty statement/i);
+    expect(() => assertReadOnlyExec('   ;;  ')).toThrow(/empty statement/i);
+    expect(() => assertReadOnlyExec('-- DELETE FROM contracts')).toThrow(/empty statement/i);
+  });
+
+  it('checks every statement, not just the first', () => {
+    expect(() => assertReadOnlyExec('SELECT 1; DELETE FROM contracts')).toThrow(/read-only/i);
+    expect(() => assertReadOnlyExec('SELECT 1; SELECT 2')).not.toThrow();
   });
 });

@@ -58,3 +58,22 @@ describe('forModel', () => {
     expect(view).toContain(JSON.stringify([[injected]])); // verbatim, inside the data payload
   });
 });
+
+describe('tool-results — missing cells and truncation flag', () => {
+  it('nulls a cell for a column absent from a later row', () => {
+    const qr = toQueryResult('R1', [
+      { a: 1, b: 5 },
+      { a: 2 }, // b missing → null
+    ]);
+    expect(qr.columns).toEqual(['a', 'b']);
+    expect(qr.rows).toEqual([
+      [1, 5],
+      [2, null],
+    ]);
+  });
+
+  it('marks a truncated result in the model-facing header', () => {
+    const out = forModel({ handle: 'R2', columns: ['a'], rows: [[1]], truncated: true });
+    expect(out).toContain('отрязани');
+  });
+});

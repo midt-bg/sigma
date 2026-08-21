@@ -129,6 +129,14 @@ describe('person slug (свързани лица)', () => {
   it('returns null for an undecodable slug rather than throwing', () => {
     expect(personIdFromSlug('!!!not base64!!!')).toBeNull();
   });
+  it('encodes a bare name key the same as its prefixed form (the prefix is stripped, not required)', () => {
+    // Callers hand it either shape — a row's person_id carries the prefix, a freshly computed name key
+    // does not. Encoding the literal 'person:' into one of them would mint two different URLs for the
+    // same human, and only one of them would round-trip.
+    expect(personSlug('ИВАН ПЕТРОВ')).toBe(personSlug('person:ИВАН ПЕТРОВ'));
+    // Decoding always canonicalises to the prefixed id, so both inputs land on the same person.
+    expect(personIdFromSlug(personSlug('ИВАН ПЕТРОВ'))).toBe('person:ИВАН ПЕТРОВ');
+  });
 });
 
 describe('hrefForEntity', () => {
@@ -141,5 +149,21 @@ describe('hrefForEntity', () => {
     const href = hrefForEntity('contract', 'c:e:UNP:ОП20-42/22/');
     expect(href).not.toContain('/contracts/e:UNP:ОП20-42/22/');
     expect(href).toBe('/contracts/e:UNP:ОП20-42%2F22%2F');
+  });
+});
+
+describe('slug decode edge cases', () => {
+  it('authoritySlug returns an unprefixed id verbatim (no auth: prefix)', () => {
+    expect(authoritySlug('000695089')).toBe('000695089');
+  });
+  it('companySlug returns an unprefixed id verbatim (neither eik: nor name:)', () => {
+    expect(companySlug('rawid-123')).toBe('rawid-123');
+  });
+  it('bidderIdFromSlug returns null for an undecodable name slug', () => {
+    // starts with 'n' but the remainder is not valid base64url → atob throws → caught → null
+    expect(bidderIdFromSlug('n@@@')).toBeNull();
+  });
+  it('bidderIdFromSlug returns null for a slug that is neither a ЕИК nor name-encoded', () => {
+    expect(bidderIdFromSlug('xyz')).toBeNull();
   });
 });

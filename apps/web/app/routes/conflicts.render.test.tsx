@@ -148,6 +148,20 @@ async function renderConflicts(links: ConflictLink[], contracts: ConflictContrac
 
 const text = () => container.textContent ?? '';
 
+/** Click the first card's „Виж договорите" toggle and let the stubbed drill-down fetcher settle. */
+async function expandFirstCard() {
+  const toggle = [...container.querySelectorAll('button')].find((b) =>
+    (b.textContent ?? '').includes('договорите'),
+  )!;
+  expect(toggle).toBeTruthy();
+  await act(async () => {
+    toggle.click();
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
 describe('/conflicts route — render', () => {
   it('meta() marks the page noindex and titles it', () => {
     const tags = meta({ matches: [] } as never);
@@ -243,6 +257,109 @@ describe('/conflicts route — render', () => {
     expect(text()).toContain('Извън периода'); // the „after" contract is disclosed but not asserted
   });
 
+  it('renders an undated, unnumbered, authority-less contract without a timeline or shares', async () => {
+    // Sparse feed row: no signedAt (contractTimeline returns null → no timeline section), no authority
+    // name („—"), no contract number („договор" + index-keyed), and amountEur 0 (share mode 'no-value').
+    // The card must still render the contract list rather than blanking or throwing on the nullish fields.
+    await renderConflicts(
+      [link({ firstDeclaredYear: null, lastDeclaredYear: null })], // also drops the declared-years line
+      [
+        {
+          contractSlug: 'c-bare',
+          signedAt: null,
+          // getLinkContracts maps a NULL joined authority to '' (never null), so '' is the real
+          // shape the card receives for an unresolved awarding body.
+          authority: '',
+          authorityId: 'a:bare',
+          authorityTotalEur: null,
+          contractKind: null,
+          procedureType: null,
+          subject: 'Без дата',
+          contractNumber: null,
+          amountEur: 0,
+          temporal: 'after',
+        },
+      ],
+    );
+    await expandFirstCard();
+
+    expect(container.querySelector('.contract-list')).not.toBeNull();
+    expect(text()).toContain('Без дата');
+    expect(text()).toContain('договор'); // contractNumber null → generic label, not „№ null"
+    expect(text()).not.toContain('№ null');
+    expect(container.querySelector('.contract-authority')!.textContent).toBe('—');
+    expect(container.querySelector('.timeline, .cc-timeline')).toBeNull(); // undated → no timeline
+    expect(text()).toContain('сума не е налична'); // companyEur 0 → the no-value share row
+  });
+
+  it('renders a sub-threshold authority share as „под 0,1%" with no plotted bar', async () => {
+    await renderConflicts(
+      [link()],
+      [
+        {
+          contractSlug: 'c-tiny',
+          signedAt: '2021-05-01',
+          authority: 'Огромна Община',
+          authorityId: 'a:big',
+          authorityTotalEur: 10_000_000_000,
+          contractKind: null,
+          procedureType: null,
+          subject: 'Дребна доставка',
+          contractNumber: 'Д-9',
+          amountEur: 1_000, // 0.00001 of the total → below the tiny threshold
+          temporal: 'contemporaneous',
+        },
+      ],
+    );
+    await expandFirstCard();
+
+    expect(text()).toContain('под 0,1%');
+    expect(container.querySelector('.auth-share-pct')!.className).toContain('is-muted');
+    expect(container.querySelector('.auth-bar i')).toBeNull(); // muted row plots no fill
+  });
+
+  it('renders „—" for a share with no denominator (authority total unknown)', async () => {
+    await renderConflicts(
+      [link()],
+      [
+        {
+          contractSlug: 'c-nodenom',
+          signedAt: '2021-05-01',
+          authority: 'Община Без Общо',
+          authorityId: 'a:nd',
+          authorityTotalEur: null, // no denominator → ratio null → 'no-denom'
+          contractKind: null,
+          procedureType: null,
+          subject: 'Доставка',
+          contractNumber: 'Д-7',
+          amountEur: 500_000,
+          temporal: 'contemporaneous',
+        },
+      ],
+    );
+    await expandFirstCard();
+
+    const pctCell = container.querySelector('.auth-share-pct')!;
+    expect(pctCell.textContent).toBe('—');
+    expect(pctCell.className).toContain('is-muted');
+    expect(text()).not.toContain('от общо'); // no denominator to quote
+  });
+
+  it('renders the empty-contracts state when the drill-down returns none', async () => {
+    await renderConflicts([link()], []);
+    await expandFirstCard();
+    expect(text()).toContain('Няма намерени договори.');
+  });
+
+  it('omits the in-window group when every contract falls outside the declared period', async () => {
+    await renderConflicts([link()], [CONTRACTS[1]!]); // the 'after' contract only
+    await expandFirstCard();
+    expect(text()).toContain('Извън периода');
+    // The in-window group collapses to its empty note instead of an empty heading + list.
+    expect(text()).toContain('Няма договори, сключени в декларирания период.');
+    expect(container.querySelector('.contract-list')).not.toBeNull(); // the outside group still lists
+  });
+
   it('paginates when the eligible set exceeds one page (100), showing one page of cards', async () => {
     const many = Array.from({ length: 130 }, (_, i) =>
       link({
@@ -311,5 +428,56 @@ describe('Trade Register evidence on the card (#279, ADR-0033)', () => {
     await renderConflicts([link({ eik: '201122335' })]);
     const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
     expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
+  });
+});
+
+describe('ConflictCards — provenance and timeline on the thinner row shapes', () => {
+  it('cites no act entry for a seat/ЕИК confirmation, and prints no bare „№"', async () => {
+    // A 'confirmed' seal identifies the COMPANY from declared data; nobody was found in a register act, so
+    // there is no entry number or date to cite. Rendering the separators anyway („· № · справка") would
+    // imply a document behind the claim that does not exist.
+    await renderConflicts([
+      link({
+        evidenceKind: 'confirmed',
+        registryRole: null,
+        registryEntryNumber: null,
+        registryEntryDate: null,
+      }),
+    ]);
+    const evidence = container.querySelector('.cc-evidence')!.textContent ?? '';
+    expect(evidence).toContain('потвърдена');
+    expect(evidence).not.toContain('№');
+    expect(evidence).not.toContain('вписване');
+    expect(evidence).toContain('справка'); // the lookup date is NOT NULL — it always cites when we looked
+  });
+
+  it('plots the contract marks but no declared-period band when the window is unknown', async () => {
+    // A declaration can carry no usable period (both years null) while the contracts it is matched against
+    // are dated. The axis is still worth drawing — the band is not, and a band defaulted to 0 would render
+    // a zero-width marker at the left edge that reads as „the period starts at the beginning of time".
+    await renderConflicts(
+      [link({ firstDeclaredYear: null, lastDeclaredYear: null })],
+      [
+        {
+          contractSlug: 'c-undeclared',
+          signedAt: '2022-07-01',
+          authority: 'Община Тест',
+          authorityId: 'a:1',
+          authorityTotalEur: 50_000_000,
+          contractKind: null,
+          procedureType: null,
+          subject: 'Договор без известен период',
+          contractNumber: null, // also drives the index-keyed fallback in the in-window list
+          amountEur: 1_000_000,
+          temporal: 'contemporaneous',
+        },
+      ],
+    );
+    await expandFirstCard();
+
+    expect(text()).toContain('Времева ос');
+    expect(container.querySelector('.tl-band')).toBeNull(); // marks and ticks render; the band does not
+    expect(container.querySelector('.tl-mark')).not.toBeNull(); // …and the selector is a real one
+    expect(container.querySelectorAll('.contract-list li').length).toBe(1);
   });
 });

@@ -161,6 +161,20 @@ describe('loadFxRates', () => {
     expect(summary).toEqual({ fetched: [], skipped: [], inserted: 0, uncovered: [], warnings: [] });
   });
 
+  it('skips a coverage gap whose staged contract_date is not a valid ISO date', async () => {
+    // A malformed date in raw staging surfaces verbatim through findFxCoverageGaps' MIN/MAX (the SQL
+    // does not format-validate), so loadFxRates must reject the range before fetching.
+    const { db, d1 } = fxDb();
+    stageContract(db, 'CHF', '2026-7-8'); // unpadded → isIsoDate false
+    const fetchFn = vi.fn();
+
+    const summary = await loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn });
+
+    expect(fetchFn).not.toHaveBeenCalled(); // never fetches for an unusable range
+    expect(summary.skipped).toContain('CHF');
+    expect(summary.warnings.some((w) => w.includes('invalid date range'))).toBe(true);
+  });
+
   it('fetches only the gap range and upserts rates idempotently', async () => {
     const { db, d1 } = fxDb();
     stageContract(db, 'USD', '2026-07-08');

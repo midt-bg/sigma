@@ -61,7 +61,11 @@ const totalsRow = {
   refreshed_at: '2024-06-02T10:00:00Z',
 };
 
-function fakeDb(totals: typeof totalsRow | null, capture?: string[]): D1Database {
+function fakeDb(
+  totals: typeof totalsRow | null,
+  singleOffer: { value_eur: number; contracts: number } | null = { value_eur: 50000, contracts: 1 },
+  capture?: string[],
+): D1Database {
   return {
     prepare(sql: string) {
       capture?.push(sql);
@@ -82,8 +86,7 @@ function fakeDb(totals: typeof totalsRow | null, capture?: string[]): D1Database
         async first<T>() {
           if (sql.includes('home_totals')) return (totals as T) ?? (null as T);
           // single-offer aggregate
-          if (sql.includes('COALESCE(SUM(amount_eur)'))
-            return { value_eur: 50000, contracts: 1 } as T;
+          if (sql.includes('COALESCE(SUM(amount_eur)')) return singleOffer as T;
           return null as T;
         },
       };
@@ -124,7 +127,7 @@ describe('getHomeData', () => {
 
   it('excludes the unknown identity bucket from top companies', async () => {
     const sql: string[] = [];
-    await getHomeData(fakeDb(totalsRow, sql));
+    await getHomeData(fakeDb(totalsRow, undefined, sql));
 
     expect(sql.find((query) => query.includes('FROM company_totals'))).toContain(
       "WHERE kind <> 'unknown'",
@@ -143,5 +146,11 @@ describe('getHomeData', () => {
 
     expect(data.singleOffer.contracts).toBe(1);
     expect(data.singleOffer.valueEur).toBe(50000);
+  });
+
+  it('falls back to zero single-offer aggregate when the scan returns no row', async () => {
+    const data = await getHomeData(fakeDb(totalsRow, null));
+
+    expect(data.singleOffer).toEqual({ valueEur: 0, contracts: 0 });
   });
 });

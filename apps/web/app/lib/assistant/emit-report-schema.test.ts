@@ -112,3 +112,57 @@ describe('EMIT_REPORT_JSON_SCHEMA', () => {
     expect(EMIT_REPORT_JSON_SCHEMA.required).toEqual(['title', 'question', 'blocks']);
   });
 });
+
+describe('validateEmitShape — remaining block types and negatives', () => {
+  it('accepts callout, flows, and timeseries blocks', () => {
+    const r = validateEmitShape({
+      title: 't',
+      question: 'q',
+      blocks: [
+        { type: 'callout', title: 'Внимание', md: 'бележка' },
+        { type: 'flows', resultId: 'R1', fromCol: 'f', toCol: 't', valueCol: 'v' },
+        { type: 'timeseries', resultId: 'R1', periodCol: 'p', valueCol: 'v' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a non-object input and a non-string question', () => {
+    expect(validateEmitShape(null).ok).toBe(false);
+    expect(validateEmitShape('nope').ok).toBe(false);
+    expect(validateEmitShape({ title: 't', question: 5, blocks: [] }).ok).toBe(false);
+  });
+
+  it('rejects flows and timeseries blocks missing their columns', () => {
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [{ type: 'flows', resultId: 'R1', fromCol: 'f' }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [{ type: 'timeseries', resultId: 'R1', periodCol: 'p' }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('rejects totals/facts with non-array items and a table with non-array columns', () => {
+    expect(
+      validateEmitShape({ title: 't', question: '', blocks: [{ type: 'totals', items: 'x' }] }).ok,
+    ).toBe(false);
+    expect(
+      validateEmitShape({ title: 't', question: '', blocks: [{ type: 'facts', items: 'x' }] }).ok,
+    ).toBe(false);
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [{ type: 'table', resultId: 'R1', columns: 'nope' }],
+      }).ok,
+    ).toBe(false);
+  });
+});

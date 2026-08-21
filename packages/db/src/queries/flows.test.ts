@@ -143,3 +143,75 @@ describe('getFlows', () => {
     expect(Array.isArray(data.sectors)).toBe(true);
   });
 });
+
+describe('getFlows — funding scope and label truncation', () => {
+  it('scopes the base aggregation by EU funding', async () => {
+    const { db, sql } = spyDb();
+    await getFlows(db, { funding: 'eu' });
+    expect(sql.some((s) => s.includes('c.eu_funded = 1'))).toBe(true);
+  });
+
+  it('scopes the base aggregation by national funding', async () => {
+    const { db, sql } = spyDb();
+    await getFlows(db, { funding: 'national' });
+    expect(sql.some((s) => s.includes('c.eu_funded IS NULL OR c.eu_funded = 0'))).toBe(true);
+  });
+
+  it('reads the rollup (not a scoped aggregation) when funding is explicitly „all"', async () => {
+    const { db, sql } = spyDb();
+    await getFlows(db, { funding: 'all' });
+    expect(sql.some(usesFlowPairsRollup)).toBe(true);
+    expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
+  });
+
+  it('truncates a sankey node label longer than 30 chars with an ellipsis', async () => {
+    const longName = 'Министерство на регионалното развитие и благоустройството';
+    const data = await getFlows(fakeDb([{ ...pairRow, authority_name: longName }]), {});
+    const node = data.sankey.nodes.find((n) => n.side === 'authority')!;
+    expect(node.label.length).toBeLessThanOrEqual(30);
+    expect(node.label.endsWith('…')).toBe(true);
+  });
+});
+
+describe('getFlows — sankey ordering', () => {
+  it('orders the authority column by descending node total across two authorities', async () => {
+    // Two DISTINCT authorities are needed for the authority-column `.sort()` comparator to run at all
+    // (a single authority key never invokes it). The higher-total authority ranks to the top (index 0).
+    const pairs = [
+      {
+        ...pairRow,
+        authority_id: 'auth:small',
+        authority_name: 'Малко ведомство',
+        won_eur: 100000,
+        bidder_id: 'eik:a',
+      },
+      {
+        ...pairRow,
+        authority_id: 'auth:big',
+        authority_name: 'Голямо ведомство',
+        won_eur: 900000,
+        bidder_id: 'eik:b',
+      },
+    ];
+    const data = await getFlows(fakeDb(pairs), {});
+    const auth = data.sankey.nodes.filter((n) => n.side === 'authority');
+    expect(auth).toHaveLength(2);
+    const big = auth.find((n) => n.label.startsWith('Голямо'))!;
+    const small = auth.find((n) => n.label.startsWith('Малко'))!;
+    expect(big.y).toBeLessThan(small.y); // bigger total sits higher in the column
+  });
+
+  it('orders ribbons by company rank when two pairs share an authority (sort tiebreak)', async () => {
+    // Input is deliberately NOT in rank order (Бета before the bigger Алфа) so the comparator has to
+    // reorder: ribbons must come out in company-node order (Алфа's node ranks above Бета's by value).
+    // Without the `.sort()` the ribbons would keep input order — this assertion discriminates it.
+    const pairs = [
+      { ...pairRow, bidder_id: 'eik:222', bidder_name: 'Бета ООД', won_eur: 200000, contracts: 3 },
+      { ...pairRow, bidder_id: 'eik:111', bidder_name: 'Алфа ООД', won_eur: 300000, contracts: 5 },
+    ];
+    const data = await getFlows(fakeDb(pairs), {});
+    expect(data.sankey.ribbons.map((r) => r.toName)).toEqual(['Алфа ООД', 'Бета ООД']);
+    expect(data.sankey.nodes.filter((n) => n.side === 'authority')).toHaveLength(1);
+    expect(data.sankey.nodes.filter((n) => n.side === 'company')).toHaveLength(2);
+  });
+});

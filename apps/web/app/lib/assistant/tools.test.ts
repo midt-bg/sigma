@@ -187,3 +187,170 @@ describe('resolveRowsReadBudget', () => {
     expect(resolveRowsReadBudget('999999999')).toBe(50_000_000);
   });
 });
+
+describe('run_sql — guard and error paths', () => {
+  it('rejects a structurally-valid SELECT over a non-allowlisted table (AST guard)', async () => {
+    // Passes the cheap structural read-only check, then the AST guard rejects the raw_* mirror.
+    const c = ctx();
+    const out = await runTool('run_sql', { sql: 'SELECT id FROM raw_contracts' }, c);
+    expect(out).toMatch(/отхвърлена/);
+    expect(c.results).toHaveLength(0);
+  });
+
+  it('tolerates a driver that omits rows-read meta and an unset turn counter', async () => {
+    const c: ToolContext = {
+      db: {
+        prepare() {
+          return {
+            bind() {
+              return this;
+            },
+            async all() {
+              return { results: [{ n: 1 }] }; // no meta block
+            },
+          };
+        },
+      } as unknown as D1Database,
+      results: [], // rowsRead intentionally unset → the `?? 0` fallback
+    };
+    const out = await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    expect(out).toContain('R1');
+    expect(c.rowsRead).toBe(0); // meta absent → +0
+  });
+
+  it('tolerates a driver that returns no results array at all (results ?? [])', async () => {
+    const c: ToolContext = {
+      db: {
+        prepare() {
+          return {
+            bind() {
+              return this;
+            },
+            async all() {
+              return {}; // neither results nor meta
+            },
+          };
+        },
+      } as unknown as D1Database,
+      results: [],
+    };
+    const out = await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
+    expect(out).toContain('R1'); // an empty result set, still handled
+    expect(c.results[0]).toMatchObject({ rows: [] });
+  });
+
+  it('returns a generic error (never the raw D1 message) when the query throws', async () => {
+    const c: ToolContext = {
+      db: {
+        prepare() {
+          return {
+            bind() {
+              return this;
+            },
+            async all() {
+              throw new Error('D1 internal: table x locked');
+            },
+          };
+        },
+      } as unknown as D1Database,
+      results: [],
+      rowsRead: 0,
+    };
+    const out = await runTool('run_sql', { sql: 'SELECT 1 AS n FROM contracts' }, c);
+    expect(out).toBe('Грешка при изпълнение на заявката.');
+    expect(out).not.toContain('D1 internal');
+  });
+});
+
+describe('semantic_search — hits', () => {
+  function vectorCtx(
+    matches: { id: string; score: number; metadata?: Record<string, unknown> }[],
+  ): ToolContext {
+    return {
+      db: {} as D1Database,
+      results: [],
+      ai: { run: async () => ({ data: [[0.1, 0.2, 0.3]] }) } as unknown as NonNullable<
+        ToolContext['ai']
+      >,
+      vectorize: {
+        upsert: async () => ({}),
+        query: async () => ({ matches }),
+      } as unknown as NonNullable<ToolContext['vectorize']>,
+    };
+  }
+
+  it('formats semantic hits with kind, ref, title and score', async () => {
+    const c = vectorCtx([
+      {
+        id: 'entity:1',
+        score: 0.912,
+        metadata: { kind: 'company', ref: 'eik:1', title: 'Тест ООД' },
+      },
+    ]);
+    const out = await runTool('semantic_search', { query: 'детски градини' }, c);
+    expect(out).toContain('company eik:1 — Тест ООД (0.912)');
+  });
+
+  it('reports no matches when the vector index returns none', async () => {
+    const out = await runTool('semantic_search', { query: 'нищо' }, vectorCtx([]));
+    expect(out).toMatch(/Няма семантични съвпадения/);
+  });
+});
+
+describe('eop_fetch', () => {
+  it('rejects a malformed date without fetching', async () => {
+    const out = await runTool('eop_fetch', { date: 'nonsense' }, ctx());
+    expect(out).toMatch(/Невалидна дата/);
+  });
+
+  it('summarises per-file row counts and errors, flagging the data as non-bindable', async () => {
+    let call = 0;
+    const c: ToolContext = {
+      db: {} as D1Database,
+      results: [],
+      fetchImpl: async () => {
+        call++;
+        // First file: a valid JSON array; the rest: a 403 surfaced as a per-file error.
+        return call === 1
+          ? {
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              text: async () => JSON.stringify([{ a: 1 }, { a: 2 }]),
+            }
+          : { ok: false, status: 403, headers: { get: () => null }, text: async () => '' };
+      },
+    };
+    const out = await runTool('eop_fetch', { date: '2024-01-15' }, c);
+    expect(out).toMatch(/2 реда/); // the valid file's row count
+    expect(out).toMatch(/грешка \(HTTP 403\)/); // a missing file surfaced as an error
+    expect(out).toContain('не могат да се подават към emit_report'); // non-bindable note
+  });
+
+  it('falls back to the global fetch when the context supplies no fetch impl', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+      text: async () => '',
+    })) as unknown as typeof fetch;
+    try {
+      const out = await runTool('eop_fetch', { date: '2024-01-15' }, ctx()); // ctx() has no fetchImpl
+      expect(out).toMatch(/HTTP 403/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('source_link', () => {
+  it('returns official deep links for a tender id', async () => {
+    const out = await runTool('source_link', { eopTenderId: '00123-2024-0007' }, ctx());
+    expect(out).toMatch(/https?:\/\//);
+  });
+
+  it('reports no links when the input yields none', async () => {
+    expect(await runTool('source_link', {}, ctx())).toMatch(/Няма налични официални линкове/);
+  });
+});

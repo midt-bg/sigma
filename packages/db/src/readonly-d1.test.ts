@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readonlyD1 } from './readonly-d1';
+import { getDb, readonlyD1 } from './readonly-d1';
 
 // Minimal fake D1 that records prepared/exec SQL and returns canned rows — same approach as the query
 // unit tests. The wrapper only inspects SQL text, so no real engine is needed; the passthrough tests
@@ -101,5 +101,22 @@ describe('readonlyD1 — disabled write-capable methods', () => {
   it('throws on withSession()', () => {
     const { db } = fakeDb();
     expect(() => readonlyD1(db).withSession()).toThrow(/read-only/i);
+  });
+});
+
+describe("getDb — the web worker's single D1 chokepoint", () => {
+  it('hands back a guarded handle, never the raw write-capable binding', () => {
+    // Web reads D1 only through getDb(env). Returning env.DB itself — or any handle that forwards a
+    // write — would put the raw binding back in the request path and undo #199 without failing a test.
+    const { db, calls } = fakeDb();
+    const handle = getDb({ DB: db });
+
+    expect(handle).not.toBe(db);
+    expect(() => handle.prepare('DELETE FROM contracts')).toThrow(/read-only/i);
+    expect(() => handle.batch([])).toThrow(/read-only/i);
+    expect(calls).toEqual([]); // nothing reached the underlying binding
+
+    handle.prepare('SELECT 1');
+    expect(calls).toEqual(['prepare:SELECT 1']); // reads still pass straight through
   });
 });
