@@ -24,6 +24,10 @@
     "packages/shared": {
       "lines": 95.5,
       "branches": 80.8
+    },
+    "packages/test-support": {
+      "lines": 100,
+      "branches": 100
     }
   }
 }

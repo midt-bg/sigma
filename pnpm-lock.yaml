@@ -152,6 +152,8 @@ importers:
 
   packages/shared: {}
 
+  packages/test-support: {}
+
 packages:
 
   '@ai-sdk/gateway@3.0.133':
