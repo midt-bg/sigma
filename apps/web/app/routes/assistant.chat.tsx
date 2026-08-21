@@ -7,6 +7,7 @@ import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import { embeddingRunnerFor } from '../lib/assistant/bindings';
+import { errorText } from '../lib/assistant/log-safety';
 import {
   retrieveSchemaContext,
   type EmbeddingRunner,
@@ -127,9 +128,10 @@ export async function action({ request, context }: Route.ActionArgs) {
       });
     } catch (error) {
       // Message only, never the raw error object: a Workers AI/Vectorize error could echo the
-      // embedded input, and the user's question must not land in logs (cf. request-log.ts q_len).
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[assistant] rag retrieval failed — full-dictionary fallback: ${message}`);
+      // embedded input, and the user's question must not land in logs (see log-safety.ts).
+      console.error(
+        `[assistant] rag retrieval failed — full-dictionary fallback: ${errorText(error)}`,
+      );
       schemaContext = undefined;
     }
   }
@@ -145,7 +147,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   } catch (error) {
     // Setup-time failure (missing key, bad config, malformed history) — degrade to a readable 503
     // rather than an unhandled 500. Mid-stream BgGPT errors are handled by the stream's onError.
-    console.error('[assistant] turn failed to start', error);
+    // Same leak-safe rule as every other catch in the module: the setup error can carry the prompt
+    // (and thus the question) in its message/cause — log the bounded text, never the object.
+    console.error(`[assistant] turn failed to start: ${errorText(error)}`);
     return Response.json(
       { error: 'Асистентът временно не е достъпен. Опитай отново след малко.' },
       { status: 503 },
