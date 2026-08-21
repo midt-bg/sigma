@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { d1FromSqlite } from '@sigma/test-support';
 import { listContracts, streamContractsCsv } from './contracts';
 
 // Row-narrowing integration test for the contract list filters (issue #138). The unit tests in
@@ -36,28 +37,6 @@ INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, bi
   ('c:TWO',  't:A', 'eik:200000002', 400, 'EUR', '2024-01-04', 2,    'ok', 400);
 `;
 
-/** Minimal D1Database facade over node:sqlite — enough for the query layer's prepare/bind/all/first. */
-function d1(db: DatabaseSync): D1Database {
-  return {
-    prepare(sql: string) {
-      let bound: (string | number | null)[] = [];
-      const stmt = {
-        bind(...params: (string | number | null)[]) {
-          bound = params;
-          return stmt;
-        },
-        async all<T>() {
-          return { results: db.prepare(sql).all(...bound) as T[] };
-        },
-        async first<T>() {
-          return (db.prepare(sql).get(...bound) ?? null) as T | null;
-        },
-      };
-      return stmt;
-    },
-  } as unknown as D1Database;
-}
-
 let open: DatabaseSync | null = null;
 
 function realDb(): D1Database {
@@ -65,7 +44,7 @@ function realDb(): D1Database {
   for (const m of migrations) db.exec(readFileSync(resolve(migrationsDir, m), 'utf8'));
   db.exec(FIXTURE);
   open = db;
-  return d1(db);
+  return d1FromSqlite(db);
 }
 
 afterEach(() => {

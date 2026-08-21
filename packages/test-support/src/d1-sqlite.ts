@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// Test-only D1Database facade over node:sqlite. D1 *is* SQLite, so backing the binding with a real
+// D1Database facade over node:sqlite. D1 *is* SQLite, so backing the binding with a real
 // in-process database gives runtime-accurate SQL semantics (joins, window functions, date()) without
 // booting workerd. Covers exactly the surface the ingest/refresh code paths use:
 // prepare().bind().first()/all()/run() and batch() (batch runs inside one transaction, like D1).

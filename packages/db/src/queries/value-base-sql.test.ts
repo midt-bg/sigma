@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { d1FromSqlite } from '@sigma/test-support';
 import { listAuthorities } from './authorities';
 import { listCompanies } from './companies';
 import { contractsSummary, listSingleOfferContracts } from './contracts';
@@ -43,28 +44,6 @@ VALUES
   ('c:suspect-null',   't:B72', 'eik:200000002', 999999, 'EUR', '2024-01-06', 1, 'value_suspect',  NULL);
 `;
 
-/** Minimal D1 facade over node:sqlite; no sqlite3 or wrangler subprocess is involved. */
-function d1(db: DatabaseSync): D1Database {
-  return {
-    prepare(sql: string) {
-      let bound: (string | number | null)[] = [];
-      const statement = {
-        bind(...params: (string | number | null)[]) {
-          bound = params;
-          return statement;
-        },
-        async all<T>() {
-          return { results: db.prepare(sql).all(...bound) as T[] };
-        },
-        async first<T>() {
-          return (db.prepare(sql).get(...bound) ?? null) as T | null;
-        },
-      };
-      return statement;
-    },
-  } as unknown as D1Database;
-}
-
 let open: DatabaseSync | null = null;
 
 function realDb(): { sqlite: DatabaseSync; db: D1Database } {
@@ -73,7 +52,7 @@ function realDb(): { sqlite: DatabaseSync; db: D1Database } {
   sqlite.exec(FIXTURE);
   sqlite.exec(precompute);
   open = sqlite;
-  return { sqlite, db: d1(sqlite) };
+  return { sqlite, db: d1FromSqlite(sqlite) };
 }
 
 afterEach(() => {

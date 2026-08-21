@@ -39,10 +39,10 @@ const SKIP_DIRS = new Set([
 export const ALLOWED = [
   // The one shared double. Throws on an unmatched query; everything else routes through it.
   'packages/test-support/src/fake-d1.ts',
-  // Not a double at all — a facade that puts the D1 surface on a real node:sqlite database, so the
-  // ingest suite runs against genuine SQL semantics. A different tool, not a competitor; #325 puts
+  // Not a double at all — a facade that puts the D1 surface on a real node:sqlite database, for the
+  // suites that exercise genuine SQL semantics. A different tool, not a competitor; #325 puts
   // replacing real-SQLite tests explicitly out of scope.
-  'packages/ingest/src/test/d1-sqlite.ts',
+  'packages/test-support/src/d1-sqlite.ts',
 ];
 
 // Both spellings of the cast, plus `satisfies` — the only other operator TypeScript offers for

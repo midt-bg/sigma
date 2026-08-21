@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FRANKFURTER_API } from '../../../packages/ingest/src/fx';
-import { d1FromSqlite } from '../../../packages/ingest/src/test/d1-sqlite';
+import { d1FromSqlite } from '@sigma/test-support';
 import { RefreshWorkflow, type Env } from './index';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
