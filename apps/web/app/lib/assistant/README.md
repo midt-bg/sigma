@@ -25,7 +25,8 @@
 | `agent.ts`                  | Vercel AI SDK glue: BgGPT през AI Gateway + `streamText`       | §2/§9.5      | typecheck |
 | `routes/assistant.chat.tsx` | Stateless chat ресурс route                                    | §2/§5        | typecheck |
 
-**Проверено:** `pnpm --filter web typecheck` → 0; **150 теста** преминават; `pnpm audit --audit-level=high`
+**Проверено:** `pnpm --filter web typecheck` → 0; целият тестов пакет на `apps/web` преминава (бройката
+расте с всяко ревю — не я кодираме тук, `pnpm --filter web test` я показва); `pnpm audit --audit-level=high`
 чист; Prettier чист. Чистите модули са unit-тествани и deploy-независими; agent loop-ът и route-ът са
 typecheck-проверени, но **не са runtime-проверени** (няма `BGGPT_API_KEY` / облачни bindings в тази среда).
 
@@ -41,8 +42,9 @@ typecheck-проверени, но **не са runtime-проверени** (н�
 ## RAG — добавка спрямо спецификацията
 
 Спецификацията е **text→SQL агент с инструменти, БЕЗ векторно извличане.** RAG е добавен нарочно на двете
-места с най-голяма полза при слаб 27B: (1) **grounding на схемата** — извлича най-релевантните trap-правила
-и примерни заявки за конкретния въпрос в системния prompt (retrieval-augmented формата на §9.2); (2)
+места с най-голяма полза при слаб 27B: (1) **grounding на схемата** — trap-правилата влизат в системния
+prompt безусловно (`hardTraps()`), а RAG извлича най-релевантните таблици и примерни заявки за конкретния
+въпрос (retrieval-augmented формата на §9.2; trap-овете не се индексират, за да не се дублират); (2)
 **`semantic_search`** — допълва FTS за парафрази/синоними. Пада обратно до статичния `describeSchema()`,
 ако се реши, че RAG е извън v1.
 
@@ -51,7 +53,7 @@ typecheck-проверени, но **не са runtime-проверени** (н�
 Това PR добавя bindings към Cloudflare ресурси, които трябва да **съществуват преди deploy** — иначе
 `wrangler deploy` се проваля и блокира CD за целия екип (бележка от ревюто на #80). Преди мърдж/deploy на
 средата с асистента осигурете: `BGGPT_API_KEY` (secret, `wrangler secret put`), Vectorize индекс
-`sigma-assistant`, R2 кофа `sigma-reports`, и еднократно индексиране на схема-корпуса (`indexSchemaCorpus`).
+`sigma-assistant`, R2 кофа `sigma-reports`, и индексиране на схема-корпуса (`indexSchemaCorpus`).
 
 ```bash
 # Веднъж на средата, ПРЕДИ `wrangler deploy` (иначе deploy-ът пада и блокира CD на целия екип):
@@ -59,8 +61,24 @@ wrangler vectorize create sigma-assistant --dimensions=1024 --metric=cosine  # �
 wrangler r2 bucket create sigma-reports
 wrangler secret put BGGPT_API_KEY                                            # интерактивно; никога не се комитва
 # `AI` (Workers AI) не изисква създаване на ресурс — account capability; включи Workers AI за акаунта.
-# След като индексът съществува, еднократно: indexSchemaCorpus(env.AI, env.VECTORIZE) пълни схема-корпуса.
+# След като индексът съществува: indexSchemaCorpus(embeddingRunnerFor(env.AI), env.VECTORIZE)
+# пълни схема-корпуса (embeddingRunnerFor е от lib/assistant/bindings.ts — env.AI не е директно
+# EmbeddingRunner и каст с `as unknown as` е точно това, което #316 премахна).
 ```
+
+**Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
+на векторите носят версията. Версията се bump-ва при всяка промяна, която маха, размества или
+пре-осмисля chunk id-та (виж правилото „WHEN TO BUMP" в `rag.ts`; чисто добавяне или редакция на
+текста на съществуващ chunk минава без bump). След bump `indexSchemaCorpus` се пуска отново: пише се
+НОВ кохорт вектори, старият остава непокътнат (rollback на Worker-а продължава да работи срещу него),
+а среда без ре-индекс просто връща 0 чънка и асистентът пада към пълния статичен речник (безопасно,
+но без RAG grounding). Стар кохорт се чисти чак когато rollback прозорецът към неговия release е
+затворен — изтриеш ли го по-рано, rollback-ът остава без RAG. Чисти се с
+`wrangler vectorize delete-vectors` (иска изричен списък id-та — възстанови ги от git историята на
+`buildSchemaChunks`); не е задължително, retrieval-ът игнорира старите кохорти чрез namespace-а.
+NB за първите среди: „стар кохорт" включва и ОРИГИНАЛНИЯ pre-namespace кохорт (id-та `schema:query:N`
+/ `schema:table:<име>` / `schema:trap:N`, записани в DEFAULT namespace-а с metadata `ns` преди
+версионирането) — той също е orphan след прехода и също се чисти по желание, по същия начин.
 
 Докато бекендът не е напълно осигурен, `/assistant/chat` връща контролирано **503**, а грешка по време на
 streaming се показва като четим текст — не като счупена връзка или 500 (graceful degradation, §7).
@@ -98,9 +116,14 @@ embed cap + проверка за брой, без raw D1 грешка към м
 - **Фаза 2 — устойчивост:** глобален budget + circuit-breaker / exponential backoff пред BgGPT
   (per-IP rate-limit и graceful degradation вече са налице — остава глобалният таван).
 - **Фаза 3:** глас (`/assistant/transcribe` → Whisper).
-- **`semantic_search` — `ns: 'entity'` е празен** докато не се добави entity indexer (ETL pipeline,
-  Фаза 2). Инструментът е регистриран и работи, но ще връща 0 попадения за всяко запитване, докато
-  pipeline-ът не напълни Vectorize с имена на компании/договори/възложители.
+- **`semantic_search` — namespace-ът `entity-v1` е празен** докато не се добави entity indexer (ETL
+  pipeline, Фаза 2). Инструментът е регистриран и работи, но ще връща 0 попадения за всяко запитване,
+  докато pipeline-ът не напълни Vectorize. Indexer-ът трябва да upsert-ва с `namespace: ENTITY_NS`.
+  Внимание: правилото „WHEN TO BUMP" от `rag.ts` е за ръчния, append-only схема-корпус и НЕ се
+  пренася едно към едно — entity корпусът е производен от данните (субекти реално изчезват при
+  дедуп/карантина), затова indexer-ът трябва да пази списъка на id-тата си и да има собствен
+  reconciliation/delete път (`wrangler vectorize delete-vectors` иска изричен списък id-та;
+  entity id-та няма как да се възстановят от git историята).
 - **`eop_fetch` връща само БРОЙ редове на ден, не самите данни** (днес): инструментът сваля, капва и
   парсва файла, но връща „N реда" и не пуска `QueryResult` в `ctx.results`, така че моделът НЕ може да
   обвърже EOP стойност в `emit_report`. Засега е probe за наличие/свежест, не източник на данни (ревю #80).

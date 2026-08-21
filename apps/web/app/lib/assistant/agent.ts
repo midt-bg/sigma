@@ -16,6 +16,7 @@ import {
 import { buildSystemPrompt } from './system-prompt';
 import { EMIT_REPORT_JSON_SCHEMA } from './emit-report-schema';
 import { ASSISTANT_TOOLS, finalizeReport, type ToolContext } from './tools';
+import { errorText } from './log-safety';
 
 export interface AgentEnv {
   BGGPT_API_KEY: string;
@@ -113,7 +114,10 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     // "An error occurred." to avoid leaking server details — we log it server-side (Workers tail)
     // and show our own message. A full rate-limit + circuit-breaker is the launch gate (README).
     onError: (error) => {
-      console.error('[assistant] stream error', error);
+      // Bounded, single-line, no cause chain. The question (already on the tool context, set by the
+      // route) is passed for redaction: a BgGPT error body can quote the prompt back, and that echo
+      // sits in the message — dropping the stack would not touch it (log-safety.ts).
+      console.error(`[assistant] stream error: ${errorText(error, [opts.ctx.userQuestion ?? ''])}`);
       return 'Асистентът временно не е достъпен. Опитай отново след малко.';
     },
   });
