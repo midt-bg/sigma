@@ -11,6 +11,7 @@ import { assertReadOnlySelect } from './sql-guard';
 import { guardSelect } from './sql-ast-guard';
 import { forModel, resultHandle, toQueryResult } from './tool-results';
 import { semanticSearch, type EmbeddingRunner, type VectorIndex } from './rag';
+import { errorText } from './log-safety';
 import { fetchEopDay, validateEopDate, type FetchImpl } from './eop-fetch';
 import { sourceLinks } from './source-link';
 import { validateEmitShape } from './emit-report-schema';
@@ -114,8 +115,9 @@ const runSqlTool: AssistantTool = {
       return forModel(qr);
     } catch (e) {
       // Don't echo the raw D1 error to the model/report — it can leak schema/internal detail. Log it
-      // server-side and hand the model a generic, retry-able message (review #80).
-      console.error('[assistant] run_sql failed', e);
+      // server-side and hand the model a generic, retry-able message (review #80). Bounded text
+      // only: a D1 error carries the SQL the model built from the question (see log-safety.ts).
+      console.error(`[assistant] run_sql failed: ${errorText(e)}`);
       return 'Грешка при изпълнение на заявката.';
     }
   },
@@ -152,9 +154,8 @@ const semanticSearchTool: AssistantTool = {
       // embed() throws on an AI-provider error or a vector-count mismatch; degrade to a friendly,
       // retry-able message instead of surfacing the raw error to the model (consistent with run_sql
       // and the route's retrieveSchemaContext fallback — review #80). Message only, never the raw
-      // error object: a provider error envelope could echo the embedded query text into the logs.
-      const message = e instanceof Error ? e.message : String(e);
-      console.error(`[assistant] semantic_search failed: ${message}`);
+      // error object: a provider error envelope could echo the embedded query text (log-safety.ts).
+      console.error(`[assistant] semantic_search failed: ${errorText(e)}`);
       return 'Семантичното търсене не е налично в момента.';
     }
   },
