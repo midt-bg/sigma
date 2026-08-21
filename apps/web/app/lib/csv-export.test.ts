@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AUTHORITY_FILTER_KEYS, COMPANY_FILTER_KEYS, CONTRACT_FILTER_KEYS } from '@sigma/db';
+import { fakeD1 } from '@sigma/test-support';
 import { DATA_SOURCE } from './dataSource';
 import { isUnfilteredCsvExport, servedCsvExport } from './csv-export';
 
@@ -68,14 +69,12 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
 }
 
 function fakeDb(refreshedAt: string | null | undefined = REFRESHED_AT): D1Database {
-  return {
-    prepare: vi.fn((sql: string) => ({
-      first: vi.fn(async () => {
-        expect(sql).toBe('SELECT refreshed_at FROM home_totals WHERE id = 1');
-        return refreshedAt === undefined ? null : { refreshed_at: refreshedAt };
-      }),
-    })),
-  } as unknown as D1Database;
+  return fakeD1([
+    {
+      when: 'SELECT refreshed_at FROM home_totals WHERE id = 1',
+      first: refreshedAt === undefined ? null : { refreshed_at: refreshedAt },
+    },
+  ]).db;
 }
 
 class InMemoryR2 {
