@@ -21,3 +21,18 @@
 id = "GHSA-qwww-vcr4-c8h2"
 ignoreUntil = 2026-10-01T00:00:00Z
 reason = "CSRF bypass in react-router unstable RSC APIs only; sigma uses plain SSR with no RSC/unstable_ usage, so unreachable. Fix is 8.3.0 (major). Remove on the react-router 8.x migration."
+
+# ── sharp 0.34.5 (transitive, dev-only via miniflare) — libvips CVEs, fixed in 0.35.0 ──────
+# WHY IGNORED: sharp 0.34.5 inherits libvips image-decoder CVEs (CVE-2026-33327/33328/
+# 35590/35591). sharp is a TRANSITIVE, DEV-ONLY dependency of miniflare (local dev server /
+# test runtime) — it is not part of the deployed Cloudflare Worker, and the vuln class needs
+# decoding an untrusted image, which the dev toolchain does not do. No upstream fix is
+# reachable: miniflare pins `sharp: ^0.34.5` (`>=0.34.5 <0.35.0`) and even its latest release
+# still ships 0.34.5, so forcing 0.35.0 would require a pnpm override outside miniflare's
+# declared range.
+# REMOVE WHEN: miniflare adopts sharp >= 0.35.0 (tracked upstream); the ignoreUntil date
+# resurfaces this if it lingers.
+[[IgnoredVulns]]
+id = "GHSA-f88m-g3jw-g9cj"
+ignoreUntil = 2026-10-22T00:00:00Z
+reason = "sharp<0.35.0 libvips CVEs — transitive dev-only dep (miniflare), not in the deployed Worker; no in-range upstream fix. Revisit when miniflare ships sharp>=0.35.0."
