@@ -115,8 +115,10 @@ const runSqlTool: AssistantTool = {
       return forModel(qr);
     } catch (e) {
       // Don't echo the raw D1 error to the model/report — it can leak schema/internal detail. Log it
-      // server-side and hand the model a generic, retry-able message (review #80). Bounded text
-      // only: a D1 error carries the SQL the model built from the question (see log-safety.ts).
+      // server-side and hand the model a generic, retry-able message (review #80). Bounded, no cause
+      // chain. NOT redacted: what a D1 message may carry is the model-built SQL, which is also the
+      // only correlation an operator has for a failing query pattern — see log-safety.ts on why the
+      // message is kept where the input is unknown at the catch site.
       console.error(`[assistant] run_sql failed: ${errorText(e)}`);
       return 'Грешка при изпълнение на заявката.';
     }
@@ -153,9 +155,10 @@ const semanticSearchTool: AssistantTool = {
     } catch (e) {
       // embed() throws on an AI-provider error or a vector-count mismatch; degrade to a friendly,
       // retry-able message instead of surfacing the raw error to the model (consistent with run_sql
-      // and the route's retrieveSchemaContext fallback — review #80). Message only, never the raw
-      // error object: a provider error envelope could echo the embedded query text (log-safety.ts).
-      console.error(`[assistant] semantic_search failed: ${errorText(e)}`);
+      // and the route's retrieveSchemaContext fallback — review #80). The query is passed for
+      // REDACTION: a provider envelope echoes the text it was given, and that echo is in the
+      // message (log-safety.ts).
+      console.error(`[assistant] semantic_search failed: ${errorText(e, [str(args.query)])}`);
       return 'Семантичното търсене не е налично в момента.';
     }
   },
