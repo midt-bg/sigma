@@ -16,6 +16,7 @@ import {
 import { buildSystemPrompt } from './system-prompt';
 import { EMIT_REPORT_JSON_SCHEMA } from './emit-report-schema';
 import { ASSISTANT_TOOLS, finalizeReport, type ToolContext } from './tools';
+import { errorText } from './log-safety';
 
 export interface AgentEnv {
   BGGPT_API_KEY: string;
@@ -113,7 +114,9 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
     // "An error occurred." to avoid leaking server details — we log it server-side (Workers tail)
     // and show our own message. A full rate-limit + circuit-breaker is the launch gate (README).
     onError: (error) => {
-      console.error('[assistant] stream error', error);
+      // Bounded message only — a BgGPT stream error can carry the prompt (and the question) in its
+      // body/cause; the raw object would put all of it in the logs (see log-safety.ts).
+      console.error(`[assistant] stream error: ${errorText(error)}`);
       return 'Асистентът временно не е достъпен. Опитай отново след малко.';
     },
   });
