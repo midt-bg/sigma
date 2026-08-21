@@ -7,7 +7,7 @@ import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import { embeddingRunnerFor } from '../lib/assistant/bindings';
-import { errorText } from '../lib/assistant/log-safety';
+import { errorText, stackHead } from '../lib/assistant/log-safety';
 import {
   retrieveSchemaContext,
   type EmbeddingRunner,
@@ -147,9 +147,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   } catch (error) {
     // Setup-time failure (missing key, bad config, malformed history) — degrade to a readable 503
     // rather than an unhandled 500. Mid-stream BgGPT errors are handled by the stream's onError.
-    // Same leak-safe rule as every other catch in the module: the setup error can carry the prompt
-    // (and thus the question) in its message/cause — log the bounded text, never the object.
-    console.error(`[assistant] turn failed to start: ${errorText(error)}`);
+    // Setup faults are config/programming errors (bad history shape, missing config) — not provider
+    // envelopes — so here the FRAME is the diagnostic and it is inherently free of user text. Log the
+    // bounded message plus the leading frames; still never the raw object (cause chain, response body).
+    console.error(
+      `[assistant] turn failed to start: ${errorText(error, [question])} | ${stackHead(error)}`,
+    );
     return Response.json(
       { error: 'Асистентът временно не е достъпен. Опитай отново след малко.' },
       { status: 503 },
