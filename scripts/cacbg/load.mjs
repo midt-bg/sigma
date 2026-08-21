@@ -22,14 +22,18 @@ import {
   closelyHeldForm,
   nameDistinctiveness,
 } from './classify.mjs';
-import { openCache, readDeed, coverage } from '../tr/cache.mjs';
-import { TR_DB, TR_RAW, deedPath } from '../tr/paths.mjs';
 import {
-  evidenceVerdict,
-  isSealedFact,
-  reconcileTermination,
-  RULES_VERSION,
-} from '../tr/evidence.mjs';
+  openCache,
+  coverage,
+  readVerdict,
+  splitLinkRecord,
+  verdictIsCurrent,
+} from '../tr/cache.mjs';
+import { TR_DB } from '../tr/paths.mjs';
+// evidenceVerdict and reconcileTermination are deliberately NOT imported any more: both need the deed,
+// and by the time this pass runs the deed is gone by design (ADR-0037). The crawler calls them; this
+// pass reads what they decided.
+import { isSealedFact, RULES_VERSION } from '../tr/evidence.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import {
   fingerprint,
@@ -56,7 +60,6 @@ const REPORT = path.join(STAGING, 'findings.md');
 // separately — §8's monotonicity gate keys on that one, not on this.
 const MATCHER_VERSION = 'cnk-1+classify-2+tr-1';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
-const TR_RAW_DIR = process.env.TR_RAW_DIR || TR_RAW;
 // A deliberate, logged override for the coverage gate below. Without it a single permanently
 // unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
 const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
@@ -610,12 +613,47 @@ function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
 const candidateEiks = [...new Set([...agg.values()].map((r) => r.eik))].sort();
 fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\n') + '\n');
 
+/**
+ * The link identity and the declaration side of its evidence question — the crawler's input under
+ * ADR-0037, and the decision pass's cache key. Returns null for an aggregate that forms no link.
+ *
+ * ONE builder, used by both passes on purpose. The verdict cache is keyed on a hash of this object,
+ * so an emit pass and a decision pass that built it even slightly differently would miss every cache
+ * entry and re-crawl the whole register — the failure would be a 5-hour bill, not an error.
+ *
+ * Carries the DECLARANT's name: a public official, published by the source register and by our own
+ * surface. Never a relative (ADR-0032 does not name them) and never anyone from a deed.
+ */
+function linkRecordFor(rec) {
+  // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
+  // it would send the crawler after a deed no decision ever asks about.
+  if (rec.scope === 'self' && !rec.hasMaterialOwn && !rec.kinds.has('management')) return null;
+  const declYears = [...rec.declYears];
+  return {
+    linkKey: rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`,
+    eik: rec.eik,
+    declarantName: rec.person,
+    declaredSeats: [...rec.seats],
+    declaredEik: rec.method === 'declared_eik',
+    firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
+    scope: rec.scope,
+    nameGloballyUnique: nameGloballyUnique(rec.key),
+    companyNameDistinctive: nameDistinctiveness(rec.key) === 'distinctive',
+  };
+}
+const candidateLinks = [...agg.values()].map(linkRecordFor).filter(Boolean);
+fs.writeFileSync(
+  path.join(STAGING, 'candidate-links.jsonl'),
+  candidateLinks.map((l) => JSON.stringify(l)).join('\n') + '\n',
+);
+
 if (EMIT_CANDIDATES_ONLY) {
   // Stop BEFORE the TR gate and before anything is written to the domain. A bootstrap pass that built
   // links would leave a surface resting on no evidence at all, and a failure between this pass and the
   // real one would leave that surface sitting in the work DB, shippable.
   console.log(
-    `${candidateEiks.length} candidate ЕИК written for the crawler; stopping (--emit-candidates)`,
+    `${candidateEiks.length} candidate ЕИК / ${candidateLinks.length} link(s) written for the ` +
+      `crawler; stopping (--emit-candidates)`,
   );
   db.close();
   for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${WORK_DB}${suffix}`, { force: true }); // the copy has served its purpose
@@ -627,58 +665,92 @@ if (!fs.existsSync(TR_CACHE_DB)) {
   throw new Error(
     `REFUSE TO LOAD: no Trade Register cache at ${TR_CACHE_DB}. Every publishing decision now rests ` +
       `on a registry fact (ADR-0033); without the cache there is no evidence to rest on. Run ` +
-      `scripts/tr/fetch-deeds.mjs --eiks-file ${path.join(STAGING, 'candidate-eiks.txt')} first.`,
+      `scripts/tr/fetch-deeds.mjs --links-file ${path.join(STAGING, 'candidate-links.jsonl')} first.`,
   );
 }
 const trCache = openCache(TR_CACHE_DB);
 const trCoverage = coverage(trCache, candidateEiks);
 console.log(
-  `TR cache: ${trCoverage.covered}/${trCoverage.wanted} covered ` +
+  `TR deeds: ${trCoverage.covered}/${trCoverage.wanted} ЕИК covered ` +
     `(fetched ${trCoverage.fetched}, outside ТР ${trCoverage.outsideTr}, missing ${trCoverage.missing})`,
 );
-if (trCoverage.missing > 0 && !ALLOW_PARTIAL_TR) {
+
+// ── the incremental gate (ADR-0037) ──────────────────────────────────────────────────────────────
+// The old rule refused on a single missing ЕИК. That was right while a crawl was all-or-nothing: a
+// partial cache publishes a decimated surface, clears the ship floor of 50, and wipes the rest of the
+// live links. It is wrong now that a crawl legitimately makes partial progress across runs — under the
+// measured limiter (ADR-0036) an all-or-nothing gate never opens at all.
+//
+// The protection does not go away, it moves to where it already existed: §8's monotonicity gate, whose
+// entire job is noticing a published claim that disappeared. A link that loses its evidence stops being
+// published and audit.mjs hard-fails on exactly that, with the rules_version escape for a deliberate
+// bump. Two gates for one duty was the redundancy; the weaker one goes.
+//
+// What stays is a floor on how much of the surface may rest on no verdict at all — and it applies to
+// EVERY run, not only a first one. Keying it on „is there a prior published set" left a 95% floor that
+// a single leftover published row switched off entirely: monotonicity would then protect that one row
+// while a decimated surface shipped past the ship floor of 50 beneath it.
+//
+// Always-on is affordable because the currency test below deliberately ignores AGE — a verdict stops
+// being current only when the rules move or the declaration changes. Steady state is therefore ~100%,
+// and the two ways to fall below it are the two where refusing is right: a cold start, and a rules
+// bump whose re-crawl has not caught up (publishing then would mean publishing on a ladder this code
+// no longer speaks). `--allow-partial-tr` remains the stated override for a smaller surface.
+const VERDICT_FLOOR = 0.95;
+// `verdictIsCurrent`, not a hand-rolled copy. There were two copies of this predicate here and both
+// could be deleted with every test still green — on the LAST fail-closed check before publishing a
+// claim about a named person. The duplication is why the cache-side test could not kill the loader-side
+// mutation; one definition means one thing to test.
+//
+// `maxAgeDays` is deliberately omitted: age governs what the CRAWLER re-asks, not what may be
+// published. Withholding on age would delete a true claim the moment a rate limit delayed its refresh,
+// and `purgeExpired` already bounds how stale a stored lookup can get.
+const verdictCurrency = { rulesVersion: RULES_VERSION };
+const linksAwaitingVerdict = candidateLinks.filter(
+  (l) => !verdictIsCurrent(readVerdict(trCache, l.linkKey), splitLinkRecord(l), verdictCurrency),
+);
+const verdictsCurrent = candidateLinks.length - linksAwaitingVerdict.length;
+const verdictRatio = candidateLinks.length === 0 ? 1 : verdictsCurrent / candidateLinks.length;
+console.log(
+  `TR verdicts: ${verdictsCurrent}/${candidateLinks.length} current ` +
+    `(${(verdictRatio * 100).toFixed(1)}%)`,
+);
+if (linksAwaitingVerdict.length) {
+  // ЕИК only, never link_key: the key embeds the official's name, and a name has no business in a CI
+  // log (ADR-0033 decision 5). The ЕИК is what the operator needs to re-run the crawler against.
+  const eiks = [...new Set(linksAwaitingVerdict.map((l) => l.eik))].sort();
+  console.log(
+    `  awaiting a registry verdict: ${eiks.slice(0, 20).join(', ')}` +
+      (eiks.length > 20 ? ` … and ${eiks.length - 20} more` : ''),
+  );
+}
+if (verdictRatio < VERDICT_FLOOR && !ALLOW_PARTIAL_TR) {
   trCache.close();
   db.close();
   throw new Error(
-    `REFUSE TO LOAD: the Trade Register cache covers ${trCoverage.covered} of ${trCoverage.wanted} ` +
-      `candidate ЕИК. A partial cache does not fail loudly downstream — it publishes a decimated ` +
-      `surface that still clears the ship floor and then wipes the rest of the live links. Finish ` +
-      `the crawl, or pass --allow-partial-tr to state that a smaller surface is intended.`,
+    `REFUSE TO LOAD: only ${verdictsCurrent} of ${candidateLinks.length} link(s) carry a current ` +
+      `registry verdict (${(verdictRatio * 100).toFixed(1)}% < ${VERDICT_FLOOR * 100}%). Publishing ` +
+      `now would rest the surface on evidence most of it does not have. Re-run the crawler until the ` +
+      `cache fills — it resumes — or pass --allow-partial-tr to state that a smaller surface is ` +
+      `intended.` +
+      `\nAwaiting a verdict (ЕИК): ${[...new Set(linksAwaitingVerdict.map((l) => l.eik))]
+        .sort()
+        .slice(0, 20)
+        .join(', ')}`,
   );
 }
 
-// Deeds are read from git-ignored scratch and cached in memory for the run. The parsed deed carries
-// third-party names; they are used ONLY inside evidenceVerdict's boolean comparisons and never reach
-// a column, a log line or the report (ADR-0033 decision 5).
 // The lookup date sealed on every link: when the evidence was gathered, not when it was interpreted.
 // It is the freshness bound the methodology page has to state, so it comes from the cache rather than
 // from `now` — a re-run over an unchanged cache must not make the evidence look fresher than it is.
-const trLookupDate = (() => {
+// Fallback only, for a link with no verdict of its own to date. Once the crawl is incremental
+// (ADR-0037) a single global MAX would stamp this run's date onto a decision reached weeks ago and
+// overstate the freshness the methodology page promises — so the sealed date is per link, taken from
+// the verdict's own decided_at, and this is what is left when there is no verdict at all.
+const trLookupFallback = (() => {
   const row = trCache.prepare('SELECT MAX(fetched_at) m FROM deeds').get();
   return row?.m ? String(row.m).slice(0, 10) : new Date().toISOString().slice(0, 10);
 })();
-
-const deedCache = new Map();
-function deedFor(eik) {
-  if (deedCache.has(eik)) return deedCache.get(eik);
-  const row = readDeed(trCache, eik);
-  let entry;
-  if (!row) entry = { deed: null, outsideTr: false, missing: true };
-  else if (row.status === 'outside_tr') entry = { deed: null, outsideTr: true, missing: false };
-  else {
-    // RE-DERIVED from the ЕИК through safeEik, never the stored raw_path. The cache index is written by
-    // the crawler but travels between runs — and once it does, a stored path is attacker-influenced
-    // input joined straight onto a filesystem root, which is a traversal read. purgeExpired already
-    // re-derives for exactly this reason; this was the one read that did not. deedPath also throws on a
-    // malformed ЕИК rather than quietly reading some other company's deed (R8).
-    const file = deedPath(eik, TR_RAW_DIR);
-    entry = fs.existsSync(file)
-      ? { deed: JSON.parse(fs.readFileSync(file, 'utf8')), outsideTr: false, missing: false }
-      : { deed: null, outsideTr: false, missing: true };
-  }
-  deedCache.set(eik, entry);
-  return entry;
-}
 
 const declarantsByEik = new Map();
 for (const rec of agg.values()) {
@@ -728,16 +800,7 @@ for (const rec of agg.values()) {
   // rec.seats is keyed on `pid|eik|scope`, so it already holds ONLY the seats this person declared for
   // THIS company — which is what #279 §5 rung 3 requires: 4.9% of company-name keys carry more than one
   // distinct declared seat, so a company-only key would let one person's seat confirm another's link.
-  const { deed, outsideTr, missing } = deedFor(rec.eik);
-  if (missing && !ALLOW_PARTIAL_TR) {
-    // Unreachable via the coverage gate above; kept as a belt-and-braces refusal so a future change
-    // that loosens the gate cannot silently publish a link with no evidence behind it.
-    trCache.close();
-    db.close();
-    throw new Error(
-      `no cached deed for ЕИК ${rec.eik} — the coverage gate should have caught this`,
-    );
-  }
+
   // A declarant-provided ЕИК is the national unique identifier (ЗТРРЮЛНЦ) — it resolves the winner
   // deterministically even behind a generic or winner-colliding name, so a declared_eik match publishes
   // on its own basis (A_eik), never held for name-genericness. This is at least as certain as the seat
@@ -754,7 +817,6 @@ for (const rec of agg.values()) {
   // declared-ЕИК leg (ADR-0028: the ЕИК is the identity), and never rung 2 (the register named this
   // person in THIS company). nameDistinctiveness is deliberately NOT part of this gate: the seat rung
   // exists precisely to rescue a generic name, so requiring distinctiveness would empty it.
-  const nameUnique = nameGloballyUnique(rec.key);
   // „Неизвестна" — the withholding verdict, used for every way of ending up with no usable evidence.
   const noEvidence = () => ({
     kind: 'unknown',
@@ -767,37 +829,36 @@ for (const rec of agg.values()) {
   });
   // With --allow-partial-tr the operator has accepted an incomplete cache. An uncached ЕИК then yields
   // no evidence at all, which is „Неизвестна" — held. It must never be read as a reason to publish.
-  let verdict;
-  if (missing) verdict = noEvidence();
-  else {
-    try {
-      verdict = evidenceVerdict({
-        deed,
-        outsideTr,
-        declarantName: rec.person,
-        declaredSeats: [...rec.seats],
-        declaredEik: rec.method === 'declared_eik',
-        firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
-        scope: rec.scope,
-        nameGloballyUnique: nameUnique,
-        // ADR-0035. The resolver picked this winner by фирма; `nameGloballyUnique` above only says no OTHER
-        // WINNER shares that name, which says nothing about the register at large. So an uncorroborated
-        // rung 2 additionally asks whether the фирма is one a national twin is unlikely to share.
-        // `rec.key` is the WINNER's registered name — the canonical spelling of the company we actually
-        // looked up, which is the identity in question.
-        companyNameDistinctive: nameDistinctiveness(rec.key) === 'distinctive',
-      });
-    } catch (err) {
-      // A deed we cannot parse is a deed we cannot reason about — so this link withholds, exactly as an
-      // uncached one does, and the run continues. Failing the whole load instead would let one malformed
-      // deed out of ~400 decide the fate of every other link, and the ship floor would then refuse the
-      // reduced surface — turning a single bad payload into a total outage. Loud, per link, fail-closed.
-      console.error(
-        `  ${rec.eik}: evidence UNREADABLE — ${err instanceof Error ? err.message : err} (link held)`,
-      );
-      verdict = noEvidence();
-    }
+  // The decision was reached by the crawler, beside the deed it rests on (ADR-0037). This pass reads
+  // it; it never re-derives one, because the deed it would need is deliberately gone by now.
+  //
+  // A verdict is usable only if it answers TODAY's question: same rules version, same declaration
+  // inputs. Age is deliberately NOT a condition here — `purgeExpired` bounds how stale a stored lookup
+  // can get, and the lookup date travels onto the link so the reader sees it. Withholding on age would
+  // instead delete a true claim the moment a rate limit delayed its refresh.
+  const linkRecord = linkRecordFor(rec);
+  const cached = linkRecord ? readVerdict(trCache, linkRecord.linkKey) : null;
+  const usable =
+    cached != null && verdictIsCurrent(cached, splitLinkRecord(linkRecord), verdictCurrency);
+  if (!usable && cached != null) {
+    console.error(
+      `  ${rec.eik}: verdict is stale (rules or declaration moved) — link held until re-crawled`,
+    );
   }
+  // „Неизвестна" is the honest answer for a link the crawler has not reached yet: held, never a reason
+  // to publish. It is exactly what an uncached ЕИК produced before, so the surface degrades the same
+  // way it always did — one link at a time, downward.
+  const verdict = usable
+    ? {
+        kind: cached.kind,
+        publishable: cached.publishable,
+        registryRole: cached.registryRole,
+        matchedFact: cached.matchedFact,
+        entryNumber: cached.entryNumber,
+        entryDate: cached.entryDate,
+        rulesVersion: cached.rulesVersion,
+      }
+    : noEvidence();
   const tier = verdict.kind;
   const contemporaneous = [...years].some(
     (cy) => temporalStatus(declYears, cy) === 'contemporaneous',
@@ -866,9 +927,12 @@ for (const rec of agg.values()) {
   // — the registered owner there is the relative, whose name we neither store nor check.
   // PHASE 1 uses only `terminated`; the „и към днешна дата" label is computed and deliberately not
   // rendered (ADR-0033 decision 4 — it asserts a present tense behind an LIA addendum).
+  // Read from the verdict, not recomputed: the deed it needs is deliberately gone by now (ADR-0037).
+  // Without a usable verdict there is nothing to reconcile against, and the honest fallback is the
+  // unreconciled `divested` — the same answer the old code gave for an uncached ЕИК.
   const recon =
-    divested && rec.scope === 'self'
-      ? reconcileTermination({ deed, declarantName: rec.person, scope: rec.scope })
+    divested && rec.scope === 'self' && usable && cached.reconTerminated != null
+      ? { terminated: cached.reconTerminated, label: cached.reconLabel }
       : { terminated: divested, label: null };
   const terminatedEffective = recon.terminated;
 
@@ -936,7 +1000,7 @@ for (const rec of agg.values()) {
     verdict.matchedFact,
     verdict.entryNumber,
     verdict.entryDate,
-    trLookupDate,
+    usable ? String(cached.decidedAt).slice(0, 10) : trLookupFallback,
     verdict.rulesVersion,
     liveStatus,
   );
@@ -951,6 +1015,7 @@ db.exec('COMMIT');
 // mechanism exists to prevent. Fail the build (non-zero exit) instead of shipping a silent un-suppression.
 const unusedSupp = [...suppressedFp].filter((fp) => !usedSuppressions.has(fp));
 if (unusedSupp.length > 0) {
+  trCache.close();
   db.close();
   throw new Error(
     `${unusedSupp.length} suppression(s) matched NO built link — a stale/mis-keyed takedown would silently ` +
@@ -1124,6 +1189,9 @@ console.log(
     : "✓ §2 ал.3 canary: all material family holdings sourced from 'assets' declarations (rail #3, ADR-0032)",
 );
 console.log(`report → ${REPORT}`);
+// Both handles, on every path that leaves this file — the verdict-floor refusal above already closes
+// the pair, and a cache left open on the other two would be the same intent kept only half the time.
+trCache.close();
 db.close();
 // No exit code is tied to ambiguity — it is expected, quarantined, and safe. The over-merge libel proof
 // is the labelled company-name-key.test.ts; the loader fails only on an actual exception.

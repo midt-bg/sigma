@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -98,6 +99,16 @@ function buildTrCache(owners) {
       );
   }
   cache.close();
+
+  // The deeds alone decide nothing since ADR-0037: the verdict is reached by the crawler and the
+  // loader only reads it. Run the REAL decision over these fixture deeds so this test keeps
+  // exercising the evidence ladder rather than a hand-written verdict row.
+  seedVerdicts({
+    workDb: DB,
+    staging: STAGING,
+    trDb: TR_DB,
+    deedFor: (eik) => readFixtureDeed(TR_RAW, eik),
+  });
 }
 
 const open = () => new DatabaseSync(DB, { readOnly: true });

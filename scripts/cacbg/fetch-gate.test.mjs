@@ -84,6 +84,185 @@ test('--allow-incomplete downgrades a shortfall to a warning → exit 0', async 
   assert.equal(await runGate(routes, ['--allow-incomplete']), 0);
 });
 
+// --- the deadline (run 31889519937): the crawl must stop ITSELF before a CI job cap kills it mid-write ---
+// The clock is injected and driven by the fake getter — one tick per HTTP request — so „when" the deadline
+// falls is expressed in requests, not in real elapsed time, and the tests are deterministic.
+const tickingGate = (
+  routes,
+  msPerRequest,
+  extraArgv = [],
+  folders = [FOLDER],
+  concurrency = '1',
+) => {
+  let clock = 0;
+  const routed = fakeGet(routes);
+  return run({
+    httpGet: async (url) => {
+      clock += msPerRequest;
+      return routed(url);
+    },
+    rawDir: dir,
+    guard: () => {},
+    now: () => clock,
+    argv: [
+      'node',
+      'fetch.mjs',
+      '--folders',
+      folders.join(','),
+      '--concurrency',
+      concurrency,
+      '--deadline-minutes',
+      '1',
+      ...extraArgv,
+    ],
+  });
+};
+
+// The case assessCompleteness CANNOT see. Every set the crawl reached is fully obtained, so the arithmetic
+// says „complete" — while whole later years were never opened. Without a deadline term in the gate this
+// exits 0 and the pipeline ships a corpus missing entire years.
+test('deadline on a set boundary → later sets are never attempted, and the gate still refuses (exit 1)', async () => {
+  const FOLDER2 = '2098t';
+  const routes = {
+    ...list2,
+    ...ok('a1.xml'),
+    ...ok('a2.xml'),
+    [`${BASE}/${FOLDER2}/list.xml`]: { status: 200, body: listXml(['b1.xml']) },
+    [`${BASE}/${FOLDER2}/b1.xml`]: { status: 200, body: '<x/>' },
+  };
+  // 3 requests fit in the first set (list.xml + a1 + a2); at 25 s each the clock reads 75 s > 60 s when the
+  // set closes, so the second set is refused at the top of the loop.
+  const code = await tickingGate(routes, 25_000, [], [FOLDER, FOLDER2]);
+  assert.equal(code, 1, 'a deadline stop must never certify the corpus');
+  assert.ok(fs.existsSync(path.join(dir, FOLDER, 'a2.xml')), 'the first set completed');
+  assert.equal(
+    fs.existsSync(path.join(dir, FOLDER2)),
+    false,
+    'an out-of-budget set must leave no directory — an empty one reads like a visited set',
+  );
+});
+
+// A set whose list.xml never loads is `continue`d, which bypasses the end-of-set check — so the budget has
+// to be tested at the TOP of the loop too, or a run of unavailable sets crawls straight through it.
+// --allow-incomplete is passed deliberately: a skipped set makes the corpus incomplete on the ORDINARY gate
+// too, so without the override this test would pass on that alone and say nothing about the deadline.
+test('a set skipped on list.xml still consumes the budget — the next set is refused (exit 1)', async () => {
+  const FOLDER2 = '2098t';
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 503, body: '' },
+    [`${BASE}/${FOLDER2}/list.xml`]: { status: 200, body: listXml(['b1.xml']) },
+    [`${BASE}/${FOLDER2}/b1.xml`]: { status: 200, body: '<x/>' },
+  };
+  const code = await tickingGate(routes, 61_000, ['--allow-incomplete'], [FOLDER, FOLDER2]);
+  assert.equal(code, 1, 'only the deadline term can produce this exit code');
+  assert.equal(
+    fs.existsSync(path.join(dir, FOLDER2)),
+    false,
+    'the budget was spent on the skipped set; the next one must not be opened',
+  );
+});
+
+// The regression that the independent review caught (finding 2). A set whose LAST in-flight request lands
+// past the budget withheld NOTHING — every announced declaration is on disk. Inferring the stop from the
+// clock instead of from the pool condemned exactly the run that finally completed the corpus: exit 1,
+// extract/ship skipped, four hours red for a job that had actually succeeded.
+test('a fully-obtained corpus whose last request crosses the deadline is COMPLETE (exit 0)', async () => {
+  // 31 s per request: list.xml at 31 s (under), a1.xml at 62 s (over) — and a1 was the only announced row.
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  const code = await tickingGate(routes, 31_000);
+  assert.equal(fs.existsSync(path.join(dir, FOLDER, 'a1.xml')), true, 'nothing was withheld');
+  assert.equal(code, 0, 'a complete corpus must never be reported as a deadline stop');
+});
+
+// Every other deadline test runs one worker, which cannot see a stop condition that only SOME workers
+// honour. Production runs eight. With the budget spent before any declaration is handed out, a pool where
+// even one worker ignores `shouldStop` writes into the very window the deadline reserves for tar.
+test('the deadline binds EVERY worker, not just the first (concurrency 8)', async () => {
+  const files = Array.from({ length: 24 }, (_, i) => `c${i}.xml`);
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(files) },
+    ...Object.assign({}, ...files.map((f) => ok(f))),
+  };
+  const code = await tickingGate(routes, 61_000, [], [FOLDER], '8');
+  assert.equal(code, 1);
+  const written = files.filter((f) => fs.existsSync(path.join(dir, FOLDER, f)));
+  assert.deepEqual(written, [], `no worker may fetch past the budget, got ${written.join(', ')}`);
+});
+
+// An entry-only deadline check passes every worker while the budget remains, then lets those workers drain
+// the folder after it expires. The clock must fall mid-folder, with both written and still-unhanded rows, to
+// distinguish that bug from a per-item check at production concurrency.
+test('deadline falls MID-folder at concurrency 8 → later rows stay unfetched (exit 1)', async () => {
+  const files = Array.from({ length: 24 }, (_, i) => `c${i}.xml`);
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(files) },
+    ...Object.assign({}, ...files.map((f) => ok(f))),
+  };
+  // list.xml leaves 50 s of the 60 s budget, so workers enter the pool before later requests spend it.
+  const code = await tickingGate(routes, 10_000, [], [FOLDER], '8');
+  const written = files.filter((f) => fs.existsSync(path.join(dir, FOLDER, f)));
+  assert.ok(written.length > 0, 'the deadline must fall after declaration work starts');
+  assert.ok(
+    written.length < files.length,
+    `the pool must withhold rows once the budget is spent — it wrote all ${files.length}`,
+  );
+  assert.equal(code, 1, 'a mid-folder deadline stop is a partial corpus and must exit 1');
+});
+
+// The comparison is `>=`, so a clock landing EXACTLY on the budget is spent, not still running. Off-by-one
+// here is invisible to every other test, which all land clear of the boundary.
+test('a clock landing exactly on the deadline is spent (exit 1)', async () => {
+  const FOLDER2 = '2098t';
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+    [`${BASE}/${FOLDER2}/list.xml`]: { status: 200, body: listXml(['b1.xml']) },
+    [`${BASE}/${FOLDER2}/b1.xml`]: { status: 200, body: '<x/>' },
+  };
+  // 2 requests close the first set at exactly 60 000 ms — the budget, to the millisecond.
+  const code = await tickingGate(routes, 30_000, ['--allow-incomplete'], [FOLDER, FOLDER2]);
+  assert.equal(code, 1);
+  assert.equal(fs.existsSync(path.join(dir, FOLDER2)), false, 'exactly-spent is spent');
+});
+
+test('deadline inside a set → the remaining declarations stay unfetched (exit 1)', async () => {
+  // 61 s per request: the clock is past the deadline the moment list.xml lands, so no declaration is handed
+  // out at all and the raw tree holds only the list.
+  const code = await tickingGate({ ...list2, ...ok('a1.xml'), ...ok('a2.xml') }, 61_000);
+  assert.equal(code, 1);
+  assert.equal(fs.existsSync(path.join(dir, FOLDER, 'list.xml')), true);
+  assert.equal(
+    fs.existsSync(path.join(dir, FOLDER, 'a1.xml')),
+    false,
+    'pool stopped handing out work',
+  );
+});
+
+// --allow-incomplete means „I have seen this shortfall and accept it". A deadline is a clock going off with
+// nobody having looked, so it must not be downgradable — otherwise the workflow's own flag could publish a
+// half-crawled corpus.
+test('--allow-incomplete does NOT downgrade a deadline stop (still exit 1)', async () => {
+  // One remaining row equals the worker count. A pool that claims the row before checking the deadline
+  // mistakes an exhausted cursor for completed work, so the ordinary incomplete override wrongly exits 0.
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  const code = await tickingGate(routes, 61_000, ['--allow-incomplete']);
+  assert.equal(code, 1);
+});
+
+// Regression guard: the deadline is opt-in. Without the flag a complete crawl still exits 0 — and with a
+// budget that is never reached, the crawl runs to the end.
+test('a deadline that is never reached leaves the crawl untouched (exit 0)', async () => {
+  const code = await tickingGate({ ...list2, ...ok('a1.xml'), ...ok('a2.xml') }, 1_000);
+  assert.equal(code, 0);
+  assert.equal(fs.existsSync(path.join(dir, FOLDER, 'a2.xml')), true);
+});
+
 // Prove the RETURNED code becomes a real non-zero PROCESS exit (run() → process.exitCode, the production
 // wiring), in a real subprocess driving the real run() with the injected fake.
 test('the process actually exits non-zero on an incomplete crawl (and zero on a complete one)', () => {

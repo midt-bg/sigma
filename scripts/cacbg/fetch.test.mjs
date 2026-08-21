@@ -1,9 +1,19 @@
 // node:test — pure crawl-option + circuit-breaker helpers of the CACBG crawler. No I/O.
-// Guards two silent-failure footguns ydimitrof flagged: (1) an unvalidated --concurrency/--limit that
-// degrades to a no-op crawl, and (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall.
+// Every case here guards an option or counter that fails SILENTLY when it fails, which is why they are
+// worth unit tests at all: (1) an unvalidated --concurrency/--limit that degrades to a no-op crawl, and
+// (2) a circuit breaker blind to a sustained non-200 (403/429/5xx) wall — both flagged by ydimitrof;
+// (3) --deadline-minutes, where a bad value means „no deadline" rather than an error; (4) a flag given
+// with no value at all, which used to read as „not given"; and (5) the politeness ceiling on concurrency,
+// which had a floor but no roof. The end-to-end behaviour of the deadline lives in fetch-gate.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCrawlOptions, nextBreaker, BREAKER_TRIP, assessCompleteness } from './fetch.mjs';
+import {
+  parseCrawlOptions,
+  nextBreaker,
+  BREAKER_TRIP,
+  MAX_CONCURRENCY,
+  assessCompleteness,
+} from './fetch.mjs';
 
 test('parseCrawlOptions: defaults — no limit, 6 workers', () => {
   const o = parseCrawlOptions([]);
@@ -26,6 +36,47 @@ test('parseCrawlOptions: valid overrides parse', () => {
   assert.equal(o.folders, '2021_nc,2025y');
 });
 
+// --- --deadline-minutes: absent means no cap (a hand-run crawl), and garbage must fail like the rest ---
+test('parseCrawlOptions: no --deadline-minutes → Infinity (an uncapped crawl)', () => {
+  assert.equal(parseCrawlOptions([]).deadlineMinutes, Infinity);
+});
+test('parseCrawlOptions: --deadline-minutes parses', () => {
+  assert.equal(parseCrawlOptions(['--deadline-minutes', '240']).deadlineMinutes, 240);
+});
+test('parseCrawlOptions: non-numeric --deadline-minutes throws (not NaN → uncapped crawl)', () => {
+  // NaN is not finite, so an unvalidated value would silently mean „no deadline" — the exact failure the
+  // deadline exists to prevent, restored by a typo.
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes', 'abc']),
+    /deadline-minutes must be a positive integer/,
+  );
+});
+test('parseCrawlOptions: zero/negative/fractional --deadline-minutes throws', () => {
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '0']), /deadline-minutes/);
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '-5']), /deadline-minutes/);
+  assert.throws(() => parseCrawlOptions(['--deadline-minutes', '2.5']), /deadline-minutes/);
+});
+
+// A flag present but valueless used to fall through to the DEFAULT, which for the deadline means „no
+// deadline at all" — the feature switched off by a typo, with nothing said. Same shape for the older flags.
+test('parseCrawlOptions: a valueless flag throws instead of silently defaulting', () => {
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes']),
+    /--deadline-minutes was given without/,
+  );
+  assert.throws(() => parseCrawlOptions(['--limit']), /--limit was given without/);
+  assert.throws(() => parseCrawlOptions(['--concurrency']), /--concurrency was given without/);
+  assert.throws(() => parseCrawlOptions(['--folders']), /--folders was given without/);
+});
+test('parseCrawlOptions: a flag swallowed by the NEXT flag throws too', () => {
+  // `--deadline-minutes --allow-incomplete` reads as „deadline = --allow-incomplete"; Number() of that is
+  // NaN, but only because posInt rejects it — the value must be refused before it is ever interpreted.
+  assert.throws(
+    () => parseCrawlOptions(['--deadline-minutes', '--allow-incomplete']),
+    /--deadline-minutes was given without/,
+  );
+});
+
 // --- the footgun: a bad concurrency must FAIL LOUD, not spin up zero workers and exit 0 ---
 test('parseCrawlOptions: non-numeric --concurrency throws (not NaN → 0 workers → silent no-op)', () => {
   assert.throws(
@@ -39,6 +90,22 @@ test('parseCrawlOptions: zero/negative --concurrency throws', () => {
 });
 test('parseCrawlOptions: fractional --concurrency throws', () => {
   assert.throws(() => parseCrawlOptions(['--concurrency', '2.5']), /concurrency/);
+});
+
+// --concurrency had a floor but no roof: `--concurrency 500` was an accepted way to open five hundred
+// simultaneous connections to a state register, from the very script whose backoff and circuit breaker
+// exist to prevent that. The ceiling is what the workflow actually runs, so tuning DOWN stays free and
+// tuning up is a deliberate edit.
+test('parseCrawlOptions: --concurrency above the politeness ceiling throws', () => {
+  assert.throws(
+    () => parseCrawlOptions(['--concurrency', String(MAX_CONCURRENCY + 1)]),
+    /at most 8 — the register is a state server/,
+  );
+  assert.throws(() => parseCrawlOptions(['--concurrency', '500']), /at most 8/);
+});
+test('parseCrawlOptions: the ceiling itself is allowed — it is what the workflow runs', () => {
+  assert.equal(parseCrawlOptions(['--concurrency', String(MAX_CONCURRENCY)]).concurrency, 8);
+  assert.equal(MAX_CONCURRENCY, 8, 'the workflow passes --concurrency 8; keep them in lockstep');
 });
 
 // --- the other footgun: a bad --limit silently fetched EVERYTHING (NaN → not finite → no slice) ---
