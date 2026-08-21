@@ -14,5 +14,8 @@
     "@sigma/api-contract": "workspace:*",
     "@sigma/config": "workspace:*",
     "@sigma/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@sigma/test-support": "workspace:*"
   }
 }

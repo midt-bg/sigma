@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { getMethodologyStats } from './methodology';
 
 function fakeDb(opts: {
@@ -6,18 +7,11 @@ function fakeDb(opts: {
   coverageRow?: object | null;
   sectorsRow?: object | null;
 }): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        async first<T>() {
-          if (sql.includes('home_totals')) return (opts.totalsRow ?? null) as T;
-          if (sql.includes('COUNT(bids_received)')) return (opts.coverageRow ?? null) as T;
-          if (sql.includes('sector_totals')) return (opts.sectorsRow ?? null) as T;
-          return null as T;
-        },
-      };
-    },
-  } as D1Database;
+  return fakeD1([
+    { when: 'home_totals', first: opts.totalsRow ?? null },
+    { when: 'COUNT(bids_received)', first: opts.coverageRow ?? null },
+    { when: 'sector_totals', first: opts.sectorsRow ?? null },
+  ]).db;
 }
 
 describe('getMethodologyStats', () => {

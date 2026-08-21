@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { getContract } from './details';
 
 const baseContractRow = {
@@ -56,38 +57,29 @@ function fakeDb(
   contractRow: typeof baseContractRow,
   lotRows: unknown[],
   amendmentRows: unknown[] = [],
-  cohortStatsRow: unknown = null,
+  cohortStatsRow: object | null = null,
 ): D1Database {
-  return {
-    prepare(sql: string) {
-      let binds: unknown[] = [];
-      const statement = {
-        bind(...values: unknown[]) {
-          binds = values;
-          return statement;
-        },
-        async first<T>() {
-          if (sql.includes('WHERE c.id = ?')) return contractRow as T;
-          if (sql.includes('authority_totals') || sql.includes('company_totals')) return null as T;
-          // The „Подобни договори" cohort lookup — null unless the test supplies a stats row.
-          if (sql.includes('cpv_division_stats')) return cohortStatsRow as T;
-          throw new Error(`unexpected first query: ${sql}`);
-        },
-        async all<T>() {
-          if (sql.includes('FROM lots l')) {
-            expect(binds).toEqual([contractRow.tender_currency, contractRow.tender_id]);
-            return { results: lotRows as T[] };
-          }
-          if (sql.includes('FROM amendments')) {
-            expect(binds).toEqual([contractRow.unp, contractRow.contract_number]);
-            return { results: amendmentRows as T[] };
-          }
-          throw new Error(`unexpected all query: ${sql}`);
-        },
-      };
-      return statement;
+  return fakeD1([
+    { when: 'WHERE c.id = ?', first: contractRow },
+    { when: 'authority_totals', first: null },
+    { when: 'company_totals', first: null },
+    // The „Подобни договори" cohort lookup — null unless the test supplies a stats row.
+    { when: 'cpv_division_stats', first: cohortStatsRow },
+    {
+      when: 'FROM lots l',
+      all: (call) => {
+        expect(call.binds).toEqual([contractRow.tender_currency, contractRow.tender_id]);
+        return lotRows;
+      },
     },
-  } as D1Database;
+    {
+      when: 'FROM amendments',
+      all: (call) => {
+        expect(call.binds).toEqual([contractRow.unp, contractRow.contract_number]);
+        return amendmentRows;
+      },
+    },
+  ]).db;
 }
 
 describe('getContract', () => {
@@ -249,31 +241,20 @@ describe('getContract', () => {
 
   // The read is gated on a clean value: a suspect contract must NOT even query cpv_division_stats.
   it('skips the cohort read (and returns no cohort) for a non-clean value', async () => {
-    let cohortQueried = false;
-    const db = {
-      prepare(sql: string) {
-        if (sql.includes('cpv_division_stats')) cohortQueried = true;
-        const statement = {
-          bind() {
-            return statement;
-          },
-          async first<T>() {
-            if (sql.includes('WHERE c.id = ?'))
-              return { ...baseContractRow, value_flag: 'value_suspect' } as T;
-            return null as T;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-        return statement;
-      },
-    } as unknown as D1Database;
+    // No cpv_division_stats route at all: were the read to happen, the double would reject rather
+    // than quietly answer, so the assertion below cannot pass for the wrong reason.
+    const fake = fakeD1([
+      { when: 'WHERE c.id = ?', first: { ...baseContractRow, value_flag: 'value_suspect' } },
+      { when: 'authority_totals', first: null },
+      { when: 'company_totals', first: null },
+      { when: 'FROM lots l', all: [] },
+      { when: 'FROM amendments', all: [] },
+    ]);
 
-    const detail = await getContract(db, 'c:1');
+    const detail = await getContract(fake.db, 'c:1');
 
     expect(detail?.cohort).toBeNull();
-    expect(cohortQueried).toBe(false);
+    expect(fake.sql.some((sql) => sql.includes('cpv_division_stats'))).toBe(false);
   });
 
   it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {

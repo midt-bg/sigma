@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, throwingD1, type FakeD1Call } from '@sigma/test-support';
 import {
   EIK_CONTRACTS_SQL,
   LINK_CONTRACTS_SQL,
@@ -46,38 +47,30 @@ function row(over: Record<string, unknown> = {}) {
   };
 }
 
-// Minimal D1 stand-in: all() returns the rows registered for the FIRST bound value (the scope key). Records
-// every (sql, key) bind on `.binds` so a test can assert how many reads a load issued (e.g. ЕИК dedup).
-function fakeDb(
-  byKey: Record<string, unknown[]>,
-): D1Database & { binds: { sql: string; key: string }[] } {
-  const binds: { sql: string; key: string }[] = [];
-  const db = {
-    binds,
-    prepare(sql = '') {
-      let key = '';
-      // A contract read (by ЕИК or link_key) can bind the SAME value a scope query already used (a company
-      // page binds the ЕИК for both COMPANY_SQL and EIK_CONTRACTS_SQL), so contract reads are STRICTLY
-      // namespaced under a `contracts:` key — never falling back to the scope rows (which would map link rows
-      // as contracts). A scope query with no contract rows registered simply reads an empty contract set.
-      const isContractRead = sql === EIK_CONTRACTS_SQL || sql === LINK_CONTRACTS_SQL;
-      return {
-        bind(...p: unknown[]) {
-          key = String(p[0]);
-          binds.push({ sql, key });
-          return this;
-        },
-        async all() {
-          const results = isContractRead ? byKey[`contracts:${key}`] : byKey[key];
-          return { results: results ?? [] };
-        },
-        async first() {
-          return null;
-        },
-      };
-    },
-  };
-  return db as unknown as D1Database & { binds: { sql: string; key: string }[] };
+// Minimal D1 stand-in: all() returns the rows registered for the FIRST bound value (the scope key).
+// Exposes the shared double's own call log on `.calls` so a test can assert how many reads a load
+// issued (e.g. ЕИК dedup) — the log already carries the SQL and the binds this used to project.
+function fakeDb(byKey: Record<string, unknown[]>): D1Database & { calls: FakeD1Call[] } {
+  // A contract read (by ЕИК or link_key) can bind the SAME value a scope query already used (a company
+  // page binds the ЕИК for both COMPANY_SQL and EIK_CONTRACTS_SQL), so contract reads are STRICTLY
+  // namespaced under a `contracts:` key — never falling back to the scope rows (which would map link rows
+  // as contracts). A scope query with no contract rows registered simply reads an empty contract set.
+  const contracts =
+    (sql: string) =>
+    (call: { sql: string; binds: unknown[] }): unknown[] => {
+      // Markers match by substring; the double this replaced dispatched on `sql === EIK_CONTRACTS_SQL`,
+      // so the equality it asserted belongs inside the route rather than being widened by the move.
+      expect(call.sql).toBe(sql);
+      return byKey[`contracts:${String(call.binds[0])}`] ?? [];
+    };
+  const fake = fakeD1([
+    { when: EIK_CONTRACTS_SQL, all: contracts(EIK_CONTRACTS_SQL) },
+    { when: LINK_CONTRACTS_SQL, all: contracts(LINK_CONTRACTS_SQL) },
+    { when: 'FROM interest_links il', all: (call) => byKey[String(call.binds[0])] ?? [] },
+  ]);
+  // Object.assign, not a cast: `calls` is the live array the double already keeps, so the handle
+  // types as the intersection without anyone having to assert it is a D1Database.
+  return Object.assign(fake.db, { calls: fake.calls });
 }
 
 describe('related-persons queries', () => {
@@ -178,7 +171,9 @@ describe('related-persons queries', () => {
     expect(res!.contracts['111']).toHaveLength(1);
     expect('temporal' in res!.contracts['111']![0]!).toBe(false);
     // …and the ЕИК contract set was READ exactly once, though two links share it
-    const eikReads = db.binds.filter((b) => b.sql === EIK_CONTRACTS_SQL && b.key === '111');
+    const eikReads = db.calls.filter(
+      (call) => call.sql === EIK_CONTRACTS_SQL && String(call.binds[0]) === '111',
+    );
     expect(eikReads).toHaveLength(1);
   });
 
@@ -211,21 +206,7 @@ describe('related-persons queries', () => {
 // A D1 whose statements throw D1's „no such table" — the свързани-лица migration (0003) not yet applied to
 // this env. Every conflict read must degrade (empty/null), never 500.
 function throwingDb(err: Error): D1Database {
-  return {
-    prepare() {
-      return {
-        bind() {
-          return this;
-        },
-        async all(): Promise<never> {
-          throw err;
-        },
-        async first(): Promise<never> {
-          throw err;
-        },
-      };
-    },
-  } as unknown as D1Database;
+  return throwingD1(err).db;
 }
 
 describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {

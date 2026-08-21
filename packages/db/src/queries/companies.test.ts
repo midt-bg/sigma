@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1Call } from '@sigma/test-support';
 import { listCompanies, streamCompaniesCsv, type CompanyListParams } from './companies';
 import type { CompanyTotalsRow } from './rows';
 
@@ -43,35 +44,26 @@ const unfilteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
   },
 ];
 
-function usesFilteredCompanySource(sql: string): boolean {
-  return sql.includes('FROM (') && sql.includes('substr(t.cpv_code, 1, 2)');
-}
+// The scoped base-aggregation CTE a sector/year/EU cross-cut switches the FROM source to, as opposed
+// to the plain company_totals rollup.
+const FILTERED_SOURCE = ['FROM (', 'substr(t.cpv_code, 1, 2)'];
+
+/** Keyset page: everything after the `bidder_id` the query bound as its cursor. */
+const after = (rows: (CompanyTotalsRow & { sort_value: number })[]) => (call: FakeD1Call) =>
+  rows.filter((r) => r.bidder_id > String(call.binds.at(-2)));
 
 function fakeDb(): D1Database {
-  return {
-    prepare(sql: string) {
-      let bound: unknown[] = [];
-      return {
-        bind(...args: unknown[]) {
-          bound = args;
-          return this;
-        },
-        async all<T>() {
-          const rows = usesFilteredCompanySource(sql) ? filteredRows : unfilteredRows;
-          if (sql.includes('ORDER BY bidder_id')) {
-            const afterId = bound.at(-2) as string;
-            return { results: rows.filter((r) => r.bidder_id > afterId) as T[] };
-          }
-          return { results: rows as T[] };
-        },
-        async first<T>() {
-          return {
-            n: usesFilteredCompanySource(sql) ? filteredRows.length : unfilteredRows.length,
-          } as T;
-        },
-      };
-    },
-  } as D1Database;
+  return fakeD1([
+    // The CSV stream pages by bidder_id; the list query carries a sort_value column instead. Keeping
+    // the two apart by their own marker means breaking either one throws rather than falling through
+    // to the other and quietly returning an unpaginated page.
+    { when: [...FILTERED_SOURCE, 'ORDER BY bidder_id'], all: after(filteredRows) },
+    { when: [...FILTERED_SOURCE, 'AS sort_value'], all: filteredRows },
+    { when: FILTERED_SOURCE, first: { n: filteredRows.length } },
+    { when: ['FROM company_totals', 'ORDER BY bidder_id'], all: after(unfilteredRows) },
+    { when: ['FROM company_totals', 'AS sort_value'], all: unfilteredRows },
+    { when: 'FROM company_totals', first: { n: unfilteredRows.length } },
+  ]).db;
 }
 
 describe('streamCompaniesCsv', () => {
