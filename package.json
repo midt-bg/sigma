@@ -17,6 +17,8 @@
     "check:docs:test": "node --test scripts/check-docs.test.mjs",
     "check:coverage": "node scripts/check-coverage.mjs",
     "check:coverage:test": "node --test scripts/check-coverage.test.mjs",
+    "check:fake-d1": "node scripts/check-fake-d1.mjs",
+    "check:fake-d1:test": "node --test scripts/check-fake-d1.test.mjs",
     "format": "prettier --write .",
     "setup": "node scripts/setup.mjs",
     "import": "node scripts/import.mjs",
