@@ -8,7 +8,12 @@ import type {
   OwnershipKind,
 } from '@sigma/api-contract';
 import { ENTITY_TYPES } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import {
+  MASKED_NATURAL_PERSON_LABEL,
+  cleanName,
+  entityName,
+  isNaturalPersonBidder,
+} from '@sigma/shared';
 import { authoritySlug, companySlug } from './identity';
 import { sectorRef } from './sectors';
 
@@ -44,19 +49,36 @@ export interface CompanyTotalsRow {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  legal_form: string | null;
 }
 
 export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {
-  const hasEik = r.eik_valid === 1 && Boolean(r.eik);
+  // Privacy (PR #183 review): a sole trader / natural person has the same `ЕТ` / sole-trader signal
+  // in the rollup as on the detail page and in the CSV/JSON exports. Mask ЕИК and the source name
+  // here so /companies, /companies.data (RRv7 single-fetch twin), and the home top-10 all carry
+  // the masked values — they share this mapper, so the new branch covers all three in one place.
+  //
+  // Consortium guard mirrors the CSV streamer (`bidder_kind !== 'consortium' && isNaturalPersonBidder(...)`
+  // in companies.ts): isNaturalPersonBidder's docstring delegates JV filtering to the caller, so a
+  // consortium whose first member is a sole trader (e.g. "ЕТ Иван Петров; Строй ООД") would
+  // otherwise over-mask — losing the "… и др." shape and the consortium ЕИК. The guard keeps the
+  // JV's name + ЕИК verbatim.
+  //
+  // The unmasked name is also held back from `displayName`: a masked row must read "Частно лице"
+  // everywhere on the list page (and on the home page) — exposing the masked `displayName` next
+  // to a null ЕИК would let a crawler infer the natural-person class without needing the ЕИК.
+  const isNaturalPerson =
+    r.kind !== 'consortium' && isNaturalPersonBidder(cleanName(r.name), r.legal_form);
+  const name = isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : cleanName(r.name);
   return {
     slug: companySlug(r.bidder_id),
-    name: cleanName(r.name),
-    displayName: entityName(cleanName(r.name), r.kind),
+    name,
+    displayName: isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : entityName(name, r.kind),
     kind: r.kind,
     isConsortium: r.kind === 'consortium',
-    eik: r.eik,
+    eik: isNaturalPerson ? null : r.eik,
     eikValid: r.eik_valid === 1,
-    hasEik,
+    hasEik: isNaturalPerson ? false : r.eik_valid === 1 && Boolean(r.eik),
     ownershipKind: r.ownership_kind,
     settlement: r.settlement,
     sector: sectorRef(r.primary_sector),

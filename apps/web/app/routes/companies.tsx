@@ -1,5 +1,11 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, money, moneyBare, parseConsortiumMembers } from '@sigma/shared';
+import {
+  count,
+  MASKED_NATURAL_PERSON_LABEL,
+  money,
+  moneyBare,
+  parseConsortiumMembers,
+} from '@sigma/shared';
 import { getCompanyFacets, listCompanies, getDb } from '@sigma/db';
 import type { CompanyListItem } from '@sigma/api-contract';
 import type { Route } from './+types/companies';
@@ -40,8 +46,21 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response. (PR #183 review #1:
+  // the leaderboard list exposes masked sole-trader rows in `toCompanyListItem`; the marker
+  // ensures the .data twin — RRv7 single-fetch — also carries noindex when ANY row on the page
+  // is masked, so search engines don't surface the masked twin separately from the HTML.)
+  const headers: Record<string, string> = {
+    'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(1800),
+  };
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    headers['X-Privacy-Mask'] = 'applied';
+  }
+  return headers;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -57,6 +76,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     getCompanyFacets(db),
     getCoverageMeta(db),
   ]);
+  // Privacy (PR #183 review #1): if any row on this page was masked by the shared
+  // `toCompanyListItem` mapper (sole trader / natural person), stamp the privacy-mask marker so
+  // the worker `hardenResponse` translates it into `X-Robots-Tag: noindex` on the `.data` twin
+  // (RRv7 single-fetch). The marker is internal — it never reaches the client. Mirrors the
+  // company-detail loader's per-row marker pattern.
+  if (page.items.some((c) => c.name === MASKED_NATURAL_PERSON_LABEL)) {
+    return Response.json({ page, facets, coverage }, { headers: { 'X-Privacy-Mask': 'applied' } });
+  }
   return { page, facets, coverage };
 }
 
