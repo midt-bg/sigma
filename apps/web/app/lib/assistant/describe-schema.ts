@@ -72,10 +72,14 @@ export const TABLES: TableDoc[] = [
   },
   {
     name: 'amendments',
-    grain: 'един анекс',
+    grain: 'един анекс към договор',
     columns:
-      'id, natural_key, unp (=УНП, свързва tenders/contracts), contract_number, ' +
-      'value_before, value_after, value_delta, currency, published_at',
+      'id, natural_key, unp (=УНП = tenders.source_id), contract_number (свържи по ДВЕТЕ: ' +
+      't.source_id = am.unp AND c.contract_number = am.contract_number — само unp НЕ е достатъчно), ' +
+      'value_before, value_after, value_delta (в `currency`, НЕ в EUR — НЕ сумирай между валути; ' +
+      'за EUR ползвай contracts.amount_eur / current_value_eur), currency, published_at, ' +
+      'value_suspect (1 = съмнително двойно броене — value_after/value_delta са НЕНАДЕЖДНИ, ' +
+      'изключи ги с value_suspect = 0), value_restated (1 = стойността е поправена по текста на основанието)',
   },
   {
     name: 'parties',
