@@ -113,7 +113,11 @@ describe('retrieveSchemaContext', () => {
     expect(index.query).toHaveBeenCalledTimes(1);
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ namespace: 'schema-v2' }),
+      // returnMetadata:'all' is load-bearing, not a default: real Vectorize returns NO metadata
+      // unless asked, and the fake hands back `metadata.text` regardless — so without this pin,
+      // dropping the option stays green here while production keeps every chunk text-less (kept=0,
+      // silent full-dictionary fallback on every turn).
+      expect.objectContaining({ namespace: 'schema-v2', returnMetadata: 'all' }),
     );
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
@@ -123,17 +127,25 @@ describe('retrieveSchemaContext', () => {
 
   it('drops matches below the relevance floor (so an off-topic top-K falls back to the full dictionary)', async () => {
     const ai = fakeAI();
+    // Derived from the floor (± epsilon), like every other floor fixture: a recalibration (#318)
+    // above a hardcoded 0.6 would fail this test for a regression that does not exist.
     const index = fakeIndex([
-      { id: 'schema-v2:table:lots', score: 0.6, metadata: { text: 'релевантно' } },
-      { id: 'schema-v2:table:parties', score: 0.1, metadata: { text: 'нерелевантно' } },
+      { id: 'schema-v2:table:lots', score: MIN_SCHEMA_SCORE + 0.05, metadata: { text: 'релевантно' } },
+      {
+        id: 'schema-v2:table:parties',
+        score: MIN_SCHEMA_SCORE - 0.05,
+        metadata: { text: 'нерелевантно' },
+      },
     ]);
-    // Only the above-floor chunk survives; the 0.1 match is discarded rather than injected as "context".
+    // Only the above-floor chunk survives; the below-floor match is discarded rather than injected as "context".
     expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual(['релевантно']);
   });
 
   it('returns [] when every match is below the floor (buildSystemPrompt then uses the full dictionary)', async () => {
     const ai = fakeAI();
-    const index = fakeIndex([{ id: 'schema-v2:table:x', score: 0.05, metadata: { text: 'x' } }]);
+    const index = fakeIndex([
+      { id: 'schema-v2:table:x', score: MIN_SCHEMA_SCORE - 0.05, metadata: { text: 'x' } },
+    ]);
     expect(await retrieveSchemaContext(ai, index, 'нищо общо')).toEqual([]);
   });
 
@@ -177,6 +189,40 @@ describe('retrieveSchemaContext', () => {
       },
     });
     expect(out).toEqual(['релевантно']);
+  });
+
+  it('an ASYNC sink that rejects is defused too — no unhandled rejection escapes the turn', async () => {
+    // `(stats) => void` accepts an async function; its rejection is not a sync throw, so the
+    // try/catch alone would let it surface as an unhandled rejection (logged as an error by the
+    // runtime — the opposite of best-effort).
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    // The web tsconfig carries Workers types, not Node's — reach the test runtime's process via globalThis.
+    type Proc = { on(e: string, f: (r: unknown) => void): void; off(e: string, f: (r: unknown) => void): void };
+    const proc = (globalThis as unknown as { process: Proc }).process;
+    proc.on('unhandledRejection', onUnhandled);
+    try {
+      const ai = fakeAI();
+      const index = fakeIndex([
+        { id: 'schema-v2:table:lots', score: MIN_SCHEMA_SCORE + 0.05, metadata: { text: 'x' } },
+      ]);
+      const out = await retrieveSchemaContext(ai, index, 'въпрос', {
+        onStats: async () => {
+          throw new Error('async sink down');
+        },
+      });
+      const hits = await semanticSearch(ai, fakeIndex([]), 'нещо', {
+        onStats: async () => {
+          throw new Error('async entity sink down');
+        },
+      });
+      await new Promise((r) => setTimeout(r, 0)); // let any stray rejection reach the handler
+      expect(out).toEqual(['x']);
+      expect(hits).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      proc.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('reports zeros when embedding yields no query vector (no silent stats gap)', async () => {
@@ -233,7 +279,7 @@ describe('semanticSearch', () => {
     expect(index.query).toHaveBeenCalledTimes(1);
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ namespace: 'entity-v1' }),
+      expect.objectContaining({ namespace: 'entity-v1', returnMetadata: 'all' }), // see the schema twin
     );
     expect(index.query).toHaveBeenCalledWith(
       expect.anything(),
@@ -287,9 +333,7 @@ describe('semanticSearch', () => {
       },
     ]);
     const stats: SemanticSearchStats[] = [];
-    const out = await semanticSearch(ai, index, 'детски градини', undefined, undefined, (s) =>
-      stats.push(s),
-    );
+    const out = await semanticSearch(ai, index, 'детски градини', { onStats: (s) => stats.push(s) });
     // kept must describe the actual return value; matched=0 would mean empty/unindexed namespace.
     expect(stats).toEqual([{ matched: 2, kept: 1 }]);
     expect(out).toHaveLength(1);
@@ -303,7 +347,7 @@ describe('semanticSearch', () => {
       { id: 'e1', metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } } as unknown as Match,
       { id: 'e2', score: 0, metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' } },
     ]);
-    const out = await semanticSearch(ai, index, 'детски градини', 8, 0);
+    const out = await semanticSearch(ai, index, 'детски градини', { topK: 8, minScore: 0 });
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ ref: 'eik:2', score: 0 });
   });
