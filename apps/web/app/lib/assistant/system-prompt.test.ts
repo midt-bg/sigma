@@ -85,13 +85,21 @@ describe('buildSystemPrompt', () => {
       upsert: async (vectors: VectorRecord[]) => {
         stored.push(...vectors);
       },
-      query: async (_v: number[], opts: { topK: number; namespace?: string }) => ({
+      query: async (
+        _v: number[],
+        opts: { topK: number; namespace?: string; returnMetadata?: boolean | 'all' | 'indexed' },
+      ) => ({
         matches: stored
           .filter((r) => r.namespace === opts.namespace)
           .slice(0, opts.topK)
           // Score just above the floor: derived, so a MIN_SCHEMA_SCORE recalibration cannot
-          // silently flip this test onto the fallback branch.
-          .map((r) => ({ id: r.id, score: MIN_SCHEMA_SCORE + 0.01, metadata: r.metadata })),
+          // silently flip this test onto the fallback branch. Metadata ONLY when asked for, like
+          // the real index (default 'none') — so this seam also proves the read side asks.
+          .map((r) => ({
+            id: r.id,
+            score: MIN_SCHEMA_SCORE + 0.01,
+            metadata: opts.returnMetadata === 'all' ? r.metadata : undefined,
+          })),
       }),
     };
     await indexSchemaCorpus(ai, index);

@@ -125,7 +125,9 @@ export function buildSchemaChunks(): SchemaChunk[] {
 // re-purposes chunk ids. Within a version, upsert mutates ids IN PLACE and never deletes — a
 // removal would leave an orphan vector forever eligible for topK, and `query:${i}` ids are
 // positional, so a mid-array insert re-points every later id at different content. Pure appends
-// and in-place refinements of an existing chunk's text are safe without a bump.
+// and in-place refinements of an existing chunk's text need no bump — but they STILL need a re-run
+// of indexSchemaCorpus: retrieval returns the `metadata.text` stored at index time, never the
+// current TABLES/CANONICAL_QUERIES source, so an un-indexed edit ships stale prompt text.
 export const SCHEMA_NS = 'schema-v2';
 
 /** On provisioning / after a SCHEMA_NS bump: embed the schema chunks and upsert them into SCHEMA_NS. */
@@ -187,7 +189,13 @@ export interface RetrieveOptions {
 
 function reportStats<S>(onStats: ((stats: S) => void) | undefined, stats: S): void {
   try {
-    onStats?.(stats);
+    // Called synchronously (a sync throw lands in the catch), and a returned promise is defused too:
+    // `=> void` accepts an async sink, whose rejection would otherwise escape as an unhandled
+    // rejection — logged as an error by the runtime, the opposite of "best-effort".
+    const r: unknown = onStats?.(stats);
+    if (r && typeof (r as { then?: unknown }).then === 'function') {
+      (r as Promise<unknown>).catch(() => {});
+    }
   } catch {
     // Observability is best-effort by contract — never let it degrade retrieval.
   }
@@ -270,17 +278,24 @@ export interface SemanticSearchStats {
   kept: number;
 }
 
+// Mirror of RetrieveOptions — the same contract in the same shape, so a caller that only wants
+// stats does not have to pass `undefined, undefined, cb` positionally.
+export interface SemanticSearchOptions {
+  topK?: number;
+  minScore?: number;
+  // Same best-effort contract as RetrieveOptions.onStats: invoked in reportStats' try/catch, so a
+  // throwing sink can never cost the tool its hits.
+  onStats?: (stats: SemanticSearchStats) => void;
+}
+
 /** Vector search over indexed entity/contract titles — complements the FTS keyword tool. */
 export async function semanticSearch(
   ai: EmbeddingRunner,
   index: VectorIndex,
   query: string,
-  topK = 8,
-  minScore = MIN_ENTITY_SCORE,
-  // Same best-effort contract as RetrieveOptions.onStats: invoked in reportStats' try/catch, so a
-  // throwing sink can never cost the tool its hits.
-  onStats?: (stats: SemanticSearchStats) => void,
+  opts: SemanticSearchOptions = {},
 ): Promise<SemanticHit[]> {
+  const { topK = 8, minScore = MIN_ENTITY_SCORE, onStats } = opts;
   const [vec] = await embed(ai, [query]);
   if (!vec) {
     reportStats(onStats, { matched: 0, kept: 0 });
