@@ -34,6 +34,26 @@ describe('embeddingRunnerFor', () => {
     );
   });
 
+  it('names the TYPE of a non-object response and never its content (the `in` TypeError echo)', async () => {
+    // `'data' in 'some body'` throws "Cannot use 'in' operator to search for 'data' in some body" —
+    // V8 puts the operand in the message, so a text/primitive body would land in the log through
+    // the keys-only path. The adapter must name the type instead.
+    const body = 'колко плати община Пловдив — gateway said no';
+    for (const [out, tag] of [
+      [body, 'string'],
+      [null, 'null'],
+      [42, 'number'],
+    ] as const) {
+      const { ai } = fakeBinding(out as unknown as Record<string, unknown>);
+      const err = await embeddingRunnerFor(ai)
+        .run(EMBED_MODEL, { text: ['а'] })
+        .then(() => undefined, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain(`не-обект: ${tag}`);
+      expect((err as Error).message).not.toContain('Пловдив');
+    }
+  });
+
   it('rejects an EMPTY data array for a non-empty input instead of reading [] as success', async () => {
     // `[]` is truthy: a presence-only check would return { data: [] } and embed()'s count error
     // would then blame "0 embeddings" instead of the real cause — a provider answering with an
