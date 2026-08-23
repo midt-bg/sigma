@@ -25,7 +25,9 @@ export function embeddingRunnerFor(ai: Ai): EmbeddingRunner {
       // meant to be keys-only. Name the TYPE, never the value.
       if (typeof out !== 'object' || out === null) {
         const kind: string = out === null ? 'null' : typeof out;
-        throw new Error(`embeddings: неочаквана форма на отговора от ${EMBED_MODEL} (не-обект: ${kind})`);
+        throw new Error(
+          `embeddings: неочаквана форма на отговора от ${EMBED_MODEL} (не-обект: ${kind})`,
+        );
       }
       // `data.length > 0` too, not just presence: an empty `data: []` is truthy and would read as
       // "success" here for a NON-empty input (embed() never calls the adapter with empty texts) —

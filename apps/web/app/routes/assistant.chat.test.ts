@@ -71,13 +71,23 @@ describe('POST /assistant/chat (route door)', () => {
     // The embed call carries the route's question, through the typed bridge, to the real model id.
     expect(AI.run).toHaveBeenCalledWith(EMBED_MODEL, { text: [QUESTION] });
     // The agent receives the kept chunks AND the server-authoritative question.
-    const opts = m.runAssistant.mock.calls[0]?.[0] as { schemaContext?: string[]; ctx: { userQuestion?: string } };
+    const opts = m.runAssistant.mock.calls[0]?.[0] as {
+      schemaContext?: string[];
+      ctx: { userQuestion?: string };
+    };
     expect(opts.schemaContext).toEqual(['chunk A']);
     expect(opts.ctx.userQuestion).toBe(QUESTION);
     // Exactly one structured stats line; counts only.
-    const stats = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('assistant.rag'));
+    const stats = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('assistant.rag'));
     expect(stats).toHaveLength(1);
-    expect(JSON.parse(stats[0] ?? '')).toEqual({ evt: 'assistant.rag', matched: 2, aboveFloor: 1, kept: 1 });
+    expect(JSON.parse(stats[0] ?? '')).toEqual({
+      evt: 'assistant.rag',
+      matched: 2,
+      aboveFloor: 1,
+      kept: 1,
+    });
     for (const c of [...log.mock.calls, ...error.mock.calls]) {
       expect(String(c[0])).not.toContain('Пловдив');
     }

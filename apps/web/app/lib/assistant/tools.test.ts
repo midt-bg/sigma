@@ -118,7 +118,11 @@ describe('semantic_search', () => {
   const vec = () => Array.from({ length: EMBED_DIM }, () => 0.1);
   function wired(matches: Array<{ id: string; score: number; metadata: Record<string, string> }>) {
     const c = ctx();
-    c.ai = { run: vi.fn(async (_m: string, inputs: { text: string[] }) => ({ data: inputs.text.map(vec) })) };
+    c.ai = {
+      run: vi.fn(async (_m: string, inputs: { text: string[] }) => ({
+        data: inputs.text.map(vec),
+      })),
+    };
     c.vectorize = {
       upsert: vi.fn(async () => undefined),
       query: vi.fn(async () => ({ matches })),
@@ -131,8 +135,16 @@ describe('semantic_search', () => {
   it('renders the above-floor hits and emits the counts-only stats line (never the query)', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const c = wired([
-      { id: 'e1', score: MIN_ENTITY_SCORE + 0.05, metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' } },
-      { id: 'e2', score: MIN_ENTITY_SCORE - 0.05, metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' } },
+      {
+        id: 'e1',
+        score: MIN_ENTITY_SCORE + 0.05,
+        metadata: { kind: 'company', ref: 'eik:1', title: 'Фирма' },
+      },
+      {
+        id: 'e2',
+        score: MIN_ENTITY_SCORE - 0.05,
+        metadata: { kind: 'company', ref: 'eik:2', title: 'Друга' },
+      },
     ]);
     const out = await runTool('semantic_search', { query: QUERY }, c);
     expect(out).toBe(`company eik:1 — Фирма (${(MIN_ENTITY_SCORE + 0.05).toFixed(3)})`);

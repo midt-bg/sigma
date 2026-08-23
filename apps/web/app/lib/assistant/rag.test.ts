@@ -130,7 +130,11 @@ describe('retrieveSchemaContext', () => {
     // Derived from the floor (± epsilon), like every other floor fixture: a recalibration (#318)
     // above a hardcoded 0.6 would fail this test for a regression that does not exist.
     const index = fakeIndex([
-      { id: 'schema-v2:table:lots', score: MIN_SCHEMA_SCORE + 0.05, metadata: { text: 'релевантно' } },
+      {
+        id: 'schema-v2:table:lots',
+        score: MIN_SCHEMA_SCORE + 0.05,
+        metadata: { text: 'релевантно' },
+      },
       {
         id: 'schema-v2:table:parties',
         score: MIN_SCHEMA_SCORE - 0.05,
@@ -198,7 +202,10 @@ describe('retrieveSchemaContext', () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     // The web tsconfig carries Workers types, not Node's — reach the test runtime's process via globalThis.
-    type Proc = { on(e: string, f: (r: unknown) => void): void; off(e: string, f: (r: unknown) => void): void };
+    type Proc = {
+      on(e: string, f: (r: unknown) => void): void;
+      off(e: string, f: (r: unknown) => void): void;
+    };
     const proc = (globalThis as unknown as { process: Proc }).process;
     proc.on('unhandledRejection', onUnhandled);
     try {
@@ -333,7 +340,9 @@ describe('semanticSearch', () => {
       },
     ]);
     const stats: SemanticSearchStats[] = [];
-    const out = await semanticSearch(ai, index, 'детски градини', { onStats: (s) => stats.push(s) });
+    const out = await semanticSearch(ai, index, 'детски градини', {
+      onStats: (s) => stats.push(s),
+    });
     // kept must describe the actual return value; matched=0 would mean empty/unindexed namespace.
     expect(stats).toEqual([{ matched: 2, kept: 1 }]);
     expect(out).toHaveLength(1);

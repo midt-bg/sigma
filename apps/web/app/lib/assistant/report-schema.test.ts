@@ -195,7 +195,11 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
               header: 'Институция',
               align: null as unknown as undefined,
               format: 'text',
-              link: { kind: 'authority', idCol: 'authority_id', href: 'javascript:alert(1)' } as never,
+              link: {
+                kind: 'authority',
+                idCol: 'authority_id',
+                href: 'javascript:alert(1)',
+              } as never,
             },
           ],
         },
@@ -554,7 +558,7 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
   });
 
-  it('does NOT flag a bare млн./млрд. unit (the site\'s own column-header style carries no number)', () => {
+  it("does NOT flag a bare млн./млрд. unit (the site's own column-header style carries no number)", () => {
     // The abbreviation flags only behind a spelled numeral; alone it is a unit, exactly like "хил.".
     expect(findProseNumbers('Стойност (млн. €)')).toHaveLength(0);
     expect(findProseNumbers('Стойност млн. €')).toHaveLength(0); // "Сто-йност" is not "сто"
@@ -581,7 +585,11 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('Илион')).toHaveLength(0);
     expect(findProseNumbers('маси за билярд')).toHaveLength(0);
     const out = bindReport(
-      { title: 'Павилиони по спирки — възложители', question: '', blocks: [{ type: 'text', md: 'Няма данни.' }] },
+      {
+        title: 'Павилиони по спирки — възложители',
+        question: '',
+        blocks: [{ type: 'text', md: 'Няма данни.' }],
+      },
       results,
     );
     expect(out.ok).toBe(true);
