@@ -53,6 +53,26 @@ describe('errorText', () => {
     expect(out).toBe('no such column: eik');
   });
 
+  it('still redacts a needle whose whitespace differs from the collapsed message (shift-enter question)', () => {
+    // The message is collapsed to one line BEFORE matching; a needle typed with a newline, a tab or
+    // a double space (composer shift-enter) would otherwise never match the echo it is meant to blank.
+    const question = 'колко плати\nобщина Пловдив\t на  фирма Х';
+    const out = errorText(new Error(`400 invalid input: ${question}`), [question]);
+    expect(out).not.toContain('Пловдив');
+    expect(out).toBe('400 invalid input: «редактирано»');
+  });
+
+  it('judges the length floor on the collapsed needle, so whitespace padding cannot lift a short one over it', () => {
+    // 'eik' wrapped in 12 chars of whitespace is still 'eik' once collapsed — below the floor.
+    const out = errorText(new Error('no such column: eik'), ['   \n\t  eik   \n  ']);
+    expect(out).toBe('no such column: eik');
+  });
+
+  it('stays total when a non-string sneaks into redact (never throws inside a catch block)', () => {
+    const bad = [undefined, 42, null] as unknown as string[];
+    expect(errorText(new Error('x'.repeat(10)), bad)).toBe('x'.repeat(10));
+  });
+
   it('collapses a multi-line message to one line (prefix-keyed greps must not lose the tail)', () => {
     expect(errorText(new Error('ред 1\n  ред 2\tред 3'))).toBe('ред 1 ред 2 ред 3');
   });
