@@ -544,10 +544,33 @@ describe('findProseNumbers', () => {
     // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
     expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
     expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
+    expect(findProseNumbers('двадесет и пет млн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('петте млн')).not.toHaveLength(0);
+    expect(findProseNumbers('стотици млн. евро')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко млрд.')).not.toHaveLength(0);
     // Long-scale forms and the top of the prefix list stay closed.
     expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
     expect(findProseNumbers('децилион')).not.toHaveLength(0);
     expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
+  });
+
+  it('does NOT flag a bare млн./млрд. unit (the site\'s own column-header style carries no number)', () => {
+    // The abbreviation flags only behind a spelled numeral; alone it is a unit, exactly like "хил.".
+    expect(findProseNumbers('Стойност (млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност млн. €')).toHaveLength(0); // "Сто-йност" is not "сто"
+    expect(findProseNumbers('Похарчено, млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Сума (хил. €)')).toHaveLength(0);
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'spent_eur', header: 'Похарчено (млн. €)', format: 'money' }],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it('does NOT flag ordinary words that merely END in -илион (павилион — a routine tender subject)', () => {
