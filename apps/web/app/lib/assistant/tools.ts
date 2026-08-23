@@ -139,17 +139,12 @@ const semanticSearchTool: AssistantTool = {
   async execute(args, ctx) {
     if (!ctx.ai || !ctx.vectorize) return 'Семантичното търсене не е налично в момента.';
     try {
-      const hits = await semanticSearch(
-        ctx.ai,
-        ctx.vectorize,
-        str(args.query),
-        undefined,
-        undefined,
+      const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query), {
         // Same structured, counts-only discipline as the route's assistant.rag line (issue #318):
         // kept=0 with matched>0 = the floor dropped everything; matched=0 = empty/unindexed
         // namespace. Never the query text.
-        (stats) => console.log(JSON.stringify({ evt: 'assistant.semantic', ...stats })),
-      );
+        onStats: (stats) => console.log(JSON.stringify({ evt: 'assistant.semantic', ...stats })),
+      });
       if (hits.length === 0) return 'Няма семантични съвпадения.';
       return hits.map((h) => `${h.kind} ${h.ref} — ${h.title} (${h.score.toFixed(3)})`).join('\n');
     } catch (e) {

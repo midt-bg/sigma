@@ -8,22 +8,24 @@
 
 ## Какво има (имплементирано)
 
-| Файл                        | Роля                                                                               | Спец.        | Проверка  |
-| --------------------------- | ---------------------------------------------------------------------------------- | ------------ | --------- |
-| `report-schema.ts`          | Block речник + **сървърно обвързване на стойностите**                              | §4, §9.1, §7 | unit      |
-| `sql-guard.ts`              | Read-only структурен guard + LIMIT + byte cap                                      | §7, §9.4     | unit      |
-| `sql-ast-guard.ts`          | AST guard: read-only + table allowlist + no-cross-join + function denylist + LIMIT | §9.4         | unit      |
-| `describe-schema.ts`        | Куриран речник на данните с капаните                                               | §9.2         | unit      |
-| `rag.ts`                    | Vectorize + Workers AI RAG (grounding + semantic search)                           | _добавка_    | unit      |
-| `system-prompt.ts`          | emit-report политика, values-by-reference, data-trust, скелет                      | §4/§7/§9.10  | unit      |
-| `tool-results.ts`           | D1 редове → хендълнат `QueryResult`                                                | §7           | unit      |
-| `eop-fetch.ts`              | `eop_fetch` — валидация + fixed base (no SSRF) + cap                               | §9.7         | unit      |
-| `source-link.ts`            | Официални линкове (ЦАИС ЕОП) за цитиране                                           | §3           | unit      |
-| `emit-report-schema.ts`     | Структурна валидация + model-facing JSON Schema                                    | §4           | unit      |
-| `render-format.ts`          | format-by-hint + entity-ref линкове                                                | §4           | unit      |
-| `tools.ts`                  | Tool registry (SDK-агностичен) + `finalizeReport`                                  | §2/§3        | unit      |
-| `agent.ts`                  | Vercel AI SDK glue: BgGPT през AI Gateway + `streamText`                           | §2/§9.5      | typecheck |
-| `routes/assistant.chat.tsx` | Stateless chat ресурс route                                                        | §2/§5        | typecheck |
+| Файл                        | Роля                                                                               | Спец.        | Проверка            |
+| --------------------------- | ---------------------------------------------------------------------------------- | ------------ | ------------------- |
+| `report-schema.ts`          | Block речник + **сървърно обвързване на стойностите**                              | §4, §9.1, §7 | unit                |
+| `sql-guard.ts`              | Read-only структурен guard + LIMIT + byte cap                                      | §7, §9.4     | unit                |
+| `sql-ast-guard.ts`          | AST guard: read-only + table allowlist + no-cross-join + function denylist + LIMIT | §9.4         | unit                |
+| `describe-schema.ts`        | Куриран речник на данните с капаните                                               | §9.2         | unit                |
+| `rag.ts`                    | Vectorize + Workers AI RAG (grounding + semantic search)                           | _добавка_    | unit                |
+| `system-prompt.ts`          | emit-report политика, values-by-reference, data-trust, скелет                      | §4/§7/§9.10  | unit                |
+| `tool-results.ts`           | D1 редове → хендълнат `QueryResult`                                                | §7           | unit                |
+| `eop-fetch.ts`              | `eop_fetch` — валидация + fixed base (no SSRF) + cap                               | §9.7         | unit                |
+| `source-link.ts`            | Официални линкове (ЦАИС ЕОП) за цитиране                                           | §3           | unit                |
+| `emit-report-schema.ts`     | Структурна валидация + model-facing JSON Schema                                    | §4           | unit                |
+| `render-format.ts`          | format-by-hint + entity-ref линкове                                                | §4           | unit                |
+| `tools.ts`                  | Tool registry (SDK-агностичен) + `finalizeReport`                                  | §2/§3        | unit                |
+| `bindings.ts`               | Единственият типизиран мост Ai → `EmbeddingRunner` (#316)                          | §2           | unit                |
+| `log-safety.ts`             | Leak-safe текст на грешка за ВСЕКИ catch: без stack/cause, редакция на входа       | §7           | unit                |
+| `agent.ts`                  | Vercel AI SDK glue: BgGPT през AI Gateway + `streamText`                           | §2/§9.5      | unit (stream error) |
+| `routes/assistant.chat.tsx` | Stateless chat ресурс route                                                        | §2/§5        | unit (route door)   |
 
 **Проверено:** `pnpm --filter web typecheck` → 0; целият тестов пакет на `apps/web` преминава (бройката
 расте с всяко ревю — не я кодираме тук, `pnpm --filter web test` я показва); `pnpm audit --audit-level=high`
@@ -69,7 +71,10 @@ wrangler secret put BGGPT_API_KEY                                            # �
 **Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
 на векторите носят версията. Версията се bump-ва при всяка промяна, която маха, размества или
 пре-осмисля chunk id-та (виж правилото „WHEN TO BUMP" в `rag.ts`; чисто добавяне или редакция на
-текста на съществуващ chunk минава без bump). След bump `indexSchemaCorpus` се пуска отново: пише се
+текста на съществуващ chunk НЕ иска bump). **ВСЯКА промяна в корпуса — включително редакция на текст —
+иска повторно пускане на `indexSchemaCorpus`:** retrieval-ът връща `metadata.text`, записан при
+индексирането, а не текущия текст от кода; bump-ът решава само дали се пише нов кохорт, или се
+презаписват същите id-та. След bump `indexSchemaCorpus` пише
 НОВ кохорт вектори, старият остава непокътнат (rollback на Worker-а продължава да работи срещу него),
 а среда без ре-индекс просто връща 0 чънка и асистентът пада към пълния статичен речник (безопасно,
 но без RAG grounding). Стар кохорт се чисти чак когато rollback прозорецът към неговия release е
