@@ -248,10 +248,14 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // Inflections (милиона/милиарди/милионен) and "милионер" still match — over-flagging toward an
   // unbound figure is the safe direction; "Илион" (Troy) and "билярд" (the game) no longer do.
   // Digit forms are already caught by `\d{5,}` above.
-  // млрд/млн are stems too: "дванадесет млрд." has neither a digit (the \d…млрд pattern above needs
-  // one) nor a full-word suffix — the abbreviation must flag on its own (review f/u, ydimitrof).
+  // млрд/млн flag when a SPELLED NUMERAL precedes them: "дванадесет млрд." has neither a digit (the
+  // \d…млрд pattern above needs one) nor a full-word suffix (review f/u, ydimitrof). Bare, they are
+  // a UNIT — "Стойност (млн. €)" is the site's own column-header style and carries no number — so the
+  // abbreviation alone must not flag (it did, rejecting unit-only headers — review f/u). The numeral
+  // list is the closed class of Bulgarian cardinals (1–19, tens, hundreds) plus the vague quantifiers.
   // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
-  /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд|млрд|млн/giu, // spelled magnitudes
+  /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд/giu, // spelled magnitudes
+  /(?<!\p{L})(?:един|една|едно|два|две|три|четири|пет|шест|седем|осем|девет|десет|(?:един|два|три|четири|пет|шест|седем|осем|девет)надесет|(?:два|три|четири|пет|шест|седем|осем|девет)десет|сто|двеста|триста|(?:четири|пет|шест|седем|осем|девет)стотин|половин|няколко|десетки|стотици)(?:те|та|то)?(?!\p{L})[\s\u00a0]+(?:млрд|млн)/giu, // numeral + млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
