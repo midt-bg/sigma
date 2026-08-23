@@ -26,6 +26,16 @@ const MIN_REDACT_CHARS = 8;
 const REDACTED = '«редактирано»';
 const UNPRINTABLE = '«грешка без текстово представяне»';
 
+/**
+ * One line, single spaces, no edge whitespace. Applied to BOTH the message and every `redact`
+ * needle: the needle comes from the composer (shift-enter newlines, tabs, double spaces) and the
+ * message is collapsed before matching, so an un-collapsed needle would silently stop matching the
+ * very echo it is meant to blank.
+ */
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 /** Slice by CODE POINTS, so a cap can never cut an emoji in half and emit a lone surrogate. */
 function capCodePoints(text: string, max: number): string {
   const points = Array.from(text);
@@ -50,9 +60,13 @@ export function errorText(error: unknown, redact: readonly string[] = []): strin
   // One line per event: a multi-line message would emit continuation lines without the `[assistant]`
   // prefix, so prefix-keyed greps/alerts (and any downstream redaction) would miss exactly the tail
   // where an echoed input would sit.
-  let out = raw.replace(/\s+/g, ' ').trim();
+  let out = collapseWhitespace(raw);
   for (const needle of redact) {
-    if (needle && needle.length >= MIN_REDACT_CHARS) out = out.split(needle).join(REDACTED);
+    // Normalise the needle the same way as the message — the length floor must also be judged on
+    // the collapsed form, or runs of whitespace could pad a too-short needle past it. The typeof
+    // check keeps the function total against a non-string slipping through the `unknown` boundary.
+    const n = typeof needle === 'string' ? collapseWhitespace(needle) : '';
+    if (n.length >= MIN_REDACT_CHARS) out = out.split(n).join(REDACTED);
   }
   return capCodePoints(out, MAX_LOG_MESSAGE_CHARS);
 }
