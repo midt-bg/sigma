@@ -18,6 +18,15 @@ export function embeddingRunnerFor(ai: Ai): EmbeddingRunner {
   return {
     run: async (model, inputs) => {
       const out = await ai.run(model, { text: inputs.text });
+      // The types say `out` is an object; the RUNTIME may disagree (a gateway answering 200 with a
+      // JSON primitive or a text body). `'data' in out` then THROWS, and V8 embeds the stringified
+      // operand in that TypeError's message ("Cannot use 'in' operator to search for 'data' in
+      // <the body>") — the body would smuggle itself into the log through the very path that is
+      // meant to be keys-only. Name the TYPE, never the value.
+      if (typeof out !== 'object' || out === null) {
+        const kind: string = out === null ? 'null' : typeof out;
+        throw new Error(`embeddings: неочаквана форма на отговора от ${EMBED_MODEL} (не-обект: ${kind})`);
+      }
       // `data.length > 0` too, not just presence: an empty `data: []` is truthy and would read as
       // "success" here for a NON-empty input (embed() never calls the adapter with empty texts) —
       // the inverse failure of the missing-key case, named separately for the operator (review

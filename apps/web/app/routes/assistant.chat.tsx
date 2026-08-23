@@ -127,10 +127,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         onStats: (stats) => console.log(JSON.stringify({ evt: 'assistant.rag', ...stats })),
       });
     } catch (error) {
-      // Message only, never the raw error object: a Workers AI/Vectorize error could echo the
-      // embedded input, and the user's question must not land in logs (see log-safety.ts).
+      // Message only, never the raw error object — and the question passed for REDACTION: this is
+      // the call that embeds it, so a Workers AI/Vectorize error is the likeliest place for it to
+      // be echoed, and it must not land in logs (see log-safety.ts — only the needle closes an echo;
+      // the cap and the stack-drop merely bound it).
       console.error(
-        `[assistant] rag retrieval failed — full-dictionary fallback: ${errorText(error)}`,
+        `[assistant] rag retrieval failed — full-dictionary fallback: ${errorText(error, [question])}`,
       );
       schemaContext = undefined;
     }
