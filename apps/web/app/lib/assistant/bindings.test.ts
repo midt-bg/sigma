@@ -47,7 +47,10 @@ describe('embeddingRunnerFor', () => {
       const { ai } = fakeBinding(out as unknown as Record<string, unknown>);
       const err = await embeddingRunnerFor(ai)
         .run(EMBED_MODEL, { text: ['а'] })
-        .then(() => undefined, (e: unknown) => e);
+        .then(
+          () => undefined,
+          (e: unknown) => e,
+        );
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain(`не-обект: ${tag}`);
       expect((err as Error).message).not.toContain('Пловдив');

@@ -33,7 +33,13 @@ function failingModel(statusCode: number, isRetryable: boolean) {
 }
 
 function ctx(): ToolContext {
-  return { db: {} as never, results: [], rowsRead: 0, rowsReadBudget: 1000, userQuestion: QUESTION };
+  return {
+    db: {} as never,
+    results: [],
+    rowsRead: 0,
+    rowsReadBudget: 1000,
+    userQuestion: QUESTION,
+  };
 }
 
 async function runToEnd(): Promise<string> {

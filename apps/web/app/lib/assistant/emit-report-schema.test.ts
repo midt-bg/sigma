@@ -117,14 +117,17 @@ describe('validateEmitShape', () => {
     const facts = (sub: unknown) => ({
       title: 't',
       question: '',
-      blocks: [{ type: 'facts', items: [{ term: 'x', ref: { resultId: 'R1', row: 0, col: 'c' }, sub }] }],
+      blocks: [
+        { type: 'facts', items: [{ term: 'x', ref: { resultId: 'R1', row: 0, col: 'c' }, sub }] },
+      ],
     });
     expect(validateEmitShape(facts(undefined)).ok).toBe(true);
     expect(validateEmitShape(facts(null)).ok).toBe(true);
     expect(validateEmitShape(facts('пояснение')).ok).toBe(true);
     const num = validateEmitShape(facts(12000000));
     expect(num.ok).toBe(false);
-    if (!num.ok) expect(num.errors).toEqual(['block[0] (facts): items[0] needs {term, ref, sub?:string}']);
+    if (!num.ok)
+      expect(num.errors).toEqual(['block[0] (facts): items[0] needs {term, ref, sub?:string}']);
     expect(validateEmitShape(facts({ a: 1 })).ok).toBe(false);
   });
 
