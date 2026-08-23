@@ -108,8 +108,24 @@ describe('validateEmitShape', () => {
     });
     expect(validateEmitShape(tbl('right')).ok).toBe(true);
     expect(validateEmitShape(tbl(undefined)).ok).toBe(true);
+    expect(validateEmitShape(tbl(null)).ok).toBe(true); // a model's "not given" — not a retry
     expect(validateEmitShape(tbl('center')).ok).toBe(false);
     expect(validateEmitShape(tbl('"><b>')).ok).toBe(false);
+  });
+
+  it('type-checks the optional facts `sub` (a number there is an unbound figure AND a TypeError downstream)', () => {
+    const facts = (sub: unknown) => ({
+      title: 't',
+      question: '',
+      blocks: [{ type: 'facts', items: [{ term: 'x', ref: { resultId: 'R1', row: 0, col: 'c' }, sub }] }],
+    });
+    expect(validateEmitShape(facts(undefined)).ok).toBe(true);
+    expect(validateEmitShape(facts(null)).ok).toBe(true);
+    expect(validateEmitShape(facts('пояснение')).ok).toBe(true);
+    const num = validateEmitShape(facts(12000000));
+    expect(num.ok).toBe(false);
+    if (!num.ok) expect(num.errors).toEqual(['block[0] (facts): items[0] needs {term, ref, sub?:string}']);
+    expect(validateEmitShape(facts({ a: 1 })).ok).toBe(false);
   });
 
   it('caps oversized model arrays (blocks, items, columns)', () => {

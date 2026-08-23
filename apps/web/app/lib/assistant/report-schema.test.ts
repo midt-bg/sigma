@@ -180,6 +180,42 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
     }
   });
 
+  it('rebuilds `link` from its known fields and folds a null align — no model-supplied key rides through', () => {
+    // validateEmitShape does not reject unknown keys, so the rebuild must be explicit one level DOWN
+    // too: an `href` smuggled inside `link` must not reach the frozen report (a renderer that reads
+    // it would take the model's URL over the canonical one).
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: null as unknown as undefined,
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id', href: 'javascript:alert(1)' } as never,
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const col = out.report.blocks[0].columns[0];
+      expect(col).toEqual({
+        key: 'authority',
+        header: 'Институция',
+        format: 'text',
+        link: { kind: 'authority', idCol: 'authority_id' },
+      });
+      expect(col).not.toHaveProperty('align');
+      expect(JSON.stringify(col)).not.toContain('href');
+    }
+  });
+
   it('rejects a table whose link idCol is absent from the result', () => {
     const out = bindReport(
       emit([
@@ -508,6 +544,24 @@ describe('findProseNumbers', () => {
     // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
     expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
     expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
+    // Long-scale forms and the top of the prefix list stay closed.
+    expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
+    expect(findProseNumbers('децилион')).not.toHaveLength(0);
+    expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
+  });
+
+  it('does NOT flag ordinary words that merely END in -илион (павилион — a routine tender subject)', () => {
+    // The bare suffix matched "павилиони" and rejected a legitimate title as an unbound number the
+    // model could not rewrite; the suffix is anchored to the numeral prefixes instead (review f/u).
+    expect(findProseNumbers('Доставка на павилиони за автобусни спирки')).toHaveLength(0);
+    expect(findProseNumbers('Павилион на спирката')).toHaveLength(0);
+    expect(findProseNumbers('Илион')).toHaveLength(0);
+    expect(findProseNumbers('маси за билярд')).toHaveLength(0);
+    const out = bindReport(
+      { title: 'Павилиони по спирки — възложители', question: '', blocks: [{ type: 'text', md: 'Няма данни.' }] },
+      results,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {

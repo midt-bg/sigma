@@ -239,16 +239,19 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // Matching the SUFFIXES — not an explicit list — closes the row upward for good: an earlier list stopped
   // at квадрилион and let "3 квинтилиона лева" slip (the currency pattern can't bridge the digit to "лева"
   // across the word), the exact "12 млрд." defamation vector some orders up (review #80 + f/u, ydimitrof).
-  // Near-collisions exist only on the -лион side ("Илион"/Троя — or any other word ending in -лион)
-  // and are ACCEPTED: for a gate that must fail TOWARD flagging an unbound figure, over-flagging is
-  // the safe direction, and the procurement/currency register rarely contains such words. If
-  // legitimate reports ever get rejected over this, reach for a `\p{L}` lookaround word boundary
-  // (JS `\b` is ASCII-only) rather than growing an exception list (review f/u, ydimitrof).
+  // The suffixes are ANCHORED to the numeral prefixes (м-, б-, тр-, квадр-, квинт-, секст-, септ-,
+  // окт-, нон-, дец-: every Bulgarian magnitude through 10^33) rather than matched bare: the bare
+  // suffix also matched "павилион(и)" — kiosks/bus-stop shelters, a ROUTINE tender subject — and
+  // rejected a legitimate title as an unbound number the model cannot rewrite (review f/u). A
+  // `\p{L}` lookaround cannot separate "пав-илион" from "секст-илион" (both start at a word edge),
+  // so the prefix list is the right tool; it stays closed upward for any real-world magnitude.
+  // Inflections (милиона/милиарди/милионен) and "милионер" still match — over-flagging toward an
+  // unbound figure is the safe direction; "Илион" (Troy) and "билярд" (the game) no longer do.
   // Digit forms are already caught by `\d{5,}` above.
   // млрд/млн are stems too: "дванадесет млрд." has neither a digit (the \d…млрд pattern above needs
   // one) nor a full-word suffix — the abbreviation must flag on its own (review f/u, ydimitrof).
   // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
-  /илион|илиард|хиляд|млрд|млн/giu, // spelled magnitudes + inflections; хиляд(а/и); млрд/млн
+  /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд|млрд|млн/giu, // spelled magnitudes
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
@@ -483,13 +486,16 @@ export function bindReport(
             gateProse(col.header, `${at}: material number in column header "${col.key}"`, errors);
           // Build each resolved column EXPLICITLY (not `{ ...c }`) so only the known fields reach the
           // renderer — a spread would carry any extra model-supplied property (validateEmitShape does
-          // not reject unknown keys) straight through. `align` is enum-validated upstream.
+          // not reject unknown keys) straight through. The same goes one level DOWN: `link` is rebuilt
+          // from its two known fields, not copied by reference, or an extra key inside it (an `href`)
+          // would ride into the frozen report. `align`/`link` are enum-validated upstream; a `null`
+          // (accepted there as "not given") folds to absent here.
           const columns: EmitTableColumn[] = b.columns.map((c) => ({
             key: c.key,
             header: sanitizeProse(c.header),
-            ...(c.align !== undefined ? { align: c.align } : {}),
+            ...(c.align != null ? { align: c.align } : {}),
             format: c.format,
-            ...(c.link !== undefined ? { link: c.link } : {}),
+            ...(c.link != null ? { link: { kind: c.link.kind, idCol: c.link.idCol } } : {}),
           }));
           if (r.rows.length === 0) {
             // An empty (0-row) result carries no column metadata, so requireCols would reject every
