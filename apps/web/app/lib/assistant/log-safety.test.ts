@@ -73,6 +73,55 @@ describe('errorText', () => {
     expect(errorText(new Error('x'.repeat(10)), bad)).toBe('x'.repeat(10));
   });
 
+  it('redacts a JSON-escaped echo (a provider quoting the input inside a JSON error body)', () => {
+    // The common provider shape: the raw body becomes `.message`; a `"` in the question arrives as
+    // `\"` and a shift-enter newline as the two characters `\n` — neither is the verbatim needle.
+    const question = 'колко плати община "Пловдив"\nна фирма Х за 2024';
+    const body = JSON.stringify({ error: { message: `invalid input: ${question}` } });
+    const out = errorText(new Error(body), [question]);
+    expect(out).not.toContain('Пловдив');
+    expect(out).toContain('«редактирано»');
+    expect(out).toContain('invalid input'); // the diagnostic survives
+  });
+
+  it('redacts a TRUNCATED echo of a long input (the embed path caps what it sends)', () => {
+    const question = `колко плати община Пловдив на фирма Х ${'и още текст '.repeat(200)}`;
+    const echoed = question.slice(0, 2048); // what a provider would quote back
+    const out = errorText(new Error(`3010: invalid input: ${echoed}`), [question]);
+    expect(out).not.toContain('Пловдив');
+    expect(out).toContain('3010: invalid input: «редактирано»');
+  });
+
+  it('blanks a long echoed question as ONE run, not a prefix of it', () => {
+    // Pre-cap regression guard: the raw message is bounded before matching, so a needle must still
+    // be blanked in full even when the message is longer than the bound.
+    const question = `${'в'.repeat(100)} ${'община Пловдив '.repeat(1200)}`.trim();
+    const out = errorText(new Error(`err: ${question}`), [question]);
+    expect(out).not.toContain(question.slice(0, 40));
+    expect(out).toBe('err: «редактирано»');
+  });
+
+  it('leaves an unrelated message untouched by the windowed matcher', () => {
+    const question = 'колко плати община Пловдив на фирма Х за 2024 година';
+    const msg = 'Асистентът временно не е достъпен: no such column: total_value';
+    expect(errorText(new Error(msg), [question])).toBe(msg);
+  });
+
+  it('caps a multi-megabyte message to the same line as a short one (pre-cap is invisible)', () => {
+    // No timing assertion (flaky in CI); the pre-cap's effect is that this completes in ms, and the
+    // OUTPUT must be identical to the uncapped computation.
+    const out = errorText(new Error('x'.repeat(4 << 20)));
+    expect(out).toBe(`${'x'.repeat(MAX_LOG_MESSAGE_CHARS)}…`);
+  });
+
+  it('never emits a lone surrogate even when the raw pre-cap boundary falls inside an emoji', () => {
+    for (const pad of [19199, 19198]) {
+      const out = errorText(new Error(`${' '.repeat(pad)}😀 опашка`));
+      expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      expect(out).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    }
+  });
+
   it('collapses a multi-line message to one line (prefix-keyed greps must not lose the tail)', () => {
     expect(errorText(new Error('ред 1\n  ред 2\tред 3'))).toBe('ред 1 ред 2 ред 3');
   });
@@ -108,5 +157,30 @@ describe('stackHead', () => {
     const noStack = new Error('x');
     Object.defineProperty(noStack, 'stack', { value: undefined });
     expect(stackHead(noStack)).toBe('');
+  });
+
+  it('never returns continuation lines of a MULTI-LINE message (V8 prints the whole message first)', () => {
+    // The line the route logs is `${errorText(e, [question])} | ${stackHead(e)}` — if the message
+    // spans lines, "drop line 0" would hand back the question that errorText just redacted.
+    const question = 'колко плати община Пловдив на фирма Х';
+    const err = new Error(`invalid input:\n${question}\n(code 400)`);
+    const out = stackHead(err, 3);
+    expect(out).not.toContain('Пловдив');
+    expect(out).not.toContain('code 400');
+    expect(out).toMatch(/^at /);
+    expect(out.split(' | ').every((f) => f.startsWith('at '))).toBe(true);
+  });
+
+  it('fails CLOSED on a stack with no recognisable frame line (never the header)', () => {
+    const err = new Error('съобщение с въпроса вътре');
+    Object.defineProperty(err, 'stack', { value: 'Error: съобщение с въпроса вътре\nнещо друго' });
+    expect(stackHead(err)).toBe('');
+    const hostile = new Error('x');
+    Object.defineProperty(hostile, 'stack', {
+      get() {
+        throw new Error('getter');
+      },
+    });
+    expect(stackHead(hostile)).toBe('');
   });
 });
