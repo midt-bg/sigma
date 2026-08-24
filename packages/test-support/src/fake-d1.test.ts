@@ -221,6 +221,7 @@ describe('fakeD1 — first() and run()', () => {
     const seen: FakeD1Call[] = [];
     const { db } = fakeD1([{ when: 'DELETE FROM staging', run: (call) => seen.push(call) }]);
     await expect(db.prepare('DELETE FROM staging WHERE id = ?').bind(7).run()).resolves.toEqual({
+      results: [],
       success: true,
       meta: {},
     });
@@ -233,7 +234,7 @@ describe('fakeD1 — first() and run()', () => {
   });
 
   it('records an exec() alongside the prepared statements', async () => {
-    const fake = fakeD1([]);
+    const fake = fakeD1([{ when: 'PRAGMA optimize', run: () => undefined }]);
     await fake.db.exec('PRAGMA optimize');
     expect(fake.sql).toEqual(['PRAGMA optimize']);
   });
@@ -244,6 +245,82 @@ describe('fakeD1 — first() and run()', () => {
     const fake = fakeD1([]);
     const foreign = { bind: () => foreign } as unknown as D1PreparedStatement;
     await expect(fake.db.batch([foreign])).rejects.toThrow(/another database/i);
+  });
+});
+
+describe('fakeD1 — exec() and batch() answer to the same contract', () => {
+  // The write paths in production reach D1 only through batch() (staging, refresh, fx) — never
+  // through prepare().run(). A batch that succeeded whatever it was handed would put the silent
+  // pass this helper exists to kill on the one entry point those paths use.
+
+  it('rejects a batch() statement no route matches', async () => {
+    const fake = fakeD1([{ when: 'DELETE FROM staging', run: () => undefined }]);
+    const error = await rejection(fake.db.batch([fake.db.prepare('INSERT INTO no_such_table')]));
+    expect(error.message).toMatch(/no route matched this batch\(\) query/i);
+    expect(error.message).toContain('INSERT INTO no_such_table');
+  });
+
+  it('rejects the unmatched statement even when an earlier one in the batch matched', async () => {
+    const fake = fakeD1([{ when: 'DELETE FROM staging', run: () => undefined }]);
+    await expect(
+      fake.db.batch([
+        fake.db.prepare('DELETE FROM staging'),
+        fake.db.prepare('INSERT INTO no_such_table'),
+      ]),
+    ).rejects.toThrow(/no route matched/i);
+  });
+
+  it('invokes the matching run() route for each batched statement, with its own binds', async () => {
+    const seen: FakeD1Call[] = [];
+    const fake = fakeD1([{ when: 'DELETE FROM staging', run: (call) => seen.push(call) }]);
+    await fake.db.batch([
+      fake.db.prepare('DELETE FROM staging WHERE id = ?').bind(1),
+      fake.db.prepare('DELETE FROM staging WHERE id = ?').bind(2),
+    ]);
+    expect(seen.map((call) => call.binds)).toEqual([[1], [2]]);
+    expect(seen.map((call) => call.via)).toEqual(['prepare', 'prepare']);
+  });
+
+  it('serves the rows of a matching all() route to a batched SELECT', async () => {
+    const fake = fakeD1([{ when: 'FROM contracts', all: ROWS, meta: { rows_read: 2 } }]);
+    await expect(fake.db.batch([fake.db.prepare('SELECT * FROM contracts')])).resolves.toEqual([
+      { results: ROWS, success: true, meta: { rows_read: 2 } },
+    ]);
+  });
+
+  it('lets a batched statement through without a route when onUnmatched is "empty"', async () => {
+    const fake = recordingD1();
+    await expect(fake.db.batch([fake.db.prepare('INSERT INTO anything')])).resolves.toEqual([
+      { results: [], success: true, meta: {} },
+    ]);
+  });
+
+  it('rejects an exec() no route matches', async () => {
+    const fake = fakeD1([{ when: 'PRAGMA optimize', run: () => undefined }]);
+    await expect(fake.db.exec('DROP TABLE contracts')).rejects.toThrow(
+      /no route matched this exec\(\) query/i,
+    );
+  });
+
+  it('invokes the matching run() route for an exec()', async () => {
+    const seen: FakeD1Call[] = [];
+    const fake = fakeD1([{ when: 'PRAGMA optimize', run: (call) => seen.push(call) }]);
+    await fake.db.exec('PRAGMA optimize');
+    expect(seen.map((call) => call.via)).toEqual(['exec']);
+  });
+
+  it('carries the rows key a real D1Result always has, on run() and batch() alike', async () => {
+    // Masked by the cast to D1Database: without it a reader gets `undefined` from the double where
+    // real D1 hands back `[]`.
+    const fake = fakeD1([{ when: 'DELETE FROM staging', run: () => undefined }]);
+    await expect(fake.db.prepare('DELETE FROM staging').run()).resolves.toEqual({
+      results: [],
+      success: true,
+      meta: {},
+    });
+    await expect(fake.db.batch([fake.db.prepare('DELETE FROM staging')])).resolves.toEqual([
+      { results: [], success: true, meta: {} },
+    ]);
   });
 });
 

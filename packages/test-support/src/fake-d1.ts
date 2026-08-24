@@ -6,7 +6,7 @@
 // emptiness having asserted nothing. A test that goes green while testing nothing is worse than one
 // that goes red, so here an unmatched query THROWS and emptiness is something a test asks for.
 //
-// Not a replacement for packages/ingest/src/test/d1-sqlite.ts: that runs the real SQL against a real
+// Not a replacement for the d1-sqlite.ts facade beside it: that runs the real SQL against a real
 // node:sqlite database. This one is for unit tests of the TypeScript logic *around* a query, where
 // the SQL itself is not under test. scripts/check-fake-d1.mjs keeps both of them the only two.
 
@@ -123,6 +123,15 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   ): FakeD1Route[K] | undefined =>
     routes.find((r) => r[method] !== undefined && matches(r, call.sql))?.[method];
 
+  /**
+   * The first route whose markers appear in this SQL, whatever it answers. `exec()` and `batch()`
+   * do not ask for a particular shape the way `all()`/`first()`/`run()` do — they only need the
+   * statement to be one the test registered, so an unregistered one throws instead of succeeding
+   * against nothing.
+   */
+  const registered = (call: FakeD1Call): FakeD1Route | undefined =>
+    routes.find((r) => matches(r, call.sql));
+
   const statement = (call: FakeD1Call) => {
     const self = {
       bind(...args: unknown[]) {
@@ -130,8 +139,11 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         return self;
       },
       async all() {
+        // The route itself, not `responder()`'s response: `meta` belongs to whichever route
+        // answered, so all() needs the pair. `=== undefined` rather than a falsy test — `all: []`
+        // is a route that deliberately answers "no rows".
         const hit = routes.find((r) => r.all !== undefined && matches(r, call.sql));
-        if (!hit?.all) {
+        if (hit?.all === undefined) {
           if (!lenient) throw unmatched('all', call.sql, routes);
           return { results: [], success: true, meta: {} };
         }
@@ -153,10 +165,10 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         const effect = responder('run', call);
         if (effect === undefined) {
           if (!lenient) throw unmatched('run', call.sql, routes);
-          return { success: true, meta: {} };
+          return { results: [], success: true, meta: {} };
         }
         effect(call);
-        return { success: true, meta: {} };
+        return { results: [], success: true, meta: {} };
       },
     };
     bound.set(self, call);
@@ -168,7 +180,10 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
       return statement(record(statement_, 'prepare'));
     },
     async exec(statement_: string) {
-      record(statement_, 'exec');
+      const call = record(statement_, 'exec');
+      const route = registered(call);
+      if (route === undefined && !lenient) throw unmatched('exec', call.sql, routes);
+      route?.run?.(call);
       return { count: 0, duration: 0 };
     },
     async batch(statements: object[]) {
@@ -178,8 +193,22 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         // A statement not made by this double has no recorded SQL; re-recording an empty string
         // would quietly corrupt the call log, so refuse rather than guess.
         if (!call) throw new Error('fake D1: batch() received a statement from another database');
+        // A second record, under `via: 'batch'`: the prepare() that built this statement already
+        // logged it, and a test asserting how a write reached D1 needs to tell the two apart. Not
+        // a double count — `calls` logs entry points, not distinct statements.
         record(call.sql, 'batch');
-        results.push({ results: [], success: true, meta: {} });
+        const route = registered(call);
+        if (route === undefined) {
+          if (!lenient) throw unmatched('batch', call.sql, routes);
+          results.push({ results: [], success: true, meta: {} });
+          continue;
+        }
+        route.run?.(call);
+        results.push({
+          results: route.all === undefined ? [] : resolve(route.all, call),
+          success: true,
+          meta: resolve(route.meta ?? {}, call),
+        });
       }
       return results;
     },
