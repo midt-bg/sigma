@@ -7,7 +7,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
-import { findCasts, isScannable, staleAllowlistEntries, isMain } from './check-fake-d1.mjs';
+import {
+  findCasts,
+  findAliases,
+  isScannable,
+  staleAllowlistEntries,
+  isMain,
+  SCAN_ROOTS,
+} from './check-fake-d1.mjs';
 
 test('findCasts finds a bare `as D1Database`', () => {
   const hits = findCasts('  } as D1Database;\n');
@@ -87,4 +94,53 @@ test('isMain is true only for the entry module, and survives an encoded path', (
   assert.equal(isMain(url, '/tmp/dir with space/check-fake-d1.mjs'), true);
   assert.equal(isMain(url, '/tmp/other.mjs'), false);
   assert.equal(isMain(url, undefined), false);
+});
+
+// ── the second axis: what gets scanned ─────────────────────────────────────────
+
+test('SCAN_ROOTS covers both workspace roots', () => {
+  // Without this, deleting 'apps' from the list leaves every test in the suite green while web and
+  // etl quietly drop out of enforcement — a silent scope regression of exactly the kind #325 is
+  // about. The pattern being right is only half the gate; the other half is where it is applied.
+  assert.deepEqual([...SCAN_ROOTS].sort(), ['apps', 'packages']);
+});
+
+// ── aliasing: a cast the pattern cannot see ────────────────────────────────────
+
+test('findAliases catches a local type alias — `as unknown as DBAlias` evades findCasts', () => {
+  const hits = findAliases('type DBAlias = D1Database;\n');
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].line, 1);
+  assert.match(hits[0].snippet, /DBAlias/);
+  // The evasion itself: the cast that follows carries no D1Database token at all.
+  assert.equal(findCasts('const db = {} as unknown as DBAlias;').length, 0);
+});
+
+test('findAliases catches a renamed type import', () => {
+  const hits = findAliases("import type { D1Database as DB } from '@cloudflare/workers-types';\n");
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].snippet, /D1Database as DB/);
+});
+
+test('findAliases catches an interface extending D1Database', () => {
+  assert.equal(findAliases('interface Handle extends D1Database {}\n').length, 1);
+});
+
+test('findAliases leaves an ordinary annotation alone — the gate bans casts, not types', () => {
+  // A binding declared as D1Database is how honest code names it. Flagging these would make the
+  // gate fire on every Env type in the repo, and a gate that cries wolf gets weakened.
+  assert.deepEqual(findAliases('type Env = { DB: D1Database };\n'), []);
+  assert.deepEqual(findAliases('export function q(db: D1Database) {}\n'), []);
+  assert.deepEqual(findAliases('let db: D1Database | undefined;\n'), []);
+});
+
+test('findAliases ignores an alias written in a comment or a string', () => {
+  assert.deepEqual(findAliases('// type DBAlias = D1Database;\n'), []);
+  assert.deepEqual(findAliases('const doc = "type DBAlias = D1Database";\n'), []);
+});
+
+test('findAliases reports the 1-based line of a hit further down the file', () => {
+  const hits = findAliases('const a = 1;\n\ntype Handle = D1Database;\n');
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].line, 3);
 });

@@ -23,7 +23,9 @@ import { join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const SCAN_ROOTS = ['apps', 'packages'];
+// Exported so the self-test can pin it: a pattern that is right but applied to half the repo is
+// a gate that passes while enforcing nothing.
+export const SCAN_ROOTS = ['apps', 'packages'];
 const SKIP_DIRS = new Set([
   'node_modules',
   '.git',
@@ -49,6 +51,13 @@ export const ALLOWED = [
 // giving an object literal that type. The `as unknown as` alternative must come FIRST: the shorter
 // spelling is a suffix of the longer one, so a naive pattern reports two casts for one.
 const CAST = /\bas\s+unknown\s+as\s+D1Database\b|\bas\s+D1Database\b|\bsatisfies\s+D1Database\b/g;
+
+// One line of indirection defeats CAST: `type DBAlias = D1Database` and then `as unknown as
+// DBAlias` carries no D1Database token for the pattern to find. Renaming the type on import, or
+// extending it, does the same. Give the type a second name outside the allowlist and the gate
+// treats that as the offence — there is no honest reason for a test to need one.
+const ALIAS =
+  /\btype\s+[A-Za-z_$][\w$]*\s*=\s*D1Database\s*(?=[;\n]|$)|\bD1Database\s+as\s+[A-Za-z_$][\w$]*|\binterface\s+[A-Za-z_$][\w$]*\s+extends\s+D1Database\b/g;
 
 // ── pure helpers (unit-tested in check-fake-d1.test.mjs) ───────────────────────
 
@@ -154,17 +163,30 @@ export function blankNonCode(source) {
   return out.join('');
 }
 
-/** Every D1Database cast in `source`, as `{ line, snippet }`, ignoring comments and literals. */
-export function findCasts(source) {
+function scan(pattern, source) {
   const code = blankNonCode(source);
   const hits = [];
-  CAST.lastIndex = 0;
+  pattern.lastIndex = 0;
   let match;
-  while ((match = CAST.exec(code)) !== null) {
+  while ((match = pattern.exec(code)) !== null) {
     const line = code.slice(0, match.index).split('\n').length;
     hits.push({ line, snippet: match[0].replace(/\s+/g, ' ') });
   }
   return hits;
+}
+
+/** Every D1Database cast in `source`, as `{ line, snippet }`, ignoring comments and literals. */
+export function findCasts(source) {
+  return scan(CAST, source);
+}
+
+/**
+ * Every second name given to D1Database in `source`. An ordinary annotation — `db: D1Database`, or
+ * a field on an Env type — is not one: the gate bans casting a hand-rolled object to the type, not
+ * naming the type.
+ */
+export function findAliases(source) {
+  return scan(ALIAS, source);
 }
 
 /** Only TypeScript sources can hold the cast; .mjs scripts and data files cannot. */
@@ -215,13 +237,27 @@ function main() {
 
   const allowed = new Set(ALLOWED);
   const offenders = [];
+  const aliases = [];
   let castCount = 0;
   for (const file of files) {
     if (allowed.has(file)) continue;
-    const hits = findCasts(readFileSync(join(ROOT, file), 'utf8'));
-    if (hits.length === 0) continue;
-    offenders.push({ file, hits });
-    castCount += hits.length;
+    const source = readFileSync(join(ROOT, file), 'utf8');
+    const hits = findCasts(source);
+    if (hits.length > 0) {
+      offenders.push({ file, hits });
+      castCount += hits.length;
+    }
+    for (const hit of findAliases(source)) aliases.push({ file, hit });
+  }
+
+  if (aliases.length > 0) {
+    for (const { file, hit } of aliases) console.error(`${file}:${hit.line}: ${hit.snippet}`);
+    console.error(
+      `\ncheck-fake-d1: ${aliases.length} second name(s) for D1Database outside the allowlist. ` +
+        'Casting to an alias is still casting to D1Database, and the gate cannot see it — build ' +
+        'the double with fakeD1()/recordingD1()/throwingD1() from @sigma/test-support (#325).',
+    );
+    process.exit(1);
   }
 
   if (offenders.length > 0) {
