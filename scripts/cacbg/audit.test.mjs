@@ -302,6 +302,22 @@ test('D — a previously published link that vanished under an UNCHANGED rules_v
   assert.match(out, /p9\|200000002/);
 });
 
+test('D — a pre-evidence-regime link (null rules_version) that vanished is a declared removal, not a finding', () => {
+  // The transition case #309 introduced and no test covered: links published BEFORE
+  // interest_link_evidence existed carry no evidence row, so load.mjs's LEFT JOIN leaves their
+  // snapshot rules_version null. The pre-#309 regime is gone, so their disappearance under the current
+  // regime is intentional by definition — not a silent recall. Before this test the fallback
+  // `?? RULES_VERSION` masked the missing rows and turned the whole legacy set into hard findings on
+  // the first post-#309 staging run (32736025202: 37 regressions, 0 declared removals).
+  const { threw, out } = buildAndAudit({
+    ...ONE_LINK,
+    snapshot: [{ link_key: 'p9|200000002', rules_version: null }],
+  });
+  assert.equal(threw, false, 'a pre-evidence-regime removal must not fail the build');
+  assert.match(out, /p9\|200000002/, 'but it must still be reported');
+  assert.match(out, /pre-evidence regime/, 'the ground must name the transition, not print "null"');
+});
+
 test('D — the same disappearance under a CHANGED rules_version is a printed diff, not a finding', () => {
   // Removal stays an intentional event: bumping the rules version is how you declare one.
   const { threw, out } = buildAndAudit({

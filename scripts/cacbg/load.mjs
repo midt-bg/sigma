@@ -142,15 +142,24 @@ const usedSuppressions = new Set();
 // set — written, not skipped, so a missing file means „the loader never ran", not „nothing published".
 const priorPublished = (() => {
   try {
-    return db
-      .prepare(
-        `SELECT il.link_key AS link_key, e.rules_version AS rules_version
+    return (
+      db
+        .prepare(
+          `SELECT il.link_key AS link_key, e.rules_version AS rules_version
            FROM interest_links il
            LEFT JOIN interest_link_evidence e ON e.link_key = il.link_key
           WHERE il.status = 'published'`,
-      )
-      .all()
-      .map((r) => ({ link_key: r.link_key, rules_version: r.rules_version ?? RULES_VERSION }));
+        )
+        .all()
+        // rules_version is NOT NULL in interest_link_evidence, so a null here means the LEFT JOIN
+        // missed — the link was published under a regime that had no evidence table at all (before
+        // #309 introduced it). That is exactly the case §8's gate must treat as a rules bump: the
+        // regime that licensed it is gone, so its vanishing under the current regime is intentional,
+        // not a silent recall. Defaulting to RULES_VERSION here erased that distinction and turned a
+        // legitimate one-way transition into 37 hard findings on the first post-#309 staging run
+        // (32736025202). Keep the null; audit.mjs's declaredRemoval reads null !== RULES_VERSION.
+        .map((r) => ({ link_key: r.link_key, rules_version: r.rules_version }))
+    );
   } catch (e) {
     // A first run: interest_links does not exist yet. Any OTHER failure must surface — swallowing it
     // would turn a broken export into a permanently silent gate.
