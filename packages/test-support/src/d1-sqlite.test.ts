@@ -65,8 +65,22 @@ describe('d1FromSqlite', () => {
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM t').get()).toEqual({ n: 2 });
   });
 
+  it('carries the keys a real D1Result always has, on all(), run() and batch() alike', async () => {
+    // The cast to D1Database hides a missing key: a reader gets `undefined` from the facade where
+    // real D1 hands back `[]` or `{}`.
+    expect(await db.prepare('SELECT id FROM t').all()).toMatchObject({ success: true, meta: {} });
+    expect(await db.prepare("INSERT INTO t VALUES ('c', 3)").run()).toEqual({
+      results: [],
+      success: true,
+      meta: {},
+    });
+    expect(await db.batch([db.prepare("INSERT INTO t VALUES ('d', 4)")])).toEqual([
+      { results: [], success: true, meta: {} },
+    ]);
+  });
+
   it('reports one success per batched statement', async () => {
     const out = await db.batch([db.prepare(`INSERT INTO t (id, n) VALUES ('c', 3)`)]);
-    expect(out).toEqual([{ success: true, meta: {} }]);
+    expect(out).toEqual([{ results: [], success: true, meta: {} }]);
   });
 });
