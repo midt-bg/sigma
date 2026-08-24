@@ -11,6 +11,7 @@
 // (name-based) colliding link STILL fails A_multi_eik — the relaxation must not weaken the name gate.
 // Run: node --import ./scripts/cacbg/register-ts.mjs --test scripts/cacbg/audit.test.mjs
 import { test, after } from 'node:test';
+import { RULES_VERSION } from '../tr/evidence.mjs';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
@@ -278,7 +279,7 @@ test('a well-formed seal passes every C axis (positive control)', () => {
 // A one-for-one swap — one link lost, one gained — leaves the count identical and the floor silent
 // while a true published link is dropped. Only a per-key comparison sees it.
 const SEALED = [
-  `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live'`,
+  `'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-05','${RULES_VERSION}','live'`,
 ];
 const ONE_LINK = {
   bidders: [`'b1','УНИК ТЕХ 7 ЕООД','100000001',1`, `'b2','ВТОРА ФИРМА ЕООД','200000002',1`],
@@ -292,8 +293,8 @@ test('D — a previously published link that vanished under an UNCHANGED rules_v
   const { threw, out } = buildAndAudit({
     ...ONE_LINK,
     snapshot: [
-      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
-      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' }, // published last run, gone now
+      { link_key: 'p1|100000001', rules_version: RULES_VERSION },
+      { link_key: 'p9|200000002', rules_version: RULES_VERSION }, // published last run, gone now
     ],
   });
   assert.equal(threw, true, 'a silent recall regression must fail the build');
@@ -331,8 +332,8 @@ test('D — a link taken down through the ADR-0031 suppression path is a declare
       `'il2','p9|200000002','p9','200000002','${K('ВТОРА ФИРМА ЕООД')}','exact_name_key','document','b2','owns',0,1000,'suppressed'`,
     ],
     snapshot: [
-      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
-      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' },
+      { link_key: 'p1|100000001', rules_version: RULES_VERSION },
+      { link_key: 'p9|200000002', rules_version: RULES_VERSION },
     ],
   });
   assert.equal(threw, false, 'the sanctioned takedown path must not fail the build');
@@ -347,8 +348,8 @@ test('D — a snapshot entry acknowledged as a corrected input is a declared rem
   const { threw, out } = buildAndAudit({
     ...ONE_LINK,
     snapshot: [
-      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
-      { link_key: 'p9|200000002', rules_version: 'tr-rules-1', corrected: true },
+      { link_key: 'p1|100000001', rules_version: RULES_VERSION },
+      { link_key: 'p9|200000002', rules_version: RULES_VERSION, corrected: true },
     ],
   });
   assert.equal(threw, false, 'an acknowledged correction must not fail the build');
@@ -365,8 +366,8 @@ test('D — neither escape hatch fires on its own: an unacknowledged, unsuppress
       `'il2','p9|200000002','p9','200000002','${K('ВТОРА ФИРМА ЕООД')}','exact_name_key','document','b2','owns',0,1000,'held'`,
     ],
     snapshot: [
-      { link_key: 'p1|100000001', rules_version: 'tr-rules-1' },
-      { link_key: 'p9|200000002', rules_version: 'tr-rules-1' },
+      { link_key: 'p1|100000001', rules_version: RULES_VERSION },
+      { link_key: 'p9|200000002', rules_version: RULES_VERSION },
     ],
   });
   assert.equal(
@@ -380,7 +381,7 @@ test('D positive control — an unchanged published set produces no monotonicity
   // Without this, a gate that never fires would pass both negatives above.
   const { threw, out } = buildAndAudit({
     ...ONE_LINK,
-    snapshot: [{ link_key: 'p1|100000001', rules_version: 'tr-rules-1' }],
+    snapshot: [{ link_key: 'p1|100000001', rules_version: RULES_VERSION }],
   });
   assert.equal(threw, false);
   assert.doesNotMatch(out, /D_monotonicity/);
