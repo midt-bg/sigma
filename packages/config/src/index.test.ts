@@ -145,8 +145,13 @@ describe('procedureGroup (edge inputs)', () => {
   });
 
   it('falls back via the exported key constant, not a hard-coded literal', () => {
-    // A whitespace-only value trims to '' and an absent value is nullish — both land on the
-    // exported unknown key. Asserted against PROCEDURE_UNKNOWN_KEY, not a hard-coded 'unknown'.
+    // Same destination, two different paths through procedureGroup — worth naming, because the
+    // whitespace case is easy to misread as hitting the nullish guard:
+    //   '   '     → truthy, so it PASSES `if (!procedureType)` and reaches the map lookup, where
+    //               `.get('')` misses and `?? PROCEDURE_UNKNOWN` supplies the fallback.
+    //   undefined/null → falsy, caught by the guard before any lookup.
+    // (The map-miss branch is also covered on its own by the unrecognised-type case above.)
+    // Asserted against PROCEDURE_UNKNOWN_KEY, not a hard-coded 'unknown'.
     expect(procedureGroup('   ').key).toBe(PROCEDURE_UNKNOWN_KEY);
     expect(procedureGroup(undefined).key).toBe(PROCEDURE_UNKNOWN_KEY);
     expect(procedureGroup(null).key).toBe(PROCEDURE_UNKNOWN_KEY);
