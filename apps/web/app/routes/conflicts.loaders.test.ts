@@ -66,6 +66,23 @@ describe('leaderboard loader (/conflicts)', () => {
     };
     expect(res.init.headers['Cache-Control']).toBe('no-store');
   });
+
+  it('slices to the ceiling and warns when the eligible set exceeds it (partial-aggregate guard)', async () => {
+    // The loader fetches ceiling+1 to DETECT truncation; on overflow it slices back to the ceiling and warns an
+    // operator, because per-person aggregates go partial past the cut (niki #312 MEDIUM 2). 1001 sentinels.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    q.getConflictLeaderboard.mockResolvedValue(
+      Array.from({ length: 1001 }, (_, i) => ({
+        linkKey: `p|${i}`,
+        officialSlug: `s${i}`,
+        eik: `${i}`,
+      })),
+    );
+    const res = (await leaderboardLoader({ context } as never)) as { data: { links: unknown[] } };
+    expect(res.data.links).toHaveLength(1000); // sliced to the ceiling, never renders the +1 sentinel
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceed the 1000 ceiling'));
+    warn.mockRestore();
+  });
 });
 
 describe('official loader (/conflicts/official/:id)', () => {
@@ -83,7 +100,9 @@ describe('official loader (/conflicts/official/:id)', () => {
 
   it('returns the conflict payload for a valid official', async () => {
     q.personIdFromSlug.mockReturnValue('person:1');
-    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [] });
+    // Match the real OfficialConflicts DTO shape — incl. the eager `contracts` map added in #287 (niki #312
+    // LOW 1: the untyped mock previously omitted it, the one gap the api-contract type exists to catch).
+    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
     const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { official: string };
     expect(res.official).toBe('Иван Петров');
     expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1');
@@ -113,7 +132,12 @@ describe('company loader (/conflicts/company/:eik)', () => {
   });
 
   it('returns the conflict payload for a valid company', async () => {
-    q.getCompanyConflicts.mockResolvedValue({ company: 'АЛФА ООД', eik: '123456789', links: [] });
+    q.getCompanyConflicts.mockResolvedValue({
+      company: 'АЛФА ООД',
+      eik: '123456789',
+      links: [],
+      contracts: {},
+    });
     const res = (await call(companyLoader, { eik: '123456789' })) as { company: string };
     expect(res.company).toBe('АЛФА ООД');
   });

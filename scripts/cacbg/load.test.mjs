@@ -1490,6 +1490,40 @@ test('a bootstrap pass leaves the REAL work DB untouched — it runs on a throwa
   assert.equal(fs.existsSync(`${DB}.bootstrap`), false, 'the throwaway copy must be cleaned up');
 });
 
+test('a published link with no evidence row (pre-#309 regime) carries null rules_version, not a masking fallback', () => {
+  // The one-way transition #309 introduced. interest_links pre-dates interest_link_evidence: any
+  // link published before ADR-0033 landed has no evidence row and no rules_version to travel with.
+  // Defaulting the LEFT JOIN miss to RULES_VERSION erased that distinction and made the audit see 37
+  // legitimate regime-transition removals as silent recalls on the first post-#309 staging run
+  // (32736025202). The snapshot has to carry null through so declaredRemoval can read it.
+  const SNAP = path.join(STAGING, 'published-snapshot.json');
+  runLoad();
+  // Read-only lookup, then a writable connection to simulate the pre-#309 state.
+  const rdb = open();
+  const preExistingKey = rdb
+    .prepare("SELECT link_key FROM interest_links WHERE status='published' LIMIT 1")
+    .get().link_key;
+  rdb.close();
+  const wdb = new DatabaseSync(DB);
+  // Simulate the pre-#309 state: this key was published before the evidence table existed, so its
+  // evidence row is gone. The current run's REBUILD would resurface it, but the snapshot export
+  // reads what stands BEFORE the wipe — which on staging on 2026-08-24 was 103 such orphaned rows.
+  wdb.prepare('DELETE FROM interest_link_evidence WHERE link_key = ?').run(preExistingKey);
+  wdb.close();
+  runLoad();
+  const snap = JSON.parse(fs.readFileSync(SNAP, 'utf8'));
+  const orphan = snap.find((s) => s.link_key === preExistingKey);
+  assert.ok(
+    orphan,
+    'the pre-evidence link must still appear in the snapshot — the gate needs to see it',
+  );
+  assert.equal(
+    orphan.rules_version,
+    null,
+    'a missing evidence row must surface as null, not as the current RULES_VERSION',
+  );
+});
+
 test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', () => {
   // The end-to-end shape of the merged workflow: real run → bootstrap (to produce the crawl list) →
   // real run. If the bootstrap emptied interest_links, the second real run would export an EMPTY

@@ -738,21 +738,36 @@ export interface ConflictContract {
   temporal: 'contemporaneous' | 'before' | 'after' | 'unknown';
 }
 
-/** The on-demand per-link contract list (the expandable row on /conflicts). */
+/** A winner's contract as carried in the EAGER detail DTOs — everything about `ConflictContract` EXCEPT the
+ *  `temporal` mark. `temporal` is per-LINK (it depends on the office-holder's declared window), but a winner's
+ *  contracts are the SAME for every official linked to it — so the DTO carries the facts ONCE per ЕИК and the
+ *  detail component derives `temporal` per link. This is what stops a company page from serialising the same
+ *  contract set once per official (ydimitrof #312 HIGH 1). */
+export type ConflictContractFacts = Omit<ConflictContract, 'temporal'>;
+
+/** The on-demand per-link contract list (the standalone lazy resource route). */
 export interface LinkContracts {
   linkKey: string;
   contracts: ConflictContract[];
 }
 
-/** One office-holder's declared ownership links. */
+/** One office-holder's declared ownership links, with each WINNER's contracts loaded EAGERLY and deduped by
+ *  ЕИК. The detail page renders the full case (timeline, per-authority shares, contract split) for every link
+ *  with no lazy fetch. `contracts[ЕИК]` is that winner's contract FACTS (read-time ordered union-declared-window
+ *  first, so the cap never drops an in-window contract); the detail component marks each contract's `temporal`
+ *  against the specific link's window. Keyed by ЕИК — one array per winner, not per link. */
 export interface OfficialConflicts {
   official: string;
   links: ConflictLink[];
+  contracts: Record<string, ConflictContractFacts[]>; // ЕИК → the winner's contract facts (temporal derived per link)
 }
 
-/** A winner's page: office-holders with a declared ownership stake in it. */
+/** A winner's page: office-holders with a declared ownership stake in it, with each winner's contracts loaded
+ *  EAGERLY and deduped by ЕИК (a company page has ONE ЕИК → one facts array shared by every official's block),
+ *  mirroring OfficialConflicts. */
 export interface CompanyConflicts {
   company: string;
   eik: string;
   links: ConflictLink[];
+  contracts: Record<string, ConflictContractFacts[]>; // ЕИК → the winner's contract facts
 }
