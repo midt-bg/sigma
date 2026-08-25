@@ -237,6 +237,12 @@ jobs:
           lookup-only: true
           fail-on-cache-miss: true
 
+      # No --allow-partial-corpus, deliberately, and that matters most on the path that does NOT crawl.
+      # A full_crawl=false run (the monthly schedule) restores whatever `restore-keys: cacbg-raw-` returns —
+      # the most RECENT snapshot, which since #313 is routinely a deadline-stopped partial one — and then
+      # extracts from it. Without the stamp that run republishes a surface missing whole years and nothing
+      # downstream notices. With it the run stops here instead, which is the correct outcome: the cache is
+      # still fine to RESUME from, just not to publish from. Dispatch with full_crawl=true to finish it.
       - name: Extract declarations → staging (dedup by ControlHash)
         run: node scripts/cacbg/extract.mjs
 

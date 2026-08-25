@@ -220,6 +220,12 @@ export async function run({
   const pastDeadline = () => now() >= deadlineAt;
   let deadlineHit = false;
 
+  // Clear any prior sentinel BEFORE fetching. From here until the clean exit below the corpus is in flux,
+  // and a stamp from an earlier run would describe a corpus that no longer exists. Clearing first also
+  // means every abnormal exit — deadline stop, circuit breaker, an uncaught throw, the runner being
+  // killed — leaves the corpus unstamped without needing its own cleanup path.
+  fs.rmSync(sentinelPath(rawDir), { force: true });
+
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
     ? override.split(',').map((f) => safeFolder(f.trim()))
@@ -358,7 +364,40 @@ export async function run({
       return 1;
     }
   }
+
+  // The completeness sentinel — written ONLY on a corpus that reconciles against the register's own
+  // list.xml, and removed otherwise. #313 made a partial raw cache an EXPECTED state (the crawl now stops
+  // on its deadline and saves what it has), and `restore-keys: cacbg-raw-` takes the most RECENT snapshot,
+  // not the most complete. Nothing downstream could tell the two apart: extract.mjs walks readdirSync over
+  // whatever files exist and never reconciles them against list.xml, so a truncated corpus re-publishes as
+  // a smaller surface with no error anywhere. The monotonicity gate sees net growth when new links offset
+  // lost ones, the --min-links floor only counts, and a first run in a fresh environment has no baseline
+  // at all.
+  //
+  // So: a partial cache stays perfectly good for RESUMING (the next crawl skips what is on disk) but is
+  // marked unfit for PUBLISHING. --allow-incomplete does not write it either: that flag records that an
+  // operator accepted a shortfall, which is exactly the state a later unattended run must not inherit as
+  // if it were whole.
+  // Gated on the RECONCILED verdict, not on reaching this line: --allow-incomplete lets an accepted
+  // shortfall proceed to exit 0, and stamping there would hand a later unattended run an acceptance that
+  // was never theirs.
+  if (!completeness.incomplete) writeSentinel(rawDir, { folders: folders.length, ...completeness });
   return 0;
+}
+
+/** Sentinel path for a raw corpus directory. Exported so the reader and the writer cannot drift. */
+export const sentinelPath = (rawDir) => path.join(rawDir, '.corpus-complete.json');
+
+/**
+ * Stamp a corpus as publishable. Called on the clean-exit path only; every other path REMOVES the file so
+ * a stale sentinel can never outlive the corpus it described (a resumed crawl that then fails must not
+ * leave yesterday's stamp behind).
+ */
+function writeSentinel(rawDir, summary) {
+  fs.writeFileSync(
+    sentinelPath(rawDir),
+    `${JSON.stringify({ ...summary, stampedAt: new Date().toISOString() }, null, 2)}\n`,
+  );
 }
 
 // Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit/integration tests
