@@ -43,9 +43,12 @@ export function bidderIdFromSlug(slug: string): string | null {
   return null;
 }
 
-/** person id (`person:<name-key>`) → `/conflicts/official/:slug` segment. The key is uppercase Cyrillic
- *  with spaces (companyNameKey output) — not URL-clean — so base64url it, like a name-keyed bidder. Stable
- *  across rebuilds (depends only on the normalised name); never split-parses the `|` that link_key uses. */
+/** person id (`person:<name-key>|<institution-key>`) → `/conflicts/official/:slug` segment. The id encodes
+ *  the (name, institution) grain (ADR-0026; `personId()` in load.mjs) — NOT name alone — so two namesakes in
+ *  different institutions get DISTINCT slugs and never collapse into one page/row. The key is uppercase
+ *  Cyrillic with spaces (companyNameKey output) — not URL-clean — so base64url the WHOLE id (name+institution),
+ *  like a name-keyed bidder. Stable across rebuilds (depends only on the normalised name+institution); encodes
+ *  the id wholesale and never split-parses the internal `|`, nor the extra `|`s that link_key layers on. */
 export function personSlug(personId: string): string {
   return b64urlEncode(personId.startsWith('person:') ? personId.slice(7) : personId);
 }

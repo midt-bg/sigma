@@ -4,15 +4,16 @@ import type { Route } from './+types/conflict.official';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout } from '../components/ui';
-import { ConflictCards } from '../components/ConflictCards';
+import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { declaredStakeNoun } from '../lib/conflicts';
 
-// One office-holder's declared ownership links. Reads private-ownership interest_links only. 404 (not an
-// empty page) when the person has no published link — a bare page under someone's name reads as an
-// unfounded accusation.
+// One office-holder's declared ownership links. Reads published interest_links, which per ADR-0032
+// include a close relative's declared stake alongside the person's own — the relative is never named and
+// the relationship never asserted. 404 (not an empty page) when the person has no published link — a bare
+// page under someone's name reads as an unfounded accusation.
 export function meta({ data, matches, params }: Route.MetaArgs) {
   const name = data?.official ?? 'Длъжностно лице';
   const tags = seoMeta({
@@ -39,7 +40,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 }
 
 export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
-  const { official, links } = loaderData;
+  const { official, links, contracts } = loaderData;
   // Family-AWARE, not family-blind: the page must not assert an own stake above cards that say „свързано
   // лице", and must not go vague where the stake really is the official's own (§2.6).
   const stake = declaredStakeNoun(links);
@@ -61,10 +62,12 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
 
         <Callout titleAs="h2" title="Източник и обхват">
           <p className="m-0">
-            Данните са от собствените декларации на лицето (публичен регистър на КПКОНПИ),
-            съпоставени точно с регистъра на изпълнителите. Показваме само 100% съвпадения, и само
-            когато самоличността на дружеството е потвърдена от Търговския регистър. Сигнал за
-            неточност: <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
+            Данните са от декларациите на лицето пред КПКОНПИ (публичен регистър), съпоставени точно
+            с регистъра на изпълнителите. Показваме деклариран дял — собствен или на свързано лице;
+            името на близкия не се показва и видът на връзката не се твърди. Показваме само 100%
+            съвпадения, и само когато самоличността на дружеството е потвърдена от Търговския
+            регистър. Сигнал за неточност:{' '}
+            <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
           </p>
         </Callout>
 
@@ -73,11 +76,7 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
           title="Деклариран дял в компании изпълнители"
           hint={`Дружества, спечелили обществени поръчки, за които лицето е декларирало ${stake}. Подредени по силата на връзката.`}
         >
-          <ConflictCards
-            links={links}
-            caption={`Деклариран дял на ${official} в компании изпълнители`}
-            omit="official"
-          />
+          <ConflictDetail links={links} contracts={contracts} perspective="official" />
         </Section>
       </main>
     </>

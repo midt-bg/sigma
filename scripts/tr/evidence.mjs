@@ -34,8 +34,15 @@ import {
  * Version of the RULES, not of the code. §8's monotonicity gate keys on this: a previously published
  * link disappearing under an UNCHANGED rules version is a hard finding; under a changed one it is an
  * expected diff. Bump it whenever a rung's meaning changes.
+ *
+ * `tr-rules-2` records the evidence regime that #309 and ADR-0035 introduced and that `tr-rules-1`
+ * never described. Under `tr-rules-1` a link could publish with NO registry evidence at all — the
+ * `interest_link_evidence` table did not yet exist. Publishing now requires a seal, and rung 2 also
+ * requires something beyond the company name to establish the company. Both change what a rung means,
+ * which is exactly what this constant is for; leaving it at `tr-rules-1` made the monotonicity gate
+ * compare two incompatible regimes and report the tightening as 37 silent regressions.
  */
-export const RULES_VERSION = 'tr-rules-1';
+export const RULES_VERSION = 'tr-rules-2';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
