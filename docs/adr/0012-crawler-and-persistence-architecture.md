@@ -18,7 +18,7 @@ PII contained, and fits SIGMA's existing Cloudflare ETL rather than bolting on n
 
 - `fetch.mjs` — pure I/O. Discovers folders, fetches `list.xml` + every declaration into a git-ignored
   **raw cache** (`scratch/cacbg/raw/<year>/`). Resumable by file existence (immutable source ⇒ skip if
-  present), polite (concurrency ≤6, 403/429/5xx exponential backoff, circuit breaker, jitter), and
+  present), polite (concurrency capped in code, 403/429/5xx exponential backoff, circuit breaker, jitter), and
   404-tolerant (listed-but-unpublished files are source gaps, not errors). Path-sanitizes every `xmlFile`.
 - `extract.mjs` — no network. Re-parses the raw cache into structured staging, so the parser can evolve
   without re-fetching. Splits public holdings from internal third-party data (ADR-0010).
@@ -40,3 +40,30 @@ withdrawn/amended) must be expired, else a stale link implies a *current* confli
 - New infrastructure is honestly acknowledged: a rate-limited cached crawler, a JS resolver pass, a
   suppression/correction store, and upstream-schema-drift monitoring — none of which the base ETL had.
 - The raw cache is ~3 GB locally (git-ignored, deleted post-spike); in production it is R2, retained.
+
+### Measured 2026-08-15: a cold corpus does not fit in one CI job
+
+The estimate above (~135k declarations, 2017–2025) was low. The register's own index announces **37 sets
+spanning 2015–2026 and ~281 000 declarations** — the `*y` end-of-year republications and the compliance
+sets roughly double the naive year count. A cold `full_crawl` at concurrency 8 reached 36 of the 37 sets
+in the related-persons-data job's full 300-minute budget and was killed inside the last one.
+
+This does not change the decision, only its operating envelope: **a cold corpus takes more than one run.**
+`fetch.mjs` therefore takes `--deadline-minutes`, stops handing out work when the budget is spent, and
+returns instead of being killed mid-write — a killed crawl keeps writing while the workflow's cache-save
+step reads the same tree, which loses the entire crawl (run 31889519937). Warm runs are unaffected: the
+resumability this ADR already specifies (skip if present) is what makes the next run cheap.
+
+Two is the measured expectation, not a guarantee — the second run's share depends on how much the first
+got through. **Either a re-run or a fresh dispatch resumes**, because the cache key carries
+`run_id`-`run_attempt` and GitHub increments `run_attempt` on a re-run: the save therefore lands on a key
+that does not exist yet, while `restore-keys: cacbg-raw-` still returns the previous attempt's snapshot.
+Keyed on `run_id` alone a re-run could not store what it crawled — the save would be refused onto an
+immutable entry, downgraded to a warning, and the verify step would then certify the loss by finding the
+earlier attempt. That is why `run_attempt` belongs in the key, and not merely in a diagnostic.
+
+The politeness envelope above is restated to match practice: the ceiling is **8**, not the „≤6" this ADR
+originally wrote, and it is now enforced in `parseCrawlOptions` (`MAX_CONCURRENCY`) rather than merely
+described here. It had been describing an unenforced 6 while the workflow ran 8 and the flag accepted any
+positive integer — `--concurrency 500` was a legal way to ask a state register for five hundred parallel
+connections. Lowering it stays a flag; raising it is a code change, which is the point.

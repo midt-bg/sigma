@@ -15,6 +15,8 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
+import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
@@ -114,6 +116,20 @@ function buildTrCache(dbFile, rawDir, spec = {}, { omit = [] } = {}) {
       );
   }
   cache.close();
+
+  // The deeds alone decide nothing now: since ADR-0037 the verdict is reached by the crawler and the
+  // loader only reads it. Run the REAL decision over these fixture deeds, so these tests keep
+  // exercising the evidence ladder end to end instead of hand-written verdict rows.
+  seedVerdicts({
+    workDb: DB,
+    staging: STAGING,
+    trDb: dbFile,
+    deedFor: (eik) => {
+      if (omit.includes(eik)) return null; // never reached — no verdict, an incomplete cache
+      if ((spec[eik] ?? {}).outsideTr) return { outsideTr: true };
+      return readFixtureDeed(rawDir, eik);
+    },
+  });
 }
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
@@ -1172,20 +1188,68 @@ test('a MISSING Trade Register cache refuses the whole load', () => {
   );
 });
 
-test('a PARTIAL cache refuses the load rather than publishing a decimated surface', () => {
-  const partialDb = path.join(dir, 'partial-cache.sqlite');
-  const partialRaw = path.join(dir, 'partial-deeds');
-  // Cover everything EXCEPT two winners — the shape a resumed-but-unfinished crawl leaves behind.
-  buildTrCache(
-    partialDb,
-    partialRaw,
-    { 111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] } },
-    { omit: ['444444447', '777777773'] },
+test('a verdict from an OLDER rules version is held, never published', () => {
+  // The last fail-closed check before publishing a claim about a named person, and it was untested:
+  // both `rules_version` comparisons could be deleted with all 273 tests still green. Without it a
+  // forgotten RULES_VERSION bump means a correction to the evidence ladder does not withdraw the
+  // claims the old ladder made — for as long as the verdict cache keeps them.
+  const staleDb = path.join(dir, 'stale-rules.sqlite');
+  const staleRaw = path.join(dir, 'stale-rules-deeds');
+  buildTrCache(staleDb, staleRaw, { 111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] } });
+
+  const before = (() => {
+    runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw });
+    const db = open();
+    const n = db.prepare(`SELECT COUNT(*) n FROM interest_links WHERE status='published'`).get().n;
+    db.close();
+    return n;
+  })();
+  assert.ok(before > 0, 'the fixture must publish something for this to prove anything');
+
+  // Age the LADDER, not the lookup: same inputs, same freshness, a version the code no longer speaks.
+  const cache = new DatabaseSync(staleDb);
+  cache.exec(`UPDATE verdicts SET rules_version = 'tr-rules-0'`);
+  cache.close();
+
+  assert.throws(
+    () => runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw }),
+    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+    'not one claim may ride a ladder version this code no longer speaks — and the run says so loudly',
   );
+  runLoad(); // restore the full built state for any later reader
+});
+
+test('a MOSTLY complete cache still publishes — an incremental crawl has to be able to', () => {
+  // The change that makes an incremental crawl possible at all: a run whose crawl was cut short must
+  // still publish. Note what „incomplete" now means — a verdict merely past its refresh age is still
+  // usable, because the loader's currency test ignores age deliberately. Only a link that has NEVER
+  // been decided counts against the floor, and a few of those are tolerable.
+  const partialDb = path.join(dir, 'partial-warm.sqlite');
+  const partialRaw = path.join(dir, 'partial-warm-deeds');
+  buildTrCache(partialDb, partialRaw, {}, { omit: ['121212129'] });
+  assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  runLoad(); // restore the full built state for any later reader
+});
+
+test('a substantially incomplete cache refuses EVEN WITH a prior published surface', () => {
+  // The floor used to switch off entirely the moment anything had ever been published — so one
+  // leftover row from a partial ship, or from the direct UPDATE the suppression runbook sanctions,
+  // disabled it. Monotonicity would then dutifully protect that single row while a decimated surface
+  // shipped past the ship floor of 50 underneath it.
+  const partialDb = path.join(dir, 'partial-cold.sqlite');
+  const partialRaw = path.join(dir, 'partial-cold-deeds');
+  buildTrCache(partialDb, partialRaw, {}, { omit: ['444444447', '777777773', '666666665'] });
+  const db = open();
+  const prior = db
+    .prepare(`SELECT COUNT(*) n FROM interest_links WHERE status='published'`)
+    .get().n;
+  db.close();
+  assert.ok(prior > 0, 'there must be a prior surface for this to prove anything');
   assert.throws(
     () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*covers \d+ of \d+/,
+    /REFUSE TO LOAD[\s\S]*current registry verdict/,
   );
+  runLoad(); // restore the full built state for any later reader
 });
 
 test('--allow-partial-tr is the deliberate, stated override', () => {
@@ -1424,6 +1488,40 @@ test('a bootstrap pass leaves the REAL work DB untouched — it runs on a throwa
   );
   after.close();
   assert.equal(fs.existsSync(`${DB}.bootstrap`), false, 'the throwaway copy must be cleaned up');
+});
+
+test('a published link with no evidence row (pre-#309 regime) carries null rules_version, not a masking fallback', () => {
+  // The one-way transition #309 introduced. interest_links pre-dates interest_link_evidence: any
+  // link published before ADR-0033 landed has no evidence row and no rules_version to travel with.
+  // Defaulting the LEFT JOIN miss to RULES_VERSION erased that distinction and made the audit see 37
+  // legitimate regime-transition removals as silent recalls on the first post-#309 staging run
+  // (32736025202). The snapshot has to carry null through so declaredRemoval can read it.
+  const SNAP = path.join(STAGING, 'published-snapshot.json');
+  runLoad();
+  // Read-only lookup, then a writable connection to simulate the pre-#309 state.
+  const rdb = open();
+  const preExistingKey = rdb
+    .prepare("SELECT link_key FROM interest_links WHERE status='published' LIMIT 1")
+    .get().link_key;
+  rdb.close();
+  const wdb = new DatabaseSync(DB);
+  // Simulate the pre-#309 state: this key was published before the evidence table existed, so its
+  // evidence row is gone. The current run's REBUILD would resurface it, but the snapshot export
+  // reads what stands BEFORE the wipe — which on staging on 2026-08-24 was 103 such orphaned rows.
+  wdb.prepare('DELETE FROM interest_link_evidence WHERE link_key = ?').run(preExistingKey);
+  wdb.close();
+  runLoad();
+  const snap = JSON.parse(fs.readFileSync(SNAP, 'utf8'));
+  const orphan = snap.find((s) => s.link_key === preExistingKey);
+  assert.ok(
+    orphan,
+    'the pre-evidence link must still appear in the snapshot — the gate needs to see it',
+  );
+  assert.equal(
+    orphan.rules_version,
+    null,
+    'a missing evidence row must surface as null, not as the current RULES_VERSION',
+  );
 });
 
 test('the monotonicity gate still sees a prior surface AFTER a bootstrap pass', () => {

@@ -11,7 +11,8 @@
 // Usage:
 //   node scripts/cacbg/fetch.mjs                        # all folders discovered from the register index
 //   node scripts/cacbg/fetch.mjs --folders 2021_nc,2025y # restrict to a subset
-//   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6
+//   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6  # concurrency is capped at MAX_CONCURRENCY
+//   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,14 +25,29 @@ import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.
 const BASE = `https://${CACBG_HOST}`;
 const RAW = path.join(SCRATCH, 'raw');
 
+// The politeness ceiling on parallel requests to register.cacbg.bg. `--concurrency` had a floor but no
+// roof, so `--concurrency 500` was a valid way to ask a state server for five hundred simultaneous
+// connections — from a script whose whole design (backoff, circuit breaker, inter-request sleep) exists to
+// avoid exactly that. 8 is what the workflow runs and what the corpus measurement was taken at; ADR-0012's
+// original „≤6" predates it. Raising this is a deliberate edit with a server on the other end, not a flag.
+export const MAX_CONCURRENCY = 8;
+
 // Parse + VALIDATE crawl options. An unvalidated Number() lets `--concurrency abc/0` become NaN/0 →
 // `Array.from({length})` spawns zero workers → the crawl fetches nothing and exits 0 (a silent no-op),
 // and a bad `--limit` (NaN, non-finite) silently skips the slice and fetches the whole register. Both
 // must fail LOUD instead. Pure — takes argv, returns {limit, concurrency, folders} or throws.
 export function parseCrawlOptions(argv) {
+  // A flag PRESENT but valueless (`--deadline-minutes` at the end of argv, or followed by the next flag)
+  // used to fall through to the default — silently meaning „no deadline", „no limit", „6 workers". That is
+  // the same silent-no-op class the validation below exists to kill, so it throws rather than defaults: a
+  // default is what you get for not asking, not for asking badly.
   const get = (name, def) => {
     const i = argv.indexOf(`--${name}`);
-    return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
+    if (i < 0) return def;
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--'))
+      throw new Error(`--${name} was given without a value`);
+    return v;
   };
   const posInt = (raw, name) => {
     const n = Number(raw);
@@ -40,10 +56,20 @@ export function parseCrawlOptions(argv) {
     return n;
   };
   const limitRaw = get('limit', '');
+  const deadlineRaw = get('deadline-minutes', '');
+  const concurrency = posInt(get('concurrency', '6'), 'concurrency');
+  if (concurrency > MAX_CONCURRENCY)
+    throw new Error(
+      `--concurrency must be at most ${MAX_CONCURRENCY} — the register is a state server, not a load target; ` +
+        `got ${concurrency}`,
+    );
   return {
     limit: limitRaw ? posInt(limitRaw, 'limit') : Infinity,
-    concurrency: posInt(get('concurrency', '6'), 'concurrency'),
+    concurrency,
     folders: get('folders', ''),
+    // Wall-clock budget after which the crawl stops ENQUEUEING new work and returns normally. Absent by
+    // default — a hand-run crawl has no cap to respect. See run() for why a CI crawl needs one.
+    deadlineMinutes: deadlineRaw ? posInt(deadlineRaw, 'deadline-minutes') : Infinity,
     // A transparency platform must not silently publish a partial corpus. By default an incomplete crawl
     // (a set whose list.xml never loaded, or an announced declaration we failed to fetch for a non-404
     // reason) exits non-zero; the operator passes --allow-incomplete to proceed knowingly (#226, Todor #2).
@@ -139,13 +165,22 @@ async function discoverFolders(get = politeGet) {
   return [...seen];
 }
 
-async function pool(items, concurrency, worker) {
+// `shouldStop` is consulted before each item is handed to a worker, so a deadline stops the pool within one
+// in-flight request per worker instead of draining the whole folder. Items never handed out stay unattempted,
+// which is exactly what the completeness arithmetic needs to see.
+//
+// RETURNS whether work was actually withheld. The caller must not infer that from the clock: a pool whose
+// LAST request happens to land past the deadline handed out everything it was asked to and withheld nothing,
+// and treating that as a stop condemns a complete corpus. `i` is only ever advanced past the length check
+// within one synchronous step, so `i < items.length` here means exactly „rows nobody was given".
+async function pool(items, concurrency, worker, shouldStop = () => false) {
   let i = 0;
   await Promise.all(
     Array.from({ length: concurrency }, async () => {
-      while (i < items.length) await worker(items[i++]);
+      while (i < items.length && !shouldStop()) await worker(items[i++]);
     }),
   );
+  return i < items.length;
 }
 
 // The crawl. Returns the intended process exit code (0 = complete, 1 = incomplete without an override) so the
@@ -159,9 +194,31 @@ export async function run({
   rawDir = RAW,
   argv = process.argv,
   guard = assertScratchIgnored,
+  now = () => Date.now(),
 } = {}) {
   guard();
-  const { limit, concurrency, folders: override, allowIncomplete } = parseCrawlOptions(argv);
+  const {
+    limit,
+    concurrency,
+    folders: override,
+    allowIncomplete,
+    deadlineMinutes,
+  } = parseCrawlOptions(argv);
+
+  // WHY A SELF-IMPOSED DEADLINE. The full corpus is ~37 sets / ~281 000 declarations and does not fit in the
+  // related-persons-data job's 300-minute cap. When the cap fired mid-crawl (run 31889519937) the runner
+  // killed the STEP but not this process, which kept writing while the `always()` cache-save step ran `tar`
+  // over the same tree — „file changed as we read it", tar exit 1, and actions/cache/save downgrades a save
+  // failure to a WARNING, so the step went green having stored nothing. Five hours of polite crawling were
+  // lost and the next run started from an empty cache again.
+  //
+  // The fix is to stop before the axe rather than under it: past the deadline the crawl hands out no new
+  // work, lets in-flight requests land, and RETURNS. The tree is then quiet, tar succeeds, the cache holds
+  // what was fetched, and the next run resumes (a declaration already on disk is skipped). A full corpus
+  // therefore takes two runs rather than none.
+  const deadlineAt = Number.isFinite(deadlineMinutes) ? now() + deadlineMinutes * 60_000 : Infinity;
+  const pastDeadline = () => now() >= deadlineAt;
+  let deadlineHit = false;
 
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
@@ -173,6 +230,13 @@ export async function run({
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   for (const folder of folders) {
+    // Checked BEFORE mkdir/list.xml so an out-of-budget set leaves no trace at all — an empty directory
+    // and a cached list.xml would read, to the next run, like a set that had genuinely been visited.
+    if (pastDeadline()) {
+      deadlineHit = true;
+      console.log(`  deadline reached — stopping before ${folder} (not attempted)`);
+      break;
+    }
     const dir = path.join(rawDir, folder);
     fs.mkdirSync(dir, { recursive: true });
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
@@ -193,54 +257,87 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
-    await pool(rows, concurrency, async (row) => {
-      let xmlFile;
-      try {
-        xmlFile = safeXmlFile(row.xmlFile);
-      } catch {
-        fstat.errors++;
-        return;
-      }
-      const dest = path.join(dir, xmlFile);
-      if (fs.existsSync(dest)) {
-        fstat.cached++;
-        return;
-      }
-      let res;
-      try {
-        res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
-      } catch {
-        fstat.errors++;
-        consecutive = nextBreaker(consecutive, 'fail');
-        if (consecutive > BREAKER_TRIP)
-          throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
-        return;
-      }
-      if (res.status === 404) {
-        fstat.missing++;
-        consecutive = nextBreaker(consecutive, 'missing');
-        return;
-      } // listed-but-unpublished (source gap)
-      if (res.status !== 200) {
-        // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
-        // just network throws — so the crawl stops instead of hammering the register indefinitely.
-        fstat.errors++;
-        consecutive = nextBreaker(consecutive, 'fail');
-        if (consecutive > BREAKER_TRIP)
-          throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
-        return;
-      }
-      consecutive = nextBreaker(consecutive, 'ok');
-      atomicWrite(dest, res.body);
-      fstat.fetched++;
-      await sleep(15);
-    });
+    const withheld = await pool(
+      rows,
+      concurrency,
+      async (row) => {
+        let xmlFile;
+        try {
+          xmlFile = safeXmlFile(row.xmlFile);
+        } catch {
+          fstat.errors++;
+          return;
+        }
+        const dest = path.join(dir, xmlFile);
+        if (fs.existsSync(dest)) {
+          fstat.cached++;
+          return;
+        }
+        let res;
+        try {
+          res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
+        } catch {
+          fstat.errors++;
+          consecutive = nextBreaker(consecutive, 'fail');
+          if (consecutive > BREAKER_TRIP)
+            throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
+          return;
+        }
+        if (res.status === 404) {
+          fstat.missing++;
+          consecutive = nextBreaker(consecutive, 'missing');
+          return;
+        } // listed-but-unpublished (source gap)
+        if (res.status !== 200) {
+          // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
+          // just network throws — so the crawl stops instead of hammering the register indefinitely.
+          fstat.errors++;
+          consecutive = nextBreaker(consecutive, 'fail');
+          if (consecutive > BREAKER_TRIP)
+            throw new Error(`circuit breaker near ${folder}/${xmlFile}`);
+          return;
+        }
+        consecutive = nextBreaker(consecutive, 'ok');
+        atomicWrite(dest, res.body);
+        fstat.fetched++;
+        await sleep(15);
+      },
+      pastDeadline,
+    );
+    // Asked whether the pool WITHHELD work, not whether the clock has passed. A set whose final in-flight
+    // request lands one second past the budget is fully obtained and must not be called a deadline stop —
+    // otherwise the run that finally completes the corpus is the one declared partial and refused. If the
+    // clock is spent but this set finished, the next iteration's top-of-loop guard stops us; if this was
+    // the LAST set, there is nothing left to withhold and the corpus is complete.
+    if (withheld) {
+      deadlineHit = true;
+      console.log(`  deadline reached inside ${folder} — stopping`);
+      break;
+    }
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
   console.log('\n=== crawl summary ===');
-  console.log(JSON.stringify({ folders: stats.folders, ...completeness }, null, 2));
+  console.log(JSON.stringify({ folders: stats.folders, ...completeness, deadlineHit }, null, 2));
   console.log(`raw cache → ${rawDir}`);
+
+  // A deadline stop is its OWN shortfall verdict and does not go through assessCompleteness, which can only
+  // reconcile the sets the crawl reached. Stopping exactly on a set boundary leaves every reached set fully
+  // obtained — arithmetically complete — while whole later years were never opened, so the gate would have
+  // certified a corpus missing 2015 through 2019 and exited 0.
+  //
+  // --allow-incomplete deliberately does NOT downgrade this. That flag means „I have seen this shortfall and
+  // accept it"; a deadline stop is a clock going off mid-sentence, with nobody having looked at what is
+  // missing. The operator re-runs to resume — the whole point of stopping cleanly — or crawls a chosen
+  // subset with --folders and accepts THAT knowingly.
+  if (deadlineHit) {
+    console.error(
+      `\n✖ CRAWL STOPPED ON ITS DEADLINE (--deadline-minutes ${deadlineMinutes}) — the corpus is partial ` +
+        `by construction: ${completeness.reachedSets} of ${folders.length} set(s) reached. The raw cache is ` +
+        `intact and consistent; re-run to resume from it (declarations already on disk are skipped).`,
+    );
+    return 1;
+  }
 
   // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
   // platform's job. Return a non-zero exit code unless the operator has explicitly accepted the shortfall.

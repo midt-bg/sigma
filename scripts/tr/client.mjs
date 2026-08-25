@@ -6,15 +6,23 @@
 // chains correctly, so ordinary verification is available and is strictly stronger than a pin we would
 // have to hand-maintain. Copying the pinning across "for consistency" would weaken this leg.
 //
-// Rate limiting: the register throttles, and when it does the block is SUSTAINED. An earlier spike saw
-// HTTP 429 at roughly 50 cumulative requests ending in a burst, and thereafter 429 to every subsequent
-// request — including simple /Deeds/{eik} calls that had worked seconds before. There is no
-// `Retry-After` and no `X-RateLimit-*` header, so a client cannot pace against a published budget; it
-// can only avoid tripping one. That makes a 429 an instruction to STOP, not a transient to retry
-// through: `politeTrGet` retries 5xx and network faults with growing backoff, and never retries a 429.
-// (#279 §3's "5 retries with growing backoff" and the decision that a 429 ends the run are consistent
-// only if the retry set excludes 429.) The limiter is the operator's only way to express a rate
-// preference, and tuning around it empirically is what spec §3.3's "NEVER bulk-scrape" forbids.
+// Rate limiting (re-measured 2026-08-19 through this module's own httpsGet — ADR-0036, which supersedes
+// ADR-0033's context 4). The budget is FIVE requests: the 6th returns 429. The block is scoped to the
+// IP, not the session — a brand-new EPZEUSessionID is refused just the same, so carrying cookies does
+// not help. There is no `Retry-After` and no `X-RateLimit-*`, the body is empty, and it comes back in
+// 48-67ms against 250-475ms for a real deed, so it is refused at an edge before the application. It has
+// a second face: while blocked, the connection may STALL (a 20s timeout) instead of answering 429.
+// It clears on its own in ~161s.
+//
+// So a 429 is a COOLDOWN, not the sustained wall ADR-0033 recorded. This module still does not retry
+// one — it reports the fact as `RateLimitError` and lets the caller decide, which is why the retry set
+// here excludes 429 exactly as before. The wait-and-resume policy lives in fetch-deeds.mjs, because
+// „how long to wait" is a crawl decision, not a transport one. `politeTrGet` retries 5xx and network
+// faults with growing backoff, and never retries a 429.
+//
+// The pace floor does not move. The limiter is the operator's only way to express a rate preference,
+// and probing its threshold empirically is what spec §3.3's "NEVER bulk-scrape" forbids — ADR-0036
+// records one deliberate reproduction and sanctions no more.
 
 import https from 'node:https';
 import { safeEik } from './paths.mjs';
@@ -26,10 +34,13 @@ export const TR_HOST = 'portal.registryagency.bg';
 export const TR_USER_AGENT =
   'sigma-bot/1.0 (+https://github.com/midt-bg/sigma) contact: via repo issues';
 
-/** Thrown on HTTP 429. Distinguishable so the crawler can end the run instead of marking anything. */
+/**
+ * Thrown on HTTP 429. Distinguishable so the crawler can cool down and resume the SAME ЕИК without
+ * marking anything about it — the block is a fact about us, never about that company (ADR-0036).
+ */
 export class RateLimitError extends Error {
   constructor(url) {
-    super(`REFUSE TO CONTINUE: ${TR_HOST} returned 429 for ${url} — the block is sustained; stop`);
+    super(`RATE LIMITED: ${TR_HOST} returned 429 for ${url} — cool down before the next request`);
     this.name = 'RateLimitError';
     this.url = url;
   }
@@ -133,7 +144,8 @@ export function httpsGet(url, { timeoutMs = 20_000, maxBytes = MAX_BODY_BYTES } 
 
 /**
  * GET with polite retries. 5xx and network faults retry with growing backoff; 2xx/4xx return as-is;
- * **429 throws `RateLimitError` immediately and is never retried**.
+ * **429 throws `RateLimitError` immediately and is never retried HERE** — waiting out the cooldown is
+ * the crawler's call, not the transport's (ADR-0036).
  * @param {string} url
  * @param {{httpGet?:Function, sleep?:Function, tries?:number, backoffMs?:number}} [opts]
  *   `httpGet` and `sleep` are the injection seam — the whole retry policy is testable offline.
@@ -153,7 +165,8 @@ export async function politeTrGet(url, opts = {}) {
       continue;
     }
     // Checked before the retry branch: a 429 arriving mid-retry must abort the whole call, not be
-    // folded into the 5xx budget and not let a later 200 mask the block.
+    // folded into the 5xx budget and not let a later 200 mask the block. The caller cools down and
+    // re-enters; retrying inside the 5xx budget would spend four more requests into a live block.
     if (res.status === 429) throw new RateLimitError(url);
     if (res.status >= 500) {
       if (attempt >= tries) return res; // give the caller the last response to record
