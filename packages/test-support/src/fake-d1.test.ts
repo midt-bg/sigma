@@ -324,6 +324,76 @@ describe('fakeD1 — exec() and batch() answer to the same contract', () => {
   });
 });
 
+describe('fakeD1 — a batched statement is routed by what it does', () => {
+  // Matching on markers alone is blind to the method: `FROM staging` is a substring of
+  // `DELETE FROM staging`, so a read-only route would answer a write with its rows — the same
+  // silent pass, one marker collision away. A batched write wants `run:`; a batched SELECT wants
+  // `all:`; neither will settle for the other.
+
+  it('rejects a batched write whose only matching route is read-only', async () => {
+    const fake = fakeD1([{ when: 'FROM staging', all: [{ id: 1 }] }]);
+    const error = await rejection(
+      fake.db.batch([fake.db.prepare('DELETE FROM staging WHERE id = 1')]),
+    );
+    expect(error.message).toMatch(/no route matched this batch\(\) query/i);
+  });
+
+  it('rejects a batched SELECT whose only matching route is a write effect', async () => {
+    const fake = fakeD1([{ when: 'FROM staging', run: () => undefined }]);
+    await expect(fake.db.batch([fake.db.prepare('SELECT id FROM staging')])).rejects.toThrow(
+      /no route matched/i,
+    );
+  });
+
+  it('serves a batched write from its run() route, and carries RETURNING rows if it has them', async () => {
+    const seen: FakeD1Call[] = [];
+    const fake = fakeD1([
+      { when: 'INSERT INTO staging', run: (call) => seen.push(call), all: [{ id: 9 }] },
+    ]);
+    await expect(
+      fake.db.batch([fake.db.prepare('INSERT INTO staging VALUES (?) RETURNING id').bind(9)]),
+    ).resolves.toEqual([{ results: [{ id: 9 }], success: true, meta: {} }]);
+    expect(seen.map((call) => call.binds)).toEqual([[9]]);
+  });
+
+  it('does not fire a write effect for a batched SELECT that happens to match it', async () => {
+    let fired = 0;
+    const fake = fakeD1([
+      { when: 'FROM staging', run: () => (fired += 1) },
+      { when: 'FROM staging', all: [{ id: 1 }] },
+    ]);
+    await fake.db.batch([fake.db.prepare('SELECT id FROM staging')]);
+    expect(fired).toBe(0);
+  });
+
+  it('treats a leading WITH as the read it usually is', async () => {
+    const fake = fakeD1([{ when: 'FROM staging', all: [{ id: 1 }] }]);
+    await expect(
+      fake.db.batch([fake.db.prepare('WITH x AS (SELECT 1) SELECT id FROM staging')]),
+    ).resolves.toEqual([{ results: [{ id: 1 }], success: true, meta: {} }]);
+  });
+
+  it('rejects an exec() whose matching route answers a different method', async () => {
+    // exec() returns no rows, so `run:` is the only responder that means anything to it.
+    const fake = fakeD1([{ when: 'PRAGMA optimize', all: [] }]);
+    await expect(fake.db.exec('PRAGMA optimize')).rejects.toThrow(/no route matched this exec/i);
+  });
+
+  it('carries the route meta on run(), the same as batch() does for the same statement', async () => {
+    const fake = fakeD1([
+      { when: 'DELETE FROM staging', run: () => undefined, meta: { changes: 5 } },
+    ]);
+    expect(await fake.db.prepare('DELETE FROM staging').run()).toEqual({
+      results: [],
+      success: true,
+      meta: { changes: 5 },
+    });
+    expect(await fake.db.batch([fake.db.prepare('DELETE FROM staging')])).toEqual([
+      { results: [], success: true, meta: { changes: 5 } },
+    ]);
+  });
+});
+
 describe('throwingD1', () => {
   it('rejects when the statement executes, not when it is prepared', async () => {
     // D1's prepare() is lazy: a missing table surfaces on all()/first(), and a double that threw

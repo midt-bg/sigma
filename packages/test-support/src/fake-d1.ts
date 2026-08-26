@@ -95,6 +95,13 @@ function unmatched(method: string, sql: string, routes: FakeD1Route[]): Error {
   );
 }
 
+/**
+ * Whether a batched statement reads. Leading keyword only: a CTE that goes on to write
+ * (`WITH … INSERT`) reads as a SELECT here, which costs a false rejection rather than a false pass —
+ * the route it then demands is simply the one it does not have.
+ */
+const READ = /^\s*(?:SELECT|WITH)\b/i;
+
 function resolve<T>(value: T | ((call: FakeD1Call) => T), call: FakeD1Call): T {
   return typeof value === 'function' ? (value as (c: FakeD1Call) => T)(call) : value;
 }
@@ -123,14 +130,9 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
   ): FakeD1Route[K] | undefined =>
     routes.find((r) => r[method] !== undefined && matches(r, call.sql))?.[method];
 
-  /**
-   * The first route whose markers appear in this SQL, whatever it answers. `exec()` and `batch()`
-   * do not ask for a particular shape the way `all()`/`first()`/`run()` do — they only need the
-   * statement to be one the test registered, so an unregistered one throws instead of succeeding
-   * against nothing.
-   */
-  const registered = (call: FakeD1Call): FakeD1Route | undefined =>
-    routes.find((r) => matches(r, call.sql));
+  /** The first route answering `method` for this SQL — the route itself, where `meta` lives. */
+  const answering = (method: 'all' | 'run', call: FakeD1Call): FakeD1Route | undefined =>
+    routes.find((r) => r[method] !== undefined && matches(r, call.sql));
 
   const statement = (call: FakeD1Call) => {
     const self = {
@@ -142,7 +144,7 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         // The route itself, not `responder()`'s response: `meta` belongs to whichever route
         // answered, so all() needs the pair. `=== undefined` rather than a falsy test — `all: []`
         // is a route that deliberately answers "no rows".
-        const hit = routes.find((r) => r.all !== undefined && matches(r, call.sql));
+        const hit = answering('all', call);
         if (hit?.all === undefined) {
           if (!lenient) throw unmatched('all', call.sql, routes);
           return { results: [], success: true, meta: {} };
@@ -162,13 +164,13 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         return resolve(row, call) ?? null;
       },
       async run() {
-        const effect = responder('run', call);
-        if (effect === undefined) {
+        const hit = answering('run', call);
+        if (hit?.run === undefined) {
           if (!lenient) throw unmatched('run', call.sql, routes);
           return { results: [], success: true, meta: {} };
         }
-        effect(call);
-        return { results: [], success: true, meta: {} };
+        hit.run(call);
+        return { results: [], success: true, meta: resolve(hit.meta ?? {}, call) };
       },
     };
     bound.set(self, call);
@@ -180,13 +182,18 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
       return statement(record(statement_, 'prepare'));
     },
     async exec(statement_: string) {
+      // exec() hands back no rows, so `run:` is the only responder that means anything to it.
       const call = record(statement_, 'exec');
-      const route = registered(call);
-      if (route === undefined && !lenient) throw unmatched('exec', call.sql, routes);
-      route?.run?.(call);
+      const hit = answering('run', call);
+      if (hit?.run === undefined && !lenient) throw unmatched('exec', call.sql, routes);
+      hit?.run?.(call);
       return { count: 0, duration: 0 };
     },
     async batch(statements: object[]) {
+      // Not transactional: a statement that throws leaves the effects of the ones before it. Real
+      // D1 rolls the batch back, and so does the d1-sqlite.ts facade beside this. A test that
+      // asserts state AFTER a failed batch belongs on the facade, not here — this double is for the
+      // TypeScript logic around the statements, not for their atomicity.
       const results = [];
       for (const entry of statements) {
         const call = bound.get(entry);
@@ -197,14 +204,18 @@ function build(routes: FakeD1Route[], options: FakeD1Options): FakeD1 {
         // logged it, and a test asserting how a write reached D1 needs to tell the two apart. Not
         // a double count — `calls` logs entry points, not distinct statements.
         record(call.sql, 'batch');
-        const route = registered(call);
+        // Routed by what the statement does, not by markers alone: `FROM staging` is a substring of
+        // `DELETE FROM staging`, so a read-only route would otherwise answer a write with its rows.
+        const read = READ.test(call.sql);
+        const route = answering(read ? 'all' : 'run', call);
         if (route === undefined) {
           if (!lenient) throw unmatched('batch', call.sql, routes);
           results.push({ results: [], success: true, meta: {} });
           continue;
         }
-        route.run?.(call);
+        if (!read) route.run?.(call);
         results.push({
+          // A write serves rows too when it has them — INSERT … RETURNING is still a write.
           results: route.all === undefined ? [] : resolve(route.all, call),
           success: true,
           meta: resolve(route.meta ?? {}, call),
