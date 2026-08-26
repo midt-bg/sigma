@@ -231,6 +231,17 @@ export async function run({
     ? override.split(',').map((f) => safeFolder(f.trim()))
     : (console.log('Discovering folders from register index …'), await discover(httpGet));
   console.log(`Folders to crawl (${folders.length}): ${folders.join(', ') || '(none)'}`);
+  // An index page that yields ZERO folders is a broken or redesigned index, never a real corpus state —
+  // the register has published year-sets continuously since 2015. Proceeding would run a vacuous crawl
+  // whose completeness arithmetic is 0/0 and stamp it (review finding: reproduced — exit 0 and a
+  // `folders: 0, incomplete: false` stamp over an existing raw tree). Fail instead; the stamp was
+  // already cleared above, so the corpus is left resumable and unpublishable.
+  if (!override && folders.length === 0) {
+    console.error(
+      `\n✖ the register index yielded no folders — refusing to certify anything from it.`,
+    );
+    return 1;
+  }
 
   // Per-set accounting so completeness can be reconciled announced↔obtained (Todor #2). A set whose list.xml
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
@@ -251,8 +262,21 @@ export async function run({
       stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
     }
-    atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
     let rows = parseList(listRes.body.toString('utf8'));
+    // An HTTP-200 body that parses to ZERO rows while the folder already holds declaration files is a
+    // contradiction, not an empty set: a maintenance HTML page or a schema change both come back 200 and
+    // parse to [] (review finding: confirmed against a real maintenance page). Trusting it would shrink
+    // `announced` to zero, make the folder look trivially complete, and OVERWRITE the cached list the
+    // extractor reads. Skip the folder instead — skippedFolders makes the corpus incomplete, so no stamp.
+    if (rows.length === 0) {
+      const onDisk = fs.readdirSync(dir).some((f) => f.endsWith('.xml') && f !== 'list.xml');
+      if (onDisk) {
+        console.log(`  ${folder}: list.xml parsed to 0 rows but declarations exist on disk — SKIP`);
+        stats.skippedFolders.push({ folder, status: 'empty-list-with-files' });
+        continue;
+      }
+    }
+    atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
     // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
     // gate certified a corpus it had never attempted to fetch (ydimitrof #226).
@@ -380,8 +404,14 @@ export async function run({
   // if it were whole.
   // Gated on the RECONCILED verdict, not on reaching this line: --allow-incomplete lets an accepted
   // shortfall proceed to exit 0, and stamping there would hand a later unattended run an acceptance that
-  // was never theirs.
-  if (!completeness.incomplete) writeSentinel(rawDir, { folders: folders.length, ...completeness });
+  // was never theirs. Two more conditions, both review findings:
+  //   • !override — a --folders subset that completes is complete FOR THE SUBSET; certifying the whole
+  //     raw tree from it would stamp around every other folder's state. Subset crawls still CLEAR the
+  //     stamp (top of run), so they leave the corpus resumable-not-publishable, which is right.
+  //   • announced > 0 — a crawl that reconciled zero declarations certifies nothing. With the empty-
+  //     index and empty-list guards above this is belt-and-braces, not the primary defence.
+  const stampable = !override && !completeness.incomplete && completeness.announcedDeclarations > 0;
+  if (stampable) writeSentinel(rawDir, { folders: folders.length, ...completeness });
   return 0;
 }
 

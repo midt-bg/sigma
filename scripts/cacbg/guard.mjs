@@ -27,6 +27,30 @@ export function assertScratchIgnored(subdir = 'cacbg') {
   }
 }
 
+/**
+ * The same PII rail for an OVERRIDDEN output directory (the CACBG_RAW / CACBG_STAGING test seams).
+ * assertScratchIgnored probes the fixed scratch/ location, so a caller that redirects its I/O elsewhere
+ * would sail past it — the review demonstrated extract writing related.jsonl (third-party names) into a
+ * TRACKED directory via CACBG_STAGING. The rule an override must satisfy is the same one scratch/
+ * satisfies: nothing PII may land where git can commit it. So: outside the repository entirely (temp
+ * dirs — where every test points) is fine; inside it, the directory must be git-ignored.
+ * @param {string} dir absolute or relative path the override points at
+ * @param {string} name the env var being validated, for the error message
+ */
+export function assertOverrideDirSafe(dir, name) {
+  const abs = path.resolve(dir);
+  if (!abs.startsWith(ROOT + path.sep)) return; // outside the repo — git cannot commit it
+  const rel = path.relative(ROOT, abs);
+  try {
+    execFileSync('git', ['check-ignore', '-q', rel], { cwd: ROOT });
+  } catch {
+    throw new Error(
+      `REFUSE TO RUN: ${name}=${dir} points inside the repository at a path git does not ignore — ` +
+        `PII output must never be committable (PII rail, spec §8)`,
+    );
+  }
+}
+
 // Path-sanitize an xml_file / year from the untrusted list.xml before using it in a filesystem path
 // or URL. Rejects traversal, absolute paths, and anything outside the expected shape.
 // The shape of a real declaration filename. Single source of truth for both the throwing guard below

@@ -10,13 +10,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseList, parseDeclaration } from './parse.mjs';
-import { assertScratchIgnored, SCRATCH } from './guard.mjs';
+import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
 import { sentinelPath } from './fetch.mjs';
 
 // Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
 // production behaviour is unchanged when they are unset.
 const RAW = process.env.CACBG_RAW || path.join(SCRATCH, 'raw');
 const STAGING = process.env.CACBG_STAGING || path.join(SCRATCH, 'staging');
+// An override must satisfy the same rail the default location does — see assertOverrideDirSafe. The
+// default paths are covered by assertScratchIgnored in run(); overrides are validated here, at the
+// moment they are adopted, so no code path can write PII somewhere git could commit.
+if (process.env.CACBG_RAW) assertOverrideDirSafe(RAW, 'CACBG_RAW');
+if (process.env.CACBG_STAGING) assertOverrideDirSafe(STAGING, 'CACBG_STAGING');
 
 /**
  * Refuse a corpus that was never stamped complete — unless the caller states it knows.

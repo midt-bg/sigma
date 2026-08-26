@@ -40,8 +40,15 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-const ok = (f) => ({ [`${BASE}/${FOLDER}/${f}`]: { status: 200, body: '<x/>' } });
-const crawl = (routes, extraArgv = [], msPerRequest = null) => {
+const ok = (f, folder = FOLDER) => ({ [`${BASE}/${folder}/${f}`]: { status: 200, body: '<x/>' } });
+// Discovery-mode by default: the stamp is deliberately reserved for full-discovery crawls, so the tests
+// that expect one must crawl the way the workflow does. `folders` switches to a --folders subset run.
+const crawl = (
+  routes,
+  extraArgv = [],
+  msPerRequest = null,
+  { discovered = [FOLDER], folders = null } = {},
+) => {
   let clock = 0;
   const routed = fakeGet(routes);
   return run({
@@ -53,8 +60,16 @@ const crawl = (routes, extraArgv = [], msPerRequest = null) => {
       : routed,
     rawDir: dir,
     guard: () => {},
+    discover: async () => discovered,
     ...(msPerRequest ? { now: () => clock } : {}),
-    argv: ['node', 'fetch.mjs', '--folders', FOLDER, '--concurrency', '1', ...extraArgv],
+    argv: [
+      'node',
+      'fetch.mjs',
+      ...(folders ? ['--folders', folders] : []),
+      '--concurrency',
+      '1',
+      ...extraArgv,
+    ],
   });
 };
 
@@ -131,6 +146,55 @@ test('a stale stamp cannot outlive the corpus it described', async () => {
   );
 });
 
+test('a --folders subset that completes does NOT stamp — complete for the subset is not complete', async () => {
+  // Review finding (blocker): raw/ holds another folder in unknown state; certifying the whole tree off
+  // one finished subset would stamp around it. The subset still CLEARS any prior stamp (it mutates the
+  // corpus), leaving resumable-not-publishable — the correct state.
+  const OTHER = '2098t';
+  fs.mkdirSync(path.join(dir, OTHER), { recursive: true });
+  fs.writeFileSync(path.join(dir, OTHER, 'stale.xml'), '<x/>');
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes, [], null, { folders: FOLDER }), 0, 'the subset itself succeeds');
+  assert.equal(
+    fs.existsSync(sentinelPath(dir)),
+    false,
+    'a subset run must never certify the whole corpus',
+  );
+});
+
+test('an index that discovers ZERO folders is a failure, not a trivially complete corpus', async () => {
+  // Review finding (blocker, reproduced): exit 0 and a `folders: 0, incomplete: false` stamp over an
+  // existing raw tree. The register has published year-sets continuously since 2015 — an empty index is
+  // a broken or redesigned index page, never a real corpus state.
+  fs.mkdirSync(path.join(dir, FOLDER), { recursive: true });
+  fs.writeFileSync(path.join(dir, FOLDER, 'a1.xml'), '<x/>');
+  assert.equal(await crawl({}, [], null, { discovered: [] }), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false);
+});
+
+test('a 200 list.xml that parses to zero rows over existing declarations is a skip, not an empty set', async () => {
+  // Review finding: a maintenance HTML page and a schema change both come back 200 and parse to [].
+  // Trusting one would zero out `announced`, make the folder look complete, and overwrite the cached
+  // list the extractor reads. With files on disk contradicting it, the folder is skipped — which makes
+  // the corpus incomplete: exit 1, no stamp, cached list.xml preserved.
+  fs.mkdirSync(path.join(dir, FOLDER), { recursive: true });
+  fs.writeFileSync(path.join(dir, FOLDER, 'a1.xml'), '<x/>');
+  fs.writeFileSync(path.join(dir, FOLDER, 'list.xml'), listXml(['a1.xml']));
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: '<html>maintenance</html>' },
+  };
+  assert.equal(await crawl(routes), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false);
+  assert.match(
+    fs.readFileSync(path.join(dir, FOLDER, 'list.xml'), 'utf8'),
+    /a1\.xml/,
+    'the cached list the extractor reads must not be overwritten by the contradicted body',
+  );
+});
+
 // ── the reading half ───────────────────────────────────────────────────────────────────────────────
 // The writer above is only useful if something refuses an unstamped corpus. extract.mjs is that reader,
 // and it runs in-process, so it is exercised as a subprocess against a temp scratch tree.
@@ -170,5 +234,57 @@ test('extract proceeds on a stamped corpus', () => {
   });
   const out = `${res.stdout}${res.stderr}`;
   assert.doesNotMatch(out, /REFUSE TO EXTRACT/, 'a stamped corpus must pass the gate');
+  assert.equal(
+    res.status,
+    0,
+    `a stamped corpus must extract cleanly, got ${res.status}: ${out.slice(0, 300)}`,
+  );
+  fs.rmSync(scratch, { recursive: true, force: true });
+});
+
+test('--allow-partial-corpus extracts an unstamped corpus, loudly', () => {
+  // The deliberate override the refusal names. Without a test, deleting the flag entirely would leave
+  // every test green while the documented escape hatch silently stopped existing (review finding).
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-extract-partial-'));
+  fs.mkdirSync(path.join(scratch, 'raw', FOLDER), { recursive: true });
+  const res = spawnSync(
+    process.execPath,
+    [path.resolve('scripts/cacbg/extract.mjs'), '--allow-partial-corpus'],
+    {
+      env: {
+        ...process.env,
+        CACBG_RAW: path.join(scratch, 'raw'),
+        CACBG_STAGING: path.join(scratch, 'staging'),
+      },
+      encoding: 'utf8',
+    },
+  );
+  const out = `${res.stdout}${res.stderr}`;
+  assert.equal(
+    res.status,
+    0,
+    `the override must let the run proceed, got ${res.status}: ${out.slice(0, 300)}`,
+  );
+  assert.match(out, /--allow-partial-corpus/, 'the acceptance must be printed, never silent');
+});
+
+test('a CACBG_STAGING override pointing at a tracked path inside the repo is refused', () => {
+  // Review finding: the env seams redirect real I/O, and assertScratchIgnored only probes the fixed
+  // scratch/ location — so an override could write related.jsonl (third-party names) into a directory
+  // git would commit. The override rail applies the same rule scratch/ satisfies: inside the repo ⇒
+  // must be git-ignored.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-extract-pii-'));
+  fs.mkdirSync(path.join(scratch, 'raw'), { recursive: true });
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      CACBG_RAW: path.join(scratch, 'raw'),
+      CACBG_STAGING: path.resolve('scripts', 'pii-leak-probe'), // inside the repo, NOT ignored
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0, 'a committable PII destination must refuse to run');
+  assert.match(out, /CACBG_STAGING/, 'the refusal must name the offending variable');
   fs.rmSync(scratch, { recursive: true, force: true });
 });
