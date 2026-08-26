@@ -21,7 +21,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { getPinned, CACBG_HOST } from './tls.mjs';
 import { parseList } from './parse.mjs';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
-import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.mjs';
+import {
+  assertScratchIgnored,
+  assertOverrideDirSafe,
+  SCRATCH,
+  safeXmlFile,
+  safeFolder,
+} from './guard.mjs';
 
 const BASE = `https://${CACBG_HOST}`;
 const RAW = path.join(SCRATCH, 'raw');
@@ -198,6 +204,10 @@ export async function run({
   now = () => Date.now(),
 } = {}) {
   guard();
+  // The corpus directory the crawl writes into must clear the PII rail too — a symlink at rawDir would
+  // otherwise redirect fetched declarations into committable territory (review round 5, blocker 2). The
+  // injected-guard tests point rawDir at a temp dir, which is outside any repo and passes trivially.
+  assertOverrideDirSafe(rawDir, rawDir === RAW ? 'scratch/cacbg/raw' : 'rawDir');
   const {
     limit,
     concurrency,

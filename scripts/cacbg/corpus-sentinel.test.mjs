@@ -553,3 +553,28 @@ test('an ignored SYMLINK into committable territory is judged by its destination
     fs.rmSync(link, { force: true });
   }
 });
+
+test('a symlink at the DEFAULT staging directory is caught, not only an override', () => {
+  // Review round 5 (blocker 2): assertScratchIgnored probes only scratch/cacbg/.probe, so a symlink at
+  // the sibling default `staging` — pointing into tracked territory — was invisible while extract I/O
+  // followed it. The default paths now go through the canonicalizing guard unconditionally. Runs with
+  // NO env overrides, so RAW/STAGING take their real default locations.
+  const link = path.join('scratch', 'cacbg', 'staging');
+  const raw = path.join('scratch', 'cacbg', 'raw');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  const hadLink = fs.existsSync(link) || fs.lstatSync(link, { throwIfNoEntry: false });
+  if (hadLink) return; // never clobber a real local scratch tree
+  fs.mkdirSync(raw, { recursive: true });
+  try {
+    fs.symlinkSync(path.resolve('scripts'), link); // default staging → tracked scripts/
+    const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+      encoding: 'utf8', // no CACBG_* — exercises the DEFAULT path
+    });
+    const out = `${res.stdout}${res.stderr}`;
+    assert.notEqual(res.status, 0, 'a symlinked default staging into tracked files must refuse');
+    assert.match(out, /TRACKED|does not ignore/);
+  } finally {
+    fs.rmSync(link, { force: true });
+    fs.rmSync(raw, { recursive: true, force: true });
+  }
+});

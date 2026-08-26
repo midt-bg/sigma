@@ -17,11 +17,16 @@ import { sentinelPath } from './fetch.mjs';
 // production behaviour is unchanged when they are unset.
 const RAW = process.env.CACBG_RAW || path.join(SCRATCH, 'raw');
 const STAGING = process.env.CACBG_STAGING || path.join(SCRATCH, 'staging');
-// An override must satisfy the same rail the default location does — see assertOverrideDirSafe. The
-// default paths are covered by assertScratchIgnored in run(); overrides are validated here, at the
-// moment they are adopted, so no code path can write PII somewhere git could commit.
-if (process.env.CACBG_RAW) assertOverrideDirSafe(RAW, 'CACBG_RAW');
-if (process.env.CACBG_STAGING) assertOverrideDirSafe(STAGING, 'CACBG_STAGING');
+// Validate the ACTUAL output directories, default or overridden alike (review round 5, blocker 2):
+// assertScratchIgnored probes only the fixed scratch/cacbg/.probe path, so a symlink AT the sibling
+// default `raw`/`staging` — or an overridden one — is invisible to it while fetch/extract I/O follows
+// it into committable files. assertOverrideDirSafe canonicalizes the real target and asks git, so it
+// is the right check for both. Unconditional: the default location must clear the same bar it guards.
+assertOverrideDirSafe(RAW, process.env.CACBG_RAW ? 'CACBG_RAW' : 'scratch/cacbg/raw');
+assertOverrideDirSafe(
+  STAGING,
+  process.env.CACBG_STAGING ? 'CACBG_STAGING' : 'scratch/cacbg/staging',
+);
 
 /**
  * Refuse a corpus that was never stamped complete — unless the caller states it knows.
