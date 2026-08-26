@@ -126,6 +126,37 @@ test('findAliases catches an interface extending D1Database', () => {
   assert.equal(findAliases('interface Handle extends D1Database {}\n').length, 1);
 });
 
+test('findAliases catches an intersection, a mapped type and a namespaced import', () => {
+  // Three spellings that name the type without the word `= D1Database` standing alone. Each was
+  // verified to walk past the first pattern while the file itself was being scanned.
+  assert.equal(findAliases('type Evade = D1Database & {};\n').length, 1);
+  assert.equal(findAliases("type Picked = Pick<D1Database, 'prepare'>;\n").length, 1);
+  assert.equal(
+    findAliases("type Imported = import('@cloudflare/workers-types').D1Database;\n").length,
+    1,
+  );
+});
+
+test('findAliases catches a heritage clause that names D1Database anywhere in the list', () => {
+  assert.equal(
+    findAliases('interface Multi extends Record<string, unknown>, D1Database {}\n').length,
+    1,
+  );
+});
+
+test('findAliases leaves the type where it is a PARAMETER, not the alias itself', () => {
+  // `type Params<F> = F extends (db: D1Database, …) => unknown ? … : …` is real code in
+  // readonly-corpus.test.ts, and an `extends` inside a conditional type is not a heritage clause.
+  // A gate that fires here is one somebody edits out.
+  assert.deepEqual(
+    findAliases(
+      'type Params<F> = F extends (db: D1Database, p: infer P) => unknown ? P : never;\n',
+    ),
+    [],
+  );
+  assert.deepEqual(findAliases('type Loader = (db: D1Database) => Promise<void>;\n'), []);
+});
+
 test('findAliases leaves an ordinary annotation alone — the gate bans casts, not types', () => {
   // A binding declared as D1Database is how honest code names it. Flagging these would make the
   // gate fire on every Env type in the repo, and a gate that cries wolf gets weakened.

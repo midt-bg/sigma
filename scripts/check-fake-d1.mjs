@@ -53,11 +53,25 @@ export const ALLOWED = [
 const CAST = /\bas\s+unknown\s+as\s+D1Database\b|\bas\s+D1Database\b|\bsatisfies\s+D1Database\b/g;
 
 // One line of indirection defeats CAST: `type DBAlias = D1Database` and then `as unknown as
-// DBAlias` carries no D1Database token for the pattern to find. Renaming the type on import, or
-// extending it, does the same. Give the type a second name outside the allowlist and the gate
-// treats that as the offence — there is no honest reason for a test to need one.
+// DBAlias` carries no D1Database token for the pattern to find. Renaming the type on import,
+// intersecting it, picking from it, implementing or extending it all do the same. Giving the type a
+// second name outside the allowlist is therefore the offence — there is no honest reason for a test
+// to need one.
+//
+// Best-effort, like every content-mode rule: this reads text, not types, so indirection it cannot
+// see (a local module that re-exports the type under another name, a `typeof` on some value) still
+// gets through. It closes the spellings a hurried author reaches for, not an author working around
+// it on purpose.
+//
+// The first arm requires the mention to sit where an ALIAS goes — right of `=`, or inside an
+// intersection, union, type argument or namespace — never where a PARAMETER or FIELD goes:
+// `type Env = { DB: D1Database }` and `type Loader = (db: D1Database) => …` are how honest code
+// spells a binding, and a gate that fires on those is one people learn to weaken. `implements` is
+// deliberately absent for the same reason: `ReadonlyD1 implements D1Database` is the production
+// wrapper doing the real thing, and TypeScript already forces a complete implementation there, so
+// it is no shortcut to a stub.
 const ALIAS =
-  /\btype\s+[A-Za-z_$][\w$]*\s*=\s*D1Database\s*(?=[;\n]|$)|\bD1Database\s+as\s+[A-Za-z_$][\w$]*|\binterface\s+[A-Za-z_$][\w$]*\s+extends\s+D1Database\b/g;
+  /\btype\s+[A-Za-z_$][\w$]*(?:<[^>]*>)?\s*=[^;\n{]*?(?<=[=&|<,.]\s{0,9})\bD1Database\b|\bD1Database\s+as\s+[A-Za-z_$][\w$]*|\b(?:interface|class)\s+[A-Za-z_$][\w$]*(?:<[^>]*>)?\s+extends\b[^{\n]*\bD1Database\b/g;
 
 // ── pure helpers (unit-tested in check-fake-d1.test.mjs) ───────────────────────
 
