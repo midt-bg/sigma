@@ -36,7 +36,11 @@ function captureDb(): { db: D1Database; batches: Captured[][] } {
   fake.db.batch = (async (statements: D1PreparedStatement[]) => {
     const results = await inner(statements);
     const prepared = fake.calls.filter((c) => c.via === 'prepare');
-    batches.push(prepared.slice(consumed, consumed + statements.length).map(({ sql, binds }) => ({ sql, binds })));
+    batches.push(
+      prepared
+        .slice(consumed, consumed + statements.length)
+        .map(({ sql, binds }) => ({ sql, binds })),
+    );
     consumed += statements.length;
     return results;
   }) as typeof fake.db.batch;

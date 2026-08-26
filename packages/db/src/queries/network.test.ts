@@ -93,7 +93,10 @@ describe('getEntityNetwork', () => {
   });
 
   it('offers centre options for the picker', async () => {
-    const { centerOptions } = await getEntityNetwork(fakeDb().db, { kind: 'authority', id: 'auth:C' });
+    const { centerOptions } = await getEntityNetwork(fakeDb().db, {
+      kind: 'authority',
+      id: 'auth:C',
+    });
     // Assert the full mapped shape for BOTH sides — label (cleanName/entityName) and value (slug),
     // not just the authority value, so the companies-branch mapping is actually exercised.
     expect(centerOptions.authorities[0]).toEqual({

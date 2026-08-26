@@ -285,7 +285,9 @@ describe('streamContractsCsv', () => {
   };
 
   it('streams a BOM header then one CSV row per contract with the raw (unescaped) id', async () => {
-    const bytes = new Uint8Array(await streamContractsCsv(csvDb([[csvRow], []]).db, {}).arrayBuffer());
+    const bytes = new Uint8Array(
+      await streamContractsCsv(csvDb([[csvRow], []]).db, {}).arrayBuffer(),
+    );
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split('\n')[0]).toBe(
