@@ -108,6 +108,15 @@ jobs:
             coverage-summary.md
             apps/*/coverage/coverage-summary.json
             packages/*/coverage/coverage-summary.json
+      # Fake-D1 doubles (#325): outside @sigma/test-support nothing may cast a value to D1Database.
+      # A hand-rolled double dispatches on sql.includes() and falls through to no rows when a marker
+      # stops matching, so the test goes green having asserted nothing. Self-tests first, like the
+      # gates either side of it.
+      - name: Fake-D1 doubles
+        if: ${{ !cancelled() }}
+        run: |
+          pnpm check:fake-d1:test
+          pnpm check:fake-d1
       # Docs integrity (#102): fail on a dangling docs reference in source or an
       # unindexed doc. The checker self-tests first, so the gate is itself gated.
       - name: Docs integrity

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { getAuthority, getCompany, getContract } from './details';
 
 const baseContractRow = {
@@ -60,38 +61,29 @@ function fakeDb(
   contractRow: typeof baseContractRow,
   lotRows: unknown[],
   amendmentRows: unknown[] = [],
-  cohortStatsRow: unknown = null,
+  cohortStatsRow: object | null = null,
 ): D1Database {
-  return {
-    prepare(sql: string) {
-      let binds: unknown[] = [];
-      const statement = {
-        bind(...values: unknown[]) {
-          binds = values;
-          return statement;
-        },
-        async first<T>() {
-          if (sql.includes('WHERE c.id = ?')) return contractRow as T;
-          if (sql.includes('authority_totals') || sql.includes('company_totals')) return null as T;
-          // The „Подобни договори" cohort lookup — null unless the test supplies a stats row.
-          if (sql.includes('cpv_division_stats')) return cohortStatsRow as T;
-          throw new Error(`unexpected first query: ${sql}`);
-        },
-        async all<T>() {
-          if (sql.includes('FROM lots l')) {
-            expect(binds).toEqual([contractRow.tender_currency, contractRow.tender_id]);
-            return { results: lotRows as T[] };
-          }
-          if (sql.includes('FROM amendments')) {
-            expect(binds).toEqual([contractRow.unp, contractRow.contract_number]);
-            return { results: amendmentRows as T[] };
-          }
-          throw new Error(`unexpected all query: ${sql}`);
-        },
-      };
-      return statement;
+  return fakeD1([
+    { when: 'WHERE c.id = ?', first: contractRow },
+    { when: 'authority_totals', first: null },
+    { when: 'company_totals', first: null },
+    // The „Подобни договори" cohort lookup — null unless the test supplies a stats row.
+    { when: 'cpv_division_stats', first: cohortStatsRow },
+    {
+      when: 'FROM lots l',
+      all: (call) => {
+        expect(call.binds).toEqual([contractRow.tender_currency, contractRow.tender_id]);
+        return lotRows;
+      },
     },
-  } as D1Database;
+    {
+      when: 'FROM amendments',
+      all: (call) => {
+        expect(call.binds).toEqual([contractRow.unp, contractRow.contract_number]);
+        return amendmentRows;
+      },
+    },
+  ]).db;
 }
 
 describe('getContract', () => {
@@ -326,31 +318,20 @@ describe('getContract', () => {
 
   // The read is gated on a clean value: a suspect contract must NOT even query cpv_division_stats.
   it('skips the cohort read (and returns no cohort) for a non-clean value', async () => {
-    let cohortQueried = false;
-    const db = {
-      prepare(sql: string) {
-        if (sql.includes('cpv_division_stats')) cohortQueried = true;
-        const statement = {
-          bind() {
-            return statement;
-          },
-          async first<T>() {
-            if (sql.includes('WHERE c.id = ?'))
-              return { ...baseContractRow, value_flag: 'value_suspect' } as T;
-            return null as T;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-        return statement;
-      },
-    } as unknown as D1Database;
+    // No cpv_division_stats route at all: were the read to happen, the double would reject rather
+    // than quietly answer, so the assertion below cannot pass for the wrong reason.
+    const fake = fakeD1([
+      { when: 'WHERE c.id = ?', first: { ...baseContractRow, value_flag: 'value_suspect' } },
+      { when: 'authority_totals', first: null },
+      { when: 'company_totals', first: null },
+      { when: 'FROM lots l', all: [] },
+      { when: 'FROM amendments', all: [] },
+    ]);
 
-    const detail = await getContract(db, 'c:1');
+    const detail = await getContract(fake.db, 'c:1');
 
     expect(detail?.cohort).toBeNull();
-    expect(cohortQueried).toBe(false);
+    expect(fake.sql.some((sql) => sql.includes('cpv_division_stats'))).toBe(false);
   });
 
   it('recomputes delta from before/after (ignoring a disagreeing source delta) and trims text', async () => {
@@ -570,39 +551,28 @@ function companyDb(
     avg_bids: 2.34,
   },
 ): D1Database {
-  return {
-    prepare(sql: string) {
-      const stmt = {
-        bind() {
-          return stmt;
-        },
-        async first<T>() {
-          if (sql.includes('FROM company_totals')) return row as T;
-          if (sql.includes('nuts_regions')) return { legal_form: 'ООД', region: 'София' } as T;
-          if (sql.includes('AS primary_eur')) return extra as T;
-          if (sql.includes('four_plus'))
-            return { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } as T;
-          if (sql.includes('amount_eur IS NULL')) return { n: 3 } as T;
-          return null as T;
-        },
-        async all<T>() {
-          if (sql.includes('AS paid'))
-            return {
-              results: [
-                { authority_id: 'auth:1', name: 'Общ 1', paid: 60000, n: 6 },
-                { authority_id: 'auth:2', name: 'Общ 2', paid: 40000, n: 6 },
-              ] as T[],
-            };
-          if (sql.includes('GROUP BY t.procedure_type') && sql.includes('c.bidder_id'))
-            return {
-              results: [{ procedure_type: 'Открита процедура', n: 10, eur: 90000 }] as T[],
-            };
-          return { results: [] as T[] };
-        },
-      };
-      return stmt;
+  return fakeD1([
+    { when: 'FROM company_totals', first: row },
+    { when: 'nuts_regions', first: { legal_form: 'ООД', region: 'София' } },
+    { when: 'AS primary_eur', first: extra },
+    { when: 'four_plus', first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } },
+    { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: { n: 3 } },
+    {
+      when: 'AS paid',
+      all: [
+        { authority_id: 'auth:1', name: 'Общ 1', paid: 60000, n: 6 },
+        { authority_id: 'auth:2', name: 'Общ 2', paid: 40000, n: 6 },
+      ],
     },
-  } as unknown as D1Database;
+    {
+      when: ['GROUP BY t.procedure_type', 'c.bidder_id'],
+      all: [{ procedure_type: 'Открита процедура', n: 10, eur: 90000 }],
+    },
+    // Both detail pages render a contracts panel through listContracts: its page read and the
+    // COUNT/SUM aggregate that accompanies it. Empty here; nothing in this file asserts on them.
+    { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
+    { when: 'COUNT(*) AS total', first: { total: 0, eur: 0, suspect: 0 } },
+  ]).db;
 }
 
 describe('getCompany', () => {
@@ -672,30 +642,21 @@ describe('getCompany', () => {
     // Exercises the `?? null`/`?? 0` fallbacks: null bidderMeta, null bidsRow, null suspectRow,
     // a null primary_sector (bound as ''), and a procedure row whose value is NULL.
     const row = { ...companyRow, primary_sector: null };
-    const db = {
-      prepare(sql: string) {
-        const stmt = {
-          bind() {
-            return stmt;
-          },
-          async first<T>() {
-            if (sql.includes('FROM company_totals')) return row as T;
-            if (sql.includes('nuts_regions')) return null as T; // bidderMeta null
-            if (sql.includes('AS primary_eur')) return null as T; // extra null
-            if (sql.includes('four_plus')) return null as T; // bidsRow null
-            if (sql.includes('amount_eur IS NULL')) return null as T; // suspectRow null
-            return null as T;
-          },
-          async all<T>() {
-            if (sql.includes('AS paid')) return { results: [] as T[] };
-            if (sql.includes('GROUP BY t.procedure_type') && sql.includes('c.bidder_id'))
-              return { results: [{ procedure_type: 'Открита процедура', n: 1, eur: null }] as T[] };
-            return { results: [] as T[] };
-          },
-        };
-        return stmt;
+    const db = fakeD1([
+      { when: 'FROM company_totals', first: row },
+      { when: 'nuts_regions', first: null }, // bidderMeta null
+      { when: 'AS primary_eur', first: null }, // extra null
+      { when: 'four_plus', first: null }, // bidsRow null
+      { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: null }, // suspectRow null
+      { when: 'AS paid', all: [] },
+      {
+        when: ['GROUP BY t.procedure_type', 'c.bidder_id'],
+        all: [{ procedure_type: 'Открита процедура', n: 1, eur: null }],
       },
-    } as unknown as D1Database;
+      // listContracts panel — see companyDb/authorityDb above.
+      { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
+      { when: 'COUNT(*) AS total', first: { total: 0, eur: 0, suspect: 0 } },
+    ]).db;
     const d = (await getCompany(db, 'eik:111111111'))!;
     expect(d.region).toBeNull();
     expect(d.legalForm).toBeNull();
@@ -728,37 +689,27 @@ function authorityDb(
   row: typeof authorityRow | null,
   sectorRows: { division: string; eur: number }[] = [{ division: '45', eur: 120000 }],
 ): D1Database {
-  return {
-    prepare(sql: string) {
-      const stmt = {
-        bind() {
-          return stmt;
-        },
-        async first<T>() {
-          if (sql.includes('FROM authority_totals')) return row as T;
-          if (sql.includes('AVG(c.bids_received)')) return { avg_bids: 3.16 } as T;
-          if (sql.includes('amount_eur IS NULL')) return { n: 2 } as T;
-          return null as T;
-        },
-        async all<T>() {
-          if (sql.includes('ORDER BY won DESC'))
-            return {
-              results: [
-                { bidder_id: 'eik:1', name: 'A ООД', kind: 'company', won: 120000, n: 8 },
-                { bidder_id: 'eik:2', name: 'Б АД', kind: 'company', won: 80000, n: 5 },
-              ] as T[],
-            };
-          if (sql.includes('GROUP BY division')) return { results: sectorRows as T[] };
-          if (sql.includes('GROUP BY t.procedure_type'))
-            return {
-              results: [{ procedure_type: 'Пряко договаряне', n: 4, eur: 60000 }] as T[],
-            };
-          return { results: [] as T[] };
-        },
-      };
-      return stmt;
+  return fakeD1([
+    { when: 'FROM authority_totals', first: row },
+    { when: 'AVG(c.bids_received)', first: { avg_bids: 3.16 } },
+    { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: { n: 2 } },
+    {
+      when: 'ORDER BY won DESC',
+      all: [
+        { bidder_id: 'eik:1', name: 'A ООД', kind: 'company', won: 120000, n: 8 },
+        { bidder_id: 'eik:2', name: 'Б АД', kind: 'company', won: 80000, n: 5 },
+      ],
     },
-  } as unknown as D1Database;
+    { when: 'GROUP BY division', all: sectorRows },
+    {
+      when: 'GROUP BY t.procedure_type',
+      all: [{ procedure_type: 'Пряко договаряне', n: 4, eur: 60000 }],
+    },
+    // Both detail pages render a contracts panel through listContracts: its page read and the
+    // COUNT/SUM aggregate that accompanies it. Empty here; nothing in this file asserts on them.
+    { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
+    { when: 'COUNT(*) AS total', first: { total: 0, eur: 0, suspect: 0 } },
+  ]).db;
 }
 
 describe('getAuthority', () => {
@@ -822,34 +773,20 @@ describe('getAuthority', () => {
       { division: '34', eur: 5000 }, // 7th valid → tail
       { division: 'XX', eur: 3000 }, // unknown CPV division → sectorRef null → filtered out
     ];
-    const db = {
-      prepare(sql: string) {
-        const stmt = {
-          bind() {
-            return stmt;
-          },
-          async first<T>() {
-            if (sql.includes('FROM authority_totals'))
-              return { ...authorityRow, spent_eur: 0 } as T;
-            if (sql.includes('AVG(c.bids_received)')) return { avg_bids: null } as T; // avgBids null
-            if (sql.includes('amount_eur IS NULL')) return null as T; // suspectRow null → 0
-            return null as T;
-          },
-          async all<T>() {
-            if (sql.includes('ORDER BY won DESC'))
-              return {
-                results: [
-                  { bidder_id: 'eik:1', name: 'A ООД', kind: 'company', won: 1, n: 1 },
-                ] as T[],
-              };
-            if (sql.includes('GROUP BY division')) return { results: sectorRows as T[] };
-            if (sql.includes('GROUP BY t.procedure_type')) return { results: [] as T[] };
-            return { results: [] as T[] };
-          },
-        };
-        return stmt;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', first: { ...authorityRow, spent_eur: 0 } },
+      { when: 'AVG(c.bids_received)', first: { avg_bids: null } }, // avgBids null
+      { when: ['COUNT(*) AS n', 'amount_eur IS NULL'], first: null }, // suspectRow null → 0
+      {
+        when: 'ORDER BY won DESC',
+        all: [{ bidder_id: 'eik:1', name: 'A ООД', kind: 'company', won: 1, n: 1 }],
       },
-    } as unknown as D1Database;
+      { when: 'GROUP BY division', all: sectorRows },
+      { when: 'GROUP BY t.procedure_type', all: [] },
+      // listContracts panel — see companyDb/authorityDb above.
+      { when: 'COALESCE(NULLIF(c.contract_subject', all: [] },
+      { when: 'COUNT(*) AS total', first: { total: 0, eur: 0, suspect: 0 } },
+    ]).db;
     const d = (await getAuthority(db, 'auth:123456789'))!;
     expect(d.avgBids).toBeNull();
     expect(d.suspect).toBe(0);
@@ -1007,26 +944,14 @@ describe('getContract — subcontractor, framework, currency, and field branches
   });
 
   it('surfaces authority and company totals when the rollup rows exist', async () => {
-    const db = {
-      prepare(sql: string) {
-        const stmt = {
-          bind() {
-            return stmt;
-          },
-          async first<T>() {
-            if (sql.includes('WHERE c.id = ?')) return baseContractRow as T;
-            if (sql.includes('authority_totals')) return { spent_eur: 900000, contracts: 300 } as T;
-            if (sql.includes('company_totals'))
-              return { won_eur: 400000, contracts: 40, primary_sector: '72' } as T;
-            return null as T;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-        return stmt;
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'WHERE c.id = ?', first: baseContractRow },
+      { when: 'authority_totals', first: { spent_eur: 900000, contracts: 300 } },
+      { when: 'company_totals', first: { won_eur: 400000, contracts: 40, primary_sector: '72' } },
+      { when: 'cpv_division_stats', first: null },
+      { when: 'FROM lots l', all: [] },
+      { when: 'FROM amendments', all: [] },
+    ]).db;
     const d = (await getContract(db, 'c:1'))!;
     expect(d.authority.totalEur).toBe(900000);
     expect(d.authority.totalContracts).toBe(300);
@@ -1093,22 +1018,7 @@ describe('getContract — lot totals, framework floor, and sector fallbacks', ()
 
 describe('getContract — not-found and lot kind default', () => {
   it('returns null when the contract id matches no row', async () => {
-    const db = {
-      prepare() {
-        const stmt = {
-          bind() {
-            return stmt;
-          },
-          async first() {
-            return null;
-          },
-          async all() {
-            return { results: [] };
-          },
-        };
-        return stmt;
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([{ when: 'WHERE c.id = ?', first: null }]).db;
     expect(await getContract(db, 'c:missing')).toBeNull();
   });
 

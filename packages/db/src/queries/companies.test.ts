@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1, type FakeD1Call } from '@sigma/test-support';
 import {
   getCompanyFacets,
   listCompanies,
@@ -49,35 +50,26 @@ const unfilteredRows: (CompanyTotalsRow & { sort_value: number })[] = [
   },
 ];
 
-function usesFilteredCompanySource(sql: string): boolean {
-  return sql.includes('FROM (') && sql.includes('substr(t.cpv_code, 1, 2)');
-}
+// The scoped base-aggregation CTE a sector/year/EU cross-cut switches the FROM source to, as opposed
+// to the plain company_totals rollup.
+const FILTERED_SOURCE = ['FROM (', 'substr(t.cpv_code, 1, 2)'];
+
+/** Keyset page: everything after the `bidder_id` the query bound as its cursor. */
+const after = (rows: (CompanyTotalsRow & { sort_value: number })[]) => (call: FakeD1Call) =>
+  rows.filter((r) => r.bidder_id > String(call.binds.at(-2)));
 
 function fakeDb(): D1Database {
-  return {
-    prepare(sql: string) {
-      let bound: unknown[] = [];
-      return {
-        bind(...args: unknown[]) {
-          bound = args;
-          return this;
-        },
-        async all<T>() {
-          const rows = usesFilteredCompanySource(sql) ? filteredRows : unfilteredRows;
-          if (sql.includes('ORDER BY bidder_id')) {
-            const afterId = bound.at(-2) as string;
-            return { results: rows.filter((r) => r.bidder_id > afterId) as T[] };
-          }
-          return { results: rows as T[] };
-        },
-        async first<T>() {
-          return {
-            n: usesFilteredCompanySource(sql) ? filteredRows.length : unfilteredRows.length,
-          } as T;
-        },
-      };
-    },
-  } as D1Database;
+  return fakeD1([
+    // The CSV stream pages by bidder_id; the list query carries a sort_value column instead. Keeping
+    // the two apart by their own marker means breaking either one throws rather than falling through
+    // to the other and quietly returning an unpaginated page.
+    { when: [...FILTERED_SOURCE, 'ORDER BY bidder_id'], all: after(filteredRows) },
+    { when: [...FILTERED_SOURCE, 'AS sort_value'], all: filteredRows },
+    { when: FILTERED_SOURCE, first: { n: filteredRows.length } },
+    { when: ['FROM company_totals', 'ORDER BY bidder_id'], all: after(unfilteredRows) },
+    { when: ['FROM company_totals', 'AS sort_value'], all: unfilteredRows },
+    { when: 'FROM company_totals', first: { n: unfilteredRows.length } },
+  ]).db;
 }
 
 describe('streamCompaniesCsv', () => {
@@ -164,27 +156,14 @@ describe('prototype-key params (untrusted query values)', () => {
   });
 });
 
-// A SQL-capturing fake that returns one company row regardless of query — for asserting *which*
-// predicates the source/entity-where builders emit, independent of the fakeDb row-filtering above.
-function capDb(): { db: D1Database; sql: string[] } {
-  const sql: string[] = [];
-  const db = {
-    prepare(q: string) {
-      sql.push(q);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: [filteredRows[0]] as T[] };
-        },
-        async first<T>() {
-          return { n: 1 } as T;
-        },
-      };
-    },
-  } as D1Database;
-  return { db, sql };
+// A SQL-recording fake that answers either source with one company row — for asserting *which*
+// predicates the source/entity-where builders emit, independent of the row-filtering fakeDb above.
+function capDb(): FakeD1 {
+  return fakeD1([
+    { when: 'FROM (', all: [filteredRows[0]!] },
+    { when: 'FROM company_totals', all: [filteredRows[0]!] },
+    { when: 'COUNT(*)', first: { n: 1 } },
+  ]);
 }
 
 describe('listCompanies — backward pagination', () => {
@@ -195,21 +174,11 @@ describe('listCompanies — backward pagination', () => {
       { ...filteredRows[0]!, bidder_id: 'eik:2', sort_value: 200 },
       { ...filteredRows[0]!, bidder_id: 'eik:3', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { n: 3 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM (', all: rows },
+      { when: 'FROM company_totals', all: rows },
+      { when: 'COUNT(*)', first: { n: 3 } },
+    ]).db;
     const fwd = await listCompanies(db, { pageSize: 2 });
     const mid = await listCompanies(db, { pageSize: 2, cursor: fwd.nextCursor! });
     expect(mid.prevCursor).toBeTruthy();
@@ -273,21 +242,11 @@ describe('listCompanies — source and entity-where branches', () => {
   });
 
   it('defaults the page size and tolerates a missing total row', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [filteredRows[0]] as T[] };
-          },
-          async first<T>() {
-            return null as T; // COUNT(*) row absent
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM (', all: [filteredRows[0]!] },
+      { when: 'FROM company_totals', all: [filteredRows[0]!] },
+      { when: 'COUNT(*)', first: null }, // COUNT(*) row absent
+    ]).db;
     const page = await listCompanies(db, {}); // no pageSize → default of 25
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(0);
@@ -298,21 +257,11 @@ describe('listCompanies — source and entity-where branches', () => {
       { ...filteredRows[0]!, bidder_id: 'eik:1', sort_value: 200 },
       { ...filteredRows[0]!, bidder_id: 'eik:2', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { n: 9 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM (', all: rows },
+      { when: 'FROM company_totals', all: rows },
+      { when: 'COUNT(*)', first: { n: 9 } },
+    ]).db;
     const page = await listCompanies(db, { pageSize: 1 });
     expect(page.items).toHaveLength(1); // overflow row dropped
     expect(page.total).toBe(9);
@@ -322,27 +271,16 @@ describe('listCompanies — source and entity-where branches', () => {
 
 describe('getCompanyFacets', () => {
   it('maps the two entity kinds (missing kind → 0) and sorts sectors by descending value', async () => {
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            if (sql.includes('GROUP BY kind'))
-              return { results: [{ kind: 'company', n: 7 }] as T[] }; // consortium absent → 0
-            if (sql.includes('sector_totals'))
-              return {
-                results: [
-                  { division: '45', value_eur: 100 }, // out of order → must be reordered below
-                  { division: '72', value_eur: 900 },
-                ] as T[],
-              };
-            return { results: [] as T[] };
-          },
-        };
+    const db = fakeD1([
+      { when: 'GROUP BY kind', all: [{ kind: 'company', n: 7 }] }, // consortium absent → 0
+      {
+        when: 'sector_totals',
+        all: [
+          { division: '45', value_eur: 100 }, // out of order → must be reordered below
+          { division: '72', value_eur: 900 },
+        ],
       },
-    } as D1Database;
+    ]).db;
     const facets = await getCompanyFacets(db);
     const company = facets.kinds.find((k) => k.value === 'company')!;
     const consortium = facets.kinds.find((k) => k.value === 'consortium')!;
@@ -352,19 +290,10 @@ describe('getCompanyFacets', () => {
   });
 
   it('drops zero-value sectors from the facet', async () => {
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            if (sql.includes('GROUP BY kind')) return { results: [] as T[] };
-            return { results: [] as T[] }; // no sector_totals rows → every count 0 → filtered out
-          },
-        };
-      },
-    } as D1Database;
+    const db = fakeD1([
+      { when: 'GROUP BY kind', all: [] },
+      { when: 'sector_totals', all: [] }, // no rows → every count 0 → filtered out
+    ]).db;
     const facets = await getCompanyFacets(db);
     expect(facets.sectors).toEqual([]);
   });
@@ -372,18 +301,10 @@ describe('getCompanyFacets', () => {
 
 describe('streamCompaniesCsv — body edges', () => {
   it('emits header only when there are no rows', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM (', all: [] },
+      { when: 'FROM company_totals', all: [] },
+    ]).db;
     const bytes = new Uint8Array(await streamCompaniesCsv(db, {}).arrayBuffer());
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     expect(new TextDecoder().decode(bytes)).toBe(
@@ -399,18 +320,11 @@ describe('streamCompaniesCsv — body edges', () => {
       eik: String(i).padStart(9, '0'),
     }));
     let calls = 0;
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: (calls++ === 0 ? first : []) as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const page = () => (calls++ === 0 ? first : []);
+    const db = fakeD1([
+      { when: 'FROM (', all: page },
+      { when: 'FROM company_totals', all: page },
+    ]).db;
     const csv = await streamCompaniesCsv(db, {}).text();
     expect(csv.match(/\n/g)!).toHaveLength(CHUNK + 1); // header + CHUNK rows
     expect(calls).toBe(2); // === CHUNK page did not close; a second pull ran

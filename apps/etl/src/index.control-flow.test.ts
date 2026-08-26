@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 
 // index.test.ts covers the FX/derive path end-to-end against a real SQLite (#158). This file isolates
 // the RefreshWorkflow.run()/scheduled() *control flow* — plan → capped warning → zero-ingest
@@ -86,9 +87,13 @@ function fakeStep(names: string[]) {
   };
 }
 
+// Every ingest/refresh writer is mocked in this file, so the binding must never be touched. A
+// route-less double throws on any query instead of quietly answering one. One shared instance, so
+// the assertions below can name the exact handle the workflow was expected to pass down.
+const DB = fakeD1([]).db;
+
 function makeWorkflow() {
-  const env = { DB: {} as D1Database, REFRESH: {} as Workflow };
-  return new RefreshWorkflow({} as never, env);
+  return new RefreshWorkflow({} as never, { DB, REFRESH: {} as Workflow });
 }
 
 afterEach(() => {
@@ -121,7 +126,7 @@ describe('RefreshWorkflow.run — control flow', () => {
     );
 
     expect(result).toMatchObject({ from: '2026-05-29', days: 1, staged: 28, derived: 42 });
-    expect(ingest.createTransientStaging).toHaveBeenCalledWith({}, 'WORK_STAGING_SCHEMA_SQL');
+    expect(ingest.createTransientStaging).toHaveBeenCalledWith(DB, 'WORK_STAGING_SCHEMA_SQL');
     expect(ingest.loadFxRates).toHaveBeenCalledOnce(); // FX loaded before derive (#158)
     expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1);
     expect(ingest.refreshDerivedContractCount).toHaveBeenCalledOnce();
@@ -178,10 +183,11 @@ describe('RefreshWorkflow.run — control flow', () => {
 
     const result = await wf.run({} as never, fakeStep([]) as never);
     expect(result.staged).toBe(1);
-    expect(eop.computeWorkerCatchupPlan).toHaveBeenCalledWith(
-      {},
-      { today: undefined, lookbackDays: undefined, maxWindowDays: undefined },
-    );
+    expect(eop.computeWorkerCatchupPlan).toHaveBeenCalledWith(DB, {
+      today: undefined,
+      lookbackDays: undefined,
+      maxWindowDays: undefined,
+    });
   });
 
   it('logs a capped warning when the plan window was truncated', async () => {
@@ -268,7 +274,7 @@ describe('scheduled handler', () => {
   it('kicks one durable refresh run and logs its id', async () => {
     const create = vi.fn(async () => ({ id: 'wf-123' }));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const env = { DB: {} as D1Database, REFRESH: { create } as unknown as Workflow };
+    const env = { DB: fakeD1([]).db, REFRESH: { create } as unknown as Workflow };
 
     await worker.scheduled?.({} as never, env);
 

@@ -1,5 +1,5 @@
 {
-  "name": "@sigma/ingest",
+  "name": "@sigma/test-support",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,5 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
-  },
-  "devDependencies": {
-    "@sigma/test-support": "workspace:*"
   }
 }

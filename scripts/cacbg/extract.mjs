@@ -10,13 +10,62 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseList, parseDeclaration } from './parse.mjs';
-import { assertScratchIgnored, SCRATCH } from './guard.mjs';
+import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
+import { sentinelPath } from './fetch.mjs';
 
-const RAW = path.join(SCRATCH, 'raw');
-const STAGING = path.join(SCRATCH, 'staging');
+// Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
+// production behaviour is unchanged when they are unset.
+const RAW = process.env.CACBG_RAW || path.join(SCRATCH, 'raw');
+const STAGING = process.env.CACBG_STAGING || path.join(SCRATCH, 'staging');
+// Validate the ACTUAL output directories, default or overridden alike (review round 5, blocker 2):
+// assertScratchIgnored probes only the fixed scratch/cacbg/.probe path, so a symlink AT the sibling
+// default `raw`/`staging` — or an overridden one — is invisible to it while fetch/extract I/O follows
+// it into committable files. assertOverrideDirSafe canonicalizes the real target and asks git, so it
+// is the right check for both. Unconditional: the default location must clear the same bar it guards.
+assertOverrideDirSafe(RAW, process.env.CACBG_RAW ? 'CACBG_RAW' : 'scratch/cacbg/raw');
+assertOverrideDirSafe(
+  STAGING,
+  process.env.CACBG_STAGING ? 'CACBG_STAGING' : 'scratch/cacbg/staging',
+);
+
+/**
+ * Refuse a corpus that was never stamped complete — unless the caller states it knows.
+ *
+ * fetch.mjs writes `.corpus-complete.json` only when the crawl reconciles against the register's own
+ * list.xml, and clears it before touching anything. So a missing stamp means one of: a deadline stop
+ * (#313 made that an EXPECTED state), a crash, or a cache restored from a run that never finished.
+ *
+ * That distinction had no reader. `restore-keys: cacbg-raw-` takes the most RECENT snapshot, not the most
+ * complete, and the loop below walks readdirSync over whatever files exist without reconciling them
+ * against list.xml — so a truncated corpus simply produces a smaller surface, with no error anywhere.
+ * Neither downstream gate closes it: the monotonicity gate sees net growth whenever new links outnumber
+ * lost ones, the --min-links floor only counts, and a first run in a fresh environment has no baseline.
+ *
+ * A partial corpus stays fully usable for RESUMING — the next crawl skips what is on disk. This gate is
+ * only about PUBLISHING from one.
+ */
+function assertCorpusComplete() {
+  if (process.argv.includes('--allow-partial-corpus')) {
+    console.warn(
+      '⚠ --allow-partial-corpus: extracting from a corpus that was never stamped complete. ' +
+        'Whatever is missing from the raw cache will be missing from the surface, silently.',
+    );
+    return;
+  }
+  if (fs.existsSync(sentinelPath(RAW))) return;
+  throw new Error(
+    `REFUSE TO EXTRACT: no completeness stamp at ${sentinelPath(RAW)}. The raw corpus was never ` +
+      `confirmed whole — it is a deadline stop, a crashed crawl, or a cache restored from one. Extracting ` +
+      `now would publish a surface missing whatever the corpus is missing, and nothing downstream would ` +
+      `notice: the monotonicity gate sees net growth when new links offset lost ones, and the ship floor ` +
+      `only counts. Re-run the crawl to completion (it resumes — declarations on disk are skipped), or ` +
+      `pass --allow-partial-corpus to state that a smaller surface is intended.`,
+  );
+}
 
 function run() {
   assertScratchIgnored();
+  assertCorpusComplete();
   fs.mkdirSync(STAGING, { recursive: true });
   const holdingsOut = fs.createWriteStream(path.join(STAGING, 'holdings.jsonl'));
   const relatedOut = fs.createWriteStream(path.join(STAGING, 'related.jsonl'));

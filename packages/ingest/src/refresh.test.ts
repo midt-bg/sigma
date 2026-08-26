@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { recordingD1 } from '@sigma/test-support';
 import {
   createTransientStaging,
   dropTransientStaging,
@@ -10,32 +11,30 @@ import {
   transientStagingStatements,
 } from './refresh';
 
-// Capturing D1: records each batch as the list of prepared SQL strings, and lets a test pin what
-// `.first()` returns. The refresh layer only prepares/batches statements, so capturing them verifies
-// the real behaviour (order, grouping, scope).
+// Capturing D1 over the shared recording double. refresh.ts hands D1 whole bundled SQL files, so
+// marker routing has nothing to route on — recordingD1 is the shape for a wrapper like this: it
+// accepts any statement and logs it. What the tests need on top is the batch GROUPING (which
+// statements went out together), which the flat call log does not preserve, so batch() is wrapped
+// to slice the log at each call. Wrapping, not re-implementing: the double still owns the surface.
 function fakeDb(firstResult: { n: number } | null = { n: 0 }): {
   db: D1Database;
   batches: string[][];
 } {
+  const fake = recordingD1([{ when: [], first: firstResult }]);
   const batches: string[][] = [];
-  const db = {
-    prepare(sql: string) {
-      return {
-        sql,
-        bind() {
-          return this;
-        },
-        async first() {
-          return firstResult;
-        },
-      };
-    },
-    async batch(stmts: Array<{ sql: string }>) {
-      batches.push(stmts.map((s) => s.sql));
-      return stmts.map(() => ({ success: true, meta: {} }));
-    },
-  } as unknown as D1Database;
-  return { db, batches };
+  // Batch groups come from the PREPARE log, not the batch log: batch() re-records each statement
+  // under via:'batch' without its binds (prepare() already logged those), and the binds are half of
+  // what these tests assert. Prepared statements are consumed by successive batches in order.
+  const inner = fake.db.batch.bind(fake.db);
+  let consumed = 0;
+  fake.db.batch = (async (statements: D1PreparedStatement[]) => {
+    const results = await inner(statements);
+    const prepared = fake.calls.filter((c) => c.via === 'prepare');
+    batches.push(prepared.slice(consumed, consumed + statements.length).map((c) => c.sql));
+    consumed += statements.length;
+    return results;
+  }) as typeof fake.db.batch;
+  return { db: fake.db, batches };
 }
 
 describe('splitSqlStatements', () => {

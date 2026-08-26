@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import {
   contractsSummary,
   getContractFacets,
@@ -40,23 +41,41 @@ const contractRow = {
   sort_value: 1000,
 };
 
+/** The list page and the COUNT/SUM aggregate that goes with it, as two separately breakable routes. */
+function listDb(
+  rows: object[] = [contractRow],
+  summary: { total: number; eur: number; suspect: number } | null = {
+    total: 1,
+    eur: 1000,
+    suspect: 0,
+  },
+): FakeD1 {
+  // `1=0` is the guard the list query uses for an input it could not decode — the page it returns
+  // must be empty, and the count that goes with it zero. Its routes come first so the guard wins.
+  return fakeD1([
+    { when: '1=0', all: [] },
+    { when: '1=0', first: { total: 0, eur: 0, suspect: 0 } },
+    { when: 'COUNT(*) AS total', first: summary },
+    { when: 'FROM contracts c', all: rows },
+  ]);
+}
+
 function fakeDb(): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: (sql.includes('1=0') ? [] : [contractRow]) as T[] };
-        },
-        async first<T>() {
-          const total = sql.includes('1=0') ? 0 : 1;
-          return { total, eur: total ? 1000 : 0, suspect: 0 } as T;
-        },
-      };
-    },
-  } as D1Database;
+  return listDb().db;
+}
+
+// The three facet reads: the precomputed rollup, the CPV-division count, and the signed-year buckets.
+const FACET_ROLLUP = 'FROM facet_counts';
+const FACET_SECTORS = 'substr(t.cpv_code, 1, 2)';
+const FACET_YEARS = 'GROUP BY key';
+
+/** The three facet reads, each answerable — and therefore breakable — on its own. */
+function facetDb(parts: { rollup?: unknown[]; sectors?: unknown[]; years?: unknown[] }): FakeD1 {
+  return fakeD1([
+    { when: FACET_ROLLUP, all: parts.rollup ?? [] },
+    { when: FACET_SECTORS, all: parts.sectors ?? [] },
+    { when: FACET_YEARS, all: parts.years ?? [] },
+  ]);
 }
 
 describe('listContracts', () => {
@@ -80,32 +99,18 @@ describe('listContracts', () => {
   });
 
   it('accepts a caller-supplied summary override without a COUNT/SUM scan', async () => {
-    let firstCalls = 0;
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [contractRow] as T[] };
-          },
-          async first<T>() {
-            firstCalls++;
-            return { total: 0, eur: 0, suspect: 0 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    // No aggregate route at all: with an override the COUNT/SUM scan must never run, so a double
+    // that throws on it asserts the skip more directly than counting first() calls would.
+    const fake = fakeD1([{ when: 'FROM contracts c', all: [contractRow] }]);
     const page = await listContracts(
-      db,
+      fake.db,
       { pageSize: 10 },
       { total: 42, valueEur: 999, suspect: 3 },
     );
     expect(page.total).toBe(42);
     expect(page.valueEur).toBe(999);
     expect(page.suspect).toBe(3);
-    expect(firstCalls).toBe(0); // summary override → the aggregate query is skipped
+    expect(fake.sql.every((sql) => !sql.includes('COUNT(*) AS total'))).toBe(true);
   });
 
   it('slices to pageSize and emits a next cursor when the page overflows', async () => {
@@ -113,48 +118,16 @@ describe('listContracts', () => {
       { ...contractRow, id: 'c:1', sort_value: 200 },
       { ...contractRow, id: 'c:2', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { total: 2, eur: 2000, suspect: 0 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = listDb(rows, { total: 2, eur: 2000, suspect: 0 }).db;
     const page = await listContracts(db, { pageSize: 1 });
     expect(page.items).toHaveLength(1); // overflow row dropped
     expect(page.nextCursor).toBeTruthy();
   });
 });
 
-// A SQL-capturing spy over the standard fakeDb rows — for asserting which predicates buildFilters emits.
-function spyDb(): { db: D1Database; sql: string[] } {
-  const sql: string[] = [];
-  const db = {
-    prepare(q: string) {
-      sql.push(q);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: (q.includes('1=0') ? [] : [contractRow]) as T[] };
-        },
-        async first<T>() {
-          return { total: 1, eur: 1000, suspect: 0 } as T;
-        },
-      };
-    },
-  } as D1Database;
-  return { db, sql };
-}
+// A SQL-recording double over the standard list rows — for asserting which predicates buildFilters
+// emits. `listDb()` already records every statement, so the spy is just its FakeD1 handle.
+const spyDb = (): FakeD1 => listDb();
 
 describe('buildFilters (via listContracts)', () => {
   it('emits every filter predicate for a fully-specified query', async () => {
@@ -216,21 +189,7 @@ describe('buildFilters (via listContracts)', () => {
   });
 
   it('maps a CPV-less row to a null sector and defaults the page size', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [{ ...contractRow, cpv_code: null }] as T[] };
-          },
-          async first<T>() {
-            return { total: 1, eur: 1000, suspect: 0 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = listDb([{ ...contractRow, cpv_code: null }]).db;
     const page = await listContracts(db, {}); // no pageSize → default of 15
     expect(page.items[0]!.sectorCode).toBeNull(); // r.cpv_code ? … : null
   });
@@ -242,21 +201,7 @@ describe('buildFilters (via listContracts)', () => {
       { ...contractRow, id: 'c:2', sort_value: 200 },
       { ...contractRow, id: 'c:3', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { total: 3, eur: 1000, suspect: 0 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = listDb(rows, { total: 3, eur: 1000, suspect: 0 }).db;
     const fwd = await listContracts(db, { pageSize: 2 });
     const mid = await listContracts(db, { pageSize: 2, cursor: fwd.nextCursor! });
     expect(mid.prevCursor).toBeTruthy();
@@ -268,18 +213,7 @@ describe('buildFilters (via listContracts)', () => {
 
 describe('contractsSummary', () => {
   it('returns zeroed totals when the aggregate row is missing', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async first<T>() {
-            return null as T; // no aggregate row
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([{ when: 'COUNT(*) AS total', first: null }]).db; // no aggregate row
     const summary = await contractsSummary(db, {});
     expect(summary).toEqual({ total: 0, valueEur: 0, suspect: 0 });
   });
@@ -287,68 +221,34 @@ describe('contractsSummary', () => {
 
 describe('listSingleOfferContracts', () => {
   it('orders by value in value mode and by date in recent mode', async () => {
-    const capture = () => {
-      const seen: string[] = [];
-      const binds: unknown[][] = [];
-      const db = {
-        prepare(sql: string) {
-          seen.push(sql);
-          return {
-            bind(...args: unknown[]) {
-              binds.push(args);
-              return this;
-            },
-            async all<T>() {
-              return { results: [contractRow] as T[] };
-            },
-          };
-        },
-      } as D1Database;
-      return { db, seen, binds };
-    };
+    const capture = (): FakeD1 => fakeD1([{ when: 'FROM contracts c', all: [contractRow] }]);
     const v = capture();
     const items = await listSingleOfferContracts(v.db, 'value', 5);
     expect(items).toHaveLength(1);
-    expect(v.seen[0]).toContain('ORDER BY c.amount_eur DESC');
-    expect(v.seen[0]).toContain('LIMIT ?');
-    expect(v.binds[0]).toEqual([5]); // the explicit limit reaches the LIMIT placeholder
+    expect(v.sql[0]).toContain('ORDER BY c.amount_eur DESC');
+    expect(v.sql[0]).toContain('LIMIT ?');
+    expect(v.calls[0]!.binds).toEqual([5]); // the explicit limit reaches the LIMIT placeholder
 
     const r = capture();
     await listSingleOfferContracts(r.db, 'recent');
-    expect(r.seen[0]).toContain('ORDER BY COALESCE(c.signed_at, c.published_at) DESC');
-    expect(r.binds[0]).toEqual([10]); // default limit
+    expect(r.sql[0]).toContain('ORDER BY COALESCE(c.signed_at, c.published_at) DESC');
+    expect(r.calls[0]!.binds).toEqual([10]); // default limit
   });
 });
 
 describe('getContractFacets — procedure folding and EU counts', () => {
   it('folds procedure facet rows into config groups, sorts sectors, and splits EU counts', async () => {
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            if (sql.includes('facet_counts'))
-              return {
-                results: [
-                  { facet: 'procedure', key: 'Открита процедура', contracts: 5 }, // → 'open'
-                  { facet: 'eu', key: '1', contracts: 8 },
-                  { facet: 'eu', key: '0', contracts: 2 },
-                ] as T[],
-              };
-            if (sql.includes('substr(t.cpv_code, 1, 2)'))
-              return {
-                results: [
-                  { division: '45', contracts: 3 }, // out of order → must be resorted below
-                  { division: '72', contracts: 9 },
-                ] as T[],
-              };
-            return { results: [] as T[] }; // year rows
-          },
-        };
-      },
-    } as D1Database;
+    const db = facetDb({
+      rollup: [
+        { facet: 'procedure', key: 'Открита процедура', contracts: 5 }, // → 'open'
+        { facet: 'eu', key: '1', contracts: 8 },
+        { facet: 'eu', key: '0', contracts: 2 },
+      ],
+      sectors: [
+        { division: '45', contracts: 3 }, // out of order → must be resorted below
+        { division: '72', contracts: 9 },
+      ],
+    }).db;
     const facets = await getContractFacets(db);
     expect(facets.procedures.find((p) => p.value === 'open')?.count).toBe(5);
     expect(facets.sectors.map((s) => s.value)).toEqual(['72', '45']); // 9 before 3
@@ -356,23 +256,13 @@ describe('getContractFacets — procedure folding and EU counts', () => {
   });
 
   it('sorts real years newest-first and sinks the unknown bucket to the end', async () => {
-    const db = {
-      prepare(sql: string) {
-        return {
-          async all<T>() {
-            if (sql.includes('facet_counts')) return { results: [] as T[] };
-            if (sql.includes('substr(t.cpv_code, 1, 2)')) return { results: [] as T[] };
-            return {
-              results: [
-                { key: '2022', contracts: 1 },
-                { key: '2024', contracts: 2 },
-                { key: 'unknown', contracts: 3 },
-              ] as T[],
-            };
-          },
-        };
-      },
-    } as D1Database;
+    const db = facetDb({
+      years: [
+        { key: '2022', contracts: 1 },
+        { key: '2024', contracts: 2 },
+        { key: 'unknown', contracts: 3 },
+      ],
+    }).db;
     const facets = await getContractFacets(db);
     // localeCompare orders the real years descending; both `a === unknown` and `b === unknown`
     // comparator arms fire to push the unknown bucket last.
@@ -381,21 +271,10 @@ describe('getContractFacets — procedure folding and EU counts', () => {
 });
 
 describe('streamContractsCsv', () => {
-  function csvDb(pages: Record<string, unknown>[][], seen?: string[]): D1Database {
+  /** The keyset walk pulls a chunk at a time; each call serves the next page, then nothing. */
+  function csvDb(pages: Record<string, unknown>[][]): FakeD1 {
     let call = 0;
-    return {
-      prepare(sql: string) {
-        seen?.push(sql);
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: (pages[call++] ?? []) as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    return fakeD1([{ when: 'FROM contracts c', all: () => pages[call++] ?? [] }]);
   }
 
   const csvRow = {
@@ -406,7 +285,7 @@ describe('streamContractsCsv', () => {
   };
 
   it('streams a BOM header then one CSV row per contract with the raw (unescaped) id', async () => {
-    const bytes = new Uint8Array(await streamContractsCsv(csvDb([[csvRow], []]), {}).arrayBuffer());
+    const bytes = new Uint8Array(await streamContractsCsv(csvDb([[csvRow], []]).db, {}).arrayBuffer());
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // UTF-8 BOM
     const csv = new TextDecoder().decode(bytes);
     expect(csv.split('\n')[0]).toBe(
@@ -417,13 +296,13 @@ describe('streamContractsCsv', () => {
   });
 
   it('emits only the header when the filtered set is empty', async () => {
-    const csv = await streamContractsCsv(csvDb([[]]), { authority: '999999999' }).text();
+    const csv = await streamContractsCsv(csvDb([[]]).db, { authority: '999999999' }).text();
     expect(csv.split('\n').filter(Boolean)).toHaveLength(1); // header row only
   });
 
   it('renders a blank sector cell and eu flag „1" for a CPV-less EU-funded row', async () => {
     const row = { ...csvRow, cpv_code: null, eu_funded: 1, amount_eur: 1000, bids_received: 3 };
-    const csv = await streamContractsCsv(csvDb([[row], []]), {}).text();
+    const csv = await streamContractsCsv(csvDb([[row], []]).db, {}).text();
     // trailing columns: …,value_eur,eu_funded,bids_received → 1000,1,3 (eu_funded === 1 → '1')
     expect(csv).toContain(',1000,1,3');
   });
@@ -435,59 +314,34 @@ describe('streamContractsCsv', () => {
       id: `c:${i}`,
       rowid: i + 1,
     }));
-    const seen: string[] = [];
-    const csv = await streamContractsCsv(csvDb([first, []], seen), { eu: 'eu' }).text();
+    const fake = csvDb([first, []]);
+    const csv = await streamContractsCsv(fake.db, { eu: 'eu' }).text();
     expect(csv.match(/\n/g)!).toHaveLength(CHUNK + 1); // header + CHUNK rows
-    expect(seen.some((s) => s.includes('c.eu_funded = 1 AND c.rowid > ?'))).toBe(true);
-    expect(seen).toHaveLength(2); // === CHUNK page did not close; a second pull ran
+    expect(fake.sql.some((s) => s.includes('c.eu_funded = 1 AND c.rowid > ?'))).toBe(true);
+    expect(fake.sql).toHaveLength(2); // === CHUNK page did not close; a second pull ran
   });
 });
 
 describe('getContractFacets — sector, year and authority facets', () => {
   it('counts sectors from the same CPV division expression used by list filters', async () => {
-    const seenSql: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        seenSql.push(sql);
-        return {
-          async all<T>() {
-            if (sql.includes('facet_counts')) return { results: [] as T[] };
-            if (sql.includes('substr(t.cpv_code, 1, 2)')) {
-              return { results: [{ division: '45', contracts: 7 }] as T[] };
-            }
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as D1Database;
-
+    const fake = facetDb({ sectors: [{ division: '45', contracts: 7 }] });
+    const db = fake.db;
     const facets = await getContractFacets(db);
 
-    expect(seenSql.some((sql) => sql.includes('JOIN tenders t ON t.id = c.tender_id'))).toBe(true);
+    expect(fake.sql.some((sql) => sql.includes('JOIN tenders t ON t.id = c.tender_id'))).toBe(true);
     expect(facets.sectors.find((sector) => sector.value === '45')?.count).toBe(7);
   });
 
   it('folds future signed-year buckets into unknown without hiding the rows', async () => {
     const currentYear = new Date().getUTCFullYear();
     const futureYear = String(currentYear + 3);
-    const db = {
-      prepare(sql: string) {
-        return {
-          async all<T>() {
-            if (sql.includes('facet_counts')) return { results: [] as T[] };
-            if (sql.includes('substr(t.cpv_code, 1, 2)')) return { results: [] as T[] };
-            return {
-              results: [
-                { key: String(currentYear), contracts: 4 },
-                { key: futureYear, contracts: 1 },
-                { key: 'unknown', contracts: 2 },
-              ] as T[],
-            };
-          },
-        };
-      },
-    } as D1Database;
-
+    const db = facetDb({
+      years: [
+        { key: String(currentYear), contracts: 4 },
+        { key: futureYear, contracts: 1 },
+        { key: 'unknown', contracts: 2 },
+      ],
+    }).db;
     const facets = await getContractFacets(db);
 
     expect(facets.years.find((year) => year.value === String(currentYear))?.count).toBe(4);
@@ -501,25 +355,14 @@ describe('getContractFacets — sector, year and authority facets', () => {
   it('always sinks the „Неизвестна" bucket below real years, whatever the row order', async () => {
     // Multiple buckets with „unknown" NOT last force the comparator to evaluate `a.key === YEAR_UNKNOWN`
     // (its first arm) as well as the `b` arm — real years descend, unknown always sorts to the bottom.
-    const db = {
-      prepare(sql: string) {
-        return {
-          async all<T>() {
-            if (sql.includes('facet_counts')) return { results: [] as T[] };
-            if (sql.includes('substr(t.cpv_code, 1, 2)')) return { results: [] as T[] };
-            return {
-              results: [
-                { key: '2020', contracts: 1 },
-                { key: 'unknown', contracts: 2 },
-                { key: '2024', contracts: 3 },
-                { key: '2022', contracts: 4 },
-              ] as T[],
-            };
-          },
-        };
-      },
-    } as D1Database;
-
+    const db = facetDb({
+      years: [
+        { key: '2020', contracts: 1 },
+        { key: 'unknown', contracts: 2 },
+        { key: '2024', contracts: 3 },
+        { key: '2022', contracts: 4 },
+      ],
+    }).db;
     const facets = await getContractFacets(db);
     const values = facets.years.map((y) => y.value);
     expect(values[values.length - 1]).toBe('unknown'); // unknown always last

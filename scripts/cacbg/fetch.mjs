@@ -20,7 +20,14 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getPinned, CACBG_HOST } from './tls.mjs';
 import { parseList } from './parse.mjs';
-import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.mjs';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import {
+  assertScratchIgnored,
+  assertOverrideDirSafe,
+  SCRATCH,
+  safeXmlFile,
+  safeFolder,
+} from './guard.mjs';
 
 const BASE = `https://${CACBG_HOST}`;
 const RAW = path.join(SCRATCH, 'raw');
@@ -197,6 +204,10 @@ export async function run({
   now = () => Date.now(),
 } = {}) {
   guard();
+  // The corpus directory the crawl writes into must clear the PII rail too — a symlink at rawDir would
+  // otherwise redirect fetched declarations into committable territory (review round 5, blocker 2). The
+  // injected-guard tests point rawDir at a temp dir, which is outside any repo and passes trivially.
+  assertOverrideDirSafe(rawDir, rawDir === RAW ? 'scratch/cacbg/raw' : 'rawDir');
   const {
     limit,
     concurrency,
@@ -220,11 +231,28 @@ export async function run({
   const pastDeadline = () => now() >= deadlineAt;
   let deadlineHit = false;
 
+  // Clear any prior sentinel BEFORE fetching. From here until the clean exit below the corpus is in flux,
+  // and a stamp from an earlier run would describe a corpus that no longer exists. Clearing first also
+  // means every abnormal exit — deadline stop, circuit breaker, an uncaught throw, the runner being
+  // killed — leaves the corpus unstamped without needing its own cleanup path.
+  fs.rmSync(sentinelPath(rawDir), { force: true });
+
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
     ? override.split(',').map((f) => safeFolder(f.trim()))
     : (console.log('Discovering folders from register index …'), await discover(httpGet));
   console.log(`Folders to crawl (${folders.length}): ${folders.join(', ') || '(none)'}`);
+  // An index page that yields ZERO folders is a broken or redesigned index, never a real corpus state —
+  // the register has published year-sets continuously since 2015. Proceeding would run a vacuous crawl
+  // whose completeness arithmetic is 0/0 and stamp it (review finding: reproduced — exit 0 and a
+  // `folders: 0, incomplete: false` stamp over an existing raw tree). Fail instead; the stamp was
+  // already cleared above, so the corpus is left resumable and unpublishable.
+  if (!override && folders.length === 0) {
+    console.error(
+      `\n✖ the register index yielded no folders — refusing to certify anything from it.`,
+    );
+    return 1;
+  }
 
   // Per-set accounting so completeness can be reconciled announced↔obtained (Todor #2). A set whose list.xml
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
@@ -245,8 +273,68 @@ export async function run({
       stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
     }
-    atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
-    let rows = parseList(listRes.body.toString('utf8'));
+    const listBody = listRes.body.toString('utf8');
+    // Structural validation FIRST (review round 3): a truncated body whose tail still holds one complete
+    // <Declaration> parses leniently to that one row — announced becomes 1, the corpus reconciles, and a
+    // fresh crawl STAMPS off a mangled list. Only a well-formed document may be counted or cached.
+    // XMLValidator alone is NOT enough: fast-xml-parser validates `<wrong/><root>…</root>` — a
+    // MULTI-root body — as true, and the lenient parser then merges both roots so parseList still finds
+    // rows (review round 4: reproduced in both root orders). A real list.xml has exactly one document
+    // element; anything else is a mangled or concatenated body.
+    const roots = () =>
+      Object.keys(new XMLParser().parse(listBody)).filter(
+        (k) => k !== '?xml' && k !== '?xml-stylesheet',
+      );
+    if (XMLValidator.validate(listBody) !== true || roots().length !== 1) {
+      console.log(`  ${folder}: list.xml is not a single well-formed document — SKIP`);
+      stats.skippedFolders.push({ folder, status: 'malformed-list' });
+      continue;
+    }
+    let rows = parseList(listBody);
+    // An HTTP-200 body that parses to ZERO rows is a maintenance HTML page or a schema change, not an
+    // empty set — the register indexes a folder only once it has declarations, and both failure shapes
+    // come back 200 and parse to [] (review finding: confirmed against a real maintenance page; the
+    // follow-up reproduced the FRESH-folder variant certifying a mixed corpus). Trusting it would shrink
+    // `announced` to zero, make the folder look trivially complete, and — when files already exist —
+    // OVERWRITE the cached list the extractor reads. Skip the folder unconditionally: skippedFolders
+    // makes the corpus incomplete, so no stamp; a genuinely empty brand-new set (never yet observed)
+    // would go red for an operator to look at, which is the right failure direction for a certifier.
+    if (rows.length === 0) {
+      const onDisk = fs.readdirSync(dir).some((f) => f.endsWith('.xml') && f !== 'list.xml');
+      console.log(
+        `  ${folder}: list.xml parsed to 0 rows${onDisk ? ' (declarations exist on disk!)' : ''} — SKIP`,
+      );
+      stats.skippedFolders.push({
+        folder,
+        status: onDisk ? 'empty-list-with-files' : 'empty-list',
+      });
+      continue;
+    }
+    // A list that announces FEWER rows than the cached one contradicts the per-year immutability the
+    // whole resume design rests on ("source is immutable per year — files already on disk are skipped").
+    // Trusting it would overwrite the fuller cached list the extractor reads and certify the shrinkage
+    // (review round 3: reproduced — cached [a1,a2], incoming [a1], stamped). Keep the cache, skip the
+    // folder; if the register ever legitimately withdraws a declaration, the red run is the place a
+    // human decides that, not a certifier.
+    const cachedListPath = path.join(dir, 'list.xml');
+    if (fs.existsSync(cachedListPath)) {
+      // A corrupt cached list (a legacy DOCTYPE, a truncated write) must not crash the shrink check —
+      // the valid INCOMING list is exactly what heals it. Unparseable-cached reads as zero rows: no
+      // shrink objection, and the atomicWrite below replaces the corrupt cache (round 4, minor).
+      const cachedRows = (() => {
+        try {
+          return parseList(fs.readFileSync(cachedListPath, 'utf8')).length;
+        } catch {
+          return 0;
+        }
+      })();
+      if (rows.length < cachedRows) {
+        console.log(`  ${folder}: list announces ${rows.length} < cached ${cachedRows} — SKIP`);
+        stats.skippedFolders.push({ folder, status: 'list-shrank' });
+        continue;
+      }
+    }
+    atomicWrite(cachedListPath, listRes.body); // cache list for extract.mjs
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
     // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
     // gate certified a corpus it had never attempted to fetch (ydimitrof #226).
@@ -358,7 +446,49 @@ export async function run({
       return 1;
     }
   }
+
+  // The completeness sentinel — written ONLY on a corpus that reconciles against the register's own
+  // list.xml, and removed otherwise. #313 made a partial raw cache an EXPECTED state (the crawl now stops
+  // on its deadline and saves what it has), and `restore-keys: cacbg-raw-` takes the most RECENT snapshot,
+  // not the most complete. Nothing downstream could tell the two apart: extract.mjs walks readdirSync over
+  // whatever files exist and never reconciles them against list.xml, so a truncated corpus re-publishes as
+  // a smaller surface with no error anywhere. The monotonicity gate sees net growth when new links offset
+  // lost ones, the --min-links floor only counts, and a first run in a fresh environment has no baseline
+  // at all.
+  //
+  // So: a partial cache stays perfectly good for RESUMING (the next crawl skips what is on disk) but is
+  // marked unfit for PUBLISHING. --allow-incomplete does not write it either: that flag records that an
+  // operator accepted a shortfall, which is exactly the state a later unattended run must not inherit as
+  // if it were whole.
+  // Gated on the RECONCILED verdict, not on reaching this line: --allow-incomplete lets an accepted
+  // shortfall proceed to exit 0, and stamping there would hand a later unattended run an acceptance that
+  // was never theirs. Two more conditions, both review findings:
+  //   • !override — a --folders subset that completes is complete FOR THE SUBSET; certifying the whole
+  //     raw tree from it would stamp around every other folder's state. Subset crawls still CLEAR the
+  //     stamp (top of run), so they leave the corpus resumable-not-publishable, which is right.
+  //   • announced > 0 — a crawl that reconciled zero declarations certifies nothing. UNREACHABLE by
+  //     construction since the zero-row skip above (every zero-announced folder lands in skippedFolders,
+  //     making the corpus incomplete; zero folders at all exits earlier) — kept as belt-and-braces
+  //     against a future regression of those guards, which is also why no test pins it: a mutant
+  //     deleting it survives, deliberately, rather than a test encoding an impossible scenario.
+  const stampable = !override && !completeness.incomplete && completeness.announcedDeclarations > 0;
+  if (stampable) writeSentinel(rawDir, { folders: folders.length, ...completeness });
   return 0;
+}
+
+/** Sentinel path for a raw corpus directory. Exported so the reader and the writer cannot drift. */
+export const sentinelPath = (rawDir) => path.join(rawDir, '.corpus-complete.json');
+
+/**
+ * Stamp a corpus as publishable. Called on the clean-exit path only; every other path REMOVES the file so
+ * a stale sentinel can never outlive the corpus it described (a resumed crawl that then fails must not
+ * leave yesterday's stamp behind).
+ */
+function writeSentinel(rawDir, summary) {
+  fs.writeFileSync(
+    sentinelPath(rawDir),
+    `${JSON.stringify({ ...summary, stampedAt: new Date().toISOString() }, null, 2)}\n`,
+  );
 }
 
 // Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit/integration tests

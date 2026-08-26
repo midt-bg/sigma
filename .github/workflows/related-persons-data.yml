@@ -39,7 +39,8 @@ on:
   # A scheduled run takes the same path as a manual one, with two differences:
   #   • it targets STAGING (the environment default below). Production stays manual, so the
   #     assertD1TargetAuthorized guard keeps a prod write a deliberate act.
-  #   • `full_crawl` is empty and therefore false, so it never crawls the CACBG corpus — it re-runs the
+  #   • `full_crawl` is empty and therefore false, so it normally never crawls the CACBG corpus — it
+  #     re-runs the
   #     decisions over the cached corpus, which is exactly what #279 §9 means by a pure, zero-network
   #     decision. Registry lookups are the one exception and run from inside this job on the 1st of the
   #     month (see „Decide whether to hit the register"): they cannot be a separate workflow, because the
@@ -181,12 +182,39 @@ jobs:
       # downgraded to a warning, step green. The verify step below would then look up that same key, find
       # attempt 1's entry, and certify the loss as a success. Every extra hour crawled would vanish.
       - name: Restore raw CACBG corpus cache
+        id: corpus_restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: scratch/cacbg/raw
           key: cacbg-raw-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             cacbg-raw-
+
+      # Does the restored cache carry a completeness stamp? fetch.mjs writes it only on a corpus that
+      # reconciled against the register's own list.xml, and clears it before touching anything — so its
+      # absence means a deadline stop, a crash, or a cache saved before the stamp existed at all. The
+      # crawl below consults this so an unstamped cache HEALS instead of failing extract: a resume over a
+      # complete cache is ~2 minutes (declarations on disk are skipped) and re-verifies against the live
+      # register — the authoritative source — rather than trusting whatever the cache holds.
+      - name: Check the corpus completeness stamp
+        id: corpus_stamp
+        run: |
+          # The restore action extracts straight into the workspace and downgrades tar errors to a
+          # warning — a failed extraction can leave SOME files (the stamp included) with no matched key
+          # reported (review finding). Files from an extraction the cache service never acknowledged are
+          # debris, not a corpus: the stamp among them would certify XML files that half-exist. Discard
+          # the whole tree so the state is exactly "no cache", which the healing crawl below handles.
+          if [ -z "${{ steps.corpus_restore.outputs.cache-matched-key }}" ] && [ -d scratch/cacbg/raw ]; then
+            echo "restore reported no matched key but scratch/cacbg/raw exists — discarding debris"
+            rm -rf scratch/cacbg/raw
+          fi
+          if [ -f scratch/cacbg/raw/.corpus-complete.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "stamped corpus: $(cat scratch/cacbg/raw/.corpus-complete.json)"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "no completeness stamp — the crawl will run to verify and stamp the corpus"
+          fi
 
       # Crawl only on demand. The polite full crawl of register.cacbg.bg is long; steady-state refresh
       # (incremental, R2-cached) is the sigma-etl Worker's job (spec §7), not this workflow.
@@ -211,14 +239,19 @@ jobs:
       # fetched, so the next run resumes rather than restarting. Budget two runs for a cold corpus, one
       # thereafter. Either „Re-run failed jobs" or a fresh dispatch resumes: the key carries run_attempt,
       # which a re-run increments, so the save lands on a new key while restore-keys still finds the old one.
+      # `full_crawl || stamp missing`: an explicitly requested crawl, or the self-heal. On a scheduled run
+      # inputs.full_crawl is empty (false), so steady state with a stamped cache stays zero-network — the
+      # heal only fires on a cache that was never confirmed whole, where trusting it would be the bug.
       - name: Crawl CACBG (full corpus)
-        if: ${{ inputs.full_crawl }}
+        if: ${{ inputs.full_crawl || steps.corpus_stamp.outputs.present != 'true' }}
         run: node scripts/cacbg/fetch.mjs --concurrency 8 --deadline-minutes 240
 
       # Save the (possibly extended) corpus whenever we crawled — even if a later step fails — so the next
-      # run resumes from here. Skipped on full_crawl=false runs (nothing new was fetched).
+      # run resumes from here. Skipped only when the crawl itself was skipped (stamped cache, no
+      # full_crawl): nothing new was fetched. A scheduled run that self-healed DOES save — that crawl is
+      # real work and the stamp it wrote must reach the cache, or every Monday heals again.
       - name: Save raw CACBG corpus cache
-        if: ${{ always() && inputs.full_crawl }}
+        if: ${{ always() && (inputs.full_crawl || steps.corpus_stamp.outputs.present != 'true') }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: scratch/cacbg/raw
@@ -229,7 +262,7 @@ jobs:
       # 31889519937 it was green and the cache was empty, which is how five hours of crawling went missing
       # unnoticed. Ask the cache service whether the key actually exists; lookup-only downloads nothing.
       - name: Verify the corpus cache was really written
-        if: ${{ always() && inputs.full_crawl }}
+        if: ${{ always() && (inputs.full_crawl || steps.corpus_stamp.outputs.present != 'true') }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: scratch/cacbg/raw
@@ -237,6 +270,11 @@ jobs:
           lookup-only: true
           fail-on-cache-miss: true
 
+      # No --allow-partial-corpus, deliberately. By this point every path guarantees a stamped corpus: an
+      # unstamped restore triggered the healing crawl above, which either finished (stamped) or deadline-
+      # stopped (run already red before reaching here). So this gate firing means something UNFORESEEN —
+      # a bug, not a known transition — and fail-closed is the right answer for it. The cache stays fine
+      # to RESUME from either way; the stamp only governs publishing.
       - name: Extract declarations → staging (dedup by ControlHash)
         run: node scripts/cacbg/extract.mjs
 

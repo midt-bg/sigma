@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, throwingD1 } from '@sigma/test-support';
 import {
   ASSISTANT_TOOLS,
   DEFAULT_ROWS_READ_BUDGET,
@@ -12,24 +13,14 @@ function ctx(
   rows: Record<string, string | number | null>[] = [],
   opts: { rowsRead?: number; rowsReadBudget?: number; totalAttempts?: number } = {},
 ): ToolContext {
-  const db = {
-    prepare(_sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return {
-            results: rows as T[],
-            meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
-          };
-        },
-        async first<T>() {
-          return null as T;
-        },
-      };
+  const db = fakeD1([
+    {
+      when: [],
+      all: rows,
+      first: null,
+      meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
     },
-  } as unknown as D1Database;
+  ]).db;
   return { db, results: [], rowsRead: 0, rowsReadBudget: opts.rowsReadBudget };
 }
 
@@ -188,6 +179,31 @@ describe('resolveRowsReadBudget', () => {
   });
 });
 
+/**
+ * A context whose statement answers with a deliberately incomplete D1 response. fakeD1 always
+ * returns a well-formed `{ results, meta }` — right for query tests, but it cannot reach run_sql's
+ * driver-shape fallbacks (`results ?? []`, `meta?.rows_read ?? 0`), which exist precisely because a
+ * driver may not send those. The double still owns prepare() and still records the SQL; only all()
+ * is overridden.
+ */
+function driverCtx(all: () => Promise<unknown>, extra: Partial<ToolContext> = {}): ToolContext {
+  const fake = fakeD1([{ when: [], all: [] }]);
+  const inner = fake.db.prepare.bind(fake.db);
+  fake.db.prepare = ((sql: string) => {
+    const stmt = inner(sql);
+    const self = {
+      ...stmt,
+      bind(...args: unknown[]) {
+        stmt.bind(...args);
+        return self;
+      },
+      all,
+    };
+    return self;
+  }) as typeof fake.db.prepare;
+  return { db: fake.db, results: [], ...extra };
+}
+
 describe('run_sql — guard and error paths', () => {
   it('rejects a structurally-valid SELECT over a non-allowlisted table (AST guard)', async () => {
     // Passes the cheap structural read-only check, then the AST guard rejects the raw_* mirror.
@@ -198,42 +214,15 @@ describe('run_sql — guard and error paths', () => {
   });
 
   it('tolerates a driver that omits rows-read meta and an unset turn counter', async () => {
-    const c: ToolContext = {
-      db: {
-        prepare() {
-          return {
-            bind() {
-              return this;
-            },
-            async all() {
-              return { results: [{ n: 1 }] }; // no meta block
-            },
-          };
-        },
-      } as unknown as D1Database,
-      results: [], // rowsRead intentionally unset → the `?? 0` fallback
-    };
+    const c = driverCtx(async () => ({ results: [{ n: 1 }] })); // no meta block
+    // rowsRead intentionally unset on the context → the `?? 0` fallback
     const out = await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
     expect(out).toContain('R1');
     expect(c.rowsRead).toBe(0); // meta absent → +0
   });
 
   it('tolerates a driver that returns no results array at all (results ?? [])', async () => {
-    const c: ToolContext = {
-      db: {
-        prepare() {
-          return {
-            bind() {
-              return this;
-            },
-            async all() {
-              return {}; // neither results nor meta
-            },
-          };
-        },
-      } as unknown as D1Database,
-      results: [],
-    };
+    const c = driverCtx(async () => ({})); // neither results nor meta
     const out = await runTool('run_sql', { sql: 'SELECT n FROM contracts' }, c);
     expect(out).toContain('R1'); // an empty result set, still handled
     expect(c.results[0]).toMatchObject({ rows: [] });
@@ -241,18 +230,7 @@ describe('run_sql — guard and error paths', () => {
 
   it('returns a generic error (never the raw D1 message) when the query throws', async () => {
     const c: ToolContext = {
-      db: {
-        prepare() {
-          return {
-            bind() {
-              return this;
-            },
-            async all() {
-              throw new Error('D1 internal: table x locked');
-            },
-          };
-        },
-      } as unknown as D1Database,
+      db: throwingD1(new Error('D1 internal: table x locked')).db,
       results: [],
       rowsRead: 0,
     };
@@ -267,7 +245,7 @@ describe('semantic_search — hits', () => {
     matches: { id: string; score: number; metadata?: Record<string, unknown> }[],
   ): ToolContext {
     return {
-      db: {} as D1Database,
+      db: fakeD1([]).db, // no tool here touches D1
       results: [],
       ai: { run: async () => ({ data: [[0.1, 0.2, 0.3]] }) } as unknown as NonNullable<
         ToolContext['ai']
@@ -306,7 +284,7 @@ describe('eop_fetch', () => {
   it('summarises per-file row counts and errors, flagging the data as non-bindable', async () => {
     let call = 0;
     const c: ToolContext = {
-      db: {} as D1Database,
+      db: fakeD1([]).db, // eop_fetch never touches D1
       results: [],
       fetchImpl: async () => {
         call++;

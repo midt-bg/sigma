@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getFlows } from './flows';
 
 const pairRow = {
@@ -20,48 +21,27 @@ const usesFlowPairsRollup = (sql: string) => sql.includes('FROM flow_pairs');
 const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
 const filtersByYear = (sql: string) => sql.includes('substr(c.signed_at, 1, 4) = ?');
 
-function fakeDb(rows: (typeof pairRow)[] = [pairRow]): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          if (sql.includes('sector_totals')) {
-            return { results: [{ division: '45' }] as T[] };
-          }
-          return { results: rows as T[] };
-        },
-      };
-    },
-  } as D1Database;
+// The two shapes the pair query can take — the flow_pairs rollup, and the base aggregation a filter
+// switches it to — plus the sector-filter dropdown, which no test here asserts on.
+function fake(rows: (typeof pairRow)[] = [pairRow]): FakeD1 {
+  return fakeD1([
+    { when: 'FROM sector_totals', all: [{ division: '45' }] },
+    { when: 'FROM flow_pairs', all: rows },
+    { when: 'FROM contracts c', all: rows },
+  ]);
 }
 
-// SQL-capturing fake DB for the branch-selection tests: records every prepared statement, returns no
-// available sectors and a single flow pair otherwise — enough to assert which source query ran.
-function spyDb(): { db: D1Database; sql: string[] } {
-  const sql: string[] = [];
-  const db = {
-    prepare(q: string) {
-      sql.push(q);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          if (q.includes('sector_totals')) return { results: [] as T[] };
-          return { results: [pairRow] as T[] };
-        },
-      };
-    },
-  } as D1Database;
-  return { db, sql };
+function spyFake(): FakeD1 {
+  return fakeD1([
+    { when: 'FROM sector_totals', all: [] },
+    { when: 'FROM flow_pairs', all: [pairRow] },
+    { when: 'FROM contracts c', all: [pairRow] },
+  ]);
 }
 
 describe('getFlows', () => {
   it('uses the flow_pairs rollup for an unfiltered request', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
 
     await getFlows(db, {});
 
@@ -70,7 +50,7 @@ describe('getFlows', () => {
   });
 
   it('falls back to a base aggregation when a sector filter is applied', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
 
     await getFlows(db, { sector: '45' });
 
@@ -78,7 +58,7 @@ describe('getFlows', () => {
   });
 
   it('falls back to a base aggregation when a year filter is applied', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
 
     await getFlows(db, { year: '2024' });
 
@@ -86,7 +66,7 @@ describe('getFlows', () => {
   });
 
   it('returns pairs with rank, slugs, names, and amounts', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fake().db, {});
 
     expect(data.pairs).toHaveLength(1);
     const pair = data.pairs[0]!;
@@ -98,7 +78,7 @@ describe('getFlows', () => {
   });
 
   it('returns a sankey layout with nodes and ribbons', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fake().db, {});
 
     expect(data.sankey.nodes.length).toBeGreaterThan(0);
     expect(data.sankey.ribbons).toHaveLength(1);
@@ -106,7 +86,7 @@ describe('getFlows', () => {
   });
 
   it('assigns each node a side ("authority" or "company") and a valid href', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fake().db, {});
 
     const authorityNode = data.sankey.nodes.find((n) => n.side === 'authority');
     const companyNode = data.sankey.nodes.find((n) => n.side === 'company');
@@ -118,7 +98,7 @@ describe('getFlows', () => {
   });
 
   it('returns an empty sankey for an empty pair set', async () => {
-    const data = await getFlows(fakeDb([]), {});
+    const data = await getFlows(fake([]).db, {});
 
     expect(data.pairs).toHaveLength(0);
     expect(data.sankey.nodes).toHaveLength(0);
@@ -126,10 +106,10 @@ describe('getFlows', () => {
   });
 
   it('clamps the top parameter to 20 or 50', async () => {
-    const data20 = await getFlows(fakeDb(), { top: 20 });
-    const data50 = await getFlows(fakeDb(), { top: 50 });
-    const dataDefault = await getFlows(fakeDb(), {});
-    const dataOther = await getFlows(fakeDb(), { top: 100 });
+    const data20 = await getFlows(fake().db, { top: 20 });
+    const data50 = await getFlows(fake().db, { top: 50 });
+    const dataDefault = await getFlows(fake().db, {});
+    const dataOther = await getFlows(fake().db, { top: 100 });
 
     expect(data20.scope.top).toBe(20);
     expect(data50.scope.top).toBe(50);
@@ -138,7 +118,7 @@ describe('getFlows', () => {
   });
 
   it('includes available sectors in the response', async () => {
-    const data = await getFlows(fakeDb(), {});
+    const data = await getFlows(fake().db, {});
 
     expect(Array.isArray(data.sectors)).toBe(true);
   });
@@ -146,19 +126,19 @@ describe('getFlows', () => {
 
 describe('getFlows — funding scope and label truncation', () => {
   it('scopes the base aggregation by EU funding', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
     await getFlows(db, { funding: 'eu' });
     expect(sql.some((s) => s.includes('c.eu_funded = 1'))).toBe(true);
   });
 
   it('scopes the base aggregation by national funding', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
     await getFlows(db, { funding: 'national' });
     expect(sql.some((s) => s.includes('c.eu_funded IS NULL OR c.eu_funded = 0'))).toBe(true);
   });
 
   it('reads the rollup (not a scoped aggregation) when funding is explicitly „all"', async () => {
-    const { db, sql } = spyDb();
+    const { db, sql } = spyFake();
     await getFlows(db, { funding: 'all' });
     expect(sql.some(usesFlowPairsRollup)).toBe(true);
     expect(sql.every((s) => !usesBaseAggregation(s))).toBe(true);
@@ -166,7 +146,7 @@ describe('getFlows — funding scope and label truncation', () => {
 
   it('truncates a sankey node label longer than 30 chars with an ellipsis', async () => {
     const longName = 'Министерство на регионалното развитие и благоустройството';
-    const data = await getFlows(fakeDb([{ ...pairRow, authority_name: longName }]), {});
+    const data = await getFlows(fake([{ ...pairRow, authority_name: longName }]).db, {});
     const node = data.sankey.nodes.find((n) => n.side === 'authority')!;
     expect(node.label.length).toBeLessThanOrEqual(30);
     expect(node.label.endsWith('…')).toBe(true);
@@ -193,7 +173,7 @@ describe('getFlows — sankey ordering', () => {
         bidder_id: 'eik:b',
       },
     ];
-    const data = await getFlows(fakeDb(pairs), {});
+    const data = await getFlows(fake(pairs).db, {});
     const auth = data.sankey.nodes.filter((n) => n.side === 'authority');
     expect(auth).toHaveLength(2);
     const big = auth.find((n) => n.label.startsWith('Голямо'))!;
@@ -209,7 +189,7 @@ describe('getFlows — sankey ordering', () => {
       { ...pairRow, bidder_id: 'eik:222', bidder_name: 'Бета ООД', won_eur: 200000, contracts: 3 },
       { ...pairRow, bidder_id: 'eik:111', bidder_name: 'Алфа ООД', won_eur: 300000, contracts: 5 },
     ];
-    const data = await getFlows(fakeDb(pairs), {});
+    const data = await getFlows(fake(pairs).db, {});
     expect(data.sankey.ribbons.map((r) => r.toName)).toEqual(['Алфа ООД', 'Бета ООД']);
     expect(data.sankey.nodes.filter((n) => n.side === 'authority')).toHaveLength(1);
     expect(data.sankey.nodes.filter((n) => n.side === 'company')).toHaveLength(2);

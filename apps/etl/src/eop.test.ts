@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 
 // Keep the pure catch-up-window helpers real (computeWorkerCatchupPlan relies on them), but stub the
 // bucket-key classifier, the OCDS/base record mappers, and every staging writer so the tests drive
@@ -72,7 +73,9 @@ function openBodyResponse(init: ResponseInit & { url?: string }): {
   return { response, cancelled: () => cancelled };
 }
 
-const fakeDb = {} as D1Database;
+// A double with no routes at all: every one of these tests stubs the staging writers, so nothing
+// may reach D1. Any query that does hits the unmatched-route throw instead of a silent empty answer.
+const fakeDb = fakeD1([]).db;
 
 // A fetch stub that dispatches on the request URL. `text` responses serve bucket XML; `json` responses
 // serve object payloads. `url: ''` means no redirect, so assertAllowedFinalHost falls back to the
@@ -97,21 +100,10 @@ afterEach(() => {
 });
 
 function fakeDbFromFreshness(maxLoadedDate: string | null): D1Database {
-  return {
-    prepare(sql: string) {
-      // Data-integrity invariant: the catch-up planner must derive the max-loaded date from served
-      // freshness (data_freshness), never from raw staging (raw_*). Throw on anything else so a
-      // regression that reads raw staging for planning fails loudly instead of passing silently.
-      if (!sql.includes('data_freshness')) {
-        throw new Error(`planning must read data_freshness, not: ${sql}`);
-      }
-      return {
-        async first() {
-          return { max_loaded_date: maxLoadedDate };
-        },
-      };
-    },
-  } as unknown as D1Database;
+  // Data-integrity invariant: the catch-up planner must derive the max-loaded date from served
+  // freshness (data_freshness), never from raw staging (raw_*). data_freshness is the ONLY route, so
+  // a regression that reads raw staging for planning throws rather than passing silently.
+  return fakeD1([{ when: 'data_freshness', first: { max_loaded_date: maxLoadedDate } }]).db;
 }
 
 describe('parseBucketKeys', () => {
@@ -372,7 +364,7 @@ describe('EOP responses the ingest walks away from', () => {
 
     await expect(
       stageBaseFromBucket(
-        {} as D1Database,
+        fakeD1([]).db,
         {
           day: '2026-06-01',
           bucketUrl: 'https://storage.eop.bg/open-data-2026-06-01/',
@@ -409,7 +401,7 @@ describe('EOP responses the ingest walks away from', () => {
 
     await expect(
       stageBaseFromBucket(
-        {} as D1Database,
+        fakeD1([]).db,
         {
           day: '2026-06-01',
           bucketUrl: 'https://storage.eop.bg/open-data-2026-06-01/',

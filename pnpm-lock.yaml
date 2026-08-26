@@ -53,6 +53,10 @@ importers:
       '@sigma/ingest':
         specifier: workspace:*
         version: link:../../packages/ingest
+    devDependencies:
+      '@sigma/test-support':
+        specifier: workspace:*
+        version: link:../../packages/test-support
 
   apps/web:
     dependencies:
@@ -96,6 +100,9 @@ importers:
       '@react-router/dev':
         specifier: 7.18.2
         version: 7.18.2(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)(react-router@7.18.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(typescript@5.9.3)(vite@8.0.16(@types/node@22.19.19)(esbuild@0.28.1)(jiti@2.7.0))(wrangler@4.93.1(@cloudflare/workers-types@4.20260521.1)(@types/node@22.19.19))
+      '@sigma/test-support':
+        specifier: workspace:*
+        version: link:../../packages/test-support
       '@tailwindcss/vite':
         specifier: ^4.2.2
         version: 4.3.0(vite@8.0.16(@types/node@22.19.19)(esbuild@0.28.1)(jiti@2.7.0))
@@ -147,10 +154,20 @@ importers:
       '@sigma/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      '@sigma/test-support':
+        specifier: workspace:*
+        version: link:../test-support
 
-  packages/ingest: {}
+  packages/ingest:
+    devDependencies:
+      '@sigma/test-support':
+        specifier: workspace:*
+        version: link:../test-support
 
   packages/shared: {}
+
+  packages/test-support: {}
 
 packages:
 

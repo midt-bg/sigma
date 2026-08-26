@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { recordingD1, type FakeD1Call } from '@sigma/test-support';
 import { BASE_AMENDMENT_COLS, BASE_CONTRACT_COLS, BASE_TENDER_COLS } from './base';
 import {
   AMENDMENT_STAGING_COLS,
@@ -16,33 +17,30 @@ import {
   upsertPartyStaging,
 } from './staging';
 
-// Capturing D1 double: records every batch as a list of { sql, args }. The staging layer's whole job
-// is statement construction (scoped DELETE, chunked INSERTs, null-fill), so capturing the prepared
-// statements verifies the actual behaviour — nothing here depends on SQL execution semantics.
-interface Captured {
-  sql: string;
-  args: unknown[];
-}
+// Capturing D1 over the shared recording double. The staging layer's whole job is statement
+// construction (scoped DELETE, chunked INSERTs, null-fill) against arbitrary generated SQL, so there
+// is nothing for marker routing to route on — recordingD1 is the shape for that: it accepts any
+// statement and logs it with its binds. Only the batch GROUPING (which statements went out together,
+// and how many batches there were) is missing from the flat log, so batch() is wrapped to slice the
+// log at each call. Wrapping, not re-implementing: the double still owns the D1 surface.
+type Captured = Pick<FakeD1Call, 'sql' | 'binds'>;
+
 function captureDb(): { db: D1Database; batches: Captured[][] } {
+  const fake = recordingD1();
   const batches: Captured[][] = [];
-  const db = {
-    prepare(sql: string) {
-      const stmt = {
-        sql,
-        args: [] as unknown[],
-        bind(...a: unknown[]) {
-          stmt.args = a;
-          return stmt;
-        },
-      };
-      return stmt;
-    },
-    async batch(stmts: Array<{ sql: string; args: unknown[] }>) {
-      batches.push(stmts.map((s) => ({ sql: s.sql, args: s.args })));
-      return stmts.map(() => ({ success: true, meta: {} }));
-    },
-  } as unknown as D1Database;
-  return { db, batches };
+  // Batch groups come from the PREPARE log, not the batch log: batch() re-records each statement
+  // under via:'batch' without its binds (prepare() already logged those), and the binds are half of
+  // what these tests assert. Prepared statements are consumed by successive batches in order.
+  const inner = fake.db.batch.bind(fake.db);
+  let consumed = 0;
+  fake.db.batch = (async (statements: D1PreparedStatement[]) => {
+    const results = await inner(statements);
+    const prepared = fake.calls.filter((c) => c.via === 'prepare');
+    batches.push(prepared.slice(consumed, consumed + statements.length).map(({ sql, binds }) => ({ sql, binds })));
+    consumed += statements.length;
+    return results;
+  }) as typeof fake.db.batch;
+  return { db: fake.db, batches };
 }
 
 const row = (cols: readonly string[], overrides: Record<string, unknown> = {}) =>
@@ -59,12 +57,12 @@ describe('upsertContractStaging', () => {
     const batch = batches[0]!;
     // DELETE is first and scoped to the source tag.
     expect(batch[0]!.sql).toBe('DELETE FROM raw_contracts WHERE source = ?');
-    expect(batch[0]!.args).toEqual(['aop']);
+    expect(batch[0]!.binds).toEqual(['aop']);
     // then one INSERT per row, with exactly one bound value per column.
     expect(batch).toHaveLength(3);
     expect(batch[1]!.sql).toContain('INSERT INTO raw_contracts');
     expect(batch[1]!.sql).toContain(CONTRACT_STAGING_COLS.join(', '));
-    expect(batch[1]!.args).toHaveLength(CONTRACT_STAGING_COLS.length);
+    expect(batch[1]!.binds).toHaveLength(CONTRACT_STAGING_COLS.length);
   });
 
   it('coalesces a missing column to null rather than binding undefined', async () => {
@@ -75,10 +73,10 @@ describe('upsertContractStaging', () => {
     await upsertContractStaging(db, 'aop', [partial] as never);
 
     const insert = batches[0]![1]!;
-    expect(insert.args[0]).toBe(`${CONTRACT_STAGING_COLS[0]}-val`); // present column keeps its value
-    expect(insert.args[1]).toBeNull(); // absent key → null, never undefined
-    expect(insert.args[2]).toBeNull();
-    expect(insert.args.every((a) => a !== undefined)).toBe(true);
+    expect(insert.binds[0]).toBe(`${CONTRACT_STAGING_COLS[0]}-val`); // present column keeps its value
+    expect(insert.binds[1]).toBeNull(); // absent key → null, never undefined
+    expect(insert.binds[2]).toBeNull();
+    expect(insert.binds.every((a) => a !== undefined)).toBe(true);
   });
 
   it('issues a lone scoped DELETE and inserts nothing for an empty set', async () => {
@@ -170,7 +168,7 @@ describe('table + column routing per staging target', () => {
       expect(n).toBe(1);
       expect(batches[0]![0]!.sql).toBe(`DELETE FROM ${table} WHERE source = ?`);
       expect(batches[0]![1]!.sql).toContain(`INSERT INTO ${table} (${cols.join(', ')})`);
-      expect(batches[0]![1]!.args).toHaveLength(cols.length);
+      expect(batches[0]![1]!.binds).toHaveLength(cols.length);
     });
   }
 });

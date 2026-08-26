@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 
 // agent.ts is thin Vercel-AI-SDK wiring. Mock the SDK and provider so the tests can assert the wiring
 // (model/base-URL resolution, tool-set assembly, stream Response + onError message) without a live
@@ -47,7 +48,9 @@ describe('resolveMaxSteps', () => {
 });
 
 describe('runAssistant (SDK wiring)', () => {
-  const ctx = { db: {} as D1Database, results: [] };
+  // The SDK is mocked here; nothing in these tests may reach D1. A route-less double throws on
+  // any query rather than silently answering one.
+  const ctx = { db: fakeD1([]).db, results: [] };
 
   beforeEach(() => {
     vi.clearAllMocks();

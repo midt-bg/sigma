@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CpvCohortStats } from '@sigma/api-contract';
+import { fakeD1 } from '@sigma/test-support';
 import { MIN_COHORT, cohortBand, contractCohort, getCpvCohortStats } from './cohort';
 
 // A large, well-separated cohort — every band is reachable here.
@@ -92,18 +93,7 @@ function fakeDb({ stats: statsOverride = null }: FakeStats): D1Database {
           p95_eur: statsOverride.p95Eur ?? 900_000,
           p99_eur: statsOverride.p99Eur ?? 4_000_000,
         };
-  return {
-    prepare(_sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async first<T>() {
-          return statsRow as T;
-        },
-      };
-    },
-  } as unknown as D1Database;
+  return fakeD1([{ when: 'FROM cpv_division_stats', first: statsRow }]).db;
 }
 
 describe('getCpvCohortStats', () => {

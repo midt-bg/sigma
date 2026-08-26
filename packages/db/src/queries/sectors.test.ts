@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { sectorOptions, sectorRef } from './sectors';
 
 describe('sectorRef', () => {
@@ -34,13 +35,7 @@ describe('sectorRef', () => {
 });
 
 const fakeSectorDb = (divisions: string[]) =>
-  ({
-    prepare: () => ({
-      bind: () => ({
-        all: async () => ({ results: divisions.map((division) => ({ division })) }),
-      }),
-    }),
-  }) as unknown as D1Database;
+  fakeD1([{ when: 'FROM sector_totals', all: divisions.map((division) => ({ division })) }]).db;
 
 describe('sectorOptions', () => {
   it('maps sector_totals divisions (in order) to SectorRef[], dropping unknown codes', async () => {

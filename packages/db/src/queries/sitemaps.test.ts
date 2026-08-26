@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import {
   contractSitemapPages,
   streamAuthoritySitemap,
@@ -34,44 +35,31 @@ function fakeDb(opts: {
   const authorities = opts.authorities ?? [];
   const companies = opts.companies ?? [];
   const contracts = opts.contracts ?? [];
-  return {
-    prepare(sql: string) {
-      if (sql.includes('as_of')) {
-        return {
-          async first() {
-            return { as_of: opts.asOf ?? null };
-          },
-        };
-      }
-      if (sql.includes('SELECT contracts FROM home_totals')) {
-        return {
-          async first() {
-            return { contracts: opts.contractCount ?? null };
-          },
-        };
-      }
-      let bound: unknown[] = [];
-      const stmt = {
-        bind(...a: unknown[]) {
-          bound = a;
-          return stmt;
-        },
-        async all() {
-          if (sql.includes('authority_totals')) {
-            const [after, limit] = bound as [string, number];
-            return { results: authorities.filter((r) => r.authority_id > after).slice(0, limit) };
-          }
-          if (sql.includes('company_totals')) {
-            const [after, limit] = bound as [string, number];
-            return { results: companies.filter((r) => r.bidder_id > after).slice(0, limit) };
-          }
-          const [after, hi, limit] = bound as [number, number, number];
-          return { results: contracts.filter((r) => r.rid > after && r.rid <= hi).slice(0, limit) };
-        },
-      };
-      return stmt;
+  return fakeD1([
+    { when: 'SELECT as_of FROM home_totals', first: { as_of: opts.asOf ?? null } },
+    { when: 'SELECT contracts FROM home_totals', first: { contracts: opts.contractCount ?? null } },
+    {
+      when: 'FROM authority_totals',
+      all: ({ binds }) => {
+        const [after, limit] = binds as [string, number];
+        return authorities.filter((r) => r.authority_id > after).slice(0, limit);
+      },
     },
-  } as unknown as D1Database;
+    {
+      when: 'FROM company_totals',
+      all: ({ binds }) => {
+        const [after, limit] = binds as [string, number];
+        return companies.filter((r) => r.bidder_id > after).slice(0, limit);
+      },
+    },
+    {
+      when: 'FROM contracts',
+      all: ({ binds }) => {
+        const [after, hi, limit] = binds as [number, number, number];
+        return contracts.filter((r) => r.rid > after && r.rid <= hi).slice(0, limit);
+      },
+    },
+  ]).db;
 }
 
 const CHUNK = 5000;

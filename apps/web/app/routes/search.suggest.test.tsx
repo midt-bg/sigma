@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import type { SearchGroup, SearchResults } from '@sigma/api-contract';
 
 const { searchMock } = vi.hoisted(() => ({ searchMock: vi.fn() }));
@@ -42,7 +43,9 @@ describe('trimGroup', () => {
 
 describe('loader', () => {
   function ctx() {
-    return { cloudflare: { env: { DB: {} as D1Database } } } as never;
+    // search() is mocked, so the binding is only ever passed along, never queried — a route-less
+    // double turns any real query into a failure instead of a silent empty answer.
+    return { cloudflare: { env: { DB: fakeD1([]).db } } } as never;
   }
 
   it('runs the ranked FTS query, trims every group, and sets the JSON + short-cache headers', async () => {

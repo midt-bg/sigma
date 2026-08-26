@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import {
   getAuthorityFacets,
   listAuthorities,
@@ -32,52 +33,25 @@ const usesRollup = (sql: string) => sql.includes('FROM authority_totals');
 const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
 
 function fakeDb(): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          if (sql.includes('type_group') && sql.includes('GROUP BY')) {
-            return { results: [{ type_group: 'министерство', n: 10 }] as T[] };
-          }
-          if (sql.includes('sector_totals')) {
-            return { results: [{ division: '45', value_eur: 500000 }] as T[] };
-          }
-          return { results: [authorityRow] as T[] };
-        },
-        async first<T>() {
-          return { n: 1 } as T;
-        },
-      };
-    },
-  } as D1Database;
+  return fakeD1([
+    { when: ['type_group', 'GROUP BY'], all: [{ type_group: 'министерство', n: 10 }] },
+    { when: 'sector_totals', all: [{ division: '45', value_eur: 500000 }] },
+    { when: 'FROM authority_totals', all: [authorityRow] },
+    { when: 'FROM (', all: [authorityRow] },
+    { when: 'COUNT(*) AS n', first: { n: 1 } },
+  ]).db;
 }
 
-// A SQL-capturing fake DB for the branch-selection tests: records every prepared statement and returns
-// one authority row regardless of query, so we can assert *which* table source ran. (Deliberately not a
-// wrapper over fakeDb above — its facet branch would hijack the base-aggregation page query, which also
-// contains `type_group` + `GROUP BY`, and feed back a facet-shaped row that toAuthorityListItem can't map.)
-function spyDb(): { db: D1Database; sql: string[] } {
-  const sql: string[] = [];
-  const db = {
-    prepare(q: string) {
-      sql.push(q);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: [authorityRow] as T[] };
-        },
-        async first<T>() {
-          return { n: 1 } as T;
-        },
-      };
-    },
-  } as D1Database;
-  return { db, sql };
+// A SQL-recording fake for the branch-selection tests: it answers either table source with one
+// authority row, so the assertion is about *which* source ran. Deliberately not fakeDb() above — its
+// facet route would hijack the base-aggregation page query (which also carries `type_group` +
+// `GROUP BY`) and feed back a facet-shaped row that toAuthorityListItem cannot map.
+function spyDb(): FakeD1 {
+  return fakeD1([
+    { when: 'FROM authority_totals', all: [authorityRow] },
+    { when: 'FROM (', all: [authorityRow] },
+    { when: 'COUNT(*) AS n', first: { n: 1 } },
+  ]);
 }
 
 describe('listAuthorities', () => {
@@ -91,21 +65,11 @@ describe('listAuthorities', () => {
   });
 
   it('defaults the page size and tolerates a missing total row', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [authorityRow] as T[] };
-          },
-          async first<T>() {
-            return null as T; // COUNT(*) row absent
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: [authorityRow] },
+      { when: 'FROM (', all: [authorityRow] },
+      { when: 'COUNT(*) AS n', first: null }, // COUNT(*) row absent
+    ]).db;
     const page = await listAuthorities(db, {}); // no pageSize → default of 25
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(0); // null total row → 0
@@ -162,18 +126,10 @@ describe('getAuthorityFacets', () => {
 
 describe('streamAuthoritiesCsv', () => {
   it('returns a Response with CSV content-type and attachment disposition', () => {
-    const db = {
-      prepare(_sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: [] },
+      { when: 'FROM (', all: [] },
+    ]).db;
 
     const response = streamAuthoritiesCsv(db, {});
 
@@ -228,21 +184,11 @@ describe('listAuthorities — base-source and entity-where branches', () => {
       { ...authorityRow, authority_id: 'auth:1', sort_value: 200 },
       { ...authorityRow, authority_id: 'auth:2', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { n: 5 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: rows },
+      { when: 'FROM (', all: rows },
+      { when: 'COUNT(*) AS n', first: { n: 5 } },
+    ]).db;
     const page = await listAuthorities(db, { pageSize: 1 });
     expect(page.items).toHaveLength(1); // the overflow row is not emitted
     expect(page.total).toBe(5);
@@ -260,21 +206,11 @@ describe('listAuthorities — backward pagination', () => {
       { ...authorityRow, authority_id: 'auth:2', sort_value: 200 },
       { ...authorityRow, authority_id: 'auth:3', sort_value: 100 },
     ];
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: rows as T[] };
-          },
-          async first<T>() {
-            return { n: 3 } as T;
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: rows },
+      { when: 'FROM (', all: rows },
+      { when: 'COUNT(*) AS n', first: { n: 3 } },
+    ]).db;
     const fwd = await listAuthorities(db, { pageSize: 2 });
     const mid = await listAuthorities(db, { pageSize: 2, cursor: fwd.nextCursor! });
     expect(mid.prevCursor).toBeTruthy();
@@ -304,26 +240,16 @@ describe('getAuthorityFacets — sector sort', () => {
   it('orders the sector facets by descending value', async () => {
     // Two non-zero sectors returned out of value-order forces the `.sort((a,b) => b.count - a.count)`
     // comparator to actually reorder (a single row would never invoke it).
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            if (sql.includes('GROUP BY')) return { results: [] as T[] };
-            if (sql.includes('sector_totals'))
-              return {
-                results: [
-                  { division: '45', value_eur: 100 }, // smaller first → must be reordered below
-                  { division: '33', value_eur: 900 },
-                ] as T[],
-              };
-            return { results: [] as T[] };
-          },
-        };
+    const db = fakeD1([
+      { when: ['type_group', 'GROUP BY'], all: [] },
+      {
+        when: 'sector_totals',
+        all: [
+          { division: '45', value_eur: 100 }, // smaller first → must be reordered below
+          { division: '33', value_eur: 900 },
+        ],
       },
-    } as D1Database;
+    ]).db;
     const facets = await getAuthorityFacets(db);
     expect(facets.sectors.map((s) => s.value)).toEqual(['33', '45']); // 900 before 100
   });
@@ -331,22 +257,12 @@ describe('getAuthorityFacets — sector sort', () => {
 
 describe('getAuthorityFacets — unmapped type label', () => {
   it('labels an unrecognised type_group as „друго"', async () => {
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            // A NULL that leaks past the SQL COALESCE(type_group,'друго') → typeLabel(null) is null →
-            // the `?? 'друго'` fallback owns the label. (Defensive; the real query can't emit NULL here.)
-            if (sql.includes('type_group') && sql.includes('GROUP BY'))
-              return { results: [{ type_group: null, n: 4 }] as T[] };
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    // A NULL that leaks past the SQL COALESCE(type_group,'друго') → typeLabel(null) is null → the
+    // `?? 'друго'` fallback owns the label. (Defensive; the real query can't emit NULL here.)
+    const db = fakeD1([
+      { when: ['type_group', 'GROUP BY'], all: [{ type_group: null, n: 4 }] },
+      { when: 'sector_totals', all: [] },
+    ]).db;
     const facets = await getAuthorityFacets(db);
     expect(facets.types[0]).toMatchObject({ value: null, label: 'друго', count: 4 });
     expect(facets.sectors).toEqual([]); // no sector_totals rows
@@ -369,20 +285,15 @@ describe('streamAuthoritiesCsv — streamed body', () => {
       },
     ];
     let served = false;
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            if (served) return { results: [] as T[] };
-            served = true;
-            return { results: rows as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const serve = () => {
+      if (served) return [];
+      served = true;
+      return rows;
+    };
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: serve },
+      { when: 'FROM (', all: serve },
+    ]).db;
     // The BOM lives in the bytes for Excel; Response.text()'s UTF-8 decode strips a leading BOM, so
     // assert it at the byte layer and read the content from the (BOM-stripped) decoded text.
     const bytes = new Uint8Array(await streamAuthoritiesCsv(db, {}).arrayBuffer());
@@ -395,18 +306,10 @@ describe('streamAuthoritiesCsv — streamed body', () => {
   });
 
   it('closes immediately when there are no rows', async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: [] },
+      { when: 'FROM (', all: [] },
+    ]).db;
     const bytes = new Uint8Array(await streamAuthoritiesCsv(db, {}).arrayBuffer());
     expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]); // BOM still emitted
     expect(new TextDecoder().decode(bytes)).toBe(
@@ -430,23 +333,15 @@ describe('streamAuthoritiesCsv — streamed body', () => {
       avg_eur: 1,
     }));
     let calls = 0;
-    const sqls: string[] = [];
-    const db = {
-      prepare(sql: string) {
-        sqls.push(sql);
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: (calls++ === 0 ? first : []) as T[] };
-          },
-        };
-      },
-    } as unknown as D1Database;
+    const page = () => (calls++ === 0 ? first : []);
+    const fake = fakeD1([
+      { when: 'FROM authority_totals', all: page },
+      { when: 'FROM (', all: page },
+    ]);
+    const db = fake.db;
     const csv = await streamAuthoritiesCsv(db, { types: ['министерство'] }).text();
     expect(csv.match(/\n/g)!).toHaveLength(CHUNK + 1); // header + CHUNK rows
     expect(calls).toBe(2); // the === CHUNK page did not close; a second pull ran
-    expect(sqls.some((s) => s.includes('type_group IN'))).toBe(true); // ew.sql folded into conds
+    expect(fake.sql.some((s) => s.includes('type_group IN'))).toBe(true); // ew.sql folded in
   });
 });
