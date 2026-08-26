@@ -39,43 +39,90 @@ export function assertScratchIgnored(subdir = 'cacbg') {
  * @param {string} name the env var being validated, for the error message
  */
 export function assertOverrideDirSafe(dir, name) {
-  // Ask git ITSELF, not a lexical prefix check. The review demonstrated four bypasses of the string
-  // comparison this used to do: the repository root itself (equality fails a startsWith(ROOT+sep)
-  // test), a /proc/self/cwd symlink alias resolving back inside the checkout, an unignored path in a
-  // DIFFERENT git worktree, and case aliases on case-insensitive filesystems. Running git FROM the
-  // target directory sidesteps all four — the OS resolves symlinks on chdir, and git answers for
-  // whichever repository actually contains the path, ours or not.
-  //
-  // The directory may not exist yet (extract creates staging), so the probe walks up to the deepest
-  // existing ancestor and the missing tail is re-appended for the ignore check.
-  const missing = [];
-  let probe = path.resolve(dir);
-  while (!fs.existsSync(probe)) {
-    const parent = path.dirname(probe);
-    if (parent === probe) break; // filesystem root — nothing exists; nothing to commit either
-    missing.unshift(path.basename(probe));
-    probe = parent;
-  }
   const refuse = (why) => {
     throw new Error(
       `REFUSE TO RUN: ${name}=${dir} ${why} — PII output must never be committable (PII rail, spec §8)`,
     );
   };
-  let top = null;
-  try {
-    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: probe }).toString().trim();
-  } catch {
-    return; // not inside ANY git worktree — no repository can commit it
+  // The directory may not exist yet (extract creates staging): walk up to the deepest existing
+  // ancestor; the missing tail is re-appended for the ignore checks below.
+  const missing = [];
+  let probe = path.resolve(dir);
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    missing.unshift(path.basename(probe));
+    probe = parent;
   }
   const target = path.join(probe, ...missing);
-  const rel = path.relative(top, path.resolve(probe, target === probe ? '.' : target));
-  if (rel === '' || rel === '.')
-    refuse('IS a git worktree root — everything under it defaults to committable');
-  try {
-    execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd: top });
-  } catch {
-    refuse(`points inside the git worktree at ${top} at a path git does not ignore`);
+  // Git must answer for the FILESYSTEM location. An inherited GIT_DIR / GIT_WORK_TREE would let the
+  // caller substitute another repository's ignore policy for the one that actually contains the path
+  // (review round 3: reproduced — an alternate repo's exclude rules accepted a tracked sink/).
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  const gitTop = (cwd) => {
+    try {
+      return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+        .toString()
+        .trim();
+    } catch (e) {
+      // Only a CONFIRMED "not a repository" may pass. Every other failure — git missing, permission
+      // errors, a corrupt repository — leaves the question unanswered, and an unanswered safety
+      // question fails closed (review round 3: EPERM and invalid setups all used to PASS).
+      const msg = `${e.stderr ?? ''}${e.message ?? ''}`;
+      if (/not a git repository/i.test(msg)) return null;
+      refuse(`could not be verified (git failed from ${cwd}: ${String(msg).split('\n')[0]})`);
+    }
+  };
+  // EVERY containing worktree must ignore the target, not just the innermost: a nested repository that
+  // ignores the path proves nothing about an OUTER repository that tracks the same tree (review round
+  // 3: reproduced — inner repo ignored sink/, outer repo held inner/sink/related.jsonl as committable).
+  let cwd = probe;
+  for (let depth = 0; depth < 64; depth++) {
+    const top = gitTop(cwd);
+    if (top === null) return; // no (further) repository contains it
+    const rel = path.relative(top, target);
+    if (rel === '' || rel === '.')
+      refuse('IS a git worktree root — everything under it defaults to committable');
+    // TRACKED beats ignored. Ignore rules never apply to paths already in the index, and check-ignore
+    // can even answer "ignored" for them (a nested repository makes everything beneath it implicitly
+    // ignored — truthful for ADDING files, silent about ones tracked BEFORE the nested repo appeared;
+    // review round 3 reproduced exactly that committable leak). If any file under the target is in
+    // this worktree's index, modifications are committable regardless of every pattern.
+    let tracked;
+    try {
+      tracked = execFileSync('git', ['ls-files', '-z', '--', rel], {
+        cwd: top,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      refuse(`could not be verified (git ls-files failed in ${top})`);
+    }
+    // Decided OUTSIDE the try — a refusal thrown inside it would be swallowed by our own catch and
+    // re-dressed as a verification failure (caught by the fixture's message assertion, usefully).
+    if (tracked.length > 0)
+      refuse(`overlaps files TRACKED in the git worktree at ${top} — already committable`);
+    try {
+      execFileSync('git', ['check-ignore', '-q', '--', rel], {
+        cwd: top,
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+    } catch (e) {
+      if (e.status === 1)
+        refuse(`points inside the git worktree at ${top} at a path git does not ignore`);
+      refuse(`could not be verified (git check-ignore failed in ${top})`);
+    }
+    const above = path.dirname(top);
+    if (above === top) return; // filesystem root
+    cwd = above;
   }
+  refuse('could not be verified (worktree nesting exceeded 64 levels)');
 }
 
 // Path-sanitize an xml_file / year from the untrusted list.xml before using it in a filesystem path

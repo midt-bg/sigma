@@ -20,6 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getPinned, CACBG_HOST } from './tls.mjs';
 import { parseList } from './parse.mjs';
+import { XMLValidator } from 'fast-xml-parser';
 import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.mjs';
 
 const BASE = `https://${CACBG_HOST}`;
@@ -262,7 +263,16 @@ export async function run({
       stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
     }
-    let rows = parseList(listRes.body.toString('utf8'));
+    const listBody = listRes.body.toString('utf8');
+    // Structural validation FIRST (review round 3): a truncated body whose tail still holds one complete
+    // <Declaration> parses leniently to that one row — announced becomes 1, the corpus reconciles, and a
+    // fresh crawl STAMPS off a mangled list. Only a well-formed document may be counted or cached.
+    if (XMLValidator.validate(listBody) !== true) {
+      console.log(`  ${folder}: list.xml is not well-formed XML — SKIP`);
+      stats.skippedFolders.push({ folder, status: 'malformed-list' });
+      continue;
+    }
+    let rows = parseList(listBody);
     // An HTTP-200 body that parses to ZERO rows is a maintenance HTML page or a schema change, not an
     // empty set — the register indexes a folder only once it has declarations, and both failure shapes
     // come back 200 and parse to [] (review finding: confirmed against a real maintenance page; the
@@ -282,7 +292,22 @@ export async function run({
       });
       continue;
     }
-    atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
+    // A list that announces FEWER rows than the cached one contradicts the per-year immutability the
+    // whole resume design rests on ("source is immutable per year — files already on disk are skipped").
+    // Trusting it would overwrite the fuller cached list the extractor reads and certify the shrinkage
+    // (review round 3: reproduced — cached [a1,a2], incoming [a1], stamped). Keep the cache, skip the
+    // folder; if the register ever legitimately withdraws a declaration, the red run is the place a
+    // human decides that, not a certifier.
+    const cachedListPath = path.join(dir, 'list.xml');
+    if (fs.existsSync(cachedListPath)) {
+      const cachedRows = parseList(fs.readFileSync(cachedListPath, 'utf8')).length;
+      if (rows.length < cachedRows) {
+        console.log(`  ${folder}: list announces ${rows.length} < cached ${cachedRows} — SKIP`);
+        stats.skippedFolders.push({ folder, status: 'list-shrank' });
+        continue;
+      }
+    }
+    atomicWrite(cachedListPath, listRes.body); // cache list for extract.mjs
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
     // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
     // gate certified a corpus it had never attempted to fetch (ydimitrof #226).

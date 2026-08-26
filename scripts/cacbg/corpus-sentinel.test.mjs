@@ -221,6 +221,43 @@ test('a 200 list.xml that parses to zero rows over existing declarations is a sk
   );
 });
 
+test('a truncated list whose tail still parses to one row is malformed, not a one-row set', async () => {
+  // Review round 3 (blocker, reproduced): lenient parsing accepted a mangled body's surviving complete
+  // <Declaration> as the whole announcement — announced 1, reconciled, STAMPED. Structural validation
+  // now precedes counting: not-well-formed ⇒ the folder is skipped and the corpus cannot certify.
+  const truncated =
+    `<root><MainCategory><Category Name="C"><Institution Name="I"><Person><Name>N</Name>` +
+    `<Position><Name>P</Name><Declaration><xmlFile>a1.xml</xmlFile></Declaration><Declaration><xmlFile>a2`;
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: truncated },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false);
+});
+
+test('a list that announces fewer rows than the cached one is a contradiction, not an update', async () => {
+  // Review round 3 (blocker, reproduced): cached [a1,a2], incoming [a1] — the fuller cache was
+  // overwritten and the shrunken corpus stamped. The resume design rests on per-year immutability, so
+  // shrinkage is skipped and the cached list survives; a genuine withdrawal is a human decision on a
+  // red run, not a certifier's.
+  fs.mkdirSync(path.join(dir, FOLDER), { recursive: true });
+  fs.writeFileSync(path.join(dir, FOLDER, 'list.xml'), listXml(['a1.xml', 'a2.xml']));
+  fs.writeFileSync(path.join(dir, FOLDER, 'a1.xml'), '<x/>');
+  fs.writeFileSync(path.join(dir, FOLDER, 'a2.xml'), '<x/>');
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false);
+  assert.match(
+    fs.readFileSync(path.join(dir, FOLDER, 'list.xml'), 'utf8'),
+    /a2\.xml/,
+    'the fuller cached list must survive the contradicted shrinkage',
+  );
+});
+
 // ── the reading half ───────────────────────────────────────────────────────────────────────────────
 // The writer above is only useful if something refuses an unstamped corpus. extract.mjs is that reader,
 // and it runs in-process, so it is exercised as a subprocess against a temp scratch tree.
@@ -329,4 +366,73 @@ test('a CACBG_RAW override pointing at a tracked path inside the repo is refused
   const out = `${res.stdout}${res.stderr}`;
   assert.notEqual(res.status, 0);
   assert.match(out, /CACBG_RAW/, 'the refusal must name the offending variable');
+});
+
+// ── the override guard, adversarially ──────────────────────────────────────────────────────────────
+// Round-3 findings: the guard must answer for the FILESYSTEM location (not an inherited GIT_DIR), must
+// check EVERY containing worktree (not just the innermost), and an unanswerable question fails closed.
+
+test('an inherited GIT_DIR cannot substitute a permissive repository for the real one', () => {
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-decoy-'));
+  spawnSync('git', ['init', '-q', decoy], { encoding: 'utf8' });
+  fs.mkdirSync(path.join(decoy, '.git', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(decoy, '.git', 'info', 'exclude'), '*\n'); // decoy ignores EVERYTHING
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      GIT_DIR: path.join(decoy, '.git'),
+      GIT_WORK_TREE: path.resolve('.'),
+      CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-git-raw-')),
+      CACBG_STAGING: path.resolve('scripts', 'pii-leak-probe'),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0, 'the decoy exclude-everything repo must not be consulted');
+  assert.match(out, /does not ignore/);
+  fs.rmSync(decoy, { recursive: true, force: true });
+});
+
+test('a nested repository that ignores the path does not clear an OUTER repository that tracks it', () => {
+  // The committable leak from review round 3: the file entered the OUTER index BEFORE the nested repo
+  // existed. Tracked beats ignored — ignore rules never apply to the index, and the nested repo's
+  // implicit ignore silently covers it. (A nested repo with nothing tracked outside is genuinely
+  // uncommittable from the outer side — git add refuses across the boundary — and passes.)
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-outer-'));
+  spawnSync('git', ['init', '-q', outer], { encoding: 'utf8' });
+  const inner = path.join(outer, 'inner');
+  fs.mkdirSync(path.join(inner, 'sink'), { recursive: true });
+  fs.writeFileSync(path.join(inner, 'sink', 'related.jsonl'), '{}\n');
+  spawnSync('git', ['add', 'inner/sink/related.jsonl'], { cwd: outer, encoding: 'utf8' }); // tracked FIRST
+  spawnSync('git', ['init', '-q', inner], { encoding: 'utf8' }); // nested repo appears AFTER
+  fs.writeFileSync(path.join(inner, '.gitignore'), 'sink/\n'); // inner ignores it; outer index unmoved
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-nest-raw-')),
+      CACBG_STAGING: path.join(inner, 'sink'),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0, 'the outer worktree still tracks inner/sink');
+  assert.match(out, /TRACKED/, 'the refusal must name the real reason — the index, not a pattern');
+  fs.rmSync(outer, { recursive: true, force: true });
+});
+
+test('when git cannot answer at all, the guard fails closed', () => {
+  // Round 3: EPERM, a missing git and a corrupt repository all used to PASS. Only a confirmed
+  // "not a repository" may pass; an unanswered safety question refuses.
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      HOME: process.env.HOME,
+      PATH: '/nonexistent', // git unreachable
+      CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-nogit-raw-')),
+      CACBG_STAGING: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-nogit-stg-')),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0, 'no verification means no run');
+  assert.match(out, /could not be verified/);
 });
