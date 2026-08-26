@@ -16,6 +16,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 function gitEnv() {
   const env = { ...process.env, LC_ALL: 'C' };
   for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  // Re-set AFTER the sweep: without it git stops repository discovery at filesystem boundaries, and a
+  // mount point INSIDE an outer worktree reports the accepted „not a repository" while that worktree
+  // can track the mounted path (review round 4, truncated finding). Forcing discovery across mounts
+  // keeps the every-containing-worktree walk honest. Untestable without root (a bind mount), so this
+  // line carries the reasoning instead of a fixture.
+  env.GIT_DISCOVERY_ACROSS_FILESYSTEM = '1';
   return env;
 }
 export const SCRATCH = path.join(ROOT, 'scratch', 'cacbg');
@@ -63,6 +69,15 @@ export function assertOverrideDirSafe(dir, name) {
     if (parent === probe) break;
     missing.unshift(path.basename(probe));
     probe = parent;
+  }
+  // Canonicalize BEFORE judging (review round 4, truncated finding): git already resolves symlinks for
+  // its own cwd, but the ignore verdict was being passed the LEXICAL name — an ignored symlink
+  // `scratch/leak` pointing at `scripts/` was judged as scratch/… while extraction wrote through it
+  // into committable files. Judging the resolved location closes that.
+  try {
+    probe = fs.realpathSync(probe);
+  } catch {
+    refuse('could not be verified (the existing ancestor could not be resolved)');
   }
   const target = path.join(probe, ...missing);
   // Git must answer for the FILESYSTEM location. An inherited GIT_DIR / GIT_WORK_TREE would let the

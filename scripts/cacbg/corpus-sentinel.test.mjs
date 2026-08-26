@@ -271,6 +271,21 @@ test('a multi-root body that validates is still not a list', async () => {
   assert.equal(fs.existsSync(sentinelPath(dir)), false);
 });
 
+test('a corrupt cached list is healed by a valid incoming one, not crashed on', async () => {
+  // Round 4 (minor, recovered from the truncated report): the shrink check parses the CACHED list, and
+  // a legacy/corrupt body there threw instead of letting the valid incoming list replace it. The
+  // sentinel was already cleared, so it was fail-closed — but self-healing is the designed behavior.
+  fs.mkdirSync(path.join(dir, FOLDER), { recursive: true });
+  fs.writeFileSync(path.join(dir, FOLDER, 'list.xml'), '<!DOCTYPE nonsense><<<broken');
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes), 0, 'the valid incoming list must heal the corrupt cache');
+  assert.equal(fs.existsSync(sentinelPath(dir)), true);
+  assert.match(fs.readFileSync(path.join(dir, FOLDER, 'list.xml'), 'utf8'), /a1\.xml/);
+});
+
 // ── the reading half ───────────────────────────────────────────────────────────────────────────────
 // The writer above is only useful if something refuses an unstamped corpus. extract.mjs is that reader,
 // and it runs in-process, so it is exercised as a subprocess against a temp scratch tree.
@@ -512,4 +527,29 @@ test('an inherited GIT_DIR cannot reach the DEFAULT-path scratch rail either', (
   assert.match(out, /REFUSE TO EXTRACT/, 'the scratch rail must consult the real repository');
   assert.doesNotMatch(out, /not git-ignored/);
   fs.rmSync(decoy, { recursive: true, force: true });
+});
+
+test('an ignored SYMLINK into committable territory is judged by its destination', () => {
+  // Round 4 (blocker, recovered from the truncated report): scratch/ is ignored, so a symlink
+  // scratch/cacbg/leak → scripts/ passed the lexical check while extraction would write THROUGH it
+  // into tracked files. The guard now canonicalizes before judging: the resolved location is scripts/,
+  // which is tracked, and tracked refuses.
+  const link = path.join('scratch', 'cacbg', 'leak-link');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  try {
+    fs.symlinkSync(path.resolve('scripts'), link);
+    const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+      env: {
+        ...process.env,
+        CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-sym-raw-')),
+        CACBG_STAGING: path.resolve(link),
+      },
+      encoding: 'utf8',
+    });
+    const out = `${res.stdout}${res.stderr}`;
+    assert.notEqual(res.status, 0, 'writing through the symlink reaches committable files');
+    assert.match(out, /TRACKED|does not ignore/);
+  } finally {
+    fs.rmSync(link, { force: true });
+  }
 });

@@ -308,7 +308,16 @@ export async function run({
     // human decides that, not a certifier.
     const cachedListPath = path.join(dir, 'list.xml');
     if (fs.existsSync(cachedListPath)) {
-      const cachedRows = parseList(fs.readFileSync(cachedListPath, 'utf8')).length;
+      // A corrupt cached list (a legacy DOCTYPE, a truncated write) must not crash the shrink check —
+      // the valid INCOMING list is exactly what heals it. Unparseable-cached reads as zero rows: no
+      // shrink objection, and the atomicWrite below replaces the corrupt cache (round 4, minor).
+      const cachedRows = (() => {
+        try {
+          return parseList(fs.readFileSync(cachedListPath, 'utf8')).length;
+        } catch {
+          return 0;
+        }
+      })();
       if (rows.length < cachedRows) {
         console.log(`  ${folder}: list announces ${rows.length} < cached ${cachedRows} — SKIP`);
         stats.skippedFolders.push({ folder, status: 'list-shrank' });
