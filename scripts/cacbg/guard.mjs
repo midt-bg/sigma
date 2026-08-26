@@ -8,6 +8,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// One environment for every git the rails spawn: inherited GIT_DIR / GIT_WORK_TREE would substitute a
+// DIFFERENT repository's answer for the filesystem's (review rounds 3-4 demonstrated it against both
+// rails), and LC_ALL=C pins git's messages to English — this machine runs bg_BG, where a localized
+// „not a git repository" would turn every legitimate outside-repo override into a refusal.
+function gitEnv() {
+  const env = { ...process.env, LC_ALL: 'C' };
+  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  return env;
+}
 export const SCRATCH = path.join(ROOT, 'scratch', 'cacbg');
 
 /**
@@ -20,7 +30,7 @@ export const SCRATCH = path.join(ROOT, 'scratch', 'cacbg');
 export function assertScratchIgnored(subdir = 'cacbg') {
   const probe = path.join('scratch', subdir, '.probe');
   try {
-    execFileSync('git', ['check-ignore', '-q', probe], { cwd: ROOT });
+    execFileSync('git', ['check-ignore', '-q', '--', probe], { cwd: ROOT, env: gitEnv() });
   } catch {
     throw new Error(
       `REFUSE TO RUN: ${probe} is not git-ignored — add scratch/ to .gitignore first (PII rail, spec §8)`,
@@ -58,8 +68,7 @@ export function assertOverrideDirSafe(dir, name) {
   // Git must answer for the FILESYSTEM location. An inherited GIT_DIR / GIT_WORK_TREE would let the
   // caller substitute another repository's ignore policy for the one that actually contains the path
   // (review round 3: reproduced — an alternate repo's exclude rules accepted a tracked sink/).
-  const env = { ...process.env };
-  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+  const env = gitEnv();
   const gitTop = (cwd) => {
     try {
       return execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -88,6 +97,11 @@ export function assertOverrideDirSafe(dir, name) {
     const rel = path.relative(top, target);
     if (rel === '' || rel === '.')
       refuse('IS a git worktree root — everything under it defaults to committable');
+    // `./`-prefix the pathspec: `--` does NOT disable git's pathspec magic, so a directory literally
+    // named `:(top)scratch/…` is evaluated as MAGIC — resolving to an ignored path and certifying a
+    // committable one (review round 4; verified: check-ignore answers 0 for it). --literal-pathspecs is
+    // NOT usable here — check-ignore rejects the literal magic flag while still evaluating :(top) — but
+    // a leading ./ keeps the name a name for both commands (verified both directions).
     // TRACKED beats ignored. Ignore rules never apply to paths already in the index, and check-ignore
     // can even answer "ignored" for them (a nested repository makes everything beneath it implicitly
     // ignored — truthful for ADDING files, silent about ones tracked BEFORE the nested repo appeared;
@@ -95,7 +109,7 @@ export function assertOverrideDirSafe(dir, name) {
     // this worktree's index, modifications are committable regardless of every pattern.
     let tracked;
     try {
-      tracked = execFileSync('git', ['ls-files', '-z', '--', rel], {
+      tracked = execFileSync('git', ['ls-files', '-z', '--', `./${rel}`], {
         cwd: top,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -108,7 +122,7 @@ export function assertOverrideDirSafe(dir, name) {
     if (tracked.length > 0)
       refuse(`overlaps files TRACKED in the git worktree at ${top} — already committable`);
     try {
-      execFileSync('git', ['check-ignore', '-q', '--', rel], {
+      execFileSync('git', ['check-ignore', '-q', '--', `./${rel}`], {
         cwd: top,
         env,
         stdio: ['ignore', 'ignore', 'pipe'],

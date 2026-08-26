@@ -258,6 +258,19 @@ test('a list that announces fewer rows than the cached one is a contradiction, n
   );
 });
 
+test('a multi-root body that validates is still not a list', async () => {
+  // Round 4 (blocker, reproduced): fast-xml-parser validates `<wrong/><root>…</root>` as true, and the
+  // lenient parser merges both roots so parseList still finds the rows. Exactly one document element or
+  // the folder is skipped.
+  const multi = `<wrong/>` + listXml(['a1.xml']);
+  const routes = {
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: multi },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false);
+});
+
 // ── the reading half ───────────────────────────────────────────────────────────────────────────────
 // The writer above is only useful if something refuses an unstamped corpus. extract.mjs is that reader,
 // and it runs in-process, so it is exercised as a subprocess against a temp scratch tree.
@@ -435,4 +448,68 @@ test('when git cannot answer at all, the guard fails closed', () => {
   const out = `${res.stdout}${res.stderr}`;
   assert.notEqual(res.status, 0, 'no verification means no run');
   assert.match(out, /could not be verified/);
+});
+
+test('a literal directory named like pathspec magic cannot resolve to an ignored path', () => {
+  // Round 4 (blocker, verified): `--` does not disable pathspec magic, and check-ignore evaluates
+  // `:(top)…` — a directory LITERALLY named `:(top)scratch/cacbg/leak` used to be judged by the ignore
+  // status of scratch/cacbg/leak and pass, while the literal directory is committable. The ./ prefix
+  // keeps the name a name.
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-magic-raw-')),
+      CACBG_STAGING: path.resolve(':(top)scratch/cacbg/leak'),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0);
+  assert.match(out, /does not ignore/, 'the literal name must be judged, not the magic resolution');
+});
+
+test('a localized git does not turn legitimate outside-repo overrides into refusals', () => {
+  // Round 4: this machine runs bg_BG, where „not a git repository" arrives translated — the English
+  // match then read a legitimate /tmp override as an unexplained failure and refused. gitEnv pins
+  // LC_ALL=C, so the caller's locale must not matter.
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      LC_ALL: 'bg_BG.UTF-8',
+      LANG: 'bg_BG.UTF-8',
+      CACBG_RAW: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-loc-raw-')),
+      CACBG_STAGING: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-loc-stg-')),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.match(
+    out,
+    /REFUSE TO EXTRACT/,
+    'the guard must PASS (the later corpus gate is what refuses)',
+  );
+  assert.doesNotMatch(out, /could not be verified/);
+});
+
+test('an inherited GIT_DIR cannot reach the DEFAULT-path scratch rail either', () => {
+  // Round 4: assertOverrideDirSafe stripped GIT_* but assertScratchIgnored still inherited them — the
+  // default-output rail could consult a decoy repository. Both rails now share gitEnv(). The decoy here
+  // ignores NOTHING, so consulting it would refuse the probe; the REAL repo ignores scratch/ and the
+  // run proceeds to the corpus gate.
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-decoy2-'));
+  spawnSync('git', ['init', '-q', decoy], { encoding: 'utf8' });
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      GIT_DIR: path.join(decoy, '.git'),
+      // The decoy's OWN empty worktree: .gitignore files are read from the work tree, so pointing the
+      // work tree at the real checkout would answer "ignored" either way and hide the substitution.
+      GIT_WORK_TREE: decoy,
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.match(out, /REFUSE TO EXTRACT/, 'the scratch rail must consult the real repository');
+  assert.doesNotMatch(out, /not git-ignored/);
+  fs.rmSync(decoy, { recursive: true, force: true });
 });

@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getPinned, CACBG_HOST } from './tls.mjs';
 import { parseList } from './parse.mjs';
-import { XMLValidator } from 'fast-xml-parser';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { assertScratchIgnored, SCRATCH, safeXmlFile, safeFolder } from './guard.mjs';
 
 const BASE = `https://${CACBG_HOST}`;
@@ -267,8 +267,16 @@ export async function run({
     // Structural validation FIRST (review round 3): a truncated body whose tail still holds one complete
     // <Declaration> parses leniently to that one row — announced becomes 1, the corpus reconciles, and a
     // fresh crawl STAMPS off a mangled list. Only a well-formed document may be counted or cached.
-    if (XMLValidator.validate(listBody) !== true) {
-      console.log(`  ${folder}: list.xml is not well-formed XML — SKIP`);
+    // XMLValidator alone is NOT enough: fast-xml-parser validates `<wrong/><root>…</root>` — a
+    // MULTI-root body — as true, and the lenient parser then merges both roots so parseList still finds
+    // rows (review round 4: reproduced in both root orders). A real list.xml has exactly one document
+    // element; anything else is a mangled or concatenated body.
+    const roots = () =>
+      Object.keys(new XMLParser().parse(listBody)).filter(
+        (k) => k !== '?xml' && k !== '?xml-stylesheet',
+      );
+    if (XMLValidator.validate(listBody) !== true || roots().length !== 1) {
+      console.log(`  ${folder}: list.xml is not a single well-formed document — SKIP`);
       stats.skippedFolders.push({ folder, status: 'malformed-list' });
       continue;
     }
