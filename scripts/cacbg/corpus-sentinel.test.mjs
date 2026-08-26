@@ -153,6 +153,12 @@ test('a --folders subset that completes does NOT stamp — complete for the subs
   const OTHER = '2098t';
   fs.mkdirSync(path.join(dir, OTHER), { recursive: true });
   fs.writeFileSync(path.join(dir, OTHER, 'stale.xml'), '<x/>');
+  // Seeded stamp: the subset must CLEAR it (it mutates the corpus), not merely decline to write one —
+  // a clear that runs only on the discovery path would leave this stale certificate standing.
+  fs.writeFileSync(
+    sentinelPath(dir),
+    JSON.stringify({ incomplete: false, stampedAt: 'yesterday' }),
+  );
   const routes = {
     [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
     ...ok('a1.xml'),
@@ -161,7 +167,7 @@ test('a --folders subset that completes does NOT stamp — complete for the subs
   assert.equal(
     fs.existsSync(sentinelPath(dir)),
     false,
-    'a subset run must never certify the whole corpus',
+    'a subset run must never certify the whole corpus — and must clear a prior certificate',
   );
 });
 
@@ -171,7 +177,27 @@ test('an index that discovers ZERO folders is a failure, not a trivially complet
   // a broken or redesigned index page, never a real corpus state.
   fs.mkdirSync(path.join(dir, FOLDER), { recursive: true });
   fs.writeFileSync(path.join(dir, FOLDER, 'a1.xml'), '<x/>');
+  // Seeded stamp: the clear must run BEFORE the zero-discovery bail-out, or the failure exits 1 while
+  // yesterday's certificate keeps standing over a tree the run just declared unverifiable.
+  fs.writeFileSync(
+    sentinelPath(dir),
+    JSON.stringify({ incomplete: false, stampedAt: 'yesterday' }),
+  );
   assert.equal(await crawl({}, [], null, { discovered: [] }), 1);
+  assert.equal(fs.existsSync(sentinelPath(dir)), false, 'the stale stamp must be gone too');
+});
+
+test('a maintenance page on a FRESH folder cannot ride a valid neighbour into a stamp', async () => {
+  // The review reproduced exactly this: folder A serves maintenance HTML (0 rows, no files on disk),
+  // folder B is valid — skippedSets stayed 0, the corpus stamped. Zero-row folders now skip
+  // unconditionally, so A makes the corpus incomplete regardless of B.
+  const A = '2097t';
+  const routes = {
+    [`${BASE}/${A}/list.xml`]: { status: 200, body: '<html>maintenance</html>' },
+    [`${BASE}/${FOLDER}/list.xml`]: { status: 200, body: listXml(['a1.xml']) },
+    ...ok('a1.xml'),
+  };
+  assert.equal(await crawl(routes, [], null, { discovered: [A, FOLDER] }), 1);
   assert.equal(fs.existsSync(sentinelPath(dir)), false);
 });
 
@@ -266,6 +292,7 @@ test('--allow-partial-corpus extracts an unstamped corpus, loudly', () => {
     `the override must let the run proceed, got ${res.status}: ${out.slice(0, 300)}`,
   );
   assert.match(out, /--allow-partial-corpus/, 'the acceptance must be printed, never silent');
+  fs.rmSync(scratch, { recursive: true, force: true });
 });
 
 test('a CACBG_STAGING override pointing at a tracked path inside the repo is refused', () => {
@@ -287,4 +314,19 @@ test('a CACBG_STAGING override pointing at a tracked path inside the repo is ref
   assert.notEqual(res.status, 0, 'a committable PII destination must refuse to run');
   assert.match(out, /CACBG_STAGING/, 'the refusal must name the offending variable');
   fs.rmSync(scratch, { recursive: true, force: true });
+});
+
+test('a CACBG_RAW override pointing at a tracked path inside the repo is refused too', () => {
+  // Same rail, other variable — deleting only the RAW validation survived the STAGING-only test.
+  const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
+    env: {
+      ...process.env,
+      CACBG_RAW: path.resolve('scripts', 'pii-raw-probe'),
+      CACBG_STAGING: fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-pii-raw-')),
+    },
+    encoding: 'utf8',
+  });
+  const out = `${res.stdout}${res.stderr}`;
+  assert.notEqual(res.status, 0);
+  assert.match(out, /CACBG_RAW/, 'the refusal must name the offending variable');
 });

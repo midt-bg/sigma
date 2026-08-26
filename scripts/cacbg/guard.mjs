@@ -3,6 +3,7 @@
 // commit. This asserts that invariant before any fetch — if scratch/ is not ignored, we stop hard.
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,16 +39,42 @@ export function assertScratchIgnored(subdir = 'cacbg') {
  * @param {string} name the env var being validated, for the error message
  */
 export function assertOverrideDirSafe(dir, name) {
-  const abs = path.resolve(dir);
-  if (!abs.startsWith(ROOT + path.sep)) return; // outside the repo — git cannot commit it
-  const rel = path.relative(ROOT, abs);
-  try {
-    execFileSync('git', ['check-ignore', '-q', rel], { cwd: ROOT });
-  } catch {
+  // Ask git ITSELF, not a lexical prefix check. The review demonstrated four bypasses of the string
+  // comparison this used to do: the repository root itself (equality fails a startsWith(ROOT+sep)
+  // test), a /proc/self/cwd symlink alias resolving back inside the checkout, an unignored path in a
+  // DIFFERENT git worktree, and case aliases on case-insensitive filesystems. Running git FROM the
+  // target directory sidesteps all four — the OS resolves symlinks on chdir, and git answers for
+  // whichever repository actually contains the path, ours or not.
+  //
+  // The directory may not exist yet (extract creates staging), so the probe walks up to the deepest
+  // existing ancestor and the missing tail is re-appended for the ignore check.
+  const missing = [];
+  let probe = path.resolve(dir);
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break; // filesystem root — nothing exists; nothing to commit either
+    missing.unshift(path.basename(probe));
+    probe = parent;
+  }
+  const refuse = (why) => {
     throw new Error(
-      `REFUSE TO RUN: ${name}=${dir} points inside the repository at a path git does not ignore — ` +
-        `PII output must never be committable (PII rail, spec §8)`,
+      `REFUSE TO RUN: ${name}=${dir} ${why} — PII output must never be committable (PII rail, spec §8)`,
     );
+  };
+  let top = null;
+  try {
+    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: probe }).toString().trim();
+  } catch {
+    return; // not inside ANY git worktree — no repository can commit it
+  }
+  const target = path.join(probe, ...missing);
+  const rel = path.relative(top, path.resolve(probe, target === probe ? '.' : target));
+  if (rel === '' || rel === '.')
+    refuse('IS a git worktree root — everything under it defaults to committable');
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd: top });
+  } catch {
+    refuse(`points inside the git worktree at ${top} at a path git does not ignore`);
   }
 }
 

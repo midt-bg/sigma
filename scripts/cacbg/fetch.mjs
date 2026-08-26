@@ -263,18 +263,24 @@ export async function run({
       continue;
     }
     let rows = parseList(listRes.body.toString('utf8'));
-    // An HTTP-200 body that parses to ZERO rows while the folder already holds declaration files is a
-    // contradiction, not an empty set: a maintenance HTML page or a schema change both come back 200 and
-    // parse to [] (review finding: confirmed against a real maintenance page). Trusting it would shrink
-    // `announced` to zero, make the folder look trivially complete, and OVERWRITE the cached list the
-    // extractor reads. Skip the folder instead — skippedFolders makes the corpus incomplete, so no stamp.
+    // An HTTP-200 body that parses to ZERO rows is a maintenance HTML page or a schema change, not an
+    // empty set — the register indexes a folder only once it has declarations, and both failure shapes
+    // come back 200 and parse to [] (review finding: confirmed against a real maintenance page; the
+    // follow-up reproduced the FRESH-folder variant certifying a mixed corpus). Trusting it would shrink
+    // `announced` to zero, make the folder look trivially complete, and — when files already exist —
+    // OVERWRITE the cached list the extractor reads. Skip the folder unconditionally: skippedFolders
+    // makes the corpus incomplete, so no stamp; a genuinely empty brand-new set (never yet observed)
+    // would go red for an operator to look at, which is the right failure direction for a certifier.
     if (rows.length === 0) {
       const onDisk = fs.readdirSync(dir).some((f) => f.endsWith('.xml') && f !== 'list.xml');
-      if (onDisk) {
-        console.log(`  ${folder}: list.xml parsed to 0 rows but declarations exist on disk — SKIP`);
-        stats.skippedFolders.push({ folder, status: 'empty-list-with-files' });
-        continue;
-      }
+      console.log(
+        `  ${folder}: list.xml parsed to 0 rows${onDisk ? ' (declarations exist on disk!)' : ''} — SKIP`,
+      );
+      stats.skippedFolders.push({
+        folder,
+        status: onDisk ? 'empty-list-with-files' : 'empty-list',
+      });
+      continue;
     }
     atomicWrite(path.join(dir, 'list.xml'), listRes.body); // cache list for extract.mjs
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
@@ -408,8 +414,11 @@ export async function run({
   //   • !override — a --folders subset that completes is complete FOR THE SUBSET; certifying the whole
   //     raw tree from it would stamp around every other folder's state. Subset crawls still CLEAR the
   //     stamp (top of run), so they leave the corpus resumable-not-publishable, which is right.
-  //   • announced > 0 — a crawl that reconciled zero declarations certifies nothing. With the empty-
-  //     index and empty-list guards above this is belt-and-braces, not the primary defence.
+  //   • announced > 0 — a crawl that reconciled zero declarations certifies nothing. UNREACHABLE by
+  //     construction since the zero-row skip above (every zero-announced folder lands in skippedFolders,
+  //     making the corpus incomplete; zero folders at all exits earlier) — kept as belt-and-braces
+  //     against a future regression of those guards, which is also why no test pins it: a mutant
+  //     deleting it survives, deliberately, rather than a test encoding an impossible scenario.
   const stampable = !override && !completeness.incomplete && completeness.announcedDeclarations > 0;
   if (stampable) writeSentinel(rawDir, { folders: folders.length, ...completeness });
   return 0;
