@@ -10,6 +10,7 @@ import {
   chunkStatements,
   runShip,
   assertShippedCounts,
+  readCountsWithRetry,
   sqlLiteral,
   sqlIdent,
   TABLES,
@@ -232,6 +233,73 @@ test('chunkStatements refuses a non-positive size rather than looping forever', 
 test('assertShippedCounts passes when the target holds exactly what was shipped', () => {
   assert.doesNotThrow(() =>
     assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 2 }),
+  );
+});
+
+// ── readCountsWithRetry — a flaky live readback must not become a false verdict ──────────────────────
+// The readback is `wrangler d1 execute --remote --json`, a network call that intermittently times out.
+// When it did, the run FAILED over data that had actually shipped, and skipped the reindex behind it
+// (runs 32775600033, 33207492181). These pin: transient failures retry, real drift passes through.
+const RC_TABLES = ['persons', 'interest_links'];
+
+test('readCountsWithRetry returns the answer once a transient failure clears', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 3) throw new Error('Command failed: wrangler d1 execute (timeout)');
+    return { persons: 3, interest_links: 2 };
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 3, 'it must keep trying, not give up on the first throw');
+});
+
+test('readCountsWithRetry retries an INCOMPLETE answer (a table missing), not just a throw', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    return calls < 2 ? { persons: 3 } : { persons: 3, interest_links: 2 }; // interest_links missing first
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 2);
+});
+
+test('readCountsWithRetry returns {} after exhausting attempts — the guard still fails closed', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    throw new Error('sustained failure');
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: () => {} });
+  assert.deepEqual(out, {}, 'a genuinely unreadable target yields {} so assertShippedCounts fails');
+  assert.equal(calls, 3, 'it must exhaust exactly the budget');
+});
+
+test('readCountsWithRetry does NOT retry a COMPLETE answer that disagrees — real drift passes through', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    return { persons: 3, interest_links: 0 }; // a real partial ship: 0 is a number, a complete answer
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 0 });
+  assert.equal(calls, 1, 'a complete answer must be returned immediately, drift or not');
+});
+
+test('readCountsWithRetry backs off between attempts', () => {
+  const waits = [];
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 3) throw new Error('transient');
+    return { persons: 1, interest_links: 1 };
+  };
+  readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: (ms) => waits.push(ms) });
+  assert.deepEqual(
+    waits,
+    [2000, 4000],
+    'linear backoff before attempts 2 and 3, none before the first',
   );
 });
 

@@ -294,6 +294,35 @@ export function parseWranglerJson(out) {
   return JSON.parse(out); // no usable bracket: let the original parse error surface
 }
 
+// Retry the readback around a single-attempt reader. `wrangler d1 execute --remote --json` is a live
+// network call that intermittently times out or errors transiently; when it did, readShippedCounts
+// returned {} and assertShippedCounts then failed the WHOLE run — falsely, over data that had actually
+// shipped — and skipped the reindex behind it (observed on runs 32775600033 and 33207492181). The guard
+// is right to fail closed; the READ under it must not turn one flaky call into a false verdict.
+//
+// The distinction the retry rests on: `attempt()` throwing, or returning an answer missing any expected
+// table, is a TRANSIENT read failure — retry it. A complete answer whose numbers disagree is a REAL
+// drift — return it unchanged so assertShippedCounts catches it. A genuinely empty table counts as 0
+// (a number), so a real partial ship is never mistaken for a transient miss. Pure; `attempt`/`sleep`
+// injected, so the retry logic is unit-tested without touching wrangler.
+export function readCountsWithRetry(attempt, tables, { attempts = 4, sleep = () => {} } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) sleep(2000 * i);
+    try {
+      const counts = attempt();
+      if (tables.every((t) => typeof counts[t] === 'number')) return counts;
+      lastErr = new Error('readback returned an incomplete answer');
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  console.error(
+    `ship: could not read back row counts after ${attempts} attempts — ${lastErr?.message ?? lastErr}`,
+  );
+  return {};
+}
+
 function readShippedCounts(d1Name, remote, expected) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
@@ -302,28 +331,23 @@ function readShippedCounts(d1Name, remote, expected) {
   const sql = tables
     .map((t) => `SELECT ${sqlLiteral(t)} AS t, COUNT(*) AS n FROM ${sqlIdent(t)}`)
     .join(' UNION ALL ');
-  try {
+  return readCountsWithRetry(() => {
     const out = execFileSync(
       'wrangler',
       ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
       { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
     );
-    // Defensive, NOT a fix for an observed failure — the earlier wording here claimed otherwise and
-    // was wrong. Checked against the real tool: `wrangler d1 execute --json` writes its notices
-    // („▲ [WARNING] Processing wrangler.jsonc") to STDERR and leaves stdout as clean JSON, and
-    // execFileSync returns stdout alone, so slicing from the first '[' is in fact safe today. The
-    // scan below survives a future release that changes that, and costs one failed parse if it does.
+    // `wrangler d1 execute --json` writes its notices („▲ [WARNING] Processing wrangler.jsonc") to
+    // STDERR and leaves stdout as clean JSON, and execFileSync returns stdout alone, so slicing from
+    // the first '[' is safe today. The scan survives a future release that changes that, at one failed
+    // parse if it does.
     const parsed = parseWranglerJson(out);
     const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
-    // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass
-    // for „the table is empty"; anything non-numeric must land as NaN so assertShippedCounts fails closed.
+    // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell
+    // pass for „the table is empty"; anything non-numeric lands as NaN so the retry treats it as an
+    // incomplete answer and assertShippedCounts fails closed if it is the final one.
     return Object.fromEntries(rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]));
-  } catch (err) {
-    console.error(
-      `ship: could not read back row counts — ${err instanceof Error ? err.message : err}`,
-    );
-    return {};
-  }
+  }, tables);
 }
 
 function resolveD1Id(d1Name) {
