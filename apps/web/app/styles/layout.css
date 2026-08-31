@@ -23,7 +23,10 @@
    Editorial posture: quiet rail, collapsible groups, full-width table side. */
 .split {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  /* minmax(0,1fr) not 1fr: a bare 1fr track has min-width:auto, so a wide non-wrapping child (a long
+     institution name, the results table) can stretch it past its share and force horizontal overflow.
+     minmax(0,…) caps the content column at the available width. */
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: var(--s-7);
   margin-top: var(--s-5);
   align-items: start;
@@ -220,7 +223,11 @@
 
 @media (max-width: 960px) {
   .split {
-    grid-template-columns: 1fr;
+    /* Same guard as the base rule: the stacked single column holds both the filter rail and the wide
+       results table. A bare 1fr lets the table stretch the track past the viewport, so the full-width
+       „Търси" button renders wider than the sparse filter rows above it (which never reveal the
+       overflow). minmax(0,…) pins the track to the viewport, so button and filters share one width. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--s-5);
   }
   .split > aside {
@@ -629,20 +636,88 @@ details.row .body .signal .why {
   }
 }
 
-/* Filter rail: no-JS apply button + active-filter chip strip */
+/* Filter rail: apply bar + active-filter chip strip.
+   On desktop the „Търси" bar is a floating pill pinned to the viewport (position: fixed), so it never
+   scrolls out of reach however long the filter list is. On mobile the rail collapses behind a toggle,
+   so the bar just sits at the list's end. */
+.filter-apply-bar {
+  margin-top: var(--s-2);
+  padding-top: var(--s-3);
+  background: var(--paper);
+  border-top: 1px solid var(--ink);
+}
+.filter-apply-links {
+  margin: var(--s-2) 0 0;
+}
 .filter-apply {
-  display: inline-block;
-  min-block-size: 24px;
-  min-inline-size: 24px;
-  margin: var(--s-3) 0;
+  /* THE fix: force border-box. This button computes as content-box (the global `* {box-sizing}` reset
+     isn't winning here), so inline-size EXCLUDED the 32px horizontal padding + 1px border — at 100% it
+     rendered 66px wider than the filter column and overflowed it (the „too wide" bug). border-box makes
+     inline-size include padding+border, so 100% now fits the column exactly instead of overflowing it. */
+  box-sizing: border-box;
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-block-size: 0;
+  margin: 0 auto;
   border: 1px solid var(--ink);
   background: var(--ink);
   color: var(--paper);
-  padding: 8px var(--s-4);
-  font: 500 11px/1 var(--font-mono);
-  letter-spacing: 0.16em;
+  padding: 8px var(--s-6);
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.22em;
   text-transform: uppercase;
+  text-align: center;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.filter-apply:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+/* 960.02 (not 961) shrinks the gap with the ≤960px mobile block to the unreachable (960, 960.02] on
+   fractional/zoomed widths (vs a 1px 960–961 dead zone); the base styles render correctly within it. */
+@media (min-width: 960.02px) {
+  /* Floating action pill: a compact, content-sized bar centred horizontally and lifted off the bottom
+     edge so it reads as an overlay, not a page-bottom chrome. Fixed is viewport-relative here — no
+     ancestor sets transform/filter/contain (transform on the pill itself doesn't break its own fixed
+     positioning). Page-bottom clearance below reserves room so the footer is never covered. */
+  .filter-apply-bar {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    /* --filter-bar-lift is set by FilterRail's scroll effect = how far the footer intrudes into the
+       viewport, so the pill rises to rest just above the footer instead of covering it. */
+    inset-block-end: calc(var(--s-5) + var(--filter-bar-lift, 0px));
+    inline-size: auto;
+    max-inline-size: calc(100vw - 2 * var(--gutter));
+    z-index: 30;
+    margin: 0;
+    padding: 10px var(--s-4);
+    border: 1px solid var(--ink);
+    background: var(--paper);
+    box-shadow: 0 18px 40px -20px rgb(0 0 0 / 0.45);
+  }
+  .filter-apply-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+  }
+  .filter-apply {
+    inline-size: auto;
+    min-inline-size: 220px;
+    min-block-size: 0;
+    padding: 9px var(--s-4);
+    letter-spacing: 0.18em;
+  }
+  .filter-apply-links {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
 }
 .active-filters {
   display: flex;

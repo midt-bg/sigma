@@ -582,6 +582,12 @@ main {
   max-width: var(--max);
   margin: 0 auto;
   padding: var(--s-7) var(--gutter) var(--s-9);
+  /* Contain the page to the viewport width: a wide child (e.g. the nowrap results table) must never
+     push the layout past the screen and force a horizontal page scroll (which clips the left edge and
+     makes full-width children like the „Търси" button read as too wide). `clip` — not `hidden` — so no
+     scroll container is created and the sticky filter rail keeps working; the table keeps its own
+     internal `overflow: auto`. */
+  overflow-x: clip;
 }
 main.narrow {
   max-width: var(--max-narrow);
