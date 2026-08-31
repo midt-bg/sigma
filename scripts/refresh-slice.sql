@@ -766,7 +766,8 @@ INSERT INTO tenders
    procedure_type, contract_kind, num_lots, status, published_at, deadline_at,
    legal_basis, award_criteria, main_activity, notice_type,
    place_of_performance, start_date, end_date, duration, duration_unit,
-   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id)
+   eu_programme, green, social, innovation, eauction, cancelled, eop_tender_id,
+   corrections_count)
 SELECT
   't:' || t.unp,
   t.unp,
@@ -799,7 +800,8 @@ SELECT
   t.innovation,
   t.eauction,
   t.cancelled,
-  NULLIF(t.tender_id, '')                 -- raw EOP numeric tenderId from the header row
+  NULLIF(t.tender_id, ''),                -- raw EOP numeric tenderId from the header row
+  t.corrections_count
 FROM raw_tenders t
 WHERE t.lot_id IS NULL
   AND EXISTS (
@@ -844,7 +846,14 @@ ON CONFLICT(id) DO UPDATE SET
   -- real, keep its id but backfill from the header if it was somehow missing.
   eop_tender_id = CASE WHEN tenders.procedure_type = 'неизвестна'
     THEN COALESCE(excluded.eop_tender_id, tenders.eop_tender_id)
-    ELSE COALESCE(tenders.eop_tender_id, excluded.eop_tender_id) END;
+    ELSE COALESCE(tenders.eop_tender_id, excluded.eop_tender_id) END,
+  -- Monotonic counter: never regress it, regardless of procedure_type — a real tender's
+  -- corrections_count must keep growing across incremental refreshes, not freeze at its first value.
+  corrections_count = CASE
+    WHEN excluded.corrections_count IS NULL THEN tenders.corrections_count
+    WHEN tenders.corrections_count IS NULL THEN excluded.corrections_count
+    ELSE MAX(excluded.corrections_count, tenders.corrections_count)
+  END;
 
 -- @refresh-batch lots
 INSERT OR IGNORE INTO lots (id, tender_id, title, cpv_code, estimated_value)
@@ -1162,7 +1171,8 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic,
+   exemption_legal_basis, outside_zop, dps_contract)
 SELECT
   'c:o:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
     COALESCE(NULLIF(x.lot_id, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
@@ -1205,7 +1215,10 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  x.exemption_legal_basis,
+  x.outside_zop,
+  x.dps_contract
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
@@ -1531,7 +1544,8 @@ INSERT OR IGNORE INTO contracts
    eu_programme, duration_days, winner_size, contractor_country,
    bids_sme, bids_rejected, bids_non_eea,
    subcontractor_eik, subcontractor_name, subcontract_value,
-   eauction, framework, accelerated, strategic)
+   eauction, framework, accelerated, strategic,
+   exemption_legal_basis, outside_zop, dps_contract)
 SELECT
   'c:e:' || COALESCE(x.unp, '') || ':' || COALESCE(x.contract_number, '') || ':' ||
     COALESCE(NULLIF(x.lot_norm, ''), '_') || ':' || x.bidder_key || ':' || x.contract_ordinal,
@@ -1574,7 +1588,10 @@ SELECT
   x.eauction,
   x.framework_contract,
   x.accelerated,
-  x.strategic
+  x.strategic,
+  x.exemption_legal_basis,
+  x.outside_zop,
+  x.dps_contract
 FROM (
   SELECT q.*,
     -- value_suspect is repaired directly from proc_est_eur. value_low (and 'review') is populated here,
@@ -1928,7 +1945,7 @@ WHERE source LIKE 'ocds:%'
 INSERT OR REPLACE INTO amendments (
   id, natural_key, contract_number, contract_number_raw, link_method, unp,
   value_before, value_after, value_delta, currency,
-  published_at, document_number, description, source,
+  published_at, document_number, description, reason, circumstances, source,
   value_restated, value_treatment, value_suspect
 )
 WITH keyed AS (
@@ -1971,6 +1988,8 @@ SELECT
   published_at,
   document_number,
   description,
+  reason,
+  circumstances,
   source,
   CASE WHEN value_after_restated IS NOT NULL THEN 1 ELSE 0 END,
   value_treatment,
@@ -2464,12 +2483,29 @@ WHERE cca.authority_id IN (SELECT authority_id FROM refresh_touched_authorities)
 GROUP BY cca.authority_id;
 
 -- @refresh-batch flow-pairs
+-- Two-path parity with scripts/precompute.sql: this batch already fully recomputes flow_pairs (no
+-- touched-set scoping below), so the DROP+CREATE is exactly as safe here as in precompute.sql — it
+-- guarantees first_date/last_date exist on a served D1 whose flow_pairs predates migration 0012,
+-- instead of INSERTing into columns a stale table doesn't have. DROP removes 0000_init's
+-- idx_flow_pairs_won/idx_flow_pairs_authority and 0001's idx_flow_pairs_bidder, so all three are
+-- recreated below, same as precompute.sql.
+DROP TABLE IF EXISTS flow_pairs;
+CREATE TABLE IF NOT EXISTS flow_pairs (
+  authority_id TEXT NOT NULL REFERENCES authorities(id), bidder_id TEXT NOT NULL REFERENCES bidders(id),
+  authority_name TEXT NOT NULL, bidder_name TEXT NOT NULL, bidder_kind TEXT NOT NULL,
+  won_eur REAL NOT NULL, contracts INTEGER NOT NULL, first_date TEXT, last_date TEXT,
+  PRIMARY KEY (authority_id, bidder_id)
+);
 DELETE FROM flow_pairs;
-INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts)
-SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*)
+INSERT INTO flow_pairs (authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts, first_date, last_date)
+SELECT t.authority_id, c.bidder_id, a.name, b.name, b.kind, SUM(c.amount_eur), COUNT(*),
+  MIN(c.signed_at), MAX(c.signed_at)
 FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id = t.authority_id JOIN bidders b ON b.id = c.bidder_id
 WHERE c.amount_eur IS NOT NULL
 GROUP BY t.authority_id, c.bidder_id;
+CREATE INDEX IF NOT EXISTS idx_flow_pairs_won ON flow_pairs(won_eur DESC);
+CREATE INDEX IF NOT EXISTS idx_flow_pairs_authority ON flow_pairs(authority_id);
+CREATE INDEX IF NOT EXISTS idx_flow_pairs_bidder ON flow_pairs(bidder_id);
 
 -- @refresh-batch entity-search-index
 DELETE FROM search_index WHERE kind = 'company';

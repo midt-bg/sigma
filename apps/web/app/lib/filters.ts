@@ -175,6 +175,29 @@ export function buildSectorGroup(
   };
 }
 
+/** /quality „Разбивка" ranking controls read from the URL (?rdir/?rfrom/?rto). */
+export interface QualityRankingControls {
+  rankDir: 'asc' | 'desc' | null; // null = the sort key's default order
+  rankFrom: number | null; // avg-index range bounds on the 0–100 display scale (from ≤ to)
+  rankTo: number | null;
+}
+
+/**
+ * Parse + validate the „Разбивка" ranking controls: ?rdir is an allow-listed asc|desc; ?rfrom/?rto
+ * are digits-only ints ≤ 100 (no signs, decimals or SQL-ish shapes reach a query or a cache key —
+ * CWE-349); an inverted pair is swapped so the range is always from ≤ to. The db layer re-validates.
+ */
+export function qualityRankingControls(sp: URLSearchParams): QualityRankingControls {
+  const rdir = sp.get('rdir');
+  const rangeInt = (raw: string | null): number | null =>
+    raw != null && /^\d{1,3}$/.test(raw) && Number(raw) <= 100 ? Number(raw) : null;
+  let rankFrom = rangeInt(sp.get('rfrom'));
+  let rankTo = rangeInt(sp.get('rto'));
+  if (rankFrom != null && rankTo != null && rankFrom > rankTo)
+    [rankFrom, rankTo] = [rankTo, rankFrom];
+  return { rankDir: rdir === 'asc' || rdir === 'desc' ? rdir : null, rankFrom, rankTo };
+}
+
 // Canonical serialization order so the same logical state always yields the same URL string —
 // good for history/bookmarks/caching. Filter facets first, then search/sort, then the paging cursor
 // markers. Link param order (cosmetic). Every entry must be in CANONICAL_QUERY_PARAMS (asserted in
@@ -184,19 +207,30 @@ export const PARAM_ORDER = [
   'type',
   'kind',
   'sector',
-  'g', // trends granularity (month/year)
+  'cpv', // /trends: 5-digit CPV group filter
+  'cpvSort', // /trends: CPV list ordering
+  'angle', // /trends: time | cpv | cross lens
+  'step', // /trends: series granularity (m|q|y)
   'year',
   'procedure',
   'funding',
   'eu',
   'bids', // /contracts single-bid filter
+  'band', // /quality: histogram score-band filter
+  'grain', // /quality: rollup grain
   'value',
   'authority',
   'bidder',
   'center', // /network focus entity
+  'contract', // /quality: scorecard subject
+  'sel', // /quality: selected ranking row
   'top',
   'count',
   'sort',
+  'csort', // /quality: contract list ordering
+  'rdir',
+  'rfrom',
+  'rto',
   'cursor',
   'page',
   'p', // sitemap-contracts page

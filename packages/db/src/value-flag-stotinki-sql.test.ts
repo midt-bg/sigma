@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,18 +17,14 @@ import { describe, expect, it } from 'vitest';
 // path. A copy left behind fails here rather than in production.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
-const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-// refresh-slice.sql's свързани-лица block reads interest_link_evidence (#279, ADR-0033), so the script
-// only parses against a DB that also has 0006 — without it sqlite3 aborts on „no such table" before it
-// ever reaches the value_flag CASE these tests are about.
-const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
-// #305 Tier-2: served amendments gained value_restated/value_treatment (promote + refresh-slice write them).
-const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
-const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
+// Full migration chain in `wrangler d1 migrations apply` order — promote/refresh-slice write columns
+// (e.g. 0012's reason/circumstances) added anywhere along the chain, so the served schema must be
+// built the same way production builds it, not from a hand-picked subset.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -55,13 +51,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   const dir = mkdtempSync(resolve(tmpdir(), `sigma-stotinki-${label}-`));
   const dbPath = resolve(dir, 'test.sqlite');
   try {
-    readScript(dbPath, schemaPath);
-    readScript(dbPath, migration2Path);
-    readScript(dbPath, migration3Path);
-    readScript(dbPath, migration9Path);
-    readScript(dbPath, migration6Path);
-    readScript(dbPath, migration7Path);
-    readScript(dbPath, migration8Path);
+    for (const migration of migrations) readScript(dbPath, migration);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

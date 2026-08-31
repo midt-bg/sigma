@@ -118,6 +118,62 @@ describe('cacheKey', () => {
     expect(cacheUrl('http://local/contracts?cursor=c5&page=2').search).not.toBe(
       cacheUrl('http://local/contracts?cursor=c5&page=5').search,
     );
+    // ?band (histogram score-band click-filter on /quality) narrows the contracts list — distinct
+    // bands and the unfiltered view must each get their own entry.
+    expect(cacheUrl('http://local/quality?band=6').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?band=6').search).not.toBe(
+      cacheUrl('http://local/quality?band=weak').search,
+    );
+    // ?rdir flips the „Разбивка" row order; ?rfrom/?rto narrow its rows. Distinct values render
+    // different tables, so each must mint its own cache entry (CWE-349).
+    expect(cacheUrl('http://local/quality?rdir=desc').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?rdir=desc').search).not.toBe(
+      cacheUrl('http://local/quality?rdir=asc').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10&rto=60').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10&rto=60').search).not.toBe(
+      cacheUrl('http://local/quality?rfrom=10&rto=70').search,
+    );
+    expect(cacheUrl('http://local/quality?rfrom=10').search).not.toBe(
+      cacheUrl('http://local/quality?rto=10').search,
+    );
+  });
+
+  it('keys every recently-added param so a future refactor cannot silently drop it (CWE-349)', () => {
+    // /trends: angle (lens), cpv (5-digit group filter), cpvSort (CPV list ordering), step (series
+    // granularity) — each narrows or reorders the rendered list/chart.
+    expect(cacheUrl('http://local/trends?angle=cpv').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?cpv=45233').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?cpvSort=med').search).not.toBe(
+      cacheUrl('http://local/trends').search,
+    );
+    expect(cacheUrl('http://local/trends?step=year').search).not.toBe(
+      cacheUrl('http://local/trends?step=month').search,
+    );
+    // /quality: csort (contract list ordering), contract (scorecard subject), grain (rollup grain),
+    // sel (selected ranking row scoping the contracts list).
+    expect(cacheUrl('http://local/quality?csort=value').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?contract=c1').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
+    expect(cacheUrl('http://local/quality?grain=supplier').search).not.toBe(
+      cacheUrl('http://local/quality?grain=year').search,
+    );
+    expect(cacheUrl('http://local/quality?sel=auth:1').search).not.toBe(
+      cacheUrl('http://local/quality').search,
+    );
   });
 });
 

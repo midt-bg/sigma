@@ -17,6 +17,7 @@ export * from './trend';
 export * from './regions';
 export * from './cohort';
 export * from './competition';
+export * from './quality';
 export * from './search';
 export * from './details';
 export * from './sitemaps';

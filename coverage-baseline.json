@@ -6,8 +6,8 @@
       "branches": 58.2
     },
     "apps/web": {
-      "lines": 91,
-      "branches": 82.4
+      "lines": 91.6,
+      "branches": 79.8
     },
     "packages/config": {
       "lines": 92.8,

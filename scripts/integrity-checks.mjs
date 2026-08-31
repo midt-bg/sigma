@@ -372,6 +372,78 @@ export async function checkStagingReconciliation(runner) {
   };
 }
 
+// 6) Contract Quality / Health Index (design spec §8). derive-contract-features.sql's own final
+//    SELECT prints these same invariant columns, but that SELECT is only ever displayed by
+//    `wrangler d1 execute` — a violation never failed the ETL. This promotes them to a hard gate.
+//    Self-skips when contract_features/tmp_diag are absent — tmp_diag is created by
+//    derive-contract-features.sql and deliberately left in place (never DROPped), so its presence
+//    also proves that script actually ran on this connection, not just that a stale
+//    contract_features table exists from an earlier run.
+export async function checkContractFeaturesIntegrity(runner) {
+  const name = 'contract-features-integrity';
+  if (
+    !(await tableExists(runner, 'contract_features')) ||
+    !(await tableExists(runner, 'tmp_diag'))
+  ) {
+    return {
+      name,
+      ok: true,
+      skipped: true,
+      detail: 'contract_features/tmp_diag absent (derive-contract-features.sql not yet run)',
+    };
+  }
+  const r =
+    (
+      await rows(
+        runner,
+        'SELECT' +
+          ' (SELECT COUNT(*) FROM contracts) AS contracts_rows,' +
+          ' (SELECT COUNT(*) FROM contract_features) AS contract_features_rows,' +
+          ' (SELECT unmapped_procedure_rows FROM tmp_diag) AS unmapped_procedure_rows,' +
+          " (SELECT COUNT(*) FROM contract_features WHERE value_flag = 'value_suspect' AND (score_overall IS NOT NULL OR score_c IS NOT NULL)) AS value_suspect_leak_rows," +
+          ' (SELECT COUNT(*) FROM contract_features WHERE single_offer = 1 AND score_a_bids > 0 AND peer_has_multi = 1) AS a1_floor_violations,' +
+          " (SELECT COUNT(*) FROM contract_features cf JOIN contracts c ON c.id = cf.contract_id JOIN tenders t ON t.id = c.tender_id WHERE t.procedure_type = 'Пряко договаряне' AND cf.score_b <> 0) AS direct_award_b1_nonzero",
+      )
+    )[0] || {};
+  const contractsRows = num(r.contracts_rows);
+  const contractFeaturesRows = num(r.contract_features_rows);
+  const unmappedProcedureRows = num(r.unmapped_procedure_rows);
+  const valueSuspectLeakRows = num(r.value_suspect_leak_rows);
+  const a1FloorViolations = num(r.a1_floor_violations);
+  const directAwardB1Nonzero = num(r.direct_award_b1_nonzero);
+
+  const fails = [];
+  if (contractsRows !== contractFeaturesRows)
+    fails.push(
+      `contract_features_rows ${contractFeaturesRows} != contracts_rows ${contractsRows} (orphaned/dropped contract)`,
+    );
+  if (unmappedProcedureRows !== 0)
+    fails.push(
+      `${unmappedProcedureRows} rows have an unmapped procedure_type (§12.2 vocabulary gap)`,
+    );
+  if (valueSuspectLeakRows !== 0)
+    fails.push(
+      `${valueSuspectLeakRows} value_suspect rows leaked a score (score_overall/score_c should be null)`,
+    );
+  if (a1FloorViolations !== 0)
+    fails.push(
+      `${a1FloorViolations} single-offer rows violate the A1 floor (peer_has_multi with score_a_bids>0)`,
+    );
+  if (directAwardB1Nonzero !== 0)
+    fails.push(
+      `${directAwardB1Nonzero} direct-award (Пряко договаряне) rows have a nonzero score_b`,
+    );
+
+  return {
+    name,
+    ok: fails.length === 0,
+    skipped: false,
+    detail: fails.length
+      ? fails.join('; ')
+      : `contracts_rows=${contractsRows} reconciled, no invariant violations`,
+  };
+}
+
 // 7) Amendment twin dedup (#286). The OCDS→EOP bridge lets an OCDS amendment reach the same contract as
 //    its EOP twin; the prefer-EOP dedup keeps only one per (unp, contract_number) by DELETE-ing OCDS rows
 //    before promotion — the SOLE guard, since promotion is unconditional. On the incremental path a twin
@@ -412,14 +484,18 @@ export const CHECKS = [
   checkEikValidity,
   checkDateSanity,
   checkStagingReconciliation,
+  checkContractFeaturesIntegrity,
   checkAmendmentTwins,
 ];
 
-export async function runIntegrityChecks(runner) {
-  // Sequential, not Promise.all: preserve the printed order and avoid firing every check's reads at
-  // D1 at once. Each `fn` may return a value (sync runner) or a Promise (async/D1 runner); await both.
+// Sequential, not Promise.all: preserve the printed order and avoid firing every check's reads at
+// D1 at once. Each `fn` may return a value (sync runner) or a Promise (async/D1 runner); await both.
+// `checks` defaults to the standard #97 set; pass a different array (e.g.
+// [checkContractFeaturesIntegrity]) to gate a narrower, call-site-specific set without affecting
+// the other assertIntegrity callers.
+export async function runIntegrityChecks(runner, checks = CHECKS) {
   const results = [];
-  for (const fn of CHECKS) results.push(await fn(runner));
+  for (const fn of checks) results.push(await fn(runner));
   return results;
 }
 
@@ -445,9 +521,14 @@ export function summarizeIntegrity(results, label = 'integrity') {
 
 // Run all checks, print a one-line summary per check, and FAIL non-zero on any real violation.
 // `exit: true` (default) mirrors assertFxPopulated — print to stderr and process.exit(1). Tests pass
-// `exit: false` to get a thrown Error instead (the assertion still fails the same way).
-export async function assertIntegrity(runner, { label = 'integrity', exit = true } = {}) {
-  const results = await runIntegrityChecks(runner);
+// `exit: false` to get a thrown Error instead (the assertion still fails the same way). `checks`
+// defaults to the standard #97 set; pass a different array (e.g. [checkContractFeaturesIntegrity])
+// to gate a narrower, call-site-specific set without affecting the other assertIntegrity callers.
+export async function assertIntegrity(
+  runner,
+  { label = 'integrity', exit = true, checks = CHECKS } = {},
+) {
+  const results = await runIntegrityChecks(runner, checks);
   for (const r of results) {
     const tag = r.skipped ? 'SKIP' : r.warn ? 'WARN' : r.ok ? ' ok ' : 'FAIL';
     console.log(`   [${tag}] ${r.name}: ${r.detail}`);

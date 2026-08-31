@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,16 +19,14 @@ import { describe, expect, it } from 'vitest';
 //   (d) full-vs-slice parity for the restated contract.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const schemaPath = resolve(root, 'packages/db/migrations/0000_init.sql');
-const migration1Path = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
-const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
-const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
-const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
-const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
-// #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
-const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
-// #279/ADR-0033: refresh-slice.sql + normalize-raw.sql read interest_link_evidence, so 0009 must be applied too.
-const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// Full migration chain in `wrangler d1 migrations apply` order — promote/refresh-slice write columns
+// (e.g. 0012's reason/circumstances) added anywhere along the chain, so the served schema must be
+// built the same way production builds it, not from a hand-picked subset.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const derivePath = resolve(root, 'scripts/derive-amendments.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
@@ -61,14 +59,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
   const dir = mkdtempSync(resolve(tmpdir(), `sigma-totalrestated-${label}-`));
   const dbPath = resolve(dir, 'test.sqlite');
   try {
-    readScript(dbPath, schemaPath);
-    readScript(dbPath, migration1Path);
-    readScript(dbPath, migration2Path);
-    readScript(dbPath, migration3Path);
-    readScript(dbPath, migration6Path);
-    readScript(dbPath, migration7Path);
-    readScript(dbPath, migration8Path);
-    readScript(dbPath, migration9Path);
+    for (const migration of migrations) readScript(dbPath, migration);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

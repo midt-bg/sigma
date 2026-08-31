@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,14 +44,21 @@ describe('ship-domain', () => {
     const workDb = resolve(dir, 'work.sqlite');
     const persistTo = resolve(dir, 'served');
     try {
-      readScript(workDb, resolve(root, 'packages/db/migrations/0000_init.sql'));
+      // Full migration chain, like scripts/import.mjs — ship-domain's precompute/derive steps
+      // reference the 0012 health-index columns.
+      const migrationsDir = resolve(root, 'packages/db/migrations');
+      for (const f of readdirSync(migrationsDir)
+        .filter((n) => n.endsWith('.sql'))
+        .sort()) {
+        readScript(workDb, resolve(migrationsDir, f));
+      }
       sqlite(
         workDb,
         `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority line 1
 Authority line 2', '1', 'public');
-         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:200000002', 'Bidder', '200000002', '200000002', 1, 'company');
-         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status) VALUES ('t:1', '1', 'Tender', 'auth:1', 'BGN', 'open', 'awarded');
-         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:200000002', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:200000007', 'Bidder', '200000007', '200000007', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status) VALUES ('t:1', '1', 'Tender', 'auth:1', 'BGN', 'Открита процедура', 'awarded');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:200000007', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
          INSERT INTO amendments (id, natural_key, contract_number, unp, description, source) VALUES ('am:1:C1:A1', 'am:1:C1:A1', 'C1', '1', 'Description line 1
 Description line 2', 'test');
          INSERT INTO nuts_regions (nuts3, nuts3_name, nuts2, nuts2_name, nuts1, nuts1_name)
@@ -79,6 +86,63 @@ Description line 2', 'test');
           "SELECT description FROM amendments WHERE id='am:1:C1:A1'",
         )[0]?.description,
       ).toBe('Description line 1\nDescription line 2');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  // Regression for the missing `await` on the contract-features gate (scripts/ship-domain.mjs:248):
+  // without it, assertIntegrity's process.exit(1)/throw fires asynchronously after the script has
+  // already moved on to the next console.log stage, so a broken contract_features table could ship.
+  // A tender with a procedure_type outside the §12.2 21-value vocabulary makes
+  // checkContractFeaturesIntegrity fail deterministically (unmapped_procedure_rows > 0) without
+  // disturbing row counts, so this isolates the gate-ordering bug from unrelated derive logic.
+  it('aborts before the served-D1 gate when the contract-features invariant is violated', () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'sigma-ship-domain-gate-'));
+    const workDb = resolve(dir, 'work.sqlite');
+    const persistTo = resolve(dir, 'served');
+    try {
+      const migrationsDir = resolve(root, 'packages/db/migrations');
+      for (const f of readdirSync(migrationsDir)
+        .filter((n) => n.endsWith('.sql'))
+        .sort()) {
+        readScript(workDb, resolve(migrationsDir, f));
+      }
+      sqlite(
+        workDb,
+        `INSERT INTO authorities (id, name, bulstat, type) VALUES ('auth:1', 'Authority', '1', 'public');
+         INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES ('eik:200000007', 'Bidder', '200000007', '200000007', 1, 'company');
+         INSERT INTO tenders (id, source_id, title, authority_id, currency, procedure_type, status) VALUES ('t:1', '1', 'Tender', 'auth:1', 'BGN', 'Bogus unmapped procedure type', 'awarded');
+         INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, contract_number, signing_value, value_flag, amount_eur) VALUES ('c:e:1', 't:1', 'eik:200000007', 10, 'BGN', 'C1', 10, 'ok', 10 / 1.95583);
+         INSERT INTO nuts_regions (nuts3, nuts3_name, nuts2, nuts2_name, nuts1, nuts1_name)
+           VALUES ('BG000', 'Region', 'BG00', 'Region 2', 'BG0', 'Region 1');
+         INSERT INTO data_freshness (source, rows, refreshed_at) VALUES ('eop', 1, '2026-06-08');`,
+      );
+
+      let error: (Error & { status?: number; stdout?: Buffer; stderr?: Buffer }) | undefined;
+      try {
+        execFileSync(
+          'node',
+          ['scripts/ship-domain.mjs', `--work-db=${workDb}`, `--persist-to=${persistTo}`],
+          { cwd: root, stdio: 'pipe', maxBuffer: 128 * 1024 * 1024 },
+        );
+      } catch (err) {
+        error = err as Error & { status?: number; stdout?: Buffer; stderr?: Buffer };
+      }
+
+      expect(
+        error,
+        'ship-domain.mjs should exit non-zero on a violated contract-features invariant',
+      ).toBeDefined();
+      expect(error?.status).toBe(1);
+      const stdout = String(error?.stdout ?? '');
+      const stderr = String(error?.stderr ?? '');
+      expect(stdout).toContain('==> contract-features integrity gate on served D1');
+      expect(stderr).toContain('integrity gate failed');
+      // The gate must stop the ship BEFORE the next stage runs — the later reconciliation gate's
+      // banner (and ship completion) must never print.
+      expect(stdout).not.toContain('==> integrity gate on served D1');
+      expect(stdout).not.toContain('==> ship complete');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

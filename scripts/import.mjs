@@ -2,7 +2,7 @@
 // Sigma ETL orchestrator for storage.eop.bg open-data buckets. Initial backfill and daily catch-up
 // both route through scripts/load-eop.mjs; only the date window and derive mode differ.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -24,7 +24,7 @@ import {
   fullClearTables,
   refreshSliceStatementGroups,
 } from '../packages/ingest/src/refresh.ts';
-import { assertIntegrity } from './integrity-checks.mjs';
+import { assertIntegrity, CHECKS } from './integrity-checks.mjs';
 import { buildAnomalyReport, formatAnomalyReport } from './anomaly-report.mjs';
 
 // Per-refresh anomaly report (#100): cross-row outliers the per-row value_flag can't see. OBSERVES
@@ -92,9 +92,34 @@ function run(cmd, args, cwd = root, options = {}) {
 }
 
 const d1PersistArgs = !remote && persistTo ? ['--persist-to', String(persistTo)] : [];
+// Local D1 (workerd) needs a moment to fully release its SQLite file lock after a preceding
+// `wrangler d1 execute --file` invocation exits — back-to-back execSql calls can otherwise hit a
+// transient "database table is locked" / SQLITE_LOCKED on the very first statement. Retry a
+// handful of times with a short backoff; only for this specific transient signature, so a real
+// SQL error in the file still fails fast.
+const LOCK_ERROR_PATTERN = /database (table )?is locked|SQLITE_(BUSY|LOCKED)/i;
+function execWranglerD1File(file, attempt = 1) {
+  const args = ['wrangler', ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--file', file]];
+  console.log(`\n==> ${args[0]} ${args[1].join(' ')}`);
+  const result = spawnSync(args[0], args[1], { cwd: apiDir, encoding: 'utf8' });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status === 0) return;
+  const combined = `${result.stdout || ''}${result.stderr || ''}`;
+  if (attempt < 5 && LOCK_ERROR_PATTERN.test(combined)) {
+    const delayMs = 1500 * attempt;
+    console.log(
+      `==> transient D1 lock on ${basename(file)} (attempt ${attempt}); retrying in ${delayMs}ms`,
+    );
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    return execWranglerD1File(file, attempt + 1);
+  }
+  const cause = result.error ? ` (${result.error.message})` : '';
+  throw new Error(`Command failed: wrangler d1 execute ${d1Name} ${loc} --file ${file}${cause}`);
+}
 function execSql(file, label = basename(file)) {
   const startedAt = process.hrtime.bigint();
-  run('wrangler', ['d1', 'execute', d1Name, loc, ...d1PersistArgs, '--file', file], apiDir);
+  execWranglerD1File(file);
   const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   console.log(`==> batch timing ${label}: ${elapsedMs.toFixed(1)}ms`);
 }
@@ -229,8 +254,8 @@ function resolveCatchupPlan() {
 }
 
 function validateDeriveMode(mode) {
-  if (!['full', 'slice'].includes(mode))
-    throw new Error(`unknown --derive=${mode}; expected full|slice`);
+  if (!['full', 'slice', 'health'].includes(mode))
+    throw new Error(`unknown --derive=${mode}; expected full|slice|health`);
 }
 
 // Refuse the one combination that silently destroys data: a full derive (which rebuilds the domain
@@ -299,8 +324,21 @@ async function runFullDerive() {
   execSql(resolve(root, 'scripts/promote-amendments.sql'));
   assertFxPopulated();
   execSql(resolve(root, 'scripts/precompute.sql'));
-  await assertIntegrity(d1, { label: 'full derive (D1)' });
+  runHealthDerive();
+  // checkContractFeaturesIntegrity already ships inside CHECKS (integrity-checks.mjs) — appending
+  // it again ran the same D1 reads twice per gate for no extra coverage.
+  await assertIntegrity(d1, {
+    label: 'full derive (D1)',
+    checks: CHECKS,
+  });
   reportAnomalies(d1, 'full derive (D1)');
+}
+
+// Standalone Phase 4/5 re-derive for the Contract Quality / Health Index (design spec §8) — runs
+// against the already-populated served D1 without the ~25-minute full re-import.
+function runHealthDerive() {
+  execSql(resolve(root, 'scripts/derive-health.sql'));
+  execSql(resolve(root, 'scripts/derive-contract-features.sql'));
 }
 
 async function runSliceDerive() {
@@ -309,7 +347,14 @@ async function runSliceDerive() {
   execSql(resolve(root, 'scripts/load-nuts.sql'));
   execSql(resolve(root, 'scripts/seed-state-owned.sql'));
   runRefreshSliceBatches();
-  await assertIntegrity(d1, { label: 'slice derive (D1)' });
+  // Full Phase 4/5 recompute, not a scoped refresh of just the touched authority/bidder/contract
+  // ids — correct-over-incremental for now; a scoped refresh (design spec §8) is a documented
+  // future optimization once the full recompute cost is measured on prod D1.
+  runHealthDerive();
+  await assertIntegrity(d1, {
+    label: 'slice derive (D1)',
+    checks: CHECKS,
+  });
   reportAnomalies(d1, 'slice derive (D1)');
 }
 
@@ -341,11 +386,16 @@ async function runWorkBackfill() {
   if (existsSync(workDb)) rmSync(workDb, { force: true });
   console.log(`==> Sigma import (work DB ${workDb})`);
 
+  // Apply the FULL migration chain (not just 0000_init): later migrations are additive
+  // (e.g. 0003 adds the health-index columns normalize-raw.sql writes into), and the work DB
+  // must match the table shape `wrangler d1 migrations apply` gives the served D1.
   const migrationsDir = resolve(root, 'packages/db/migrations');
-  const migrations = readdirSync(migrationsDir)
-    .filter((name) => /^\d+.*\.sql$/.test(name))
+  const migrationFiles = readdirSync(migrationsDir)
+    .filter((f) => /^\d.*\.sql$/.test(f))
     .sort();
-  for (const migration of migrations) sqliteFile(workDb, resolve(migrationsDir, migration));
+  for (const migration of migrationFiles) {
+    sqliteFile(workDb, resolve(migrationsDir, migration));
+  }
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
   let loadFlags = explicitRangeFlags();
@@ -430,13 +480,26 @@ if (arg('work-db') !== undefined) {
   process.exit(0);
 }
 
+let deriveMode = String(arg('derive') || 'full');
+
+if (catchup && deriveMode === 'health') {
+  // The catchup planner picks full|slice itself; silently downgrading an explicit
+  // --derive=health would hide that no data load or normalize would run.
+  throw new Error('--catchup ignores --derive=health; run `--derive=health` separately');
+}
+
+if (!catchup && deriveMode === 'health') {
+  console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'}, derive=health only)`);
+  run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
+  runHealthDerive();
+  process.exit(0);
+}
+
 console.log(`==> Sigma import (${remote ? 'REMOTE' : 'local'})`);
 run('wrangler', ['d1', 'migrations', 'apply', d1Name, loc, ...d1PersistArgs], apiDir);
 execSqlStatements(dropTransientStagingStatements(), 'drop-stale-transient-staging');
 // Must precede resolveCatchupPlan(): latestLoadedDate() reads raw_contracts, which lives here.
 execSql(resolve(root, 'scripts/work-staging-schema.sql'));
-
-let deriveMode = String(arg('derive') || 'full');
 let loadFlags = explicitRangeFlags();
 // Mirrors load-eop.mjs, which also falls back to DEFAULT_FROM when no --from is given.
 let windowFrom = String(arg('from') || DEFAULT_FROM);

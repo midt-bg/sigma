@@ -11,25 +11,21 @@
 // onto the prior-window target — while a corpus-ambiguous annex that would look unique in the window stays
 // honestly unlinked.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const migrations = [
-  'packages/db/migrations/0000_init.sql',
-  'packages/db/migrations/0001_flow_pairs_bidder_index.sql',
-  'packages/db/migrations/0002_current_value_currency.sql',
-  'packages/db/migrations/0003_related_persons_foundation.sql',
-  // #305: refresh-slice.sql writes value_restated/value_treatment/value_suspect into served amendments.
-  'packages/db/migrations/0006_amendment_restated.sql',
-  'packages/db/migrations/0007_amendment_value_suspect.sql',
-  'packages/db/migrations/0008_amendment_provenance.sql',
-  // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
-  'packages/db/migrations/0009_interest_link_evidence.sql',
-].map((p) => resolve(root, p));
+// Full migration chain in `wrangler d1 migrations apply` order — refresh-slice.sql writes columns
+// (e.g. 0012's reason/circumstances) added anywhere along the chain, so the served schema must be
+// built the same way production builds it, not from a hand-picked subset.
+const migrationsDir = resolve(root, 'packages/db/migrations');
+const migrations = readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => resolve(migrationsDir, f));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const refreshSlice = resolve(root, 'scripts/refresh-slice.sql');
 
