@@ -1,20 +1,54 @@
 /// <reference types="node" />
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const migrationsDir = resolve(root, 'packages/db/migrations');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_index.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
+const migration4 = resolve(root, 'packages/db/migrations/0004_cpv_division_stats.sql');
+const migration5 = resolve(root, 'packages/db/migrations/0005_list_sort_indexes.sql');
+const migration6 = resolve(root, 'packages/db/migrations/0006_amendment_restated.sql');
+const migration7 = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
+const migration8 = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
+const migration11 = resolve(root, 'packages/db/migrations/0011_contracts_overrun_index.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
+
+// Every migration file the served chain must contain, in apply order. A stray or misnumbered file
+// (e.g. two branches both claiming 0011) fails this before it ever reaches `wrangler d1 migrations
+// apply` — see the fleet-wide 0011_contracts_overrun_index.sql renumber note in AGENTS.md history.
+const EXPECTED_MIGRATION_FILES = [
+  '0000_init.sql',
+  '0001_flow_pairs_bidder_index.sql',
+  '0002_current_value_currency.sql',
+  '0003_related_persons_foundation.sql',
+  '0004_cpv_division_stats.sql',
+  '0005_list_sort_indexes.sql',
+  '0006_amendment_restated.sql',
+  '0007_amendment_value_suspect.sql',
+  '0008_amendment_provenance.sql',
+  '0009_interest_link_evidence.sql',
+  '0010_publishing_gate_constraints.sql',
+  '0011_contracts_overrun_index.sql',
+];
+
+describe('migration file inventory', () => {
+  it('contains exactly the expected migration files, with no number collisions', () => {
+    const actual = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+    expect(actual).toEqual([...EXPECTED_MIGRATION_FILES].sort());
+  });
+});
 
 function sqlite(dbPath: string, sql: string): string {
   return execFileSync('sqlite3', [dbPath], { input: sql, encoding: 'utf8' });
@@ -34,6 +68,15 @@ describe('served migrations', () => {
       readScript(dbPath, migration0);
       readScript(dbPath, migration1);
       readScript(dbPath, migration2);
+      readScript(dbPath, migration3);
+      readScript(dbPath, migration4);
+      readScript(dbPath, migration5);
+      readScript(dbPath, migration6);
+      readScript(dbPath, migration7);
+      readScript(dbPath, migration8);
+      readScript(dbPath, migration9);
+      readScript(dbPath, migration10);
+      readScript(dbPath, migration11);
 
       expect(
         sqlite(
@@ -87,6 +130,24 @@ describe('served migrations', () => {
           "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_flow_pairs_bidder' AND tbl_name='flow_pairs';",
         ).trim(),
       ).toBe('1');
+
+      // 0011 adds the partial overrun index used by /overruns + /analytics (OVERRUN_WHERE).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun' AND tbl_name='contracts';",
+        ).trim(),
+      ).toBe('1');
+
+      // Guard the index's actual definition, not just its presence: the partial predicate and the
+      // (signing_value_eur, current_value_eur) column order are both load-bearing for the covering
+      // scan OVERRUN_WHERE relies on — a silent regression in either must fail CI, not eyeballing.
+      const overrunIndexSql = sqlite(
+        dbPath,
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun';",
+      );
+      expect(overrunIndexSql).toContain('annex_count > 0');
+      expect(overrunIndexSql).toContain('contracts(signing_value_eur, current_value_eur)');
 
       // The served schema must never carry raw_* staging tables.
       expect(
