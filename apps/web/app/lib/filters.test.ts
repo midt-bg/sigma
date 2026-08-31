@@ -4,13 +4,16 @@ import {
   authorityListFilters,
   companyListFilters,
   contractListFilters,
+  cpvGroupSelection,
   getMulti,
   leaderboardRankOffset,
+  MAX_CPV_GROUP_SELECTION,
   MAX_MULTI_VALUES,
   pageNav,
   PARAM_ORDER,
   searchHref,
   withParams,
+  yearCardState,
 } from './filters';
 import { CANONICAL_QUERY_PARAMS } from './query-params';
 
@@ -115,6 +118,29 @@ describe('getMulti', () => {
       years: ['2024', '2016', 'unknown'],
       eu: 'eu',
     });
+  });
+});
+
+describe('cpvGroupSelection', () => {
+  it('parses repeatable and CSV ?cpv values into a deduped, order-preserving set', () => {
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp('cpv=45233,33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp('cpv=45233&cpv=45233&cpv=33600'))).toEqual(['45233', '33600']);
+    expect(cpvGroupSelection(sp(''))).toEqual([]);
+  });
+
+  it('drops anything that is not exactly a 5-digit group code (CWE-349 key hygiene)', () => {
+    expect(
+      cpvGroupSelection(sp('cpv=4523&cpv=452333&cpv=abcde&cpv=45 33&cpv= 45233 &cpv=%27--')),
+    ).toEqual(['45233']);
+  });
+
+  it('caps the selection at MAX_CPV_GROUP_SELECTION so hostile spam stays bounded', () => {
+    const q = Array.from({ length: 40 }, (_, i) => `cpv=${10000 + i}`).join('&');
+    const out = cpvGroupSelection(sp(q));
+    expect(out).toHaveLength(MAX_CPV_GROUP_SELECTION);
+    expect(out[0]).toBe('10000');
+    expect(out.at(-1)).toBe(String(10000 + MAX_CPV_GROUP_SELECTION - 1));
   });
 });
 
@@ -370,5 +396,26 @@ describe('withParams', () => {
     // The invariant behind the filter: a key ordered but not in the allow-list would be silently
     // dropped from every generated link.
     expect(PARAM_ORDER.filter((key) => !CANONICAL_QUERY_PARAMS.has(key))).toEqual([]);
+  });
+
+  it('round-trips the reserved `g` param like any other canonical param (#144, not yet read anywhere)', () => {
+    // `g` sits in both PARAM_ORDER and CANONICAL_QUERY_PARAMS (never just one) — withParams must
+    // neither drop it as unknown nor silently lose it to override handling.
+    expect(CANONICAL_QUERY_PARAMS.has('g')).toBe(true);
+    expect(PARAM_ORDER.includes('g')).toBe(true);
+    expect(withParams(sp('sort=value-desc&g=1'), {})).toBe('?g=1&sort=value-desc');
+    expect(withParams(sp('sort=value-desc'), { g: '1' })).toBe('?g=1&sort=value-desc');
+  });
+});
+
+describe('yearCardState', () => {
+  it('round-trips select → active → clear on the /trends year card toggle', () => {
+    // No year selected: every card is inactive and clicking one selects it.
+    expect(yearCardState('2023', null)).toEqual({ active: false, nextYear: '2023' });
+    // That year now selected (URL round-trip: nextYear from the click above becomes selectedYear):
+    // its card is active and clicking it again clears the filter.
+    expect(yearCardState('2023', '2023')).toEqual({ active: true, nextYear: null });
+    // A different year's card stays inactive and still selects itself on click.
+    expect(yearCardState('2022', '2023')).toEqual({ active: false, nextYear: '2022' });
   });
 });

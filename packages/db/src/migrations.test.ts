@@ -13,6 +13,7 @@ const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_curr
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
 const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
+const migration11 = resolve(root, 'packages/db/migrations/0011_contracts_overrun_index.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
 
@@ -34,6 +35,7 @@ describe('served migrations', () => {
       readScript(dbPath, migration0);
       readScript(dbPath, migration1);
       readScript(dbPath, migration2);
+      readScript(dbPath, migration11);
 
       expect(
         sqlite(
@@ -88,6 +90,14 @@ describe('served migrations', () => {
         ).trim(),
       ).toBe('1');
 
+      // 0011 adds the partial overrun index used by /overruns + /analytics (OVERRUN_WHERE).
+      expect(
+        sqlite(
+          dbPath,
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_contracts_overrun' AND tbl_name='contracts';",
+        ).trim(),
+      ).toBe('1');
+
       // The served schema must never carry raw_* staging tables.
       expect(
         sqlite(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'raw_%';").trim(),
@@ -133,6 +143,7 @@ describe('served migrations', () => {
       );
       readScript(dbPath, migration2);
       readScript(dbPath, migration3);
+      readScript(dbPath, migration11);
       readScript(dbPath, migration9);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);

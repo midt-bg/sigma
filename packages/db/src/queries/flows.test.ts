@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1 } from '@sigma/test-support';
-import { getFlows } from './flows';
+import { getFlows, getFlowsHeadline } from './flows';
 
 const pairRow = {
   authority_id: 'auth:000695089',
@@ -121,5 +121,20 @@ describe('getFlows', () => {
     const data = await getFlows(fake().db, {});
 
     expect(Array.isArray(data.sectors)).toBe(true);
+  });
+});
+
+describe('getFlowsHeadline', () => {
+  function fakeDb(row: { authorities: number; pairs: number } | null): FakeD1 {
+    return fakeD1([{ when: 'FROM authority_totals', first: row }]);
+  }
+
+  it('returns the authority and flow-pair counts from the rollups', async () => {
+    const h = await getFlowsHeadline(fakeDb({ authorities: 4123, pairs: 88210 }).db);
+    expect(h).toEqual({ authorities: 4123, pairs: 88210 });
+  });
+
+  it('defaults to zeroes when the rollups are empty', async () => {
+    expect(await getFlowsHeadline(fakeDb(null).db)).toEqual({ authorities: 0, pairs: 0 });
   });
 });
