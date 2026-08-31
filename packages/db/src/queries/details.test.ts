@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1 } from '@sigma/test-support';
 import { getContract } from './details';
+import { contractSlug } from './identity';
 
 const baseContractRow = {
   id: 'c:1',
@@ -83,6 +84,14 @@ function fakeDb(
 }
 
 describe('getContract', () => {
+  it('encodes the raw row id as the contractSlug used by the copy-citation link (review #206) — id must stay in sync with contractSlug', async () => {
+    const row = { ...baseContractRow, id: 'c:1/2' };
+    const detail = await getContract(fakeDb(row, []), 'c:1/2');
+
+    expect(detail?.id).toBe(contractSlug(row.id));
+    expect(detail?.id).toBe('1%2F2');
+  });
+
   it('uses the tender currency for lot estimated values', async () => {
     const detail = await getContract(
       fakeDb(baseContractRow, [

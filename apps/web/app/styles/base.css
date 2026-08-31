@@ -151,3 +151,52 @@ code,
     scroll-behavior: auto !important;
   }
 }
+
+/* =========== Print styles =========== */
+/* A print-friendly view: strip site chrome and interactive actions, force high-contrast
+   black-on-white, expose link targets inline, and avoid awkward mid-element page breaks. */
+@media print {
+  /* Hide navigation, footers, search drawer, and actions */
+  .site-header,
+  .site-nav,
+  .nav-backdrop,
+  .search-drawer,
+  .site-footer,
+  .copy-btn {
+    display: none !important;
+  }
+
+  /* Expose URLs in print — absolute http(s)/protocol-relative links only, not internal relative links */
+  a[href^='http']::after,
+  a[href^='//']::after {
+    content: ' (' attr(href) ')';
+    word-break: break-all;
+    font-size: 0.9em;
+  }
+
+  /* Ensure background and text colors are optimized for printing */
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Prevent elements from breaking mid-page */
+  .section,
+  .table-wrap,
+  .result,
+  .facts {
+    break-inside: avoid;
+  }
+
+  /* Clean up page margins */
+  @page {
+    margin: 1.5cm;
+  }
+
+  /* Expand the content to fill the page width */
+  #main,
+  .page-header {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}
