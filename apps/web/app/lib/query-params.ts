@@ -2,15 +2,18 @@
 // one list means an unknown param (`?x=poison`) can neither poison the key nor ride a cached link
 // (#56 / #197). The cache-key.test.ts drift guard keeps it a complete superset of what the app reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
+  'angle', // /trends: time | cpv | cross lens
   'authority',
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
+  'by', // /overruns — sort dimension (absolute | percent)
   'center',
   'count',
+  'cpvSort', // /trends: CPV list ordering
+  'cur', // /trends: include the current (partial) period — changes the chart, totals and year cards
   'cursor',
   'eu',
   'funding',
-  'g',
   'kind',
   'p',
   'page', // keyed unconditionally — harmless over-key when there's no cursor
@@ -18,6 +21,7 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'q',
   'sector',
   'sort',
+  'step', // /trends: series granularity (m|q|y; replaced the old `g` param)
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
