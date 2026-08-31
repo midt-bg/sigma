@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1, type FakeD1Call } from '@sigma/test-support';
-import { getCompetition } from './competition';
+import { getCompetition, getOpaqueShareByYear } from './competition';
 
 // The query layer is pure SQL-building over D1; tests use a fake D1 that returns canned rows keyed by
 // SQL markers (same approach as companies.test.ts). They verify the JS-side math (shares, HHI mapping,
@@ -252,5 +252,32 @@ describe('getCompetition', () => {
     expect(calls.calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
     // totals, procedure-mix, single-offer, concentration, direct-award, recurring-pairs all scope to it
     expect(calls.calls.filter((c) => c.binds.includes('auth:111'))).toHaveLength(6);
+  });
+});
+
+describe('getOpaqueShareByYear', () => {
+  function fakeDb(rows: { year: string; value_eur: number; single_value_eur: number }[]): FakeD1 {
+    return fakeD1([{ when: 'GROUP BY year', all: rows }]);
+  }
+
+  it('maps the per-year single-offer value rows to the API shape', async () => {
+    const rows = await getOpaqueShareByYear(
+      fakeDb([
+        { year: '2020', value_eur: 1000, single_value_eur: 200 },
+        { year: '2025', value_eur: 2000, single_value_eur: 900 },
+      ]).db,
+    );
+    expect(rows).toEqual([
+      { year: '2020', valueEur: 1000, singleOfferValueEur: 200 },
+      { year: '2025', valueEur: 2000, singleOfferValueEur: 900 },
+    ]);
+  });
+
+  it('excludes the in-progress current calendar year (headline reads the latest complete year)', async () => {
+    const { db, sql } = fakeDb([]);
+    await getOpaqueShareByYear(db);
+    // Capped below the current year rather than the partial-period `<= date('now')`.
+    expect(sql[0]).toContain("substr(c.signed_at, 1, 4) < strftime('%Y', 'now')");
+    expect(sql[0]).not.toContain("c.signed_at <= date('now')");
   });
 });
