@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1 } from '@sigma/test-support';
-import { getEntityNetwork } from './network';
+import { getEntityCounterparties, getEntityNetwork } from './network';
 
 // Fake D1 keyed by SQL markers (same approach as the other query tests). Verifies the ego-network
 // shaping: centre + hop-1 neighbours + hop-2 (top-1 other per neighbour), node de-duplication, the
@@ -54,6 +54,86 @@ const HOP2 = [
   },
 ];
 
+// Counterparties of a COMPANY centre (eik:A): the authorities that paid it, ordered by won_eur desc.
+const COMP_COUNTERPARTIES = [
+  {
+    authority_id: 'auth:C',
+    bidder_id: 'eik:A',
+    authority_name: 'Център Институция',
+    bidder_name: 'Фирма А',
+    bidder_kind: 'company',
+    won_eur: 5000,
+    contracts: 5,
+  },
+  {
+    authority_id: 'auth:X',
+    bidder_id: 'eik:A',
+    authority_name: 'Друга Институция',
+    bidder_name: 'Фирма А',
+    bidder_kind: 'company',
+    won_eur: 2000,
+    contracts: 2,
+  },
+];
+
+// COUNT(*) returns no row (D1 error) instead of the usual { n: 42 } — used to assert the fallback
+// stays `null` ("unknown") rather than masking the failure as the HOP1 draw cap.
+function fakeDbCountFails(): D1Database {
+  return fakeD1(
+    [
+      { when: 'ORDER BY spent_eur', all: PICKER_AUTH },
+      { when: 'FROM company_totals', all: PICKER_COMP },
+      { when: 'FROM flow_pairs WHERE authority_id = ?', all: HOP1 },
+      { when: 'WHERE bidder_id IN', all: HOP2 },
+      { when: 'FROM authority_totals WHERE authority_id', first: CENTER_AUTH },
+      { when: 'COUNT(*)', first: null },
+    ],
+    { onUnmatched: 'empty' },
+  ).db;
+}
+
+function fakeDb(): D1Database {
+  return fakeD1(
+    [
+      { when: 'ORDER BY spent_eur', all: PICKER_AUTH },
+      { when: 'FROM company_totals', all: PICKER_COMP },
+      // The counterparties keyset query tiebreaks on the neighbour id column: for an authority
+      // centre that is "won_eur DESC, bidder_id"; for a COMPANY centre it is "won_eur DESC,
+      // authority_id" (the other ORDER BY the reviewer flagged as untested). The hop-1 graph read
+      // orders by "won_eur DESC LIMIT" (no id tiebreak).
+      { when: 'won_eur DESC, authority_id', all: COMP_COUNTERPARTIES },
+      { when: 'won_eur DESC, bidder_id', all: HOP1 },
+      { when: 'FROM flow_pairs WHERE authority_id = ?', all: HOP1 },
+      { when: 'WHERE bidder_id IN', all: HOP2 },
+      { when: 'FROM authority_totals WHERE authority_id', first: CENTER_AUTH },
+      { when: 'COUNT(*)', first: { n: 42 } },
+    ],
+    { onUnmatched: 'empty' },
+  ).db;
+}
+
+// The centre-load fails (no name in authority_totals AND no HOP1 sample to fall back to) while
+// COUNT(*) still succeeds with a real, non-zero total — used to assert the early-exit at the
+// `!center` branch preserves that already-computed total instead of fabricating 0.
+function fakeDbCenterLoadFails(): D1Database {
+  return fakeD1(
+    [
+      { when: 'ORDER BY spent_eur', all: PICKER_AUTH },
+      { when: 'FROM company_totals', all: PICKER_COMP },
+      { when: 'FROM flow_pairs WHERE authority_id = ?', all: [] },
+      { when: 'FROM authority_totals WHERE authority_id', first: null },
+      { when: 'COUNT(*)', first: { n: 7 } },
+    ],
+    { onUnmatched: 'empty' },
+  ).db;
+}
+
+// No authority has any flows at all: the `!top` early-exit before a centre is even chosen. This is
+// a real, known zero (not a centre-load failure) and must stay the literal `0`.
+function fakeDbNoAuthorities(): D1Database {
+  return fakeD1([{ when: [], all: [], first: null }]).db;
+}
+
 function fake(): FakeD1 {
   return fakeD1([
     { when: 'ORDER BY spent_eur', all: PICKER_AUTH },
@@ -63,6 +143,7 @@ function fake(): FakeD1 {
     { when: 'FROM flow_pairs WHERE authority_id = ?', all: HOP1 },
     { when: 'WHERE bidder_id IN', all: HOP2 },
     { when: 'FROM authority_totals WHERE authority_id', first: CENTER_AUTH },
+    { when: 'COUNT(*)', first: { n: 42 } },
   ]);
 }
 
@@ -76,6 +157,18 @@ describe('getEntityNetwork', () => {
     // auth:C (centre) + eik:A, eik:B (hop 1) + auth:X (hop 2, shared by both -> one node)
     expect(nodes.map((n) => n.id).sort()).toEqual(['auth:C', 'auth:X', 'eik:A', 'eik:B']);
     expect(edges).toHaveLength(4); // C->A, C->B, A->X, B->X
+  });
+
+  it('tiebreaks the hop-1 draw by neighbour id, same as getEntityCounterparties page 1 (review #144)', async () => {
+    // Without an id tiebreak, two flow_pairs rows tied on won_eur could draw in a different order
+    // than the counterparties table's first page (keyset on won_eur DESC, <neighbour id>) — the
+    // graph and the table would then disagree on which of a tied pair is "top". Assert the hop-1
+    // SQL orders by the same (won_eur DESC, neighbourCol) pair the keyset query uses.
+    const authCapture = fake();
+    await getEntityNetwork(authCapture.db, { kind: 'authority', id: 'auth:C' });
+    expect(authCapture.sql.some((s) => s.includes('ORDER BY won_eur DESC, bidder_id LIMIT'))).toBe(
+      true,
+    );
   });
 
   it('alternates kinds by hop (authority centre -> company hop1 -> authority hop2)', async () => {
@@ -99,5 +192,133 @@ describe('getEntityNetwork', () => {
     });
     expect(centerOptions.authorities.length).toBeGreaterThan(0);
     expect(centerOptions.authorities[0]).toMatchObject({ kind: 'authority', value: 'a:C' });
+  });
+
+  it('reports the full counterparty count, not just the drawn cap', async () => {
+    const { counterpartyTotal } = await getEntityNetwork(fakeDb(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(counterpartyTotal).toBe(42); // COUNT(*) over flow_pairs, not the HOP1 cap (2 drawn)
+  });
+
+  it('reports counterpartyTotal as null (not the HOP1 cap) when COUNT(*) fails', async () => {
+    const { counterpartyTotal } = await getEntityNetwork(fakeDbCountFails(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(counterpartyTotal).toBeNull(); // must stay "unknown", never fabricated as hop1.length (2)
+  });
+
+  it('preserves the already-computed counterpartyTotal (not a fabricated 0) when the centre fails to load', async () => {
+    const result = await getEntityNetwork(fakeDbCenterLoadFails(), {
+      kind: 'authority',
+      id: 'auth:GHOST',
+    });
+    expect(result.center).toBeNull();
+    expect(result.counterpartyTotal).toBe(7); // the real COUNT(*), not the literal 0
+  });
+
+  it('still returns a real 0 when no authority has any flows at all (the legitimate !top zero)', async () => {
+    const result = await getEntityNetwork(fakeDbNoAuthorities(), null);
+    expect(result.center).toBeNull();
+    expect(result.counterpartyTotal).toBe(0);
+  });
+});
+
+describe('getEntityCounterparties', () => {
+  it('returns the full count and normalises rows to authority -> company', async () => {
+    const page = await getEntityCounterparties(fakeDb(), { kind: 'authority', id: 'auth:C' });
+    expect(page.total).toBe(42);
+    expect(page.rows[0]).toMatchObject({
+      authorityLabel: 'Център Институция',
+      authoritySlug: 'C',
+      companyLabel: 'Фирма А',
+      companySlug: 'A',
+      valueEur: 5000,
+      contracts: 5,
+    });
+  });
+
+  it('emits a next cursor when more rows exist than fit on the page', async () => {
+    // The fake returns 2 rows; pageSize 1 means an extra row is seen -> there is a next page.
+    const page = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { pageSize: 1 },
+    );
+    expect(page.rows).toHaveLength(1);
+    expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('handles a company centre (other neighbour column + ORDER BY)', async () => {
+    // Company centre keysets on authority_id, not bidder_id — exercises the previously-untested path.
+    const page = await getEntityCounterparties(fakeDb(), { kind: 'company', id: 'eik:A' });
+    expect(page.rows).toHaveLength(2);
+    expect(page.rows.map((r) => r.authoritySlug)).toEqual(['C', 'X']);
+    expect(page.rows[0]).toMatchObject({ companySlug: 'A', valueEur: 5000 });
+  });
+
+  it('reuses a caller-supplied total instead of a second COUNT(*)', async () => {
+    // The /network route passes the count getEntityNetwork already ran (avoids a duplicate D1 scan).
+    const page = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { total: 7 },
+    );
+    expect(page.total).toBe(7); // the passed value, not the fake's COUNT(*) sentinel (42)
+  });
+
+  it('reports total as null (not 0) when COUNT(*) fails — consistent with getEntityNetwork', async () => {
+    const page = await getEntityCounterparties(fakeDbCountFails(), {
+      kind: 'authority',
+      id: 'auth:C',
+    });
+    expect(page.total).toBeNull(); // must stay "unknown", never fabricated as a real zero
+  });
+
+  it('still runs its own COUNT(*) — and can report null — even when the caller passes total: null', async () => {
+    const page = await getEntityCounterparties(
+      fakeDbCountFails(),
+      { kind: 'authority', id: 'auth:C' },
+      { total: null },
+    );
+    expect(page.total).toBeNull();
+  });
+
+  it('walks forward then backward through the keyset (before/reverse path)', async () => {
+    const p = { kind: 'authority', id: 'auth:C' } as const;
+    // page 1 (no cursor) → has a forward cursor
+    const page1 = await getEntityCounterparties(fakeDb(), p, { pageSize: 1 });
+    expect(page1.rows).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+    // page 2 (forward) → has a backward cursor
+    const page2 = await getEntityCounterparties(fakeDb(), p, {
+      pageSize: 1,
+      cursor: page1.nextCursor,
+    });
+    expect(page2.prevCursor).not.toBeNull();
+    // back (a `before` cursor) → exercises ks.reverse + rows.reverse() without throwing
+    const back = await getEntityCounterparties(fakeDb(), p, {
+      pageSize: 1,
+      cursor: page2.prevCursor,
+    });
+    expect(back.rows).toHaveLength(1);
+  });
+
+  it('drops a cursor minted for a different centre (cursor is centre-bound)', async () => {
+    // A cursor from centre auth:C must not paginate centre auth:X — the signature mismatch resets it.
+    const fromC = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:C' },
+      { pageSize: 1 },
+    );
+    const onX = await getEntityCounterparties(
+      fakeDb(),
+      { kind: 'authority', id: 'auth:X' },
+      { pageSize: 1, cursor: fromC.nextCursor },
+    );
+    // Decodes to null → treated as page 1 (no Prev), not a mis-anchored page.
+    expect(onX.prevCursor).toBeNull();
   });
 });

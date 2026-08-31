@@ -21,6 +21,12 @@ function b64urlDecode(s: string): string {
 
 const EIK_RE = /^\d{9}(\d{4})?$/;
 
+/** Whether a slug is a well-formed ЕИК (9 or 13 digits) — the shape both authority and valid-bidder
+ *  slugs share, so `a:`/`c:` centre-token validation (network-center.ts) can test it consistently. */
+export function isValidEikSlug(slug: string): boolean {
+  return EIK_RE.test(slug);
+}
+
 /** bidder id → `/companies/:slug` segment. Valid ЕИК → digits; name-keyed → `n` + base64url(name);
  * the labelled unknown bucket stays literal so contract-page links remain resolvable. */
 export function companySlug(bidderId: string): string {
