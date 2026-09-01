@@ -77,9 +77,16 @@ function dictionaryColumns(columns: string): string[] {
   // again, so every later column would silently fall out of the guard — the exact failure mode
   // this suite exists to prevent would then hide inside the suite itself.
   if (depth !== 0) throw new Error(`unbalanced parentheses in dictionary columns: ${columns}`);
-  return segments
-    .map((s) => /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.trim())?.[0])
-    .filter((c): c is string => c !== undefined);
+  return (
+    segments
+      // Strip a SQL quoting wrapper first (`"col"`, `[col]`, `` `col` ``): the identifier regex below
+      // starts at a letter/underscore, so a quoted top-level column would otherwise be silently skipped
+      // and never checked against the real schema — a guard that fails OPEN. The dictionary does not
+      // quote today; this keeps the guard closed if it ever does (review f/u, ydimitrof).
+      .map((s) => s.trim().replace(/^["'`[]+/, ''))
+      .map((s) => /^[A-Za-z_][A-Za-z0-9_]*/.exec(s)?.[0])
+      .filter((c): c is string => c !== undefined)
+  );
 }
 
 /** The `→target` table references a dictionary `columns` string names (e.g. `tender_id→tenders`). */

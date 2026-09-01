@@ -137,16 +137,38 @@ export function makeStreamErrorLogger(redact: readonly string[]): (error: unknow
   };
 }
 
+/**
+ * The text of every USER message in the turn's history — the exact set that can be quoted back by a
+ * provider error, since these are what the prompt carries. Assistant/tool messages are ours, not the
+ * person's, so they are not redaction needles.
+ */
+export function userTexts(messages: readonly UIMessage[]): string[] {
+  const out: string[] = [];
+  for (const m of messages) {
+    if (m?.role !== 'user') continue;
+    const text = m.parts
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text)
+      .join(' ')
+      .trim();
+    if (text) out.push(text);
+  }
+  return out;
+}
+
 const STREAM_ERROR_USER_TEXT = 'Асистентът временно не е достъпен. Опитай отново след малко.';
 
 export async function runAssistant(opts: RunAssistantOptions): Promise<Response> {
   const maxSteps = resolveMaxSteps(opts.env.MAX_STEPS);
   const messages = await convertToModelMessages(opts.messages);
-  // Captured by the error hooks below: a short string, not `opts` (which would pin the whole
-  // UIMessage history for the stream's lifetime). The question is passed for redaction: a BgGPT
-  // error body can quote the prompt back, and that echo sits in the message — dropping the stack
-  // would not touch it (log-safety.ts).
-  const redact = [opts.ctx.userQuestion ?? ''];
+  // Captured by the error hooks below: plain strings, not `opts` (which would pin the whole
+  // UIMessage history for the stream's lifetime). Every USER text is passed for redaction, not just
+  // the latest: a BgGPT error body can quote back any part of the prompt it was sent, and a
+  // multi-turn conversation puts EARLIER questions in that prompt too — redacting only the last one
+  // would leave an earlier question in the tail log (review f/u, ydimitrof). The echo lives in the
+  // message; dropping the stack would not touch it (log-safety.ts). log-safety's own length floor
+  // discards the fragments too short to be worth blanking.
+  const redact = userTexts(opts.messages);
   const logStreamError = makeStreamErrorLogger(redact);
   const result = streamText({
     model: buildModel(opts.env),
