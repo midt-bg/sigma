@@ -552,6 +552,9 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('петте млн')).not.toHaveLength(0);
     expect(findProseNumbers('стотици млн. евро')).not.toHaveLength(0);
     expect(findProseNumbers('няколко млрд.')).not.toHaveLength(0);
+    // трлн: no digit, no `-илион` stem, no млн/млрд — it slipped the whole gate (review f/u).
+    expect(findProseNumbers('три трлн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко трлн.')).not.toHaveLength(0);
     // Long-scale forms and the top of the prefix list stay closed.
     expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
     expect(findProseNumbers('децилион')).not.toHaveLength(0);
