@@ -25,7 +25,7 @@ vi.mock('ai', async (importOriginal) => ({
 }));
 
 import { RetryError } from 'ai';
-import { makeStreamErrorLogger, resolveMaxSteps, runAssistant } from './agent';
+import { makeStreamErrorLogger, resolveMaxSteps, runAssistant, userTexts } from './agent';
 import { ASSISTANT_TOOLS } from './tools';
 
 describe('resolveMaxSteps', () => {
@@ -184,5 +184,59 @@ describe('makeStreamErrorLogger', () => {
     makeStreamErrorLogger([question])(new Error(`400: ${question}`));
     restore();
     expect(lines[0]).not.toContain('Пловдив');
+  });
+});
+
+describe('userTexts (the redaction set for a multi-turn prompt)', () => {
+  const msgs = (parts: [string, string][]) =>
+    parts.map(([role, text]) => ({
+      role,
+      parts: [{ type: 'text', text }],
+    })) as unknown as Parameters<typeof userTexts>[0];
+
+  it('collects EVERY user turn, not just the latest', () => {
+    // A provider error can quote back any part of the prompt, and a multi-turn prompt carries the
+    // earlier questions too — redacting only ctx.userQuestion left those in the tail log (review f/u).
+    const earlier = 'колко плати община Пловдив през 2023';
+    const latest = 'а през 2024 колко плати същата община';
+    expect(
+      userTexts(
+        msgs([
+          ['user', earlier],
+          ['assistant', 'отговор'],
+          ['user', latest],
+        ]),
+      ),
+    ).toEqual([earlier, latest]);
+  });
+
+  it("ignores non-user roles and empty texts (they are not the person's words)", () => {
+    expect(
+      userTexts(
+        msgs([
+          ['assistant', 'наш текст'],
+          ['user', '   '],
+          ['system', 'директива'],
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  it('feeds the logger a set that blanks an EARLIER question', () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => {
+      lines.push(String(l));
+    });
+    const earlier = 'колко плати община Пловдив през 2023';
+    const set = userTexts(
+      msgs([
+        ['user', earlier],
+        ['user', 'а през 2024 колко плати същата община'],
+      ]),
+    );
+    makeStreamErrorLogger(set)(new Error(`400 invalid input: ${earlier}`));
+    spy.mockRestore();
+    expect(lines[0]).not.toContain('Пловдив');
+    expect(lines[0]).toContain('«редактирано»');
   });
 });
