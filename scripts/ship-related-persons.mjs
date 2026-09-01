@@ -294,7 +294,45 @@ export function parseWranglerJson(out) {
   return JSON.parse(out); // no usable bracket: let the original parse error surface
 }
 
-function readShippedCounts(d1Name, remote, expected) {
+// Retry the readback around a single-attempt reader. `wrangler d1 execute --remote --json` is a live
+// network call that intermittently times out or errors transiently; when it did, readShippedCounts
+// returned {} and assertShippedCounts then failed the WHOLE run — falsely, over data that had actually
+// shipped — and skipped the reindex behind it (observed on runs 32775600033 and 33207492181). The guard
+// is right to fail closed; the READ under it must not turn one flaky call into a false verdict.
+//
+// The distinction the retry rests on: `attempt()` throwing, or returning an answer where any expected
+// table is not a non-negative integer (missing, NaN, string, null), is a TRANSIENT read failure — retry
+// it. A complete answer whose numbers disagree is a REAL drift — return it unchanged so
+// assertShippedCounts catches it. A genuinely empty table counts as 0 (a non-negative integer), so a real
+// partial ship is never mistaken for a transient miss. Pure; `attempt`/`sleep` injected, so the retry
+// logic is unit-tested without touching wrangler. `sleep` defaults to the REAL synchronous sleeper — the
+// backoff must fire in production, where the whole point is to ride out a transient outage; a degenerate
+// `attempts` (0, negative, NaN, fractional, Infinity) falls back to the default 4 rather than making zero
+// attempts or looping forever.
+export function readCountsWithRetry(attempt, tables, { attempts = 4, sleep = sleepSync } = {}) {
+  const budget = Number.isInteger(attempts) && attempts > 0 ? attempts : 4;
+  let lastErr;
+  for (let i = 0; i < budget; i++) {
+    if (i > 0) sleep(2000 * i);
+    try {
+      const counts = attempt();
+      if (tables.every((t) => Number.isInteger(counts[t]) && counts[t] >= 0)) return counts;
+      lastErr = new Error('readback returned an incomplete answer');
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  console.error(
+    `ship: could not read back row counts after ${budget} attempts — ${lastErr?.message ?? lastErr}`,
+  );
+  return {};
+}
+
+// `deps` is a TEST SEAM: prod passes nothing, so `readOnce` is the live wrangler read, `sleep` falls
+// through to the helper's real `sleepSync`, and `attempts` to its default 4. Tests inject a fake reader,
+// a recording sleep, and a small budget to pin the retry WIRING — that readShippedCounts actually wraps
+// the read in readCountsWithRetry with a real backoff, and not a one-shot — without touching wrangler.
+export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
     .map(([t]) => t);
@@ -302,28 +340,28 @@ function readShippedCounts(d1Name, remote, expected) {
   const sql = tables
     .map((t) => `SELECT ${sqlLiteral(t)} AS t, COUNT(*) AS n FROM ${sqlIdent(t)}`)
     .join(' UNION ALL ');
-  try {
-    const out = execFileSync(
-      'wrangler',
-      ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
-      { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
-    );
-    // Defensive, NOT a fix for an observed failure — the earlier wording here claimed otherwise and
-    // was wrong. Checked against the real tool: `wrangler d1 execute --json` writes its notices
-    // („▲ [WARNING] Processing wrangler.jsonc") to STDERR and leaves stdout as clean JSON, and
-    // execFileSync returns stdout alone, so slicing from the first '[' is in fact safe today. The
-    // scan below survives a future release that changes that, and costs one failed parse if it does.
-    const parsed = parseWranglerJson(out);
-    const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
-    // Only a real number counts as an answer. `Number(null)` is 0, which would let a null-valued cell pass
-    // for „the table is empty"; anything non-numeric must land as NaN so assertShippedCounts fails closed.
-    return Object.fromEntries(rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]));
-  } catch (err) {
-    console.error(
-      `ship: could not read back row counts — ${err instanceof Error ? err.message : err}`,
-    );
-    return {};
-  }
+  const readOnce =
+    deps.readOnce ??
+    (() => {
+      const out = execFileSync(
+        'wrangler',
+        ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
+        { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+      );
+      // `wrangler d1 execute --json` writes its notices („▲ [WARNING] Processing wrangler.jsonc") to
+      // STDERR and leaves stdout as clean JSON, and execFileSync returns stdout alone, so slicing from
+      // the first '[' is safe today. The scan survives a future release that changes that, at one failed
+      // parse if it does.
+      const parsed = parseWranglerJson(out);
+      const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
+      // Only a non-negative integer counts as an answer. `Number(null)` is 0, which would let a
+      // null-valued cell pass for „the table is empty"; anything non-numeric lands as NaN so the retry
+      // treats it as an incomplete answer and assertShippedCounts fails closed if it is the final one.
+      return Object.fromEntries(rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]));
+    });
+  // Pass `sleep`/`attempts` through only when a test overrides them; undefined lets the helper defaults
+  // (the real sleepSync, 4 attempts) apply — so production always gets the backoff.
+  return readCountsWithRetry(readOnce, tables, { sleep: deps.sleep, attempts: deps.attempts });
 }
 
 function resolveD1Id(d1Name) {

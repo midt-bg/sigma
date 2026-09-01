@@ -10,6 +10,8 @@ import {
   chunkStatements,
   runShip,
   assertShippedCounts,
+  readCountsWithRetry,
+  readShippedCounts,
   sqlLiteral,
   sqlIdent,
   TABLES,
@@ -233,6 +235,196 @@ test('assertShippedCounts passes when the target holds exactly what was shipped'
   assert.doesNotThrow(() =>
     assertShippedCounts({ persons: 3, interest_links: 2 }, { persons: 3, interest_links: 2 }),
   );
+});
+
+// ── readCountsWithRetry — a flaky live readback must not become a false verdict ──────────────────────
+// The readback is `wrangler d1 execute --remote --json`, a network call that intermittently times out.
+// When it did, the run FAILED over data that had actually shipped, and skipped the reindex behind it
+// (runs 32775600033, 33207492181). These pin: transient failures retry, real drift passes through.
+const RC_TABLES = ['persons', 'interest_links'];
+
+test('readCountsWithRetry returns the answer once a transient failure clears', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 3) throw new Error('Command failed: wrangler d1 execute (timeout)');
+    return { persons: 3, interest_links: 2 };
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 3, 'it must keep trying, not give up on the first throw');
+});
+
+test('readCountsWithRetry retries an INCOMPLETE answer (a table missing), not just a throw', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    return calls < 2 ? { persons: 3 } : { persons: 3, interest_links: 2 }; // interest_links missing first
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 2);
+});
+
+test('readCountsWithRetry returns {} after exhausting attempts — the guard still fails closed', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    throw new Error('sustained failure');
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: () => {} });
+  assert.deepEqual(out, {}, 'a genuinely unreadable target yields {} so assertShippedCounts fails');
+  assert.equal(calls, 3, 'it must exhaust exactly the budget');
+});
+
+test('readCountsWithRetry does NOT retry a COMPLETE answer that disagrees — real drift passes through', () => {
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    return { persons: 3, interest_links: 0 }; // a real partial ship: 0 is a number, a complete answer
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 0 });
+  assert.equal(calls, 1, 'a complete answer must be returned immediately, drift or not');
+});
+
+test('readCountsWithRetry backs off between attempts', () => {
+  const waits = [];
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 3) throw new Error('transient');
+    return { persons: 1, interest_links: 1 };
+  };
+  readCountsWithRetry(attempt, RC_TABLES, { attempts: 4, sleep: (ms) => waits.push(ms) });
+  assert.deepEqual(
+    waits,
+    [2000, 4000],
+    'linear backoff before attempts 2 and 3, none before the first',
+  );
+});
+
+test('readCountsWithRetry does NOT back off after the FINAL failed attempt', () => {
+  // The exhaustion path: 3 attempts, all failing, must sleep only BETWEEN them (before 2 and 3), never
+  // after the last — a trailing sleep burns 6s before returning {} for nothing. The success-path backoff
+  // test above cannot see this; only a fully-failing run does.
+  const waits = [];
+  const attempt = () => {
+    throw new Error('sustained failure');
+  };
+  readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: (ms) => waits.push(ms) });
+  assert.deepEqual(waits, [2000, 4000], 'two sleeps for three attempts, none trailing the last');
+});
+
+test('readCountsWithRetry retries a NON-FINITE cell (NaN / string / null), not just a missing table', () => {
+  // A present-but-malformed cell is what `typeof x === "number"` let slip: `typeof NaN === "number"` is
+  // true, so a NaN (from a non-numeric wrangler cell) was accepted as an answer instead of retried. Each
+  // of these must be treated as an incomplete answer — a row count is a non-negative integer or nothing.
+  for (const bad of [Number.NaN, '2', null, 2.5, -1, Infinity]) {
+    let calls = 0;
+    const attempt = () => {
+      calls += 1;
+      return calls < 2 ? { persons: 3, interest_links: bad } : { persons: 3, interest_links: 2 };
+    };
+    const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: 3, sleep: () => {} });
+    assert.deepEqual(out, { persons: 3, interest_links: 2 }, `retried past ${String(bad)}`);
+    assert.equal(calls, 2, `a non-finite ${String(bad)} must not count as an answer`);
+  }
+});
+
+test('readCountsWithRetry defaults to 4 attempts (not 1) when none is given', () => {
+  // Pins the default budget: a mutant lowering it to 1 would give up after the first throw and return {}.
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 4) throw new Error('transient');
+    return { persons: 1, interest_links: 1 };
+  };
+  const out = readCountsWithRetry(attempt, RC_TABLES, { sleep: () => {} }); // no `attempts`
+  assert.deepEqual(out, { persons: 1, interest_links: 1 });
+  assert.equal(calls, 4, 'the default budget must be 4, so it recovers on the fourth try');
+});
+
+test('readCountsWithRetry treats a degenerate `attempts` as the default 4, never 0 or forever', () => {
+  // 0 / negative / NaN / fraction would make ZERO attempts (return {} having never read); Infinity would
+  // loop forever. All must fall back to 4 — so a persistent failure terminates at exactly 4 reads.
+  for (const bad of [0, -3, Number.NaN, 2.5, Infinity]) {
+    let calls = 0;
+    const attempt = () => {
+      calls += 1;
+      throw new Error('sustained failure');
+    };
+    const out = readCountsWithRetry(attempt, RC_TABLES, { attempts: bad, sleep: () => {} });
+    assert.deepEqual(out, {}, `degenerate ${String(bad)} still fails closed`);
+    assert.equal(calls, 4, `degenerate ${String(bad)} must run exactly the default 4 attempts`);
+  }
+});
+
+test('readCountsWithRetry uses a REAL sleep by default — the backoff must fire in production', () => {
+  // Finding 1's regression guard. Every other test injects a no-op sleep, so a mutant reverting the
+  // default `sleep = sleepSync` back to `() => {}` would slip past them all. With no sleep injected, one
+  // transient failure must cost a real ~2s backoff before the recovering read — proof the default blocks.
+  let calls = 0;
+  const attempt = () => {
+    calls += 1;
+    if (calls < 2) throw new Error('transient');
+    return { persons: 1, interest_links: 1 };
+  };
+  const started = Date.now();
+  const out = readCountsWithRetry(attempt, RC_TABLES); // no options at all → real sleepSync, 4 attempts
+  const elapsed = Date.now() - started;
+  assert.deepEqual(out, { persons: 1, interest_links: 1 });
+  assert.ok(elapsed >= 1900, `expected a real ~2s backoff, waited only ${elapsed}ms`);
+});
+
+// ── readShippedCounts — the PRODUCTION wiring, not just the helper in isolation ──────────────────────
+// Codex flagged that the tests exercised readCountsWithRetry directly but nothing pinned that
+// readShippedCounts actually wraps its wrangler read in that retry with a real backoff. The `deps` seam
+// injects a fake reader + recording sleep so these run without touching wrangler.
+const RS_EXPECTED = { persons: 3, interest_links: 2 };
+
+test('readShippedCounts wraps the read in a retry with real backoff — not a one-shot', () => {
+  // Kills the mutant that reverts readShippedCounts to a single wrangler call: a one-shot would return the
+  // first (failing) read; the wiring must retry past two transient failures and forward the 2s/4s schedule.
+  const waits = [];
+  let calls = 0;
+  const readOnce = () => {
+    calls += 1;
+    if (calls < 3) throw new Error('Command failed: wrangler d1 execute (timeout)');
+    return { persons: 3, interest_links: 2 };
+  };
+  const out = readShippedCounts('sigma-db', true, RS_EXPECTED, {
+    readOnce,
+    sleep: (ms) => waits.push(ms),
+  });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 3, 'readShippedCounts must retry the read, not call it once');
+  assert.deepEqual(waits, [2000, 4000], 'and forward the real linear backoff');
+});
+
+test('readShippedCounts inherits the default 4-attempt budget', () => {
+  // No `attempts` in deps → the helper default (4) must apply through the wiring, so it recovers on the 4th.
+  let calls = 0;
+  const readOnce = () => {
+    calls += 1;
+    if (calls < 4) throw new Error('transient');
+    return { persons: 3, interest_links: 2 };
+  };
+  const out = readShippedCounts('sigma-db', true, RS_EXPECTED, { readOnce, sleep: () => {} });
+  assert.deepEqual(out, { persons: 3, interest_links: 2 });
+  assert.equal(calls, 4);
+});
+
+test('readShippedCounts short-circuits to {} when nothing was expected', () => {
+  // No numeric expectations → no tables to read → no wrangler call at all.
+  let calls = 0;
+  const readOnce = () => {
+    calls += 1;
+    return {};
+  };
+  const out = readShippedCounts('sigma-db', true, {}, { readOnce, sleep: () => {} });
+  assert.deepEqual(out, {});
+  assert.equal(calls, 0, 'an empty expectation must never touch the reader');
 });
 
 test('assertShippedCounts fails on a short table and names the numbers', () => {
