@@ -164,7 +164,10 @@ export async function retrieveSchemaContext(
       // contract promises a numeric `score`, but if an index backend ever omits it, a scoreless match must
       // read as below the floor (dropped) — never injected as unranked "context". Zero survivors makes
       // buildSystemPrompt fall back to the full static dictionary, which is the safe outcome (review, ydimitrof).
-      .filter((m) => (m.score ?? 0) >= minScore)
+      // Number.isFinite, not `?? 0`: the drop must not depend on the floor's VALUE. With an explicit
+      // minScore = 0, `(undefined ?? 0) >= 0` would let a scoreless match through as context — the
+      // same rule the entity path below states, kept identical here (review f/u, ydimitrof).
+      .filter((m) => Number.isFinite(m.score) && m.score >= minScore)
       .map((m) => String(m.metadata?.text ?? ''))
       .filter(Boolean)
   );
