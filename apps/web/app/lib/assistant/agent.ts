@@ -111,6 +111,32 @@ function errorTag(error: unknown): string {
   return ` [${wrapper}APICallError status=${api.statusCode ?? '?'} retryable=${api.isRetryable}]`;
 }
 
+/**
+ * One log line per stream error, deduped for the lifetime of ONE request.
+ *
+ * streamText's hook and the UI-stream hook see the SAME error object for a provider failure; the UI
+ * hook alone also sees a failure of the UI stream itself — so both must log, but a provider error
+ * must not be written twice. Objects dedup by IDENTITY (two distinct errors that happen to render
+ * the same text each deserve their own line); a primitive throw has no identity, so it dedups by
+ * its rendered text — without that branch the same thrown string is logged twice (review f/u,
+ * ydimitrof). Exported so the dedup is testable without driving a real stream.
+ */
+export function makeStreamErrorLogger(redact: readonly string[]): (error: unknown) => void {
+  const loggedObjects = new WeakSet<object>();
+  const loggedPrimitives = new Set<string>();
+  return (error: unknown): void => {
+    const text = errorText(error, redact);
+    if (typeof error === 'object' && error !== null) {
+      if (loggedObjects.has(error)) return;
+      loggedObjects.add(error);
+    } else {
+      if (loggedPrimitives.has(text)) return;
+      loggedPrimitives.add(text);
+    }
+    console.error(`[assistant] stream error: ${text}${errorTag(error)}`);
+  };
+}
+
 const STREAM_ERROR_USER_TEXT = 'Асистентът временно не е достъпен. Опитай отново след малко.';
 
 export async function runAssistant(opts: RunAssistantOptions): Promise<Response> {
@@ -121,17 +147,7 @@ export async function runAssistant(opts: RunAssistantOptions): Promise<Response>
   // error body can quote the prompt back, and that echo sits in the message — dropping the stack
   // would not touch it (log-safety.ts).
   const redact = [opts.ctx.userQuestion ?? ''];
-  // One log line per error object. streamText's hook and the UI-stream hook see the SAME error for
-  // a provider failure; the UI hook alone sees a failure of the UI stream itself — log from both,
-  // dedup by identity so a provider error is never written twice.
-  const logged = new WeakSet<object>();
-  const logStreamError = (error: unknown): void => {
-    if (typeof error === 'object' && error !== null) {
-      if (logged.has(error)) return;
-      logged.add(error);
-    }
-    console.error(`[assistant] stream error: ${errorText(error, redact)}${errorTag(error)}`);
-  };
+  const logStreamError = makeStreamErrorLogger(redact);
   const result = streamText({
     model: buildModel(opts.env),
     system: buildSystemPrompt({ schemaContext: opts.schemaContext, freshness: opts.freshness }),

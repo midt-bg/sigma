@@ -253,9 +253,14 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // a UNIT — "Стойност (млн. €)" is the site's own column-header style and carries no number — so the
   // abbreviation alone must not flag (it did, rejecting unit-only headers — review f/u). The numeral
   // list is the closed class of Bulgarian cardinals (1–19, tens, hundreds) plus the vague quantifiers.
+  // `трлн` rides the same branch: "три трлн лева" has no digit, no full-word `-илион` stem and no
+  // млн/млрд either, so it slipped the whole gate while the very numeral+abbreviation logic that
+  // motivates this branch covers it one magnitude down (review f/u, ydimitrof). Only the
+  // abbreviations Bulgarian financial writing actually uses are listed — an invented "квдрлн" would
+  // be a pattern nobody writes, and the full word (квадрилион) is already caught by the stem above.
   // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
   /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд/giu, // spelled magnitudes
-  /(?<!\p{L})(?:един|една|едно|два|две|три|четири|пет|шест|седем|осем|девет|десет|(?:един|два|три|четири|пет|шест|седем|осем|девет)надесет|(?:два|три|четири|пет|шест|седем|осем|девет)десет|сто|двеста|триста|(?:четири|пет|шест|седем|осем|девет)стотин|половин|няколко|десетки|стотици)(?:те|та|то)?(?!\p{L})[\s\u00a0]+(?:млрд|млн)/giu, // numeral + млрд/млн
+  /(?<!\p{L})(?:един|една|едно|два|две|три|четири|пет|шест|седем|осем|девет|десет|(?:един|два|три|четири|пет|шест|седем|осем|девет)надесет|(?:два|три|четири|пет|шест|седем|осем|девет)десет|сто|двеста|триста|(?:четири|пет|шест|седем|осем|девет)стотин|половин|няколко|десетки|стотици)(?:те|та|то)?(?!\p{L})[\s\u00a0]+(?:трлн|млрд|млн)/giu, // numeral + трлн/млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
