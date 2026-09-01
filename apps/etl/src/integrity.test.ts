@@ -65,6 +65,13 @@ function servedD1(seed: Seed = {}): D1Database {
     { when: 'signed_at', all: [{ n: seed.badDates ?? 0 }] },
     // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
     { when: 'current_value_eur', all: [{ n: 0 }] },
+    // subject-risk-bounds (#229): the 0014 columns are present on a served D1 that has taken the
+    // migration, so the check RUNS here rather than self-skipping. Clean by default — shares in
+    // [0,1], k <= n, and no is_high_markup on a non-'ok' row. These precede the general
+    // ['FROM contracts', 'COUNT(*) AS n'] route below, which would otherwise swallow the last one.
+    { when: 'pragma_table_info', all: [{ name: 'x' }] },
+    { when: 'so_vs', all: [{ so_vs: 0, hm_vs: 0, so_kn: 0, hm_kn: 0 }] },
+    { when: ['is_high_markup IS NOT NULL', "value_flag <> 'ok'"], all: [{ n: 0 }] },
     { when: ['FROM contracts', 'COUNT(*) AS n'], all: [{ n: seed.contracts ?? 5 }] },
     { when: 'neg_ok', all: [{ neg_ok: seed.negOk ?? 0, neg_other: 0 }] },
     { when: 'eik_valid = 1', all: [{ n: 0 }] },
@@ -115,9 +122,10 @@ describe('runServedIntegrityGate', () => {
       const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
       return ok?.event.skipped as number;
     };
-    // With home_totals present, two fewer checks self-skip than on the bare work DB —
-    // rollup-reconciliation and current-amount-parity (#261) both move from skipped to run.
-    expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 2);
+    // With home_totals present, three fewer checks self-skip than on the bare work DB —
+    // rollup-reconciliation, current-amount-parity (#261) and subject-risk-bounds (#229) all move
+    // from skipped to run.
+    expect(await skippedFor({ rollups: true })).toBe((await skippedFor({})) - 3);
   });
 
   it('throws when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {

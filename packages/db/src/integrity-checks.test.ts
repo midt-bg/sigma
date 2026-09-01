@@ -21,6 +21,7 @@ import {
   checkNoNegativeValues,
   checkRollupReconciliation,
   checkStagingReconciliation,
+  checkSubjectRiskBounds,
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -31,6 +32,7 @@ const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006, joined by the officials block for the Trade Register evidence gate (#279, ADR-0033).
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -75,6 +77,7 @@ function freshDb(): string {
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
   readScript(dbPath, migration9Path);
+  readScript(dbPath, riskColumnsPath);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }
@@ -122,6 +125,7 @@ describe('reconciliation gate — clean corpus', () => {
       'date-sanity',
       'staging-reconciliation',
       'amendment-twin-dedup',
+      'subject-risk-bounds',
     ])
       expect(results.find((r) => r.name === nm)?.skipped, `${nm} must not skip`).toBe(false);
   });
@@ -141,6 +145,35 @@ describe('reconciliation gate — clean corpus', () => {
   it('rollup reconciliation self-skips before precompute (empty rollups)', async () => {
     const db = track(freshDb()); // no precompute → home_totals empty
     const result = await checkRollupReconciliation(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  it('subject-risk-bounds self-skips before precompute (empty rollups)', async () => {
+    const db = track(freshDb());
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  // home_totals predates the risk columns, so it is not proof they exist; a DB with a populated
+  // home_totals but no risk column must skip, not throw 'no such column'.
+  it('subject-risk-bounds self-skips (not throws) when a risk column is missing but home_totals exists', async () => {
+    const db = track(freshDb());
+    precompute(db); // populates home_totals AND the risk columns
+    sqlite(db, 'ALTER TABLE contracts DROP COLUMN is_high_markup;'); // drift: column gone
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+
+  // Partial drift: one rollup table migrated, the other not. A company_totals-only guard sails past this
+  // and then throws 'no such column' on the authority_totals half of the bounds query (#244 review).
+  it('subject-risk-bounds self-skips when authority_totals lags behind company_totals', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(db, 'ALTER TABLE authority_totals DROP COLUMN single_offer_k;');
+    const result = await checkSubjectRiskBounds(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
@@ -401,6 +434,39 @@ describe('reconciliation gate — injected violations', () => {
     const result = await checkStagingReconciliation(runner(db));
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
+  });
+
+  it('subject-risk-bounds catches a value_share above 1 (the Finding-1 200% bug)', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(
+      db,
+      "UPDATE company_totals SET single_offer_value_share = 2.0 WHERE bidder_id = 'eik:131071587';",
+    );
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/single_offer_value_share outside \[0,1\]/);
+  });
+
+  it('subject-risk-bounds catches a flagged count exceeding its denominator (k > n)', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(
+      db,
+      "UPDATE company_totals SET single_offer_k = single_offer_n + 1 WHERE bidder_id = 'eik:131071587';",
+    );
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/single_offer_k > single_offer_n/);
+  });
+
+  it('subject-risk-bounds catches is_high_markup set on a non-ok (suspect) contract', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(db, "UPDATE contracts SET is_high_markup = 1, value_flag = 'review' WHERE id = 'c:1';");
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/is_high_markup set on a non-'ok' value_flag/);
   });
 
   it('assertIntegrity throws non-zero on a sign-flipped amount_eur (the import would exit 1)', async () => {

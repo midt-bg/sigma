@@ -29,6 +29,8 @@ const migrations = [
   'packages/db/migrations/0008_amendment_provenance.sql',
   // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
   'packages/db/migrations/0009_interest_link_evidence.sql',
+  // precompute/refresh-slice write the subject-risk columns (#229); they live in 0014, not 0000_init.
+  'packages/db/migrations/0014_subject_risk_columns.sql',
 ].map((p) => resolve(root, p));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const refreshSlice = resolve(root, 'scripts/refresh-slice.sql');

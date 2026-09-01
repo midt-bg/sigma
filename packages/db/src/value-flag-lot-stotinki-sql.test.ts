@@ -30,6 +30,8 @@ const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_valu
 const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 // #279/ADR-0033: refresh-slice.sql's свързани-лица block reads interest_link_evidence, so 0009 too.
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0014, not 0000_init.
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [
   ['normalize-raw', resolve(root, 'scripts/normalize-raw.sql')],
@@ -63,6 +65,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, migration7Path);
     readScript(dbPath, migration8Path);
     readScript(dbPath, migration9Path);
+    readScript(dbPath, riskColumnsPath);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

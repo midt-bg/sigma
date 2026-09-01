@@ -1,11 +1,13 @@
 -- Sigma — consolidated schema (D1 / SQLite). Single source of truth for the database.
 --
--- Sigma is pre-production and every import starts from a FRESH database (no deployed data to
--- preserve), so the schema is ONE file rather than an incremental migration chain — re-introduce
--- incremental migrations only once there is deployed data you cannot drop. Applied by
--- `wrangler d1 migrations apply sigma [--local|--remote]`; the full import is `node scripts/import.mjs`
--- (work DB: load-eop → derive-amendments → load-fx → load-nuts → normalize-raw → promote-amendments,
--- then ship-domain copies the served tables into the served D1 and runs precompute on it).
+-- The WORK DB is rebuilt from scratch every import (import.mjs loads THIS file, then load/transform), so
+-- 0000_init is its single source of truth. The SERVED D1 (prod) is PERSISTENT: ship-domain runs
+-- `wrangler d1 migrations apply`, which is filename-tracked — once applied, 0000_init is frozen there.
+-- So add NEW schema objects in a new numbered migration (ALTER TABLE …), NEVER by editing 0000_init: an
+-- edit reaches the work DB (and green local CI) but never prod — the applied-migration trap. Touch
+-- 0000_init only on a full rebuild that regenerates the whole chain. The full import is
+-- `node scripts/import.mjs` (work DB: load-eop → derive-amendments → load-fx → load-nuts → normalize-raw
+-- → promote-amendments, then ship-domain copies the served tables into the served D1 + runs precompute).
 --
 -- Modelling rationale (cleaning policy, value_flag, consortium model, canonical EUR + FX, the
 -- synthetic-tender rule) lives in docs/etl.md and docs/core-scope.md.

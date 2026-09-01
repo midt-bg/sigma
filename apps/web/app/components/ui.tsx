@@ -89,7 +89,7 @@ export function Callout({
   // Heading level for the title. Defaults to h3 (a callout nested under a section's h2). Pass 'h2' when the
   // callout sits at the TOP of a page — directly under the page h1 — so the outline doesn't skip h1→h3→h2.
   titleAs?: 'h2' | 'h3';
-  variant?: 'warning';
+  variant?: 'warning' | 'neutral';
   children: ReactNode;
 }) {
   const Heading = titleAs;

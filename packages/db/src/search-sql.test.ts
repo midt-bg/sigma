@@ -17,6 +17,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const migration0 = resolve(root, 'packages/db/migrations/0000_init.sql');
 const migration2 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0014, not 0000_init.
+const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 
 function readScript(dbPath: string, path: string): void {
   execFileSync('sqlite3', ['-bail', dbPath], { input: `.read ${path}\n`, stdio: 'pipe' });
@@ -142,6 +144,7 @@ function withDb(fn: (dbPath: string) => void): void {
     readScript(dbPath, migration0);
     readScript(dbPath, migration2);
     readScript(dbPath, migration9);
+    readScript(dbPath, riskColumnsPath);
     exec(dbPath, FIXTURE);
     exec(dbPath, POPULATE_INDEX);
     fn(dbPath);

@@ -431,7 +431,9 @@ per-day bucket-ите на `storage.eop.bg` (кеширани в `data/eop/`). �
   `search_index`. `contracts.current_value`/`annex_count` остават (rollup-ът; `amendments` е
   source историята му).
 
-Репото е pre-production и ползва един свеж стартов schema файл — `packages/db/migrations/0000_init.sql`.
+Work базата се пресъздава при всеки импорт от `packages/db/migrations/0000_init.sql`; обслужваната D1 е
+персистентна и получава номерираните миграции чрез `wrangler d1 migrations apply`, затова нови schema
+обекти минават през нова номерирана миграция, а не през редакция на `0000_init`.
 Допълненията за `storage.eop` включват контактни полета на възложители и изпълнители,
 `raw_ocds_lots` (в work схемата) и стойностни полета на `lots`. Обслужваният `tenders` ред носи
 суровия EOP числов `tenderId` (`eop_tender_id`, миграция `0003_tender_eop_id.sql`), за да може
