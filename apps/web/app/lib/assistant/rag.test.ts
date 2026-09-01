@@ -143,6 +143,16 @@ describe('retrieveSchemaContext', () => {
     ]);
     expect(await retrieveSchemaContext(ai, index, 'въпрос')).toEqual([]);
   });
+  it('drops a scoreless SCHEMA match even at an explicit minScore = 0 (symmetry with the entity path)', async () => {
+    // `(undefined ?? 0) >= 0` would smuggle a scoreless match in as "context"; the safety must not
+    // depend on the default floor happening to be > 0 (review f/u, ydimitrof).
+    const ai = fakeAI();
+    const index = fakeIndex([
+      { id: 'schema-v2:table:x', metadata: { text: 'без score' } } as unknown as Match,
+      { id: 'schema-v2:table:y', score: 0, metadata: { text: 'истинска нула' } },
+    ]);
+    expect(await retrieveSchemaContext(ai, index, 'въпрос', 6, 0)).toEqual(['истинска нула']);
+  });
 });
 
 describe('semanticSearch', () => {
