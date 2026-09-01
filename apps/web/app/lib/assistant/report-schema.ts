@@ -523,6 +523,12 @@ export function bindReport(
             key: c.key,
             header: sanitizeProse(c.header),
             ...(c.align != null ? { align: c.align } : {}),
+            // Unconditional, unlike `align`/`link`: `format` is MANDATORY on every column —
+            // validateEmitShape rejects the block unless `isFormat(c.format)` holds (emit-report-schema.ts),
+            // and EmitTableColumn types it required — so `format: undefined` is unreachable here and a
+            // conditional spread would only imply an optionality the contract does not have
+            // (review f/u, ydimitrof: the premise "if the schema allows a column without format" does
+            // not hold — it does not).
             format: c.format,
             ...(c.link != null ? { link: { kind: c.link.kind, idCol: c.link.idCol } } : {}),
           }));
