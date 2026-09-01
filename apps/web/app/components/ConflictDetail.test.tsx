@@ -93,6 +93,22 @@ async function render(links: ConflictLink[], byEik: Record<string, ConflictContr
 
 const text = () => container.textContent ?? '';
 
+/**
+ * The `<dd>` of the „…" stat cell named by its `<dt>`. The cells carry no per-field class — they are
+ * all `.cc-stat` — so a selector cannot name one, and a looser selector silently widens to the whole
+ * card (review ydimitrof, #254): asserting „—" over the card passes on any other dash on the page.
+ * Throwing on a miss is the point; a finder that returns null would restore exactly that hole.
+ */
+function statValue(label: string): HTMLElement {
+  for (const cell of container.querySelectorAll('.cc-stat')) {
+    if (cell.querySelector('dt')?.textContent?.trim() === label) {
+      const dd = cell.querySelector('dd');
+      if (dd) return dd as HTMLElement;
+    }
+  }
+  throw new Error(`no .cc-stat labelled „${label}" — the cell was renamed or removed`);
+}
+
 describe('ConflictDetail — provenance on the thinner link shapes', () => {
   it('cites no act entry for a seat/ЕИК confirmation, and prints no bare „№"', async () => {
     // A 'confirmed' seal identifies the COMPANY from declared data; nobody was found in a register
@@ -116,11 +132,22 @@ describe('ConflictDetail — provenance on the thinner link shapes', () => {
     expect(evidence).toContain('справка'); // lookup_date is NOT NULL — it always says when we looked
   });
 
-  it('renders „—" for a link with no source declaration URL', async () => {
+  it('renders „—" in the source cell itself for a link with no declaration URL', async () => {
+    // Pinned to the „Източник" cell, not the card: the card holds several other „—" (Период, an
+    // unresolved authority), so a card-wide assertion would pass with the cell deleted outright.
     await render([link({ sourceUrl: null })], { '111': [facts()] });
-    const src = container.querySelector('.cc-source, .conflict-detail')!;
-    expect(src.textContent).toContain('—');
+    expect(statValue('Източник').textContent?.trim()).toBe('—');
+    expect(statValue('Източник').querySelector('a')).toBeNull();
     expect(container.querySelector('a[href^="https://register.cacbg.bg"]')).toBeNull();
+  });
+
+  it('renders the declaration link in that same cell when the URL is present', async () => {
+    // The negative case above is only meaningful if the finder reaches the right cell — a broken
+    // statValue() would make it pass by accident. This is the positive control for it.
+    await render([link()], { '111': [facts()] });
+    const link_ = statValue('Източник').querySelector('a')!;
+    expect(link_.getAttribute('href')).toBe('https://register.cacbg.bg/2024/x.xml');
+    expect(link_.textContent).toBe('декларация');
   });
 
   it('omits the declared-period line entirely when the declaration carries no usable years', async () => {
@@ -202,8 +229,20 @@ describe('ConflictDetail — timeline and contract rows on sparse data', () => {
         facts({ contractSlug: 'e:out', contractNumber: 'Д-OUT', signedAt: '2025-05-01' }),
       ],
     });
-    expect(container.querySelectorAll('.contract-list li').length).toBeGreaterThanOrEqual(2);
-    expect(text()).toContain('Д-IN');
-    expect(text()).toContain('Д-OUT');
+    const row = (number: string) =>
+      [...container.querySelectorAll('.contract-list li')].find((li) =>
+        li.textContent?.includes(number),
+      )!;
+
+    // Rendering both rows is not the claim — WHICH one carries the conflict modifier is. Asserting
+    // only presence passes with the in/out-window split fully broken in either direction
+    // (review ydimitrof, #254).
+    expect(row('Д-IN')).toBeDefined();
+    expect(row('Д-OUT')).toBeDefined();
+    expect(row('Д-IN').className).toContain('contract-item-conflict');
+    expect(row('Д-OUT').className).not.toContain('contract-item-conflict');
+    // The out-of-window row is disclosed, but behind the „Извън периода" disclosure, never asserted.
+    expect(container.querySelector('.contract-outside')!.contains(row('Д-OUT'))).toBe(true);
+    expect(container.querySelector('.contract-outside')!.contains(row('Д-IN'))).toBe(false);
   });
 });
