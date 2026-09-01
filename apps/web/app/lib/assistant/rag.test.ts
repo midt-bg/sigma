@@ -268,7 +268,9 @@ describe('retrieveSchemaContext', () => {
       { id: 'schema-v2:table:x', metadata: { text: 'без score' } } as unknown as Match,
       { id: 'schema-v2:table:y', score: 0, metadata: { text: 'истинска нула' } },
     ]);
-    expect(await retrieveSchemaContext(ai, index, 'въпрос', 6, 0)).toEqual(['истинска нула']);
+    expect(await retrieveSchemaContext(ai, index, 'въпрос', { topK: 6, minScore: 0 })).toEqual([
+      'истинска нула',
+    ]);
   });
 });
 
