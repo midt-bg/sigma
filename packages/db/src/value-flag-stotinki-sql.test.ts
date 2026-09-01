@@ -29,7 +29,7 @@ const migration6Path = resolve(root, 'packages/db/migrations/0006_amendment_rest
 const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_value_suspect.sql');
 // #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
 const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
-// precompute/refresh-slice write the subject-risk columns (#229); they live in 0011, not 0000_init.
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0014, not 0000_init.
 const riskColumnsPath = resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql');
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const etlPaths = [

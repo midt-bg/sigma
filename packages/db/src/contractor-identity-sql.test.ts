@@ -21,7 +21,7 @@ const migration9 = readFileSync(
   resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql'),
   'utf8',
 );
-// precompute/refresh-slice write the subject-risk columns (#229); they live in 0011, not 0000_init.
+// precompute/refresh-slice write the subject-risk columns (#229); they live in 0014, not 0000_init.
 const migration11 = readFileSync(
   resolve(root, 'packages/db/migrations/0014_subject_risk_columns.sql'),
   'utf8',

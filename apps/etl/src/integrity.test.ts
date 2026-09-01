@@ -65,7 +65,7 @@ function servedD1(seed: Seed = {}): D1Database {
     { when: 'signed_at', all: [{ n: seed.badDates ?? 0 }] },
     // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
     { when: 'current_value_eur', all: [{ n: 0 }] },
-    // subject-risk-bounds (#229): the 0011 columns are present on a served D1 that has taken the
+    // subject-risk-bounds (#229): the 0014 columns are present on a served D1 that has taken the
     // migration, so the check RUNS here rather than self-skipping. Clean by default — shares in
     // [0,1], k <= n, and no is_high_markup on a non-'ok' row. These precede the general
     // ['FROM contracts', 'COUNT(*) AS n'] route below, which would otherwise swallow the last one.

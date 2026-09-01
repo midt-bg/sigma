@@ -166,6 +166,17 @@ describe('reconciliation gate — clean corpus', () => {
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
   });
+
+  // Partial drift: one rollup table migrated, the other not. A company_totals-only guard sails past this
+  // and then throws 'no such column' on the authority_totals half of the bounds query (#244 review).
+  it('subject-risk-bounds self-skips when authority_totals lags behind company_totals', async () => {
+    const db = track(freshDb());
+    precompute(db);
+    sqlite(db, 'ALTER TABLE authority_totals DROP COLUMN single_offer_k;');
+    const result = await checkSubjectRiskBounds(runner(db));
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe('reconciliation gate — injected violations', () => {

@@ -421,11 +421,14 @@ export async function checkSubjectRiskBounds(runner) {
   const name = 'subject-risk-bounds';
   // Gate on the risk columns EXISTING (structural), not just home_totals presence: home_totals predates
   // these columns, so a drifted DB with a populated home_totals but no risk columns would otherwise throw
-  // 'no such column' instead of skipping. Skip cleanly on any DB that hasn't got them yet.
+  // 'no such column' instead of skipping. Probe BOTH rollup tables, not just company_totals — the loop
+  // below reads authority_totals too, so a partial drift (one table migrated, the other not) would throw
+  // past a company_totals-only guard, which is exactly what this check promises not to do.
   if (
     !(await tableExists(runner, 'home_totals')) ||
     num(await scalar(runner, 'SELECT COUNT(*) AS n FROM home_totals', 'n')) === 0 ||
     !(await columnExists(runner, 'company_totals', 'single_offer_k')) ||
+    !(await columnExists(runner, 'authority_totals', 'single_offer_k')) ||
     !(await columnExists(runner, 'contracts', 'is_high_markup'))
   ) {
     return {
