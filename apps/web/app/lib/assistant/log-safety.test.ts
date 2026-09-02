@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorText, MAX_LOG_MESSAGE_CHARS, stackHead } from './log-safety';
+import { errorText, MAX_LOG_MESSAGE_CHARS, MAX_RAW_CHARS, stackHead } from './log-safety';
 
 describe('errorText', () => {
   it('returns the message without the stack or the cause chain', () => {
@@ -94,9 +94,14 @@ describe('errorText', () => {
 
   it('blanks a long echoed question as ONE run, not a prefix of it', () => {
     // Pre-cap regression guard: the raw message is bounded before matching, so a needle must still
-    // be blanked in full even when the message is longer than the bound.
-    const question = `${'в'.repeat(100)} ${'община Пловдив '.repeat(1200)}`.trim();
-    const out = errorText(new Error(`err: ${question}`), [question]);
+    // be blanked in full even when the message is longer than the bound. The fixture MUST exceed the
+    // bound, or this test never enters the pre-cap at all (it did not: 18 105 units vs a 19 200 bound
+    // — review f/u on #321); the assertion pins that the guard cannot silently drift below it again.
+    const question = `${'в'.repeat(100)} ${'община Пловдив '.repeat(1400)}`.trim();
+    expect(question.length).toBeGreaterThan(MAX_RAW_CHARS);
+    // The tail after the needle sits BEYOND the pre-cap, so it must vanish — that pins the ORDER (cap
+    // the raw message, then redact): capping after redaction would leave "…»пашка" behind.
+    const out = errorText(new Error(`err: ${question} опашка`), [question]);
     expect(out).not.toContain(question.slice(0, 40));
     expect(out).toBe('err: «редактирано»');
   });
