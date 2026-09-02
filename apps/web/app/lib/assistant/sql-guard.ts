@@ -171,7 +171,8 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // `printf`/`format` with a width specifier (`printf('%1000000d', x)`) build arbitrarily large STRINGS.
   // The string-building AGGREGATES are the same amplification class one step up — `group_concat` /
   // `string_agg` (its official SQLite ≥3.44 synonym, `string_agg(X, sep)` — D1 runs a modern SQLite, so
-  // the alias reaches the same code path) / `json_group_array` / `json_group_object` collapse an ENTIRE
+  // the alias reaches the same code path) / `json_group_array` / `json_group_object` — and their JSONB
+  // twins `jsonb_group_*` (SQLite ≥3.45, present in workerd's build) — collapse an ENTIRE
   // full-table scan into ONE huge cell that materialises before capRows can measure it (and capRows keeps
   // the first row whole), so a single returned row can OOM the isolate. All of these materialise in Worker
   // memory before capRows sees the row; no analytics query needs any of them (review #80, red-team R2;
@@ -184,7 +185,7 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // padded inside the quotes (`" group_concat"`) is a DIFFERENT identifier to SQLite — resolves to
   // no built-in, so it needs no handling here.
   if (
-    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|json_group_array|json_group_object)["'\]`]?\s*\(/i.test(
+    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|jsonb?_group_(?:array|object))["'\]`]?\s*\(/i.test(
       sql,
     )
   ) {
