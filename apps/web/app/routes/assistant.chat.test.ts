@@ -42,6 +42,19 @@ function post(question = QUESTION): Request {
   });
 }
 
+/** A request whose headers are NOT guarded (a real Request drops Content-Length) — for the input checks. */
+function postRaw(body: string, headers: Record<string, string> = {}): Request {
+  return {
+    method: 'POST',
+    headers: new Headers({
+      'Content-Type': 'application/json',
+      'Sec-Fetch-Site': 'same-origin',
+      ...headers,
+    }),
+    text: async () => body,
+  } as unknown as Request;
+}
+
 function run(env: Record<string, unknown>, request = post()) {
   return (action as unknown as (a: { request: Request; context: unknown }) => Promise<Response>)({
     request,
@@ -129,6 +142,28 @@ describe('POST /assistant/chat (route door)', () => {
     expect(failed).toContain('«редактирано»');
     expect(failed).toMatch(/\| at /); // the frame part is there…
     for (const l of lines) expect(l).not.toContain('Пловдив'); // …and carries no message text
+  });
+
+  it('rejects bad input at the door: over-cap body (declared or actual), invalid JSON, no turns, one giant turn', async () => {
+    const status = async (req: Request) => (await run({}, req)).status;
+    const turn = (text: string, role = 'user') => ({
+      id: 't',
+      role,
+      parts: [{ type: 'text', text }],
+    });
+    // A declared Content-Length above the cap is refused BEFORE the body is buffered…
+    expect(await status(postRaw('{}', { 'Content-Length': String(300 * 1024) }))).toBe(413);
+    // …and an under-declared one does not help: the UTF-8 byte count of the read body is checked too.
+    expect(await status(postRaw(JSON.stringify({ messages: [turn('я'.repeat(140_000))] })))).toBe(
+      413,
+    );
+    expect(await status(postRaw('not json'))).toBe(400);
+    expect(await status(postRaw(JSON.stringify({ messages: [] })))).toBe(400);
+    // Non-client roles are dropped before the recency slice → no turns left.
+    expect(await status(postRaw(JSON.stringify({ messages: [turn('x', 'system')] })))).toBe(400);
+    // One message over the per-message cap, even though the body is under the total cap.
+    expect(await status(post('a'.repeat(70_000)))).toBe(413);
+    expect(m.runAssistant).not.toHaveBeenCalled();
   });
 
   it('returns 503 before any model work when the endpoint is unprovisioned', async () => {

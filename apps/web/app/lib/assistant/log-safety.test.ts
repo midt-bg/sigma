@@ -106,6 +106,19 @@ describe('errorText', () => {
     expect(out).toBe('err: «редактирано»');
   });
 
+  it('blanks a SHORT needle (below the window) by exact match', () => {
+    const question = 'кратък въпрос'; // ≥ MIN_REDACT_CHARS, < REDACT_WINDOW
+    expect(errorText(new Error(`400: ${question} — invalid`), [question])).toBe(
+      '400: «редактирано» — invalid',
+    );
+  });
+
+  it('does not truncate a message whose UTF-16 length exceeds the cap while its code points do not', () => {
+    // 200 emoji = 400 UTF-16 units but 200 code points: the cap counts code points, so nothing is cut.
+    const msg = '😀'.repeat(200);
+    expect(errorText(new Error(msg))).toBe(msg);
+  });
+
   it('leaves an unrelated message untouched by the windowed matcher', () => {
     const question = 'колко плати община Пловдив на фирма Х за 2024 година';
     const msg = 'Асистентът временно не е достъпен: no such column: total_value';
