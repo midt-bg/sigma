@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guardSelect } from './sql-ast-guard';
+import { denyDeniedFunction, guardSelect } from './sql-ast-guard';
 import { assertReadOnlySelect } from './sql-guard';
 import { CANONICAL_QUERIES } from './describe-schema';
 
@@ -151,6 +151,29 @@ describe('guardSelect', () => {
     ]) {
       expect(guardSelect(sql).ok, sql).toBe(true);
     }
+  });
+
+  it('fails CLOSED on a call node whose name shape it does not know (no SQL text produces one)', () => {
+    // node-sql-parser 5.4 always names a call as a string (aggr_func) or `{ name: [{ value }] }`
+    // (function). A future grammar could not silently widen that into a bypass: an unnamed call is
+    // refused outright rather than assumed harmless.
+    for (const node of [
+      { type: 'function', name: { name: [] } },
+      { type: 'function', name: 42 },
+      { type: 'function', name: { name: [{ value: 7 }] } },
+    ]) {
+      expect(denyDeniedFunction(node)).toMatch(/could not be verified/);
+    }
+    // Known shapes, at any depth of a plain object/array tree, resolve to the lower-cased name.
+    expect(
+      denyDeniedFunction([
+        { type: 'aggr_func', name: 'SUM' },
+        { where: { type: 'function', name: { name: [{ type: 'default', value: 'PRINTF' }] } } },
+      ]),
+    ).toBe('function not allowed: printf');
+    expect(
+      denyDeniedFunction({ columns: [{ expr: { type: 'aggr_func', name: 'COUNT' } }] }),
+    ).toBeNull();
   });
 
   it('rejects an explicit JOIN / CROSS JOIN with no ON/USING (Cartesian product, review #80)', () => {
