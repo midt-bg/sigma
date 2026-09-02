@@ -204,6 +204,22 @@ describe('/conflicts/official/:id — render', () => {
     expect(JSON.stringify(tags)).toContain('Иван Петров');
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
   });
+
+  it('meta() falls back to a generic noun when the loader data is absent (error boundary render)', () => {
+    // On a thrown 404 the route still renders its meta with `data` undefined; the title must degrade to
+    // the generic noun rather than interpolating "undefined" into a public page title.
+    const tags = officialMeta({ data: undefined, matches: [], params: { id: 'aXZhbg' } } as never);
+    expect(JSON.stringify(tags)).toContain('Длъжностно лице');
+    expect(JSON.stringify(tags)).not.toContain('undefined');
+  });
+
+  it('falls back to a generic kicker when the person has no institution on the first link', async () => {
+    await mount(ConflictOfficial as never, {
+      official: 'Иван Петров',
+      links: [], // no links → links[0] is undefined → the kicker takes its fallback
+    });
+    expect(text()).toContain('Длъжностно лице');
+  });
 });
 
 describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
@@ -357,6 +373,12 @@ describe('/conflicts/company/:eik — render', () => {
     } as never);
     expect(JSON.stringify(tags)).toContain('ТРЕЙС ГРУП ХОЛД АД');
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
+  });
+
+  it('meta() falls back to a generic noun when the loader data is absent (error boundary render)', () => {
+    const tags = companyMeta({ data: undefined, matches: [], params: { eik: '111' } } as never);
+    expect(JSON.stringify(tags)).toContain('Дружество');
+    expect(JSON.stringify(tags)).not.toContain('undefined');
   });
 });
 

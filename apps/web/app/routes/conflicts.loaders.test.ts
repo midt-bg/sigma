@@ -160,6 +160,14 @@ describe('contracts resource loader (/conflicts/link/:scope/:slug/:eik/contracts
     expect(q.getLinkContracts).not.toHaveBeenCalled();
   });
 
+  it('404s when the route params are absent entirely (not merely blank)', async () => {
+    // React Router types :scope/:slug/:eik as optional; an absent key takes the `?? ''` fallback rather
+    // than reaching the DB with `undefined` interpolated into the link_key.
+    q.personIdFromSlug.mockReturnValue(null);
+    await expectStatus(call(contractsLoader, {}), 404);
+    expect(q.getLinkContracts).not.toHaveBeenCalled();
+  });
+
   it('builds a SELF link_key (personId|eik) — never collapses with the family key', async () => {
     q.personIdFromSlug.mockReturnValue('person:1');
     q.getLinkContracts.mockResolvedValue([{ contractNumber: 'A-1' }]);

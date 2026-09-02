@@ -71,6 +71,24 @@ describe('rateLimitConflictsRoute', () => {
     expect(limit).not.toHaveBeenCalled();
   });
 
+  it('does not limit non-GET/HEAD methods (the budget is for read scraping)', async () => {
+    // The limiter guards enumeration of the published surface, which is read-only. A POST/OPTIONS to the
+    // same path is not a scrape vector and must pass through untouched rather than consuming the budget.
+    for (const method of ['POST', 'OPTIONS', 'DELETE']) {
+      const { limiter, limit } = rateLimiter(false);
+      const response = await rateLimitConflictsRoute(
+        new Request('http://local/conflicts', {
+          method,
+          headers: { 'CF-Connecting-IP': '203.0.113.40' },
+        }),
+        { CONFLICTS_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(response, method).toBeNull();
+      expect(limit, method).not.toHaveBeenCalled();
+    }
+  });
+
   it('does not limit unrelated paths', async () => {
     const { limiter, limit } = rateLimiter(false);
     await expect(

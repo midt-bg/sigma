@@ -48,3 +48,18 @@ describe('entityHref', () => {
     expect(href).not.toMatch(/[#?&]/); // no fragment/query/param can be injected via a malformed id
   });
 });
+
+describe('formatCell — date branch', () => {
+  it('renders a null date value as a literal em-dash, not „null"', () => {
+    // Pinned to the character, not to `date(null)`: comparing the two only proves formatCell delegates,
+    // and would still pass if the shared formatter started returning something else entirely.
+    expect(formatCell(null, 'date')).toBe('—');
+  });
+
+  it('formats a present date through the shared formatter rather than echoing the ISO string', () => {
+    // The null case alone cannot tell delegation from a hard-coded em-dash — a formatCell that always
+    // returned '—' for 'date' would pass it. This is the assertion that fixes the non-null path.
+    expect(formatCell('2026-03-05', 'date')).toBe('05.03.2026');
+    expect(formatCell(20260305, 'date')).toBe('20260305'); // unparseable → echoed, never a fake date
+  });
+});

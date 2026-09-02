@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1, type FakeD1Call } from '@sigma/test-support';
-import { getCompetition } from './competition';
+import {
+  getAuthorityProcedureCompetition,
+  getAuthoritySingleOffer,
+  getCompetition,
+  getCompetitionSummary,
+} from './competition';
 
 // The query layer is pure SQL-building over D1; tests use a fake D1 that returns canned rows keyed by
 // SQL markers (same approach as companies.test.ts). They verify the JS-side math (shares, HHI mapping,
@@ -216,6 +221,83 @@ describe('getCompetition', () => {
     expect(bySingleOffer).toEqual([]);
   });
 
+  it('handles a degenerate corpus: null totals row, zero-contract rows, empty classified set', async () => {
+    // Sweeps the zero-guard false branches: `contracts > 0 ? … : 0`, `classified > 0 ? … : 0`,
+    // `classifiedContracts > 0 ? … : 0`, the `row?.x ?? 0` nullish fallbacks, and the year scope filter.
+    const db = fakeD1([
+      { when: CORPUS_TOTALS, first: null }, // totals row missing → every `row?.x ?? 0` falls back
+      { when: 'FROM sector_totals', all: [] },
+      { when: 'FROM flow_pairs', all: [] },
+      { when: 'JOIN bidders b', all: [] },
+      { when: 'WITH pair AS', all: [] },
+      {
+        when: 'GROUP BY t.procedure_type',
+        all: [
+          { procedure_type: 'Покана до определени лица', contracts: 1, value_eur: 0 }, // neutral
+          { procedure_type: 'неизвестна', contracts: 1, value_eur: 0 }, // unknown → 0 classified
+        ],
+      },
+      {
+        when: 'TRIM(t.procedure_type) IN (',
+        all: [
+          {
+            authority_id: 'auth:9',
+            name: 'X',
+            type_group: null,
+            classified: 0,
+            non_competitive: 0,
+            value_eur: 0,
+          },
+        ],
+      },
+      {
+        when: SINGLE_OFFER_BOARD,
+        all: [
+          {
+            authority_id: 'auth:9',
+            name: 'X',
+            type_group: null,
+            contracts: 0,
+            single_offer: 0,
+            value_eur: 0,
+          },
+        ],
+      },
+    ]).db;
+    const data = await getCompetition(db, { year: '2024' });
+    expect(data.totals.singleOfferShare).toBe(0);
+    expect(data.totals.valueEur).toBe(0);
+    expect(data.bySingleOffer[0]?.singleOfferShare).toBe(0); // r.contracts 0 → 0
+    expect(data.byDirectAward[0]?.nonCompetitiveShare).toBe(0); // r.classified 0 → 0
+    expect(data.procedure.nonCompetitiveShare).toBe(0); // classifiedContracts 0 → 0
+    expect(data.procedure.nonCompetitiveValueShare).toBe(0); // classifiedValueEur 0 → 0
+    expect(data.scope.year).toBe(2024); // year scoped through Number()
+  });
+
+  it('offers exactly two leaderboard sizes — MAX_TOP on an exact request, otherwise the default', async () => {
+    // Not a clamp: the source is `p.top === MAX_TOP ? MAX_TOP : DEFAULT_TOP`, so anything that is not
+    // exactly 50 falls back to 20 rather than being reduced to 50. That fallback is the half that
+    // matters — it is what stops a caller from naming its own leaderboard size (and its own LIMIT).
+    expect((await getCompetition(fakeDb().db, { top: 50 })).scope.top).toBe(50);
+
+    for (const top of [999, 51, 35, 0, -1, Number.NaN]) {
+      expect((await getCompetition(fakeDb().db, { top })).scope.top).toBe(20);
+    }
+    expect((await getCompetition(fakeDb().db, {})).scope.top).toBe(20); // omitted → default
+  });
+
+  it('scopes every panel by EU funding', async () => {
+    const calls = fakeDb();
+    await getCompetition(calls.db, { funding: 'eu' });
+    expect(calls.sql.some((s) => s.includes('c.eu_funded = 1'))).toBe(true);
+  });
+
+  it('scopes every panel by national funding', async () => {
+    const calls = fakeDb();
+    await getCompetition(calls.db, { funding: 'national' });
+    expect(calls.sql.some((s) => s.includes('c.eu_funded IS NULL OR c.eu_funded = 0'))).toBe(true);
+  });
+
   it('scopes competition indicators by authorityId', async () => {
     const national = await getCompetition(scopedFakeDb().db, { minContracts: 1 });
     const calls = scopedFakeDb();
@@ -252,5 +334,49 @@ describe('getCompetition', () => {
     expect(calls.calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
     // totals, procedure-mix, single-offer, concentration, direct-award, recurring-pairs all scope to it
     expect(calls.calls.filter((c) => c.binds.includes('auth:111'))).toHaveLength(6);
+  });
+});
+
+describe('authority-detail wrappers', () => {
+  it('getAuthoritySingleOffer returns the single-offer totals for one authority', async () => {
+    const calls = fakeDb();
+    const totals = await getAuthoritySingleOffer(calls.db, 'auth:111');
+    expect(totals.singleOfferShare).toBeCloseTo(0.3); // 3 / 10 from TOTALS
+    expect(calls.sql.some((s) => s.includes('t.authority_id = ?'))).toBe(true); // scoped
+  });
+
+  it('getAuthorityProcedureCompetition folds the procedure mix for one authority', async () => {
+    const calls = fakeDb();
+    const proc = await getAuthorityProcedureCompetition(calls.db, 'auth:111');
+    expect(proc).toMatchObject({ classifiedContracts: 8, nonCompetitiveContracts: 2 });
+    expect(proc.nonCompetitiveShare).toBeCloseTo(0.25); // 2 / 8
+    expect(calls.sql.some((s) => s.includes('t.authority_id = ?'))).toBe(true);
+  });
+});
+
+describe('getCompetitionSummary', () => {
+  it('returns totals and the single most-concentrated authority (default params)', async () => {
+    const summary = await getCompetitionSummary(fakeDb().db);
+    expect(summary.totals.singleOfferShare).toBeCloseTo(0.3);
+    expect(summary.topConcentration).toMatchObject({ slug: '222', hhi: 0.7 });
+  });
+
+  it('yields a null topConcentration when no authority qualifies', async () => {
+    const emptyDb = fakeD1([
+      {
+        when: CORPUS_TOTALS,
+        first: { contracts: 0, single_offer: 0, value_eur: 0, single_value_eur: 0 },
+      },
+      { when: 'FROM sector_totals', all: [] },
+      { when: 'FROM flow_pairs', all: [] },
+      { when: 'JOIN bidders b', all: [] },
+      { when: 'WITH pair AS', all: [] },
+      { when: 'GROUP BY t.procedure_type', all: [] },
+      { when: 'TRIM(t.procedure_type) IN (', all: [] },
+      { when: SINGLE_OFFER_BOARD, all: [] },
+    ]).db;
+    const summary = await getCompetitionSummary(emptyDb, { minContracts: 5 });
+    expect(summary.topConcentration).toBeNull(); // byConcentration[0] ?? null
+    expect(summary.totals.contracts).toBe(0);
   });
 });

@@ -62,7 +62,10 @@ const totalsRow = {
   refreshed_at: '2024-06-02T10:00:00Z',
 };
 
-function fake(totals: typeof totalsRow | null): FakeD1 {
+function fake(
+  totals: typeof totalsRow | null,
+  singleOffer: { value_eur: number; contracts: number } | null = { value_eur: 50000, contracts: 1 },
+): FakeD1 {
   return fakeD1([
     { when: 'home_totals', first: totals },
     { when: 'company_totals', all: [companyRow] },
@@ -71,7 +74,7 @@ function fake(totals: typeof totalsRow | null): FakeD1 {
     // listSingleOfferContracts (two calls: 'recent' by date, 'value' by amount)
     { when: ['bids_received = 1', 'JOIN'], all: [contractRow] },
     // the single-offer aggregate, which reads the same table without a join
-    { when: 'COALESCE(SUM(amount_eur)', first: { value_eur: 50000, contracts: 1 } },
+    { when: 'COALESCE(SUM(amount_eur)', first: singleOffer },
   ]);
 }
 
@@ -107,10 +110,10 @@ describe('getHomeData', () => {
   });
 
   it('excludes the unknown identity bucket from top companies', async () => {
-    const home = fake(totalsRow);
-    await getHomeData(home.db);
+    const calls = fake(totalsRow);
+    await getHomeData(calls.db);
 
-    expect(home.sql.find((query) => query.includes('FROM company_totals'))).toContain(
+    expect(calls.sql.find((query) => query.includes('FROM company_totals'))).toContain(
       "WHERE kind <> 'unknown'",
     );
   });
@@ -127,5 +130,11 @@ describe('getHomeData', () => {
 
     expect(data.singleOffer.contracts).toBe(1);
     expect(data.singleOffer.valueEur).toBe(50000);
+  });
+
+  it('falls back to zero single-offer aggregate when the scan returns no row', async () => {
+    const data = await getHomeData(fake(totalsRow, null).db);
+
+    expect(data.singleOffer).toEqual({ valueEur: 0, contracts: 0 });
   });
 });

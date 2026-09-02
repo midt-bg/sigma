@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { AUTHORITY_FILTER_KEYS } from './authorities';
 import { COMPANY_FILTER_KEYS } from './companies';
 import { CONTRACT_FILTER_KEYS } from './contracts';
-import { decodeCursor, encodeCursor, filterSignature, keyset, pageCursors } from './keyset';
+import {
+  MAX_CURSOR_CHARS,
+  decodeCursor,
+  encodeCursor,
+  filterSignature,
+  keyset,
+  pageCursors,
+} from './keyset';
 
 const FILTER_VALUE: Record<string, unknown> = {
   authority: '000695089',
@@ -165,6 +172,21 @@ describe('keyset clause', () => {
     expect(k.orderSql).toBe('ORDER BY won_eur ASC, bidder_id ASC');
     expect(k.reverse).toBe(true);
   });
+  it('rejects an unsafe sort direction (guards a non-TS/hostile caller)', () => {
+    expect(() =>
+      keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'sideways' as 'asc' }),
+    ).toThrow(/Unsafe keyset dir/);
+  });
+  it('inverts an ascending sort for a backward (before) cursor', () => {
+    // dir='asc' + before ⇒ effectiveDir flips to desc: the `opts.dir === 'desc' ? 'asc' : 'desc'`
+    // else-branch. Walks backward through an ascending list.
+    const firstPage = keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'asc' });
+    const cursor = encodeCursor('before', 1000, 'x', firstPage.cursorToken);
+    const k = keyset({ sortCol: 'won_eur', idCol: 'bidder_id', dir: 'asc', cursor });
+    expect(k.whereSql).toContain('won_eur < ?');
+    expect(k.orderSql).toBe('ORDER BY won_eur DESC, bidder_id DESC');
+    expect(k.reverse).toBe(true);
+  });
   it('rejects unsafe sort fragments unless explicitly allowlisted', () => {
     expect(() =>
       keyset({ sortCol: 'won_eur; DROP TABLE contracts', idCol: 'bidder_id', dir: 'desc' }),
@@ -200,6 +222,18 @@ describe('pageCursors', () => {
     expect(decodeCursor(prevCursor)).toMatchObject({ dir: 'before', value: 900, id: 'a' });
     expect(nextCursor).toBeNull();
   });
+  it('before page with no rows: both cursors null (empty prev-page)', () => {
+    // Walking backward off the top: the query returns zero rows, so there is neither a first nor a
+    // last row → the `last ? … : null` and `hasMore && first ? … : null` else-branches both yield null.
+    const incoming = encodeCursor('before', 700, 'c');
+    const { prevCursor, nextCursor } = pageCursors({
+      rows: [],
+      hasMore: false,
+      incomingCursor: incoming,
+    });
+    expect(prevCursor).toBeNull();
+    expect(nextCursor).toBeNull();
+  });
   it('before page: next always returns toward the page we came from, prev only when more', () => {
     const incoming = encodeCursor('before', 700, 'c');
     const noMore = pageCursors({
@@ -217,5 +251,42 @@ describe('pageCursors', () => {
     });
     expect(decodeCursor(more.prevCursor)).toMatchObject({ dir: 'before', value: 900, id: 'a' });
     expect(decodeCursor(more.nextCursor)).toMatchObject({ dir: 'after', value: 800, id: 'b' });
+  });
+});
+
+describe('decodeCursor — malformed and hostile input', () => {
+  const enc = (tuple: unknown) =>
+    'after:' +
+    btoa(unescape(encodeURIComponent(JSON.stringify(tuple))))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+  it('rejects an oversized cursor before running the decode pipeline', () => {
+    // A raw run of 'A's is not decodable, so it would be rejected by the try/catch even without the
+    // length guard. Use a payload that WOULD decode to a valid tuple: only the length guard can reject
+    // it, so this actually exercises line 39 rather than the JSON.parse catch.
+    const oversizedButValid = enc([1, 'x'.repeat(600)]); // > MAX_CURSOR_CHARS once base64-expanded
+    expect(oversizedButValid.length).toBeGreaterThan(MAX_CURSOR_CHARS);
+    expect(decodeCursor(oversizedButValid)).toBeNull();
+    // A valid cursor just under the limit must still decode — the guard rejects only the oversized.
+    const underLimit = enc([1, 'y'.repeat(300)]);
+    expect(underLimit.length).toBeLessThanOrEqual(MAX_CURSOR_CHARS);
+    expect(decodeCursor(underLimit)).toMatchObject({ dir: 'after', value: 1 });
+  });
+  it('rejects a payload that is not valid JSON (decode pipeline throws)', () => {
+    expect(decodeCursor('after:' + btoa('not json').replace(/=+$/, ''))).toBeNull();
+  });
+  it('rejects a non-string/number sort value or a non-string id', () => {
+    expect(decodeCursor(enc([{}, 'id']))).toBeNull();
+    expect(decodeCursor(enc(['v', 123]))).toBeNull();
+  });
+  it('rejects a non-string sortToken', () => {
+    expect(decodeCursor(enc(['v', 'id', 123]))).toBeNull();
+  });
+  it('rejects a cursor whose sortToken does not match the expected one', () => {
+    const c = encodeCursor('after', 'v', 'id', 'tokA');
+    expect(decodeCursor(c, 'tokB')).toBeNull();
+    expect(decodeCursor(c, 'tokA')).toMatchObject({ sortToken: 'tokA' });
   });
 });

@@ -12,6 +12,7 @@ import {
   contractYear,
   contractYearsLabel,
   contractsCountLabel,
+  declaredStakeNoun,
   fundsCellLabel,
   fundsMagnitude,
   hasContemporaneousContracts,
@@ -540,6 +541,55 @@ describe('authorityShareDisplay', () => {
   });
 });
 
+describe('temporalLabel — unknown feed value', () => {
+  it('falls back to the raw value when the temporal tag is not one of the known keys', () => {
+    // The label map is keyed on the four known tags; an unrecognised value from the feed must surface
+    // verbatim rather than rendering "undefined" in the UI.
+    expect(temporalLabel('sideways' as ConflictContract['temporal'])).toBe('sideways');
+  });
+});
+
+describe('contractTimeline — unusable signing years', () => {
+  it('ignores contracts whose signed_at year is non-numeric or zero', () => {
+    // parseYear rejects a non-finite year and a year 0 — both would otherwise plot a bogus point at the
+    // axis origin. With no usable year left, the timeline is null and the caller renders no axis at all.
+    const tl = contractTimeline(link(), [
+      contract({ signedAt: 'not-a-date' }),
+      contract({ signedAt: '0000-01-01' }),
+    ]);
+    expect(tl).toBeNull();
+  });
+});
+
+describe('authorityShares — ordering when the denominator is unknown', () => {
+  const row = (authorityId: string, authority: string, amountEur: number, total: number | null) =>
+    contract({ authorityId, authority, amountEur, authorityTotalEur: total });
+
+  it('ranks plottable shares above unknown-denominator ones, and breaks ties by money', () => {
+    const shares = authorityShares([
+      row('a:nd1', 'Без общо 1', 100_000, null), // ratio null
+      row('a:bar', 'С дял', 1_000_000, 10_000_000), // ratio 0.1 → plottable
+      row('a:nd2', 'Без общо 2', 900_000, null), // ratio null, richer than nd1
+    ]);
+    // Plottable first; the two null-ratio rows keep a stable money-descending order between themselves.
+    expect(shares.map((s) => s.authorityId)).toEqual(['a:bar', 'a:nd2', 'a:nd1']);
+  });
+
+  it('orders two plottable shares by ratio, falling back to money on an exact tie', () => {
+    const shares = authorityShares([
+      row('a:small', 'Малък дял', 1_000_000, 100_000_000), // 0.01
+      row('a:big', 'Голям дял', 5_000_000, 10_000_000), // 0.5
+    ]);
+    expect(shares.map((s) => s.authorityId)).toEqual(['a:big', 'a:small']);
+
+    const tied = authorityShares([
+      row('a:t1', 'Равен 1', 1_000_000, 10_000_000), // 0.1
+      row('a:t2', 'Равен 2', 2_000_000, 20_000_000), // 0.1 — same ratio, more money
+    ]);
+    expect(tied.map((s) => s.authorityId)).toEqual(['a:t2', 'a:t1']); // money breaks the tie
+  });
+});
+
 describe('registryEvidenceLabel', () => {
   // The wording is load-bearing. The register records a ROLE; it does not certify that the official owns
   // anything — that claim comes from their own declaration and is rendered separately. A label that said
@@ -966,5 +1016,30 @@ describe('markContracts (derive per-link temporal + contemporaneous-first)', () 
     // one official’s window includes 2021, another’s does not — same facts, different split
     expect(markContracts(shared, '2019', '2023')[0]!.temporal).toBe('contemporaneous');
     expect(markContracts(shared, '2010', '2014')[0]!.temporal).toBe('after');
+  });
+});
+
+describe('declaredStakeNoun — page prose must not out-claim the cards', () => {
+  const self = { relation: 'owns' };
+  const family = { relation: 'related' };
+
+  it('says „собствен дял" only when every link really is the official\'s own', () => {
+    expect(declaredStakeNoun([self])).toBe('собствен дял');
+    expect(declaredStakeNoun([self, { relation: 'partner' }])).toBe('собствен дял');
+    expect(declaredStakeNoun([])).toBe('собствен дял'); // no links → nothing to qualify
+  });
+
+  it('says „дял на свързано лице" on a family-only page', () => {
+    // Asserting an OWN stake above cards that read „свързано лице" is a false claim about a named
+    // individual — the second source of truth this function exists to remove.
+    expect(declaredStakeNoun([family])).toBe('дял на свързано лице');
+    expect(declaredStakeNoun([family, family])).toBe('дял на свързано лице');
+  });
+
+  it('falls back to the neutral wording on a MIXED page, the only phrasing true of every card', () => {
+    // Either single-sided noun would be false about half the cards on the page.
+    const mixed = 'деклариран дял — собствен или на свързано лице';
+    expect(declaredStakeNoun([self, family])).toBe(mixed);
+    expect(declaredStakeNoun([family, self])).toBe(mixed); // order must not decide the claim
   });
 });

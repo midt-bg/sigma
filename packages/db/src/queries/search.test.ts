@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fakeD1 } from '@sigma/test-support';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import {
   MAX_QUERY_CHARS,
   MAX_QUERY_TOKENS,
@@ -95,7 +95,10 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
   return fakeD1([
     // The свързани-лица table probe drives which hits SQL search() runs. Report present/absent per the
     // fixture flag so both the with-conflict path and the un-migrated fallback are exercisable.
-    { when: 'sqlite_master', first: hasConflictTable ? { n: 1 } : null },
+    // BOTH свързани-лица tables must be present (n === 2) for the conflict-aware hits SQL to run;
+    // the fixture reports the real count, not a truthy stand-in, or it would silently exercise the
+    // un-migrated fallback while claiming to cover the badge path.
+    { when: 'sqlite_master', first: hasConflictTable ? { n: 2 } : null },
     // Per-kind counts, before the hits route below: both read search_index, and only GROUP BY kind
     // tells them apart.
     {
@@ -229,5 +232,112 @@ describe('search', () => {
     // still return the other groups; the has_conflict=0 correctness of that SQL is proven in search-sql.test.
     const results = await search(searchDb(-6, false), 'company');
     expect(results.groups.find((g) => g.kind === 'company')?.hits.length ?? 0).toBeGreaterThan(0);
+  });
+});
+
+describe('search — empty query and href fallback', () => {
+  it('returns the empty shape for a blank or punctuation-only query', async () => {
+    expect(await search(searchDb(), '')).toEqual({ query: '', groups: [], empty: true });
+    expect(await search(searchDb(), '   ""   ')).toMatchObject({ empty: true, groups: [] });
+  });
+
+  it('coalesces a null/undefined raw query to the empty shape', async () => {
+    // (rawQuery ?? '').trim() — a nullish query must not throw before normalisation.
+    expect(await search(searchDb(), null as unknown as string)).toMatchObject({ empty: true });
+    expect(await search(searchDb(), undefined as unknown as string)).toMatchObject({ empty: true });
+  });
+
+  it('searchMoreHref falls back to /search for an unrecognised kind', () => {
+    const href = searchMoreHref('nope' as unknown as Parameters<typeof searchMoreHref>[0], 'q');
+    expect(href.startsWith('/search?q=')).toBe(true);
+  });
+});
+
+// A search DB that reports an arbitrary свързани-лица table count and can starve one group of hits.
+// The probe statement itself names the tables, so it is filtered out of the recorded SQL before
+// asserting which hits SQL actually ran — see hitsSql below.
+const hitsSql = (fake: FakeD1) => fake.sql.filter((s) => !s.includes('sqlite_master'));
+
+const OFFICIAL_HIT = {
+  ref: 'person:ИВАН МИНЕВ',
+  title: 'Иван Минев',
+  ident: null,
+  subtitle: 'Община Русе',
+  amount: 500000,
+  entity_kind: null,
+  ownership_kind: null,
+  eik_valid: null,
+  has_conflict: 0,
+  rank: -6,
+};
+const COMPANY_HIT = {
+  ref: 'eik:111111113',
+  title: 'ТЕСТ ООД',
+  ident: '111111113',
+  subtitle: null,
+  amount: 1000,
+  entity_kind: 'company',
+  ownership_kind: null,
+  eik_valid: 1,
+  has_conflict: 1,
+  rank: -5,
+};
+
+function probeDb(tableCount: number | null, starvedKind: string | null = null): FakeD1 {
+  return fakeD1([
+    { when: 'sqlite_master', first: tableCount === null ? null : { n: tableCount } },
+    {
+      when: ['FROM search_index', 'GROUP BY kind'],
+      all: [
+        { kind: 'official', n: 2 },
+        { kind: 'company', n: 7 },
+      ],
+    },
+    {
+      when: 'FROM search_index',
+      all: (call) => {
+        const kind = String(call.binds[0]);
+        if (kind === starvedKind) return [];
+        return kind === 'official' ? [OFFICIAL_HIT] : [COMPANY_HIT];
+      },
+    },
+  ]);
+}
+
+describe('search — свързани-лица migration probe and count/hits divergence', () => {
+  it('runs the conflict-aware hits SQL only when BOTH tables are present', async () => {
+    const both = probeDb(2);
+    await search(both.db, 'тест');
+    expect(hitsSql(both).some((s) => s.includes('interest_links'))).toBe(true);
+
+    // 0003 applied but not 0006: the join would reference a table that isn't there and 500 every
+    // search, so a partial migration must read the same as no migration at all.
+    const partial = probeDb(1);
+    await search(partial.db, 'тест');
+    expect(hitsSql(partial).some((s) => s.includes('interest_links'))).toBe(false);
+  });
+
+  it('treats a probe that returns no row at all as un-migrated', async () => {
+    const none = probeDb(null);
+    await search(none.db, 'тест');
+    expect(hitsSql(none).some((s) => s.includes('interest_links'))).toBe(false);
+  });
+
+  it('keeps a group whose count is non-zero but whose hits come back empty', async () => {
+    // The count and the hits are two separate FTS reads; they can disagree (index churn between them).
+    // The group must survive with its real total and an intact „виж всички" link rather than vanish.
+    const results = await search(probeDb(2, 'company').db, 'тест');
+    const company = results.groups.find((g) => g.kind === 'company');
+    expect(company).toMatchObject({ total: 7, hits: [] });
+    expect(company!.moreHref).not.toBeNull();
+    expect(results.empty).toBe(false); // a real total, so the „нищо не е намерено" state stays off
+  });
+
+  it('does not let a hitless group out-rank a real match in the placement gate', async () => {
+    // A group with no rows has no bm25 rank at all. Reading one out of an empty result set (rather than
+    // standing it off at Infinity) would hand it the strongest possible score and sink „Свързани лица"
+    // below a group that matched nothing — the exact placement the minister's ask reverses.
+    const groups = (await search(probeDb(2, 'company').db, 'тест')).groups;
+    expect(groups[0]!.kind).toBe('official');
   });
 });

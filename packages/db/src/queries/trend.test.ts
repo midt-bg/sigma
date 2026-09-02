@@ -159,3 +159,65 @@ describe('getSpendingTrend', () => {
     expect(series.binds).toEqual(['2020-01-01', 'eik:222']);
   });
 });
+
+describe('getSpendingTrend — zero-spend prior year and empty coverage', () => {
+  it('nulls YoY against a zero prior year and reports zero coverage when nothing is dated', async () => {
+    // 2023 is fully zero-filled between the two endpoints → 2024 YoY is measured against 0 → null.
+    const custom = fakeD1([
+      {
+        when: 'GROUP BY period',
+        all: [
+          { period: '2022-01', value_eur: 1000, contracts: 10 },
+          { period: '2024-01', value_eur: 2000, contracts: 20 },
+        ],
+      },
+      { when: 'COUNT(*) AS total', first: { dated: 0, total: 0 } },
+      { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+      { when: 'FROM sector_totals', all: [] },
+    ]);
+    const { years, coverage } = await getSpendingTrend(custom.db, {});
+    const byYear = new Map(years.map((y) => [y.year, y]));
+    expect(byYear.get('2023')).toMatchObject({ valueEur: 0, yoyPct: -1 }); // (0 - 1000)/1000
+    expect(byYear.get('2024')!.yoyPct).toBeNull(); // prev year is 0 → guarded
+    expect(coverage).toEqual({ dated: 0, total: 0, pct: 0 }); // total 0 → pct 0, no divide-by-zero
+  });
+});
+
+describe('getSpendingTrend — funding scope, sectors toggle, empty inputs', () => {
+  it('scopes the series by EU funding', async () => {
+    const cap = fake();
+    await getSpendingTrend(cap.db, { funding: 'eu' });
+    expect(cap.sql.some((s) => s.includes('c.eu_funded = 1'))).toBe(true);
+  });
+
+  it('scopes the series by national funding', async () => {
+    const cap = fake();
+    await getSpendingTrend(cap.db, { funding: 'national' });
+    expect(cap.sql.some((s) => s.includes('c.eu_funded IS NULL OR c.eu_funded = 0'))).toBe(true);
+  });
+
+  it('skips the sector options when includeSectors is false', async () => {
+    const data = await getSpendingTrend(fake().db, {}, { includeSectors: false });
+    expect(data.sectors).toEqual([]);
+  });
+
+  it('resolves sector options from sector_totals when includeSectors defaults on', async () => {
+    // scopedFake() answers sector_totals with { division: '45' }; the default (includeSectors) path
+    // must resolve it to a SectorRef. Asserting the resolved code guards the true branch against a
+    // mutation that always returns [] — which the includeSectors:false case cannot detect.
+    const data = await getSpendingTrend(scopedFake().db, {});
+    expect(data.sectors.map((s) => s.code)).toEqual(['45']);
+  });
+
+  it('returns empty points and zero coverage when the series and coverage rows are absent', async () => {
+    const empty = fakeD1([
+      { when: 'GROUP BY period', all: [] }, // no series rows → the points loop is skipped
+      { when: 'COUNT(*) AS total', first: null }, // coverageRow null → dated/total fall back to 0
+      { when: 'SELECT as_of FROM home_totals', first: { as_of: null } },
+      { when: 'FROM sector_totals', all: [] },
+    ]);
+    const data = await getSpendingTrend(empty.db, {});
+    expect(data.points).toEqual([]);
+    expect(data.coverage).toEqual({ dated: 0, total: 0, pct: 0 });
+  });
+});

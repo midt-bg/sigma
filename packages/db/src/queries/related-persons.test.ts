@@ -4,6 +4,7 @@ import {
   EIK_CONTRACTS_SQL,
   LINK_CONTRACTS_SQL,
   getCompanyConflicts,
+  isMissingConflictTableError,
   getConflictLeaderboard,
   getLinkContracts,
   getOfficialConflicts,
@@ -201,6 +202,27 @@ describe('related-persons queries', () => {
     // an unknown/non-surfaced link_key yields no contracts (the SQL WHERE gate returns nothing)
     expect(await getLinkContracts(fakeDb({}), 'person:nobody|000')).toEqual([]);
   });
+
+  it('maps a null authority name to an empty string, never the literal "null"', async () => {
+    // authority is LEFT JOINed, so an unresolved body comes back NULL. The DTO must carry '' (the UI
+    // renders its own placeholder) rather than leaking a null into the rendered card.
+    const db = fakeDb({
+      // Contract reads are namespaced under `contracts:<link_key>` in the fake (see its comment).
+      'contracts:person:ivan|111': [
+        {
+          id: 'c:e:noauth',
+          signed_at: null,
+          authority: null,
+          contract_kind: null,
+          contract_number: null,
+          amount_eur: null,
+          temporal: 'after',
+        },
+      ],
+    });
+    const [c] = await getLinkContracts(db, 'person:ivan|111');
+    expect(c!.authority).toBe('');
+  });
 });
 
 // A D1 whose statements throw D1's „no such table" — the свързани-лица migration (0003) not yet applied to
@@ -208,6 +230,26 @@ describe('related-persons queries', () => {
 function throwingDb(err: Error): D1Database {
   return throwingD1(err).db;
 }
+
+describe('isMissingConflictTableError', () => {
+  it('is false for a thrown non-Error value (never matched, always propagates)', () => {
+    // D1/workerd can surface a rejection that is not an Error instance; the predicate must not try to
+    // read .message off it, and a non-Error is never treated as the benign missing-table case.
+    expect(isMissingConflictTableError('no such table: declared_interests')).toBe(false);
+    expect(isMissingConflictTableError(null)).toBe(false);
+    expect(isMissingConflictTableError({ message: 'no such table: declared_interests' })).toBe(
+      false,
+    );
+  });
+
+  it('matches only the свързани-лица tables, not an unrelated missing table', () => {
+    expect(isMissingConflictTableError(new Error('no such table: declared_interests'))).toBe(true);
+    // qualified + quoted forms the D1 message can take
+    expect(isMissingConflictTableError(new Error('no such table: main."declarations"'))).toBe(true);
+    expect(isMissingConflictTableError(new Error('no such table: bidders'))).toBe(false);
+    expect(isMissingConflictTableError(new Error('syntax error near "SELECT"'))).toBe(false);
+  });
+});
 
 describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {
   const missing = () =>
@@ -297,5 +339,23 @@ describe('an unrecognised evidence seal withholds the link instead of upgrading 
       '10': [row({ link_key: 'ok|111' }), row({ link_key: 'bad|111', evidence_kind: 'refuted' })],
     });
     expect((await getConflictLeaderboard(db, 10)).map((l) => l.linkKey)).toEqual(['ok|111']);
+  });
+});
+
+describe('registry_role is narrowed to the two rungs the card can render', () => {
+  it("maps 'manager' through as its own rung, not folded into 'owner'", async () => {
+    // The label for a manager („вписан като управител") makes a materially weaker claim than the one
+    // for an owner. Folding manager→owner would assert a stake the register never recorded.
+    const db = fakeDb({ '10': [row({ registry_role: 'manager' })] });
+    expect((await getConflictLeaderboard(db, 10))[0]!.registryRole).toBe('manager');
+  });
+
+  it('withholds any other role value rather than guessing a rung', async () => {
+    // A role the register carries but the surface has no vetted wording for ('procurator', a value from
+    // a later rules_version, or NULL on a row with no act) must render nothing, never the nearest label.
+    for (const role of ['procurator', 'board_member', '', null, undefined]) {
+      const db = fakeDb({ '10': [row({ registry_role: role })] });
+      expect((await getConflictLeaderboard(db, 10))[0]!.registryRole).toBeNull();
+    }
   });
 });
