@@ -123,6 +123,10 @@ describe('assertReadOnlySelect', () => {
       'SELECT json_group_array(name) FROM contracts',
       'SELECT hex(group_concat(description)) FROM contracts',
       'SELECT json_group_object(id, name) FROM bidders',
+      // The JSONB twins (SQLite ≥3.45, in workerd's build): same one-huge-cell class, and the bare
+      // `json_group_array` literal cannot match inside `jsonb_group_array` (review f/u).
+      'SELECT jsonb_group_array(name) FROM bidders',
+      'SELECT "jsonb_group_object"(id, name) FROM bidders',
     ]) {
       const r = assertReadOnlySelect(sql);
       expect(r.ok, sql).toBe(false);
