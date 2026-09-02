@@ -69,6 +69,10 @@ export interface VectorIndex {
 }
 
 export async function embed(ai: EmbeddingRunner, texts: string[]): Promise<number[][]> {
+  // This early return IS the adapter's contract: embeddingRunnerFor() (bindings.ts) reads an empty
+  // `data` array as a provider fault ("empty batch for a NON-empty input") and never expects to be
+  // called with zero texts. Keep it above the run() so the contract holds for EVERY caller, not just
+  // today's three (review f/u, ydimitrof) — rag.test.ts pins that the model is not called for [].
   if (texts.length === 0) return [];
   const capped = texts.map((t) => (t.length > MAX_EMBED_CHARS ? t.slice(0, MAX_EMBED_CHARS) : t));
   const { data } = await ai.run(EMBED_MODEL, { text: capped });
