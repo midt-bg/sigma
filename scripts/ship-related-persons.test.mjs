@@ -12,6 +12,8 @@ import {
   assertShippedCounts,
   readCountsWithRetry,
   readShippedCounts,
+  chunkTables,
+  READBACK_MAX_TABLES,
   sqlLiteral,
   sqlIdent,
   TABLES,
@@ -415,6 +417,254 @@ test('readShippedCounts inherits the default 4-attempt budget', () => {
   assert.equal(calls, 4);
 });
 
+// ── the readback must fit the LOCAL engine's compound-SELECT cap ────────────────────────────────────
+// The six shipped tables went out as one six-term UNION ALL. Remote D1 allows 500 terms; the local
+// runtime (workerd) allows 5 — measured: 5 answer, 6 return `too many terms in compound SELECT`. So a
+// local ship read back as „target has no answer" for every table, over data that had just shipped, and
+// the run died before the reindex. These pin the split that keeps every query under the cap.
+const SHIP_TABLES = [
+  'persons',
+  'declarations',
+  'declared_interests',
+  'interest_links',
+  'interest_link_evidence',
+  'interest_link_authorities',
+];
+const SHIP_EXPECTED = Object.fromEntries(SHIP_TABLES.map((t, i) => [t, i + 1]));
+
+test('chunkTables never emits a group wider than the cap, and loses no table', () => {
+  for (const n of [1, 4, 5, 6, 9]) {
+    const tables = SHIP_TABLES.concat(Array.from({ length: 9 }, (_, i) => `t${i}`)).slice(0, n);
+    const groups = chunkTables(tables);
+    assert.ok(
+      groups.every((g) => g.length <= READBACK_MAX_TABLES),
+      `a group exceeded ${READBACK_MAX_TABLES} for n=${n}`,
+    );
+    assert.deepEqual(groups.flat(), tables, `chunking dropped or reordered a table for n=${n}`);
+  }
+});
+
+test('readShippedCounts asks in chunks under the cap — never one six-table query', () => {
+  // The actual regression. A six-term readback is precisely what the local engine refuses.
+  const asked = [];
+  const readOnce = (group) => {
+    asked.push(group);
+    return Object.fromEntries(group.map((t) => [t, SHIP_EXPECTED[t]]));
+  };
+  const out = readShippedCounts('sigma', false, SHIP_EXPECTED, { readOnce, sleep: () => {} });
+  assert.ok(asked.length > 1, 'six tables must not be read in a single query');
+  assert.ok(
+    asked.every((g) => g.length <= READBACK_MAX_TABLES),
+    `a readback asked for more than ${READBACK_MAX_TABLES} tables at once`,
+  );
+  // Merged across chunks, the answer is still the whole picture — so the guard sees every table.
+  assert.deepEqual(out, SHIP_EXPECTED);
+  assert.deepEqual(
+    asked.flat(),
+    SHIP_TABLES,
+    'every shipped table must be asked about exactly once',
+  );
+});
+
+test('a chunk that never answers leaves ITS tables unanswered — the guard still fails closed', () => {
+  // Splitting must not soften the verdict: the tables in a dead chunk have to stay missing, so
+  // assertShippedCounts reports them rather than passing a partial ship.
+  const readOnce = (group) => {
+    if (group.includes('interest_link_evidence')) throw new Error('wrangler timeout');
+    return Object.fromEntries(group.map((t) => [t, SHIP_EXPECTED[t]]));
+  };
+  const out = readShippedCounts('sigma', false, SHIP_EXPECTED, {
+    readOnce,
+    sleep: () => {},
+    attempts: 2,
+  });
+  assert.equal(out.persons, 1, 'a healthy chunk must still report');
+  assert.ok(!('interest_link_evidence' in out), 'a dead chunk must not invent an answer');
+  assert.throws(
+    () => assertShippedCounts(SHIP_EXPECTED, out),
+    /interest_link_evidence: shipped 5, target has no answer/,
+  );
+});
+
+test('a REMOTE readback is chunked too — both engines cap compound SELECT at 5', () => {
+  // An earlier revision kept remote on one query, assuming only workerd capped compound SELECT. Measured
+  // against a staging database, the remote rejects six terms exactly like the local one — which is why
+  // the scheduled ship had been failing verification ever since the sixth table landed. Pinning this
+  // stops the „remote is different" assumption from coming back.
+  const asked = [];
+  const readOnce = (group) => {
+    asked.push(group);
+    return Object.fromEntries(group.map((t) => [t, SHIP_EXPECTED[t]]));
+  };
+  const out = readShippedCounts('sigma-stage-green', true, SHIP_EXPECTED, {
+    readOnce,
+    sleep: () => {},
+  });
+  assert.ok(
+    asked.length > 1,
+    'the remote path must split too — six terms are rejected there as well',
+  );
+  assert.ok(
+    asked.every((g) => g.length <= READBACK_MAX_TABLES),
+    `a remote readback asked for more than ${READBACK_MAX_TABLES} tables at once`,
+  );
+  assert.deepEqual(
+    asked.flat(),
+    SHIP_TABLES,
+    'every shipped table must be asked about exactly once',
+  );
+  assert.deepEqual(out, SHIP_EXPECTED);
+});
+
+test('a chunk cannot answer for a table outside its own group', () => {
+  // readCountsWithRetry checks the group but returns the reader's whole object. If a merge copied that
+  // wholesale, a reader answering beyond its group could pre-seed a count for a table whose own group
+  // later dies — and the guard would verify a table nobody actually read. Fail-closed must not depend
+  // on the reader being well-behaved.
+  const readOnce = (group) => {
+    if (group.includes('persons')) return SHIP_EXPECTED; // over-answers: every table, not just its own
+    throw new Error('wrangler timeout'); // ...and every later group dies
+  };
+  const out = readShippedCounts('sigma', false, SHIP_EXPECTED, {
+    readOnce,
+    sleep: () => {},
+    attempts: 2,
+  });
+  for (const t of SHIP_TABLES.slice(READBACK_MAX_TABLES)) {
+    assert.ok(!(t in out), `${t} was answered by another group's reader`);
+  }
+  assert.throws(() => assertShippedCounts(SHIP_EXPECTED, out), /target has no answer/);
+});
+
+test('an INHERITED count never stands in for one the target did not report', () => {
+  // The last hole in „fails closed unconditionally": both the completeness check and the merge used a
+  // bare lookup / `in`, which walk the prototype chain. With Object.prototype carrying the expected
+  // numbers, a group that exhausted to {} still „had" every count — and verification passed over a
+  // target that answered for nothing. Own properties only, in the reader, the merge AND the guard.
+  const polluted = [];
+  try {
+    for (const t of SHIP_TABLES) {
+      Object.defineProperty(Object.prototype, t, {
+        value: SHIP_EXPECTED[t],
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+      polluted.push(t);
+    }
+    const readOnce = () => {
+      throw new Error('wrangler timeout'); // every group dies; nothing is ever really read
+    };
+    const out = readShippedCounts('sigma', false, SHIP_EXPECTED, {
+      readOnce,
+      sleep: () => {},
+      attempts: 2,
+    });
+    for (const t of SHIP_TABLES) {
+      assert.ok(!Object.hasOwn(out, t), `${t} was fabricated from the prototype`);
+    }
+    assert.throws(
+      () => assertShippedCounts(SHIP_EXPECTED, out),
+      /target has no answer/,
+      'the guard must not read counts through a prototype either',
+    );
+  } finally {
+    for (const t of polluted) delete Object.prototype[t];
+  }
+});
+
+test('an INHERITED count is not a complete answer — the reader must own what it reports', () => {
+  // Covers the completeness check specifically (the test above only exercises the merge, because its
+  // reader always throws). Here the reader RETURNS an object whose counts live on the prototype: `in`
+  // and a bare lookup would call that a complete answer and hand it straight back.
+  const polluted = [];
+  try {
+    for (const t of SHIP_TABLES) {
+      Object.defineProperty(Object.prototype, t, {
+        value: SHIP_EXPECTED[t],
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+      polluted.push(t);
+    }
+    // ONE chunk's worth of tables, deliberately: with two chunks the reader is called twice anyway and
+    // a call count could not tell „retried" apart from „second group".
+    const oneChunk = Object.fromEntries(
+      SHIP_TABLES.slice(0, READBACK_MAX_TABLES).map((t) => [t, SHIP_EXPECTED[t]]),
+    );
+    let calls = 0;
+    const readOnce = () => {
+      calls += 1;
+      return {}; // owns nothing; every expected key is only inherited
+    };
+    const out = readShippedCounts('sigma', false, oneChunk, {
+      readOnce,
+      sleep: () => {},
+      attempts: 3,
+    });
+    assert.equal(calls, 3, 'an answer owning nothing must be retried to exhaustion, not accepted');
+    for (const t of Object.keys(oneChunk)) {
+      assert.ok(!Object.hasOwn(out, t), `${t} came from the prototype`);
+    }
+    assert.throws(() => assertShippedCounts(oneChunk, out), /target has no answer/);
+  } finally {
+    for (const t of polluted) delete Object.prototype[t];
+  }
+});
+
+test('a polluted prototype SETTER cannot seed counts for a chunk that never answered', () => {
+  // The accumulator itself was the last hole: `counts[t] = …` invokes an inherited setter, so writing a
+  // healthy chunk's count could define own values for tables in a chunk that later died.
+  const victim = SHIP_TABLES[SHIP_TABLES.length - 1];
+  let installed = false;
+  try {
+    Object.defineProperty(Object.prototype, SHIP_TABLES[0], {
+      configurable: true,
+      enumerable: false,
+      set(v) {
+        // A healthy write smuggles in a count for a table nobody read.
+        Object.defineProperty(this, victim, {
+          value: SHIP_EXPECTED[victim],
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        Object.defineProperty(this, SHIP_TABLES[0], {
+          value: v,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      },
+      get() {
+        return undefined;
+      },
+    });
+    installed = true;
+    const readOnce = (group) => {
+      if (group.includes(victim)) throw new Error('wrangler timeout');
+      return Object.fromEntries(group.map((t) => [t, SHIP_EXPECTED[t]]));
+    };
+    const out = readShippedCounts('sigma', false, SHIP_EXPECTED, {
+      readOnce,
+      sleep: () => {},
+      attempts: 2,
+    });
+    assert.ok(!Object.hasOwn(out, victim), `${victim} was seeded by a prototype setter`);
+    assert.throws(() => assertShippedCounts(SHIP_EXPECTED, out), /target has no answer/);
+  } finally {
+    if (installed) delete Object.prototype[SHIP_TABLES[0]];
+  }
+});
+
+test('a full six-table readback still verifies clean when every chunk answers', () => {
+  // The happy path across the split: chunking is invisible to the caller.
+  const readOnce = (group) => Object.fromEntries(group.map((t) => [t, SHIP_EXPECTED[t]]));
+  const out = readShippedCounts('sigma', false, SHIP_EXPECTED, { readOnce, sleep: () => {} });
+  assert.doesNotThrow(() => assertShippedCounts(SHIP_EXPECTED, out));
+});
+
 test('readShippedCounts short-circuits to {} when nothing was expected', () => {
   // No numeric expectations → no tables to read → no wrangler call at all.
   let calls = 0;
@@ -509,6 +759,35 @@ test('runShip verifies what landed — a short table fails the run', () => {
 test('runShip fails the run when the read-back itself could not answer', () => {
   const h = shipHarness({ readCounts: () => ({}) });
   assert.throws(() => h.run(), /no answer/);
+});
+
+test('a swallowing prototype setter cannot drop a table out of the verification', () => {
+  // The summary is what the guard compares against. It was built with `summary[table] = …`, so an
+  // inherited setter that accepts the write without defining an own property left NO entry — and
+  // Object.entries then skipped that table in both the expected set and the readback. A shipped table
+  // would simply never be verified: a pass with nothing checked, which is the worst possible „green".
+  let installed = false;
+  try {
+    Object.defineProperty(Object.prototype, 'declarations', {
+      configurable: true,
+      enumerable: false,
+      set() {
+        /* swallow: no own property is ever defined */
+      },
+      get() {
+        return undefined;
+      },
+    });
+    installed = true;
+    const h = shipHarness({ tables: ['persons', 'declarations'] });
+    const summary = h.run();
+    assert.ok(
+      Object.hasOwn(summary, 'declarations'),
+      'the shipped table vanished from the summary the guard verifies',
+    );
+  } finally {
+    if (installed) delete Object.prototype.declarations;
+  }
 });
 
 test('runShip skips a table absent from the work DB without shipping or verifying it', () => {

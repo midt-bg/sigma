@@ -73,6 +73,17 @@ export function chunkStatements(statements, maxPerRequest = MAX_STATEMENTS_PER_R
   return chunks;
 }
 
+/**
+ * Define an OWN property, never assign. `obj[k] = v` runs an inherited setter if Object.prototype
+ * carries one for that name, and a hostile or merely broken setter can then swallow the write (leaving
+ * no own entry, so `Object.entries` skips the table entirely) or define entries for keys nobody wrote.
+ * Both the ship summary and the readback merge feed the verification guard, so both must own what they
+ * record — otherwise a table can vanish from the comparison instead of failing it.
+ */
+function setOwn(obj, key, value) {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 /** Block the (synchronous) ship loop without burning CPU. */
 const sleepSync = (ms) => {
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -111,10 +122,10 @@ export function runShip({
   for (const table of tables) {
     const read = readTable(table);
     if (!read) {
-      summary[table] = 'absent (skipped)';
+      setOwn(summary, table, 'absent (skipped)');
       continue;
     }
-    summary[table] = read.rowCount;
+    setOwn(summary, table, read.rowCount);
     const chunks = chunkStatements(read.statements, maxStatements);
     chunks.forEach((chunk, i) =>
       applyPaced(chunks.length > 1 ? `${table}.${i + 1}` : table, chunk.join('')),
@@ -316,7 +327,14 @@ export function readCountsWithRetry(attempt, tables, { attempts = 4, sleep = sle
     if (i > 0) sleep(2000 * i);
     try {
       const counts = attempt();
-      if (tables.every((t) => Number.isInteger(counts[t]) && counts[t] >= 0)) return counts;
+      // Object.hasOwn, not a bare lookup: a polluted Object.prototype would otherwise let an INHERITED
+      // integer stand in for a count the target never reported.
+      if (
+        tables.every(
+          (t) => Object.hasOwn(counts, t) && Number.isInteger(counts[t]) && counts[t] >= 0,
+        )
+      )
+        return counts;
       lastErr = new Error('readback returned an incomplete answer');
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
@@ -328,40 +346,102 @@ export function readCountsWithRetry(attempt, tables, { attempts = 4, sleep = sle
   return {};
 }
 
+// How many tables one readback query may cover. The readback asks for every shipped table at once, as
+// `SELECT … UNION ALL SELECT …` — one term per table. SQLite caps the terms in a compound SELECT
+// (SQLITE_MAX_COMPOUND_SELECT); the stock limit is 500, but BOTH D1 runtimes cap it at 5. Measured on
+// each, not assumed — five terms answer, six return `too many terms in compound SELECT: SQLITE_ERROR`;
+// locally through `wrangler d1 execute --local` (workerd) and remotely against a staging database. The
+// terms need not touch a table: `SELECT 1 UNION ALL …` trips it just the same, so this is the engine's
+// limit and not a property of what we ship.
+//
+// The ship writes six tables. So the readback did not fail to READ, it failed to PARSE: wrangler
+// returned an error object, no row carried a count, and the guard reported „target has no answer" for
+// EVERY table — over data that had just shipped correctly — and the run died before the reindex behind
+// it. Exactly the false verdict #335 removed from the flaky-network path, arriving through a different
+// door: not a timeout, a query neither engine will ever accept.
+//
+// That is also why the scheduled workflow had been red at this step since the sixth table landed
+// (#309, 2026-08-14): every run after it failed here, and the 2026-08-31 run — with #335's retries in
+// place — burned all four attempts on the same rejection. A deterministic parse error does not heal
+// with backoff; only splitting the query does.
+//
+// Four leaves room under the measured 5 for a table to be added without silently re-crossing the line.
+export const READBACK_MAX_TABLES = 4;
+
+/** Split into runs of at most `size`, order preserved. Exported so the chunking itself is testable. */
+export function chunkTables(tables, size = READBACK_MAX_TABLES) {
+  const width = Number.isInteger(size) && size > 0 ? size : READBACK_MAX_TABLES;
+  const out = [];
+  for (let i = 0; i < tables.length; i += width) out.push(tables.slice(i, i + width));
+  return out;
+}
+
 // `deps` is a TEST SEAM: prod passes nothing, so `readOnce` is the live wrangler read, `sleep` falls
 // through to the helper's real `sleepSync`, and `attempts` to its default 4. Tests inject a fake reader,
 // a recording sleep, and a small budget to pin the retry WIRING — that readShippedCounts actually wraps
 // the read in readCountsWithRetry with a real backoff, and not a one-shot — without touching wrangler.
+// `readOnce` receives the group it is being asked about, so a test can answer per chunk.
 export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
     .map(([t]) => t);
   if (!tables.length) return {};
-  const sql = tables
-    .map((t) => `SELECT ${sqlLiteral(t)} AS t, COUNT(*) AS n FROM ${sqlIdent(t)}`)
-    .join(' UNION ALL ');
-  const readOnce =
-    deps.readOnce ??
-    (() => {
-      const out = execFileSync(
-        'wrangler',
-        ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
-        { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
-      );
-      // `wrangler d1 execute --json` writes its notices („▲ [WARNING] Processing wrangler.jsonc") to
-      // STDERR and leaves stdout as clean JSON, and execFileSync returns stdout alone, so slicing from
-      // the first '[' is safe today. The scan survives a future release that changes that, at one failed
-      // parse if it does.
-      const parsed = parseWranglerJson(out);
-      const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
-      // Only a non-negative integer counts as an answer. `Number(null)` is 0, which would let a
-      // null-valued cell pass for „the table is empty"; anything non-numeric lands as NaN so the retry
-      // treats it as an incomplete answer and assertShippedCounts fails closed if it is the final one.
-      return Object.fromEntries(rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]));
+  const counts = {};
+  // BOTH targets split. An earlier revision kept the remote path on a single query, on the assumption
+  // that only workerd capped compound SELECT — measuring the remote showed the same cap of 5, which is
+  // precisely why the scheduled ship had been failing verification since the sixth table. The split
+  // costs the remote path one extra invocation and gives up a single-snapshot read; nothing writes to
+  // these tables during verification (the ship itself is the only writer, and the workflow serialises
+  // its runs), and a verification that cannot execute is worth less than one that reads in two parts.
+  const groups = chunkTables(tables);
+  // Each chunk retries on its own. A chunk that exhausts contributes nothing, so its tables are simply
+  // absent from the merged answer — which assertShippedCounts still reads as „no answer" and fails
+  // closed on. Splitting widens no hole: a partial ship is caught by the counts, not by the batching.
+  for (const group of groups) {
+    const sql = group
+      .map((t) => `SELECT ${sqlLiteral(t)} AS t, COUNT(*) AS n FROM ${sqlIdent(t)}`)
+      .join(' UNION ALL ');
+    const readOnce = deps.readOnce
+      ? () => deps.readOnce(group)
+      : () => {
+          const out = execFileSync(
+            'wrangler',
+            ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--json', '--command', sql],
+            { cwd: resolve('apps/web'), encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+          );
+          // `wrangler d1 execute --json` writes its notices („▲ [WARNING] Processing wrangler.jsonc") to
+          // STDERR and leaves stdout as clean JSON, and execFileSync returns stdout alone, so slicing
+          // from the first '[' is safe today. The scan survives a future release that changes that, at
+          // one failed parse if it does.
+          const parsed = parseWranglerJson(out);
+          const rows = (Array.isArray(parsed) ? parsed[0]?.results : parsed?.results) ?? [];
+          // Only a non-negative integer counts as an answer. `Number(null)` is 0, which would let a
+          // null-valued cell pass for „the table is empty"; anything non-numeric lands as NaN so the
+          // retry treats it as an incomplete answer and assertShippedCounts fails closed if it is final.
+          return Object.fromEntries(
+            rows.map((r) => [r.t, typeof r.n === 'number' ? r.n : Number.NaN]),
+          );
+        };
+    // Pass `sleep`/`attempts` through only when a test overrides them; undefined lets the helper
+    // defaults (the real sleepSync, 4 attempts) apply — so production always gets the backoff.
+    const answer = readCountsWithRetry(readOnce, group, {
+      sleep: deps.sleep,
+      attempts: deps.attempts,
     });
-  // Pass `sleep`/`attempts` through only when a test overrides them; undefined lets the helper defaults
-  // (the real sleepSync, 4 attempts) apply — so production always gets the backoff.
-  return readCountsWithRetry(readOnce, tables, { sleep: deps.sleep, attempts: deps.attempts });
+    // Take ONLY what this group was asked about. readCountsWithRetry validates the group's tables but
+    // hands back whatever the reader returned, so a reader answering beyond its group (a malformed
+    // response, an injected one) could seed a count for a table whose OWN group later dies — and the
+    // guard would then verify a table nobody successfully read. Fail-closed has to hold unconditionally,
+    // not just for well-behaved readers.
+    // defineProperty, not assignment: `counts[t] = …` runs a SETTER if Object.prototype carries one for
+    // that name, and a polluted setter could define own counts for tables no chunk ever read. Reading is
+    // already own-only (Object.hasOwn); writing has to be too, or the accumulator itself is the hole.
+    for (const t of group) {
+      if (!Object.hasOwn(answer, t)) continue;
+      setOwn(counts, t, answer[t]);
+    }
+  }
+  return counts;
 }
 
 function resolveD1Id(d1Name) {
@@ -390,7 +470,13 @@ function resolveD1Id(d1Name) {
 export function assertShippedCounts(expected, actual) {
   const drift = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
-    .map(([table, n]) => ({ table, expected: n, actual: actual[table] }))
+    // Object.hasOwn: a table the readback never answered for must read as „no answer" even if a
+    // polluted Object.prototype would happily hand back a plausible integer.
+    .map(([table, n]) => ({
+      table,
+      expected: n,
+      actual: Object.hasOwn(actual, table) ? actual[table] : undefined,
+    }))
     .filter(({ expected: e, actual: a }) => a !== e);
   if (drift.length)
     throw new Error(
@@ -526,10 +612,10 @@ function main() {
       for (const table of TABLES) {
         const read = readTable(table);
         if (!read) {
-          summary[table] = 'absent (skipped)';
+          setOwn(summary, table, 'absent (skipped)');
           continue;
         }
-        summary[table] = read.rowCount;
+        setOwn(summary, table, read.rowCount);
         writeFileSync(resolve(emit, `${table}.sql`), read.statements.join(''));
       }
     } else {

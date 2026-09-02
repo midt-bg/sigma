@@ -43,6 +43,31 @@ overrides:
   #                 only, via vite/vitest — never ships to the Worker.
   nanoid: '^3.3.17'
 
+  #   browserslist <4.28.7 — two HIGH advisories (GHSA-73wf-gq98-2v4g, GHSA-c83g-rgw3-j3cx, CVSS 7.5),
+  #                 via @babel/helper-compilation-targets → build-time only, never ships to the
+  #                 Worker. The range (^4.24.0) already admitted the fix; the lockfile had not moved,
+  #                 so the audit gate went red on main (2026-09-02). The pin is the floor.
+  browserslist: '^4.28.7'
+# One version for the deps declared in more than one workspace. Referenced as "catalog:" from each
+# package.json, so a workspace cannot drift from the others without editing THIS file (review ydimitrof,
+# #339 series): before this, typescript 5.9/6.0, @types/node 22/25 and wrangler 4.75/4.93 coexisted.
+catalog:
+  # ≥4.123 is what opens the LOCAL D1 (4.93.1 fails on `_cf_ALARM has 3 columns but 2 values` — its
+  # workerd predates the state format). Every 4.12x wrangler ships a miniflare 5 *alpha* as its own
+  # dependency; that is Cloudflare's pin, not ours, and the same alpha line has run the local pipeline
+  # since 4.123.0. @cloudflare/vite-plugin moves with it (^1.54.3, peer `wrangler ^4.128.0`): 1.37 called
+  # unstable_getWorkerNameFromProject (removed in 4.103) and the old unstable_printBindings signature
+  # (changed in 4.128) — deploy/typecheck never hit them, Vite's `b` shortcut did. The bump also drops the
+  # duplicate miniflare 4 the old plugin carried. wrangler 4.128 lists @cloudflare/workers-types ^5 as an
+  # OPTIONAL peer; the repo's 4.x is not a supported peer but only wrangler's exported declarations import
+  # it — CLI use and `wrangler types --check` are unaffected. workers-types 5 is a major, deferred past the
+  # release; revisit with it.
+  'wrangler': '^4.128.0'
+  # matches the one Node runtime (build/node-24); 22 (web) and 25 (root) both drop out of the lockfile
+  '@types/node': '^24.0.0'
+  # root already; apps/web sat on 5.9 only because two scaffold commits picked different versions
+  'typescript': '^6.0.3'
+
 onlyBuiltDependencies:
   - esbuild
   - workerd

@@ -206,14 +206,76 @@ function latestLoadedDate() {
   return fallback[0]?.max_loaded_date ?? null;
 }
 
+/**
+ * Does the served surface already hold an EOP/OCDS corpus? A COUNT, deliberately — never a date. It
+ * exists only to tell „first run" apart from „a derive was interrupted"; see the refusal below for why
+ * the same table must not be used to derive a watermark. Scoped to the two id namespaces so a seeded or
+ * hand-imported row cannot make an empty database look populated.
+ */
+function servedCorpusRows() {
+  const rows = safeD1(`
+    SELECT COUNT(*) AS n
+    FROM contracts
+    WHERE id LIKE 'c:e:%' OR id LIKE 'c:o:%'
+  `);
+  return Number(rows[0]?.n ?? 0);
+}
+
 function resolveCatchupPlan() {
+  const rawFrom = arg('from');
   const today = String(arg('today') || todayUtc());
   const lookbackDays = Number(arg('lookback-days') || DEFAULT_LOOKBACK_DAYS);
   const maxLoadedDate = latestLoadedDate();
   if (!maxLoadedDate) {
-    const from = String(arg('from') || DEFAULT_FROM);
+    // No watermark. That reads as „nothing is loaded" — and for a first run it IS, so the full backfill
+    // below is right. But the two witnesses latestLoadedDate consults are both transient, and they can
+    // fall silent together for a completely different reason:
+    //   • raw_contracts is the transient staging, torn down in a finally after every load;
+    //   • refresh-slice.sql NULLs data_freshness.as_of in its FIRST batch (`setup`, so a half-refreshed
+    //     surface never advertises freshness) and rewrites it only in `globals`, eighteen batches later.
+    //     Every batch is its own atomic statement group, so ANY failure in between leaves as_of NULL.
+    // So an INTERRUPTED derive is indistinguishable from a cold start by watermark alone, and the
+    // consequences differ sharply: a cold start wants the whole feed, while an interrupted derive over a
+    // populated surface would silently re-derive from DEFAULT_FROM — a 2020→today rebuild opening with
+    // DELETE FROM contracts on the live path, and on the --work-db path a narrow tail window that ships
+    // wholesale over the served tables. Neither is what an interrupted run asked for.
+    //
+    // The served corpus tells the two apart, used ONLY as a yes/no — never as a date. It deliberately
+    // does not become a third watermark: `contracts` carries publication dates, not the bucket days the
+    // window is computed from (the served schema has no `source` column at all), and a publication date
+    // that runs ahead of its bucket would move the window PAST buckets that were never loaded — silently
+    // skipping them, which is worse than any rebuild. So: rows but no watermark ⇒ refuse and say why.
+    // An operator who knows how far the interrupted run got states it with --from --derive=slice.
+    // `--from` with no value parses as `true`, which is not a window (review lyubomir-bozhinov, #337).
+    // Treated as present, it skipped this refusal and produced from="true", so the operator got
+    // validateDay's cryptic „windowFrom must be YYYY-MM-DD" instead of the message that explains what
+    // actually happened. Fail-closed either way, but only one of the two tells them what to do.
+    const explicitFrom = typeof rawFrom === 'string' ? rawFrom : null;
+    if (!explicitFrom && servedCorpusRows() > 0) {
+      throw new Error(
+        'catch-up cannot plan: no load watermark, but the served surface is not empty.\n' +
+          '  Both witnesses are transient and empty right now — raw_contracts (torn down after each\n' +
+          '  load) and data_freshness.as_of (NULLed by refresh-slice.sql until its final batches). That\n' +
+          '  is what an INTERRUPTED derive looks like, and it is indistinguishable here from a first run.\n' +
+          '  Refusing rather than guessing: planning from the default start would re-derive the whole\n' +
+          '  feed over a populated surface.\n' +
+          '  Fix, in order of preference:\n' +
+          '    1. Re-run the interrupted derive to completion — it rewrites the watermark.\n' +
+          '    2. State the tail explicitly: --from=YYYY-MM-DD --derive=slice (a narrow window MUST be\n' +
+          '       a slice; a full derive rebuilds from staging and would drop everything older).\n' +
+          '    3. --derive=full only with a window that reaches the start of the feed.',
+      );
+    }
+    const from = String(explicitFrom || DEFAULT_FROM);
     const to = String(arg('to') || today);
-    return { from, to, maxLoadedDate, gapDays: daysInWindow(from, to), derive: 'full' };
+    // Honour an explicit --derive here too. This branch defaults to `full` because its default window
+    // starts at the feed's beginning — but the refusal above sends an operator here WITH a --from, and a
+    // narrow window forced to a full derive is exactly the combination assertDeriveWindowSafe refuses.
+    // Hardcoding `full` made the advertised recovery unusable: the plan printed fine and the live run
+    // then refused it. So the recovery `--from=… --derive=slice` has to reach the dispatcher intact.
+    const requestedDerive = arg('derive');
+    const derive = requestedDerive && requestedDerive !== true ? String(requestedDerive) : 'full';
+    return { from, to, maxLoadedDate, gapDays: daysInWindow(from, to), derive };
   }
   const window = computeCatchupWindow({ maxLoadedDate, today, lookbackDays });
   const from = String(arg('from') || window.from);
@@ -336,6 +398,36 @@ async function runWorkBackfill() {
     rawWorkDb === true
       ? resolve(root, 'data/work/backfill.sqlite')
       : resolve(root, String(rawWorkDb));
+  // Resolve the plan BEFORE touching anything. Both the catch-up refusal below and the one inside
+  // resolveCatchupPlan are „do not proceed" verdicts, and proceeding far enough to delete the caller's
+  // existing work DB and re-apply the migrations before announcing one is its own small act of damage.
+  const plan = catchup ? resolveCatchupPlan() : null;
+  if (plan) {
+    console.log(
+      `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`,
+    );
+    // This path builds a FRESH work DB from the window and then ships it wholesale, so it always behaves
+    // as a full derive no matter what the plan says — the line above prints a `derive` it does not act
+    // on. That is survivable for a window reaching the start of the feed, and destructive for a tail:
+    // everything outside it would be replaced by the tail. The refusal in resolveCatchupPlan recommends
+    // exactly such a tail (`--from=… --derive=slice`), which is right for the live path and wrong here —
+    // so refuse the contradiction loudly rather than silently ignoring the slice.
+    // ALLOWLIST, not a denylist (review ydimitrof, #337). `!== 'full'` rather than `=== 'slice'`:
+    // validateDeriveMode runs on the live path only — this function never reaches it — so an
+    // unrecognised --derive would sail past a slice-only check and straight into the wholesale ship
+    // below. „Anything I do not positively recognise" is the only safe default when the failure mode is
+    // silent replacement of the served corpus.
+    if (plan.derive !== 'full') {
+      throw new Error(
+        `--work-db catch-up can only run a full derive (got --derive=${plan.derive}): it rebuilds a\n` +
+          `  fresh work DB from the window (${plan.from}..${plan.to}) and ships it WHOLESALE, so anything\n` +
+          `  outside the window would be dropped from the served surface.\n` +
+          `  Either run the slice against the live database (without --work-db), or widen the window to\n` +
+          `  the start of the feed and state --derive=full.`,
+      );
+    }
+  }
+
   const workDir = dirname(workDb);
   mkdirSync(workDir, { recursive: true });
   if (existsSync(workDb)) rmSync(workDb, { force: true });
@@ -348,14 +440,7 @@ async function runWorkBackfill() {
   for (const migration of migrations) sqliteFile(workDb, resolve(migrationsDir, migration));
   sqliteFile(workDb, resolve(root, 'scripts/work-staging-schema.sql'));
 
-  let loadFlags = explicitRangeFlags();
-  if (catchup) {
-    const plan = resolveCatchupPlan();
-    loadFlags = rangeFlags(plan.from, plan.to);
-    console.log(
-      `==> catchup window ${plan.from}..${plan.to} (${plan.gapDays} days, latest=${plan.maxLoadedDate || 'none'}, derive=${plan.derive})`,
-    );
-  }
+  const loadFlags = plan ? rangeFlags(plan.from, plan.to) : explicitRangeFlags();
 
   // Derive intermediate-SQL filenames from the work-DB basename so two backfills sharing a work
   // directory (e.g. a convergence harness running full + windowed loads side by side) never clobber

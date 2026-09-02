@@ -21,6 +21,7 @@ import {
   MAX_BATCH_ROWS,
   MAX_STATEMENTS_PER_REQUEST,
   PACE_MS,
+  READBACK_MAX_TABLES,
   TABLES,
 } from './ship-related-persons.mjs';
 
@@ -250,16 +251,35 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
     Array.from({ length: nums.length }, (_, i) => i + 1),
   );
 
-  // The read-back must be the LAST thing the run does, and must count each table from that table.
-  const last = calls.at(-1);
-  assert.ok(last.argv.includes('--command'), 'the read-back must come after the inserts');
-  const sql = last.argv[last.argv.indexOf('--command') + 1];
+  // The read-back must be the LAST thing the run does, and must count each table from that table. It is
+  // no longer ONE query: against a local target the counts are split into chunks, because workerd caps a
+  // compound SELECT at 5 terms and the ship writes six tables. So the tail of the call list is one or
+  // more count queries, and it is their UNION that has to cover every table.
+  const readback = [];
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const ci = calls[i].argv.indexOf('--command');
+    if (ci === -1) break;
+    const q = calls[i].argv[ci + 1];
+    if (!/COUNT\(\*\) AS n FROM/.test(q)) break;
+    readback.unshift(q);
+  }
+  assert.ok(readback.length > 0, 'the read-back must come after the inserts');
+  const sql = readback.join('\n');
   for (const table of TABLES)
     assert.match(
       sql,
       new RegExp(`COUNT\\(\\*\\) AS n FROM "${table}"`),
       `${table} not really counted`,
     );
+  // …and no single query may cross the local engine's cap, which is the whole point of the split: one
+  // over-wide query comes back as an error object, and every table then reads as „no answer".
+  for (const q of readback) {
+    const terms = (q.match(/COUNT\(\*\) AS n FROM/g) ?? []).length;
+    assert.ok(
+      terms <= READBACK_MAX_TABLES,
+      `a read-back query counted ${terms} tables — over the ${READBACK_MAX_TABLES}-table cap`,
+    );
+  }
 });
 
 test('a request that never landed fails the run', (t) => {
