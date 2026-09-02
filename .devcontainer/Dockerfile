@@ -1,10 +1,10 @@
-# Digest-pinned to the 22-bookworm multi-arch index resolved on 2026-06-16.
+# Digest-pinned to the 24-bookworm multi-arch index resolved on 2026-09-02.
 # The tag is kept for readability; the @sha256 is what actually pins the image.
 # Re-resolve with: curl -fsSL -D - -o /dev/null \
 #   -H 'Accept: application/vnd.oci.image.index.v1+json' \
-#   https://mcr.microsoft.com/v2/devcontainers/typescript-node/manifests/22-bookworm \
+#   https://mcr.microsoft.com/v2/devcontainers/typescript-node/manifests/24-bookworm \
 #   | grep -i docker-content-digest
-FROM mcr.microsoft.com/devcontainers/typescript-node:22-bookworm@sha256:59e8c044af4ed4795967188c3d0b9bc677f42d42b0ff41f98c8be5333defeb64
+FROM mcr.microsoft.com/devcontainers/typescript-node:24-bookworm@sha256:3c84ba4842b181e699f9494842dbf737a3c96cc3a6028dd83f9a9d9b6f059d1a
 
 ARG WRANGLER_VERSION=4
 # uv installer is fetched from a version-pinned path (astral.sh/uv/<ver>/install.sh),

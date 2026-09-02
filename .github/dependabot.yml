@@ -1,8 +1,22 @@
-# Keeps the SHA-pinned GitHub Actions in .github/workflows/ fresh. Dependabot rewrites the pinned
-# commit SHA and updates the trailing `# vX.Y.Z` comment, so we keep the supply-chain safety of
-# pinning without the pins silently going stale. Scoped to github-actions only — the npm/pnpm
-# dependency surface is handled separately (and the security-sensitive @babel/core pin is a manual
-# override in pnpm-workspace.yaml).
+# Two surfaces, one file.
+#
+# GitHub Actions: keeps the SHA-pinned actions in .github/workflows/ fresh. Dependabot rewrites the
+# pinned commit SHA and updates the trailing `# vX.Y.Z` comment, so we keep the supply-chain safety of
+# pinning without the pins silently going stale.
+#
+# npm/pnpm: until 2026-09-02 this surface had NO automation, and advisories reached us only when the
+# Dependency audit step turned main red (browserslist, that day). Weekly minor+patch bumps arrive as
+# ONE grouped PR. Majors are NOT grouped: each comes as its own PR — but only while no grouped
+# minor/patch PR is open for that dependency, because Dependabot marks a grouped PR's members as
+# handled before it looks at ungrouped updates (dependabot/dependabot-core#14202). Merging (or
+# closing) the weekly PR promptly is what keeps majors flowing; a second group would not fix this,
+# it would just batch the majors and add the reverse suppression. The majors listed under `ignore`
+# are deferred past the release (each is a migration with its own risk) and are SUPPRESSED, not
+# surfaced — delete an entry to see it again. Security updates are not configured here: GitHub raises
+# them on its own once enabled for the repo, and the Dependency audit step (osv-scanner) fails CI on a
+# real advisory regardless of Dependabot. The security-sensitive pins (browserslist, undici, …) are
+# overrides in pnpm-workspace.yaml, maintained by hand: a pnpm override is a REPLACEMENT of every
+# resolution, not a floor, so a Dependabot PR that needs a newer one must lift the override with it.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -16,4 +30,40 @@ updates:
           - '*'
     commit-message:
       prefix: ci
+      include: scope
+
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Sofia
+    open-pull-requests-limit: 5
+    groups:
+      # minor + patch in one weekly PR — one CI run, one review, instead of ten small ones. Majors stay
+      # ungrouped on purpose (see the header for the #14202 caveat).
+      minor-and-patch:
+        update-types: [minor, patch]
+    # majors deferred past the release (see the header) — suppressed until an entry is removed
+    ignore:
+      - dependency-name: react-router
+        update-types: [version-update:semver-major]
+      - dependency-name: '@react-router/*'
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: '@ai-sdk/*'
+        update-types: [version-update:semver-major]
+      - dependency-name: ai
+        update-types: [version-update:semver-major]
+      - dependency-name: '@cloudflare/workers-types'
+        update-types: [version-update:semver-major]
+      # jsdom 30 needs undici ^8.9, while pnpm-workspace.yaml overrides undici to ^7.29 — and a pnpm
+      # override is a REPLACEMENT, not a floor, so that PR would install an unsupported graph. Lift both
+      # together, not one at a time.
+      - dependency-name: jsdom
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: build
       include: scope
