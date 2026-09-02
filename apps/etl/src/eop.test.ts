@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { computeWorkerCatchupPlan, listBucketForDay, stageBaseFromBucket } from './eop';
 
 /**
@@ -25,19 +26,15 @@ function openBodyResponse(init: ResponseInit & { url?: string }): {
 }
 
 function fakeDbFromFreshness(maxLoadedDate: string): D1Database {
-  const db = {
-    prepare(sql: string) {
-      if (sql.includes('raw_contracts')) {
+  return fakeD1([
+    {
+      when: 'raw_contracts',
+      first: () => {
         throw new Error('raw staging should not be read for planning');
-      }
-      return {
-        async first() {
-          return { max_loaded_date: maxLoadedDate };
-        },
-      };
+      },
     },
-  };
-  return db as unknown as D1Database;
+    { when: [], first: { max_loaded_date: maxLoadedDate } },
+  ]).db;
 }
 
 describe('computeWorkerCatchupPlan', () => {
@@ -120,7 +117,7 @@ describe('EOP responses the ingest walks away from', () => {
 
     await expect(
       stageBaseFromBucket(
-        {} as D1Database,
+        fakeD1([]).db,
         {
           day: '2026-06-01',
           bucketUrl: 'https://storage.eop.bg/open-data-2026-06-01/',
@@ -157,7 +154,7 @@ describe('EOP responses the ingest walks away from', () => {
 
     await expect(
       stageBaseFromBucket(
-        {} as D1Database,
+        fakeD1([]).db,
         {
           day: '2026-06-01',
           bucketUrl: 'https://storage.eop.bg/open-data-2026-06-01/',

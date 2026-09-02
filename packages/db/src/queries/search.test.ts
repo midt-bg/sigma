@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import {
   MAX_QUERY_CHARS,
   MAX_QUERY_TOKENS,
@@ -85,40 +86,29 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
     rank: -4 + i * 0.1,
   }));
 
-  return {
-    prepare(sql: string) {
-      let bound: unknown[] = [];
-      return {
-        bind(...args: unknown[]) {
-          bound = args;
-          return this;
-        },
-        async first<T>() {
-          // The свързани-лица table probe drives which hits SQL search() runs. Report present/absent per the
-          // fixture flag so both the with-conflict path and the un-migrated fallback are exercisable.
-          if (sql.includes('sqlite_master')) return (hasConflictTable ? { n: 1 } : null) as T;
-          return null as T;
-        },
-        async all<T>() {
-          if (sql.includes('COUNT(*) AS n')) {
-            return {
-              results: [
-                { kind: 'official', n: 2 },
-                { kind: 'company', n: 7 },
-                { kind: 'contract', n: 6 },
-              ] as T[],
-            };
-          }
+  const byKind: Record<string, object[]> = {
+    official: officialRows,
+    company: companyRows,
+    contract: contractRows,
+  };
 
-          const kind = bound[0];
-          if (kind === 'official') return { results: officialRows as T[] };
-          if (kind === 'company') return { results: companyRows as T[] };
-          if (kind === 'contract') return { results: contractRows as T[] };
-          return { results: [] as T[] };
-        },
-      };
+  return fakeD1([
+    // The свързани-лица table probe drives which hits SQL search() runs. Report present/absent per the
+    // fixture flag so both the with-conflict path and the un-migrated fallback are exercisable.
+    { when: 'sqlite_master', first: hasConflictTable ? { n: 1 } : null },
+    // Per-kind counts, before the hits route below: both read search_index, and only GROUP BY kind
+    // tells them apart.
+    {
+      when: ['FROM search_index', 'GROUP BY kind'],
+      all: [
+        { kind: 'official', n: 2 },
+        { kind: 'company', n: 7 },
+        { kind: 'contract', n: 6 },
+      ],
     },
-  } as D1Database;
+    // The hits query, one execution per kind — which kind is in the first bound argument.
+    { when: 'FROM search_index', all: (call) => byKind[String(call.binds[0])] ?? [] },
+  ]).db;
 }
 
 describe('search helpers', () => {

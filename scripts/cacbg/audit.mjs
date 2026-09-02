@@ -258,11 +258,13 @@ if (priorPublished === null) {
   // "removed" alone would flatten a court annulment, a corrected parse and a rules bump into one line.
   for (const p of declared) {
     const ground =
-      p.rules_version !== RULES_VERSION
-        ? `a rules change (${p.rules_version} → ${RULES_VERSION})`
-        : statusNow.get(p.link_key) === 'suppressed'
-          ? 'a suppression (ADR-0031 takedown path)'
-          : 'an acknowledged input correction';
+      p.rules_version == null
+        ? `the pre-evidence regime — predates §8 and #309, now under ${RULES_VERSION}`
+        : p.rules_version !== RULES_VERSION
+          ? `a rules change (${p.rules_version} → ${RULES_VERSION})`
+          : statusNow.get(p.link_key) === 'suppressed'
+            ? 'a suppression (ADR-0031 takedown path)'
+            : 'an acknowledged input correction';
     console.log(`  - ${p.link_key} removed under ${ground}`);
   }
   if (declared.length) console.log('');

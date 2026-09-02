@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "@sigma/ingest": "workspace:*"
+  },
+  "devDependencies": {
+    "@sigma/test-support": "workspace:*"
   }
 }

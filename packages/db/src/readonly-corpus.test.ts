@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import {
   contractSitemapPages,
   getAuthority,
@@ -39,36 +40,12 @@ import { isReadOnlySql } from './readonly-sql';
 // irrelevant here (each loader's own unit test covers results), and the SQL is already captured at
 // prepare() time, so we swallow those rejections and assert only on the captured SQL.
 function capturingDb(): { db: D1Database; captured: string[] } {
-  const captured: string[] = [];
+  // Every loader reads; none of them care what comes back here. A route that constrains nothing
+  // answers them all, and the zero proxy keeps arithmetic on a "row" from throwing before the next
+  // statement is reached.
   const zero = new Proxy({}, { get: () => 0 });
-  const stmt = {
-    bind() {
-      return stmt;
-    },
-    async all() {
-      return { results: [], success: true, meta: {} };
-    },
-    async first() {
-      return zero;
-    },
-    async raw() {
-      return [];
-    },
-    async run() {
-      return { results: [], success: true, meta: {} };
-    },
-  };
-  const db = {
-    prepare(sql: string) {
-      captured.push(sql);
-      return stmt;
-    },
-    async exec(sql: string) {
-      captured.push(sql);
-      return { count: 0, duration: 0 };
-    },
-  } as unknown as D1Database;
-  return { db, captured };
+  const { db, sql } = fakeD1([{ when: [], all: [], first: zero }]);
+  return { db, captured: sql };
 }
 
 const swallow = (p: Promise<unknown>): Promise<unknown> => p.catch(() => undefined);

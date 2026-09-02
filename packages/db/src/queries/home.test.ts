@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getHomeData } from './home';
 
 const authorityRow = {
@@ -61,39 +62,22 @@ const totalsRow = {
   refreshed_at: '2024-06-02T10:00:00Z',
 };
 
-function fakeDb(totals: typeof totalsRow | null, capture?: string[]): D1Database {
-  return {
-    prepare(sql: string) {
-      capture?.push(sql);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          if (sql.includes('company_totals')) return { results: [companyRow] as T[] };
-          if (sql.includes("type_group = 'община'")) return { results: [authorityRow] as T[] };
-          if (sql.includes('type_group IN')) return { results: [authorityRow] as T[] };
-          // listSingleOfferContracts (two calls: 'recent' by date, 'value' by amount)
-          if (sql.includes('bids_received = 1') && sql.includes('JOIN')) {
-            return { results: [contractRow] as T[] };
-          }
-          return { results: [] as T[] };
-        },
-        async first<T>() {
-          if (sql.includes('home_totals')) return (totals as T) ?? (null as T);
-          // single-offer aggregate
-          if (sql.includes('COALESCE(SUM(amount_eur)'))
-            return { value_eur: 50000, contracts: 1 } as T;
-          return null as T;
-        },
-      };
-    },
-  } as D1Database;
+function fake(totals: typeof totalsRow | null): FakeD1 {
+  return fakeD1([
+    { when: 'home_totals', first: totals },
+    { when: 'company_totals', all: [companyRow] },
+    { when: "type_group = 'община'", all: [authorityRow] },
+    { when: 'type_group IN', all: [authorityRow] },
+    // listSingleOfferContracts (two calls: 'recent' by date, 'value' by amount)
+    { when: ['bids_received = 1', 'JOIN'], all: [contractRow] },
+    // the single-offer aggregate, which reads the same table without a join
+    { when: 'COALESCE(SUM(amount_eur)', first: { value_eur: 50000, contracts: 1 } },
+  ]);
 }
 
 describe('getHomeData', () => {
   it('returns zero-value fallback totals when home_totals has no row', async () => {
-    const data = await getHomeData(fakeDb(null));
+    const data = await getHomeData(fake(null).db);
 
     expect(data.totals.contracts).toBe(0);
     expect(data.totals.valueEur).toBe(0);
@@ -102,7 +86,7 @@ describe('getHomeData', () => {
   });
 
   it('maps home_totals row to HomeData.totals', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fake(totalsRow).db);
 
     expect(data.totals.contracts).toBe(500);
     expect(data.totals.valueEur).toBe(1000000);
@@ -111,7 +95,7 @@ describe('getHomeData', () => {
   });
 
   it('includes top companies, ministries, and municipalities', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fake(totalsRow).db);
 
     expect(data.topCompanies).toHaveLength(1);
     expect(data.topCompanies[0]!.slug).toBe('103267194');
@@ -123,23 +107,23 @@ describe('getHomeData', () => {
   });
 
   it('excludes the unknown identity bucket from top companies', async () => {
-    const sql: string[] = [];
-    await getHomeData(fakeDb(totalsRow, sql));
+    const home = fake(totalsRow);
+    await getHomeData(home.db);
 
-    expect(sql.find((query) => query.includes('FROM company_totals'))).toContain(
+    expect(home.sql.find((query) => query.includes('FROM company_totals'))).toContain(
       "WHERE kind <> 'unknown'",
     );
   });
 
   it('includes single-offer contract lists', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fake(totalsRow).db);
 
     expect(Array.isArray(data.recentSingleOffer)).toBe(true);
     expect(Array.isArray(data.topSingleOffer)).toBe(true);
   });
 
   it('includes single-offer aggregate stats', async () => {
-    const data = await getHomeData(fakeDb(totalsRow));
+    const data = await getHomeData(fake(totalsRow).db);
 
     expect(data.singleOffer.contracts).toBe(1);
     expect(data.singleOffer.valueEur).toBe(50000);

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, throwingD1, type FakeD1Call } from '@sigma/test-support';
 import {
+  EIK_CONTRACTS_SQL,
+  LINK_CONTRACTS_SQL,
   getCompanyConflicts,
   getConflictLeaderboard,
   getLinkContracts,
@@ -45,24 +48,29 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 // Minimal D1 stand-in: all() returns the rows registered for the FIRST bound value (the scope key).
-function fakeDb(byKey: Record<string, unknown[]>): D1Database {
-  return {
-    prepare() {
-      let key = '';
-      return {
-        bind(...p: unknown[]) {
-          key = String(p[0]);
-          return this;
-        },
-        async all() {
-          return { results: byKey[key] ?? [] };
-        },
-        async first() {
-          return null;
-        },
-      };
-    },
-  } as unknown as D1Database;
+// Exposes the shared double's own call log on `.calls` so a test can assert how many reads a load
+// issued (e.g. ЕИК dedup) — the log already carries the SQL and the binds this used to project.
+function fakeDb(byKey: Record<string, unknown[]>): D1Database & { calls: FakeD1Call[] } {
+  // A contract read (by ЕИК or link_key) can bind the SAME value a scope query already used (a company
+  // page binds the ЕИК for both COMPANY_SQL and EIK_CONTRACTS_SQL), so contract reads are STRICTLY
+  // namespaced under a `contracts:` key — never falling back to the scope rows (which would map link rows
+  // as contracts). A scope query with no contract rows registered simply reads an empty contract set.
+  const contracts =
+    (sql: string) =>
+    (call: { sql: string; binds: unknown[] }): unknown[] => {
+      // Markers match by substring; the double this replaced dispatched on `sql === EIK_CONTRACTS_SQL`,
+      // so the equality it asserted belongs inside the route rather than being widened by the move.
+      expect(call.sql).toBe(sql);
+      return byKey[`contracts:${String(call.binds[0])}`] ?? [];
+    };
+  const fake = fakeD1([
+    { when: EIK_CONTRACTS_SQL, all: contracts(EIK_CONTRACTS_SQL) },
+    { when: LINK_CONTRACTS_SQL, all: contracts(LINK_CONTRACTS_SQL) },
+    { when: 'FROM interest_links il', all: (call) => byKey[String(call.binds[0])] ?? [] },
+  ]);
+  // Object.assign, not a cast: `calls` is the live array the double already keeps, so the handle
+  // types as the intersection without anyone having to assert it is a D1Database.
+  return Object.assign(fake.db, { calls: fake.calls });
 }
 
 describe('related-persons queries', () => {
@@ -114,9 +122,66 @@ describe('related-persons queries', () => {
     expect(await getCompanyConflicts(fakeDb({}), '999')).toBeNull();
   });
 
-  it('link contracts map the raw id to a URL slug and pass the temporal mark through', async () => {
+  // #287 + niki #312 HIGH 2: the detail loaders batch each link's contracts EAGERLY, but DEDUPED by ЕИК — the
+  // read is keyed on the winner's ЕИК (`EIK_CONTRACTS_SQL` binds it first), and `temporal` is derived per link
+  // in TS. So a contract set registered under a ЕИК is served to EVERY link on that winner, each marked for its
+  // own declared window. A raw contract row here carries NO `temporal` column (it is computed, not selected).
+  const eikContract = (over: Record<string, unknown> = {}) => ({
+    id: 'c:e:a1',
+    signed_at: '2021-05-01', // within the 2019–2023 declared window of row() → 'contemporaneous'
+    authority: 'Община Пловдив',
+    authority_id: 'auth1',
+    authority_total_eur: 5_000_000,
+    contract_kind: 'Услуги',
+    contract_number: 'Д-1',
+    amount_eur: 1_000_000,
+    procedure_type: 'открита процедура',
+    subject: 'Ремонт',
+    ...over,
+  });
+
+  it('official conflicts eager-load each WINNER contracts keyed by ЕИК (facts only; temporal is derived client-side)', async () => {
+    // Two links on DIFFERENT winners (ЕИК 111, 222) — one read per distinct ЕИК, keyed by ЕИК. The rows are
+    // FACTS: no `temporal` column (it is per-link, derived in the component by markContracts).
     const db = fakeDb({
-      'person:ivan|111': [
+      'person:ivan': [row({ link_key: 'a', eik: '111' }), row({ link_key: 'b', eik: '222' })],
+      'contracts:111': [eikContract()],
+      'contracts:222': [eikContract({ id: 'c:e:b1', signed_at: '2016-03-01' })],
+    });
+    const res = await getOfficialConflicts(db, 'person:ivan');
+    // keyed by ЕИК (one array per winner), NOT per linkKey
+    expect(Object.keys(res!.contracts).sort()).toEqual(['111', '222']);
+    expect(res!.contracts['111']).toHaveLength(1);
+    expect(res!.contracts['111']![0]!.contractSlug).toBe('e:a1'); // 'c:' prefix stripped
+    // facts carry NO temporal — that is a per-link presentation concern, derived by markContracts
+    expect('temporal' in res!.contracts['111']![0]!).toBe(false);
+  });
+
+  it('company conflicts read the shared ЕИК contracts ONCE, keyed by ЕИК (HIGH 1 payload + HIGH 2 query dedup)', async () => {
+    // Two officials on the SAME winner (ЕИК 111). The old code read AND serialised the identical set once PER
+    // link (measured 61× on a real company); now the ЕИК is read once and the DTO carries it once, keyed by ЕИК
+    // — every official's block derives its own window split from the same shared facts client-side.
+    const db = fakeDb({
+      '111': [row({ link_key: 'p1|111' }), row({ link_key: 'p2|111', official: 'Друг' })],
+      'contracts:111': [eikContract()],
+    });
+    const res = await getCompanyConflicts(db, '111');
+    // ONE contracts entry, keyed by the shared ЕИК — not one array per official (the payload dedup)
+    expect(Object.keys(res!.contracts)).toEqual(['111']);
+    expect(res!.contracts['111']).toHaveLength(1);
+    expect('temporal' in res!.contracts['111']![0]!).toBe(false);
+    // …and the ЕИК contract set was READ exactly once, though two links share it
+    const eikReads = db.calls.filter(
+      (call) => call.sql === EIK_CONTRACTS_SQL && String(call.binds[0]) === '111',
+    );
+    expect(eikReads).toHaveLength(1);
+  });
+
+  it('link contracts map the raw id to a URL slug and pass the temporal mark through', async () => {
+    // getLinkContracts (the gated lazy-route read) selects `temporal` in SQL, so the row carries it; contract
+    // reads are namespaced under `contracts:<link_key>` in the fake.
+    const db = fakeDb({
+      'contracts:person:ivan|111': [
         {
           id: 'c:e:abc',
           signed_at: '2021-05-01',
@@ -141,21 +206,7 @@ describe('related-persons queries', () => {
 // A D1 whose statements throw D1's „no such table" — the свързани-лица migration (0003) not yet applied to
 // this env. Every conflict read must degrade (empty/null), never 500.
 function throwingDb(err: Error): D1Database {
-  return {
-    prepare() {
-      return {
-        bind() {
-          return this;
-        },
-        async all(): Promise<never> {
-          throw err;
-        },
-        async first(): Promise<never> {
-          throw err;
-        },
-      };
-    },
-  } as unknown as D1Database;
+  return throwingD1(err).db;
 }
 
 describe('conflict reads soft-fail on an un-migrated env (no 500)', () => {

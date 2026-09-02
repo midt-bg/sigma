@@ -1,18 +1,36 @@
-/* Свързани лица — the /conflicts surface. A mobile-first, ranked list of case-cards (not a table): each
-   card carries the identity + signal strip, and expands to a lazily-fetched case detail (magnitude bar,
-   timeline, contract list) in grouped sub-sections. All conflict-surface CSS lives here so it can be found
-   and changed together; the generic table CSS in tables.css is untouched. Branching logic stays in
-   ../lib/conflicts.ts. */
+/* Свързани лица — the /conflicts detail surface. Since #287 the /conflicts LIST is a DataTable (tables.css);
+   this stylesheet dresses the person/company DETAIL pages, where the case detail is rendered EAGERLY as one
+   block per link (identity + signal strip + the always-open case: magnitude bar, timeline, contract list) —
+   no lazy fetch, no expand control (those rules were removed with the retired cards). All conflict-detail CSS
+   lives here so it can be found and changed together; branching logic stays in ../lib/conflicts.ts. */
 
-/* ── The ranked list + card shell ─────────────────────────────────────────── */
+/* ── The detail block list + card shell ───────────────────────────────────── */
 
-.conflict-cards {
+/* Detail-page block list (#287). The person/company pages render the case detail EAGERLY as one block per
+   link; each block reuses the .conflict-card shell, but the wrapper is an <ol> that must reset the default
+   list markers + indent and space the blocks (without this the classes were missing entirely — niki #312
+   MEDIUM 4: inherited indent + zero gap between blocks). The blocks ARE the detail, not links elsewhere, so
+   they take no hover lift. */
+.conflict-detail-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+}
+.conflict-detail {
+  transition: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .conflict-detail:hover {
+    transform: none;
+    border-color: var(--rule);
+    box-shadow: none;
+  }
+  .conflict-detail.has-conflict:hover {
+    border-left-color: var(--accent);
+  }
 }
 
 .conflict-card {
@@ -48,15 +66,6 @@
   }
 }
 
-.cc-rank {
-  position: absolute;
-  top: var(--s-4);
-  right: var(--s-4);
-  font: 500 11px/1 var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-soft);
-}
-
 /* ── Identity ─────────────────────────────────────────────────────────────── */
 
 .cc-title {
@@ -77,11 +86,6 @@
   text-decoration: underline;
   text-decoration-thickness: 1px;
 }
-.cc-arrow {
-  color: var(--ink-soft);
-  margin: 0 var(--s-1);
-}
-
 .cc-interest {
   display: flex;
   flex-wrap: wrap;
@@ -130,78 +134,6 @@
   margin-top: 1px;
   font-size: 11px;
   color: var(--ink-soft);
-}
-
-/* ── Disclosure control + animated panel ──────────────────────────────────── */
-
-.cc-footer {
-  display: flex;
-}
-.cc-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-2);
-  min-height: 44px; /* touch target */
-  padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-card);
-  background: var(--paper);
-  color: var(--ink);
-  font: 500 12px/1 var(--font-mono);
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-.cc-toggle:hover {
-  border-color: var(--ink);
-  color: var(--accent);
-}
-.cc-chevron {
-  flex: 0 0 auto;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid currentColor;
-  transition: transform 0.15s ease;
-}
-.cc-toggle[aria-expanded='true'] .cc-chevron {
-  transform: rotate(180deg);
-}
-
-/* Auto-height accordion, tolerant of lazily-loaded (unknown-height) content: the 0fr→1fr grid row animates
-   against whatever the intrinsic height currently is, so content arriving mid-flight doesn't need a pixel
-   target. prefers-reduced-motion is handled globally in base.css. */
-.cc-disclosure {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.cc-disclosure[data-open='true'] {
-  grid-template-rows: 1fr;
-}
-.cc-disclosure-inner {
-  overflow: hidden;
-  min-height: 0;
-}
-/* Keep horizontal padding ≥ the 6px timeline edge-dot bleed (dots at left:0%/100% overflow ±half their
-   12px width) so `overflow:hidden` above never clips them. Do not zero this padding. */
-.cc-panel {
-  padding: var(--s-4);
-  background: var(--paper-warm);
-  border-top: 1px solid var(--rule);
-  border-radius: 0 0 var(--radius-card) var(--radius-card);
-}
-.cc-panel[data-state='loaded'] {
-  animation: cc-fade-in 160ms ease;
-}
-@keyframes cc-fade-in {
-  from {
-    opacity: 0.4;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 /* ── Expanded case: three headed sub-sections ─────────────────────────────── */
@@ -522,19 +454,11 @@
   .cc-stat dd {
     text-align: left;
   }
-  /* The disclosure control anchors to the right so its position is predictable down the whole list. */
-  .cc-footer {
-    justify-content: flex-end;
-  }
 }
 
 @media (min-width: 760px) {
   .conflict-card {
     padding: var(--s-5);
     gap: var(--s-4);
-  }
-  .cc-rank {
-    top: var(--s-5);
-    right: var(--s-5);
   }
 }

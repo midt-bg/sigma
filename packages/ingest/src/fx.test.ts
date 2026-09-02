@@ -20,7 +20,7 @@ import {
   loadFxRates,
   parseFxSeries,
 } from './fx';
-import { d1FromSqlite } from './test/d1-sqlite';
+import { d1FromSqlite } from '@sigma/test-support';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const FETCHED_AT = '2026-07-10T00:00:00Z';

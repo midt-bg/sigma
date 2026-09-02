@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getRegionalSpending } from './regions';
 
 // Fake D1 keyed by SQL markers (same approach as competition.test.ts). Verifies the JS-side
@@ -13,25 +14,22 @@ const ROWS = [
   { region: null, value_eur: 2000, contracts: 20, authorities: 8 }, // NULL -> unattributed
 ];
 
-function fakeDb(capture?: string[]): D1Database {
-  return {
-    prepare(sql: string) {
-      capture?.push(sql);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: ROWS as T[] };
-        },
-      };
-    },
-  } as unknown as D1Database;
+// Both shapes the query can take: the authority_totals rollup, and the base aggregation a filter
+// switches it to. Each is its own route, so losing either one is a failure rather than a fallback.
+function fake(): FakeD1 {
+  return fakeD1([
+    { when: 'FROM authority_totals GROUP BY region', all: ROWS },
+    { when: 'JOIN authorities a', all: ROWS },
+    // getRegionalSpending also fetches the sector-filter options. Nothing here asserts on them, so
+    // the answer is explicitly no divisions — which is what the old double produced by accident,
+    // since it served region rows to this query and sectorOptions filtered every one away.
+    { when: 'FROM sector_totals', all: [] },
+  ]);
 }
 
 describe('getRegionalSpending', () => {
   it('returns all 28 regions, sorted by value, with the top mapped to its NUTS3', async () => {
-    const { regions } = await getRegionalSpending(fakeDb(), {});
+    const { regions } = await getRegionalSpending(fake().db, {});
     expect(regions).toHaveLength(28);
     expect(regions[0]).toMatchObject({ name: 'Пловдив', nuts3: 'BG421', valueEur: 5000 });
     expect(regions[1]).toMatchObject({ name: 'Бургас', nuts3: 'BG341', valueEur: 3000 });
@@ -40,19 +38,19 @@ describe('getRegionalSpending', () => {
   });
 
   it('folds NULL and unknown regions into the unattributed bucket', async () => {
-    const { unattributed } = await getRegionalSpending(fakeDb(), {});
+    const { unattributed } = await getRegionalSpending(fake().db, {});
     expect(unattributed).toEqual({ valueEur: 2100, contracts: 21, authorities: 9 });
   });
 
   it('reports coverage as the share of authorities with a known region', async () => {
-    const { coverage } = await getRegionalSpending(fakeDb(), {});
+    const { coverage } = await getRegionalSpending(fake().db, {});
     expect(coverage.withRegion).toBe(16); // 10 + 6
     expect(coverage.total).toBe(25); // 16 + 9 unattributed
     expect(coverage.pct).toBeCloseTo(16 / 25);
   });
 
   it('rolls regions up into NUTS2 macro-regions', async () => {
-    const { macroRegions } = await getRegionalSpending(fakeDb(), {});
+    const { macroRegions } = await getRegionalSpending(fake().db, {});
     expect(macroRegions[0]).toMatchObject({
       nuts2: 'BG42',
       name: 'Южен централен',
@@ -62,13 +60,13 @@ describe('getRegionalSpending', () => {
   });
 
   it('reads authority_totals unfiltered, but aggregates from base tables when filtered', async () => {
-    const unfiltered: string[] = [];
-    await getRegionalSpending(fakeDb(unfiltered), {});
-    expect(unfiltered.some((s) => s.includes('FROM authority_totals'))).toBe(true);
+    const unfiltered = fake();
+    await getRegionalSpending(unfiltered.db, {});
+    expect(unfiltered.sql.some((s) => s.includes('FROM authority_totals'))).toBe(true);
 
-    const filtered: string[] = [];
-    await getRegionalSpending(fakeDb(filtered), { sector: '45' });
-    expect(filtered.some((s) => s.includes('FROM authority_totals'))).toBe(false);
-    expect(filtered.some((s) => s.includes('JOIN tenders t'))).toBe(true);
+    const filtered = fake();
+    await getRegionalSpending(filtered.db, { sector: '45' });
+    expect(filtered.sql.some((s) => s.includes('FROM authority_totals'))).toBe(false);
+    expect(filtered.sql.some((s) => s.includes('JOIN tenders t'))).toBe(true);
   });
 });

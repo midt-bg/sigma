@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
-// Deep render tests for the /conflicts leaderboard route and its ConflictCards. These exercise the ACTUAL
-// route component + card tree against realistic loader data (framework-mode `loaderData`), driven through a
-// real React Router data router (createRoutesStub) so useSearchParams/useFetcher/Link all resolve. The
-// per-contract expansion is fetched through a stubbed `/conflicts/link/.../contracts` loader, so the lazily
-// rendered CaseDetail (magnitude bar, timeline, authority shares, contract list) is covered end to end.
+// Deep render tests for the /conflicts leaderboard route (#287). The list is now one row per PERSON: a
+// `DataTable` fed by `groupByPerson(links)`, not a stack of per-relationship cards. These exercise the ACTUAL
+// route component against realistic loader data (framework-mode `loaderData`) through a real React Router
+// data router (createRoutesStub) so useSearchParams/Link resolve. The per-link CaseDetail / timeline /
+// authority-shares / expand behaviour moved to the person + company detail pages (plan §3.3) and is covered
+// by `conflict.pages.render.test.tsx` — deliberately NOT re-tested here.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictLink } from '@sigma/api-contract';
 import Conflicts, { meta, headers } from './conflicts';
 
 // React needs this flag to run act() cleanly under the jsdom test environment.
@@ -53,11 +54,6 @@ const familyLink = link({
   company: 'ЕВРОСТРОЙ 21 ЕООД',
   eik: '333',
   relation: 'related', // a close relative's stake — anonymized
-  // The shape the QUERY actually yields for a family link, not the base factory's self-link default.
-  // `findPerson` searches the act for the OFFICIAL; a relative's stake is registered to the relative,
-  // so the official is never found and no `document` rung is reachable — only a seat/ЕИК confirmation.
-  // A fixture carrying `document`/`owner` here tested a row that cannot exist and hid the assertion
-  // below, which is the one that matters: no registry-role claim on an anonymized card.
   evidenceKind: 'confirmed' as const,
   registryRole: null,
   ownInstitution: false,
@@ -79,37 +75,8 @@ const zeroContractLink = link({
   contractValueEur: null,
   contemporaneousContractCount: 0,
   contemporaneousValueEur: null,
-  sourceUrl: null, // no declaration URL → the „—" source branch
+  sourceUrl: null,
 });
-
-const CONTRACTS: ConflictContract[] = [
-  {
-    contractSlug: 'c-in',
-    signedAt: '2021-05-01',
-    authority: 'Община Тест',
-    authorityId: 'a:1',
-    authorityTotalEur: 50_000_000,
-    contractKind: 'Строителство',
-    procedureType: 'открита процедура',
-    subject: 'Ремонт на път',
-    contractNumber: 'Д-1',
-    amountEur: 10_000_000,
-    temporal: 'contemporaneous',
-  },
-  {
-    contractSlug: 'c-after',
-    signedAt: '2024-02-01',
-    authority: 'Община Тест',
-    authorityId: 'a:1',
-    authorityTotalEur: 50_000_000,
-    contractKind: null,
-    procedureType: 'договаряне без обявление',
-    subject: 'Доставка на софтуер',
-    contractNumber: 'Д-3',
-    amountEur: 5_000_000,
-    temporal: 'after',
-  },
-];
 
 // ── jsdom render harness ───────────────────────────────────────────────────────
 let container: HTMLDivElement;
@@ -125,17 +92,11 @@ afterEach(() => {
   container.remove();
 });
 
-/** Mount the /conflicts route through a real data router with the drill-down loader stubbed. */
-async function renderConflicts(links: ConflictLink[], contracts: ConflictContract[] = CONTRACTS) {
+/** Mount the /conflicts route through a real data router. The person page target only needs to resolve as a
+ *  route so the title-column links have somewhere to point. */
+async function renderConflicts(links: ConflictLink[]) {
   const Stub = createRoutesStub([
     { path: '/conflicts', Component: Conflicts, loader: () => ({ links }) },
-    {
-      path: '/conflicts/link/:scope/:slug/:eik/contracts',
-      loader: ({ params }) => ({
-        linkKey: `${params.slug}|${params.eik}${params.scope === 'family' ? '|family' : ''}`,
-        contracts,
-      }),
-    },
     { path: '/conflicts/official/:slug', Component: () => null },
     { path: '/conflicts/company/:eik', Component: () => null },
     { path: '/conflicts/methodology', Component: () => null },
@@ -147,6 +108,7 @@ async function renderConflicts(links: ConflictLink[], contracts: ConflictContrac
 }
 
 const text = () => container.textContent ?? '';
+const bodyRows = () => [...container.querySelectorAll('tbody tr')];
 
 describe('/conflicts route — render', () => {
   it('meta() marks the page noindex and titles it', () => {
@@ -162,15 +124,14 @@ describe('/conflicts route — render', () => {
     expect(h['Cache-Control']).toBe('public, max-age=42');
   });
 
-  it('renders the empty state when there are no links (no summary, no cards)', async () => {
+  it('renders the empty state when there are no links (no summary, no table)', async () => {
     await renderConflicts([]);
     expect(text()).toContain('Все още няма публикувани връзки');
-    expect(container.querySelector('.conflict-cards')).toBeNull();
+    expect(container.querySelector('table')).toBeNull();
   });
 
   it('renders the summary totals and the magnitude bar for a populated leaderboard', async () => {
     await renderConflicts([link(), familyLink]);
-    // summary facts
     expect(text()).toContain('Длъжностни лица с деклариран дял');
     expect(text()).toContain('Връзки към изпълнители');
     // contemporaneous magnitude bar renders only when both totals are > 0
@@ -178,72 +139,197 @@ describe('/conflicts route — render', () => {
     expect(container.querySelector('.share-bar, [class*="share"]')).not.toBeNull();
   });
 
-  it('renders a self card AND a family card, labelled distinctly; the relative is never named', async () => {
-    await renderConflicts([link(), familyLink]);
-    const cards = container.querySelectorAll('.conflict-card');
-    expect(cards.length).toBe(2);
-    // self label vs family label (ADR-0032) — both present
-    expect(text()).toContain('дялово участие'); // self
-    // the FAMILY card names the office-holder + company and uses the anonymized „свързано лице"
-    // framing only — no relative name, no relationship type asserted (rails #1 & #2).
-    const familyCard = [...cards].find((c) => c.textContent?.includes('ЕВРОСТРОЙ 21 ЕООД'))!;
-    expect(familyCard.textContent).toContain('деклариран дял на свързано лице');
-    expect(familyCard.textContent).toContain('Кмет Тестов'); // the OFFICIAL is named
-    expect(familyCard.textContent).not.toContain('съпруг'); // relationship type never asserted on the card
-    expect(familyCard.textContent).not.toContain('дете');
-    // own-institution chip present on the self link, absent on the family one
-    expect(text()).toContain('от собствената институция');
-  });
-
-  it('renders the source declaration link, and „—" when a link has no source URL', async () => {
-    await renderConflicts([link(), zeroContractLink]);
-    const sourceAnchor = [...container.querySelectorAll('a')].find(
-      (a) => a.textContent === 'декларация',
-    );
-    expect(sourceAnchor?.getAttribute('href')).toBe('https://register.cacbg.bg/2024/i.xml');
-    // Scoped to the card that actually has sourceUrl: null. A page-wide toContain('—') passes on any
-    // em-dash anywhere — including the ones the value and date cells render — so it would survive the
-    // source branch being deleted outright.
-    const cards = container.querySelectorAll('.conflict-card');
-    const noSourceCard = [...cards].find((c) => c.textContent?.includes('ПРАЗЕН ООД'))!;
-    expect(noSourceCard).toBeTruthy();
-    expect(
-      [...noSourceCard.querySelectorAll('a')].some((a) => a.textContent === 'декларация'),
-    ).toBe(false);
-    expect(noSourceCard.textContent).toContain('—');
-  });
-
-  it('a zero-contract link renders no „Виж договорите" toggle', async () => {
-    await renderConflicts([zeroContractLink]);
-    expect(
-      [...container.querySelectorAll('button')].some((b) =>
-        b.textContent?.includes('Виж договорите'),
-      ),
-    ).toBe(false);
-  });
-
-  it('expanding a card lazily loads and renders the case detail (timeline, authority shares, contract list)', async () => {
+  it('renders a native table with a non-empty caption and every header scoped to its column', async () => {
     await renderConflicts([link()]);
-    const toggle = [...container.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Виж договорите'),
-    ) as HTMLButtonElement;
-    expect(toggle).toBeTruthy();
-    await act(async () => {
-      toggle.click();
-    });
-    // give the fetcher a tick to resolve the stubbed loader
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-    // the in-window contract is grouped under the declared-period heading; the after contract sits outside
-    expect(text()).toContain('в декларирания период');
-    expect(text()).toContain('Ремонт на път'); // subject of the in-window contract
-    expect(text()).toContain('Дял при възложителите'); // authority-shares section
-    expect(container.querySelector('.contract-list')).not.toBeNull();
-    expect(text()).toContain('Извън периода'); // the „after" contract is disclosed but not asserted
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    const caption = table!.querySelector('caption');
+    expect(caption?.textContent?.trim().length).toBeGreaterThan(0);
+    const heads = [...table!.querySelectorAll('thead th')];
+    expect(heads.length).toBeGreaterThan(0);
+    expect(heads.every((th) => th.getAttribute('scope') === 'col')).toBe(true);
+    // Native table semantics only — the old synthetic list roles must be gone.
+    expect(container.querySelector('[aria-posinset], [aria-setsize]')).toBeNull();
   });
 
-  it('paginates when the eligible set exceeds one page (100), showing one page of cards', async () => {
+  it('collapses N links for ONE person into a single row; the person is named once', async () => {
+    // Two winners for the SAME official → one person row, not two. (Distinct ЕИК so it is not a family
+    // collapse — genuinely two winners folded by groupByPerson.)
+    await renderConflicts([
+      link({ eik: '111', company: 'ТРЕЙС ГРУП ХОЛД АД', linkKey: 'k1' }),
+      link({ eik: '222', company: 'ГБС АД', linkKey: 'k2' }),
+    ]);
+    const rows = bodyRows();
+    expect(rows.length).toBe(1);
+    // Named exactly once across the whole table body.
+    const occurrences = rows.filter((r) => r.textContent?.includes('Иван Петров')).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it('ranks by the strongest link: a person whose STRONGEST link is strong is not sunk below a weak person', async () => {
+    // Weak person: no own-institution, no contemporaneous. Strong person: two links, one weak and one strong
+    // (own-institution + contemporaneous). If the sort ever regresses to per-link or to OR-ed flags summed,
+    // the strong person could slip; rank = strongest SINGLE link must keep them first.
+    const weak = link({
+      officialSlug: 'weak',
+      official: 'Слаб Тестов',
+      eik: '700',
+      ownInstitution: false,
+      contemporaneous: false,
+      contemporaneousContractCount: 0,
+      contemporaneousValueEur: null,
+    });
+    const strongWeakHalf = link({
+      officialSlug: 'strong',
+      official: 'Силен Тестов',
+      linkKey: 'strong-weak',
+      eik: '810',
+      ownInstitution: false,
+      contemporaneous: false,
+      contemporaneousContractCount: 0,
+      contemporaneousValueEur: null,
+    });
+    const strongStrongHalf = link({
+      officialSlug: 'strong',
+      official: 'Силен Тестов',
+      linkKey: 'strong-strong',
+      eik: '811',
+      ownInstitution: true,
+      contemporaneousContractCount: 2,
+      contemporaneousValueEur: 5_000_000,
+    });
+    // Feed weak FIRST so a naive stable sort would leave it on top if ranking were broken.
+    await renderConflicts([weak, strongWeakHalf, strongStrongHalf]);
+    const rows = bodyRows();
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain('Силен Тестов');
+    expect(rows[1].textContent).toContain('Слаб Тестов');
+  });
+
+  it('Публични средства shows the contemporaneous sum with the „от" total beneath', async () => {
+    await renderConflicts([link()]); // 30 млн. window, 88 млн. total
+    const row = bodyRows()[0];
+    const funds = row.querySelector('td[data-label="Публични средства"]')!;
+    expect(funds.textContent).toContain('30');
+    expect(funds.textContent).toContain('млн.');
+    expect(funds.textContent).toContain('от'); // the „от <total>" context line
+    expect(funds.textContent).toContain('88');
+  });
+
+  it('Дружества: 3 distinct winners → the count; a single winner → its name', async () => {
+    await renderConflicts([
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '1',
+        company: 'А АД',
+        linkKey: 'm1',
+      }),
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '2',
+        company: 'Б АД',
+        linkKey: 'm2',
+      }),
+      link({
+        officialSlug: 'multi',
+        official: 'Много Тестов',
+        eik: '3',
+        company: 'В АД',
+        linkKey: 'm3',
+      }),
+    ]);
+    const multiRow = bodyRows().find((r) => r.textContent?.includes('Много Тестов'))!;
+    const cell = multiRow.querySelector('td[data-label="Дружества"]')!;
+    expect(cell.textContent).toContain('3'); // count, not a company name
+    expect(cell.textContent).not.toContain('АД');
+
+    // Single-winner person → the winner's NAME in the Дружества cell.
+    await renderConflicts([link()]);
+    const soleCell = bodyRows()[0].querySelector('td[data-label="Дружества"]')!;
+    expect(soleCell.textContent).toContain('ТРЕЙС ГРУП ХОЛД АД');
+  });
+
+  it('признаци live in a SECONDARY column and a flag sourced from a SECOND link still renders', async () => {
+    // A person whose FIRST link has no own-institution but a SECOND link does — the OR across links must
+    // surface the chip. Both signals rendered as restrained chips (no inline colour/style).
+    const primary = link({
+      officialSlug: 'orflag',
+      official: 'Флаг Тестов',
+      linkKey: 'or-1',
+      eik: '501',
+      ownInstitution: false,
+      contemporaneousContractCount: 0,
+      contemporaneousValueEur: null,
+    });
+    const second = link({
+      officialSlug: 'orflag',
+      official: 'Флаг Тестов',
+      linkKey: 'or-2',
+      eik: '502',
+      ownInstitution: true,
+      contemporaneousContractCount: 1,
+      contemporaneousValueEur: 1_000_000,
+    });
+    await renderConflicts([primary, second]);
+    const row = bodyRows().find((r) => r.textContent?.includes('Флаг Тестов'))!;
+    const signals = row.querySelector('td[data-label="Признаци"]')!;
+    expect(signals.classList.contains('col-secondary')).toBe(true);
+    expect(signals.textContent).toContain('от собствената институция'); // from the SECOND link
+    expect(signals.textContent).toContain('към момента на договор');
+    // Restrained chips, no new colour: chip class present, no inline style attribute.
+    const chips = signals.querySelectorAll('.chip');
+    expect(chips.length).toBeGreaterThan(0);
+    expect([...chips].some((c) => c.getAttribute('style'))).toBe(false);
+    // The corresponding header is a secondary column too (drops on tablet).
+    const headers = [...container.querySelectorAll('thead th')];
+    const signalsHead = headers.find((th) => th.textContent === 'Признаци')!;
+    expect(signalsHead.classList.contains('col-secondary')).toBe(true);
+  });
+
+  it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
+    await renderConflicts([zeroContractLink]);
+    const row = bodyRows()[0];
+    expect(row.querySelector('td[data-label="Договори"]')!.textContent).toContain('0');
+    expect(text()).not.toContain('NaN');
+    // No window money, so no „от" split — only the total (which is „—" for a null value).
+    const funds = row.querySelector('td[data-label="Публични средства"]')!;
+    expect(funds.textContent).not.toContain('NaN');
+  });
+
+  it('a family-linked person is named on the row, but the relative never is', async () => {
+    await renderConflicts([familyLink]);
+    const row = bodyRows()[0];
+    expect(row.textContent).toContain('Кмет Тестов'); // the OFFICIAL is named
+    expect(row.textContent).not.toContain('съпруг'); // relationship type never asserted
+    expect(row.textContent).not.toContain('дете');
+    // Title column carries the name+institution and links to the person page.
+    const titleCell = row.querySelector('td.cell-title')!;
+    const link = titleCell.querySelector('a')!;
+    expect(link.getAttribute('href')).toContain('/conflicts/official/');
+    // …and the identity-free „свързано лице" qualifier, so a family-ONLY row is not read as an own stake
+    // (niki #312 MEDIUM 1). It states the kind, never who the relative is or the relationship type.
+    expect(titleCell.textContent).toContain('свързано лице');
+  });
+
+  it('a self-stake row carries no „свързано лице" qualifier — the wording is family-AWARE, not blanket', async () => {
+    // POSITIVE CONTROL for the qualifier: an own stake (relation 'owns') must NOT be tagged свързано лице,
+    // else every row reads as anonymized and the distinction the qualifier exists to draw is lost.
+    await renderConflicts([link()]);
+    const titleCell = bodyRows()[0].querySelector('td.cell-title')!;
+    expect(titleCell.textContent).not.toContain('свързано лице');
+  });
+
+  it('the rank column is a corner-badge cell and the title column carries data-label', async () => {
+    await renderConflicts([link()]);
+    const row = bodyRows()[0];
+    expect(row.querySelector('td.cell-rank')).not.toBeNull();
+    const title = row.querySelector('td.cell-title')!;
+    expect(title.getAttribute('data-label')).toBe('Длъжностно лице');
+  });
+
+  it('paginates when the eligible persons exceed one page (100), showing one page of rows', async () => {
     const many = Array.from({ length: 130 }, (_, i) =>
       link({
         linkKey: `k${i}`,
@@ -253,63 +339,9 @@ describe('/conflicts route — render', () => {
       }),
     );
     await renderConflicts(many);
-    expect(container.querySelectorAll('.conflict-card').length).toBe(100); // one page
+    expect(bodyRows().length).toBe(100); // one page of PERSONS
     expect(
       container.querySelector('.pagination, nav[aria-label], [class*="pagination"]'),
     ).not.toBeNull();
-  });
-});
-
-describe('Trade Register evidence on the card (#279, ADR-0033)', () => {
-  it('renders the registry fact the link rests on, so the card explains itself', async () => {
-    await renderConflicts([link({ evidenceKind: 'document', registryRole: 'owner' })]);
-    const text = container.textContent ?? '';
-    expect(text).toContain('Регистър');
-    expect(text).toContain('лицето е вписано като съдружник/собственик');
-    expect(text).toContain('вписване 2011-05-02'); // WHICH entry
-    expect(text).toContain('справка 2026-08-05'); // and HOW FRESH it is
-    // The entry NUMBER is what makes the claim findable in the register — a date alone does not
-    // identify a record. It was carried to every client in the DTO and never rendered, which is the
-    // one payload that costs bytes and answers nothing (cefothe, #309).
-    expect(text).toContain('20110502101007');
-  });
-
-  it('omits the entry number rather than printing an empty label when there is none', async () => {
-    // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so
-    // the label must be absent entirely — not „· №" with nothing after it, which reads as missing data
-    // rather than as an inapplicable field. Scoped to the evidence label: „№" alone is the card RANK.
-    await renderConflicts([
-      link({ evidenceKind: 'confirmed', registryRole: null, registryEntryNumber: null }),
-    ]);
-    const text = container.textContent ?? '';
-    expect(text).toContain('Регистър');
-    expect(text).not.toContain('· №');
-  });
-
-  it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
-    await renderConflicts([link({ evidenceKind: 'confirmed', registryRole: null })]);
-    const text = container.textContent ?? '';
-    expect(text).toContain('самоличност, потвърдена по декларирани данни');
-    expect(text).not.toContain('вписано като');
-  });
-
-  it('a FAMILY card never carries a registry-role claim — the relative is not in the act we read', async () => {
-    // The production shape for a family link, which the fixture used to contradict: `findPerson` looks
-    // for the OFFICIAL, and a relative's stake is registered to the relative, so the official is never
-    // found and the rung can only ever be `confirmed`/`registryRole: null`. A card that said „лицето е
-    // вписано като съдружник/собственик" here would assert that the named official is recorded in the
-    // register as an owner of this company — a false, named, libel-shaped claim, on the one card whose
-    // whole design is that the stakeholder stays anonymous (ADR-0030/0032).
-    await renderConflicts([familyLink]);
-    const familyCard = container.querySelector('.conflict-card')!;
-    expect(familyCard.textContent).toContain('деклариран дял на свързано лице');
-    expect(familyCard.textContent).toContain('самоличност, потвърдена по декларирани данни');
-    expect(familyCard.textContent).not.toContain('вписано като');
-  });
-
-  it('links out to the register so a reader can check the same act we read', async () => {
-    await renderConflicts([link({ eik: '201122335' })]);
-    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
-    expect(hrefs.some((h) => h.includes('201122335'))).toBe(true);
   });
 });

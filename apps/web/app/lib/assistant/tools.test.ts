@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import {
   ASSISTANT_TOOLS,
   DEFAULT_ROWS_READ_BUDGET,
@@ -12,24 +13,14 @@ function ctx(
   rows: Record<string, string | number | null>[] = [],
   opts: { rowsRead?: number; rowsReadBudget?: number; totalAttempts?: number } = {},
 ): ToolContext {
-  const db = {
-    prepare(_sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return {
-            results: rows as T[],
-            meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
-          };
-        },
-        async first<T>() {
-          return null as T;
-        },
-      };
+  const db = fakeD1([
+    {
+      when: [],
+      all: rows,
+      first: null,
+      meta: { rows_read: opts.rowsRead ?? 0, total_attempts: opts.totalAttempts ?? 1 },
     },
-  } as unknown as D1Database;
+  ]).db;
   return { db, results: [], rowsRead: 0, rowsReadBudget: opts.rowsReadBudget };
 }
 

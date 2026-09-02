@@ -23,19 +23,20 @@
     "node-sql-parser": "^5.4.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router": "7.18.0"
+    "react-router": "7.18.2"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.29.1",
-    "@react-router/dev": "7.18.0",
+    "@cloudflare/vite-plugin": "^1.54.3",
+    "@react-router/dev": "7.18.2",
+    "@sigma/test-support": "workspace:*",
     "@tailwindcss/vite": "^4.2.2",
-    "@types/node": "^22",
+    "@types/node": "catalog:",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5.9.3",
+    "typescript": "catalog:",
     "vite": "^8.0.3",
-    "wrangler": "^4.75.0"
+    "wrangler": "catalog:"
   }
 }

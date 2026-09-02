@@ -9,6 +9,16 @@
 -- precompute.sql, scoped.
 
 -- @refresh-batch setup
+-- Invalidate the freshness markers BEFORE anything is rebuilt; `@refresh-batch globals` writes the true
+-- values back at the end. The groups below run as separate batches with nothing transactional spanning
+-- them, so a failure part-way through leaves the domain tables advanced while `data_freshness` and
+-- `home_totals` still advertise the PREVIOUS slice — a reader is then told a date that is confidently
+-- wrong rather than unknown. Nulling `as_of` first makes an interrupted refresh read as „unknown slice":
+-- getCoverageMeta already coalesces a missing as_of to null, and the ETL catch-up planner falls back to
+-- raw_contracts. Only `as_of` is touched: `refreshed_at` is NOT NULL, and the row counts stay readable.
+UPDATE data_freshness SET as_of = NULL;
+UPDATE home_totals SET as_of = NULL;
+
 -- The base-wins dedup probes contracts by АОП document number — index it (no-op if already present).
 CREATE INDEX IF NOT EXISTS idx_contracts_cnum ON contracts(contract_number);
 CREATE INDEX IF NOT EXISTS idx_contracts_tender_id ON contracts(tender_id);

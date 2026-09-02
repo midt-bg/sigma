@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
-import { Link, useFetcher } from 'react-router';
+import { type CSSProperties, type ReactNode, useId } from 'react';
+import { Link } from 'react-router';
 import { count, money, pct, plural } from '@sigma/shared';
-import type { ConflictContract, ConflictLink, LinkContracts } from '@sigma/api-contract';
+import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import { Chip, ExternalEikLink, ShareBar } from './ui';
 import {
   authorityShares,
@@ -16,238 +16,175 @@ import {
   fundsMagnitude,
   hasContemporaneousContracts,
   isHttpsUrl,
-  linkContractsHref,
+  markContracts,
   officialHref,
   partitionContracts,
-  relationLabel,
   registryEvidenceLabel,
+  relationLabel,
   temporalLabel,
 } from '../lib/conflicts';
 
-// Свързани лица — a ranked, paginated list of declared-ownership CASE-CARDS (not a table). All branching
-// lives in ../lib/conflicts (tested); this only emits markup. `omit` drops the redundant party on a
-// single-subject page (an office-holder's own page omits the office-holder; a winner's page omits the
-// company). Each card carries identity + a signal strip and expands to a lazily-fetched case detail
-// (magnitude bar, timeline, contract list) — fetched on demand so the leaderboard payload stays lean.
-export function ConflictCards({
+// The rich per-link case detail, lifted out of the retired ConflictCards so the person/company pages can
+// render it EAGERLY (no lazy fetcher — those pages exist to show the detail, and the contracts are loaded
+// server-side by getOfficialConflicts / getCompanyConflicts). Each sub-block keeps its original
+// (link, contracts) prop contract. Styles stay in styles/conflict-cards.css (globally imported), shared
+// with nothing else now that the list is a table.
+//
+// `perspective` chooses which party heads each block: 'official' pages head by the winning COMPANY (ЕИК +
+// profile link, the counterparty the reader came to see), 'company' pages head by the OFFICIAL (institution
+// sub-label + profile link). The other party is the page's own subject (named in the PageHeader), so it is
+// never repeated inside a block — mirroring the old `omit`.
+
+/** The eager list of per-link detail blocks for a person/company page. `contracts` is the ЕИК→contract-facts
+ *  map the loader batched (one array per winner, not per link — #312 HIGH 1); each block marks its winner's
+ *  facts against its OWN declared window (`markContracts`) and renders its full case with no lazy fetch. On a
+ *  company page every link shares one ЕИК, so all blocks read the same facts array, each with its own split. */
+export function ConflictDetail({
   links,
-  caption,
-  omit,
-  startRank = 0,
-  totalCount,
+  contracts,
+  perspective,
 }: {
   links: ConflictLink[];
-  caption: string;
-  omit?: 'official' | 'company';
-  // Rank of the row BEFORE the first shown (paginated leaderboards); 0 on unpaginated per-entity views.
-  startRank?: number;
-  // Total across ALL pages, for aria-setsize (so AT announces global rank though the DOM holds one page).
-  // Defaults to the shown count — correct on the unpaginated per-entity views; pass the full count when paginating.
-  totalCount?: number;
+  contracts: Record<string, ConflictContractFacts[]>;
+  perspective: 'official' | 'company';
 }) {
-  const setSize = totalCount ?? links.length;
   return (
-    <ol className="conflict-cards" role="list" aria-label={caption}>
-      {links.map((l, i) => (
-        <ConflictCard
-          key={l.linkKey}
-          link={l}
-          rank={startRank + i + 1}
-          setSize={setSize}
-          omit={omit}
-        />
+    <ol className="conflict-detail-list" role="list">
+      {links.map((l) => (
+        <li key={l.linkKey}>
+          <ConflictDetailBlock
+            link={l}
+            contracts={markContracts(
+              contracts[l.eik] ?? [],
+              l.firstDeclaredYear,
+              l.lastDeclaredYear,
+            )}
+            perspective={perspective}
+          />
+        </li>
       ))}
     </ol>
   );
 }
 
-function ConflictCard({
+// One link's full detail, eagerly expanded: the counterparty header + interest strip + stat grid +
+// provenance, then the CaseDetail (magnitude bar, timeline, per-authority shares, contract list).
+function ConflictDetailBlock({
   link: l,
-  rank,
-  setSize,
-  omit,
+  contracts,
+  perspective,
 }: {
   link: ConflictLink;
-  rank: number;
-  setSize: number;
-  omit?: 'official' | 'company';
+  contracts: ConflictContract[];
+  perspective: 'official' | 'company';
 }) {
-  const fetcher = useFetcher<LinkContracts>();
-  const [open, setOpen] = useState(false);
   const titleId = useId();
-  const panelId = useId();
-  const funds = fundsCellLabel(l);
   const conflict = hasContemporaneousContracts(l);
-  const loaded = fetcher.data != null;
-  // Guards a double-fetch from a rapid re-toggle before React commits (fetcher.state is a stale closure read).
-  const requested = useRef(false);
-  // A load that failed (network/5xx/loader throw) settles back to idle with no data. Clear the guard so a
-  // re-open RETRIES rather than leaving the panel permanently empty; without this the ref stays set forever.
-  useEffect(() => {
-    if (fetcher.state === 'idle' && requested.current && fetcher.data == null) {
-      requested.current = false;
-    }
-  }, [fetcher.state, fetcher.data]);
-
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    // Load on first open, and again on re-open after a failed load (still no data). The ref + idle check
-    // keep a rapid re-toggle from firing two loads before React commits fetcher.state.
-    if (next && !loaded && !requested.current && fetcher.state === 'idle') {
-      requested.current = true;
-      fetcher.load(linkContractsHref(l)); // lazy-load; cached by the card once it succeeds
-    }
-  }
-
-  // Names the expanded region so several open cards on one page stay distinguishable to screen readers.
-  const subject =
-    omit === 'official'
-      ? l.company
-      : omit === 'company'
-        ? l.official
-        : `${l.official} / ${l.company}`;
-
-  return (
-    <li aria-posinset={rank} aria-setsize={setSize}>
-      <article
-        className={`conflict-card${conflict ? ' has-conflict' : ''}`}
-        aria-labelledby={titleId}
-      >
-        <span className="cc-rank" aria-hidden="true">
-          № {rank}
-        </span>
-
+  const funds = fundsCellLabel(l);
+  // The head names the OTHER party (the page's own subject is in the PageHeader). Official page → the
+  // winning company (ЕИК + profile link); company page → the official (institution sub-label + profile link).
+  let head: ReactNode;
+  if (perspective === 'official') {
+    head = (
+      <>
         <h3 id={titleId} className="cc-title">
-          {omit !== 'official' && <Link to={officialHref(l.officialSlug)}>{l.official}</Link>}
-          {omit !== 'official' && omit !== 'company' && (
-            <span className="cc-arrow" aria-hidden="true">
-              →
-            </span>
-          )}
-          {omit !== 'company' && (
-            <>
-              <Link to={companyProfileHref(l.eik)}>{l.company}</Link>
-              <ExternalEikLink eik={l.eik} />
-            </>
-          )}
+          <Link to={companyProfileHref(l.eik)}>{l.company}</Link>
+          <ExternalEikLink eik={l.eik} />
         </h3>
-        {/* The official's institution — disambiguates namesakes (person grain is (name, institution),
-            ADR-0026). Shown only where the official is named (not on their own page, where it's the header). */}
-        {omit !== 'official' && l.institution && (
-          <p className="cc-official-inst small muted">{l.institution}</p>
-        )}
+        <p className="cc-official-inst small muted">ЕИК&nbsp;{l.eik}</p>
+      </>
+    );
+  } else {
+    head = (
+      <>
+        <h3 id={titleId} className="cc-title">
+          <Link to={officialHref(l.officialSlug)}>{l.official}</Link>
+        </h3>
+        {l.institution && <p className="cc-official-inst small muted">{l.institution}</p>}
+      </>
+    );
+  }
+  return (
+    <article
+      className={`conflict-card conflict-detail${conflict ? ' has-conflict' : ''}`}
+      aria-labelledby={titleId}
+    >
+      {head}
 
-        <div className="cc-interest">
-          <span>{relationLabel(l.relation)}</span>
-          {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
-          {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
-              so the chip can't claim „към момента на договор" from a flag that drifted out of sync with the
-              current contract set. hasContemporaneousContracts ⇔ the card's contract split shows an in-window row. */}
-          {hasContemporaneousContracts(l) && <Chip tone="window">към момента на договор</Chip>}
-          {(l.firstDeclaredYear || l.lastDeclaredYear) && (
-            <span className="small muted">
-              деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.
-            </span>
-          )}
+      <div className="cc-interest">
+        <span>{relationLabel(l.relation)}</span>
+        {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
+        {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
+            so the chip can't claim „към момента на договор" from a flag that drifted out of sync with the
+            current contract set. */}
+        {conflict && <Chip tone="window">към момента на договор</Chip>}
+        {(l.firstDeclaredYear || l.lastDeclaredYear) && (
+          <span className="small muted">
+            деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.
+          </span>
+        )}
+      </div>
+
+      <dl className="cc-stats">
+        <div className="cc-stat">
+          <dt>Договори</dt>
+          <dd>{contractsCountLabel(l)}</dd>
         </div>
+        <div className="cc-stat">
+          <dt>Публични средства</dt>
+          <dd>
+            <span className="cc-funds-primary" title="по договори в декларирания период">
+              {funds.primary}
+            </span>
+            {funds.total && <span className="cc-funds-total">от {funds.total}</span>}
+          </dd>
+        </div>
+        <div className="cc-stat">
+          <dt>Период</dt>
+          <dd>{contractYearsLabel(l.firstContractYear, l.lastContractYear)}</dd>
+        </div>
+        <div className="cc-stat">
+          <dt>Източник</dt>
+          <dd>
+            {isHttpsUrl(l.sourceUrl) ? (
+              <a href={l.sourceUrl!} target="_blank" rel="noopener noreferrer">
+                декларация
+              </a>
+            ) : (
+              <span className="muted">—</span>
+            )}
+          </dd>
+        </div>
+        {/* The Trade Register fact the link's identity rests on (#279, ADR-0033) — the register records a
+            ROLE, it does not certify the ownership claim, which comes from the official's own declaration. */}
+        <div className="cc-stat">
+          <dt>Регистър</dt>
+          <dd>
+            <ExternalEikLink eik={l.eik} />
+            <span className="small muted cc-evidence">
+              {registryEvidenceLabel(l)}
+              {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
+              {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
+              {l.registryLookupDate ? ` · справка ${l.registryLookupDate}` : ''}
+            </span>
+          </dd>
+        </div>
+      </dl>
 
-        <dl className="cc-stats">
-          <div className="cc-stat">
-            <dt>Договори</dt>
-            <dd>{contractsCountLabel(l)}</dd>
-          </div>
-          <div className="cc-stat">
-            <dt>Публични средства</dt>
-            <dd>
-              <span className="cc-funds-primary" title="по договори в декларирания период">
-                {funds.primary}
-              </span>
-              {funds.total && <span className="cc-funds-total">от {funds.total}</span>}
-            </dd>
-          </div>
-          <div className="cc-stat">
-            <dt>Период</dt>
-            <dd>{contractYearsLabel(l.firstContractYear, l.lastContractYear)}</dd>
-          </div>
-          <div className="cc-stat">
-            <dt>Източник</dt>
-            <dd>
-              {isHttpsUrl(l.sourceUrl) ? (
-                <a href={l.sourceUrl!} target="_blank" rel="noopener noreferrer">
-                  декларация
-                </a>
-              ) : (
-                <span className="muted">—</span>
-              )}
-            </dd>
-          </div>
-          {/* The Trade Register fact the link's identity rests on (#279, ADR-0033). This is what makes
-              „every shown link explains itself" true rather than a promise: a reader can open the same act
-              we read and check it. The wording is careful — the register records a ROLE, it does not
-              certify the ownership claim, which comes from the official's own declaration. */}
-          <div className="cc-stat">
-            <dt>Регистър</dt>
-            <dd>
-              <ExternalEikLink eik={l.eik} />
-              <span className="small muted cc-evidence">
-                {registryEvidenceLabel(l)}
-                {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
-                {/* The entry NUMBER, not just its date: a date does not identify a record, and this is
-                    what a reader types to find the same act we read. Rendered only when present —
-                    a seat/ЕИК confirmation cites no act entry, and an empty „№" would read as missing
-                    data rather than as an inapplicable field. */}
-                {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
-                {l.registryLookupDate ? ` · справка ${l.registryLookupDate}` : ''}
-              </span>
-            </dd>
-          </div>
-        </dl>
-
-        {l.contractCount > 0 && (
-          <>
-            <div className="cc-footer">
-              <button
-                type="button"
-                className="cc-toggle"
-                aria-expanded={open}
-                aria-controls={panelId}
-                onClick={toggle}
-              >
-                {open ? 'Скрий договорите' : 'Виж договорите'}
-                <span className="cc-chevron" aria-hidden="true" />
-              </button>
-            </div>
-            <div className="cc-disclosure" data-open={open}>
-              <div className="cc-disclosure-inner">
-                <div
-                  id={panelId}
-                  role="region"
-                  aria-label={`Договори — ${subject}`}
-                  className="cc-panel"
-                  inert={!open}
-                  data-state={loaded ? 'loaded' : 'loading'}
-                >
-                  {fetcher.data ? (
-                    <CaseDetail link={l} contracts={fetcher.data.contracts} />
-                  ) : fetcher.state === 'loading' ? (
-                    <p className="muted small m-0" role="status">
-                      Зареждане на договорите…
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </article>
-    </li>
+      {l.contractCount > 0 && <CaseDetail link={l} contracts={contracts} />}
+    </article>
   );
 }
 
 // The expanded case, in three headed sub-sections: the magnitude bar (how much of the money moved while the
 // stake was declared), a timeline placing each contract against the declared window, and the contract list.
-function CaseDetail({ link: l, contracts }: { link: ConflictLink; contracts: ConflictContract[] }) {
+export function CaseDetail({
+  link: l,
+  contracts,
+}: {
+  link: ConflictLink;
+  contracts: ConflictContract[];
+}) {
   const mag = fundsMagnitude(l);
   const funds = fundsCellLabel(l);
   return (
@@ -274,7 +211,7 @@ function CaseDetail({ link: l, contracts }: { link: ConflictLink; contracts: Con
 // the timeline lacks (a small sum can still be a huge share of a small municipality). Each row is a stat:
 // the body + its capture share paired on one line, a neutral bar tied directly beneath, then the figures.
 // The bar is neutral (a high share is a question, not a verdict); a contract in the declared window is marked.
-function AuthorityShares({ contracts }: { contracts: ConflictContract[] }) {
+export function AuthorityShares({ contracts }: { contracts: ConflictContract[] }) {
   const shares = authorityShares(contracts);
   if (shares.length === 0) return null;
   return (
@@ -327,7 +264,13 @@ function AuthorityShares({ contracts }: { contracts: ConflictContract[] }) {
 
 // Contracts as dots on a year axis, the declared-stake window as a shaded band. Renders only when at least
 // one contract is dated (contractTimeline returns null otherwise) — the list below still covers undated ones.
-function Timeline({ link: l, contracts }: { link: ConflictLink; contracts: ConflictContract[] }) {
+export function Timeline({
+  link: l,
+  contracts,
+}: {
+  link: ConflictLink;
+  contracts: ConflictContract[];
+}) {
   const tl = contractTimeline(l, contracts);
   if (!tl) return null;
   const inCount = tl.marks.filter((m) => m.inWindow).length;
@@ -389,7 +332,7 @@ function tickStyle(pct: number): CSSProperties {
   return { left: `${pct}%`, transform: 'translateX(-50%)' };
 }
 
-function ContractList({ contracts }: { contracts: ConflictContract[] }) {
+export function ContractList({ contracts }: { contracts: ConflictContract[] }) {
   if (contracts.length === 0)
     return (
       <section className="cc-section">

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import { getAuthorityFacets, listAuthorities, streamAuthoritiesCsv } from './authorities';
 
 const authorityRow = {
@@ -27,52 +28,21 @@ const usesRollup = (sql: string) => sql.includes('FROM authority_totals');
 const usesBaseAggregation = (sql: string) => sql.includes('FROM contracts c');
 
 function fakeDb(): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          if (sql.includes('type_group') && sql.includes('GROUP BY')) {
-            return { results: [{ type_group: 'министерство', n: 10 }] as T[] };
-          }
-          if (sql.includes('sector_totals')) {
-            return { results: [{ division: '45', value_eur: 500000 }] as T[] };
-          }
-          return { results: [authorityRow] as T[] };
-        },
-        async first<T>() {
-          return { n: 1 } as T;
-        },
-      };
-    },
-  } as D1Database;
+  return fakeD1([
+    { when: ['type_group', 'GROUP BY'], all: [{ type_group: 'министерство', n: 10 }] },
+    { when: 'sector_totals', all: [{ division: '45', value_eur: 500000 }] },
+    { when: 'FROM authority_totals', all: [authorityRow] },
+    { when: 'FROM (', all: [authorityRow] },
+    { when: 'COUNT(*) AS n', first: { n: 1 } },
+  ]).db;
 }
 
-// A SQL-capturing fake DB for the branch-selection tests: records every prepared statement and returns
-// one authority row regardless of query, so we can assert *which* table source ran. (Deliberately not a
-// wrapper over fakeDb above — its facet branch would hijack the base-aggregation page query, which also
-// contains `type_group` + `GROUP BY`, and feed back a facet-shaped row that toAuthorityListItem can't map.)
-function spyDb(): { db: D1Database; sql: string[] } {
-  const sql: string[] = [];
-  const db = {
-    prepare(q: string) {
-      sql.push(q);
-      return {
-        bind() {
-          return this;
-        },
-        async all<T>() {
-          return { results: [authorityRow] as T[] };
-        },
-        async first<T>() {
-          return { n: 1 } as T;
-        },
-      };
-    },
-  } as D1Database;
-  return { db, sql };
+function spyDb(): FakeD1 {
+  return fakeD1([
+    { when: 'FROM authority_totals', all: [authorityRow] },
+    { when: 'FROM (', all: [authorityRow] },
+    { when: 'COUNT(*) AS n', first: { n: 1 } },
+  ]);
 }
 
 describe('listAuthorities', () => {
@@ -136,18 +106,10 @@ describe('getAuthorityFacets', () => {
 
 describe('streamAuthoritiesCsv', () => {
   it('returns a Response with CSV content-type and attachment disposition', () => {
-    const db = {
-      prepare(_sql: string) {
-        return {
-          bind() {
-            return this;
-          },
-          async all<T>() {
-            return { results: [] as T[] };
-          },
-        };
-      },
-    } as D1Database;
+    const db = fakeD1([
+      { when: 'FROM authority_totals', all: [] },
+      { when: 'FROM (', all: [] },
+    ]).db;
 
     const response = streamAuthoritiesCsv(db, {});
 

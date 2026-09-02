@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import { runServedIntegrityGate, type GateLog } from './integrity';
 
 interface Captured {
@@ -31,21 +32,21 @@ interface Seed {
   rollups?: boolean; // home_totals present (precompute ran) → rollup-reconciliation RUNS, not skips
   homeDrift?: number; // home_totals.value_eur − SUM(amount_eur); non-zero → a caught hard failure
 }
-function fakeD1(seed: Seed = {}): D1Database {
-  const rows = (sql: string): Record<string, unknown>[] => {
-    if (sql.includes('sqlite_master')) {
-      // contracts + bidders always exist; home_totals only once precompute has written the rollups.
-      if (seed.rollups && sql.includes("'home_totals'")) return [{ name: 'x' }];
-      return /'contracts'|'bidders'/.test(sql) ? [{ name: 'x' }] : [];
-    }
-    if (sql.includes('FROM home_totals') && sql.includes('COUNT(*) AS n')) {
-      return [{ n: seed.rollups ? 1 : 0 }];
-    }
-    if (sql.includes('clean_total')) {
-      // The single folded rollup-reconciliation SELECT. Everything reconciles except, when homeDrift is
-      // set, home_totals.value_eur — exactly the drift on a ministry-visible total this check must catch.
-      const clean = 1_000_000;
-      return [
+function servedD1(seed: Seed = {}): D1Database {
+  const clean = 1_000_000;
+  return fakeD1([
+    // contracts + bidders always exist; home_totals only once precompute has written the rollups.
+    { when: ['sqlite_master', "'home_totals'"], all: seed.rollups ? [{ name: 'x' }] : [] },
+    {
+      when: 'sqlite_master',
+      all: (call) => (/'contracts'|'bidders'/.test(call.sql) ? [{ name: 'x' }] : []),
+    },
+    { when: ['FROM home_totals', 'COUNT(*) AS n'], all: [{ n: seed.rollups ? 1 : 0 }] },
+    // The single folded rollup-reconciliation SELECT. Everything reconciles except, when homeDrift is
+    // set, home_totals.value_eur — exactly the drift on a ministry-visible total this check must catch.
+    {
+      when: 'clean_total',
+      all: [
         {
           clean_total: clean,
           home_value: clean + (seed.homeDrift ?? 0),
@@ -58,40 +59,23 @@ function fakeD1(seed: Seed = {}): D1Database {
           orphan_auth_rows: 0,
           orphan_bidder_rows: 0,
         },
-      ];
-    }
-    if (sql.includes('spent_eur < 0')) return [{ a: 0, c: 0, f: 0 }];
-    if (sql.includes('signed_at')) return [{ n: seed.badDates ?? 0 }];
-    if (sql.includes('current_value_eur')) {
-      // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
-      return [{ n: 0 }];
-    }
-    if (sql.includes('FROM contracts') && sql.includes('COUNT(*) AS n')) {
-      return [{ n: seed.contracts ?? 5 }];
-    }
-    if (sql.includes('neg_ok')) return [{ neg_ok: seed.negOk ?? 0, neg_other: 0 }];
-    if (sql.includes('eik_valid = 1')) return [{ n: 0 }];
-    if (sql.includes('eik_valid <> 1')) return [{ n: 0 }];
-    return [];
-  };
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return this;
-        },
-        async all() {
-          return { results: rows(sql) };
-        },
-      };
+      ],
     },
-  } as unknown as D1Database;
+    { when: 'spent_eur < 0', all: [{ a: 0, c: 0, f: 0 }] },
+    { when: 'signed_at', all: [{ n: seed.badDates ?? 0 }] },
+    // current-amount-parity (#261): clean by default — no detail/rollup disagreement.
+    { when: 'current_value_eur', all: [{ n: 0 }] },
+    { when: ['FROM contracts', 'COUNT(*) AS n'], all: [{ n: seed.contracts ?? 5 }] },
+    { when: 'neg_ok', all: [{ neg_ok: seed.negOk ?? 0, neg_other: 0 }] },
+    { when: 'eik_valid = 1', all: [{ n: 0 }] },
+    { when: 'eik_valid <> 1', all: [{ n: 0 }] },
+  ]).db;
 }
 
 describe('runServedIntegrityGate', () => {
   it('passes (logs ok, does not throw) on a clean served D1', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(fakeD1(), log)).resolves.toBeUndefined();
+    await expect(runServedIntegrityGate(servedD1(), log)).resolves.toBeUndefined();
     const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
     expect(ok?.level).toBe('info');
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
@@ -99,7 +83,7 @@ describe('runServedIntegrityGate', () => {
 
   it('throws and logs a violation when a check fails over the live D1 (empty corpus)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(fakeD1({ contracts: 0 }), log)).rejects.toThrow(
+    await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).rejects.toThrow(
       /integrity gate failed/,
     );
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
@@ -111,7 +95,7 @@ describe('runServedIntegrityGate', () => {
 
   it('throws on a hard data-integrity violation (negative ok amount_eur)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(fakeD1({ negOk: 3 }), log)).rejects.toThrow(
+    await expect(runServedIntegrityGate(servedD1({ negOk: 3 }), log)).rejects.toThrow(
       /integrity gate failed/,
     );
     expect(log.events.some((e) => e.event.event === 'etl_integrity_violation')).toBe(true);
@@ -119,7 +103,7 @@ describe('runServedIntegrityGate', () => {
 
   it('alerts but does NOT throw on a warn-only condition (out-of-range dates)', async () => {
     const log = fakeLog();
-    await expect(runServedIntegrityGate(fakeD1({ badDates: 2 }), log)).resolves.toBeUndefined();
+    await expect(runServedIntegrityGate(servedD1({ badDates: 2 }), log)).resolves.toBeUndefined();
     expect(log.events.some((e) => e.event.event === 'etl_integrity_warn')).toBe(true);
     expect(log.events.some((e) => e.level === 'error')).toBe(false);
   });
@@ -127,7 +111,7 @@ describe('runServedIntegrityGate', () => {
   it('runs rollup-reconciliation once the rollups exist (does not silently self-skip)', async () => {
     const skippedFor = async (seed: Seed): Promise<number> => {
       const log = fakeLog();
-      await runServedIntegrityGate(fakeD1(seed), log);
+      await runServedIntegrityGate(servedD1(seed), log);
       const ok = log.events.find((e) => e.event.event === 'etl_integrity_ok');
       return ok?.event.skipped as number;
     };
@@ -139,7 +123,7 @@ describe('runServedIntegrityGate', () => {
   it('throws when a rollup no longer reconciles with SUM(amount_eur) over the live D1', async () => {
     const log = fakeLog();
     await expect(
-      runServedIntegrityGate(fakeD1({ rollups: true, homeDrift: 5_000 }), log),
+      runServedIntegrityGate(servedD1({ rollups: true, homeDrift: 5_000 }), log),
     ).rejects.toThrow(/integrity gate failed/);
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');
