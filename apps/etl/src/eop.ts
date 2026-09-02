@@ -38,6 +38,8 @@ export interface CatchupPlan {
   capped: boolean;
   originalFrom: string;
   originalGapDays: number;
+  /** The unfinished earlier window this plan replays (folded into `from`), or null. */
+  replayFrom: string | null;
 }
 
 export interface BucketListing {
@@ -113,7 +115,7 @@ export function parseBucketKeys(xml: string): string[] {
   return keys;
 }
 
-function addDays(day: string, days: number): string {
+export function addDays(day: string, days: number): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
@@ -155,13 +157,34 @@ export async function latestLoadedDate(db: D1Database): Promise<string | null> {
 
 export async function computeWorkerCatchupPlan(
   db: D1Database,
-  opts: { today?: string; lookbackDays?: number; maxWindowDays?: number } = {},
+  opts: {
+    today?: string;
+    lookbackDays?: number;
+    maxWindowDays?: number;
+    /**
+     * Every window an earlier run started and never settled (see pendingWindows). The plan widens
+     * its START back to the oldest promise (before the cap) so those days are loaded again; its END
+     * is always this run's own `today` — a promise's tail beyond it is not loaded now, it simply
+     * stays outstanding (settlement subtracts only what was covered). Never widening the end keeps a
+     * backdated manual run on the window the operator asked for instead of displacing it.
+     */
+    replay?: { from: string; to: string }[];
+  } = {},
 ): Promise<CatchupPlan> {
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   const lookbackDays = opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
   const maxWindowDays = opts.maxWindowDays ?? MAX_WORKER_WINDOW_DAYS;
   const maxLoadedDate = await latestLoadedDate(db);
-  const window = computeCatchupWindow({ maxLoadedDate, today, lookbackDays });
+  const own = computeCatchupWindow({ maxLoadedDate, today, lookbackDays });
+  const replay = opts.replay ?? [];
+  const replayFrom = replay.length ? replay.map((w) => w.from).sort()[0]! : null;
+  // The end is this run's own today, never a promise's — and never past the real calendar day:
+  // buckets for the future do not exist, and an end there would cap the start past today's bucket.
+  const realToday = new Date().toISOString().slice(0, 10);
+  const to = own.to > realToday ? realToday : own.to;
+  const widenedFrom = replayFrom && replayFrom < own.from ? replayFrom : own.from;
+  // A manual `today` in the future is clamped above; the start must not outrun the clamped end.
+  const window = { from: widenedFrom > to ? to : widenedFrom, to };
   const originalGapDays = daysInWindow(window.from, window.to);
   if (originalGapDays <= maxWindowDays) {
     return {
@@ -172,18 +195,20 @@ export async function computeWorkerCatchupPlan(
       capped: false,
       originalFrom: window.from,
       originalGapDays,
+      replayFrom,
     };
   }
 
-  const cappedFrom = addDays(today, -(maxWindowDays - 1));
+  const cappedFrom = addDays(window.to, -(maxWindowDays - 1));
   return {
     maxLoadedDate,
     from: cappedFrom,
-    to: today,
-    gapDays: daysInWindow(cappedFrom, today),
+    to: window.to,
+    gapDays: daysInWindow(cappedFrom, window.to),
     capped: true,
     originalFrom: window.from,
     originalGapDays,
+    replayFrom,
   };
 }
 

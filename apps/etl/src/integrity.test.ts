@@ -83,8 +83,9 @@ describe('runServedIntegrityGate', () => {
 
   it('throws and logs a violation when a check fails over the live D1 (empty corpus)', async () => {
     const log = fakeLog();
+    // The step error itself must say WHICH check broke — the Workflow UI shows only this string.
     await expect(runServedIntegrityGate(servedD1({ contracts: 0 }), log)).rejects.toThrow(
-      /integrity gate failed/,
+      /^integrity gate failed: 1 of \d+ checks broke \(cron refresh\): non-empty-corpus — EMPTY corpus/,
     );
     const violation = log.events.find((e) => e.event.event === 'etl_integrity_violation');
     expect(violation?.level).toBe('error');

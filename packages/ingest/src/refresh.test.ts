@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { recordingD1 } from '@sigma/test-support';
 import {
+  acquireRefreshLease,
   createTransientStaging,
   dropTransientStaging,
   dropTransientStagingStatements,
+  pendingTouchedRows,
   refreshDerivedContractCount,
   refreshSliceStatementGroups,
+  releaseRefreshLease,
+  renewRefreshLease,
   runRefreshSliceStatementGroup,
   splitSqlStatements,
   transientStagingStatements,
@@ -173,5 +177,145 @@ describe('D1 orchestration', () => {
   it('refreshDerivedContractCount coalesces a null result to 0', async () => {
     const { db } = fakeDb(null);
     expect(await refreshDerivedContractCount(db)).toBe(0);
+  });
+});
+
+// The Worker asks this before short-circuiting an empty window: "did an earlier run die with rollups
+// still owed?" Absent tables are the normal post-clean-run state and must read as zero, not throw.
+describe('pendingTouchedRows', () => {
+  it('reads zero — and asks nothing else — when no touched table exists', async () => {
+    const fake = recordingD1([{ when: ['sqlite_master'], all: [] }]);
+    await expect(pendingTouchedRows(fake.db)).resolves.toEqual({
+      contracts: 0,
+      bidders: 0,
+      authorities: 0,
+      total: 0,
+    });
+    expect(fake.calls.filter((c) => /COUNT\(\*\)/.test(c.sql))).toEqual([]);
+  });
+
+  it('counts each existing touched table and sums them', async () => {
+    const fake = recordingD1([
+      {
+        when: ['sqlite_master'],
+        all: [{ name: 'refresh_touched_contracts' }, { name: 'refresh_touched_authorities' }],
+      },
+      { when: ['FROM refresh_touched_contracts'], first: { n: 3 } },
+      { when: ['FROM refresh_touched_authorities'], first: { n: 1 } },
+    ]);
+    await expect(pendingTouchedRows(fake.db)).resolves.toEqual({
+      contracts: 3,
+      bidders: 0, // the table is absent, so it is never queried
+      authorities: 1,
+      total: 4,
+    });
+    expect(fake.calls.some((c) => c.sql.includes('FROM refresh_touched_bidders'))).toBe(false);
+    // The existence probe binds the table names rather than interpolating them.
+    const probe = fake.calls.find((c) => c.sql.includes('sqlite_master'));
+    expect(probe?.binds).toEqual([
+      'refresh_touched_contracts',
+      'refresh_touched_bidders',
+      'refresh_touched_authorities',
+    ]);
+  });
+});
+
+// The lease is one atomic batch (create-if-absent, conditional upsert) plus a read-back, and the verdict
+// is read from the row, never assumed from the upsert — D1 does not report whether DO UPDATE's WHERE
+// fired. These pin the SQL contract; the real conditional semantics run on SQLite in apps/etl.
+describe('refresh lease', () => {
+  const NOW = new Date('2026-09-02T19:16:00.000Z');
+
+  it('acquires when the read-back names this holder, and binds holder/acquired/expires', async () => {
+    const fake = recordingD1([
+      {
+        when: ['FROM refresh_lease'],
+        first: { holder: 'wf-1', expires_at: '2026-09-02T19:46:00.000Z' },
+      },
+    ]);
+    await expect(acquireRefreshLease(fake.db, 'wf-1', NOW)).resolves.toEqual({
+      acquired: true,
+      holder: 'wf-1',
+      expiresAt: '2026-09-02T19:46:00.000Z',
+    });
+    const upsert = fake.calls.find((c) => c.sql.includes('INSERT INTO refresh_lease'));
+    expect(upsert?.binds).toEqual(['wf-1', '2026-09-02T19:16:00.000Z', '2026-09-02T19:46:00.000Z']);
+    expect(upsert?.sql).toMatch(
+      /WHERE refresh_lease\.expires_at <= \?2 OR refresh_lease\.holder = \?1/,
+    );
+    expect(fake.calls.some((c) => c.sql.includes('CREATE TABLE IF NOT EXISTS refresh_lease'))).toBe(
+      true,
+    );
+    // create + conditional upsert go out as ONE batch; the verdict is a separate read-back
+    expect(fake.calls.filter((c) => c.via === 'batch')).toHaveLength(2);
+    expect(
+      fake.calls.filter((c) => c.via === 'batch').some((c) => c.sql.includes('FROM refresh_lease')),
+    ).toBe(false);
+  });
+
+  it('reports the live competitor when the read-back names someone else', async () => {
+    const fake = recordingD1([
+      {
+        when: ['FROM refresh_lease'],
+        first: { holder: 'wf-0', expires_at: '2026-09-02T19:40:00.000Z' },
+      },
+    ]);
+    await expect(acquireRefreshLease(fake.db, 'wf-1', NOW)).resolves.toEqual({
+      acquired: false,
+      holder: 'wf-0',
+      expiresAt: '2026-09-02T19:40:00.000Z',
+    });
+  });
+
+  it('treats a missing row as not acquired rather than as ours', async () => {
+    const fake = recordingD1([{ when: ['FROM refresh_lease'], first: null }]);
+    await expect(acquireRefreshLease(fake.db, 'wf-1', NOW)).resolves.toEqual({
+      acquired: false,
+      holder: null,
+      expiresAt: null,
+    });
+  });
+
+  it('renews only its own row and reads the verdict back', async () => {
+    const fake = recordingD1([
+      { when: ['UPDATE refresh_lease'], run: () => {} },
+      {
+        when: ['FROM refresh_lease'],
+        first: { holder: 'wf-1', expires_at: '2026-09-02T19:50:00.000Z' },
+      },
+    ]);
+    await expect(
+      renewRefreshLease(fake.db, 'wf-1', new Date('2026-09-02T19:20:00.000Z')),
+    ).resolves.toEqual({
+      acquired: true,
+      holder: 'wf-1',
+      expiresAt: '2026-09-02T19:50:00.000Z',
+    });
+    const upd = fake.calls.find((c) => c.sql.includes('UPDATE refresh_lease'));
+    expect(upd?.sql).toMatch(/WHERE id = 1 AND holder = \?1/);
+    expect(upd?.binds).toEqual(['wf-1', '2026-09-02T19:50:00.000Z']);
+  });
+
+  it('reports a lost lease when the read-back names a newer holder', async () => {
+    const fake = recordingD1([
+      { when: ['UPDATE refresh_lease'], run: () => {} },
+      {
+        when: ['FROM refresh_lease'],
+        first: { holder: 'wf-2', expires_at: '2026-09-02T20:10:00.000Z' },
+      },
+    ]);
+    await expect(renewRefreshLease(fake.db, 'wf-1')).resolves.toEqual({
+      acquired: false,
+      holder: 'wf-2',
+      expiresAt: '2026-09-02T20:10:00.000Z',
+    });
+  });
+
+  it('releases only its own lease', async () => {
+    const fake = recordingD1([{ when: ['DELETE FROM refresh_lease'], run: () => {} }]);
+    await releaseRefreshLease(fake.db, 'wf-1');
+    const del = fake.calls.find((c) => c.sql.includes('DELETE FROM refresh_lease'));
+    expect(del?.sql).toMatch(/WHERE id = 1 AND holder = \?/);
+    expect(del?.binds).toEqual(['wf-1']);
   });
 });

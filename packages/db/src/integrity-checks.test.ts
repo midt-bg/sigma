@@ -17,10 +17,11 @@ import {
   checkCurrentAmountParity,
   checkDateSanity,
   checkEikValidity,
-  checkNonEmptyCorpus,
   checkNoNegativeValues,
+  checkNonEmptyCorpus,
   checkRollupReconciliation,
   checkStagingReconciliation,
+  summarizeIntegrity,
 } from '../../../scripts/integrity-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -410,5 +411,56 @@ describe('reconciliation gate — injected violations', () => {
     await expect(
       assertIntegrity(runner(db), { label: 'test-corrupt', exit: false }),
     ).rejects.toThrow(/integrity gate failed/);
+  });
+});
+
+// The gate's message is what a Workflow step error and a CLI exit carry. On 2026-09-02 it said only
+// "1 of 8 checks broke" and finding WHICH one meant re-running the whole roster by hand against the
+// served D1. It must name the check and carry its detail — clipped, so no check can turn a step
+// error into a page.
+describe('summarizeIntegrity message', () => {
+  const ok = (name: string) => ({ name, ok: true, skipped: false, detail: 'fine' });
+  const broken = (name: string, detail: string) => ({ name, ok: false, skipped: false, detail });
+
+  it('names every broken check with its detail', () => {
+    const summary = summarizeIntegrity(
+      [
+        ok('non-empty-corpus'),
+        broken(
+          'rollup-reconciliation',
+          'SUM(authority_totals.spent_eur) 1 != authority-attributed 2',
+        ),
+        ok('eik-validity'),
+        broken('no-negative-values', '3 contracts with value_flag=ok have negative amount_eur'),
+      ],
+      'cron refresh',
+    );
+    expect(summary.ok).toBe(false);
+    expect(summary.message).toBe(
+      'integrity gate failed: 2 of 4 checks broke (cron refresh): ' +
+        'rollup-reconciliation — SUM(authority_totals.spent_eur) 1 != authority-attributed 2; ' +
+        'no-negative-values — 3 contracts with value_flag=ok have negative amount_eur.',
+    );
+  });
+
+  it('clips a runaway detail and collapses its whitespace', () => {
+    const detail = 'x'.repeat(1000) + '\n\n   tail';
+    const summary = summarizeIntegrity([broken('date-sanity', detail)], 't');
+    expect(summary.message).toMatch(
+      /^integrity gate failed: 1 of 1 checks broke \(t\): date-sanity — x{399}…\.$/,
+    );
+  });
+
+  it('is null when nothing broke (warnings and skips are not violations)', () => {
+    const summary = summarizeIntegrity(
+      [
+        ok('a'),
+        { name: 'b', ok: true, skipped: true, detail: 'absent' },
+        { ...ok('c'), warn: true },
+      ],
+      't',
+    );
+    expect(summary.ok).toBe(true);
+    expect(summary.message).toBeNull();
   });
 });

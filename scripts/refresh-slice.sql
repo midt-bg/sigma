@@ -23,18 +23,35 @@ UPDATE home_totals SET as_of = NULL;
 CREATE INDEX IF NOT EXISTS idx_contracts_cnum ON contracts(contract_number);
 CREATE INDEX IF NOT EXISTS idx_contracts_tender_id ON contracts(tender_id);
 
-DROP TABLE IF EXISTS refresh_touched_contracts;
-DROP TABLE IF EXISTS refresh_touched_bidders;
-DROP TABLE IF EXISTS refresh_touched_authorities;
+-- Per-window scratch: rebuilt from THIS window's raw rows, so dropping them is right.
 DROP TABLE IF EXISTS refresh_joint_tender_leads;
 DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
 DROP TABLE IF EXISTS refresh_amendment_winners;
 DROP TABLE IF EXISTS refresh_amendment_contract_resolve;
-CREATE TABLE refresh_touched_contracts (id TEXT PRIMARY KEY);
-CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
-CREATE TABLE refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
+-- The touched sets are the one kind of scratch that carries meaning ACROSS runs, so they are created IF
+-- NOT EXISTS and never dropped or cleared here. Every batch that inserts or re-values a contract records
+-- the contract/bidder/authority ids it touched, and company-totals / authority-totals recompute exactly
+-- those ids. Each @refresh-batch is its own atomic D1 batch with nothing transactional spanning them, so
+-- a run that dies between `contracts` and the rollups has ALREADY committed the new contracts and the ids
+-- they touched — only the rollups are missing. Dropping the tables at the start of the next run (the
+-- shape this file had until 2026-09-02) threw those ids away, and because the next window is a short
+-- lookback the affected entities never got touched again: nineteen days of runs dying at `amendments`
+-- (SQLITE_NOMEM, #342) left 276 authorities and 481 bidders with rollups that no longer summed to their
+-- contracts (−139 M€ / −200 M€), tripping rollup-reconciliation on the first run that survived.
+-- Kept across runs, an aborted run's ids simply ride into the next run's union and are recomputed.
+-- Carrying a stale id is harmless by construction: every reader of these tables is an idempotent
+-- recompute from served or reference tables (region from nuts_regions, rollups and the contract search
+-- index DELETE+INSERT from contracts), never a rebuild from this window's raw rows.
+-- Lifecycle: created here → filled by the batches below → consumed by the rollups → dropped ONLY by
+-- `@refresh-batch cleanup` after every reader. dropTransientStagingStatements() (the abort path in
+-- packages/ingest/src/refresh.ts) deliberately leaves them alone, and the Worker refuses to skip the
+-- derive on an empty window while any of them still holds rows (pendingTouchedRows). All of that is
+-- pinned by packages/ingest/src/refresh-touched-durability.test.ts.
+CREATE TABLE IF NOT EXISTS refresh_touched_contracts (id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS refresh_touched_authorities (authority_id TEXT PRIMARY KEY);
 
 -- #286: recover the УНП for OCDS amendments via the tender.id bridge before any raw_amendments read
 -- below, mirroring derive-amendments.sql (raw_tenders first, then the raw_contracts synthetic-tender
@@ -533,7 +550,11 @@ INSERT INTO refresh_joint_tender_leads (unp, authority_id)
 SELECT unp, authority_id FROM ranked WHERE rn = 1;
 
 -- type_group for any authority still missing it (covers the rows just inserted) — same heuristic as
--- normalize-raw.sql step 1b.
+-- normalize-raw.sql step 1b. It is a GLOBAL fill, so it can touch authorities outside this window;
+-- record exactly the rows it is about to change, in this batch, BEFORE it changes them (afterwards
+-- the predicate no longer identifies them).
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT id FROM authorities WHERE type_group IS NULL;
 UPDATE authorities SET type_group = CASE
   WHEN name LIKE 'Община%' OR name LIKE 'ОБЩИНА%' OR name LIKE '%Столична община%' OR name LIKE '%СТОЛИЧНА ОБЩИНА%' THEN 'община'
   WHEN name LIKE 'Министерство%' OR name LIKE 'МИНИСТЕРСТВО%' THEN 'министерство'
@@ -743,6 +764,27 @@ FROM bidders b
 JOIN company_totals ct ON ct.bidder_id = b.id
 WHERE ct.ownership_kind IS NOT b.ownership_kind;
 
+-- Record in THIS batch what it upserted: every authority and bidder named by this window's raw rows
+-- (names, ownership_kind, consortium flags flow into the rollup rows and the search index). The same
+-- sets are recorded again downstream — harmless under OR IGNORE — but an abort right after this batch
+-- must not lose them.
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT DISTINCT authority_id FROM refresh_joint_authority_members;
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT a.id
+FROM authorities a
+WHERE a.bulstat IN (
+    SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
+  );
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT b.id
+FROM bidders b
+WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL)
+  OR b.id IN (SELECT bidder_key FROM contractor_identity);
 -- @refresh-batch touch-tenders
 INSERT OR IGNORE INTO refresh_touched_contracts (id)
 SELECT c.id
@@ -921,6 +963,17 @@ UPDATE authorities SET
   contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = authorities.bulstat AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
 WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = authorities.bulstat);
 
+-- Same batch as the UPDATE above: settlement/region/contact land in authority_totals.
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT a.id
+FROM authorities a
+WHERE a.bulstat IN (
+    SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
+  );
 -- @refresh-batch enrich-bidders
 UPDATE bidders SET
   nuts       = COALESCE((SELECT p.region_nuts    FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.region_nuts, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), nuts),
@@ -930,6 +983,12 @@ UPDATE bidders SET
   contact_phone = COALESCE((SELECT p.contact_phone FROM parties p WHERE p.eik = bidders.eik_normalized AND NULLIF(p.contact_phone, '') IS NOT NULL ORDER BY p.source DESC, COALESCE(p.ocid, '') DESC, COALESCE(p.party_id, '') DESC, COALESCE(p.name, '') DESC, COALESCE(p.street_address, '') DESC, COALESCE(p.locality, '') DESC, COALESCE(p.contact_email, '') DESC, COALESCE(p.contact_phone, '') DESC LIMIT 1), contact_phone)
 WHERE EXISTS (SELECT 1 FROM parties p WHERE p.eik = bidders.eik_normalized);
 
+-- Same batch as the UPDATE above: settlement lands in company_totals.
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT b.id
+FROM bidders b
+WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL)
+  OR b.id IN (SELECT bidder_key FROM contractor_identity);
 -- @refresh-batch touch-entities
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
 SELECT a.id
@@ -943,9 +1002,15 @@ WHERE a.bulstat IN (
   );
 
 -- @refresh-batch authority-region
+-- Re-label a touched authority from its NUTS code — the SAME result a full rebuild gives, so the two
+-- paths converge: region is only ever derived from nuts (normalize-raw.sql step 7 fills it from the
+-- same lookup on a rebuilt table), so a code with no mapping yields NULL there and must yield NULL
+-- here too, even for an id carried over from an aborted run. Only an authority with NO code is left
+-- alone: there is nothing to derive from, and a rebuild would not touch it either.
 UPDATE authorities
 SET region = (SELECT n.nuts3_name FROM nuts_regions n WHERE n.nuts3 = authorities.nuts)
-WHERE id IN (SELECT authority_id FROM refresh_touched_authorities);
+WHERE id IN (SELECT authority_id FROM refresh_touched_authorities)
+  AND nuts IS NOT NULL;
 
 -- @refresh-batch lot-values
 CREATE INDEX IF NOT EXISTS idx_raw_tenders_tender_id ON raw_tenders(tender_id);
@@ -1909,6 +1974,73 @@ SET status = 'awarded'
 WHERE status <> 'awarded'
   AND EXISTS (SELECT 1 FROM raw_contracts c WHERE 't:' || c.unp = tenders.id);
 
+-- Record what THIS batch inserted or replaced — in THIS batch. Every @refresh-batch is one atomic D1
+-- batch and nothing spans them, so the ids a batch touches must be written in the same batch as the
+-- rows it changes, or a death anywhere before the rollups loses the record of what still needs
+-- recomputing. Until 2026-09-02 this block sat at the END of `@refresh-batch amendments`, one batch
+-- later: nineteen days of runs dying inside `amendments` (SQLITE_NOMEM, #342) each committed their
+-- new contracts here and then never recorded them, so no later run rolled them up (276 authorities
+-- and 481 bidders drifted from their contracts, −139 M€ / −200 M€, and rollup-reconciliation tripped
+-- on the first run that survived). The touched tables themselves survive an abort (see `setup`); this
+-- is the other half — an id must be IN them before the batch that changed the row commits.
+-- Window-driven by construction: joins THIS window's raw_contracts / raw_amendments to the served
+-- contracts (both after the INSERTs above), plus every authority and bidder whose ЕИК appears in the
+-- window's parties, so re-attributed or re-named entities are re-rolled too.
+INSERT OR IGNORE INTO refresh_touched_contracts (id)
+SELECT DISTINCT c.id
+FROM raw_contracts rc
+JOIN contracts c ON c.contract_number = rc.contract_number AND c.tender_id = 't:' || rc.unp
+WHERE rc.contract_number IS NOT NULL
+  AND c.id GLOB 'c:[eo]:*'
+UNION
+SELECT DISTINCT c.id
+FROM raw_contracts rc
+JOIN contracts c ON c.contract_number IS NULL AND c.tender_id = 't:' || rc.unp
+WHERE rc.contract_number IS NULL
+  AND c.id GLOB 'c:[eo]:*'
+UNION
+SELECT DISTINCT c.id
+FROM raw_amendments ra
+JOIN contracts c ON c.contract_number = ra.contract_number AND c.tender_id = 't:' || ra.unp
+WHERE ra.contract_number IS NOT NULL
+UNION
+SELECT DISTINCT c.id
+FROM raw_amendments ra
+JOIN contracts c ON c.contract_number IS NULL AND c.tender_id = 't:' || ra.unp
+WHERE ra.contract_number IS NULL;
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT DISTINCT c.bidder_id
+FROM contracts c
+WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
+  AND c.bidder_id IS NOT NULL;
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT DISTINCT t.authority_id
+FROM contracts c JOIN tenders t ON t.id = c.tender_id
+WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
+  AND t.authority_id IS NOT NULL;
+-- Joint procurement: every co-authority of a touched contract, so the scoped joint rollup
+-- (authority_joint_participation) is recomputed for non-leads too, not only for the lead.
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT DISTINCT ca.authority_id
+FROM contract_co_authorities ca
+WHERE ca.contract_id IN (SELECT id FROM refresh_touched_contracts);
+INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
+SELECT a.id
+FROM authorities a
+WHERE a.bulstat IN (
+    SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
+    UNION
+    SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
+  );
+INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
+SELECT b.id
+FROM bidders b
+WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL)
+  OR b.id IN (SELECT bidder_key FROM contractor_identity);
+
+
 
 -- 5) Promote window amendments into served domain history and roll touched contracts.
 -- @refresh-batch amendments
@@ -2388,57 +2520,31 @@ SET
 FROM recalculated
 WHERE recalculated.id = contracts.id;
 
--- The transient table exists only for the statement above; drop it so a later batch
--- (or a re-run) never reads a stale slice.
-DROP TABLE IF EXISTS amend_contract_base;
-
+-- Record what the UPDATE above could have re-valued — exactly the rows of amend_contract_base — in
+-- THIS batch, so a run that dies after it still carries the ids into the next run's rollups. The
+-- window-driven recording (raw_contracts / raw_amendments / party ЕИК) already happened at the end of
+-- `@refresh-batch contracts`; this is the batch-local guarantee for the value change itself.
 INSERT OR IGNORE INTO refresh_touched_contracts (id)
-SELECT DISTINCT c.id
-FROM raw_contracts rc
-JOIN contracts c ON c.contract_number = rc.contract_number AND c.tender_id = 't:' || rc.unp
-WHERE rc.contract_number IS NOT NULL
-  AND c.id GLOB 'c:[eo]:*'
-UNION
-SELECT DISTINCT c.id
-FROM raw_contracts rc
-JOIN contracts c ON c.contract_number IS NULL AND c.tender_id = 't:' || rc.unp
-WHERE rc.contract_number IS NULL
-  AND c.id GLOB 'c:[eo]:*'
-UNION
-SELECT DISTINCT c.id
-FROM raw_amendments ra
-JOIN contracts c ON c.contract_number = ra.contract_number AND c.tender_id = 't:' || ra.unp
-WHERE ra.contract_number IS NOT NULL
-UNION
-SELECT DISTINCT c.id
-FROM raw_amendments ra
-JOIN contracts c ON c.contract_number IS NULL AND c.tender_id = 't:' || ra.unp
-WHERE ra.contract_number IS NULL;
+SELECT id FROM amend_contract_base;
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
 SELECT DISTINCT c.bidder_id
 FROM contracts c
-WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
+WHERE c.id IN (SELECT id FROM amend_contract_base)
   AND c.bidder_id IS NOT NULL;
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
 SELECT DISTINCT t.authority_id
 FROM contracts c JOIN tenders t ON t.id = c.tender_id
-WHERE c.id IN (SELECT id FROM refresh_touched_contracts)
+WHERE c.id IN (SELECT id FROM amend_contract_base)
   AND t.authority_id IS NOT NULL;
+-- Joint procurement: a re-valued contract changes every co-authority's joint rollup, not only the
+-- lead's. contract_co_authorities is served (filled by `contracts` above), so this is complete here.
 INSERT OR IGNORE INTO refresh_touched_authorities (authority_id)
-SELECT a.id
-FROM authorities a
-WHERE a.bulstat IN (
-    SELECT authority_eik FROM raw_contracts WHERE authority_eik IS NOT NULL
-    UNION
-    SELECT authority_eik FROM raw_tenders WHERE authority_eik IS NOT NULL
-    UNION
-    SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL
-  );
-INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
-SELECT b.id
-FROM bidders b
-WHERE b.eik_normalized IN (SELECT eik FROM raw_ocds_parties WHERE eik IS NOT NULL)
-  OR b.id IN (SELECT bidder_key FROM contractor_identity);
+SELECT DISTINCT ca.authority_id
+FROM contract_co_authorities ca
+WHERE ca.contract_id IN (SELECT id FROM amend_contract_base);
+-- The transient table exists only for the statements above; drop it so a later batch
+-- (or a re-run) never reads a stale slice.
+DROP TABLE IF EXISTS amend_contract_base;
 
 DROP TABLE contractor_identity;
 
@@ -2638,6 +2744,8 @@ DROP TABLE IF EXISTS refresh_joint_tender_leads;
 DROP TABLE IF EXISTS refresh_unp_prefix_authorities;
 DROP TABLE IF EXISTS refresh_joint_authority_members;
 DROP TABLE IF EXISTS refresh_joint_tender_sources;
+-- The touched sets go ONLY here — after the rollups and the contract search index have consumed them.
+-- A run that dies before this batch keeps them for the next run on purpose (see `@refresh-batch setup`).
 DROP TABLE IF EXISTS refresh_touched_contracts;
 DROP TABLE IF EXISTS refresh_touched_bidders;
 DROP TABLE IF EXISTS refresh_touched_authorities;

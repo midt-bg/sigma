@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeD1 } from '@sigma/test-support';
+import type { PendingWindow } from '@sigma/ingest';
 
 // index.test.ts covers the FX/derive path end-to-end against a real SQLite (#158). This file isolates
 // the RefreshWorkflow.run()/scheduled() *control flow* — plan → capped warning → zero-ingest
@@ -27,9 +28,24 @@ type GateLog = { info: (e: object) => void; warn: (e: object) => void; error: (e
 // Hoisted so the vi.mock factories (themselves hoisted above the imports) can close over them.
 const { ingest, eop, integrity } = vi.hoisted(() => ({
   ingest: {
+    acquireRefreshLease: vi.fn(async () => ({
+      acquired: true,
+      holder: 'test-instance',
+      expiresAt: '2026-06-07T00:30:00.000Z',
+    })),
+    releaseRefreshLease: vi.fn(async () => {}),
+    pendingWindows: vi.fn(async (): Promise<PendingWindow[]> => []),
+    recordPendingWindow: vi.fn(async () => {}),
+    settlePendingWindows: vi.fn(async () => ({ settled: 0, remaining: [] as PendingWindow[] })),
+    renewRefreshLease: vi.fn(async () => ({
+      acquired: true,
+      holder: 'test-instance',
+      expiresAt: '2026-06-07T00:30:00.000Z',
+    })),
     createTransientStaging: vi.fn(async () => {}),
     dropTransientStaging: vi.fn(async () => {}),
     refreshDerivedContractCount: vi.fn(async () => 42),
+    pendingTouchedRows: vi.fn(async () => ({ contracts: 0, bidders: 0, authorities: 0, total: 0 })),
     refreshSliceStatementGroups: vi.fn(() => [{ name: 'g1', statements: ['a', 'b'] }]),
     runRefreshSliceStatementGroup: vi.fn(async () => {}),
     loadFxRates: vi.fn(async () => ({
@@ -43,6 +59,12 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
   eop: {
     computeWorkerCatchupPlan: vi.fn(),
     ingestBucketWindow: vi.fn(),
+    // real arithmetic: the residual window is computed from it
+    addDays: (day: string, days: number) => {
+      const d = new Date(`${day}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    },
   },
   integrity: {
     runServedIntegrityGate: vi.fn(async (_db: unknown, _log: GateLog) => {}),
@@ -187,6 +209,7 @@ describe('RefreshWorkflow.run — control flow', () => {
       today: undefined,
       lookbackDays: undefined,
       maxWindowDays: undefined,
+      replay: [],
     });
   });
 
@@ -220,11 +243,39 @@ describe('RefreshWorkflow.run — control flow', () => {
 
     const result = await wf.run({ payload: {} } as never, fakeStep(names) as never);
 
-    expect(result).toMatchObject({ days: 1, staged: 0, derived: 0 });
+    expect(result).toMatchObject({ days: 1, staged: 0, derived: 0, pendingTouched: 0 });
     expect(ingest.loadFxRates).not.toHaveBeenCalled(); // no FX/derive on empty ingest
     expect(ingest.runRefreshSliceStatementGroup).not.toHaveBeenCalled();
     expect(warn.mock.calls.some((c) => String(c[0]).includes('etl_zero_ingest'))).toBe(true);
+    expect(names).toContain('pending-touched'); // the short-circuit asks first
     expect(names).toContain('drop-transient-staging'); // finally still runs
+  });
+
+  it('derives on an empty window when an earlier aborted run left touched rows behind', async () => {
+    // The touched sets survive an abort (refresh-slice.sql keeps them until its cleanup batch), so
+    // "nothing staged" no longer means "nothing to do": the previous run's rollups are still owed.
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // all counts 0
+    ingest.pendingTouchedRows.mockResolvedValueOnce({
+      contracts: 3,
+      bidders: 2,
+      authorities: 1,
+      total: 6,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    const result = await wf.run({ payload: {} } as never, fakeStep(names) as never);
+
+    expect(result).toMatchObject({ days: 1, staged: 0, derived: 42, pendingTouched: 6 });
+    expect(ingest.loadFxRates).toHaveBeenCalledTimes(1);
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1); // g1 ran
+    expect(integrity.runServedIntegrityGate).toHaveBeenCalledTimes(1);
+    const warned = warn.mock.calls.map((c) => String(c[0]));
+    expect(warned.some((l) => l.includes('etl_zero_ingest_pending_touched'))).toBe(true);
+    expect(warned.some((l) => l.includes('"etl_zero_ingest"'))).toBe(false); // not the short-circuit
+    expect(names.indexOf('pending-touched')).toBeLessThan(names.indexOf('load-fx'));
   });
 
   it('fails the run non-retryably when the served integrity gate throws, still dropping staging', async () => {
@@ -267,6 +318,434 @@ describe('RefreshWorkflow.run — control flow', () => {
     );
     expect(names).toContain('drop-transient-staging'); // finally runs on the error path
     expect(ingest.dropTransientStaging).toHaveBeenCalled();
+  });
+});
+
+describe('RefreshWorkflow.run — refresh lease', () => {
+  it('takes the lease first and releases it last, after the staging drop', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await wf.run({ payload: {}, instanceId: 'wf-42' } as never, fakeStep(names) as never);
+
+    expect(names[0]).toBe('acquire-refresh-lease');
+    expect(names.at(-1)).toBe('release-refresh-lease');
+    expect(names.indexOf('drop-transient-staging')).toBeLessThan(
+      names.indexOf('release-refresh-lease'),
+    );
+    expect(ingest.acquireRefreshLease).toHaveBeenCalledWith(DB, 'wf-42', expect.any(Date));
+    expect(ingest.releaseRefreshLease).toHaveBeenCalledWith(DB, 'wf-42');
+  });
+
+  it('steps aside — touching nothing — when another live instance holds the lease', async () => {
+    ingest.acquireRefreshLease.mockResolvedValueOnce({
+      acquired: false,
+      holder: 'wf-41',
+      expiresAt: '2026-06-07T00:20:00.000Z',
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    const result = await wf.run(
+      { payload: { today: '2026-06-07' }, instanceId: 'wf-42' } as never,
+      fakeStep(names) as never,
+    );
+
+    expect(result).toMatchObject({
+      skipped: 'lease-held',
+      leaseHolder: 'wf-41',
+      from: '2026-06-07',
+      to: '2026-06-07',
+      staged: 0,
+      derived: 0,
+      pendingTouched: 0,
+    });
+    expect(names).toEqual(['acquire-refresh-lease']); // nothing else ran — not even the staging drop
+    expect(ingest.dropTransientStaging).not.toHaveBeenCalled();
+    expect(eop.computeWorkerCatchupPlan).not.toHaveBeenCalled();
+    expect(ingest.releaseRefreshLease).not.toHaveBeenCalled(); // it is not ours to release
+    const held = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('etl_refresh_lease_held'));
+    expect(held).toBeDefined();
+    expect(JSON.parse(held!)).toMatchObject({
+      holder: 'wf-41',
+      expiresAt: '2026-06-07T00:20:00.000Z',
+    });
+  });
+
+  it('releases the lease even when the run fails', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockRejectedValueOnce(new Error('storage down'));
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-43' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/storage down/);
+
+    expect(names.at(-1)).toBe('release-refresh-lease');
+    expect(ingest.releaseRefreshLease).toHaveBeenCalledWith(DB, 'wf-43');
+  });
+});
+
+describe('RefreshWorkflow.run — lease fence', () => {
+  it('renews the lease before every writing step and once more before dropping staging', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await wf.run({ payload: {}, instanceId: 'wf-50' } as never, fakeStep(names) as never);
+
+    // drop-stale, record-window, create, ingest, load-fx, derive g1, count, gate, clear-window = 9
+    // fenced steps, + the finally's own check before dropping staging
+    expect(ingest.renewRefreshLease).toHaveBeenCalledTimes(10);
+    expect(ingest.renewRefreshLease).toHaveBeenCalledWith(DB, 'wf-50', expect.any(Date));
+    // plan-catchup and pending-touched only read: not fenced
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'plan-catchup',
+        'pending-touched',
+        'derive-slice:g1',
+        'integrity-gate',
+      ]),
+    );
+  });
+
+  it('stops before the next write when the lease is lost, leaves staging to the new holder, still releases', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    // drop-stale, create, ingest renew fine; the renew before load-fx finds a new holder; so does the finally's.
+    // One-shot answers, so nothing leaks into the next test: the four renewals before load-fx
+    // (drop-stale, record-window, create, ingest) succeed; load-fx's fence and the finally's check
+    // find the new holder.
+    const ours = { acquired: true, holder: 'wf-51', expiresAt: '2026-06-07T00:30:00.000Z' };
+    const theirs = { acquired: false, holder: 'wf-52', expiresAt: '2026-06-07T00:45:00.000Z' };
+    ingest.renewRefreshLease
+      .mockResolvedValueOnce(ours)
+      .mockResolvedValueOnce(ours)
+      .mockResolvedValueOnce(ours)
+      .mockResolvedValueOnce(ours)
+      .mockResolvedValueOnce(theirs)
+      .mockResolvedValueOnce(theirs);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-51' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/refresh lease lost before load-fx: now held by wf-52/);
+
+    expect(ingest.loadFxRates).not.toHaveBeenCalled(); // the fence fired before the body
+    expect(ingest.runRefreshSliceStatementGroup).not.toHaveBeenCalled();
+    // the staging tables belong to wf-52 now: only the drop-stale call at the start, none in finally
+    expect(ingest.dropTransientStaging).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual(
+      expect.arrayContaining([expect.stringContaining('etl_refresh_staging_left_to_new_holder')]),
+    );
+    expect(names.at(-1)).toBe('release-refresh-lease'); // holder-qualified: harmless for wf-52's row
+    expect(ingest.releaseRefreshLease).toHaveBeenCalledWith(DB, 'wf-51');
+  });
+
+  it('releases the lease even when dropping the staging tables throws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.dropTransientStaging
+      .mockResolvedValueOnce(undefined) // drop-stale at the start
+      .mockRejectedValueOnce(new Error('D1 hiccup on drop')); // the finally's drop
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-53' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/D1 hiccup on drop/);
+
+    expect(names.at(-1)).toBe('release-refresh-lease');
+    expect(ingest.releaseRefreshLease).toHaveBeenCalledWith(DB, 'wf-53');
+  });
+});
+
+describe('RefreshWorkflow.run — failures inside finally', () => {
+  it('reports the gate failure, not the staging-drop hiccup that followed it', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(
+      new Error(
+        'integrity gate failed: 1 of 8 checks broke (cron refresh): rollup-reconciliation — x.',
+      ),
+    );
+    ingest.dropTransientStaging
+      .mockResolvedValueOnce(undefined) // drop-stale at the start
+      .mockRejectedValueOnce(new Error('D1 hiccup on drop')); // the finally's drop
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-60' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/integrity gate failed: 1 of 8 checks broke/);
+
+    const logged = error.mock.calls.map((c) => String(c[0]));
+    expect(logged.some((l) => l.includes('etl_refresh_staging_drop_failed'))).toBe(true);
+    expect(logged.some((l) => l.includes('"afterFailure":true'))).toBe(true);
+    expect(names.at(-1)).toBe('release-refresh-lease');
+    expect(ingest.releaseRefreshLease).toHaveBeenCalledWith(DB, 'wf-60');
+  });
+});
+
+describe('RefreshWorkflow.run — window replay', () => {
+  it('records its window before staging and clears it only after the gate passed', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await wf.run({ payload: {}, instanceId: 'wf-70' } as never, fakeStep(names) as never);
+
+    expect(names.indexOf('pending-window')).toBeLessThan(names.indexOf('plan-catchup'));
+    expect(names.indexOf('record-window')).toBeGreaterThan(names.indexOf('plan-catchup'));
+    expect(names.indexOf('record-window')).toBeLessThan(names.indexOf('create-transient-staging'));
+    expect(names.indexOf('settle-windows')).toBeGreaterThan(names.indexOf('integrity-gate'));
+    expect(ingest.recordPendingWindow).toHaveBeenCalledWith(
+      DB,
+      'wf-70',
+      PLAN.from,
+      PLAN.to,
+      expect.any(Date),
+    );
+    expect(ingest.settlePendingWindows).toHaveBeenCalledTimes(1);
+    // the planner was told there was nothing to replay
+    expect(eop.computeWorkerCatchupPlan).toHaveBeenCalledWith(
+      DB,
+      expect.objectContaining({ replay: [] }),
+    );
+  });
+
+  it('hands an unfinished window to the planner and warns that it is replaying', async () => {
+    ingest.pendingWindows.mockResolvedValueOnce([
+      {
+        from: '2026-05-20',
+        to: '2026-05-31',
+        holder: 'wf-dead',
+        startedAt: '2026-05-31T00:00:05.000Z',
+      },
+    ]);
+    eop.computeWorkerCatchupPlan.mockResolvedValue({
+      ...PLAN,
+      from: '2026-05-20',
+      originalFrom: '2026-05-20',
+      replayFrom: '2026-05-20',
+    });
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    const result = await wf.run(
+      { payload: {}, instanceId: 'wf-71' } as never,
+      fakeStep(names) as never,
+    );
+
+    expect(eop.computeWorkerCatchupPlan).toHaveBeenCalledWith(
+      DB,
+      expect.objectContaining({ replay: [{ from: '2026-05-20', to: '2026-05-31' }] }),
+    );
+    expect(ingest.recordPendingWindow).toHaveBeenCalledWith(
+      DB,
+      'wf-71',
+      '2026-05-20',
+      PLAN.to,
+      expect.any(Date),
+    );
+    expect(result.replayFrom).toBe('2026-05-20');
+    const replay = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('etl_refresh_replay_window'));
+    expect(replay).toBeDefined();
+    expect(JSON.parse(replay!)).toMatchObject({
+      unsettled: [{ holder: 'wf-dead' }],
+      from: '2026-05-20',
+    });
+  });
+
+  it('leaves the window recorded when the gate fails, so the next run replays it', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(new Error('integrity gate failed: x'));
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-72' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/integrity gate failed/);
+
+    expect(ingest.recordPendingWindow).toHaveBeenCalledTimes(1);
+    expect(ingest.settlePendingWindows).not.toHaveBeenCalled();
+    expect(names).not.toContain('settle-windows');
+  });
+
+  it('clears the window on an empty ingest with nothing pending — it was fully covered', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult()]);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await wf.run({ payload: {}, instanceId: 'wf-73' } as never, fakeStep(names) as never);
+
+    expect(names).toContain('settle-windows-empty');
+    expect(ingest.settlePendingWindows).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RefreshWorkflow.run — inherited windows are never certified by an empty ingest', () => {
+  it('runs the derive and the gate on an empty ingest when an earlier window is unfinished', async () => {
+    ingest.pendingWindows.mockResolvedValueOnce([
+      {
+        from: '2026-05-25',
+        to: '2026-05-31',
+        holder: 'wf-dead',
+        startedAt: '2026-05-31T00:00:05.000Z',
+      },
+    ]);
+    eop.computeWorkerCatchupPlan.mockResolvedValue({
+      ...PLAN,
+      from: '2026-05-25',
+      originalFrom: '2026-05-25',
+    });
+    eop.ingestBucketWindow.mockResolvedValue([dayResult()]); // nothing staged today
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    const result = await wf.run(
+      { payload: {}, instanceId: 'wf-90' } as never,
+      fakeStep(names) as never,
+    );
+
+    expect(result.staged).toBe(0);
+    expect(names).not.toContain('settle-windows-empty'); // no short-circuit
+    expect(ingest.runRefreshSliceStatementGroup).toHaveBeenCalledTimes(1); // the derive ran
+    expect(integrity.runServedIntegrityGate).toHaveBeenCalledTimes(1); // and was verified
+    expect(names.indexOf('settle-windows')).toBeGreaterThan(names.indexOf('integrity-gate'));
+  });
+
+  it('records only its own capped coverage and reports what stays uncovered after settling', async () => {
+    ingest.pendingWindows.mockResolvedValueOnce([
+      {
+        from: '2026-04-01',
+        to: '2026-04-10',
+        holder: 'wf-dead',
+        startedAt: '2026-04-10T00:00:05.000Z',
+      },
+    ]);
+    eop.computeWorkerCatchupPlan.mockResolvedValue({
+      ...PLAN,
+      from: '2026-05-18', // capped: today − 20
+      to: '2026-06-07',
+      capped: true,
+      originalFrom: '2026-04-01',
+      replayFrom: '2026-04-01',
+    });
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.settlePendingWindows.mockResolvedValueOnce({
+      settled: 1,
+      remaining: [
+        {
+          from: '2026-04-01',
+          to: '2026-04-10',
+          holder: 'wf-dead',
+          startedAt: '2026-04-10T00:00:05.000Z',
+        },
+      ],
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    const result = await wf.run(
+      { payload: {}, instanceId: 'wf-91' } as never,
+      fakeStep(names) as never,
+    );
+
+    // the record is the CAPPED coverage, never the hull the plan was made from
+    expect(ingest.recordPendingWindow).toHaveBeenCalledWith(
+      DB,
+      'wf-91',
+      '2026-05-18',
+      '2026-06-07',
+      expect.any(Date),
+    );
+    expect(ingest.recordPendingWindow).toHaveBeenCalledTimes(1);
+    expect(ingest.settlePendingWindows).toHaveBeenCalledWith(
+      DB,
+      { from: '2026-05-18', to: '2026-06-07' },
+      expect.any(Date),
+    );
+    expect(result.uncoveredWindows).toBe(1);
+    const uncovered = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('etl_refresh_window_uncovered'));
+    expect(JSON.parse(uncovered!)).toMatchObject({
+      uncovered: [{ from: '2026-04-01', to: '2026-04-10' }],
+    });
+  });
+});
+
+describe('RefreshWorkflow.run — release failures never mask the run', () => {
+  it('reports the gate failure when both the drop and the release fail after it', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    integrity.runServedIntegrityGate.mockRejectedValueOnce(
+      new Error('integrity gate failed: the real one'),
+    );
+    ingest.dropTransientStaging
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('D1 hiccup on drop'));
+    ingest.releaseRefreshLease.mockRejectedValueOnce(new Error('D1 hiccup on release'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+    const names: string[] = [];
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-80' } as never, fakeStep(names) as never),
+    ).rejects.toThrow(/integrity gate failed: the real one/);
+
+    const logged = error.mock.calls.map((c) => String(c[0]));
+    expect(logged.some((l) => l.includes('etl_refresh_staging_drop_failed'))).toBe(true);
+    expect(logged.some((l) => l.includes('etl_refresh_lease_release_failed'))).toBe(true);
+  });
+
+  it('reports a release failure on an otherwise successful run', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.releaseRefreshLease.mockRejectedValueOnce(new Error('D1 hiccup on release'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-81' } as never, fakeStep([]) as never),
+    ).rejects.toThrow(/D1 hiccup on release/);
+  });
+
+  it('reports the drop failure, not the release failure, when both fail on a successful run', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.dropTransientStaging
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('D1 hiccup on drop'));
+    ingest.releaseRefreshLease.mockRejectedValueOnce(new Error('D1 hiccup on release'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-82' } as never, fakeStep([]) as never),
+    ).rejects.toThrow(/D1 hiccup on drop/);
   });
 });
 

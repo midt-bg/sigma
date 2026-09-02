@@ -141,6 +141,78 @@ describe('computeWorkerCatchupPlan', () => {
     expect(plan.originalFrom).not.toBe(plan.from);
   });
 
+  it('replays an unfinished earlier window by folding its from into the plan', async () => {
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-05'), {
+      today: '2026-06-07',
+      lookbackDays: 1,
+      replay: [{ from: '2026-05-30', to: '2026-06-01' }],
+    });
+    // own window would be 06-04..06-07; the unfinished 05-30 wins at the start, own today at the end
+    expect(plan).toMatchObject({
+      from: '2026-05-30',
+      to: '2026-06-07',
+      capped: false,
+      replayFrom: '2026-05-30',
+    });
+    expect(plan.originalFrom).toBe('2026-05-30');
+  });
+
+  it('keeps a backdated manual run on its own end: a promise tail past it stays outstanding', async () => {
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-05'), {
+      today: '2026-06-03', // an operator replaying the past
+      lookbackDays: 1,
+      replay: [{ from: '2026-05-30', to: '2026-06-06' }],
+    });
+    expect(plan.from).toBe('2026-05-30');
+    expect(plan.to).toBe('2026-06-03'); // not 06-06: the tail is settled by whichever run covers it
+  });
+
+  it('never lets a later promise plus the cap displace a backdated manual window', async () => {
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-04-08'), {
+      today: '2026-04-10',
+      lookbackDays: 3,
+      maxWindowDays: 21,
+      replay: [{ from: '2026-08-01', to: '2026-08-31' }], // recorded by a later run that died
+    });
+    // the operator's window, untouched: the promise lies after it and is not this run's to cover
+    expect(plan).toMatchObject({ from: '2026-04-05', to: '2026-04-10', capped: false });
+  });
+
+  it('clamps a future manual today to the real calendar day without inverting the window', async () => {
+    const realToday = new Date().toISOString().slice(0, 10);
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2999-01-01'), {
+      today: '2999-01-10', // a bogus future today: freshness and lookback both in the future
+      lookbackDays: 1,
+      maxWindowDays: 5,
+    });
+    expect(plan.to).toBe(realToday);
+    expect(plan.from <= plan.to).toBe(true);
+  });
+
+  it('ignores an unfinished from that is not earlier than its own', async () => {
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-05'), {
+      today: '2026-06-07',
+      lookbackDays: 3,
+      replay: [{ from: '2026-06-06', to: '2026-06-07' }],
+    });
+    expect(plan.from).toBe('2026-06-02');
+    expect(plan.replayFrom).toBe('2026-06-06'); // reported, not applied
+  });
+
+  it('caps a replay wider than the Worker may cover, keeping the uncapped start as originalFrom', async () => {
+    const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness('2026-06-05'), {
+      today: '2026-06-07',
+      lookbackDays: 1,
+      maxWindowDays: 5,
+      replay: [{ from: '2026-01-01', to: '2026-01-10' }],
+    });
+    expect(plan.capped).toBe(true);
+    expect(plan.from).toBe('2026-06-03'); // window.to − (5 − 1)
+    expect(plan.to).toBe('2026-06-07');
+    // the Worker records [originalFrom, from − 1] as still outstanding from these two
+    expect(plan.originalFrom).toBe('2026-01-01');
+  });
+
   it('falls back to a null max-loaded date when freshness is empty', async () => {
     const plan = await computeWorkerCatchupPlan(fakeDbFromFreshness(null), { today: '2026-06-07' });
     expect(plan.maxLoadedDate).toBeNull();
