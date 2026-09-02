@@ -225,7 +225,7 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // 40 chars of the unit, so no legitimate amount is missed.
   /(?:€|eur)\s*\d[\d.,\s]{0,40}/giu, // €1234, EUR 1 234 (currency-first)
   /\d[\d.,\s]{0,40}(?:€|лв\.?|eur|евро|лева)/giu, // 1 234 лв, 1234 евро
-  /\d[\d.,\s]{0,40}(?:млн|млрд|хил)\.?/giu, // 12 млрд, 1,2 млн
+  /\d[\d.,\s]{0,40}(?:трлн|млрд|млн|хил)\.?/giu, // 12 млрд, 1,2 млн, 12 трлн
   /\d{1,3}(?:[.,\s'’٫٬]\d{3})+/gu, // grouped: 1 234, 1,234,567, 12'000'000, 2٬500٬000 (Arabic sep)
   /\d(?:[.,]\d+)?[eE][+-]?\d+/gu, // scientific notation: 1.2e10, 12E9
   /\d{5,}/gu, // 10000+ (years are ≤4 digits)
@@ -248,19 +248,22 @@ const PROSE_NUMBER_PATTERNS: RegExp[] = [
   // Inflections (милиона/милиарди/милионен) and "милионер" still match — over-flagging toward an
   // unbound figure is the safe direction; "Илион" (Troy) and "билярд" (the game) no longer do.
   // Digit forms are already caught by `\d{5,}` above.
-  // млрд/млн flag when a SPELLED NUMERAL precedes them: "дванадесет млрд." has neither a digit (the
-  // \d…млрд pattern above needs one) nor a full-word suffix (review f/u, ydimitrof). Bare, they are
-  // a UNIT — "Стойност (млн. €)" is the site's own column-header style and carries no number — so the
-  // abbreviation alone must not flag (it did, rejecting unit-only headers — review f/u). The numeral
-  // list is the closed class of Bulgarian cardinals (1–19, tens, hundreds) plus the vague quantifiers.
-  // `трлн` rides the same branch: "три трлн лева" has no digit, no full-word `-илион` stem and no
-  // млн/млрд either, so it slipped the whole gate while the very numeral+abbreviation logic that
-  // motivates this branch covers it one magnitude down (review f/u, ydimitrof). Only the
+  // млрд/млн/трлн flag when ANY word precedes them, not only a listed numeral: "дванадесет млрд." has
+  // neither a digit (the \d…млрд pattern above needs one) nor a full-word suffix (review f/u,
+  // ydimitrof), and a CLOSED numeral list proved leaky — "два и половина млрд." (the word before the
+  // unit is "половина"), "двайсет млн.", "стотина млн.", "четвърт млрд." all passed it (review f/u on
+  // #321). Bare, the abbreviation is a UNIT — "Стойност (млн. €)" is the site's own column-header
+  // style and carries no number — so it must not flag when only punctuation, a line start or a unit
+  // PREPOSITION ("в млн. лв.", "изразени във млрд.") precedes it. A noun directly before it
+  // ("Стойност млн. €") IS flagged: without a complete numeral dictionary it is indistinguishable from
+  // "стотина млн.", and over-flagging toward an unbound figure is the safe direction (the model is
+  // asked to parenthesise the unit). `трлн` rides this branch AND the digit branch above: "три трлн
+  // лева" / "12 трлн. лева" have no `-илион` stem and no млн/млрд (review f/u, ydimitrof). Only the
   // abbreviations Bulgarian financial writing actually uses are listed — an invented "квдрлн" would
   // be a pattern nobody writes, and the full word (квадрилион) is already caught by the stem above.
   // The digit-less "хил." residue stays accepted: thousands are not the defamation-scale vector.
   /(?:м|б|тр|квадр|квинт|секст|септ|окт|нон|дец)ил(?:ион|иард)|хиляд/giu, // spelled magnitudes
-  /(?<!\p{L})(?:един|една|едно|два|две|три|четири|пет|шест|седем|осем|девет|десет|(?:един|два|три|четири|пет|шест|седем|осем|девет)надесет|(?:два|три|четири|пет|шест|седем|осем|девет)десет|сто|двеста|триста|(?:четири|пет|шест|седем|осем|девет)стотин|половин|няколко|десетки|стотици)(?:те|та|то)?(?!\p{L})[\s\u00a0]+(?:трлн|млрд|млн)/giu, // numeral + трлн/млрд/млн
+  /(?<!\p{L})(?!(?:в|във|на|по|от|до|за|към|при|с|със|и|или)(?!\p{L}))\p{L}+[\s\u00a0]+(?:трлн|млрд|млн)(?!\p{L})/giu, // word (numeral, fraction, approximation…) + трлн/млрд/млн
   /%|процент|(?<!\p{L})на\s+сто/giu, // percentages (%, процент-stem, or the phrase "на сто")
   /\d[\d.,]*\s*пъти/giu, // numeric ratios (3,5 пъти)
   // Non-€/лв currency units the suffix pattern above omits — a sub-5-digit dollar amount ("5000 долара",
