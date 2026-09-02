@@ -94,7 +94,8 @@ function callName(name: unknown): string | null {
 // call nested in an argument (`hex(group_concat(x))`), a WHERE, a sub-select or a CTE body is the same
 // memory amplification as one in the outer SELECT list. Returns the first offender, or null. Fails closed
 // on a call node whose name shape is unknown: a call that cannot be named cannot be proven harmless.
-function denyDeniedFunction(node: unknown): string | null {
+// Exported for the unit test of that fail-closed path — no SQL text makes the parser emit such a node.
+export function denyDeniedFunction(node: unknown): string | null {
   if (!node || typeof node !== 'object') return null;
   if (Array.isArray(node)) {
     for (const item of node) {
