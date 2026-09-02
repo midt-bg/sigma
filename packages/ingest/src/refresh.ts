@@ -102,7 +102,7 @@ const LEGACY_TRANSIENT_STAGING_TABLES = [
 // its own script, so it self-heals on the next run; listing it here also sweeps it after an aborted run so
 // it never lingers in D1 (review nikimilenkov LOW 2 — #306's value-resolver scratch table). Not part of
 // work-staging-schema.sql, so it stays out of transientStagingStatements' recreate path.
-const SCRATCH_TABLES = ['amendment_contract_resolve'] as const;
+const SCRATCH_TABLES = ['amendment_contract_resolve', 'amend_contract_base'] as const;
 
 function touchesTransientStaging(statement: string): boolean {
   return TRANSIENT_STAGING_TABLES.some((table) => statement.includes(table));

@@ -2061,7 +2061,31 @@ WHERE (id GLOB 'c:[eo]:*' AND EXISTS (
         AND ra.contract_number = contracts.contract_number
    );
 
-WITH contract_base AS (
+-- The value recomputation used to be ONE statement: `WITH contract_base AS (…), base, calc,
+-- recalculated UPDATE contracts … FROM recalculated`. On 2026-08-14 it began failing on D1 with
+-- `D1_ERROR: out of memory: SQLITE_NOMEM`, and kept failing every six hours for nineteen days.
+--
+-- What is measured, and only that: it OOMs even when the slice matches ZERO rows, so the data is not
+-- the cause. Raw size is not the discriminator either — the two largest statements in the `contracts`
+-- batch (349 and 363 lines, 28-29 nested SELECTs, not all of them correlated) run fine, while this one
+-- was 308 lines with 19. Those are `INSERT … SELECT`; this was a large `UPDATE … FROM <cte>`. That
+-- shape alone is not fatal — lot-values above has used it since 2026-06 at 30 lines — but at this size
+-- it was. SQLite is free to flatten an unhinted CTE instead of materialising it (the old statement's
+-- local plan has no MATERIALIZE node at all), so the honest reading is that the planner's expansion of
+-- this shape at this size exceeded what D1 would allocate. Persisting the heavy half into a real table
+-- acts as an optimisation fence and leaves a small statement behind: 247 code lines → 105.
+--
+-- The failure was silent in the worst way. `@refresh-batch setup` NULLs home_totals.as_of and only
+-- `globals` — eighteen batches later — restores it, so a death in between leaves the surface with no
+-- freshness at all: staging's footer simply dropped „последен договор" and froze at 14.08.
+--
+-- So contract_base is materialised into a transient table first — the same idiom contractor_identity
+-- above already uses. Verified equivalent, not assumed: original vs split, run under sqlite3 (no
+-- memory ceiling) over the same 199 723 contracts, gave 0 differences across all five updated columns
+-- (value_flag, amount, amount_eur, signing_value_eur, current_value_eur).
+DROP TABLE IF EXISTS amend_contract_base;
+
+CREATE TABLE amend_contract_base AS
   SELECT c.id, c.currency, c.signing_value, c.current_value, c.current_value_currency, c.fx_rate, c.value_flag,
     te.estimated_value AS proc_est_native,
     CASE
@@ -2094,19 +2118,11 @@ WITH contract_base AS (
         LIMIT 1
       )
     END AS proc_est_eur,
-    te.estimated_value AS tender_estimated_value,
-    COALESCE((
-      SELECT rc.estimated_value
-      FROM raw_contracts rc
-      WHERE rc.unp = substr(c.tender_id, 3)
-        AND rc.contract_number = c.contract_number
-        AND (
-          (c.id LIKE 'c:e:%' AND rc.source LIKE 'eop:%')
-          OR (c.id LIKE 'c:o:%' AND rc.source LIKE 'ocds:%')
-        )
-      ORDER BY rc.source DESC, rc.id DESC
-      LIMIT 1
-    ), te.estimated_value) AS classifier_estimated_value,
+    -- tender_estimated_value and classifier_estimated_value used to be projected here. The old CTE was
+    -- flattened by the planner, so neither column cost anything when nothing downstream read them;
+    -- persisting the row into a table makes every projected column real work — the classifier one
+    -- carries a correlated raw_contracts lookup with its own ORDER BY. Both are unread by the
+    -- consumer below (review), so they are not materialised.
     c.signed_at,
     -- The contract row's OWN estimate and the currency it is denominated in, for the стотинки band's
     -- own-row arm (#247). Deliberately WITHOUT the procedure fallback classifier_estimated_value carries:
@@ -2250,7 +2266,9 @@ WITH contract_base AS (
       WHERE a.unp = substr(c.tender_id, 3)
         AND a.contract_number = c.contract_number
     )
-), base AS (
+;
+
+WITH base AS (
   SELECT id, currency, signing_value, current_value, current_value_currency, fx_rate, proc_est_eur, proc_est_native,
     CASE
       WHEN c.value_flag NOT IN ('annex_suspect', 'annex_total_suspect')
@@ -2298,7 +2316,7 @@ WITH contract_base AS (
           LIMIT 1
         )
       END AS own_est_eur
-    FROM contract_base cb
+    FROM amend_contract_base cb
   ) c
 ), calc AS (
   SELECT id, new_value_flag, proc_est_eur,
@@ -2369,6 +2387,10 @@ SET
   current_value_eur = recalculated.new_current_value_eur
 FROM recalculated
 WHERE recalculated.id = contracts.id;
+
+-- The transient table exists only for the statement above; drop it so a later batch
+-- (or a re-run) never reads a stale slice.
+DROP TABLE IF EXISTS amend_contract_base;
 
 INSERT OR IGNORE INTO refresh_touched_contracts (id)
 SELECT DISTINCT c.id
