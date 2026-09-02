@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeD1 } from '@sigma/test-support';
-import type { PendingWindow } from '@sigma/ingest';
+import type { PendingWindow, RefreshLease } from '@sigma/ingest';
 
 // index.test.ts covers the FX/derive path end-to-end against a real SQLite (#158). This file isolates
 // the RefreshWorkflow.run()/scheduled() *control flow* — plan → capped warning → zero-ingest
@@ -28,20 +28,24 @@ type GateLog = { info: (e: object) => void; warn: (e: object) => void; error: (e
 // Hoisted so the vi.mock factories (themselves hoisted above the imports) can close over them.
 const { ingest, eop, integrity } = vi.hoisted(() => ({
   ingest: {
-    acquireRefreshLease: vi.fn(async () => ({
-      acquired: true,
-      holder: 'test-instance',
-      expiresAt: '2026-06-07T00:30:00.000Z',
-    })),
+    acquireRefreshLease: vi.fn(
+      async (): Promise<RefreshLease> => ({
+        acquired: true,
+        holder: 'test-instance',
+        expiresAt: '2026-06-07T00:30:00.000Z',
+      }),
+    ),
     releaseRefreshLease: vi.fn(async () => {}),
     pendingWindows: vi.fn(async (): Promise<PendingWindow[]> => []),
     recordPendingWindow: vi.fn(async () => {}),
     settlePendingWindows: vi.fn(async () => ({ settled: 0, remaining: [] as PendingWindow[] })),
-    renewRefreshLease: vi.fn(async () => ({
-      acquired: true,
-      holder: 'test-instance',
-      expiresAt: '2026-06-07T00:30:00.000Z',
-    })),
+    renewRefreshLease: vi.fn(
+      async (): Promise<RefreshLease> => ({
+        acquired: true,
+        holder: 'test-instance',
+        expiresAt: '2026-06-07T00:30:00.000Z',
+      }),
+    ),
     createTransientStaging: vi.fn(async () => {}),
     dropTransientStaging: vi.fn(async () => {}),
     refreshDerivedContractCount: vi.fn(async () => 42),
