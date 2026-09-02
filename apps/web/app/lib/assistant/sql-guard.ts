@@ -40,34 +40,56 @@ const FORBIDDEN = [
   'REVOKE',
 ];
 
-// Strip `/* block */` and `-- line` comments, but NOT when they fall inside a single-quoted string
-// literal — a regex pass that ignored literals silently corrupted query semantics: `name = 'a/*b*/c'`
-// became `name = 'a c'` (wrong rows), and `'x -- y'` was truncated to an unterminated string (fail-closed
-// false-deny). The executed SQL is this stripped string, so the corruption is invisible. Mirror the
-// literal/`''`-escape handling of splitStatements below so both layers model strings the same way
-// (review #80, follow-up). A `--`/`/*` inside a literal is preserved as data.
+// SQLite's FOUR quoting forms — '…' (string literal), "…" and `…` (quoted identifiers; SQLite also
+// accepts "…" as a literal) and […] (MS-style identifier). Inside ANY of them a comment marker, a `;`
+// or another quote char is DATA. The scanners below modelled only '…', so a `'` inside a double-quoted
+// alias (`AS "x'y"`) flipped them into "in string" for the rest of the statement: a later `/**/` or
+// `--` survived stripping verbatim, `group_concat/**/(x)` then slipped the function regex (which allows
+// only whitespace before the paren) while SQLite tokenises the comment as whitespace and runs the
+// aggregate — and the AST layer, which never looked at function names, let it through too (review f/u
+// on #223). The three symmetric forms escape their own closer by doubling it ('a''b', "a""b", `a``b`);
+// `]` has no escape. An unterminated span runs to the end of the input, which the AST guard then fails
+// to parse (fail-closed).
+const QUOTE_CLOSER: ReadonlyMap<string, string> = new Map([
+  ["'", "'"],
+  ['"', '"'],
+  ['`', '`'],
+  ['[', ']'],
+]);
+
+/** Index just past the quoted span opening at `start` (an opener char); `sql.length` if unterminated. */
+function quotedSpanEnd(sql: string, start: number): number {
+  const close = QUOTE_CLOSER.get(sql[start]!)!;
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === close) {
+      if (close !== ']' && sql[i + 1] === close) {
+        i += 2; // doubled closer: an escaped quote, still inside the span
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return sql.length;
+}
+
+// Strip `/* block */` and `-- line` comments, but NOT when they fall inside a quoted span — a regex
+// pass that ignored literals silently corrupted query semantics: `name = 'a/*b*/c'` became
+// `name = 'a c'` (wrong rows), and `'x -- y'` was truncated to an unterminated string (fail-closed
+// false-deny). The executed SQL is this stripped string, so the corruption is invisible. Both scanners
+// share quotedSpanEnd so they model quoting the same way (review #80, follow-up; all four forms, review
+// f/u on #223). A `--`/`/*` inside a span is preserved as data.
 function stripComments(sql: string): string {
   let out = '';
   let i = 0;
   const n = sql.length;
-  let inString = false;
   while (i < n) {
     const ch = sql[i]!;
-    if (inString) {
-      if (ch === "'" && sql[i + 1] === "'") {
-        out += "''"; // escaped quote inside a literal — consume both, stay in the string
-        i += 2;
-        continue;
-      }
-      out += ch;
-      if (ch === "'") inString = false;
-      i++;
-      continue;
-    }
-    if (ch === "'") {
-      inString = true;
-      out += ch;
-      i++;
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanEnd(sql, i);
+      out += sql.slice(i, end); // verbatim — comment markers inside are data
+      i = end;
       continue;
     }
     if (ch === '-' && sql[i + 1] === '-') {
@@ -89,35 +111,50 @@ function stripComments(sql: string): string {
   return out;
 }
 
-// Split on `;` at the top level, treating a `;` inside a single-quoted string literal as data, not a
-// statement separator — otherwise a benign `SELECT ';' …` is mis-counted as stacked statements and
-// rejected (review #80). SQLite escapes a quote inside a literal by doubling it (`'a''b'` is the value
-// `a'b`), so a `''` pair is consumed as data and does NOT toggle the string — a plain toggle on every
-// `'` mis-models the literal (review #80). A real stacked statement still splits; an unbalanced quote
-// just yields one segment (the AST guard then fails to parse it).
+// Split on `;` at the top level, treating a `;` inside a quoted span (literal OR quoted identifier) as
+// data, not a statement separator — otherwise a benign `SELECT ';' …` is mis-counted as stacked
+// statements and rejected (review #80). SQLite escapes a quote inside a span by doubling it (`'a''b'`
+// is the value `a'b`), so a doubled closer is consumed as data and does NOT end the span — a plain
+// toggle on every quote mis-models it (review #80). A real stacked statement still splits; an
+// unbalanced quote just yields one segment (the AST guard then fails to parse it).
 function splitStatements(sql: string): string[] {
   const out: string[] = [];
   let current = '';
-  let inString = false;
-  for (let i = 0; i < sql.length; i++) {
+  let i = 0;
+  while (i < sql.length) {
     const ch = sql[i]!;
-    if (ch === "'" && inString && sql[i + 1] === "'") {
-      // Escaped quote inside a literal: consume both chars and stay in the string.
-      current += "''";
-      i++;
-    } else if (ch === "'") {
-      inString = !inString;
-      current += ch;
-    } else if (ch === ';' && !inString) {
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanEnd(sql, i);
+      current += sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === ';') {
       out.push(current);
       current = '';
     } else {
       current += ch;
     }
+    i++;
   }
   out.push(current);
   return out.map((s) => s.trim()).filter(Boolean);
 }
+
+// Function names no analytics query needs and that amplify memory or reach outside the data — the WHY is
+// at the check in assertReadOnlySelect below. ONE definition for BOTH layers: the lexical regex there and
+// the AST walk in sql-ast-guard.ts, which tests the parser-resolved call name (comments, quoting and case
+// already gone), so the two can never drift apart and no lexical trick can hide a name from the second
+// layer (review f/u on #223).
+const DENIED_FUNCTION_ALTERNATION =
+  'load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|jsonb?_group_(?:array|object)';
+/** Whole-name test for a resolved function name (case-insensitive). */
+export const DENIED_FUNCTION_NAME = new RegExp(`^(?:${DENIED_FUNCTION_ALTERNATION})$`, 'i');
+// Lexical form: the name, an optional closing quote (see below), whitespace, `(`.
+const DENIED_FUNCTION_CALL = new RegExp(
+  `\\b(?:${DENIED_FUNCTION_ALTERNATION})["'\\]\`]?\\s*\\(`,
+  'i',
+);
 
 export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
 
@@ -183,12 +220,10 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // the bare-name regex saw only `group_concat"(` and never matched (review f/u, ydimitrof). `\b`
   // before the name still anchors after an OPENING quote (quote chars are non-word). An identifier
   // padded inside the quotes (`" group_concat"`) is a DIFFERENT identifier to SQLite — resolves to
-  // no built-in, so it needs no handling here.
-  if (
-    /\b(?:load_extension|randomblob|zeroblob|printf|format|group_concat|string_agg|jsonb?_group_(?:array|object))["'\]`]?\s*\(/i.test(
-      sql,
-    )
-  ) {
+  // no built-in, so it needs no handling here. This regex is only as good as the comment stripping
+  // above (whitespace-only between name and paren); the AST layer re-checks the same names on the
+  // parsed call, so a stripping miss is not a bypass (review f/u on #223).
+  if (DENIED_FUNCTION_CALL.test(sql)) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };
