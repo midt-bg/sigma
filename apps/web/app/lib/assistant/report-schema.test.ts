@@ -555,18 +555,54 @@ describe('findProseNumbers', () => {
     // трлн: no digit, no `-илион` stem, no млн/млрд — it slipped the whole gate (review f/u).
     expect(findProseNumbers('три трлн лева')).not.toHaveLength(0);
     expect(findProseNumbers('няколко трлн.')).not.toHaveLength(0);
+    // …and the DIGIT form of the same magnitude, the one a model most likely writes (review f/u on #321).
+    expect(findProseNumbers('дълг от 12 трлн. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('1,5 трлн')).not.toHaveLength(0);
     // Long-scale forms and the top of the prefix list stay closed.
     expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
     expect(findProseNumbers('децилион')).not.toHaveLength(0);
     expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
   });
 
+  it('flags compound, colloquial and approximate numerals before млн/млрд/трлн (a closed numeral list leaked — review f/u on #321)', () => {
+    // The numeral+abbreviation branch used a CLOSED list of cardinals: "два и половина млрд." (the
+    // word before the unit is "половина"), the colloquial tens, "стотина"/"десетина"/"дузина" and the
+    // fractions all fell outside it, so ordinary Bulgarian financial phrasing froze an unbound figure
+    // onto the report. The branch now flags ANY word before the unit except a unit preposition.
+    for (const s of [
+      'Изплатени са два и половина млрд. лева на един изпълнител.',
+      'двайсет млн. лева',
+      'трийсет млрд.',
+      'стотина млн. евро',
+      'десетина млн.',
+      'четвърт млрд.',
+      'три четвърти млн.',
+      'дузина млн.',
+      'няколкостотин млн.',
+      '12-те млн. са усвоени',
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    const out = bindReport(
+      emit([{ type: 'text', md: 'Изплатени са два и половина млрд. лева на един изпълнител.' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+  });
+
   it("does NOT flag a bare млн./млрд. unit (the site's own column-header style carries no number)", () => {
-    // The abbreviation flags only behind a spelled numeral; alone it is a unit, exactly like "хил.".
+    // Alone — after punctuation, a line start or a unit PREPOSITION — the abbreviation is a unit,
+    // exactly like "хил.". A noun directly before it ("Стойност млн. €") is the accepted over-flag:
+    // without a complete numeral dictionary it cannot be told apart from "стотина млн.", and the
+    // safe direction is to flag (the model is asked to parenthesise the unit).
     expect(findProseNumbers('Стойност (млн. €)')).toHaveLength(0);
-    expect(findProseNumbers('Стойност млн. €')).toHaveLength(0); // "Сто-йност" is not "сто"
+    expect(findProseNumbers('Стойност в млн. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Стойност (в млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('суми, изразени във млрд. евро')).toHaveLength(0);
     expect(findProseNumbers('Похарчено, млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('млрд. лв.')).toHaveLength(0);
     expect(findProseNumbers('Сума (хил. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност млн. €')).not.toHaveLength(0); // accepted over-flag (see above)
     const out = bindReport(
       emit([
         {
