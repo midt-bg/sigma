@@ -43,6 +43,11 @@ overrides:
   #                 only, via vite/vitest — never ships to the Worker.
   nanoid: '^3.3.17'
 
+  #   browserslist <4.28.7 — two HIGH advisories (GHSA-73wf-gq98-2v4g, GHSA-c83g-rgw3-j3cx, CVSS 7.5),
+  #                 via @babel/helper-compilation-targets → build-time only, never ships to the
+  #                 Worker. The range (^4.24.0) already admitted the fix; the lockfile had not moved,
+  #                 so the audit gate went red on main (2026-09-02). The pin is the floor.
+  browserslist: '^4.28.7'
 onlyBuiltDependencies:
   - esbuild
   - workerd
