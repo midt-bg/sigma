@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { guardSelect } from './sql-ast-guard';
 import { assertReadOnlySelect, capRows, enforceLimit, MAX_ROWS } from './sql-guard';
 
 describe('assertReadOnlySelect', () => {
@@ -191,6 +192,18 @@ describe('assertReadOnlySelect', () => {
     expect(assertReadOnlySelect(`SELECT id AS "x'y" FROM contracts; DROP TABLE contracts`).ok).toBe(
       false,
     );
+  });
+
+  it('runs an UNTERMINATED quoted span to the end of the input and still fails closed', () => {
+    // The span swallows the rest of the statement, so the `;` inside it does not split — but the
+    // keyword blocklist still reads the text, so this fails closed at L1…
+    const a = assertReadOnlySelect('SELECT id AS "open FROM contracts; DROP TABLE contracts');
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.reason).toMatch(/forbidden keyword/);
+    // …and a harmless-looking one passes L1 as a single statement only to fail the parser (L2).
+    const b = assertReadOnlySelect("SELECT id FROM contracts WHERE name = 'abc");
+    expect(b.ok).toBe(true);
+    if (b.ok) expect(guardSelect(b.sql).ok).toBe(false);
   });
 
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
