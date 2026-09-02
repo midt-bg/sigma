@@ -151,6 +151,48 @@ describe('assertReadOnlySelect', () => {
     }
   });
 
+  it('strips a comment hidden behind a quote inside a quoted identifier (review f/u on #223)', () => {
+    // stripComments modelled only '…' literals: the `'` inside the alias "x'y" flipped the scanner into
+    // "in string" for the rest of the statement, so the `/**/` between the function name and its paren
+    // survived verbatim, the function regex (whitespace-only before the paren) never matched, and
+    // SQLite — which tokenises the comment as whitespace — ran the aggregate. Both guard layers passed
+    // it. All four SQLite quoting forms are opaque spans now, so the comment is stripped and the name
+    // is caught here; the AST layer independently denies the parsed name (sql-ast-guard.test.ts).
+    for (const sql of [
+      `SELECT 1 AS "x'y", group_concat/**/(subject, '') FROM tenders`,
+      `SELECT 1 AS "x'y", "group_concat"/**/(subject, '') FROM tenders`,
+      `SELECT 1 AS "x'y", jsonb_group_array/**/(subject) FROM tenders`,
+      `SELECT 1 AS "x'y", group_concat -- c\n(subject, '') FROM tenders`,
+      `SELECT 1 AS \`x'y\`, printf/**/('%1000000d', 1) FROM tenders`,
+      `SELECT "it's".id, group_concat/**/("it's".name) FROM bidders AS "it's"`,
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it('keeps comment markers and semicolons inside quoted identifiers as data (all four quoting forms)', () => {
+    // "a--b" / `a/*b*/c` / "x;y" are identifiers to SQLite; a scanner that knew only '…' either
+    // truncated them (false-deny on an unterminated span) or split on the `;` (false "stacked statement").
+    const a = assertReadOnlySelect('SELECT id AS "a--b" FROM contracts');
+    expect(a.ok).toBe(true);
+    if (a.ok) expect(a.sql).toContain('"a--b"');
+    const b = assertReadOnlySelect('SELECT id AS `a/*b*/c` FROM contracts');
+    expect(b.ok).toBe(true);
+    if (b.ok) expect(b.sql).toContain('`a/*b*/c`');
+    expect(assertReadOnlySelect('SELECT id AS "x;y" FROM contracts').ok).toBe(true);
+    // L1 accepts the bracket form as one statement; the AST layer then fails closed on it — node-sql-parser
+    // does not parse `[…]` identifiers at all (pre-existing, so no bracket query ever reaches D1).
+    expect(assertReadOnlySelect('SELECT id AS [x;y] FROM contracts').ok).toBe(true);
+    // a doubled quote inside a double-quoted identifier is an escaped quote, not the end of the span
+    expect(assertReadOnlySelect('SELECT id AS "a""b; c" FROM contracts').ok).toBe(true);
+    // …and a real stacked statement after a quote-bearing identifier is still rejected
+    expect(assertReadOnlySelect(`SELECT id AS "x'y" FROM contracts; DROP TABLE contracts`).ok).toBe(
+      false,
+    );
+  });
+
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
     // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
     // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).

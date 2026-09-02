@@ -124,6 +124,35 @@ describe('guardSelect', () => {
     }
   });
 
+  it('rejects denylisted functions on the PARSED call name — no lexical trick can hide them (review f/u on #223)', () => {
+    // The regex layer is lexical and was bypassed by a comment it failed to strip; this layer sees the
+    // name the parser resolved (comments, quoting and case already gone). Fed DIRECTLY, not through
+    // assertReadOnlySelect, to prove the layer stands on its own.
+    for (const sql of [
+      `SELECT 1 AS "x'y", group_concat/**/(subject, '') FROM tenders`,
+      'SELECT "group_concat"(name) FROM bidders',
+      'SELECT GROUP_CONCAT(name) FROM bidders',
+      'SELECT hex(group_concat(description)) FROM contracts', // nested in an argument
+      "SELECT id FROM contracts WHERE id IN (SELECT id FROM contracts WHERE printf('%1000000d', 1) = '')", // in a sub-select
+      'SELECT jsonb_group_object(id, name) FROM bidders',
+      "SELECT string_agg(name, ',') FROM bidders",
+      'SELECT randomblob(100000000) FROM contracts',
+    ]) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+    // Ordinary scalar / aggregate functions are untouched (positive control against over-blocking).
+    for (const sql of [
+      'SELECT count(*), sum(amount_eur), total(amount_eur), avg(amount_eur), max(signed_at) FROM contracts',
+      "SELECT lower(name), upper(name), substr(name, 1, 3), length(name), coalesce(name, '') FROM bidders",
+      "SELECT strftime('%Y', signed_at) AS y, date(signed_at), round(amount_eur, 2), abs(amount_eur) FROM contracts",
+      "SELECT replace(name, 'a', 'b'), ifnull(name, ''), typeof(amount_eur) FROM contracts",
+    ]) {
+      expect(guardSelect(sql).ok, sql).toBe(true);
+    }
+  });
+
   it('rejects an explicit JOIN / CROSS JOIN with no ON/USING (Cartesian product, review #80)', () => {
     expect(guardSelect('SELECT * FROM contracts JOIN bidders').ok).toBe(false);
     expect(guardSelect('SELECT * FROM contracts CROSS JOIN bidders').ok).toBe(false);
