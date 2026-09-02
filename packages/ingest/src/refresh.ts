@@ -463,6 +463,7 @@ export async function settlePendingWindows(
       remaining.push({ from: r.from, to: r.to, holder: w.holder, startedAt: now.toISOString() });
     }
   }
-  remaining.sort((x, y) => (x.from < y.from ? -1 : x.from > y.from ? 1 : 0));
+  // Already in order: `before` is read ordered by start, and subtraction only ever yields pieces
+  // inside their own promise, so the pieces of an earlier promise never start after a later one.
   return { settled, remaining };
 }

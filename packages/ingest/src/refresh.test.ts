@@ -194,6 +194,19 @@ describe('pendingTouchedRows', () => {
     expect(fake.calls.filter((c) => /COUNT\(\*\)/.test(c.sql))).toEqual([]);
   });
 
+  it('reads a present table whose COUNT comes back without a row as zero', async () => {
+    const fake = recordingD1([
+      { when: ['sqlite_master'], all: [{ name: 'refresh_touched_bidders' }] },
+      { when: ['FROM refresh_touched_bidders'], first: null },
+    ]);
+    await expect(pendingTouchedRows(fake.db)).resolves.toEqual({
+      contracts: 0,
+      bidders: 0,
+      authorities: 0,
+      total: 0,
+    });
+  });
+
   it('counts each existing touched table and sums them', async () => {
     const fake = recordingD1([
       {
@@ -294,6 +307,18 @@ describe('refresh lease', () => {
     const upd = fake.calls.find((c) => c.sql.includes('UPDATE refresh_lease'));
     expect(upd?.sql).toMatch(/WHERE id = 1 AND holder = \?1/);
     expect(upd?.binds).toEqual(['wf-1', '2026-09-02T19:50:00.000Z']);
+  });
+
+  it('treats a vanished lease row on renewal as lost, not as ours', async () => {
+    const fake = recordingD1([
+      { when: ['UPDATE refresh_lease'], run: () => {} },
+      { when: ['FROM refresh_lease'], first: null },
+    ]);
+    await expect(renewRefreshLease(fake.db, 'wf-1')).resolves.toEqual({
+      acquired: false,
+      holder: null,
+      expiresAt: null,
+    });
   });
 
   it('reports a lost lease when the read-back names a newer holder', async () => {

@@ -749,6 +749,75 @@ describe('RefreshWorkflow.run — release failures never mask the run', () => {
   });
 });
 
+describe('RefreshWorkflow.run — the rarer branches of the lease paths', () => {
+  it('steps aside with no holder known and no manual today: dates from now, holder omitted', async () => {
+    ingest.acquireRefreshLease.mockResolvedValueOnce({
+      acquired: false,
+      holder: null,
+      expiresAt: null,
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    const result = await wf.run(
+      { payload: {}, instanceId: 'wf-100' } as never,
+      fakeStep([]) as never,
+    );
+
+    expect(result.skipped).toBe('lease-held');
+    expect(result.leaseHolder).toBeUndefined();
+    expect(result.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.to).toBe(result.from);
+  });
+
+  it('names "nobody" when the lease was lost and no holder is on record', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.renewRefreshLease.mockResolvedValueOnce({
+      acquired: false,
+      holder: null,
+      expiresAt: null,
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-101' } as never, fakeStep([]) as never),
+    ).rejects.toThrow(/refresh lease lost before drop-stale-transient-staging: now held by nobody/);
+  });
+
+  it('stringifies non-Error rejections from the staging drop and the release', async () => {
+    eop.computeWorkerCatchupPlan.mockResolvedValue(PLAN);
+    eop.ingestBucketWindow.mockResolvedValue([dayResult({ baseContracts: 1 })]);
+    ingest.dropTransientStaging
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce('drop said no');
+    ingest.releaseRefreshLease.mockRejectedValueOnce('release said no');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await expect(
+      wf.run({ payload: {}, instanceId: 'wf-102' } as never, fakeStep([]) as never),
+    ).rejects.toBe('drop said no');
+
+    const logged = error.mock.calls.map(
+      (c) => JSON.parse(String(c[0])) as { event: string; error: string },
+    );
+    expect(logged).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: 'etl_refresh_staging_drop_failed',
+          error: 'drop said no',
+        }),
+        expect.objectContaining({
+          event: 'etl_refresh_lease_release_failed',
+          error: 'release said no',
+        }),
+      ]),
+    );
+  });
+});
+
 describe('scheduled handler', () => {
   it('kicks one durable refresh run and logs its id', async () => {
     const create = vi.fn(async () => ({ id: 'wf-123' }));
