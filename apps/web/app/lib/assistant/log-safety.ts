@@ -24,7 +24,7 @@ export const MAX_LOG_MESSAGE_CHARS = 300;
 // Bound the WORK too: collapse/redact/count run over the raw message, and a multi-MB body as
 // `message` is itself hostile (measured: ~250 ms for 4 MB before this cap; ~2 ms after). Generous
 // enough that the final 300-code-point line is never starved by ordinary whitespace.
-const MAX_RAW_CHARS = MAX_LOG_MESSAGE_CHARS * 64;
+export const MAX_RAW_CHARS = MAX_LOG_MESSAGE_CHARS * 64;
 
 // Below this length a "redact me" needle is too short to be safely distinguishable from ordinary
 // error prose ("ЕИК", a two-word query) — blanking it would shred the message without protecting
