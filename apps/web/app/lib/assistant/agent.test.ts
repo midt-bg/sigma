@@ -24,6 +24,7 @@ vi.mock('ai', async (importOriginal) => ({
   tool: (def: unknown) => def,
 }));
 
+import { RetryError } from 'ai';
 import { makeStreamErrorLogger, resolveMaxSteps, runAssistant } from './agent';
 import { ASSISTANT_TOOLS } from './tools';
 
@@ -111,6 +112,15 @@ describe('runAssistant (SDK wiring)', () => {
     const r = await tools.emit_report.execute({ not: 'a valid report' });
     expect(r.ok).toBe(false);
     expect(Array.isArray(r.errors)).toBe(true);
+
+    // …and a valid report takes the ok branch, returning the bound (server-owned) report.
+    const ok = await tools.emit_report.execute({
+      title: 'Справка',
+      question: 'въпрос',
+      blocks: [{ type: 'text', md: 'Няма данни.' }],
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.report.title).toBe('Справка');
   });
 });
 
@@ -150,6 +160,22 @@ describe('makeStreamErrorLogger', () => {
     log(new Error('една и съща фраза'));
     restore();
     expect(lines).toHaveLength(2);
+  });
+
+  it('tags a RetryError that wraps a NON-API error with its reason only (no status to show)', () => {
+    const { lines, restore } = capture();
+    const log = makeStreamErrorLogger([]);
+    log(
+      new RetryError({
+        message: 'опитите свършиха',
+        reason: 'errorNotRetryable',
+        errors: [new Error('мрежата падна')],
+      }),
+    );
+    restore();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('[RetryError errorNotRetryable]');
+    expect(lines[0]).not.toContain('APICallError');
   });
 
   it('redacts the question before it reaches the log line', () => {
