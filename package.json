@@ -31,12 +31,12 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",
     "@vitest/coverage-v8": "^4.1.7",
-    "@types/node": "^25.9.1",
+    "@types/node": "catalog:",
     "fast-xml-parser": "5.10.1",
     "prettier": "^3.8.3",
     "turbo": "^2.9.14",
-    "typescript": "^6.0.3",
+    "typescript": "catalog:",
     "vitest": "^4.1.7",
-    "wrangler": "^4.93.1"
+    "wrangler": "catalog:"
   }
 }
