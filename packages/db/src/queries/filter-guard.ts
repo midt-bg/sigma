@@ -16,8 +16,14 @@
 //   export const FOO_FILTER_KEYS = [...] as const satisfies readonly (keyof FooListParams)[];
 //   assertCovers<FooListParams, typeof FOO_FILTER_KEYS>();
 
-/** Param fields that are route/pagination state, never row filters. */
-type NonFilterField = 'sort' | 'cursor' | 'pageSize';
+/**
+ * Param fields exempt from the FILTER_KEYS coverage requirement: route/pagination state (`sort`,
+ * `cursor`, `pageSize`) plus server-internal row filters that are never derived from the request URL.
+ * `excludeNaturalPersons` is set only server-side (the flagged homepage table), so it must NOT enter a
+ * `*_FILTER_KEYS` array — it is absent from the URL parser, the CSV classifier and the cache signature by
+ * design. If it is ever exposed as a URL param, move it into the FILTER_KEYS array instead.
+ */
+type NonFilterField = 'sort' | 'cursor' | 'pageSize' | 'excludeNaturalPersons';
 
 /**
  * Compiles only when `Keys` covers every filter field of `Params` (all fields except
