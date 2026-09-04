@@ -324,8 +324,32 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       // The verified coverage is subtracted from every promise: fulfilled ones go, straddling ones
       // shrink to what is still outstanding, out-of-reach ones stay — and are named, run after run,
       // until an operator covers them (docs/etl.md, „needs-catchup").
+      // An EARLIER run's promise is settled only by a run that actually saw a bucket in its window:
+      // storage.eop.bg answers 403/404 for a day with no bucket (a missing day is 403 AccessDenied,
+      // verified), so "nothing staged" cannot tell a quiet window from a source that answered
+      // nothing at all — and only the latter must keep the promise. A run that found at least one
+      // bucket has proven the source answers; its absent days are genuinely empty. This run's own
+      // promise is its own window and settles regardless (an empty own window is simply done).
+      const sawData = results.some((r) => r.found);
+      const heldBack = sawData ? [] : unsettled;
+      if (heldBack.length > 0) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'etl_refresh_replay_unverified',
+            unsettled: heldBack,
+            reason:
+              'no bucket found in this window — the source answered nothing, so earlier promises stay',
+          }),
+        );
+      }
       const windows = await fenced('settle-windows', async () =>
-        settlePendingWindows(this.env.DB, { from: plan.from, to: plan.to }, new Date()),
+        settlePendingWindows(
+          this.env.DB,
+          { from: plan.from, to: plan.to },
+          new Date(),
+          sawData ? () => true : (w) => w.holder === leaseHolder,
+        ),
       );
       if (windows.remaining.length > 0) {
         console.warn(

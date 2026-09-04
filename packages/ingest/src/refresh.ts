@@ -431,11 +431,21 @@ export async function settlePendingWindows(
   db: D1Database,
   covered: { from: string; to: string },
   now: Date = new Date(),
+  /**
+   * Which promises this coverage may settle; the rest are left as they are and reported as
+   * remaining. The Worker passes "own promise only" when the run saw no bucket at all — a window in
+   * which the source answered nothing is no evidence that an EARLIER run's window has been re-applied.
+   */
+  eligible: (w: PendingWindow) => boolean = () => true,
 ): Promise<SettledWindows> {
   const before = await pendingWindows(db);
   const remaining: PendingWindow[] = [];
   let settled = 0;
   for (const w of before) {
+    if (!eligible(w)) {
+      remaining.push(w); // not this run's to settle
+      continue;
+    }
     const rest = subtractCovered(w, covered);
     if (rest.length === 1 && rest[0]!.from === w.from && rest[0]!.to === w.to) {
       remaining.push(w); // untouched: entirely outside the coverage

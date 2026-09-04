@@ -38,7 +38,14 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
     releaseRefreshLease: vi.fn(async () => {}),
     pendingWindows: vi.fn(async (): Promise<PendingWindow[]> => []),
     recordPendingWindow: vi.fn(async () => {}),
-    settlePendingWindows: vi.fn(async () => ({ settled: 0, remaining: [] as PendingWindow[] })),
+    settlePendingWindows: vi.fn(
+      async (
+        _db: unknown,
+        _covered: { from: string; to: string },
+        _now?: Date,
+        _eligible?: (w: PendingWindow) => boolean,
+      ) => ({ settled: 0, remaining: [] as PendingWindow[] }),
+    ),
     renewRefreshLease: vi.fn(
       async (): Promise<RefreshLease> => ({
         acquired: true,
@@ -690,6 +697,7 @@ describe('RefreshWorkflow.run — inherited windows are never certified by an em
       DB,
       { from: '2026-05-18', to: '2026-06-07' },
       expect.any(Date),
+      expect.any(Function),
     );
     expect(result.uncoveredWindows).toBe(1);
     const uncovered = warn.mock.calls
@@ -698,6 +706,63 @@ describe('RefreshWorkflow.run — inherited windows are never certified by an em
     expect(JSON.parse(uncovered!)).toMatchObject({
       uncovered: [{ from: '2026-04-01', to: '2026-04-10' }],
     });
+  });
+});
+
+describe('RefreshWorkflow.run — inherited promises need evidence the source answered', () => {
+  const inherited = {
+    from: '2026-05-25',
+    to: '2026-05-31',
+    holder: 'wf-dead',
+    startedAt: '2026-05-31T00:00:05.000Z',
+  };
+
+  it('holds inherited promises back when no bucket was found, settling only its own', async () => {
+    ingest.pendingWindows.mockResolvedValueOnce([inherited]);
+    eop.computeWorkerCatchupPlan.mockResolvedValue({
+      ...PLAN,
+      from: '2026-05-25',
+      originalFrom: '2026-05-25',
+    });
+    eop.ingestBucketWindow.mockResolvedValue([{ ...dayResult(), found: false }]); // nothing found // found: false, nothing staged
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await wf.run({ payload: {}, instanceId: 'wf-110' } as never, fakeStep([]) as never);
+
+    const eligible = ingest.settlePendingWindows.mock.calls[0]![3]!;
+    expect(eligible({ ...inherited })).toBe(false);
+    expect(eligible({ ...inherited, holder: 'wf-110' })).toBe(true); // its own promise
+    expect(
+      warn.mock.calls
+        .map((c) => String(c[0]))
+        .some((l) => l.includes('etl_refresh_replay_unverified')),
+    ).toBe(true);
+  });
+
+  it('settles inherited promises once at least one bucket in the window was found', async () => {
+    ingest.pendingWindows.mockResolvedValueOnce([inherited]);
+    eop.computeWorkerCatchupPlan.mockResolvedValue({
+      ...PLAN,
+      from: '2026-05-25',
+      originalFrom: '2026-05-25',
+    });
+    eop.ingestBucketWindow.mockResolvedValue([
+      { ...dayResult(), found: false },
+      { ...dayResult(), day: '2026-06-06', found: true }, // one bucket found: the source answers
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const wf = makeWorkflow();
+
+    await wf.run({ payload: {}, instanceId: 'wf-111' } as never, fakeStep([]) as never);
+
+    const eligible = ingest.settlePendingWindows.mock.calls[0]![3]!;
+    expect(eligible({ ...inherited })).toBe(true);
+    expect(
+      warn.mock.calls
+        .map((c) => String(c[0]))
+        .some((l) => l.includes('etl_refresh_replay_unverified')),
+    ).toBe(false);
   });
 });
 

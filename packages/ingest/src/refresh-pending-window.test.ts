@@ -78,6 +78,21 @@ describe('pending windows on SQLite', () => {
     ]);
   });
 
+  it('settles only the promises the caller marks eligible, reporting the rest as remaining', async () => {
+    const db = fresh();
+    await recordPendingWindow(db, 'dead', '2026-05-18', '2026-05-20', AT); // inside the coverage
+    await recordPendingWindow(db, 'own', '2026-05-18', '2026-06-07', AT);
+    const result = await settlePendingWindows(
+      db,
+      { from: '2026-05-18', to: '2026-06-07' },
+      AT,
+      (w) => w.holder === 'own',
+    );
+    expect(result.settled).toBe(1);
+    expect(result.remaining.map((w) => w.holder)).toEqual(['dead']);
+    expect(await spans(db)).toEqual(['dead:2026-05-18..2026-05-20']);
+  });
+
   it('an interrupted replay never grows a promise (A dies, B capped, C dies, D capped, E wide)', async () => {
     const db = fresh();
     // A promised 04-01..04-10 and died.

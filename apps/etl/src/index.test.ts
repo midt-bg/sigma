@@ -494,7 +494,7 @@ describe('RefreshWorkflow — window replay repairs what the touched sets cannot
     expect(pendingRows(db)).toEqual([]);
   });
 
-  it('an inherited window is never certified by an empty ingest: derive and gate run, then it clears', async () => {
+  it('an inherited promise is never certified by an empty ingest: derive and gate run, but it stays until a run sees data', async () => {
     const db = freshServedDb();
     stubFetchRoutes();
     // A served corpus exists (a clean run), then an earlier run promised 07-12 … 07-14 (no buckets
@@ -522,16 +522,27 @@ describe('RefreshWorkflow — window replay repairs what the touched sets cannot
     } as WorkflowStep;
 
     // 07-31: the own lookback (07-05 …) merged with the promise is capped to 07-11 … 07-31 — the
-    // 07-09 bucket is outside it (nothing staged), the promised days are inside it (fully covered).
-    const result = await makeWorkflow(db).run(eventFor('2026-07-31'), recording);
-
-    expect(result.staged).toBe(0);
-    expect(result.capped).toBe(true);
-    expect(result.skipped).toBeUndefined();
+    // 07-09 bucket is outside it and every day answers "no bucket": nothing staged, no evidence the
+    // source answers. The derive and the gate run, the run's own promise settles, the inherited
+    // one is held back — with a warning — rather than certified by silence.
+    const held = await makeWorkflow(db).run(eventFor('2026-07-31'), recording);
+    expect(held.staged).toBe(0);
+    expect(held.capped).toBe(true);
+    expect(held.skipped).toBeUndefined();
     expect(names).not.toContain('settle-windows-empty');
     expect(names.some((n) => n.startsWith('derive-slice:'))).toBe(true);
     expect(names).toContain('integrity-gate');
     expect(names.indexOf('settle-windows')).toBeGreaterThan(names.indexOf('integrity-gate'));
+    expect(held.uncoveredWindows).toBe(1);
+    expect(pendingRows(db)).toEqual([
+      { window_from: '2026-07-12', window_to: '2026-07-14', holder: 'dead' },
+    ]);
+
+    // A run whose window includes a day that HAS a bucket (07-09) has proven the source answers:
+    // its absent days are genuinely empty, and the inherited promise is settled.
+    const seen = await makeWorkflow(db).run(eventFor('2026-07-20'), fakeStep);
+    expect(seen.staged).toBe(2);
+    expect(seen.uncoveredWindows).toBe(0);
     expect(pendingRows(db)).toEqual([]);
   });
 });
@@ -590,11 +601,14 @@ describe('RefreshWorkflow — promises only shrink across interrupted replays', 
       workflow.run(eventFor('2026-08-16', 'C'), dyingAt('ingest-storage-eop-bucket')),
     ).rejects.toThrow(/boom/);
     expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10', 'C:2026-07-27..2026-08-16']);
-    // D on 08-17: capped to 07-28..08-17, succeeds — C's promise shrinks to the day D did not cover.
+    // D on 08-17: capped to 07-28..08-17, succeeds — but every day answered "no bucket", so D has
+    // no evidence the source answers and C's promise is held back untouched (D's own is settled).
     // Nothing ever widened to include the days B already applied.
-    await workflow.run(eventFor('2026-08-17', 'D'), fakeStep);
-    expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10', 'C:2026-07-27..2026-07-27']);
-    // E: an operator's manual trigger wide enough to span both — everything settles.
+    const d = await workflow.run(eventFor('2026-08-17', 'D'), fakeStep);
+    expect(d.uncoveredWindows).toBe(2);
+    expect(spans(db)).toEqual(['A:2026-07-07..2026-07-10', 'C:2026-07-27..2026-08-16']);
+    // E: an operator's manual trigger wide enough to span both AND to reach the 07-09 bucket (the
+    // source answers) — everything settles.
     const e = await workflow.run(eventFor('2026-08-17', 'E', 60), fakeStep);
     expect(e.capped).toBe(false);
     expect(e.replayFrom).toBe('2026-07-07');

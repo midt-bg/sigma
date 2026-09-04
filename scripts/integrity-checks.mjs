@@ -427,11 +427,28 @@ export async function runIntegrityChecks(runner) {
 // (CLI assertIntegrity, the apps/etl Worker gate) reports the SAME decision and message instead of
 // re-deriving it. `violations` are the hard failures; `warned` are the non-gating WARNs.
 const MAX_DETAIL_CHARS = 400;
+// The whole message is bounded too, not only each detail: with every check broken the list would
+// otherwise grow linearly with the roster (~3 KB today, more as checks are added). Past the budget
+// the remaining checks are counted, not printed — the names that fit are the ones an operator reads.
+const MAX_MESSAGE_CHARS = 1200;
 function clipDetail(detail) {
   const text = String(detail ?? '')
     .replace(/\s+/g, ' ')
     .trim();
   return text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS - 1)}…` : text;
+}
+function describeViolations(violations) {
+  const parts = violations.map((v) => `${v.name} — ${clipDetail(v.detail)}`);
+  let out = '';
+  for (let i = 0; i < parts.length; i += 1) {
+    const next = out ? `${out}; ${parts[i]}` : parts[i];
+    if (next.length > MAX_MESSAGE_CHARS) {
+      const rest = parts.length - i;
+      return `${out || parts[i].slice(0, MAX_MESSAGE_CHARS - 1) + '…'}; +${rest} more`;
+    }
+    out = next;
+  }
+  return out;
 }
 
 export function summarizeIntegrity(results, label = 'integrity') {
@@ -452,7 +469,7 @@ export function summarizeIntegrity(results, label = 'integrity') {
       violations.length === 0
         ? null
         : `integrity gate failed: ${violations.length} of ${results.length} checks broke (${label}): ` +
-          violations.map((v) => `${v.name} — ${clipDetail(v.detail)}`).join('; ') +
+          describeViolations(violations) +
           '.',
   };
 }

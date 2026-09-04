@@ -451,6 +451,19 @@ describe('summarizeIntegrity message', () => {
     );
   });
 
+  it('bounds the whole message: past the budget the remaining checks are counted, not printed', () => {
+    const many = Array.from({ length: 8 }, (_, i) => broken(`check-${i}`, 'x'.repeat(390)));
+    const summary = summarizeIntegrity(many, 't');
+    const message = summary.message!;
+    expect(message.length).toBeLessThan(1400);
+    expect(message).toMatch(/; \+\d+ more\.$/);
+    expect(message).toContain('check-0 — ');
+    expect(message).not.toContain('check-7 — ');
+    const named = (message.match(/check-\d+ — /g) ?? []).length;
+    const counted = Number(/\+(\d+) more\.$/.exec(message)![1]);
+    expect(named + counted).toBe(8);
+  });
+
   it('is null when nothing broke (warnings and skips are not violations)', () => {
     const summary = summarizeIntegrity(
       [
