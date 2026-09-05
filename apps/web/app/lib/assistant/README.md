@@ -63,19 +63,32 @@ wrangler vectorize create sigma-assistant --dimensions=1024 --metric=cosine  # �
 wrangler r2 bucket create sigma-reports
 wrangler secret put BGGPT_API_KEY                                            # интерактивно; никога не се комитва
 # `AI` (Workers AI) не изисква създаване на ресурс — account capability; включи Workers AI за акаунта.
-# След като индексът съществува: indexSchemaCorpus(embeddingRunnerFor(env.AI), env.VECTORIZE)
-# пълни схема-корпуса (embeddingRunnerFor е от lib/assistant/bindings.ts — env.AI не е директно
-# EmbeddingRunner и каст с `as unknown as` е точно това, което #316 премахна).
+# Схема-корпусът НЕ се пълни на ръка: Worker-ът го провизионира сам при първо ползване
+# (ensureSchemaCorpus, rag.ts) — при GET /assistant/health и при всеки chat ход. Проверка:
+curl -sS -w ' %{http_code}\n' https://<host>/assistant/health   # 200 + {ns, expected, present, stale, lean, upserted}; 503 докато не е пълен (зад Access: + service token headers)
 ```
+
+**Самопровизиониране (#328) и доказателство за CD (#346):** `ensureSchemaCorpus` чете очакваните
+id-та (`schemaVectorId`, версионирани) с един `getByIds`, брои кои са налични в `SCHEMA_NS` с текста на
+ТОЗИ build (`present`), кои носят текст на стар build (`stale`), кои са преброени само по id, защото
+четенето не носи текст (`lean` — тогава `stale` не може да се засече и броячът го казва), и при всяка
+липса пуска `indexSchemaCorpus` — най-много веднъж на изолат (memo; резолвнало, но нечетимо пускане
+се опитва отново след 10 мин.), с идемпотентни upsert-и на детерминистични id-та. Vectorize прилага записите асинхронно, затова обаждането, което провизионира, отговаря 503 с
+`upserted > 0`, а повторно четене малко по-късно — 200. `GET /assistant/health` връща само броячи (никога
+текст на chunk или съобщение на провайдъра), не се кешира и е под същия per-IP limiter като чата.
+Deploy стъпката „Verify assistant schema corpus" в `.github/workflows/deploy.yml` го извиква след deploy
+(с retry ~2 мин.) и пада при разминаване — активира се с Environment променливата `SIGMA_WEB_URL` и
+Access service token (`CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`), виж `docs/deploy.md` §3/§5.
 
 **Ре-индексиране:** схема-корпусът е версиониран през `SCHEMA_NS` (`rag.ts`) — namespace-ът И id-тата
 на векторите носят версията. Версията се bump-ва при всяка промяна, която маха, размества или
 пре-осмисля chunk id-та (виж правилото „WHEN TO BUMP" в `rag.ts`; чисто добавяне или редакция на
 текста на съществуващ chunk НЕ иска bump). **ВСЯКА промяна в корпуса — включително редакция на текст —
-иска повторно пускане на `indexSchemaCorpus`:** retrieval-ът връща `metadata.text`, записан при
-индексирането, а не текущия текст от кода; bump-ът решава само дали се пише нов кохорт, или се
-презаписват същите id-та. След bump `indexSchemaCorpus` пише
-НОВ кохорт вектори, старият остава непокътнат (rollback на Worker-а продължава да работи срещу него),
+иска повторно индексиране:** retrieval-ът връща `metadata.text`, записан при индексирането, а не
+текущия текст от кода; bump-ът решава само дали се пише нов кохорт, или се презаписват същите id-та.
+Worker-ът го прави сам след deploy: `ensureSchemaCorpus` сравнява записания текст с текущия и
+преиндексира при разлика (`stale` в броячите), така че нито bump, нито редакция искат ръчна стъпка.
+След bump се пише НОВ кохорт вектори, старият остава непокътнат (rollback на Worker-а продължава да работи срещу него),
 а среда без ре-индекс просто връща 0 чънка и асистентът пада към пълния статичен речник (безопасно,
 но без RAG grounding). Стар кохорт се чисти чак когато rollback прозорецът към неговия release е
 затворен — изтриеш ли го по-рано, rollback-ът остава без RAG. Чисти се с

@@ -359,3 +359,47 @@ jobs:
       - name: Deploy refresh Workflow (sigma-etl)
         if: steps.guard.outputs.ok == 'true'
         run: pnpm --filter @sigma/etl run deploy
+
+      # #346: prove the assistant's schema corpus is indexed in the environment just deployed. LAST in the
+      # job on purpose: a red check must not leave the explorer and the ETL Workflow at different versions
+      # or skip the LOG_IP_KEY initialisation above — everything else has already shipped by now. The Worker
+      # provisions the corpus itself on first use (ensureSchemaCorpus, #328); GET /assistant/health is both
+      # the trigger and the proof — 200 only when every vector THIS build expects is readable in `schema-v2`
+      # with this build's text. Vectorize applies writes asynchronously, so the first call after a fresh
+      # deploy legitimately answers 503 with `upserted` > 0; retry for ~2 minutes before failing the deploy.
+      # Both environments sit behind Cloudflare Access, so the probe needs an Access SERVICE TOKEN
+      # (Environment secrets CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET) and the environment's public base
+      # URL (Environment variable SIGMA_WEB_URL). Until an environment defines SIGMA_WEB_URL the step is
+      # skipped with a notice — the deploy must never depend on configuration the environment was not given
+      # (docs/deploy.md §5). Only counters and an HTTP status are printed; the health body carries no text.
+      - name: Verify assistant schema corpus (#346)
+        if: steps.guard.outputs.ok == 'true'
+        env:
+          SIGMA_WEB_URL: ${{ vars.SIGMA_WEB_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          if [ -z "$SIGMA_WEB_URL" ]; then
+            echo "::notice::SIGMA_WEB_URL is not set for this environment; skipping the assistant corpus check (#346)."
+            exit 0
+          fi
+          url="${SIGMA_WEB_URL%/}/assistant/health"
+          auth=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            auth=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
+          if [ -n "$CF_ACCESS_CLIENT_ID$CF_ACCESS_CLIENT_SECRET" ] && [ "${#auth[@]}" = 0 ]; then
+            echo "::warning::Only one of CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET is set; probing WITHOUT an Access service token."
+          fi
+          for attempt in 1 2 3 4 5 6 7 8; do
+            : > /tmp/health.json
+            # curl's -w prints 000 itself on a transport failure; `|| true` only keeps `set -e` from
+            # aborting the loop. The body is counters-only JSON on success; anything else (an Access
+            # login page, a 5xx) is cut to one short line so the log never carries a page.
+            code="$(curl -sS "${auth[@]}" -o /tmp/health.json -w '%{http_code}' "$url" || true)"
+            echo "attempt $attempt: HTTP ${code:-000} $(head -c 300 /tmp/health.json | tr '\n' ' ')"
+            [ "$code" = "200" ] && exit 0
+            [ "$attempt" = 8 ] || sleep 15
+          done
+          echo "::error::assistant schema corpus is not fully indexed at $url after ~2 minutes (#346) — see the attempts above."
+          exit 1

@@ -196,6 +196,15 @@ domain таблиците и преизчислява rollup-ите + FTS.
 - променливи `SIGMA_WEB_NAME` = `sigma-stage`, `SIGMA_ETL_NAME` = `sigma-etl-stage`,
   `SIGMA_WORKFLOW_NAME` = `sigma-refresh-stage`, `SIGMA_D1_NAME` = `sigma-stage`
 
+**По избор, и за двете среди — проверка на корпуса на асистента след deploy (#346):**
+- променлива `SIGMA_WEB_URL` — публичният base URL на explorer-а за средата (напр.
+  `https://sigma-stage.cf-midt.workers.dev`, `https://sigma.midt.bg`). Без нея стъпката „Verify
+  assistant schema corpus" в `deploy.yml` се пропуска с notice, а не пада.
+- секрети `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` — Access **Service Token**, допуснат от
+  policy на Access приложението на средата (§6, „Bypass за автоматизация"); без тях probe-ът
+  среща login страницата на Access и стъпката пада след retry-ите. Token-ът не е Cloudflare API
+  token и не разширява deploy token-а — той само отваря `GET /assistant/health` за CI.
+
 > Средата `production` е **неблокираща** за създаване: дори с `environment: production` зададено на
 > job-а, GitHub все още излага repo-ниво секретите, така че production продължава да се деплойва с
 > днешните repo секрети, докато не решите да ги преместите в средата.
@@ -237,6 +246,14 @@ ETL-ът по необходимост е отделен worker — той но�
   е в списъка. Няма публичен HTTP trigger; ръчни/backfill стартирания минават през Dashboard или
   `wrangler workflows trigger <name>`. Cron-ът (`0 */6 * * *`) после опреснява без надзор.
 - Уверете се, че production е **недокоснат**, когато деплойвате staging (различен worker + D1 + lane).
+- Корпусът на асистента: `curl -sS -o /dev/null -w '%{http_code}\n' -H "CF-Access-Client-Id: …"
+  -H "CF-Access-Client-Secret: …" https://<host>/assistant/health` → `200` (тялото е
+  `{ns, expected, present, stale, lean, upserted}`, само броячи). Без Access service token
+  отговорът е `302` към login страницата — а `curl -f` не брои 3xx за грешка, затова гледайте
+  статуса, не exit кода. Worker-ът провизионира корпуса сам при
+  първото обаждане (#328); Vectorize прилага записите асинхронно, така че първият отговор може да е
+  `503` с `upserted > 0`, а повторно четене след секунди — `200`. С `SIGMA_WEB_URL` + Access service
+  token (§3) deploy стъпката прави същото автоматично и пада при разминаване (#346).
 
 ## 6. Заключване преди пускане — Cloudflare Access (Zero Trust)
 
