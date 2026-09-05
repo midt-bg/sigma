@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { guardSelect } from './sql-ast-guard';
 import { assertReadOnlySelect, capRows, enforceLimit, MAX_ROWS } from './sql-guard';
 
 describe('assertReadOnlySelect', () => {
@@ -110,6 +111,155 @@ describe('assertReadOnlySelect', () => {
       expect(r.ok, sql).toBe(false);
       if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
     }
+  });
+
+  it('rejects string-building aggregates that collapse a full scan into one huge cell (review follow-up)', () => {
+    // group_concat / json_group_array / json_group_object aggregate an ENTIRE table scan into a single
+    // returned cell that materialises before capRows (which keeps the first row whole) can measure it —
+    // the same memory-amplification class as printf, one level up. `string_agg` is the SQLite ≥3.44
+    // synonym of group_concat and reaches the same code path on D1's modern SQLite (review, ydimitrof).
+    for (const sql of [
+      'SELECT group_concat(name) FROM bidders',
+      "SELECT string_agg(name, ',') FROM bidders",
+      'SELECT json_group_array(name) FROM contracts',
+      'SELECT hex(group_concat(description)) FROM contracts',
+      'SELECT json_group_object(id, name) FROM bidders',
+      // The JSONB twins (SQLite ≥3.45, in workerd's build): same one-huge-cell class, and the bare
+      // `json_group_array` literal cannot match inside `jsonb_group_array` (review f/u).
+      'SELECT jsonb_group_array(name) FROM bidders',
+      'SELECT "jsonb_group_object"(id, name) FROM bidders',
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it('rejects QUOTED denylisted function names — SQLite resolves "group_concat"(x) as the function (review f/u)', () => {
+    // Modern SQLite (D1) resolves a double-quoted, bracketed, or backticked identifier in call
+    // position to the same built-in, so `"group_concat"(name)` reached the aggregate while the
+    // bare-name regex saw only `group_concat"(` and let it through (review, ydimitrof).
+    for (const sql of [
+      'SELECT "group_concat"(name) FROM bidders',
+      'SELECT [group_concat](name) FROM bidders',
+      'SELECT `group_concat`(name) FROM bidders',
+      'SELECT "printf"(\'%1000000d\', id) FROM contracts',
+      'SELECT "string_agg" (name, \',\') FROM bidders',
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it('strips a comment hidden behind a quote inside a quoted identifier (review f/u on #223)', () => {
+    // stripComments modelled only '…' literals: the `'` inside the alias "x'y" flipped the scanner into
+    // "in string" for the rest of the statement, so the `/**/` between the function name and its paren
+    // survived verbatim, the function regex (whitespace-only before the paren) never matched, and
+    // SQLite — which tokenises the comment as whitespace — ran the aggregate. Both guard layers passed
+    // it. All four SQLite quoting forms are opaque spans now, so the comment is stripped and the name
+    // is caught here; the AST layer independently denies the parsed name (sql-ast-guard.test.ts).
+    for (const sql of [
+      `SELECT 1 AS "x'y", group_concat/**/(subject, '') FROM tenders`,
+      `SELECT 1 AS "x'y", "group_concat"/**/(subject, '') FROM tenders`,
+      `SELECT 1 AS "x'y", jsonb_group_array/**/(subject) FROM tenders`,
+      `SELECT 1 AS "x'y", group_concat -- c\n(subject, '') FROM tenders`,
+      `SELECT 1 AS \`x'y\`, printf/**/('%1000000d', 1) FROM tenders`,
+      `SELECT "it's".id, group_concat/**/("it's".name) FROM bidders AS "it's"`,
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it('keeps comment markers and semicolons inside quoted identifiers as data (all four quoting forms)', () => {
+    // "a--b" / `a/*b*/c` / "x;y" are identifiers to SQLite; a scanner that knew only '…' either
+    // truncated them (false-deny on an unterminated span) or split on the `;` (false "stacked statement").
+    const a = assertReadOnlySelect('SELECT id AS "a--b" FROM contracts');
+    expect(a.ok).toBe(true);
+    if (a.ok) expect(a.sql).toContain('"a--b"');
+    const b = assertReadOnlySelect('SELECT id AS `a/*b*/c` FROM contracts');
+    expect(b.ok).toBe(true);
+    if (b.ok) expect(b.sql).toContain('`a/*b*/c`');
+    expect(assertReadOnlySelect('SELECT id AS "x;y" FROM contracts').ok).toBe(true);
+    // L1 accepts the bracket form as one statement; the AST layer then fails closed on it — node-sql-parser
+    // does not parse `[…]` identifiers at all (pre-existing, so no bracket query ever reaches D1).
+    expect(assertReadOnlySelect('SELECT id AS [x;y] FROM contracts').ok).toBe(true);
+    // a doubled quote inside a double-quoted identifier is an escaped quote, not the end of the span
+    expect(assertReadOnlySelect('SELECT id AS "a""b; c" FROM contracts').ok).toBe(true);
+    // …and a real stacked statement after a quote-bearing identifier is still rejected
+    expect(assertReadOnlySelect(`SELECT id AS "x'y" FROM contracts; DROP TABLE contracts`).ok).toBe(
+      false,
+    );
+  });
+
+  it('runs an UNTERMINATED quoted span to the end of the input and still fails closed', () => {
+    // The span swallows the rest of the statement, so the `;` inside it does not split — but the
+    // keyword blocklist still reads the text, so this fails closed at L1…
+    const a = assertReadOnlySelect('SELECT id AS "open FROM contracts; DROP TABLE contracts');
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.reason).toMatch(/forbidden keyword/);
+    // …and a harmless-looking one passes L1 as a single statement only to fail the parser (L2).
+    const b = assertReadOnlySelect("SELECT id FROM contracts WHERE name = 'abc");
+    expect(b.ok).toBe(true);
+    if (b.ok) expect(guardSelect(b.sql).ok).toBe(false);
+  });
+
+  it('does not refuse a query whose STRING LITERAL merely mentions a keyword or a denied function', () => {
+    // The lexical checks run with single-quoted literals blanked: a literal is data, never a call, so
+    // `LIKE '%group_concat(%'` / `'%DROP TABLE%'` must pass — the AST layer denies only REAL calls, so
+    // the lexical layer was the only one failing toward over-block here (review f/u, ydimitrof).
+    for (const sql of [
+      "SELECT id FROM contracts WHERE subject LIKE '%group_concat(%'",
+      "SELECT id FROM contracts WHERE subject LIKE '%printf(%'",
+      "SELECT id FROM tenders WHERE subject LIKE '%DROP TABLE%'",
+      "SELECT id FROM tenders WHERE subject = 'sqlite_master' OR subject = 'pragma_table_info('",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(true);
+      if (r.ok) {
+        expect(r.sql, sql).toBe(sql); // the RETURNED statement keeps the literal intact
+        expect(guardSelect(r.sql).ok, sql).toBe(true);
+      }
+    }
+    // …while the same name OUTSIDE a literal, even right next to one, is a call and is still refused —
+    // including the quoted-IDENTIFIER form, which stays visible on purpose (SQLite resolves it).
+    for (const sql of [
+      "SELECT 'x', group_concat(name) FROM bidders",
+      `SELECT 'group_concat(', "group_concat"(name) FROM bidders`,
+      "SELECT id FROM contracts WHERE subject LIKE '%x%' AND printf('%1000000d', id) = ''",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it("refuses a single-quoted token in TABLE position — SQLite reads FROM 'x' as an identifier, not data", () => {
+    // `nm ::= id | STRING` in SQLite's grammar: FROM 'sqlite_master' executes against the real catalog,
+    // so blanking literals must not blind the catalog/pragma/TVF backstops to that spelling. Any quoted
+    // token right after FROM/JOIN (optionally schema-qualified) is refused outright at L1; the AST
+    // allowlist refuses it too, but must not be the only layer that does (review f/u).
+    for (const sql of [
+      "SELECT name FROM 'sqlite_master'",
+      "SELECT name FROM main.'sqlite_master'",
+      "SELECT name FROM 'pragma_table_info'('contracts')",
+      "SELECT c.id FROM contracts c JOIN 'sqlite_master' m ON c.id = m.rootpage",
+      "WITH x AS (SELECT name FROM 'sqlite_master') SELECT name FROM x",
+      "SELECT value FROM 'json_each'('[1,2]')",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/single-quoted table/);
+    }
+    // A literal in EXPRESSION position — even one that itself reads "from 'x'" — is still just data.
+    expect(assertReadOnlySelect("SELECT id FROM contracts WHERE subject = 'from ''x'''").ok).toBe(
+      true,
+    );
+    expect(assertReadOnlySelect("SELECT id FROM contracts WHERE subject = 'join ''y'''").ok).toBe(
+      true,
+    );
   });
 
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {

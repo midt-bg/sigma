@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   bindReport,
   findProseNumbers,
+  REBUILT_COLUMN_KEYS,
+  REBUILT_LINK_KEYS,
   sanitizeProse,
   type EmitReportInput,
+  type EmitTableColumn,
   type QueryResult,
 } from './report-schema';
 
@@ -177,6 +180,81 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
       const row0 = out.report.blocks[0].rows[0]!;
       expect(row0.cells).toEqual(['Министерство на финансите', 1234567]);
       expect(row0.links).toEqual(['auth:000695089', null]); // id for the linked col, null otherwise
+    }
+  });
+
+  it('rebuilds `link` from its known fields and folds a null align — no model-supplied key rides through', () => {
+    // validateEmitShape does not reject unknown keys, so the rebuild must be explicit one level DOWN
+    // too: an `href` smuggled inside `link` must not reach the frozen report (a renderer that reads
+    // it would take the model's URL over the canonical one).
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: null as unknown as undefined,
+              format: 'text',
+              link: {
+                kind: 'authority',
+                idCol: 'authority_id',
+                href: 'javascript:alert(1)',
+              } as never,
+            },
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok && out.report.blocks[0]?.type === 'table') {
+      const col = out.report.blocks[0].columns[0];
+      expect(col).toEqual({
+        key: 'authority',
+        header: 'Институция',
+        format: 'text',
+        link: { kind: 'authority', idCol: 'authority_id' },
+      });
+      expect(col).not.toHaveProperty('align');
+      expect(JSON.stringify(col)).not.toContain('href');
+    }
+  });
+
+  it('rebuilds a fully-specified column with EXACTLY the pinned keys (nothing dropped, nothing extra)', () => {
+    // The explicit rebuild in bindReport copies a fixed list of fields; REBUILT_COLUMN_KEYS pins that
+    // list to the type at compile time, and this pins the runtime side: a column carrying every known
+    // field comes out with every one of them, and an unknown model-supplied key does not survive.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: 'left',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id', href: 'javascript:alert(1)' },
+              width: 120,
+            } as unknown as EmitTableColumn,
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const block = out.report.blocks[0];
+      expect(block?.type).toBe('table');
+      if (block?.type === 'table') {
+        const col = block.columns[0]!;
+        expect(Object.keys(col).sort()).toEqual(Object.keys(REBUILT_COLUMN_KEYS).sort());
+        expect(Object.keys(col.link!).sort()).toEqual(Object.keys(REBUILT_LINK_KEYS).sort());
+      }
     }
   });
 
@@ -487,6 +565,111 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('платиха 9999 USD')).not.toHaveLength(0);
     // a genuine `3 < 5` (no tag — `<` not followed by a letter) must stay clean (no false positive)
     expect(findProseNumbers('3 < 5 е вярно твърдение')).toHaveLength(0);
+  });
+
+  it('flags spelled magnitudes at every scale via the -илион/-илиард suffix (review follow-up)', () => {
+    // "3 трилиона лева" slipped the whole gate: the digit "3" cannot reach "лева" across the Cyrillic word.
+    // The stem now matches the -илион/-илиард suffixes, so the row is closed upward — квинтилион/секстилион
+    // are covered too, and милион/милиард (the суффикс supersets) still match (ydimitrof review).
+    expect(findProseNumbers('По изчисления са усвоени 3 трилиона лева')).not.toHaveLength(0);
+    expect(findProseNumbers('два билиона евро')).not.toHaveLength(0);
+    expect(findProseNumbers('трилион')).not.toHaveLength(0);
+    expect(findProseNumbers('квадрилион')).not.toHaveLength(0);
+    // The gap the reviewer flagged: magnitudes above квадрилион.
+    expect(findProseNumbers('три квинтилиона')).not.toHaveLength(0);
+    expect(findProseNumbers('секстилион лева')).not.toHaveLength(0);
+    // Regression: the original магнитуди still match through the suffix stems, not an explicit list.
+    expect(findProseNumbers('5 милиона')).not.toHaveLength(0);
+    expect(findProseNumbers('12 милиарда')).not.toHaveLength(0);
+    expect(findProseNumbers('триста хиляди')).not.toHaveLength(0);
+    // Spelled-out numeral + ABBREVIATED magnitude has neither a digit (for the \d…млрд pattern) nor
+    // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
+    expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
+    expect(findProseNumbers('двадесет и пет млн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('петте млн')).not.toHaveLength(0);
+    expect(findProseNumbers('стотици млн. евро')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко млрд.')).not.toHaveLength(0);
+    // трлн: no digit, no `-илион` stem, no млн/млрд — it slipped the whole gate (review f/u).
+    expect(findProseNumbers('три трлн лева')).not.toHaveLength(0);
+    expect(findProseNumbers('няколко трлн.')).not.toHaveLength(0);
+    // …and the DIGIT form of the same magnitude, the one a model most likely writes (review f/u on #321).
+    expect(findProseNumbers('дълг от 12 трлн. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('1,5 трлн')).not.toHaveLength(0);
+    // Long-scale forms and the top of the prefix list stay closed.
+    expect(findProseNumbers('квадрилиард')).not.toHaveLength(0);
+    expect(findProseNumbers('децилион')).not.toHaveLength(0);
+    expect(findProseNumbers('милионер')).not.toHaveLength(0); // accepted over-flag (safe direction)
+  });
+
+  it('flags compound, colloquial and approximate numerals before млн/млрд/трлн (a closed numeral list leaked — review f/u on #321)', () => {
+    // The numeral+abbreviation branch used a CLOSED list of cardinals: "два и половина млрд." (the
+    // word before the unit is "половина"), the colloquial tens, "стотина"/"десетина"/"дузина" and the
+    // fractions all fell outside it, so ordinary Bulgarian financial phrasing froze an unbound figure
+    // onto the report. The branch now flags ANY word before the unit except a unit preposition.
+    for (const s of [
+      'Изплатени са два и половина млрд. лева на един изпълнител.',
+      'двайсет млн. лева',
+      'трийсет млрд.',
+      'стотина млн. евро',
+      'десетина млн.',
+      'четвърт млрд.',
+      'три четвърти млн.',
+      'дузина млн.',
+      'няколкостотин млн.',
+      '12-те млн. са усвоени',
+    ]) {
+      expect(findProseNumbers(s), s).not.toHaveLength(0);
+    }
+    const out = bindReport(
+      emit([{ type: 'text', md: 'Изплатени са два и половина млрд. лева на един изпълнител.' }]),
+      results,
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it("does NOT flag a bare млн./млрд. unit (the site's own column-header style carries no number)", () => {
+    // Alone — after punctuation, a line start or a unit PREPOSITION — the abbreviation is a unit,
+    // exactly like "хил.". A noun directly before it ("Стойност млн. €") is the accepted over-flag:
+    // without a complete numeral dictionary it cannot be told apart from "стотина млн.", and the
+    // safe direction is to flag (the model is asked to parenthesise the unit).
+    expect(findProseNumbers('Стойност (млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност в млн. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Стойност (в млн. €)')).toHaveLength(0);
+    expect(findProseNumbers('суми, изразени във млрд. евро')).toHaveLength(0);
+    expect(findProseNumbers('Похарчено, млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('млрд. лв.')).toHaveLength(0);
+    expect(findProseNumbers('Сума (хил. €)')).toHaveLength(0);
+    expect(findProseNumbers('Стойност млн. €')).not.toHaveLength(0); // accepted over-flag (see above)
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'spent_eur', header: 'Похарчено (млн. €)', format: 'money' }],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it('does NOT flag ordinary words that merely END in -илион (павилион — a routine tender subject)', () => {
+    // The bare suffix matched "павилиони" and rejected a legitimate title as an unbound number the
+    // model could not rewrite; the suffix is anchored to the numeral prefixes instead (review f/u).
+    expect(findProseNumbers('Доставка на павилиони за автобусни спирки')).toHaveLength(0);
+    expect(findProseNumbers('Павилион на спирката')).toHaveLength(0);
+    expect(findProseNumbers('Илион')).toHaveLength(0);
+    expect(findProseNumbers('маси за билярд')).toHaveLength(0);
+    const out = bindReport(
+      {
+        title: 'Павилиони по спирки — възложители',
+        question: '',
+        blocks: [{ type: 'text', md: 'Няма данни.' }],
+      },
+      results,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {
