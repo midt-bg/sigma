@@ -156,6 +156,36 @@ const DENIED_FUNCTION_CALL = new RegExp(
   'i',
 );
 
+// The lexical checks in assertReadOnlySelect run on a copy with every single-quoted STRING LITERAL
+// emptied to `''`: in EXPRESSION position a literal is data, never executable, so a keyword or a denied
+// function name inside one (`WHERE subject LIKE '%group_concat(%'`, `'%DROP TABLE%'`) is not a call and
+// must not be refused — the AST layer denies only REAL calls, so the lexical layer was the only one
+// failing toward over-block there (review f/u, ydimitrof). Quoted IDENTIFIERS ("…", `…`, […]) stay
+// visible on purpose: SQLite resolves `"group_concat"(x)` to the built-in, so that name has to be seen.
+// (SQLite's legacy double-quoted-STRING fallback means `LIKE "%printf(%"` is still over-blocked — a
+// misfeature no query here needs, and over-block is the safe direction.) The one place a single-quoted
+// token is NOT data is table position: SQLite's grammar has `nm ::= id | STRING`, so `FROM 'sqlite_master'`
+// reads the real catalog — blanking would blind the catalog/pragma backstops to that spelling, which is
+// why assertReadOnlySelect refuses any quoted token after FROM/JOIN outright (review f/u). Function
+// names are `id` only (`'printf'(x)` is a syntax error), so the function regex loses nothing. The
+// statement RETURNED to the caller is the real one.
+function blankStringLiterals(sql: string): string {
+  let out = '';
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (QUOTE_CLOSER.has(ch)) {
+      const end = quotedSpanEnd(sql, i);
+      out += ch === "'" ? "''" : sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
 
 /** Structural read-only check. Returns the de-commented, single-statement SQL or a rejection. */
@@ -169,14 +199,27 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
     return { ok: false, reason: 'only a single statement is allowed' };
   }
   const sql = statements[0]!;
+  // Every check from here on reads `lexical` (string literals blanked, see blankStringLiterals); `sql`
+  // — the real statement — is what gets returned and executed.
+  const lexical = blankStringLiterals(sql);
 
-  if (!/^(select|with)\b/i.test(sql)) {
+  if (!/^(select|with)\b/i.test(lexical)) {
     return { ok: false, reason: 'query must start with SELECT or WITH' };
+  }
+
+  // A single-quoted token in TABLE position is an identifier to SQLite (`nm ::= id | STRING`): `FROM
+  // 'sqlite_master'`, `FROM main.'sqlite_master'`, `JOIN 'sqlite_master' m`, `FROM 'json_each'(…)` all
+  // execute against the real object. The blanking above turns every such token into `''`, so refuse
+  // any quoted token right after FROM/JOIN (optionally schema-qualified) here — the catalog, pragma_ and
+  // TVF checks below cannot see it any more, and the AST allowlist must not be the only layer that does
+  // (review f/u). No legitimate query quotes a table name this way.
+  if (/\b(?:from|join)\s+(?:[\w"`[\]]+\s*\.\s*)?'/i.test(lexical)) {
+    return { ok: false, reason: 'single-quoted table names are not allowed' };
   }
 
   // Whole-word keyword blocklist (cheap second layer; the AST parser is the real guard).
   for (const kw of FORBIDDEN) {
-    if (new RegExp(`\\b${kw}\\b`, 'i').test(sql)) {
+    if (new RegExp(`\\b${kw}\\b`, 'i').test(lexical)) {
       return { ok: false, reason: `forbidden keyword: ${kw}` };
     }
   }
@@ -184,21 +227,21 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // `\bPRAGMA\b` above does NOT catch the table-valued *function* form `pragma_table_info(...)` (the
   // `_` is a word char, so there is no boundary). Block the `pragma_*` identifiers here too — the AST
   // guard rejects all table-valued functions, this is the cheap belt-and-braces layer (review #80).
-  if (/\bpragma_\w+/i.test(sql)) {
+  if (/\bpragma_\w+/i.test(lexical)) {
     return { ok: false, reason: 'pragma functions are not allowed' };
   }
 
   // Common table-valued functions are invisible to the AST allowlist (parser.tableList() returns []
   // for them), so they are the same blind spot as pragma_*. The AST guard rejects every TVF in a FROM
   // at any depth; this is the cheap first-layer catch for the well-known ones (review #80, ydimitrof H1).
-  if (/\b(?:json_each|json_tree|generate_series)\s*\(/i.test(sql)) {
+  if (/\b(?:json_each|json_tree|generate_series)\s*\(/i.test(lexical)) {
     return { ok: false, reason: 'table-valued functions are not allowed' };
   }
 
   // Schema-catalog tables are the crown-jewel enumeration target. The AST guard now scopes CTE names
   // lexically (so an out-of-scope `sqlite_master` CTE can't exempt the real table), but keep a cheap
   // structural backstop on the two catalog names too — no legitimate query references them (review #80).
-  if (/\bsqlite_(?:master|schema)\b/i.test(sql)) {
+  if (/\bsqlite_(?:master|schema)\b/i.test(lexical)) {
     return { ok: false, reason: 'system catalog tables are not allowed' };
   }
 
@@ -223,7 +266,7 @@ export function assertReadOnlySelect(rawSql: string): GuardResult {
   // no built-in, so it needs no handling here. This regex is only as good as the comment stripping
   // above (whitespace-only between name and paren); the AST layer re-checks the same names on the
   // parsed call, so a stripping miss is not a bypass (review f/u on #223).
-  if (DENIED_FUNCTION_CALL.test(sql)) {
+  if (DENIED_FUNCTION_CALL.test(lexical)) {
     return { ok: false, reason: 'function not allowed' };
   }
   return { ok: true, sql };
