@@ -80,6 +80,19 @@ describe('rateLimitAssistantRoute', () => {
     }
   });
 
+  it('limits GET /assistant/health too — a public trigger of a Vectorize read and, cold, an embedding batch (#346)', async () => {
+    const { limiter, limit } = rateLimiter(false);
+    const response = await rateLimitAssistantRoute(
+      new Request('http://local/assistant/health', {
+        headers: { 'CF-Connecting-IP': '203.0.113.40' },
+      }),
+      { ASSISTANT_RATE_LIMITER: limiter },
+      false,
+    );
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.40' });
+    expect(response?.status).toBe(429);
+  });
+
   it('does not limit other methods or paths', async () => {
     const { limiter, limit } = rateLimiter(false);
     // GET on the same path

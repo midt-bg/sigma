@@ -66,6 +66,13 @@ export interface VectorIndex {
       namespace?: string;
     },
   ): Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
+  // Point reads by id, for the provisioning check (ensureSchemaCorpus): which of the ids this build
+  // expects are readable, in which namespace, with what stored text. Kept loose on the READ side like
+  // query — consumers must not trust index contents structurally. VectorizeIndex.getByIds returns
+  // VectorizeVector[] (id, values, namespace?, metadata?), which is assignable to this.
+  getByIds(
+    ids: string[],
+  ): Promise<{ id: string; namespace?: string; metadata?: Record<string, unknown> }[]>;
 }
 
 export async function embed(ai: EmbeddingRunner, texts: string[]): Promise<number[][]> {
@@ -130,6 +137,14 @@ export function buildSchemaChunks(): SchemaChunk[] {
 // current TABLES/CANONICAL_QUERIES source, so an un-indexed edit ships stale prompt text.
 export const SCHEMA_NS = 'schema-v2';
 
+/**
+ * The versioned vector id of a schema chunk — ONE rule for the writer (indexSchemaCorpus) and the
+ * checker (ensureSchemaCorpus), so the two can never drift apart.
+ */
+export function schemaVectorId(chunk: Pick<SchemaChunk, 'id'>): string {
+  return `${SCHEMA_NS}:${chunk.id}`;
+}
+
 /** On provisioning / after a SCHEMA_NS bump: embed the schema chunks and upsert them into SCHEMA_NS. */
 export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex): Promise<number> {
   const chunks = buildSchemaChunks();
@@ -139,7 +154,7 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
   );
   await index.upsert(
     chunks.map((c, i) => ({
-      id: `${SCHEMA_NS}:${c.id}`,
+      id: schemaVectorId(c),
       values: vectors[i]!,
       namespace: SCHEMA_NS,
       // `ns` in metadata is FORENSIC only (wrangler vectorize get / debugging which cohort a
@@ -149,6 +164,113 @@ export async function indexSchemaCorpus(ai: EmbeddingRunner, index: VectorIndex)
     })),
   );
   return chunks.length;
+}
+
+// ── Self-provisioning (#328) and the proof for CD (#346) ────────────────────────────────────────────
+
+// What ensureSchemaCorpus saw — counters only, never chunk text: this is a log line and a health body.
+export interface CorpusStatus {
+  ns: string;
+  expected: number; // buildSchemaChunks().length of the RUNNING code
+  present: number; // expected ids readable in SCHEMA_NS whose stored text matches this build
+  stale: number; // readable, but carrying the text of an older build (an edit never re-indexed)
+  // Of `present`, the reads that carried NO stored text and were counted by their (versioned) id alone.
+  // lean > 0 means the binding did not return metadata, so stale detection was not possible for those —
+  // observable here rather than a silent "200 over stale text".
+  lean: number;
+  upserted: number; // vectors this call wrote (0 = nothing missing, or a run started earlier in this isolate)
+}
+
+// One memoised indexing run (see indexingRuns).
+export interface IndexingRun {
+  run: Promise<number>;
+  startedAt: number;
+  settled: boolean; // resolved; a REJECTED run is removed from the memo instead
+}
+
+// Per-isolate memo of the indexing run, keyed by namespace. Vectorize applies mutations ASYNCHRONOUSLY:
+// right after an upsert, getByIds can still miss the vectors for a while, so a naive "index whenever
+// something is missing" would re-embed the whole corpus on every call in that window. One run per
+// isolate bounds the cost to one embed batch per cold start at most; other isolates may race to the
+// same upsert, which is idempotent (deterministic ids). A FAILED run is forgotten at once, so a
+// transient provider error never poisons the isolate. A RESOLVED run is kept only for
+// RETRY_INDEXING_AFTER_MS: if the corpus is still not readable after that (a mutation Vectorize accepted
+// but never applied; a stored text that never round-trips), the next call starts a fresh run instead
+// of answering `upserted: 0` for the life of the isolate — one retry per window, still bounded.
+const indexingRuns = new Map<string, IndexingRun>();
+export const RETRY_INDEXING_AFTER_MS = 10 * 60_000;
+
+/** Tests only: forget memoised indexing runs so each case starts from a cold isolate. */
+export function resetCorpusIndexingMemo(): void {
+  indexingRuns.clear();
+}
+
+/**
+ * Make sure the schema corpus THIS build expects is in the index, and report what was found. One point
+ * read of the expected ids; each is counted `present` when it is readable in SCHEMA_NS with this build's
+ * chunk text, `stale` when the stored text is an older build's (an edit that was never re-indexed —
+ * retrieval returns the STORED text, never the source). Anything short of a full, current corpus
+ * starts indexSchemaCorpus — memoised per isolate (see indexingRuns). `present`/`stale` describe what
+ * was READABLE before any write this call made: Vectorize applies writes asynchronously, so a caller
+ * that wants proof re-reads (the health route and the deploy step do). Degrades safely on a lean
+ * binding: a read with no `namespace`/`metadata` counts by its (versioned) id alone — only
+ * indexSchemaCorpus writes such ids, always into SCHEMA_NS — and is reported as `lean`, while a
+ * DIFFERENT namespace or text, when reported, counts against the corpus (fail toward re-indexing).
+ * Static corpus, deterministic ids, idempotent upserts: nothing here depends on user input.
+ */
+export async function ensureSchemaCorpus(
+  ai: EmbeddingRunner,
+  index: VectorIndex,
+  opts: { runs?: Map<string, IndexingRun>; now?: () => number } = {},
+): Promise<CorpusStatus> {
+  const { runs = indexingRuns, now = Date.now } = opts;
+  const expectedText = new Map(buildSchemaChunks().map((c) => [schemaVectorId(c), c.text]));
+  const found = await index.getByIds([...expectedText.keys()]);
+  const seen = new Set<string>();
+  let present = 0;
+  let stale = 0;
+  let lean = 0;
+  for (const v of found) {
+    const text = expectedText.get(v.id);
+    if (text === undefined || seen.has(v.id)) continue; // not asked for, or a duplicate read
+    seen.add(v.id);
+    if (v.namespace !== undefined && v.namespace !== SCHEMA_NS) continue; // another cohort's vector
+    const stored = v.metadata?.text;
+    if (typeof stored !== 'string') {
+      lean += 1; // cannot verify the text — counted by the versioned id, and said so
+      present += 1;
+    } else if (stored !== text) {
+      stale += 1;
+    } else {
+      present += 1;
+    }
+  }
+  const expected = expectedText.size;
+  if (present === expected) return { ns: SCHEMA_NS, expected, present, stale, lean, upserted: 0 };
+  let entry = runs.get(SCHEMA_NS);
+  if (entry?.settled && now() - entry.startedAt > RETRY_INDEXING_AFTER_MS) entry = undefined; // expired
+  const startedHere = entry === undefined;
+  if (entry === undefined) {
+    const fresh: IndexingRun = {
+      run: indexSchemaCorpus(ai, index),
+      startedAt: now(),
+      settled: false,
+    };
+    runs.set(SCHEMA_NS, fresh);
+    // Mark a resolved run (kept for the retry window); forget a failed one so the next call retries —
+    // the rejection itself still reaches every awaiter below.
+    fresh.run.then(
+      () => {
+        fresh.settled = true;
+      },
+      () => {
+        if (runs.get(SCHEMA_NS) === fresh) runs.delete(SCHEMA_NS);
+      },
+    );
+    entry = fresh;
+  }
+  const upserted = await entry.run;
+  return { ns: SCHEMA_NS, expected, present, stale, lean, upserted: startedHere ? upserted : 0 };
 }
 
 // Cosine-similarity floor for a schema match to count as "relevant". Without it, top-K always returns
