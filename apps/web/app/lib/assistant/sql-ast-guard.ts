@@ -11,7 +11,11 @@
 //      invisible to `tableList` (so the allowlist never sees them). No comma or ON-less cross-joins
 //      (a Cartesian product a LIMIT cannot bound) and no `WITH RECURSIVE` (unbounded recursion);
 //   4. an AST-authoritative outer LIMIT — injected when absent. Unlike the regex in sql-guard, this is
-//      not fooled by a string-literal `'LIMIT 1'` or a sub-query LIMIT (review #80).
+//      not fooled by a string-literal `'LIMIT 1'` or a sub-query LIMIT (review #80);
+//   5. the function denylist (sql-guard.ts DENIED_FUNCTION_NAME) on the PARSED call name, at any depth —
+//      the lexical regex in sql-guard was bypassed by a comment it failed to strip; the parser has
+//      already resolved comments, quoting and case, so nothing lexical can hide a name here (review
+//      f/u on #223).
 //
 // Deliberate tradeoff of failing closed: valid-but-unparsed SQLite is rejected too. node-sql-parser's
 // SQLite grammar does not cover every construct (e.g. window functions without `PARTITION BY`), so
@@ -23,7 +27,7 @@
 // the Worker bundle small.
 
 import { Parser, type AST } from 'node-sql-parser/build/sqlite';
-import { enforceLimit, MAX_ROWS, type GuardResult } from './sql-guard';
+import { DENIED_FUNCTION_NAME, enforceLimit, MAX_ROWS, type GuardResult } from './sql-guard';
 import { TABLES } from './describe-schema';
 
 const parser = new Parser();
@@ -66,6 +70,49 @@ function denyDuplicateColumns(ast: LooseSelect): string | null {
     if (seen.has(name))
       return `duplicate output column "${name}"; give columns distinct AS aliases`;
     seen.add(name);
+  }
+  return null;
+}
+
+// The resolved name of a call node. node-sql-parser 5.4 (captured from `astify`): an aggregate is
+// `{ type: 'aggr_func', name: 'GROUP_CONCAT' }`; any other call is `{ type: 'function', name: { name:
+// [{ type: 'default' | 'double_quote_string' | 'backticks_quote_string', value: 'group_concat' }] } }` —
+// so `"group_concat"(x)`, `` `group_concat`(x) ``, GROUP_CONCAT(x) and `group_concat/**/(x)` all reduce
+// to the same lower-cased name. A qualified name would carry several parts; the LAST is the function.
+// Returns null for a shape this code does not know — the caller then FAILS CLOSED rather than assume.
+function callName(name: unknown): string | null {
+  if (typeof name === 'string') return name.toLowerCase();
+  const parts = (name as { name?: unknown } | null)?.name;
+  if (Array.isArray(parts) && parts.length > 0) {
+    const last = parts[parts.length - 1] as { value?: unknown } | null;
+    if (typeof last?.value === 'string') return last.value.toLowerCase();
+  }
+  return null;
+}
+
+// Deny the same function names sql-guard's regex denies, but on the PARSED call — at ANY depth: a denied
+// call nested in an argument (`hex(group_concat(x))`), a WHERE, a sub-select or a CTE body is the same
+// memory amplification as one in the outer SELECT list. Returns the first offender, or null. Fails closed
+// on a call node whose name shape is unknown: a call that cannot be named cannot be proven harmless.
+// Exported for the unit test of that fail-closed path — no SQL text makes the parser emit such a node.
+export function denyDeniedFunction(node: unknown): string | null {
+  if (!node || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = denyDeniedFunction(item);
+      if (r) return r;
+    }
+    return null;
+  }
+  const obj = node as Record<string, unknown>;
+  if (obj.type === 'aggr_func' || obj.type === 'function') {
+    const name = callName(obj.name);
+    if (name === null) return 'function name could not be verified';
+    if (DENIED_FUNCTION_NAME.test(name)) return `function not allowed: ${name}`;
+  }
+  for (const k of Object.keys(obj)) {
+    const r = denyDeniedFunction(obj[k]);
+    if (r) return r;
   }
   return null;
 }
@@ -317,6 +364,11 @@ export function guardSelect(sql: string, maxRows = MAX_ROWS): GuardResult {
 
   const dupCol = denyDuplicateColumns(ast);
   if (dupCol) return deny(dupCol);
+
+  // The function denylist on the resolved call name, at any depth — the layer the regex cannot be
+  // (review f/u on #223, comment-desync bypass).
+  const badFn = denyDeniedFunction(ast);
+  if (badFn) return deny(badFn);
 
   // Every FROM source must be a plain table or a sub-query, at ANY nesting depth — fail closed on
   // anything else. This blocks table-valued functions (`pragma_table_info(…)`, `json_each(…)`,
