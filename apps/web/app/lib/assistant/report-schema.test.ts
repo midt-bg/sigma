@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   bindReport,
   findProseNumbers,
+  REBUILT_COLUMN_KEYS,
+  REBUILT_LINK_KEYS,
   sanitizeProse,
   type EmitReportInput,
+  type EmitTableColumn,
   type QueryResult,
 } from './report-schema';
 
@@ -217,6 +220,41 @@ describe('entity links, cell sanitisation, prose gate (review #80)', () => {
       });
       expect(col).not.toHaveProperty('align');
       expect(JSON.stringify(col)).not.toContain('href');
+    }
+  });
+
+  it('rebuilds a fully-specified column with EXACTLY the pinned keys (nothing dropped, nothing extra)', () => {
+    // The explicit rebuild in bindReport copies a fixed list of fields; REBUILT_COLUMN_KEYS pins that
+    // list to the type at compile time, and this pins the runtime side: a column carrying every known
+    // field comes out with every one of them, and an unknown model-supplied key does not survive.
+    const out = bindReport(
+      emit([
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [
+            {
+              key: 'authority',
+              header: 'Институция',
+              align: 'left',
+              format: 'text',
+              link: { kind: 'authority', idCol: 'authority_id', href: 'javascript:alert(1)' },
+              width: 120,
+            } as unknown as EmitTableColumn,
+          ],
+        },
+      ]),
+      results,
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const block = out.report.blocks[0];
+      expect(block?.type).toBe('table');
+      if (block?.type === 'table') {
+        const col = block.columns[0]!;
+        expect(Object.keys(col).sort()).toEqual(Object.keys(REBUILT_COLUMN_KEYS).sort());
+        expect(Object.keys(col.link!).sort()).toEqual(Object.keys(REBUILT_LINK_KEYS).sort());
+      }
     }
   });
 
