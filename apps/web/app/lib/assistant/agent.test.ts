@@ -3,7 +3,9 @@ import { fakeD1 } from '@sigma/test-support';
 
 // agent.ts is thin Vercel-AI-SDK wiring. Mock the SDK and provider so the tests can assert the wiring
 // (model/base-URL resolution, tool-set assembly, stream Response + onError message) without a live
-// BgGPT call. resolveMaxSteps is pure and needs no mocks.
+// BgGPT call. resolveMaxSteps is pure and needs no mocks. The `ai` mock SPREADS the real module:
+// agent.ts also imports APICallError/RetryError from it for the stream-error logger, and a mock that
+// replaced the module wholesale would turn those into `undefined` and crash every onError path.
 const { streamTextMock, createOpenAIMock, chatMock } = vi.hoisted(() => {
   const chatMock = vi.fn((model: string) => ({ model }));
   return {
@@ -13,7 +15,8 @@ const { streamTextMock, createOpenAIMock, chatMock } = vi.hoisted(() => {
   };
 });
 vi.mock('@ai-sdk/openai', () => ({ createOpenAI: createOpenAIMock }));
-vi.mock('ai', () => ({
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
   convertToModelMessages: vi.fn(async (m: unknown) => m),
   jsonSchema: vi.fn((s: unknown) => s),
   stepCountIs: vi.fn((n: number) => ({ stopAt: n })),
@@ -21,7 +24,8 @@ vi.mock('ai', () => ({
   tool: (def: unknown) => def,
 }));
 
-import { resolveMaxSteps, runAssistant } from './agent';
+import { RetryError } from 'ai';
+import { makeStreamErrorLogger, resolveMaxSteps, runAssistant } from './agent';
 import { ASSISTANT_TOOLS } from './tools';
 
 describe('resolveMaxSteps', () => {
@@ -108,5 +112,77 @@ describe('runAssistant (SDK wiring)', () => {
     const r = await tools.emit_report.execute({ not: 'a valid report' });
     expect(r.ok).toBe(false);
     expect(Array.isArray(r.errors)).toBe(true);
+
+    // …and a valid report takes the ok branch, returning the bound (server-owned) report.
+    const ok = await tools.emit_report.execute({
+      title: 'Справка',
+      question: 'въпрос',
+      blocks: [{ type: 'text', md: 'Няма данни.' }],
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.report.title).toBe('Справка');
+  });
+});
+
+describe('makeStreamErrorLogger', () => {
+  const capture = () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => {
+      lines.push(String(l));
+    });
+    return { lines, restore: () => spy.mockRestore() };
+  };
+
+  it('logs an object error once even though both stream hooks report it', () => {
+    const { lines, restore } = capture();
+    const log = makeStreamErrorLogger([]);
+    const err = new Error('провайдърът падна');
+    log(err);
+    log(err); // the second hook sees the SAME object
+    restore();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('провайдърът падна');
+  });
+
+  it('logs a PRIMITIVE throw once too — it has no identity for a WeakSet to key on', () => {
+    const { lines, restore } = capture();
+    const log = makeStreamErrorLogger([]);
+    log('низова грешка');
+    log('низова грешка');
+    restore();
+    expect(lines).toHaveLength(1);
+  });
+
+  it('still logs two DISTINCT object errors that render the same text', () => {
+    const { lines, restore } = capture();
+    const log = makeStreamErrorLogger([]);
+    log(new Error('една и съща фраза'));
+    log(new Error('една и съща фраза'));
+    restore();
+    expect(lines).toHaveLength(2);
+  });
+
+  it('tags a RetryError that wraps a NON-API error with its reason only (no status to show)', () => {
+    const { lines, restore } = capture();
+    const log = makeStreamErrorLogger([]);
+    log(
+      new RetryError({
+        message: 'опитите свършиха',
+        reason: 'errorNotRetryable',
+        errors: [new Error('мрежата падна')],
+      }),
+    );
+    restore();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('[RetryError errorNotRetryable]');
+    expect(lines[0]).not.toContain('APICallError');
+  });
+
+  it('redacts the question before it reaches the log line', () => {
+    const { lines, restore } = capture();
+    const question = 'колко плати община Пловдив на фирма Х';
+    makeStreamErrorLogger([question])(new Error(`400: ${question}`));
+    restore();
+    expect(lines[0]).not.toContain('Пловдив');
   });
 });

@@ -6,6 +6,8 @@ import type { UIMessage } from 'ai';
 import { getDb } from '@sigma/db';
 import type { Route } from './+types/assistant.chat';
 import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
+import { embeddingRunnerFor } from '../lib/assistant/bindings';
+import { errorText, stackHead } from '../lib/assistant/log-safety';
 import {
   retrieveSchemaContext,
   type EmbeddingRunner,
@@ -87,8 +89,14 @@ export async function action({ request, context }: Route.ActionArgs) {
     console.error('[assistant] BGGPT_API_KEY is not set — endpoint not provisioned');
     return Response.json({ error: 'Асистентът все още не е конфигуриран.' }, { status: 503 });
   }
-  const ai = env.AI as unknown as EmbeddingRunner | undefined;
-  const vectorize = env.VECTORIZE as unknown as VectorIndex | undefined;
+  // Both bindings are typed, not blind-cast (issue #316). VECTORIZE satisfies the narrowed
+  // VectorIndex structurally — this assignment is the compile-time proof, so a drift between
+  // rag.ts and worker-configuration.d.ts fails `tsc`, not production. AI cannot satisfy
+  // EmbeddingRunner structurally (its run() is generic per-model and returns an output UNION), so
+  // it goes through the one sanctioned bridge, embeddingRunnerFor (bindings.ts) — also
+  // compiler-checked, model literal forwarded end-to-end.
+  const vectorize: VectorIndex | undefined = env.VECTORIZE;
+  const ai: EmbeddingRunner | undefined = env.AI ? embeddingRunnerFor(env.AI) : undefined;
   // The latest user message text — used both to RAG-ground the prompt and as the server-authoritative
   // report question, so the model's echo can never smuggle an unbound number into the question slot
   // (review #80).
@@ -106,12 +114,26 @@ export async function action({ request, context }: Route.ActionArgs) {
   };
 
   // RAG grounding (best-effort): the most relevant schema chunks for the latest question; on any
-  // failure the system prompt falls back to the full static dictionary.
+  // failure the system prompt falls back to the full static dictionary. Both degradation paths are
+  // LOGGED (issue #318): without the log lines, "retrieval found nothing" and "retrieval crashed"
+  // are operationally indistinguishable from RAG working — the fallback rate must be observable
+  // before MIN_SCHEMA_SCORE can be recalibrated.
   let schemaContext: string[] | undefined;
   if (ai && vectorize && question) {
     try {
-      schemaContext = await retrieveSchemaContext(ai, vectorize, question);
-    } catch {
+      schemaContext = await retrieveSchemaContext(ai, vectorize, question, {
+        // Structured JSON, one line per turn — same aggregation discipline as workers/request-log.ts
+        // (queryable fields, no free-text scraping). Counts only; never the question text.
+        onStats: (stats) => console.log(JSON.stringify({ evt: 'assistant.rag', ...stats })),
+      });
+    } catch (error) {
+      // Message only, never the raw error object — and the question passed for REDACTION: this is
+      // the call that embeds it, so a Workers AI/Vectorize error is the likeliest place for it to
+      // be echoed, and it must not land in logs (see log-safety.ts — only the needle closes an echo;
+      // the cap and the stack-drop merely bound it).
+      console.error(
+        `[assistant] rag retrieval failed — full-dictionary fallback: ${errorText(error, [question])}`,
+      );
       schemaContext = undefined;
     }
   }
@@ -127,7 +149,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   } catch (error) {
     // Setup-time failure (missing key, bad config, malformed history) — degrade to a readable 503
     // rather than an unhandled 500. Mid-stream BgGPT errors are handled by the stream's onError.
-    console.error('[assistant] turn failed to start', error);
+    // Setup faults are config/programming errors (bad history shape, missing config) — not provider
+    // envelopes — so here the FRAME is the diagnostic and it is inherently free of user text. Log the
+    // bounded message plus the leading frames; still never the raw object (cause chain, response body).
+    console.error(
+      `[assistant] turn failed to start: ${errorText(error, [question])} | ${stackHead(error)}`,
+    );
     return Response.json(
       { error: 'Асистентът временно не е достъпен. Опитай отново след малко.' },
       { status: 503 },
