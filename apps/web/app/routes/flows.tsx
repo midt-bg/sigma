@@ -21,8 +21,21 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response. (PR #183 review #2:
+  // the flows Sankey + top-pairs table now share the masked-bidder invariant with the leaderboard
+  // (`rows.ts:86`) and the contract mapper — when ANY pair on the page is a sole trader / natural
+  // person, the marker stamps the response and the worker noindexes the .data twin.)
+  const headers: Record<string, string> = {
+    'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(1800),
+  };
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    headers['X-Privacy-Mask'] = 'applied';
+  }
+  return headers;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -34,6 +47,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     years,
   );
   const data = await getFlows(db, { sector, year, funding, top });
+  // Privacy (PR #183 review #2): if any pair on this page was masked by the shared flows mapper
+  // (sole trader / natural person), stamp the privacy-mask marker so the worker `hardenResponse`
+  // translates it into `X-Robots-Tag: noindex` on the `.data` twin (RRv7 single-fetch). The
+  // detection reads the `masked` boolean the mapper sets on the same branch
+  // (lyubomir-bozhinov review 2026-09-02, thread on packages/db/src/queries/rows.ts:86) instead of
+  // string-comparing `MASKED_NATURAL_PERSON_LABEL` — the flag is the single source-of-truth,
+  // kept in lock-step with the label and the opaque slug inside the flows mapper.
+  if (data.pairs.some((p) => p.masked)) {
+    return Response.json(
+      { data, coverage, years, unknownSector, unknownYear },
+      { headers: { 'X-Privacy-Mask': 'applied' } },
+    );
+  }
   return { data, coverage, years, unknownSector, unknownYear };
 }
 
@@ -203,7 +229,21 @@ export default function Flows({ loaderData }: Route.ComponentProps) {
                         <Link to={`/authorities/${p.authoritySlug}`}>{p.authorityName}</Link>
                       </td>
                       <td data-label="Компания">
-                        <Link to={`/companies/${p.bidderSlug}`}>{p.bidderDisplayName}</Link>
+                        {/* Masked (sole-trader / natural-person) pairs on the public /flows page
+                            must NOT render a clickable href that would either leak the ЕИК
+                            (pre-fix: bare ЕИК via `companySlug`) or 404 against the new opaque
+                            `m<base64(bidder_id)>` slug. The page is noindexed when ANY pair is
+                            masked (the loader stamps `X-Privacy-Mask` for the worker
+                            `hardenResponse`), but the per-row invariant from
+                            `companies.tsx:174-178` + `home.tsx:65-79` still applies — masked
+                            profile is reachable only via direct URL or a noindexed contract-page
+                            backlink. lyubomir-bozhinov review 2026-09-02, thread on
+                            packages/db/src/queries/rows.ts:86 (extended to the flows mapper). */}
+                        {p.masked ? (
+                          <span>{p.bidderDisplayName}</span>
+                        ) : (
+                          <Link to={`/companies/${p.bidderSlug}`}>{p.bidderDisplayName}</Link>
+                        )}
                       </td>
                       <td className="money" data-label="Сума (€)">
                         {moneyBare(p.wonEur)}

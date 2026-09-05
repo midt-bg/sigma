@@ -41,6 +41,7 @@ const FLOW_PAIRS = [
     authority_name: 'Община Тест',
     bidder_name: 'Фирма ООД',
     bidder_kind: 'company',
+    bidder_legal_form: 'ООД',
     won_eur: 1234,
     contracts: 9,
   },
@@ -93,6 +94,7 @@ const SCOPED_FLOW_PAIRS = [
     authority_name: 'Община Тест',
     bidder_name: 'Скоп Фирма АД',
     bidder_kind: 'company',
+    bidder_legal_form: 'АД',
     won_eur: 600,
     contracts: 4,
   },
@@ -334,6 +336,70 @@ describe('getCompetition', () => {
     expect(calls.calls.some((c) => c.sql.includes('t.authority_id = ?'))).toBe(true);
     // totals, procedure-mix, single-offer, concentration, direct-award, recurring-pairs all scope to it
     expect(calls.calls.filter((c) => c.binds.includes('auth:111'))).toHaveLength(6);
+  });
+});
+
+describe('getCompetition — privacy masking on the recurring-pairs table (PR #183 review — lyubomir-bozhinov 2026-09-02, extended from the rows.ts:86 thread)', () => {
+  // The competition mapper shares the masking pattern with `toCompanyListItem`, `toItem` (contract
+  // mapper), and `getFlows`. Sole-trader / natural-person pairs read „Частно лице" with an opaque
+  // non-round-trippable bidderSlug; legal entities and consortia stay verbatim. The
+  // `bidder_kind !== 'consortium'` guard preserves the consortium shape.
+
+  const soleTraderRow = {
+    authority_id: 'auth:1',
+    bidder_id: 'eik:121817309',
+    authority_name: 'Authority',
+    bidder_name: 'ЕТ ДРИФТ - НИКОЛАЙ КИРОВ',
+    bidder_kind: 'company' as const,
+    bidder_legal_form: 'ЕТ',
+    won_eur: 1000,
+    contracts: 1,
+  };
+
+  it('masks bidderName + bidderDisplayName + bidderSlug for a sole trader', async () => {
+    const db = fakeD1([
+      { when: 'FROM sector_totals', all: [{ division: '45' }] },
+      { when: 'FROM flow_pairs', all: [soleTraderRow] },
+      { when: 'JOIN bidders b', all: [soleTraderRow] },
+      { when: 'WITH pair AS', all: [] },
+      { when: 'GROUP BY t.procedure_type', all: [] },
+      { when: 'TRIM(t.procedure_type) IN (', all: [] },
+      { when: 'AS single_offer', all: [] },
+      {
+        when: 'AS single_value_eur',
+        first: { contracts: 0, single_offer: 0, value_eur: 0, single_value_eur: 0 },
+      },
+    ]).db;
+    const { topPairs } = await getCompetition(db, {});
+    expect(topPairs).toHaveLength(1);
+    const pair = topPairs[0]!;
+    expect(pair.masked).toBe(true);
+    expect(pair.bidderName).toBe('Частно лице');
+    expect(pair.bidderDisplayName).toBe('Частно лице');
+    expect(pair.bidderSlug.startsWith('m')).toBe(true);
+    expect(pair.bidderSlug).not.toContain('121817309');
+    expect(pair.bidderSlug).not.toMatch(/^\d{9}(\d{4})?$/);
+  });
+
+  it('keeps bidderSlug as the bare ЕИК for a legal entity (round-trippable)', async () => {
+    const db = fakeD1([
+      { when: 'FROM sector_totals', all: [{ division: '45' }] },
+      { when: 'FROM flow_pairs', all: [FLOW_PAIRS[0]!] },
+      { when: 'JOIN bidders b', all: [FLOW_PAIRS[0]!] },
+      { when: 'WITH pair AS', all: [] },
+      { when: 'GROUP BY t.procedure_type', all: [] },
+      { when: 'TRIM(t.procedure_type) IN (', all: [] },
+      { when: 'AS single_offer', all: [] },
+      {
+        when: 'AS single_value_eur',
+        first: { contracts: 0, single_offer: 0, value_eur: 0, single_value_eur: 0 },
+      },
+    ]).db;
+    const { topPairs } = await getCompetition(db, {});
+    const pair = topPairs[0]!;
+    expect(pair.masked).toBe(false);
+    expect(pair.bidderSlug).toBe('333');
+    expect(pair.bidderName).toBe('Фирма ООД');
   });
 });
 

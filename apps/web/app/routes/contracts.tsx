@@ -1,5 +1,5 @@
 import { Link, useNavigation, useSearchParams } from 'react-router';
-import { count, date, money, moneyBare } from '@sigma/shared';
+import { MASKED_NATURAL_PERSON_LABEL, count, date, money, moneyBare } from '@sigma/shared';
 import { contractsSummary, getContractFacets, listContracts, getDb } from '@sigma/db';
 import type { Route } from './+types/contracts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -39,8 +39,21 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response. (PR #183 review #1:
+  // the contract leaderboard exposes masked sole-trader rows via the shared `toItem` mapper; the
+  // marker ensures the .data twin — RRv7 single-fetch — also carries noindex when ANY row on the
+  // page is masked.)
+  const headers: Record<string, string> = {
+    'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(1800),
+  };
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    headers['X-Privacy-Mask'] = 'applied';
+  }
+  return headers;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -61,6 +74,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       getContractFacets(db),
     ]);
     const result = await listContracts(db, params, summary);
+    // Privacy (PR #183 review #1): if any row on this page was masked by the shared `toItem`
+    // mapper (sole trader / natural person), stamp the privacy-mask marker so the worker
+    // `hardenResponse` translates it into `X-Robots-Tag: noindex` on the `.data` twin (RRv7
+    // single-fetch). The marker is internal — it never reaches the client. Mirrors the
+    // company-detail loader's per-row marker pattern.
+    if (result.items.some((c) => c.bidderName === MASKED_NATURAL_PERSON_LABEL)) {
+      return Response.json({ result, facets }, { headers: { 'X-Privacy-Mask': 'applied' } });
+    }
     return { result, facets };
   });
 }
