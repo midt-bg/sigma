@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guardSelect } from './sql-ast-guard';
+import { denyDeniedFunction, guardSelect } from './sql-ast-guard';
 import { assertReadOnlySelect } from './sql-guard';
 import { CANONICAL_QUERIES } from './describe-schema';
 
@@ -122,6 +122,58 @@ describe('guardSelect', () => {
     ]) {
       expect(guardSelect(sql).ok, sql).toBe(false);
     }
+  });
+
+  it('rejects denylisted functions on the PARSED call name — no lexical trick can hide them (review f/u on #223)', () => {
+    // The regex layer is lexical and was bypassed by a comment it failed to strip; this layer sees the
+    // name the parser resolved (comments, quoting and case already gone). Fed DIRECTLY, not through
+    // assertReadOnlySelect, to prove the layer stands on its own.
+    for (const sql of [
+      `SELECT 1 AS "x'y", group_concat/**/(subject, '') FROM tenders`,
+      'SELECT "group_concat"(name) FROM bidders',
+      'SELECT GROUP_CONCAT(name) FROM bidders',
+      'SELECT hex(group_concat(description)) FROM contracts', // nested in an argument
+      "SELECT id FROM contracts WHERE id IN (SELECT id FROM contracts WHERE printf('%1000000d', 1) = '')", // in a sub-select
+      'SELECT jsonb_group_object(id, name) FROM bidders',
+      "SELECT string_agg(name, ',') FROM bidders",
+      'SELECT randomblob(100000000) FROM contracts',
+    ]) {
+      const r = guardSelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+    // Ordinary scalar / aggregate functions are untouched (positive control against over-blocking).
+    for (const sql of [
+      'SELECT count(*), sum(amount_eur), total(amount_eur), avg(amount_eur), max(signed_at) FROM contracts',
+      "SELECT lower(name), upper(name), substr(name, 1, 3), length(name), coalesce(name, '') FROM bidders",
+      "SELECT strftime('%Y', signed_at) AS y, date(signed_at), round(amount_eur, 2), abs(amount_eur) FROM contracts",
+      "SELECT replace(name, 'a', 'b'), ifnull(name, ''), typeof(amount_eur) FROM contracts",
+    ]) {
+      expect(guardSelect(sql).ok, sql).toBe(true);
+    }
+  });
+
+  it('fails CLOSED on a call node whose name shape it does not know (no SQL text produces one)', () => {
+    // node-sql-parser 5.4 always names a call as a string (aggr_func) or `{ name: [{ value }] }`
+    // (function). A future grammar could not silently widen that into a bypass: an unnamed call is
+    // refused outright rather than assumed harmless.
+    for (const node of [
+      { type: 'function', name: { name: [] } },
+      { type: 'function', name: 42 },
+      { type: 'function', name: { name: [{ value: 7 }] } },
+    ]) {
+      expect(denyDeniedFunction(node)).toMatch(/could not be verified/);
+    }
+    // Known shapes, at any depth of a plain object/array tree, resolve to the lower-cased name.
+    expect(
+      denyDeniedFunction([
+        { type: 'aggr_func', name: 'SUM' },
+        { where: { type: 'function', name: { name: [{ type: 'default', value: 'PRINTF' }] } } },
+      ]),
+    ).toBe('function not allowed: printf');
+    expect(
+      denyDeniedFunction({ columns: [{ expr: { type: 'aggr_func', name: 'COUNT' } }] }),
+    ).toBeNull();
   });
 
   it('rejects an explicit JOIN / CROSS JOIN with no ON/USING (Cartesian product, review #80)', () => {
