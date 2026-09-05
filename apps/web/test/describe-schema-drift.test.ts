@@ -84,14 +84,17 @@ function dictionaryColumns(columns: string): string[] {
       // and never checked against the real schema — a guard that fails OPEN. The dictionary does not
       // quote today; this keeps the guard closed if it ever does (review f/u, ydimitrof).
       .map((s) => s.trim().replace(/^["'`[]+/, ''))
-      .map((s) => /^[A-Za-z_][A-Za-z0-9_]*/.exec(s)?.[0])
+      // Unicode letters/digits (`\p{L}`/`\p{N}`, `u` flag), not ASCII only: SQLite allows a non-ASCII
+      // identifier, and an ASCII-only class would filter such a column out BEFORE the schema lookup —
+      // the guard failing OPEN for exactly the column it should flag (review f/u, ydimitrof).
+      .map((s) => /^[\p{L}_][\p{L}\p{N}_]*/u.exec(s)?.[0])
       .filter((c): c is string => c !== undefined)
   );
 }
 
 /** The `→target` table references a dictionary `columns` string names (e.g. `tender_id→tenders`). */
 function dictionaryRefs(columns: string): string[] {
-  return [...columns.matchAll(/→([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1] ?? '');
+  return [...columns.matchAll(/→([\p{L}_][\p{L}\p{N}_]*)/gu)].map((m) => m[1] ?? '');
 }
 
 describe('describe-schema drift guard (dictionary vs the migrated schema)', () => {
@@ -171,6 +174,16 @@ describe('describe-schema drift guard (dictionary vs the migrated schema)', () =
       'tenders',
       'bidders',
     ]);
+  });
+
+  it('NEGATIVE CONTROL: a non-ASCII column name is checked, not silently skipped', () => {
+    // An ASCII-only identifier class filtered a Cyrillic column out before the schema lookup — the
+    // guard failed OPEN for exactly the column it should have flagged (review f/u, ydimitrof).
+    expect(dictionaryColumns('id, стойност, amount_eur')).toEqual(['id', 'стойност', 'amount_eur']);
+    expect(dictionaryRefs('стойност→договори, tender_id→tenders')).toEqual(['договори', 'tenders']);
+    // …and through the real lookup such a phantom column is REPORTED against the served schema.
+    const real = columnsOf('contracts');
+    expect(dictionaryColumns('id, стойност').filter((c) => !real.has(c))).toEqual(['стойност']);
   });
 
   it('NEGATIVE CONTROL: an unbalanced dictionary entry fails loudly instead of exempting its tail', () => {
