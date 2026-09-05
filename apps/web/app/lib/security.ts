@@ -61,3 +61,44 @@ export function nonceLessSecurityHeaders(scriptHashes: string[], isProd: boolean
   if (isProd) headers.set('Content-Security-Policy', csp(scriptHashes));
   return headers;
 }
+
+// Internal marker header: a route that decides its response contains natural-person data sets this
+// on the outgoing `Headers` so the worker `hardenResponse` can translate it into a public-facing
+// `X-Robots-Tag: noindex`. The marker is intentionally internal — `applyPrivacyMaskHeaders` deletes
+// it from the final response so it never reaches the edge cache or the client.
+export const PRIVACY_MASK_MARKER = 'X-Privacy-Mask';
+
+// `as const` narrows the type to the literal `'applied'` (not the wider `string`), which forces
+// callers that compare against it to use this exported constant rather than re-typing the string.
+export const PRIVACY_MASK_APPLIED = 'applied' as const;
+
+// Route-layer helper: stamps the privacy-mask marker onto a `Headers` object so the downstream
+// worker `hardenResponse` can pick it up and translate it into `X-Robots-Tag: noindex`.
+//
+// Two legitimate call sites:
+//   1. **Per-row maskers** (e.g. `/companies/:eik.data`, `/contracts/:id.json`) — call only when
+//      the response body actually contains masked natural-person data, so a legal-entity response
+//      stays out of the noindex bucket.
+//   2. **Blanket-policy surfaces** (the three public CSV exports — `/contracts.csv`,
+//      `/companies.csv`, `/authorities.csv`) — the policy documented in `privacy.tsx` and
+//      `docs/privacy-masking.md` says EVERY CSV export carries `noindex` regardless of whether
+//      any specific row is a natural person, because CSV is a bulk machine-readable surface and
+//      the noindex signal is enforced blanket-wide. CSV callers therefore invoke this helper
+//      unconditionally inside `markCsvCache` (csv-export.ts).
+//
+// Workers translate the marker to `X-Robots-Tag: noindex` and delete it before cache/client, so
+// future callers can pick the strategy that fits their surface without leaking the marker.
+export function markPrivacyMaskApplied(headers: Headers): void {
+  headers.set(PRIVACY_MASK_MARKER, PRIVACY_MASK_APPLIED);
+}
+
+// Worker-layer helper: if the privacy-mask marker is set to `applied`, translate it into the
+// public-facing `X-Robots-Tag: noindex` header. The marker is then deleted unconditionally so it
+// never leaks into the edge cache or the response. Idempotent: a second call finds no marker and
+// leaves an existing `X-Robots-Tag` header untouched.
+export function applyPrivacyMaskHeaders(headers: Headers): void {
+  if (headers.get(PRIVACY_MASK_MARKER) === PRIVACY_MASK_APPLIED) {
+    headers.set('X-Robots-Tag', 'noindex');
+  }
+  headers.delete(PRIVACY_MASK_MARKER);
+}

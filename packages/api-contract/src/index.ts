@@ -76,6 +76,10 @@ export interface CompanyListItem {
   eik: string | null;
   eikValid: boolean;
   hasEik: boolean;
+  /** True for sole-trader / natural-person rows whose ЕИК + name have been masked by
+   *  `toCompanyListItem` (PR #183, ydimitrof review 2026-08-31). Surfaces a single privacy signal
+   *  consumers can branch on without re-comparing the masking label or the source name. */
+  masked: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
   sector: SectorRef | null; // primary sector
@@ -225,6 +229,12 @@ export interface ContractListItem {
   bidderName: string;
   bidderDisplayName: string;
   bidderKind: EntityKind;
+  /** True for sole-trader / natural-person rows whose `bidderSlug` is the opaque `maskedCompanySlug`
+   * and whose `bidderName` is the `MASKED_NATURAL_PERSON_LABEL`. Mirrors `CompanyListItem.masked`
+   * (rows.ts:103) — single source-of-truth for the masking signal across surfaces, kept in lock-step
+   * with the label and the opaque slug. Consumers branch on this flag rather than string-comparing
+   * the masking label (ydimitrof review 2026-08-31, thread on rows.ts:80). */
+  masked: boolean;
   procedureLabel: string;
   signedAt: string | null;
   bidsReceived: number | null;
@@ -614,7 +624,12 @@ export interface CompetitionPair {
   authoritySlug: string;
   authorityName: string;
   bidderSlug: string;
-  /** Cleaned raw name, kept for parity with FlowPair/ContractRow and a future CSV export; the UI renders bidderDisplayName. */
+  /** Already-masked bidder name — the competition mapper substitutes `MASKED_NATURAL_PERSON_LABEL`
+   * for sole-trader / natural-person rows (the raw name is a PII leak for `ЕТ` rows; see the
+   * competition mapper at packages/db/src/queries/competition.ts and PR #183 review
+   * lyubomir-bozhinov 2026-09-04). Consumers and any future CSV export MUST render `bidderName`
+   * directly — do NOT swap in the underlying raw name from elsewhere, as that would re-leak the
+   * natural-person's identifier. For UI rendering prefer `bidderDisplayName`. */
   bidderName: string;
   bidderDisplayName: string;
   bidderKind: EntityKind;

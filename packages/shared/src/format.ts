@@ -193,9 +193,55 @@ export function parseConsortiumMembers(name: string): ConsortiumMembership | nul
   return { kind: 'list', members: unique };
 }
 
-export function isNaturalPersonProfileName(name: string): boolean {
+export function isNaturalPersonProfileName(name: string | null | undefined): boolean {
+  // ydimitrof review 2026-09-03 (PR #183, thread on packages/shared/src/format.ts:232) — this
+  // helper is called from machine-readable export paths (CSV streamer, JSON body) where the
+  // raw source row can carry a `null` or `undefined` `name`. The previous signature `name: string`
+  // trusted the TypeScript annotation, but at runtime a missing name would have thrown on
+  // `String.prototype.trim()` before the masker could decide "no match → leave row alone". The
+  // public API now accepts `string | null | undefined` and the empty/`null`/whitespace short-circuit
+  // guarantees this helper is safe to call on a CSV row the registry left blank. The fall-through
+  // return is `false`: a missing name alone is NOT enough to mask.
+  if (!name) return false;
   const normalized = name.trim().toUpperCase();
   return normalized.startsWith('ЕТ ') || normalized.startsWith('ET ');
+}
+
+/**
+ * Bulgarian label substituted for a natural-person or sole-trader identifier in machine-readable
+ * exports (CSV cells, JSON `name` / `sourceNames` fields). Safe to render as HTML or JSON, and
+ * contains no comma/quote so the CSV encoder leaves it unquoted. See `isNaturalPersonBidder`.
+ */
+export const MASKED_NATURAL_PERSON_LABEL = 'Частно лице';
+
+/**
+ * Canonical natural-person / sole-trader predicate for machine-readable masking. Combines the
+ * `legal_form` rules with the leading-`ЕТ` name heuristic — so callers only need one check to
+ * decide whether to mask ЕИК and the raw source name. This is the SINGLE source of truth: every
+ * downstream surface (HTML `noindex` in `apps/web/app/routes/company.tsx`, CSV masking in
+ * `streamContractsCsv` / `streamCompaniesCsv`, JSON masking in `/contracts/:id.json`) calls this
+ * predicate — there is no inline duplicate of the `legal_form` rules in any route (ADR-0007 §1
+ * removed the legacy inline `isSingleNaturalPersonProfile`). Caller is responsible for filtering
+ * consortium rows (see the `bidder_kind` / `kind` guards in the CSV streamers); the function
+ * itself only inspects `legalForm` and `name`.
+ */
+export function isNaturalPersonBidder(
+  name: string | null | undefined,
+  legalForm: string | null,
+): boolean {
+  if (legalForm) {
+    const normalized = legalForm.trim().toUpperCase();
+    if (
+      normalized === 'ЕТ' ||
+      normalized === 'ET' ||
+      normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
+      normalized.includes('SOLE TRADER') ||
+      normalized.includes('INDIVIDUAL')
+    ) {
+      return true;
+    }
+  }
+  return isNaturalPersonProfileName(name);
 }
 
 /**
