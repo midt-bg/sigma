@@ -489,6 +489,27 @@ describe('findProseNumbers', () => {
     expect(findProseNumbers('3 < 5 е вярно твърдение')).toHaveLength(0);
   });
 
+  it('flags spelled magnitudes at every scale via the -илион/-илиард suffix (review follow-up)', () => {
+    // "3 трилиона лева" slipped the whole gate: the digit "3" cannot reach "лева" across the Cyrillic word.
+    // The stem now matches the -илион/-илиард suffixes, so the row is closed upward — квинтилион/секстилион
+    // are covered too, and милион/милиард (the суффикс supersets) still match (ydimitrof review).
+    expect(findProseNumbers('По изчисления са усвоени 3 трилиона лева')).not.toHaveLength(0);
+    expect(findProseNumbers('два билиона евро')).not.toHaveLength(0);
+    expect(findProseNumbers('трилион')).not.toHaveLength(0);
+    expect(findProseNumbers('квадрилион')).not.toHaveLength(0);
+    // The gap the reviewer flagged: magnitudes above квадрилион.
+    expect(findProseNumbers('три квинтилиона')).not.toHaveLength(0);
+    expect(findProseNumbers('секстилион лева')).not.toHaveLength(0);
+    // Regression: the original магнитуди still match through the suffix stems, not an explicit list.
+    expect(findProseNumbers('5 милиона')).not.toHaveLength(0);
+    expect(findProseNumbers('12 милиарда')).not.toHaveLength(0);
+    expect(findProseNumbers('триста хиляди')).not.toHaveLength(0);
+    // Spelled-out numeral + ABBREVIATED magnitude has neither a digit (for the \d…млрд pattern) nor
+    // a full-word stem — the abbreviations must be stems too (review f/u on #320, ydimitrof).
+    expect(findProseNumbers('дванадесет млрд. лева')).not.toHaveLength(0);
+    expect(findProseNumbers('около три млн.')).not.toHaveLength(0);
+  });
+
   it('folds alternative Unicode digit forms a reader still reads as numbers (review #80, red-team R1)', () => {
     const fullwidth = (s: string) => s.replace(/[0-9]/g, (d) => String.fromCharCode(0xff10 + +d));
     const arabicIndic = (s: string) => s.replace(/[0-9]/g, (d) => String.fromCharCode(0x0660 + +d));
