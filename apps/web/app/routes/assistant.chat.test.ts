@@ -14,14 +14,36 @@ vi.mock('@sigma/db', () => ({ getDb: m.getDb }));
 vi.mock('../lib/assistant/agent', () => ({ runAssistant: m.runAssistant }));
 
 import { action } from './assistant.chat';
-import { EMBED_MODEL } from '../lib/assistant/rag';
+import {
+  buildSchemaChunks,
+  EMBED_MODEL,
+  resetCorpusIndexingMemo,
+  SCHEMA_NS,
+  schemaVectorId,
+} from '../lib/assistant/rag';
 
 const QUESTION = 'Колко плати Община Пловдив на фирма ТРЕЙС\nпрез 2024 година?';
 const VEC = new Array(1024).fill(0.1);
 
 function fakeAI(run?: (model: string, inputs: { text: string[] }) => Promise<unknown>) {
-  return { run: vi.fn(run ?? (async () => ({ data: [VEC] }))) };
+  // One vector per input text: the corpus indexer embeds all chunks in one batch (#328).
+  return {
+    run: vi.fn(
+      run ??
+        (async (_model: string, inputs: { text: string[] }) => ({
+          data: inputs.text.map(() => VEC),
+        })),
+    ),
+  };
 }
+
+// What getByIds returns once this build's corpus is fully applied — the steady state every turn sees.
+const CORPUS_PRESENT = buildSchemaChunks().map((c) => ({
+  id: schemaVectorId(c),
+  values: VEC,
+  namespace: SCHEMA_NS,
+  metadata: { text: c.text },
+}));
 
 function fakeVectorize(matches: Array<{ id: string; score: number; text: string }>) {
   return {
@@ -29,6 +51,7 @@ function fakeVectorize(matches: Array<{ id: string; score: number; text: string 
     query: vi.fn(async () => ({
       matches: matches.map((x) => ({ id: x.id, score: x.score, metadata: { text: x.text } })),
     })),
+    getByIds: vi.fn(async () => CORPUS_PRESENT),
   };
 }
 
@@ -66,6 +89,48 @@ describe('POST /assistant/chat (route door)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     m.runAssistant.mockReset();
+    resetCorpusIndexingMemo();
+  });
+
+  it('provisions a cold index on the turn itself and still serves the turn (#328)', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    m.runAssistant.mockResolvedValue(new Response('ok'));
+    const AI = fakeAI();
+    const VECTORIZE = fakeVectorize([]);
+    VECTORIZE.getByIds.mockResolvedValue([]); // nothing indexed in this environment yet
+    const res = await run({ AI, VECTORIZE });
+    expect(res.status).toBe(200);
+    expect(VECTORIZE.upsert).toHaveBeenCalledTimes(1);
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes('assistant.index'));
+    expect(JSON.parse(line ?? '')).toEqual({
+      evt: 'assistant.index',
+      ns: SCHEMA_NS,
+      expected: CORPUS_PRESENT.length,
+      present: 0,
+      stale: 0,
+      lean: 0,
+      upserted: CORPUS_PRESENT.length,
+    });
+    expect(m.runAssistant).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps serving the turn when the corpus check itself fails, and redacts the question from that log', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    m.runAssistant.mockResolvedValue(new Response('ok'));
+    const VECTORIZE = fakeVectorize([{ id: 'a', score: 0.9, text: 'chunk A' }]);
+    VECTORIZE.getByIds.mockRejectedValue(new Error(`index unavailable while reading: ${QUESTION}`));
+    const res = await run({ AI: fakeAI(), VECTORIZE });
+    expect(res.status).toBe(200);
+    const line = error.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('corpus check failed'));
+    expect(line).toBeDefined();
+    expect(line).not.toContain('Пловдив');
+    // Retrieval still ran and grounded the turn — the check is best-effort, retrieval is independent.
+    const opts = m.runAssistant.mock.calls[0]?.[0] as { schemaContext?: string[] };
+    expect(opts.schemaContext).toEqual(['chunk A']);
   });
 
   it('RAG-grounds the turn and emits the counts-only stats line (never the question)', async () => {

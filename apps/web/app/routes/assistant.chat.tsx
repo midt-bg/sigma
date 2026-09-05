@@ -9,6 +9,7 @@ import { runAssistant, type AgentEnv } from '../lib/assistant/agent';
 import { embeddingRunnerFor } from '../lib/assistant/bindings';
 import { errorText, stackHead } from '../lib/assistant/log-safety';
 import {
+  ensureSchemaCorpus,
   retrieveSchemaContext,
   type EmbeddingRunner,
   type VectorIndex,
@@ -120,6 +121,22 @@ export async function action({ request, context }: Route.ActionArgs) {
   // before MIN_SCHEMA_SCORE can be recalibrated.
   let schemaContext: string[] | undefined;
   if (ai && vectorize && question) {
+    // Self-provisioning (#328, #346): before retrieving from the index, make sure it holds the corpus THIS
+    // build expects — one point read per turn; an indexing run at most once per isolate (memoised in
+    // rag.ts), idempotent upserts of deterministic ids, no user input involved. Best-effort like the
+    // retrieval below: a failure here is logged and the turn proceeds (RAG if the corpus is already
+    // readable, the full-dictionary fallback otherwise). The counters are logged only when something was
+    // missing or written, so a steady-state turn adds no line; GET /assistant/health always reports.
+    try {
+      const status = await ensureSchemaCorpus(ai, vectorize);
+      if (status.upserted > 0 || status.present < status.expected) {
+        console.log(JSON.stringify({ evt: 'assistant.index', ...status }));
+      }
+    } catch (error) {
+      console.error(
+        `[assistant] corpus check failed — retrieval proceeds as-is: ${errorText(error, [question])}`,
+      );
+    }
     try {
       schemaContext = await retrieveSchemaContext(ai, vectorize, question, {
         // Structured JSON, one line per turn — same aggregation discipline as workers/request-log.ts
