@@ -48,6 +48,8 @@
   margin: var(--s-7) 0;
 }
 .totals .cell {
+  display: flex;
+  flex-direction: column;
   padding: var(--s-6) var(--s-6) var(--s-6) 0;
   border-right: 1px solid var(--rule);
   min-width: 0;
@@ -61,6 +63,8 @@
 }
 .totals .num {
   display: block;
+  order: -1;
+  margin: 0;
   /* Scale down on narrower viewports so the widest value ("51,6 млрд.") never overruns its cell. */
   font: 400 clamp(26px, 2.8vw, 36px) / 1 var(--font-serif);
   font-variant-numeric: tabular-nums;
