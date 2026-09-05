@@ -56,6 +56,22 @@ export interface EmitTableColumn {
   format: CellFormat;
   link?: { kind: EntityKind; idCol: string }; // renderer builds the canonical /companies/:eik etc.
 }
+// Compile-time pin for the explicit column rebuild in bindReport (case 'table'): every key of
+// EmitTableColumn — and of its `link` — must be listed here, so a field added to the type without a
+// line in the rebuild is a tsc error (a missing property below), not a silent drop on the way to the
+// renderer (review f/u, ydimitrof). report-schema.test.ts pins the runtime side: the rebuild emits
+// exactly these keys.
+export const REBUILT_COLUMN_KEYS: Record<keyof EmitTableColumn, true> = {
+  key: true,
+  header: true,
+  align: true,
+  format: true,
+  link: true,
+};
+export const REBUILT_LINK_KEYS: Record<keyof NonNullable<EmitTableColumn['link']>, true> = {
+  kind: true,
+  idCol: true,
+};
 export interface EmitTable {
   type: 'table';
   resultId: string; // rows come wholesale from this result — the model cannot inject fabricated rows
@@ -501,7 +517,8 @@ export function bindReport(
           // not reject unknown keys) straight through. The same goes one level DOWN: `link` is rebuilt
           // from its two known fields, not copied by reference, or an extra key inside it (an `href`)
           // would ride into the frozen report. `align`/`link` are enum-validated upstream; a `null`
-          // (accepted there as "not given") folds to absent here.
+          // (accepted there as "not given") folds to absent here. REBUILT_COLUMN_KEYS/REBUILT_LINK_KEYS
+          // (top of file) pin this field list to the type, so it cannot fall behind a type change.
           const columns: EmitTableColumn[] = b.columns.map((c) => ({
             key: c.key,
             header: sanitizeProse(c.header),
