@@ -4,16 +4,22 @@ import {
   buildSchemaChunks,
   embed,
   EMBED_DIM,
+  ensureSchemaCorpus,
   indexSchemaCorpus,
   MAX_EMBED_CHARS,
   MIN_ENTITY_SCORE,
   MIN_SCHEMA_SCORE,
   retrieveSchemaContext,
+  RETRY_INDEXING_AFTER_MS,
+  SCHEMA_NS,
+  schemaVectorId,
   semanticSearch,
   type EmbeddingRunner,
+  type IndexingRun,
   type SemanticSearchStats,
   type RetrievalStats,
   type VectorIndex,
+  type VectorRecord,
 } from './rag';
 
 const vec = () => Array.from({ length: EMBED_DIM }, () => 0.1);
@@ -37,6 +43,7 @@ function fakeIndex(matches: Match[] = []) {
       upserted.push(...vectors);
     }),
     query: vi.fn(async () => ({ matches })),
+    getByIds: vi.fn(async () => []),
   } satisfies VectorIndex & { upserted: unknown[] };
 }
 
@@ -419,5 +426,118 @@ describe('rag — provider-anomaly and empty-vector guards', () => {
 
   it('semanticSearch returns [] when the embedding vector is missing', async () => {
     expect(await semanticSearch(runner([undefined]), emptyIndex(), 'q')).toEqual([]);
+  });
+});
+
+describe('ensureSchemaCorpus (self-provisioning, #328 / the proof for #346)', () => {
+  const chunks = buildSchemaChunks();
+  const ids = chunks.map(schemaVectorId);
+  type Read = { id: string; namespace?: string; metadata?: Record<string, unknown> };
+  // What getByIds returns once this build's corpus is fully applied.
+  const complete = (): Read[] =>
+    chunks.map((c) => ({
+      id: schemaVectorId(c),
+      namespace: SCHEMA_NS,
+      metadata: { text: c.text },
+    }));
+  function corpusIndex(found: Read[]) {
+    return {
+      upsert: vi.fn(async (_vectors: VectorRecord[]) => ({})),
+      query: vi.fn(async () => ({ matches: [] })),
+      getByIds: vi.fn(async () => found),
+    } satisfies VectorIndex;
+  }
+  const fullStatus = (over: Partial<ReturnType<typeof status>> = {}) => ({ ...status(), ...over });
+  const status = () => ({
+    ns: SCHEMA_NS,
+    expected: ids.length,
+    present: ids.length,
+    stale: 0,
+    lean: 0,
+    upserted: 0,
+  });
+
+  it('reports a complete corpus without touching the model or writing', async () => {
+    const ai = fakeAI();
+    const index = corpusIndex(complete());
+    expect(await ensureSchemaCorpus(ai, index, { runs: new Map() })).toEqual(fullStatus());
+    expect(index.getByIds).toHaveBeenCalledWith(ids);
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(index.upsert).not.toHaveBeenCalled();
+  });
+
+  it('indexes a missing corpus, and at most ONCE per memo even while reads still lag', async () => {
+    const ai = fakeAI();
+    const index = corpusIndex([]);
+    const runs = new Map<string, IndexingRun>();
+    const first = await ensureSchemaCorpus(ai, index, { runs });
+    expect(first).toEqual(fullStatus({ present: 0, upserted: ids.length }));
+    expect(index.upsert).toHaveBeenCalledTimes(1);
+    const written = index.upsert.mock.calls[0]?.[0] as unknown as VectorRecord[];
+    expect(written.map((v) => v.id)).toEqual(ids);
+    expect(written.every((v) => v.namespace === SCHEMA_NS)).toBe(true);
+    // Vectorize applies writes asynchronously: a second call while getByIds still returns nothing
+    // must report upserted 0 and NOT re-embed — that is the whole point of the memo.
+    const second = await ensureSchemaCorpus(ai, index, { runs });
+    expect(second.upserted).toBe(0);
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(index.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a vector against the corpus when its namespace or stored text is not this build's", async () => {
+    const found = complete();
+    found[0] = { ...found[0]!, namespace: 'schema-v1' }; // another cohort under a colliding id
+    found[1] = { ...found[1]!, metadata: { text: 'стар текст' } }; // edited chunk, never re-indexed
+    found.push({ id: 'schema-v2:query:999', namespace: SCHEMA_NS, metadata: { text: 'x' } }); // not asked
+    // A foreign-namespace read that comes FIRST for an id wins the dedupe: the id is then counted as
+    // missing (fail toward re-indexing), and a duplicate correct read later cannot flip it back.
+    found.unshift({ ...found[2]!, namespace: 'schema-v1' });
+    found.push({ ...found[4]! }); // an exact duplicate read is counted once
+    const index = corpusIndex(found);
+    const s = await ensureSchemaCorpus(fakeAI(), index, { runs: new Map() });
+    expect(s).toEqual(fullStatus({ present: ids.length - 3, stale: 1, upserted: ids.length }));
+    expect(index.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('degrades to id presence when a lean read carries no namespace or metadata — and says so via `lean`', async () => {
+    const index = corpusIndex(ids.map((id) => ({ id })));
+    const s = await ensureSchemaCorpus(fakeAI(), index, { runs: new Map() });
+    expect(s).toEqual(fullStatus({ lean: ids.length }));
+    expect(index.upsert).not.toHaveBeenCalled();
+  });
+
+  it('retries a RESOLVED run once its retry window has passed, but not before', async () => {
+    // A run Vectorize accepted but never applied would otherwise answer `upserted: 0` for the life of
+    // the isolate; after RETRY_INDEXING_AFTER_MS the memo expires and one fresh run is allowed.
+    const ai = fakeAI();
+    const index = corpusIndex([]);
+    const runs = new Map<string, IndexingRun>();
+    let clock = 1_000_000;
+    const now = () => clock;
+    expect((await ensureSchemaCorpus(ai, index, { runs, now })).upserted).toBe(ids.length);
+    clock += RETRY_INDEXING_AFTER_MS - 1;
+    expect((await ensureSchemaCorpus(ai, index, { runs, now })).upserted).toBe(0);
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    clock += 2;
+    expect((await ensureSchemaCorpus(ai, index, { runs, now })).upserted).toBe(ids.length);
+    expect(ai.run).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets a FAILED indexing run so the next call retries instead of replaying the failure', async () => {
+    const runs = new Map<string, IndexingRun>();
+    const index = corpusIndex([]);
+    let calls = 0;
+    const ai = {
+      run: vi.fn(async (_model: string, inputs: { text: string[] }) => {
+        calls += 1;
+        if (calls === 1) throw new Error('провайдърът падна');
+        return { data: inputs.text.map(vec) };
+      }),
+    } satisfies EmbeddingRunner;
+    await expect(ensureSchemaCorpus(ai, index, { runs })).rejects.toThrow('провайдърът падна');
+    expect(runs.size).toBe(0);
+    const s = await ensureSchemaCorpus(ai, index, { runs });
+    expect(s.upserted).toBe(ids.length);
+    expect(index.upsert).toHaveBeenCalledTimes(1);
   });
 });

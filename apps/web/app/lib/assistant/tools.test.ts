@@ -126,6 +126,7 @@ describe('semantic_search', () => {
     c.vectorize = {
       upsert: vi.fn(async () => undefined),
       query: vi.fn(async () => ({ matches })),
+      getByIds: vi.fn(async () => []),
     };
     return c;
   }

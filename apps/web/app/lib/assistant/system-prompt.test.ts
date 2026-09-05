@@ -101,6 +101,7 @@ describe('buildSystemPrompt', () => {
             metadata: opts.returnMetadata === 'all' ? r.metadata : undefined,
           })),
       }),
+      getByIds: async () => [], // the provisioning check is not under test here (rag.test.ts is)
     };
     await indexSchemaCorpus(ai, index);
     const topK = buildSchemaChunks().length;
