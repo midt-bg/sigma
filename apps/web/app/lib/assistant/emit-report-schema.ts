@@ -23,6 +23,14 @@ const BLOCK_TYPES = new Set([
 
 const ENTITY_KINDS = new Set(['company', 'authority', 'contract']);
 
+// Upper bounds on model-emitted array sizes. bindReport sanitises/scans every block, item and column,
+// and result rows are byte-capped upstream — but nothing bounded the array LENGTHS, so a very long (or
+// non-LLM) emission would scan an unbounded structure. These ceilings are far above any real report
+// (review follow-up).
+const MAX_BLOCKS = 100;
+const MAX_ITEMS = 50;
+const MAX_COLUMNS = 50;
+
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isNonEmptyStr = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 // row indices are 0-based, non-negative INTEGERS. A non-integer (1.5) slips bindReport's `row < length`
@@ -31,11 +39,18 @@ const isIndex = (v: unknown): v is number => typeof v === 'number' && Number.isI
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const isFormat = (v: unknown): v is CellFormat => isStr(v) && FORMATS.has(v as CellFormat);
+// Optional fields: absent OR null count as "not given" — `null` for an optional key is a common
+// model habit, and rejecting it turned a previously fine report into a retry for a value nothing
+// consumes. bindReport folds null to absent on the rebuild.
+const absent = (v: unknown): boolean => v === undefined || v === null;
+// A table column's optional horizontal alignment. Whitelisted here so an out-of-enum value the type
+// claims impossible ('left'|'right') cannot reach a renderer that interpolates it into an attribute
+// or style (review follow-up).
+const isAlign = (v: unknown): boolean => absent(v) || v === 'left' || v === 'right';
 // A table column's optional entity link. `kind` must be a known EntityKind (it reaches entityHref,
 // where an unknown kind silently builds a wrong-entity `/contracts/…` citation — review #80).
 const isLink = (v: unknown): boolean =>
-  v === undefined ||
-  (isObj(v) && isStr(v.kind) && ENTITY_KINDS.has(v.kind) && isNonEmptyStr(v.idCol));
+  absent(v) || (isObj(v) && isStr(v.kind) && ENTITY_KINDS.has(v.kind) && isNonEmptyStr(v.idCol));
 
 function isCellRef(v: unknown): v is CellRef {
   return isObj(v) && isNonEmptyStr(v.resultId) && isIndex(v.row) && isNonEmptyStr(v.col);
@@ -53,6 +68,13 @@ export function validateEmitShape(input: unknown): ShapeResult {
     errors.push('blocks must be an array');
     return { ok: false, errors };
   }
+  // Return before the per-block scan: an over-cap array is exactly the unbounded structure the ceiling
+  // guards against, so validating it any further would do the scanning we mean to refuse (as for the
+  // `!Array.isArray` guard above — review follow-up).
+  if (input.blocks.length > MAX_BLOCKS) {
+    errors.push(`blocks: at most ${MAX_BLOCKS}`);
+    return { ok: false, errors };
+  }
 
   input.blocks.forEach((b, i) => {
     const at = `block[${i}]`;
@@ -63,6 +85,21 @@ export function validateEmitShape(input: unknown): ShapeResult {
     const need = (cond: boolean, msg: string) => {
       if (!cond) errors.push(`${at} (${b.type as string}): ${msg}`);
     };
+    // Shape + ceiling for a model-emitted array, returning the array ONLY when it is worth walking:
+    // when over-cap, the length error is already recorded and scanning the oversized array is the
+    // work the ceiling exists to refuse (review follow-up) — so the caller's per-element pass is
+    // skipped (`?.forEach`). One helper, three arrays, identical semantics.
+    const cappedArray = (
+      v: unknown,
+      max: number,
+      noun: string,
+      shapeMsg: string,
+      nonEmpty = false,
+    ): unknown[] | undefined => {
+      need(Array.isArray(v) && (!nonEmpty || v.length > 0), shapeMsg);
+      need(!Array.isArray(v) || v.length <= max, `at most ${max} ${noun}`);
+      return Array.isArray(v) && v.length <= max ? v : undefined;
+    };
     switch (b.type) {
       case 'text':
         need(isStr(b.md), 'md must be a string');
@@ -72,36 +109,44 @@ export function validateEmitShape(input: unknown): ShapeResult {
         need(isStr(b.md), 'md must be a string');
         break;
       case 'totals':
-        need(Array.isArray(b.items), 'items must be an array');
-        if (Array.isArray(b.items))
-          b.items.forEach((it, j) =>
-            need(
-              isObj(it) && isStr(it.label) && isCellRef(it.ref) && isFormat(it.format),
-              `items[${j}] needs {label, ref:{resultId,row,col}, format}`,
-            ),
-          );
+        cappedArray(b.items, MAX_ITEMS, 'items', 'items must be an array')?.forEach((it, j) =>
+          need(
+            isObj(it) && isStr(it.label) && isCellRef(it.ref) && isFormat(it.format),
+            `items[${j}] needs {label, ref:{resultId,row,col}, format}`,
+          ),
+        );
         break;
       case 'facts':
-        need(Array.isArray(b.items), 'items must be an array');
-        if (Array.isArray(b.items))
-          b.items.forEach((it, j) =>
-            need(isObj(it) && isStr(it.term) && isCellRef(it.ref), `items[${j}] needs {term, ref}`),
-          );
+        cappedArray(b.items, MAX_ITEMS, 'items', 'items must be an array')?.forEach((it, j) =>
+          // `sub` is optional prose: it must be a string (or absent) HERE, because bindReport hands it
+          // to the prose gate, and a number/object there is a TypeError — an opaque tool error to the
+          // model instead of this retryable message — and a number in `sub` is an unbound figure the
+          // gate would otherwise never scan.
+          need(
+            isObj(it) && isStr(it.term) && isCellRef(it.ref) && (absent(it.sub) || isStr(it.sub)),
+            `items[${j}] needs {term, ref, sub?:string}`,
+          ),
+        );
         break;
       case 'table':
         need(isNonEmptyStr(b.resultId), 'resultId required');
-        need(Array.isArray(b.columns) && b.columns.length > 0, 'columns must be a non-empty array');
-        if (Array.isArray(b.columns))
-          b.columns.forEach((c, j) =>
-            need(
-              isObj(c) &&
-                isNonEmptyStr(c.key) &&
-                isStr(c.header) &&
-                isFormat(c.format) &&
-                isLink(c.link),
-              `columns[${j}] needs {key, header, format, link?:{kind:company|authority|contract, idCol}}`,
-            ),
-          );
+        cappedArray(
+          b.columns,
+          MAX_COLUMNS,
+          'columns',
+          'columns must be a non-empty array',
+          true,
+        )?.forEach((c, j) =>
+          need(
+            isObj(c) &&
+              isNonEmptyStr(c.key) &&
+              isStr(c.header) &&
+              isAlign(c.align) &&
+              isFormat(c.format) &&
+              isLink(c.link),
+            `columns[${j}] needs {key, header, align?:left|right, format, link?:{kind:company|authority|contract, idCol}}`,
+          ),
+        );
         break;
       case 'bar':
         need(isNonEmptyStr(b.resultId), 'resultId required');

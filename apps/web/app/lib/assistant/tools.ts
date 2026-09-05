@@ -11,6 +11,7 @@ import { assertReadOnlySelect } from './sql-guard';
 import { guardSelect } from './sql-ast-guard';
 import { forModel, resultHandle, toQueryResult } from './tool-results';
 import { semanticSearch, type EmbeddingRunner, type VectorIndex } from './rag';
+import { errorText } from './log-safety';
 import { fetchEopDay, validateEopDate, type FetchImpl } from './eop-fetch';
 import { sourceLinks } from './source-link';
 import { validateEmitShape } from './emit-report-schema';
@@ -114,8 +115,11 @@ const runSqlTool: AssistantTool = {
       return forModel(qr);
     } catch (e) {
       // Don't echo the raw D1 error to the model/report — it can leak schema/internal detail. Log it
-      // server-side and hand the model a generic, retry-able message (review #80).
-      console.error('[assistant] run_sql failed', e);
+      // server-side and hand the model a generic, retry-able message (review #80). Bounded, no cause
+      // chain. NOT redacted: what a D1 message may carry is the model-built SQL, which is also the
+      // only correlation an operator has for a failing query pattern — see log-safety.ts on why the
+      // message is kept where the input is unknown at the catch site.
+      console.error(`[assistant] run_sql failed: ${errorText(e)}`);
       return 'Грешка при изпълнение на заявката.';
     }
   },
@@ -135,14 +139,21 @@ const semanticSearchTool: AssistantTool = {
   async execute(args, ctx) {
     if (!ctx.ai || !ctx.vectorize) return 'Семантичното търсене не е налично в момента.';
     try {
-      const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query));
+      const hits = await semanticSearch(ctx.ai, ctx.vectorize, str(args.query), {
+        // Same structured, counts-only discipline as the route's assistant.rag line (issue #318):
+        // kept=0 with matched>0 = the floor dropped everything; matched=0 = empty/unindexed
+        // namespace. Never the query text.
+        onStats: (stats) => console.log(JSON.stringify({ evt: 'assistant.semantic', ...stats })),
+      });
       if (hits.length === 0) return 'Няма семантични съвпадения.';
       return hits.map((h) => `${h.kind} ${h.ref} — ${h.title} (${h.score.toFixed(3)})`).join('\n');
     } catch (e) {
       // embed() throws on an AI-provider error or a vector-count mismatch; degrade to a friendly,
       // retry-able message instead of surfacing the raw error to the model (consistent with run_sql
-      // and the route's retrieveSchemaContext fallback — review #80).
-      console.error('[assistant] semantic_search failed', e);
+      // and the route's retrieveSchemaContext fallback — review #80). The query is passed for
+      // REDACTION: a provider envelope echoes the text it was given, and that echo is in the
+      // message (log-safety.ts).
+      console.error(`[assistant] semantic_search failed: ${errorText(e, [str(args.query)])}`);
       return 'Семантичното търсене не е налично в момента.';
     }
   },

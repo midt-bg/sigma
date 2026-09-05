@@ -94,6 +94,110 @@ describe('validateEmitShape', () => {
     expect(validateEmitShape(tbl({ kind: 'company' })).ok).toBe(false); // idCol required
   });
 
+  it('validates the optional column align (whitelist left|right), rejecting anything else', () => {
+    const tbl = (align: unknown) => ({
+      title: 't',
+      question: '',
+      blocks: [
+        {
+          type: 'table',
+          resultId: 'R1',
+          columns: [{ key: 'name', header: 'Име', align, format: 'text' }],
+        },
+      ],
+    });
+    expect(validateEmitShape(tbl('right')).ok).toBe(true);
+    expect(validateEmitShape(tbl(undefined)).ok).toBe(true);
+    expect(validateEmitShape(tbl(null)).ok).toBe(true); // a model's "not given" — not a retry
+    expect(validateEmitShape(tbl('center')).ok).toBe(false);
+    expect(validateEmitShape(tbl('"><b>')).ok).toBe(false);
+  });
+
+  it('type-checks the optional facts `sub` (a number there is an unbound figure AND a TypeError downstream)', () => {
+    const facts = (sub: unknown) => ({
+      title: 't',
+      question: '',
+      blocks: [
+        { type: 'facts', items: [{ term: 'x', ref: { resultId: 'R1', row: 0, col: 'c' }, sub }] },
+      ],
+    });
+    expect(validateEmitShape(facts(undefined)).ok).toBe(true);
+    expect(validateEmitShape(facts(null)).ok).toBe(true);
+    expect(validateEmitShape(facts('пояснение')).ok).toBe(true);
+    const num = validateEmitShape(facts(12000000));
+    expect(num.ok).toBe(false);
+    if (!num.ok)
+      expect(num.errors).toEqual(['block[0] (facts): items[0] needs {term, ref, sub?:string}']);
+    expect(validateEmitShape(facts({ a: 1 })).ok).toBe(false);
+  });
+
+  it('caps oversized model arrays (blocks, items, columns)', () => {
+    const many = (n: number, make: (i: number) => unknown) =>
+      Array.from({ length: n }, (_, i) => make(i));
+    // too many blocks
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: many(101, () => ({ type: 'text', md: 'x' })),
+      }).ok,
+    ).toBe(false);
+    // too many totals items
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [
+          {
+            type: 'totals',
+            items: many(51, () => ({
+              label: 'x',
+              ref: { resultId: 'R1', row: 0, col: 'c' },
+              format: 'money',
+            })),
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+    // too many columns
+    expect(
+      validateEmitShape({
+        title: 't',
+        question: '',
+        blocks: [
+          {
+            type: 'table',
+            resultId: 'R1',
+            columns: many(51, (i) => ({ key: `k${i}`, header: 'h', format: 'text' })),
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('stops at the cap error instead of scanning the oversized array (review follow-up)', () => {
+    // Every over-cap block is ALSO individually invalid ({} has no type). Pre-fix, the per-block loop
+    // still ran and pushed 101 per-block errors; now the cap short-circuits, so exactly the one cap error
+    // is reported and the oversized structure is never walked.
+    const out = validateEmitShape({
+      title: 't',
+      question: '',
+      blocks: Array.from({ length: 101 }, () => ({})),
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors).toEqual(['blocks: at most 100']);
+
+    // Same for an over-cap items array: the per-item scan is skipped, so only the cap error surfaces
+    // (each item here is also invalid — missing label/ref/format — but none of them get walked).
+    const items = validateEmitShape({
+      title: 't',
+      question: '',
+      blocks: [{ type: 'totals', items: Array.from({ length: 51 }, () => ({})) }],
+    });
+    expect(items.ok).toBe(false);
+    if (!items.ok) expect(items.errors.some((e) => /items\[\d+\]/.test(e))).toBe(false);
+  });
+
   it('rejects a non-integer ref row (review #80)', () => {
     const out = validateEmitShape({
       title: 't',

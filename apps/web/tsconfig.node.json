@@ -1,6 +1,15 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["vite.config.ts", "vitest.config.ts", "../../vitest.shared.ts"],
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "../../vitest.shared.ts",
+    "test/**/*.test.ts",
+    // Imported by test/describe-schema-drift.test.ts; composite projects must list every program
+    // file. describe-schema.ts has no imports — if it ever gains one, tsc -b will name the missing
+    // file here (TS6307): add it to this list too (or move the shared bit out of the app tree).
+    "app/lib/assistant/describe-schema.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "strict": true,
