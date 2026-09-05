@@ -206,6 +206,62 @@ describe('assertReadOnlySelect', () => {
     if (b.ok) expect(guardSelect(b.sql).ok).toBe(false);
   });
 
+  it('does not refuse a query whose STRING LITERAL merely mentions a keyword or a denied function', () => {
+    // The lexical checks run with single-quoted literals blanked: a literal is data, never a call, so
+    // `LIKE '%group_concat(%'` / `'%DROP TABLE%'` must pass — the AST layer denies only REAL calls, so
+    // the lexical layer was the only one failing toward over-block here (review f/u, ydimitrof).
+    for (const sql of [
+      "SELECT id FROM contracts WHERE subject LIKE '%group_concat(%'",
+      "SELECT id FROM contracts WHERE subject LIKE '%printf(%'",
+      "SELECT id FROM tenders WHERE subject LIKE '%DROP TABLE%'",
+      "SELECT id FROM tenders WHERE subject = 'sqlite_master' OR subject = 'pragma_table_info('",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(true);
+      if (r.ok) {
+        expect(r.sql, sql).toBe(sql); // the RETURNED statement keeps the literal intact
+        expect(guardSelect(r.sql).ok, sql).toBe(true);
+      }
+    }
+    // …while the same name OUTSIDE a literal, even right next to one, is a call and is still refused —
+    // including the quoted-IDENTIFIER form, which stays visible on purpose (SQLite resolves it).
+    for (const sql of [
+      "SELECT 'x', group_concat(name) FROM bidders",
+      `SELECT 'group_concat(', "group_concat"(name) FROM bidders`,
+      "SELECT id FROM contracts WHERE subject LIKE '%x%' AND printf('%1000000d', id) = ''",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/function not allowed/);
+    }
+  });
+
+  it("refuses a single-quoted token in TABLE position — SQLite reads FROM 'x' as an identifier, not data", () => {
+    // `nm ::= id | STRING` in SQLite's grammar: FROM 'sqlite_master' executes against the real catalog,
+    // so blanking literals must not blind the catalog/pragma/TVF backstops to that spelling. Any quoted
+    // token right after FROM/JOIN (optionally schema-qualified) is refused outright at L1; the AST
+    // allowlist refuses it too, but must not be the only layer that does (review f/u).
+    for (const sql of [
+      "SELECT name FROM 'sqlite_master'",
+      "SELECT name FROM main.'sqlite_master'",
+      "SELECT name FROM 'pragma_table_info'('contracts')",
+      "SELECT c.id FROM contracts c JOIN 'sqlite_master' m ON c.id = m.rootpage",
+      "WITH x AS (SELECT name FROM 'sqlite_master') SELECT name FROM x",
+      "SELECT value FROM 'json_each'('[1,2]')",
+    ]) {
+      const r = assertReadOnlySelect(sql);
+      expect(r.ok, sql).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/single-quoted table/);
+    }
+    // A literal in EXPRESSION position — even one that itself reads "from 'x'" — is still just data.
+    expect(assertReadOnlySelect("SELECT id FROM contracts WHERE subject = 'from ''x'''").ok).toBe(
+      true,
+    );
+    expect(assertReadOnlySelect("SELECT id FROM contracts WHERE subject = 'join ''y'''").ok).toBe(
+      true,
+    );
+  });
+
   it('strips comments without corrupting string literals (review #80, follow-up)', () => {
     // A `/* */` or `--` INSIDE a single-quoted literal is data, not a comment: a literal-unaware strip
     // changed `'a/*b*/c'` to `'a c'` (wrong rows) and truncated `'x -- y'` (fail-closed false-deny).
