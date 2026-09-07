@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260521.1",
-    "@vitest/coverage-v8": "^4.1.7",
+    "@vitest/coverage-v8": "^5.0.0",
     "@types/node": "catalog:",
     "fast-xml-parser": "5.10.1",
     "prettier": "^3.8.3",
