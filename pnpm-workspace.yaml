@@ -64,7 +64,7 @@ catalog:
   # release; revisit with it.
   'wrangler': '^4.128.0'
   # matches the one Node runtime (build/node-24); 22 (web) and 25 (root) both drop out of the lockfile
-  '@types/node': '^24.0.0'
+  '@types/node': '^26.4.1'
   # root already; apps/web sat on 5.9 only because two scaffold commits picked different versions
   'typescript': '^6.0.3'
 
