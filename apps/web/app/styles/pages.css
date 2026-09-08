@@ -112,6 +112,54 @@
   color: var(--warning-strong);
 }
 
+/* An untrustworthy figure must not look like a trustworthy one. The old marking was a
+   grey italic line under a 32px serif number, i.e. the warning was quieter than the thing it warned
+   about. The figure now carries the accent, and the explanation gets the same weight as a risk box. */
+.value-history .vh .num.num-unverified {
+  color: var(--warning-strong);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+}
+.value-history .vh .value-badge {
+  display: inline-block;
+  margin-top: var(--s-3);
+  padding: 2px 8px;
+  font: 500 10.5px/1.5 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--warning-bg);
+  color: var(--warning-strong);
+  border: 1px solid var(--warning);
+}
+.value-alert {
+  margin: var(--s-6) 0 0;
+  padding: var(--s-5);
+  background: var(--warning-bg);
+  border-left: 3px solid var(--warning);
+}
+.value-alert-title {
+  margin: 0 0 var(--s-3);
+  font: 500 13px/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--warning-strong);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.value-alert p {
+  margin: 0 0 var(--s-2);
+}
+.value-alert p:last-child {
+  margin-bottom: 0;
+}
+.value-alert-source {
+  font-size: 0.9em;
+  color: var(--ink-mid);
+}
+
 /* Value-history strip + current lot row */
 .value-history {
   display: grid;

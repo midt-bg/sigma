@@ -245,13 +245,26 @@ export interface ContractParty {
   totalEur: number;
 }
 
+/** `contracts.value_flag` — the data-quality verdict assigned in scripts/normalize-raw.sql. Carried to
+ *  the UI so the page can say WHY a figure is untrustworthy instead of one generic label for all of
+ *  them: `value_low` (published far below the forecast) reads nothing like `annex_total_suspect`
+ *  (a known 2× double-count). */
+export type ContractValueFlag =
+  | 'ok'
+  | 'review'
+  | 'value_low'
+  | 'value_suspect'
+  | 'annex_suspect'
+  | 'annex_total_suspect';
+
 export interface ContractValueTimeline {
   estimatedEur: number | null; // lot forecast when available; otherwise procurement-level forecast
   procedureEstimatedEur: number | null; // procurement-level forecast (whole prepiska), for context
   signingEur: number | null;
   currentEur: number | null;
   deltaPct: number | null; // (current − signing) / signing, when both present
-  suspect: boolean; // value_/annex_suspect/review → render with an unverified-value label
+  suspect: boolean; // value_/annex_suspect/review/value_low → render with an unverified-value label
+  flag: ContractValueFlag; // the specific verdict behind `suspect`, so the copy can be specific
   // annex_total_suspect → the current value is a KNOWN exact 2× double-count. currentEur is blanked (—)
   // rather than shown as a labelled doubled figure — a known-wrong number is worse than an honest gap (#307).
   currentValueDoubled: boolean;

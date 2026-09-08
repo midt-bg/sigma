@@ -621,6 +621,7 @@ export async function getContract(
         ? (currentRaw - signingEur) / signingEur
         : null,
     suspect,
+    flag: (r.value_flag ?? 'ok') as ContractValueTimeline['flag'],
     currentValueDoubled,
   };
 
