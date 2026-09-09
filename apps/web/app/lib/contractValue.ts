@@ -15,6 +15,10 @@ import { money, pct } from '@sigma/shared';
 // extreme: signed for 0,01 лв., current 37 млн. лв.). Calling that „a low value" is misleading — the
 // story there is the jump, so it gets its own sentence.
 
+/** One-line marker copy for list rows, where there is no room for the full explanation. Same wording
+ *  in every list so the mark means one thing across the site. */
+export const UNVERIFIED_HINT = 'стойността в източника изглежда грешна';
+
 export interface UnverifiedValueNote {
   /** Heading for the explanation block. Varies with the verdict: most cases are a source defect, but
    *  the catch-all ones are honestly ours („does not pass our checks"), so the title must not claim

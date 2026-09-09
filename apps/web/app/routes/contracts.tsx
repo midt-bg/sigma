@@ -20,6 +20,7 @@ import {
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { UNVERIFIED_HINT } from '../lib/contractValue';
 
 const VALUE_BUCKETS = [
   { value: 'lt100k', label: 'Под 100 хил. €' },
@@ -253,10 +254,18 @@ export default function Contracts({ loaderData }: Route.ComponentProps) {
                           {date(c.signedAt)}
                         </td>
                         <td className="money" data-label="Стойност (€)">
-                          {c.valueEur != null ? (
-                            moneyBare(c.valueEur)
-                          ) : (
+                          {c.valueEur == null ? (
                             <span className="suspect">данните се проверяват</span>
+                          ) : c.valueUnverified ? (
+                            <span className="money-unverified" title={UNVERIFIED_HINT}>
+                              {moneyBare(c.valueEur)}
+                              <span className="money-unverified-mark" aria-hidden="true">
+                                {'\u26A0'}
+                              </span>
+                              <span className="sr-only"> — {UNVERIFIED_HINT}</span>
+                            </span>
+                          ) : (
+                            moneyBare(c.valueEur)
                           )}
                         </td>
                       </tr>

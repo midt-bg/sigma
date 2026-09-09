@@ -229,6 +229,9 @@ export interface ContractListItem {
   signedAt: string | null;
   bidsReceived: number | null;
   valueEur: number | null; // null = suspect / unconvertible → render the проверяват note
+  /** The value is present and summed, but the source figure looks wrong (`value_flag = 'value_low'`).
+   *  Lists must mark it: unmarked, 92 € reads exactly like a genuine 92 € contract. */
+  valueUnverified: boolean;
 }
 
 export interface ContractParty {
