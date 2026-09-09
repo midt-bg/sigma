@@ -1,10 +1,17 @@
+import { Link } from 'react-router';
 import type { NetworkData, NetworkNode } from '@sigma/api-contract';
 import { money } from '@sigma/shared';
+import { nodeHref } from '../lib/entity-tables';
 
 // Static server-rendered radial ego graph (no chart JS, like SankeyDiagram). Centre in the middle,
 // direct counterparties on an inner ring, their top other counterparty on an outer ring. Node size is
-// the sum of incident edge values; edge thickness is the flow value. The accessible data is the
-// connections table beside it; this SVG is a visual summary (role="img" + aria-label).
+// the sum of incident edge values; edge thickness is the flow value.
+//
+// Every node is a link to its profile. The href was always available (`NetworkNode.slug`) — the graph
+// simply did not use it, so the only way from a name you saw here to its page was the search box.
+// Consequently the <svg> must NOT carry role="img": that role collapses the whole graphic into one
+// image for assistive technology and hides the interactive descendants. It is a group of links, and
+// the connections table beside it is the same set of links in a linear form.
 const W = 760;
 const H = 540;
 const CX = W / 2;
@@ -64,7 +71,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
       <div className="flow-scroll">
         <svg
           viewBox={`-100 -10 ${W + 200} ${H + 20}`}
-          role="img"
+          role="group"
           aria-label={`Граф на връзките около ${center.label}`}
           className="network-svg"
         >
@@ -89,9 +96,19 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
             if (!pt) return null;
             const r = radius(n);
             const right = pt.x >= CX;
+            const kindWord = n.kind === 'authority' ? 'институция' : 'фирма';
             const label = `${n.label}: ${money(n.valueEur)}`;
             return (
-              <g key={n.id}>
+              // The label travels with the shape inside the link, so the whole node — marker and text
+              // — is one target. `aria-label` names the destination in full; the <title> stays as the
+              // pointer tooltip.
+              <Link
+                key={n.id}
+                to={nodeHref(n)}
+                className="node-link"
+                aria-label={`${n.label} — ${kindWord}, ${money(n.valueEur)}`}
+              >
+                <title>{label}</title>
                 {n.kind === 'company' ? (
                   <rect
                     className="node"
@@ -101,13 +118,9 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                     height={r * 2}
                     rx={3}
                     style={{ fill: fill(n) }}
-                  >
-                    <title>{label}</title>
-                  </rect>
+                  />
                 ) : (
-                  <circle className="node" cx={pt.x} cy={pt.y} r={r} style={{ fill: fill(n) }}>
-                    <title>{label}</title>
-                  </circle>
+                  <circle className="node" cx={pt.x} cy={pt.y} r={r} style={{ fill: fill(n) }} />
                 )}
                 {/* No label on the centre node: it is already named in the page title, the centre
                     dropdown and the legend (it is the only accent-red node). A label here would either
@@ -122,7 +135,7 @@ export function NetworkGraph({ data }: { data: NetworkData }) {
                     {truncate(n.label)}
                   </text>
                 )}
-              </g>
+              </Link>
             );
           })}
         </svg>
