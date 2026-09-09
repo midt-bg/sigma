@@ -191,6 +191,95 @@ JOIN bidders b ON b.id = c.bidder_id
 WHERE c.amount_eur IS NOT NULL
 GROUP BY t.authority_id, c.bidder_id;
 
+-- ── 5b) company_links (company ⇄ company ties) ───────────────────────────────────────────────────
+-- Edges BETWEEN companies for the profile network (migration 0011). flow_pairs answers
+-- „who paid this company"; this answers „who is this company tied to". Three tie kinds, none of which
+-- puts a personal name on an indexed page — see the migration for the reasoning.
+-- Definitions live canonically in migrations/0011_company_links.sql; the IF NOT EXISTS guards here let
+-- this file also bootstrap a database created before those tables existed (same contract as flow_pairs).
+CREATE TABLE IF NOT EXISTS company_links (
+  a_bidder_id TEXT NOT NULL REFERENCES bidders(id),
+  b_bidder_id TEXT NOT NULL REFERENCES bidders(id),
+  kind        TEXT NOT NULL,
+  directed    INTEGER NOT NULL DEFAULT 0,
+  weight_eur  REAL NOT NULL DEFAULT 0,
+  occurrences INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (a_bidder_id, b_bidder_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_company_links_a ON company_links (a_bidder_id, weight_eur DESC);
+CREATE INDEX IF NOT EXISTS idx_company_links_b ON company_links (b_bidder_id, weight_eur DESC);
+CREATE TABLE IF NOT EXISTS consortium_members (
+  consortium_id TEXT NOT NULL REFERENCES bidders(id),
+  bidder_id     TEXT NOT NULL REFERENCES bidders(id),
+  PRIMARY KEY (consortium_id, bidder_id)
+);
+CREATE INDEX IF NOT EXISTS idx_consortium_members_bidder ON consortium_members (bidder_id);
+DELETE FROM company_links;
+
+-- (a) consortium co-membership. `bidders.name` for an обединение holds a ';'-joined member list; split it
+-- and match each member back to a company row by a normalised name key (quotes stripped, upper-cased,
+-- runs of spaces collapsed). Members that do not resolve to a company in the corpus are simply dropped —
+-- a tie must have two endpoints we can link to.
+--
+-- Resolved membership is MATERIALISED into consortium_members first. Doing the pair join straight off the
+-- CTE makes SQLite re-run the whole split+match once per side of the self-join, over an unindexed result:
+-- that is the difference between a 20-second precompute and a multi-minute one.
+DELETE FROM consortium_members;
+INSERT OR IGNORE INTO consortium_members (consortium_id, bidder_id)
+WITH RECURSIVE
+  norm(id, s) AS (
+    SELECT id, upper(replace(replace(replace(replace(name,'"',''),'„',''),'“',''),'”','')) || ';'
+    FROM bidders WHERE kind = 'consortium' AND name LIKE '%;%'
+  ),
+  split(id, rest, part) AS (
+    SELECT id, s, '' FROM norm
+    UNION ALL
+    SELECT id, substr(rest, instr(rest, ';') + 1), substr(rest, 1, instr(rest, ';') - 1)
+    FROM split WHERE rest <> '' AND instr(rest, ';') > 0
+  ),
+  member(consortium_id, key) AS (
+    SELECT DISTINCT id, trim(replace(replace(replace(part,'  ',' '),'  ',' '),'  ',' '))
+    FROM split WHERE trim(part) <> ''
+  ),
+  comp(bidder_id, key) AS (
+    SELECT id, trim(replace(replace(replace(
+             upper(replace(replace(replace(replace(name,'"',''),'„',''),'“',''),'”','')),
+             '  ',' '),'  ',' '),'  ',' '))
+    FROM bidders WHERE kind = 'company'
+  )
+SELECT m.consortium_id, c.bidder_id FROM member m JOIN comp c ON c.key = m.key;
+
+-- Pairs are stored once, a < b. The weight is what the обединения they share won together.
+INSERT INTO company_links (a_bidder_id, b_bidder_id, kind, directed, weight_eur, occurrences)
+SELECT x.bidder_id, y.bidder_id, 'consortium', 0,
+       COALESCE(SUM(ct.won_eur), 0), COUNT(DISTINCT x.consortium_id)
+FROM consortium_members x
+JOIN consortium_members y ON y.consortium_id = x.consortium_id AND y.bidder_id > x.bidder_id
+LEFT JOIN company_totals ct ON ct.bidder_id = x.consortium_id
+GROUP BY x.bidder_id, y.bidder_id;
+
+-- (b) subcontracting, from the АОП „Подизпълнител" field. Directed: a is the prime, b the subcontractor.
+-- Only rows whose ЕИК resolves to a company in the corpus, and never a self-loop.
+INSERT INTO company_links (a_bidder_id, b_bidder_id, kind, directed, weight_eur, occurrences)
+SELECT c.bidder_id, b.id, 'subcontract', 1, COALESCE(SUM(c.amount_eur), 0), COUNT(*)
+FROM contracts c
+JOIN bidders b ON b.eik_normalized = c.subcontractor_eik AND b.eik_normalized IS NOT NULL
+WHERE c.subcontractor_eik IS NOT NULL AND c.subcontractor_eik <> '' AND b.id <> c.bidder_id
+GROUP BY c.bidder_id, b.id;
+
+-- (c) two companies in which the SAME office-holder declared an interest. The person is not a node and is
+-- not named here: the edge joins the two companies, and the surface links to /conflicts, where the name is
+-- already published under the LIA. Only published links of a surfaced ownership class qualify — the same
+-- gate the /conflicts pages use, so this can never widen what is claimed about anyone.
+INSERT INTO company_links (a_bidder_id, b_bidder_id, kind, directed, weight_eur, occurrences)
+SELECT x.bidder_id, y.bidder_id, 'declared_stake', 0, 0, COUNT(DISTINCT x.person_id)
+FROM interest_links x
+JOIN interest_links y ON y.person_id = x.person_id AND y.bidder_id > x.bidder_id
+WHERE x.status = 'published' AND y.status = 'published'
+  AND x.interest_class IN ('private_ownership', 'family_ownership')
+  AND y.interest_class IN ('private_ownership', 'family_ownership')
+GROUP BY x.bidder_id, y.bidder_id;
+
 -- ── 6) search_index (FTS5; Cyrillic+Latin, accent/case-folded) ─────────────────────────────────────
 -- ref stores the RAW domain id; the app maps it to a route slug. title/ident are searchable; the
 -- rest are UNINDEXED display fields. Contracts indexed only when they carry a subject (else nothing

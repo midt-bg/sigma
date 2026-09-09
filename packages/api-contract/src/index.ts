@@ -476,6 +476,42 @@ export interface NetworkEdge {
   contracts: number;
 }
 
+/** How two companies are tied (`company_links`). Deliberately NOT a person node: a shared
+ *  office-holder is drawn as a tie between the two COMPANIES and points at /conflicts, where the name is
+ *  already published under the LIA — nothing here puts a personal name on an indexed page. */
+export type CompanyTieKind = 'consortium' | 'subcontract' | 'declared_stake' | 'money';
+
+export interface CompanyTieNode {
+  id: string; // domain id ('eik:ЕИК' | 'name:…' | 'auth:ЕИК' for a paying institution)
+  kind: 'company' | 'authority';
+  label: string;
+  slug: string; // /companies/:slug | /authorities/:slug
+  valueEur: number; // the entity's total procurement — node size
+  hop: number; // 0 centre, 1 tied directly
+  /** Set when the entity has published declared-interest links; the surface offers the /conflicts page. */
+  conflictsHref: string | null;
+}
+
+export interface CompanyTieEdge {
+  from: string; // node id
+  to: string; // node id
+  kind: CompanyTieKind;
+  directed: boolean; // subcontract: from = prime, to = subcontractor
+  weightEur: number; // 0 for declared_stake — that tie is not monetary and must not be sized by money
+  occurrences: number; // shared consortia / contracts / officials
+  /** For a declared_stake tie: where the reader can see the named, already-published basis. */
+  href: string | null;
+}
+
+/** The tie network around ONE company: who it is connected to, and how. */
+export interface CompanyTieNetwork {
+  center: CompanyTieNode | null;
+  nodes: CompanyTieNode[];
+  edges: CompanyTieEdge[];
+  /** Ties that exist but did not fit the drawn set, so the surface can say so honestly. */
+  omitted: number;
+}
+
 export interface NetworkCenterOption {
   kind: 'authority' | 'company';
   label: string;

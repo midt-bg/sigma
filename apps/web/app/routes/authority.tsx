@@ -6,7 +6,7 @@ import {
   getAuthority,
   getAuthorityProcedureCompetition,
   getAuthoritySingleOffer,
-  getEntityNetwork,
+  getAuthoritySupplierTies,
   getSpendingTrend,
   getDb,
 } from '@sigma/db';
@@ -17,13 +17,13 @@ import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
-import { NetworkGraph } from '../components/NetworkGraph';
+import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
-import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
+import { tieColumns, tieRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -48,16 +48,16 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
   const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage, trend, network, competition, procedure] = await Promise.all([
+    const [authority, coverage, trend, ties, competition, procedure] = await Promise.all([
       getAuthority(db, authorityId),
       getCoverageMeta(db),
       getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
-      getEntityNetwork(db, { kind: 'authority', id: authorityId }, { includeCenterOptions: false }),
+      getAuthoritySupplierTies(db, authorityId),
       getAuthoritySingleOffer(db, authorityId),
       getAuthorityProcedureCompetition(db, authorityId),
     ]);
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage, trend, network, competition, procedure };
+    return { authority, coverage, trend, ties, competition, procedure };
   });
 }
 
@@ -70,7 +70,7 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
-  const { trend, network, competition, procedure } = loaderData;
+  const { trend, ties, competition, procedure } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
   const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
@@ -206,28 +206,30 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
 
         <Section
           id="network"
-          title="Мрежа"
+          title="Най-големи изпълнители и връзките между тях"
           hint={
             <span>
-              Най-силните преки връзки около институцията и по една следваща връзка за всеки
-              контрагент. <Link to={`/network?center=a:${a.eik}`}>Виж пълната мрежа →</Link>
+              Изпълнителите с най-много получени средства от институцията, и кои от тях са свързани
+              помежду си: съвместно участие в обединение, подизпълнителство, или деклариран интерес
+              на едно и също длъжностно лице.{' '}
+              <Link to={`/network?center=a:${a.eik}`}>Виж паричната мрежа →</Link>
             </span>
           }
         >
-          {network.center && network.nodes.length >= 2 ? (
+          {ties.center && ties.nodes.length >= 2 ? (
             <>
-              <NetworkGraph data={network} />
+              <TieGraph data={ties} />
               <div className="sr-only">
                 <DataTable
-                  columns={networkColumns}
-                  rows={networkRows(network)}
-                  getKey={(r) => `${r.from}-${r.to}`}
-                  caption="Връзки в графа"
+                  columns={tieColumns}
+                  rows={tieRows(ties)}
+                  getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
+                  caption="Изпълнители и връзките между тях"
                 />
               </div>
             </>
           ) : (
-            <p className="muted">Няма достатъчно връзки за граф.</p>
+            <p className="muted">Няма достатъчно данни за схема.</p>
           )}
         </Section>
 

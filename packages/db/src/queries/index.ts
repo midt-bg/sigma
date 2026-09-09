@@ -13,6 +13,7 @@ export * from './authorities';
 export * from './contracts';
 export * from './flows';
 export * from './network';
+export * from './company-ties';
 export * from './trend';
 export * from './regions';
 export * from './cohort';

@@ -8,7 +8,7 @@ import {
   periodRange,
   plural,
 } from '@sigma/shared';
-import { bidderIdFromSlug, getCompany, getEntityNetwork, getSpendingTrend, getDb } from '@sigma/db';
+import { bidderIdFromSlug, getCompany, getCompanyTies, getSpendingTrend, getDb } from '@sigma/db';
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -16,12 +16,12 @@ import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
-import { NetworkGraph } from '../components/NetworkGraph';
+import { TieGraph, tieDescription } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
-import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
+import { tieColumns, tieRows, trendYearColumns } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -67,20 +67,20 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!id) throw new Response('Not Found', { status: 404 });
   const db = getDb(context.cloudflare.env);
   return withDbRetry(async () => {
-    const [company, coverage, trend, network] = await Promise.all([
+    const [company, coverage, trend, ties] = await Promise.all([
       getCompany(db, id),
       getCoverageMeta(db),
       getSpendingTrend(db, { bidderId: id, granularity: 'month' }, { includeSectors: false }),
-      getEntityNetwork(db, { kind: 'company', id }, { includeCenterOptions: false }),
+      getCompanyTies(db, id, { includeFunders: true }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
-    return { company, coverage, trend, network };
+    return { company, coverage, trend, ties };
   });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
-  const { trend, network } = loaderData;
+  const { trend, ties } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
@@ -188,28 +188,41 @@ export default function Company({ loaderData }: Route.ComponentProps) {
 
         <Section
           id="network"
-          title="Мрежа"
+          title="Връзки с други дружества"
           hint={
             <span>
-              Най-силните преки връзки около {subjectPhrase} и по една следваща връзка за всеки
-              възложител. <Link to={`/network?center=c:${c.slug}`}>Виж пълната мрежа →</Link>
+              С кои дружества {subjectPhrase} е свързана: съвместно участие в обединение, възлагане
+              на подизпълнител, или деклариран интерес на едно и също длъжностно лице. Показани са и
+              институциите, от които идват парите.{' '}
+              <Link to={`/network?center=c:${c.slug}`}>Виж паричната мрежа →</Link>
             </span>
           }
         >
-          {network.center && network.nodes.length >= 2 ? (
+          {ties.center && ties.nodes.length >= 2 ? (
             <>
-              <NetworkGraph data={network} />
+              <TieGraph data={ties} />
+              {/* The graph's content as a table — the same links and the same sentences, for a screen
+                  reader and for anyone who wants to read rather than look. */}
               <div className="sr-only">
                 <DataTable
-                  columns={networkColumns}
-                  rows={networkRows(network)}
-                  getKey={(r) => `${r.from}-${r.to}`}
-                  caption="Връзки в графа"
+                  columns={tieColumns}
+                  rows={tieRows(ties)}
+                  getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
+                  caption="Връзки с други дружества"
                 />
               </div>
+              {ties.omitted > 0 && (
+                <p className="small muted mt-s3">
+                  Показани са най-силните {count(ties.nodes.length - 1)}; още {count(ties.omitted)}{' '}
+                  са извън схемата.
+                </p>
+              )}
             </>
           ) : (
-            <p className="muted">Няма достатъчно връзки за граф.</p>
+            <p className="muted">
+              Не намираме връзки с други дружества — нито общо обединение, нито подизпълнителство,
+              нито деклариран интерес на длъжностно лице.
+            </p>
           )}
         </Section>
 
