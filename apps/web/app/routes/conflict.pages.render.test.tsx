@@ -99,6 +99,18 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
 }
 const text = () => container.textContent ?? '';
 
+/**
+ * One link's detail block. It used to be `<article class="conflict-detail">` — a card idiom no other page
+ * had; it is now a plain `<Section>`, identified by the `link-<n>-<ЕИК>` id its heading
+ * carries. Throwing on a miss keeps the assertions below honest: a null block would make every
+ * `not.toContain` pass vacuously.
+ */
+function detailBlock(): HTMLElement {
+  const el = container.querySelector('section[aria-labelledby^="link-"]');
+  if (!el) throw new Error('no detail <Section> rendered');
+  return el as HTMLElement;
+}
+
 describe('/conflicts/official/:id — render', () => {
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
@@ -117,7 +129,7 @@ describe('/conflicts/official/:id — render', () => {
     expect(text()).toContain('ЕВРОСТРОЙ 21 ЕООД'); // the winner heads the block
     expect(text()).toContain('деклариран дял на свързано лице'); // family label
     // each detail block heads by the company with a link to its spending profile + its ЕИК
-    const block = container.querySelector('.conflict-detail')!;
+    const block = detailBlock();
     const profile = block.querySelector('a[href="/companies/333"]');
     expect(profile).not.toBeNull();
     expect(block.textContent).toContain('ЕИК'); // ЕИК sub-label present in the block
@@ -293,7 +305,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
       ],
       contracts: {},
     });
-    const block = container.querySelector('.conflict-detail')!;
+    const block = detailBlock();
     expect(block.textContent).toContain('деклариран дял на свързано лице');
     expect(block.textContent).toContain('самоличност, потвърдена по декларирани данни');
     expect(block.textContent).not.toContain('вписано като');
@@ -331,7 +343,7 @@ describe('/conflicts/company/:eik — render', () => {
     expect(text()).toContain('111'); // ЕИК in the header
     expect(text()).toContain('Иван Петров'); // an official heads a block
     expect(text()).toContain('Втори Официал');
-    const block = container.querySelector('.conflict-detail')!;
+    const block = detailBlock();
     // block heads by the official, linking to their conflicts page, with the institution sub-label
     expect(block.querySelector('a[href="/conflicts/official/aXZhbg"]')).not.toBeNull();
     expect(block.textContent).toContain('Община Тест'); // institution sub-label

@@ -4,11 +4,13 @@ import type { Route } from './+types/conflict.official';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout } from '../components/ui';
+import { FactsList } from '../components/FactsList';
 import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { declaredStakeNoun } from '../lib/conflicts';
+import { conflictHeadline, declaredStakeNoun } from '../lib/conflicts';
+import { count, money, plural } from '@sigma/shared';
 
 // One office-holder's declared ownership links. Reads published interest_links, which per ADR-0032
 // include a close relative's declared stake alongside the person's own — the relative is never named and
@@ -44,6 +46,11 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
   // Family-AWARE, not family-blind: the page must not assert an own stake above cards that say „свързано
   // лице", and must not go vague where the stake really is the official's own (§2.6).
   const stake = declaredStakeNoun(links);
+  // The opening key-figures panel every other detail page has and this one did not. Money is
+  // per-ЕИК-deduped by `conflictHeadline`, so two links to the same winner cannot double-count it.
+  const head = conflictHeadline(links);
+  const companies = new Set(links.map((l) => l.eik)).size;
+  const contractCount = links.reduce((n, l) => n + l.contractCount, 0);
   return (
     <>
       <Breadcrumbs
@@ -70,6 +77,36 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
             <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
           </p>
         </Callout>
+
+        <FactsList
+          label="Ключови показатели"
+          rows={[
+            {
+              term: 'Дружества',
+              value: `${count(companies)} ${plural(companies, 'дружество', 'дружества')}`,
+            },
+            {
+              term: 'Договори',
+              value: `${count(contractCount)} ${plural(contractCount, 'договор', 'договора')}`,
+            },
+            {
+              // The lead figure is the declared-window subset and the „от" figure is the COMPANIES'
+              // whole procurement — neither was labelled before, so „3,1 млн. от 11,9 млн." was
+              // unreadable.
+              term: 'Публични средства',
+              value: (
+                <>
+                  {money(head.contemporaneousEur)}
+                  <span className="cc-funds-window"> в декларирания период</span>
+                </>
+              ),
+              sub:
+                head.totalEur > 0
+                  ? `от ${money(head.totalEur)} на дружествата по обществени поръчки`
+                  : undefined,
+            },
+          ]}
+        />
 
         <Section
           id="holdings"
