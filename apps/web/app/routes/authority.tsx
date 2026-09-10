@@ -16,14 +16,14 @@ import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
-import { TrendChart } from '../components/TrendChart';
+import { TrendBlock } from '../components/TrendBlock';
 import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
 import { ShareBar, Chip, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
-import { tieColumns, tieRows, trendYearColumns } from '../lib/entity-tables';
+import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -51,7 +51,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     const [authority, coverage, trend, ties, competition, procedure] = await Promise.all([
       getAuthority(db, authorityId),
       getCoverageMeta(db),
-      getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
+      getSpendingTrend(db, { authorityId, granularity: 'year' }, { includeSectors: false }),
       getAuthoritySupplierTies(db, authorityId),
       getAuthoritySingleOffer(db, authorityId),
       getAuthorityProcedureCompetition(db, authorityId),
@@ -115,7 +115,8 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             { term: 'Обща стойност', value: money(a.spentEur) },
             { term: 'Брой договори', value: count(a.contracts) },
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
-            { term: 'Различни изпълнители', value: count(a.suppliers) },
+            { term: 'Изпълнители', value: count(a.suppliers) },
+            topSectors ? { term: 'Основни сектори', value: topSectors } : null,
             {
               term: 'Дял с финансиране от ЕС',
               value: pct(a.euSharePct),
@@ -128,11 +129,10 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             a.settlement
               ? { term: 'Седалище', value: a.settlement, sub: a.region ?? undefined }
               : { term: 'Седалище', value: <span className="muted">—</span>, sub: 'няма данни' },
-            topSectors ? { term: 'Топ сектори', value: topSectors } : null,
             a.suspect > 0 && {
               term: 'Непотвърдена стойност',
               value: `${count(a.suspect)} ${plural(a.suspect, 'договор', 'договора')}`,
-              sub: 'изключени от сумите',
+              sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
             },
           ]}
         />
@@ -143,21 +143,12 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             title="Тренд"
             hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
           >
-            {trend.points.length >= 2 ? (
-              <>
-                <TrendChart points={trend.points} granularity={trend.granularity} />
-                <div className="mt-8">
-                  <DataTable
-                    columns={trendYearColumns}
-                    rows={trend.years}
-                    getKey={(r) => r.year}
-                    caption="Разходи по години"
-                  />
-                </div>
-              </>
-            ) : (
-              <p className="muted">Няма достатъчно данни за времева графика.</p>
-            )}
+            <TrendBlock
+              points={trend.points}
+              years={trend.years}
+              granularity={trend.granularity}
+              caption="Разходи по години"
+            />
           </Section>
 
           <Section
@@ -201,6 +192,48 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
               оценка на конкретна процедура.{' '}
               <Link to={`/competition?top=50`}>Виж сравнението с други възложители →</Link>
             </p>
+          </Section>
+        </div>
+
+        <div className="two-col">
+          <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
+            <table>
+              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Сектор (CPV)</th>
+                  <th scope="col">Стойност и дял</th>
+                </tr>
+              </thead>
+              <tbody>
+                {a.sectors.map((s) => (
+                  <tr key={s.code}>
+                    <td>
+                      <Link to={`/contracts?authority=${a.eik}&sector=${s.code}`}>
+                        {s.label} (CPV {s.code})
+                      </Link>
+                    </td>
+                    <td className="money">
+                      {money(s.valueEur)}
+                      <span className="sub">{pct(s.sharePct)}</span>
+                    </td>
+                  </tr>
+                ))}
+                {a.sectorsOther && (
+                  <tr>
+                    <td className="muted">{a.sectorsOther.label}</td>
+                    <td className="money">
+                      {money(a.sectorsOther.valueEur)}
+                      <span className="sub">{pct(a.sectorsOther.sharePct)}</span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Section>
+
+          <Section id="how" title="Как купува" hint="Разпределение на договорите по вид процедура.">
+            <StackedBar slices={a.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
           </Section>
         </div>
 
@@ -290,48 +323,6 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </p>
           )}
         </Section>
-
-        <div className="two-col">
-          <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
-            <table>
-              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
-              <thead className="sr-only">
-                <tr>
-                  <th scope="col">Сектор (CPV)</th>
-                  <th scope="col">Стойност и дял</th>
-                </tr>
-              </thead>
-              <tbody>
-                {a.sectors.map((s) => (
-                  <tr key={s.code}>
-                    <td>
-                      <Link to={`/contracts?authority=${a.eik}&sector=${s.code}`}>
-                        {s.label} (CPV {s.code})
-                      </Link>
-                    </td>
-                    <td className="money">
-                      {money(s.valueEur)}
-                      <span className="sub">{pct(s.sharePct)}</span>
-                    </td>
-                  </tr>
-                ))}
-                {a.sectorsOther && (
-                  <tr>
-                    <td className="muted">{a.sectorsOther.label}</td>
-                    <td className="money">
-                      {money(a.sectorsOther.valueEur)}
-                      <span className="sub">{pct(a.sectorsOther.sharePct)}</span>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Section>
-
-          <Section id="how" title="Как купува" hint="Разпределение на договорите по вид процедура.">
-            <StackedBar slices={a.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
-          </Section>
-        </div>
 
         <Section
           id="all"

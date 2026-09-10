@@ -282,6 +282,20 @@
   }
 }
 
+/* Chart beside its table inside one section (the profile "Тренд"). Tighter than .two-col, which is
+   a gap between sections; the chart takes the wider track so its year labels stay legible. */
+.trend-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--s-5);
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .trend-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* The third-party accessibility launcher (.a11y-tools, loaded async from
    /assets/accessibility/) pins its 50px button at `top: 420px` inside a
    viewport-tall fixed container, so on phones it floats over the middle-right of

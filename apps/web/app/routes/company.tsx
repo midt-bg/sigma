@@ -15,13 +15,13 @@ import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
-import { TrendChart } from '../components/TrendChart';
+import { TrendBlock } from '../components/TrendBlock';
 import { TieGraph, tieDescription } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
-import { tieColumns, tieRows, trendYearColumns } from '../lib/entity-tables';
+import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -70,7 +70,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     const [company, coverage, trend, ties] = await Promise.all([
       getCompany(db, id),
       getCoverageMeta(db),
-      getSpendingTrend(db, { bidderId: id, granularity: 'month' }, { includeSectors: false }),
+      getSpendingTrend(db, { bidderId: id, granularity: 'year' }, { includeSectors: false }),
       getCompanyTies(db, id, { includeFunders: true }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
@@ -133,14 +133,14 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           label="Ключови показатели"
           rows={[
             { term: 'Общо спечелено', value: money(c.wonEur) },
+            { term: 'Брой договори', value: count(c.contracts) },
+            { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
+            { term: 'Възложители', value: count(c.authorities) },
             c.sector && {
               term: 'Основен сектор',
               value: `${c.sector.label} (CPV ${c.sector.code})`,
               sub: c.sectorSharePct != null ? `${pct(c.sectorSharePct)} от стойността` : undefined,
             },
-            { term: 'Брой договори', value: count(c.contracts) },
-            { term: 'Институции платци', value: count(c.authorities) },
-            { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
             { term: 'Дял с финансиране от ЕС', value: pct(c.euSharePct) },
             c.avgBids != null && {
               term: 'Средно оферти на търг',
@@ -159,72 +159,10 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             c.suspect > 0 && {
               term: 'Непотвърдена стойност',
               value: `${count(c.suspect)} ${plural(c.suspect, 'договор', 'договора')}`,
-              sub: 'изключени от сумите — данните се проверяват',
+              sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
             },
           ]}
         />
-
-        <Section
-          id="trend"
-          title="Тренд"
-          hint={`Спечеленото от ${c.displayName} във времето. Договорите без валидна дата не влизат в графиката.`}
-        >
-          {trend.points.length >= 2 ? (
-            <>
-              <TrendChart points={trend.points} granularity={trend.granularity} />
-              <div className="mt-8">
-                <DataTable
-                  columns={trendYearColumns}
-                  rows={trend.years}
-                  getKey={(r) => r.year}
-                  caption="Разходи по години"
-                />
-              </div>
-            </>
-          ) : (
-            <p className="muted">Няма достатъчно данни за времева графика.</p>
-          )}
-        </Section>
-
-        <Section
-          id="network"
-          title="Връзки с други дружества"
-          hint={
-            <span>
-              С кои дружества {subjectPhrase} е свързана: съвместно участие в обединение, възлагане
-              на подизпълнител, или деклариран интерес на едно и също длъжностно лице. Показани са и
-              институциите, от които идват парите.{' '}
-              <Link to={`/network?center=c:${c.slug}`}>Виж паричната мрежа →</Link>
-            </span>
-          }
-        >
-          {ties.center && ties.nodes.length >= 2 ? (
-            <>
-              <TieGraph data={ties} />
-              {/* The graph's content as a table — the same links and the same sentences, for a screen
-                  reader and for anyone who wants to read rather than look. */}
-              <div className="sr-only">
-                <DataTable
-                  columns={tieColumns}
-                  rows={tieRows(ties)}
-                  getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
-                  caption="Връзки с други дружества"
-                />
-              </div>
-              {ties.omitted > 0 && (
-                <p className="small muted mt-s3">
-                  Показани са най-силните {count(ties.nodes.length - 1)}; още {count(ties.omitted)}{' '}
-                  са извън схемата.
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="muted">
-              Не намираме връзки с други дружества — нито общо обединение, нито подизпълнителство,
-              нито деклариран интерес на длъжностно лице.
-            </p>
-          )}
-        </Section>
 
         {/* Consortium membership. Shown only when the source row gave us something to break out
             (a `;`-list or the rare free-text dump). Plain companies and one-name "ИНТЕРБОЛГАРСТРОЙ
@@ -266,6 +204,70 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             )}
           </Section>
         )}
+
+        <Section
+          id="trend"
+          title="Тренд"
+          hint={`Спечеленото от ${c.displayName} във времето. Договорите без валидна дата не влизат в графиката.`}
+        >
+          <TrendBlock
+            points={trend.points}
+            years={trend.years}
+            granularity={trend.granularity}
+            caption="Спечелено по години"
+            split
+          />
+        </Section>
+
+        <div className="two-col">
+          <Section
+            id="how-win"
+            title="Как печели"
+            hint="Видът процедури, по които компанията е печелила договорите."
+          >
+            <StackedBar slices={c.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
+          </Section>
+
+          <Section
+            id="bids"
+            title="Брой оферти на спечелените търгове"
+            hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
+          >
+            <table>
+              <caption className="sr-only">Брой оферти на спечелените търгове</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Брой оферти</th>
+                  <th scope="col">Брой търгове</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1 оферта</td>
+                  <td className="money">{count(c.bids.one)} търга</td>
+                </tr>
+                <tr>
+                  <td>2 оферти</td>
+                  <td className="money">{count(c.bids.two)} търга</td>
+                </tr>
+                <tr>
+                  <td>3 оферти</td>
+                  <td className="money">{count(c.bids.three)} търга</td>
+                </tr>
+                <tr>
+                  <td>4 и повече оферти</td>
+                  <td className="money">{count(c.bids.fourPlus)} търга</td>
+                </tr>
+                {c.bids.unknown > 0 && (
+                  <tr>
+                    <td className="muted">няма данни</td>
+                    <td className="money muted">{count(c.bids.unknown)} търга</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Section>
+        </div>
 
         <Section
           id="from"
@@ -322,55 +324,45 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           )}
         </Section>
 
-        <div className="two-col">
-          <Section
-            id="how-win"
-            title="Как печели"
-            hint="Видът процедури, по които компанията е печелила договорите."
-          >
-            <StackedBar slices={c.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
-          </Section>
-
-          <Section
-            id="bids"
-            title="Брой оферти на спечелените търгове"
-            hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
-          >
-            <table>
-              <caption className="sr-only">Брой оферти на спечелените търгове</caption>
-              <thead className="sr-only">
-                <tr>
-                  <th scope="col">Брой оферти</th>
-                  <th scope="col">Брой търгове</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>1 оферта</td>
-                  <td className="money">{count(c.bids.one)} търга</td>
-                </tr>
-                <tr>
-                  <td>2 оферти</td>
-                  <td className="money">{count(c.bids.two)} търга</td>
-                </tr>
-                <tr>
-                  <td>3 оферти</td>
-                  <td className="money">{count(c.bids.three)} търга</td>
-                </tr>
-                <tr>
-                  <td>4 и повече оферти</td>
-                  <td className="money">{count(c.bids.fourPlus)} търга</td>
-                </tr>
-                {c.bids.unknown > 0 && (
-                  <tr>
-                    <td className="muted">няма данни</td>
-                    <td className="money muted">{count(c.bids.unknown)} търга</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Section>
-        </div>
+        <Section
+          id="network"
+          title="Връзки с други дружества"
+          hint={
+            <span>
+              С кои дружества {subjectPhrase} е свързана: съвместно участие в обединение, възлагане
+              на подизпълнител, или деклариран интерес на едно и също длъжностно лице. Показани са и
+              институциите, от които идват парите.{' '}
+              <Link to={`/network?center=c:${c.slug}`}>Виж паричната мрежа →</Link>
+            </span>
+          }
+        >
+          {ties.center && ties.nodes.length >= 2 ? (
+            <>
+              <TieGraph data={ties} />
+              {/* The graph's content as a table — the same links and the same sentences, for a screen
+                  reader and for anyone who wants to read rather than look. */}
+              <div className="sr-only">
+                <DataTable
+                  columns={tieColumns}
+                  rows={tieRows(ties)}
+                  getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
+                  caption="Връзки с други дружества"
+                />
+              </div>
+              {ties.omitted > 0 && (
+                <p className="small muted mt-s3">
+                  Показани са най-силните {count(ties.nodes.length - 1)}; още {count(ties.omitted)}{' '}
+                  са извън схемата.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="muted">
+              Не намираме връзки с други дружества — нито общо обединение, нито подизпълнителство,
+              нито деклариран интерес на длъжностно лице.
+            </p>
+          )}
+        </Section>
 
         <Section
           id="latest"
