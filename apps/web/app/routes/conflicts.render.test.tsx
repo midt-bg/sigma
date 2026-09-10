@@ -94,9 +94,13 @@ afterEach(() => {
 
 /** Mount the /conflicts route through a real data router. The person page target only needs to resolve as a
  *  route so the title-column links have somewhere to point. */
-async function renderConflicts(links: ConflictLink[]) {
+async function renderConflicts(
+  links: ConflictLink[],
+  authority: { slug: string; name: string } | null = null,
+) {
   const Stub = createRoutesStub([
-    { path: '/conflicts', Component: Conflicts, loader: () => ({ links }) },
+    { path: '/conflicts', Component: Conflicts, loader: () => ({ links, authority }) },
+    { path: '/authorities/:eik', Component: () => null },
     { path: '/conflicts/official/:slug', Component: () => null },
     { path: '/conflicts/company/:eik', Component: () => null },
     { path: '/conflicts/methodology', Component: () => null },
@@ -122,6 +126,20 @@ describe('/conflicts route — render', () => {
       loaderHeaders: new Headers({ 'Cache-Control': 'public, max-age=42' }),
     } as never);
     expect(h['Cache-Control']).toBe('public, max-age=42');
+  });
+
+  it('says which institution the list is narrowed to, and how to widen it', async () => {
+    await renderConflicts([link()], { slug: '000123456', name: 'ОБЩИНА ТЕСТ' });
+    expect(text()).toContain('Само изпълнители на');
+    const hrefs = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('/authorities/000123456');
+    expect(hrefs).toContain('/conflicts');
+  });
+
+  it('says a narrowed list is empty, not that nothing is published at all', async () => {
+    await renderConflicts([], { slug: '000123456', name: 'ОБЩИНА ТЕСТ' });
+    expect(text()).toContain('Няма публикувани връзки към изпълнители на тази институция');
+    expect(text()).not.toContain('Все още няма публикувани връзки');
   });
 
   it('renders the empty state when there are no links (no summary, no table)', async () => {

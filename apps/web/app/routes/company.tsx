@@ -111,6 +111,14 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <OwnershipChip kind={c.ownershipKind} />
                 </>
               )}
+              {ties.center?.conflictsHref && (
+                <>
+                  {' · '}
+                  <Link to={ties.center.conflictsHref}>
+                    <Chip tone="window">деклариран дял на длъжностно лице</Chip>
+                  </Link>
+                </>
+              )}
               {c.sector && (
                 <>
                   {' '}

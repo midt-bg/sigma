@@ -18,6 +18,7 @@
 // published under the LIA. Nothing on the company profile (which IS indexed) gains a personal name.
 import type { CompanyTieEdge, CompanyTieNetwork, CompanyTieNode } from '@sigma/api-contract';
 import { cleanName, entityName } from '@sigma/shared';
+import { SURFACED_OWNERSHIP } from './related-persons';
 import { authoritySlug, companySlug } from './identity';
 
 /** Tied companies drawn around the centre. Beyond this the ring stops being readable. */
@@ -53,6 +54,12 @@ interface CenterRow {
   conflicts: number;
 }
 
+// A company's surfaced declared-stake links, counted under the exact gate the /conflicts pages publish by
+// (SURFACED_OWNERSHIP: published, an ownership class and a Trade Register evidence seal). Counting
+// `status = 'published'` alone would offer a /conflicts destination the page itself refuses to render.
+const surfacedConflicts = (bidderColumn: string) =>
+  `(SELECT COUNT(*) FROM interest_links il WHERE il.bidder_id = ${bidderColumn} AND ${SURFACED_OWNERSHIP})`;
+
 /**
  * One row per tie touching `bidderId`, with the OTHER endpoint resolved. The union covers both storage
  * directions: symmetric ties are stored once with a < b, so a centre can sit on either side.
@@ -72,9 +79,7 @@ const TIES_SQL = `
   )
   SELECT t.a_bidder_id, t.b_bidder_id, t.kind, t.directed, t.weight_eur, t.occurrences,
          t.other_id, b.name AS other_name, b.kind AS other_kind, ct.won_eur AS other_won_eur,
-         (SELECT COUNT(*) FROM interest_links il
-           WHERE il.bidder_id = t.other_id AND il.status = 'published'
-             AND il.interest_class IN ('private_ownership', 'family_ownership')) AS other_conflicts
+         ${surfacedConflicts('t.other_id')} AS other_conflicts
   FROM tie t
   JOIN bidders b ON b.id = t.other_id
   LEFT JOIN company_totals ct ON ct.bidder_id = t.other_id
@@ -87,9 +92,7 @@ const FUNDERS_SQL = `
 
 const CENTER_SQL = `
   SELECT b.id, b.name, b.kind, ct.won_eur,
-         (SELECT COUNT(*) FROM interest_links il
-           WHERE il.bidder_id = b.id AND il.status = 'published'
-             AND il.interest_class IN ('private_ownership', 'family_ownership')) AS conflicts
+         ${surfacedConflicts('b.id')} AS conflicts
   FROM bidders b LEFT JOIN company_totals ct ON ct.bidder_id = b.id
   WHERE b.id = ?1`;
 
@@ -236,9 +239,7 @@ interface SupplierRow {
 
 const SUPPLIERS_SQL = `
   SELECT fp.bidder_id, fp.bidder_name, fp.bidder_kind, fp.won_eur,
-         (SELECT COUNT(*) FROM interest_links il
-           WHERE il.bidder_id = fp.bidder_id AND il.status = 'published'
-             AND il.interest_class IN ('private_ownership', 'family_ownership')) AS conflicts
+         ${surfacedConflicts('fp.bidder_id')} AS conflicts
   FROM flow_pairs fp WHERE fp.authority_id = ?1
   ORDER BY fp.won_eur DESC LIMIT ?2`;
 

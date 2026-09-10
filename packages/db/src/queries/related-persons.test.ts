@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, throwingD1, type FakeD1Call } from '@sigma/test-support';
 import {
+  AUTHORITY_CONFLICTS_SQL,
+  AUTHORITY_LEADERBOARD_SQL,
   EIK_CONTRACTS_SQL,
   LINK_CONTRACTS_SQL,
+  getAuthorityConflictSummary,
   getCompanyConflicts,
   isMissingConflictTableError,
   getConflictLeaderboard,
@@ -357,5 +360,49 @@ describe('registry_role is narrowed to the two rungs the card can render', () =>
       const db = fakeDb({ '10': [row({ registry_role: role })] });
       expect((await getConflictLeaderboard(db, 10))[0]!.registryRole).toBeNull();
     }
+  });
+});
+
+describe('getAuthorityConflictSummary', () => {
+  it('counts the surfaced winners of one body, the own-institution ones apart', async () => {
+    const { db, calls } = fakeD1([
+      { when: AUTHORITY_CONFLICTS_SQL, first: { companies: 3, own_companies: 1 } },
+    ]);
+    expect(await getAuthorityConflictSummary(db, 'auth:1')).toEqual({
+      companies: 3,
+      ownCompanies: 1,
+    });
+    expect(calls[0]!.binds).toEqual(['auth:1']);
+  });
+
+  it('reads zero when the body has none', async () => {
+    const { db } = fakeD1([
+      { when: AUTHORITY_CONFLICTS_SQL, first: { companies: null, own_companies: null } },
+    ]);
+    expect(await getAuthorityConflictSummary(db, 'auth:1')).toEqual({
+      companies: 0,
+      ownCompanies: 0,
+    });
+  });
+
+  it('degrades to zero where the свързани-лица tables are absent, and rethrows anything else', async () => {
+    const missing = throwingD1(new Error('D1_ERROR: no such table: interest_link_authorities'));
+    expect(await getAuthorityConflictSummary(missing.db, 'auth:1')).toEqual({
+      companies: 0,
+      ownCompanies: 0,
+    });
+    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
+    await expect(getAuthorityConflictSummary(boom.db, 'auth:1')).rejects.toThrow(/syntax error/);
+  });
+});
+
+describe('getConflictLeaderboard — narrowed to one awarding body', () => {
+  it('binds the body before the limit, and only when asked to narrow', async () => {
+    const { db, calls } = fakeD1([{ when: 'FROM interest_links il', all: [] }]);
+    await getConflictLeaderboard(db, 10, 'auth:1');
+    await getConflictLeaderboard(db, 10);
+    expect(calls[0]!.sql).toBe(AUTHORITY_LEADERBOARD_SQL);
+    expect(calls[0]!.binds).toEqual(['auth:1', 10]);
+    expect(calls[1]!.binds).toEqual([10]);
   });
 });

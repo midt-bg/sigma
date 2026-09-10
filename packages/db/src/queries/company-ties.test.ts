@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1 } from '@sigma/test-support';
 import { getAuthoritySupplierTies, getCompanyTies } from './company-ties';
+import { SURFACED_OWNERSHIP } from './related-persons';
 
 // The tie network is the company↔company graph: who a company is joint-bidding with, who it
 // subcontracts to, and which companies share a declared interest with it. The privacy shape matters as
@@ -286,5 +287,19 @@ describe('getAuthoritySupplierTies', () => {
       { when: 'FROM flow_pairs fp WHERE fp.authority_id', all: [] },
     ]).db;
     expect((await getAuthoritySupplierTies(unknown, 'auth:nope')).center).toBeNull();
+  });
+});
+
+describe('the /conflicts destination on a node', () => {
+  it('is counted under the gate the page publishes by, evidence seal included — never status alone', async () => {
+    const fake = fakeD1([
+      { when: 'FROM bidders b LEFT JOIN company_totals', first: CENTER },
+      { when: 'WITH tie AS', all: [tie()] },
+      { when: 'FROM flow_pairs fp', all: [] },
+    ]);
+    await getCompanyTies(fake.db, 'eik:1', { includeFunders: true });
+    const counted = fake.sql.filter((s) => s.includes('FROM interest_links il'));
+    expect(counted).toHaveLength(2); // the centre and its ties
+    for (const s of counted) expect(s).toContain(SURFACED_OWNERSHIP);
   });
 });

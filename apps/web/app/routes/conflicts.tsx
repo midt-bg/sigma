@@ -1,6 +1,6 @@
 import { Link, useSearchParams, data } from 'react-router';
 import { count, money, plural } from '@sigma/shared';
-import { getConflictLeaderboard, getDb } from '@sigma/db';
+import { authorityIdFromSlug, getAuthorityName, getConflictLeaderboard, getDb } from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -55,8 +55,23 @@ const PER_PAGE = 100;
 // truncation actually corrupts a per-person aggregate (niki #312 MEDIUM 2, „alert at 800").
 const LEADERBOARD_WARN_AT = LEADERBOARD_MAX * 0.8;
 
-export async function loader({ context }: Route.LoaderArgs) {
+// `?authority=<ЕИК>` narrows the list to the officials whose declared-stake winners that body paid — the
+// institution profile links here. A malformed value is ignored rather than failing the page; an ЕИК that
+// names no institution is a 404, like every other slug on the site.
+const AUTHORITY_SLUG = /^\d{9}(\d{4})?$/;
+
+export async function loader({ request, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
+  const slug = new URL(request.url).searchParams.get('authority');
+  let authority: { slug: string; name: string } | null = null;
+  let authorityId: string | undefined;
+  if (slug && AUTHORITY_SLUG.test(slug)) {
+    const id = authorityIdFromSlug(slug);
+    const name = await withDbRetry(() => getAuthorityName(db, id));
+    if (name == null) throw new Response('Not Found', { status: 404 });
+    authority = { slug, name };
+    authorityId = id;
+  }
   // Fetch ONE past the ceiling so truncation is DETECTABLE rather than silently capped. The leaderboard is
   // ordered by NEXUS strength, NOT by person, so a person's links are scattered across the ordering — a cut at
   // the ceiling can drop links for MANY persons at once, yielding partial per-person sums/companyCount and a
@@ -64,7 +79,11 @@ export async function loader({ context }: Route.LoaderArgs) {
   // is no contiguous group to drop); the durable fix is grouping in SQL / server-side (tracked, LOW 3). Until
   // then the guard is loud observability: warn as the set nears the ceiling so an operator moves the grouping
   // BEFORE aggregates degrade, and slice deterministically so the render never depends on the +1 sentinel.
-  const raw = await withDbRetry(() => getConflictLeaderboard(db, LEADERBOARD_MAX + 1));
+  const raw = await withDbRetry(() =>
+    authorityId
+      ? getConflictLeaderboard(db, LEADERBOARD_MAX + 1, authorityId)
+      : getConflictLeaderboard(db, LEADERBOARD_MAX + 1),
+  );
   const truncated = raw.length > LEADERBOARD_MAX;
   const links = truncated ? raw.slice(0, LEADERBOARD_MAX) : raw;
   if (truncated) {
@@ -80,7 +99,7 @@ export async function loader({ context }: Route.LoaderArgs) {
   // propagates across D1; caching that for an hour + stale-while-revalidate is what made a refresh appear to
   // "lose" the data. Only cache once there is data to cache.
   return data(
-    { links },
+    { links, authority },
     { headers: { 'Cache-Control': links.length ? publicCache(3600) : 'no-store' } },
   );
 }
@@ -164,7 +183,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
 }
 
 export default function Conflicts({ loaderData }: Route.ComponentProps) {
-  const { links } = loaderData;
+  const { links, authority } = loaderData;
   const headline = conflictHeadline(links);
   const [sp] = useSearchParams();
   // Collapse per-relationship links into one row per PERSON, then paginate over ROWS (#287): a person with
@@ -214,8 +233,19 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           </p>
         </Callout>
 
+        {authority && (
+          <p>
+            Само изпълнители на <Link to={`/authorities/${authority.slug}`}>{authority.name}</Link>.{' '}
+            <Link to="/conflicts">Всички свързани лица →</Link>
+          </p>
+        )}
+
         {links.length === 0 ? (
-          <p className="muted">Все още няма публикувани връзки.</p>
+          <p className="muted">
+            {authority
+              ? 'Няма публикувани връзки към изпълнители на тази институция.'
+              : 'Все още няма публикувани връзки.'}
+          </p>
         ) : (
           <>
             <FactsList

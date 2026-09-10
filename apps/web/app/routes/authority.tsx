@@ -12,6 +12,7 @@ import {
 import {
   authorityIdFromSlug,
   getAuthority,
+  getAuthorityConflictSummary,
   getAuthorityProcedureCompetition,
   getAuthoritySingleOffer,
   getAuthoritySupplierTies,
@@ -56,16 +57,19 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
   const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage, trend, ties, competition, procedure] = await Promise.all([
-      getAuthority(db, authorityId),
-      getCoverageMeta(db),
-      getSpendingTrend(db, { authorityId, granularity: 'year' }, { includeSectors: false }),
-      getAuthoritySupplierTies(db, authorityId),
-      getAuthoritySingleOffer(db, authorityId),
-      getAuthorityProcedureCompetition(db, authorityId),
-    ]);
+    const [authority, coverage, trend, ties, competition, procedure, conflicts] = await Promise.all(
+      [
+        getAuthority(db, authorityId),
+        getCoverageMeta(db),
+        getSpendingTrend(db, { authorityId, granularity: 'year' }, { includeSectors: false }),
+        getAuthoritySupplierTies(db, authorityId),
+        getAuthoritySingleOffer(db, authorityId),
+        getAuthorityProcedureCompetition(db, authorityId),
+        getAuthorityConflictSummary(db, authorityId),
+      ],
+    );
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage, trend, ties, competition, procedure };
+    return { authority, coverage, trend, ties, competition, procedure, conflicts };
   });
 }
 
@@ -78,7 +82,7 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
-  const { trend, ties, competition, procedure } = loaderData;
+  const { trend, ties, competition, procedure, conflicts } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
   const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
@@ -129,6 +133,19 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             { term: 'Брой договори', value: count(a.contracts) },
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
             { term: 'Изпълнители', value: count(a.suppliers) },
+            conflicts.companies > 0 && {
+              term: 'С деклариран дял на длъжностно лице',
+              value: (
+                <Link to={`/conflicts?authority=${a.eik}`}>
+                  {count(conflicts.companies)}{' '}
+                  {plural(conflicts.companies, 'изпълнител', 'изпълнители')}
+                </Link>
+              ),
+              sub:
+                conflicts.ownCompanies > 0
+                  ? `в т.ч. ${count(conflicts.ownCompanies)} — на лице от самата институция`
+                  : undefined,
+            },
             topSectors ? { term: 'Основни сектори', value: topSectors } : null,
             {
               term: 'Дял с финансиране от ЕС',

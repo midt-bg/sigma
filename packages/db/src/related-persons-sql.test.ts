@@ -6,6 +6,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  AUTHORITY_CONFLICTS_SQL,
+  AUTHORITY_LEADERBOARD_SQL,
   COMPANY_SQL,
   EIK_CONTRACTS_SQL,
   LEADERBOARD_SQL,
@@ -180,6 +182,31 @@ describe('свързани-лица SQL (real SQLite)', () => {
       expect(board[0]!.source_url).toBe('https://register.cacbg.bg/2024/i.xml');
       // institution carries through from the latest declaration — the namesake disambiguator (I7).
       expect(board[0]!.institution).toBe('ТЕСТ');
+    });
+  });
+
+  it('narrowed to one awarding body: counts its surfaced winners (own-institution apart) and lists their links', () => {
+    withDb((db) => {
+      sqlite(
+        db,
+        `INSERT INTO authorities (id, name) VALUES ('a:2','ДРУГА ОБЩИНА');
+         INSERT INTO interest_link_authorities (link_key, authority_id, authority_name, contract_count, value_eur, own) VALUES
+           ('person:ivan|111','a:1','ОБЩИНА ТЕСТ',2,30000000,'exact'),
+           ('person:big|444','a:1','ОБЩИНА ТЕСТ',1,50000000,'none'),
+           ('person:ivan|999','a:1','ОБЩИНА ТЕСТ',3,1000,'exact'),
+           ('person:boris|222','a:1','ОБЩИНА ТЕСТ',10,5000000,'none');`,
+      );
+      // The held link (ivan|999) and the ex-officio one (boris|222) are paid by the same body and still
+      // never count: the summary sits on the same gate as the list.
+      expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:1'))).toEqual([
+        { companies: 2, own_companies: 1 },
+      ]);
+      expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:2'))).toEqual([
+        { companies: 0, own_companies: 0 },
+      ]);
+      const keys = rows(db, lit(AUTHORITY_LEADERBOARD_SQL, 'a:1', 10)).map((r) => r.link_key);
+      expect(keys).toEqual(['person:ivan|111', 'person:big|444']);
+      expect(rows(db, lit(AUTHORITY_LEADERBOARD_SQL, 'a:2', 10))).toEqual([]);
     });
   });
 

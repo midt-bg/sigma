@@ -12,6 +12,8 @@ const q = vi.hoisted(() => ({
   getOfficialConflicts: vi.fn(),
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
+  getAuthorityName: vi.fn(),
+  authorityIdFromSlug: vi.fn((slug: string) => `auth:${slug}`),
   personIdFromSlug: vi.fn(),
   // #199 chokepoint: loaders wrap env with getDb(env) → returns the read-only D1. In the test the env's
   // DB is the identity sentinel the query mocks assert on, so getDb just returns env.DB unchanged.
@@ -32,6 +34,8 @@ const call = (loader: unknown, params: Record<string, string | undefined>) =>
     context,
   });
 
+const req = (qs = '') => new Request(`https://sigma.test/conflicts${qs}`);
+
 // A loader that throws a Response is the 404 contract. Assert both that it throws and the status.
 async function expectStatus(promise: Promise<unknown>, status: number) {
   try {
@@ -48,10 +52,43 @@ afterEach(() => {
   for (const fn of Object.values(q)) fn.mockReset();
 });
 
+describe('leaderboard loader — narrowed to one institution (?authority=)', () => {
+  it('fetches only that body’s links and names it for the page', async () => {
+    q.getAuthorityName.mockResolvedValue('ОБЩИНА ТЕСТ');
+    q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
+    const res = (await leaderboardLoader({
+      request: req('?authority=000123456'),
+      context,
+    } as never)) as { data: { authority: unknown } };
+    expect(q.getAuthorityName).toHaveBeenCalledWith(DB, 'auth:000123456');
+    expect(q.getConflictLeaderboard).toHaveBeenCalledWith(DB, 1001, 'auth:000123456');
+    expect(res.data.authority).toEqual({ slug: '000123456', name: 'ОБЩИНА ТЕСТ' });
+  });
+
+  it('404s an ЕИК that names no institution, before reading any link', async () => {
+    q.getAuthorityName.mockResolvedValue(null);
+    await expectStatus(
+      leaderboardLoader({ request: req('?authority=000123456'), context } as never),
+      404,
+    );
+    expect(q.getConflictLeaderboard).not.toHaveBeenCalled();
+  });
+
+  it('ignores a malformed value and serves the whole list', async () => {
+    q.getConflictLeaderboard.mockResolvedValue([]);
+    const res = (await leaderboardLoader({ request: req('?authority=abc'), context } as never)) as {
+      data: { authority: unknown };
+    };
+    expect(q.getAuthorityName).not.toHaveBeenCalled();
+    expect(q.getConflictLeaderboard).toHaveBeenCalledWith(DB, 1001);
+    expect(res.data.authority).toBeNull();
+  });
+});
+
 describe('leaderboard loader (/conflicts)', () => {
   it('caches for an hour when there are links (self or family, ADR-0032)', async () => {
     q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
-    const res = (await leaderboardLoader({ context } as never)) as {
+    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
       data: { links: unknown[] };
       init: { headers: Record<string, string> };
     };
@@ -61,7 +98,7 @@ describe('leaderboard loader (/conflicts)', () => {
 
   it('does NOT cache an empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
     q.getConflictLeaderboard.mockResolvedValue([]);
-    const res = (await leaderboardLoader({ context } as never)) as {
+    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
       init: { headers: Record<string, string> };
     };
     expect(res.init.headers['Cache-Control']).toBe('no-store');
@@ -78,7 +115,9 @@ describe('leaderboard loader (/conflicts)', () => {
         eik: `${i}`,
       })),
     );
-    const res = (await leaderboardLoader({ context } as never)) as { data: { links: unknown[] } };
+    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
+      data: { links: unknown[] };
+    };
     expect(res.data.links).toHaveLength(1000); // sliced to the ceiling, never renders the +1 sentinel
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceed the 1000 ceiling'));
     warn.mockRestore();

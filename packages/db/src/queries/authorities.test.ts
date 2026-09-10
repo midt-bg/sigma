@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import {
   getAuthorityFacets,
+  getAuthorityName,
   listAuthorities,
   normalizeAuthoritySort,
   streamAuthoritiesCsv,
@@ -343,5 +344,17 @@ describe('streamAuthoritiesCsv — streamed body', () => {
     expect(csv.match(/\n/g)!).toHaveLength(CHUNK + 1); // header + CHUNK rows
     expect(calls).toBe(2); // the === CHUNK page did not close; a second pull ran
     expect(fake.sql.some((s) => s.includes('type_group IN'))).toBe(true); // ew.sql folded in
+  });
+});
+
+describe('getAuthorityName', () => {
+  it('names a body by id, and says null for an id that names none', async () => {
+    const known = fakeD1([
+      { when: 'SELECT name FROM authorities WHERE id', first: { name: 'ОБЩИНА ТЕСТ' } },
+    ]);
+    expect(await getAuthorityName(known.db, 'auth:1')).toBe('ОБЩИНА ТЕСТ');
+    expect(known.calls[0]!.binds).toEqual(['auth:1']);
+    const unknown = fakeD1([{ when: 'SELECT name FROM authorities WHERE id', first: null }]);
+    expect(await getAuthorityName(unknown.db, 'auth:x')).toBeNull();
   });
 });

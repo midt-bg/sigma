@@ -263,11 +263,27 @@ function toLink(r: LinkRow): ConflictLink {
 export const LEADERBOARD_SQL = `${LINK_SELECT}
   ORDER BY ${NEXUS_ORDER} LIMIT ?`;
 
+// The same list narrowed to one awarding body: links whose winner that body paid. The per-(link, authority)
+// split is already stored by the ETL (interest_link_authorities), so this is an EXISTS on the link, not a
+// scan of the contracts.
+export const AUTHORITY_LEADERBOARD_SQL = `${LINK_SELECT}
+    AND EXISTS (SELECT 1 FROM interest_link_authorities ila
+                WHERE ila.link_key = il.link_key AND ila.authority_id = ?)
+  ORDER BY ${NEXUS_ORDER} LIMIT ?`;
+
 /** The leaderboard: office-holders who declared a material ownership stake (their own or a close
- *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value). */
-export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
+ *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value).
+ *  With `authorityId`, only the links whose winner that body paid. */
+export async function getConflictLeaderboard(
+  db: D1Database,
+  limit = 100,
+  authorityId?: string,
+): Promise<ConflictLink[]> {
   try {
-    const rows = sealed((await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results);
+    const stmt = authorityId
+      ? db.prepare(AUTHORITY_LEADERBOARD_SQL).bind(authorityId, limit)
+      : db.prepare(LEADERBOARD_SQL).bind(limit);
+    const rows = sealed((await stmt.all<LinkRow>()).results);
     return rows.map(toLink);
   } catch (e) {
     if (conflictSchemaAbsent(e, 'leaderboard')) return []; // un-migrated env → empty surface, not a 500
@@ -368,6 +384,37 @@ export async function getCompanyConflicts(
     return { company: rows[0]!.company, eik, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'company')) return null; // un-migrated env → 404, not a 500
+    throw e;
+  }
+}
+
+// How many of one body's winners carry a surfaced declared stake, and how many of those were declared by an
+// official OF that body (ila.own = 'exact' — the deterministic own-institution verdict, never the locality
+// heuristic). Winners, not links: two officials in one company are one company.
+export const AUTHORITY_CONFLICTS_SQL = `SELECT COUNT(DISTINCT il.eik) AS companies,
+    COUNT(DISTINCT CASE WHEN ila.own = 'exact' THEN il.eik END) AS own_companies
+  FROM interest_link_authorities ila
+  JOIN interest_links il ON il.link_key = ila.link_key
+  WHERE ila.authority_id = ? AND ${SURFACED_OWNERSHIP}`;
+
+export interface AuthorityConflictSummary {
+  companies: number;
+  ownCompanies: number;
+}
+
+/** The declared-stake figure an institution's profile shows and links to /conflicts?authority= with. */
+export async function getAuthorityConflictSummary(
+  db: D1Database,
+  authorityId: string,
+): Promise<AuthorityConflictSummary> {
+  try {
+    const r = await db
+      .prepare(AUTHORITY_CONFLICTS_SQL)
+      .bind(authorityId)
+      .first<{ companies: number | null; own_companies: number | null }>();
+    return { companies: r?.companies ?? 0, ownCompanies: r?.own_companies ?? 0 };
+  } catch (e) {
+    if (conflictSchemaAbsent(e, 'authority summary')) return { companies: 0, ownCompanies: 0 };
     throw e;
   }
 }

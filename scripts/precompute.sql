@@ -269,15 +269,20 @@ GROUP BY c.bidder_id, b.id;
 
 -- (c) two companies in which the SAME office-holder declared an interest. The person is not a node and is
 -- not named here: the edge joins the two companies, and the surface links to /conflicts, where the name is
--- already published under the LIA. Only published links of a surfaced ownership class qualify — the same
--- gate the /conflicts pages use, so this can never widen what is claimed about anyone.
+-- already published under the LIA. Only links the /conflicts pages themselves publish qualify — published, a
+-- surfaced ownership class AND a Trade Register evidence seal (SURFACED_OWNERSHIP) — so this can never widen
+-- what is claimed about anyone.
+WITH surfaced AS (
+  SELECT il.person_id, il.bidder_id FROM interest_links il
+  WHERE il.status = 'published'
+    AND il.interest_class IN ('private_ownership', 'family_ownership')
+    AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
+)
 INSERT INTO company_links (a_bidder_id, b_bidder_id, kind, directed, weight_eur, occurrences)
 SELECT x.bidder_id, y.bidder_id, 'declared_stake', 0, 0, COUNT(DISTINCT x.person_id)
-FROM interest_links x
-JOIN interest_links y ON y.person_id = x.person_id AND y.bidder_id > x.bidder_id
-WHERE x.status = 'published' AND y.status = 'published'
-  AND x.interest_class IN ('private_ownership', 'family_ownership')
-  AND y.interest_class IN ('private_ownership', 'family_ownership')
+FROM surfaced x
+JOIN surfaced y ON y.person_id = x.person_id AND y.bidder_id > x.bidder_id
 GROUP BY x.bidder_id, y.bidder_id;
 
 -- ── 6) search_index (FTS5; Cyrillic+Latin, accent/case-folded) ─────────────────────────────────────
