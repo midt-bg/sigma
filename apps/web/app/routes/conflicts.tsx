@@ -8,15 +8,21 @@ import { FactsList } from '../components/FactsList';
 import { Section, Callout, ShareBar, Chip } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
+import { FilterRail, type FilterGroup } from '../components/FilterRail';
+import { ListControls } from '../components/ListControls';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import {
   conflictHeadline,
+  conflictListFilters,
+  filterConflictRows,
   groupByPerson,
+  institutionOptions,
   officialHref,
   officialRole,
   personFundsCell,
+  sortConflictRows,
   type ConflictPersonRow,
 } from '../lib/conflicts';
 import { withParams, leaderboardRankOffset, type PageNav } from '../lib/filters';
@@ -185,11 +191,62 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
 
 export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const { links, authority } = loaderData;
-  const headline = conflictHeadline(links);
   const [sp] = useSearchParams();
+  const filters = conflictListFilters(sp);
   // Collapse per-relationship links into one row per PERSON, then paginate over ROWS (#287): a person with
   // three winners is one row, not three, so the page count and rank offset both count persons.
-  const persons = groupByPerson(links);
+  const everyone = groupByPerson(links);
+  const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
+  // The summary describes what the filters leave, not the whole set.
+  const shown = new Set(persons.map((p) => p.officialSlug));
+  const headline = conflictHeadline(links.filter((l) => shown.has(l.officialSlug)));
+  const groups: FilterGroup[] = [
+    {
+      key: 'stake',
+      label: 'Чий е делът',
+      type: 'radio',
+      allLabel: 'всички',
+      selected: filters.stake ? [filters.stake] : [],
+      options: [
+        {
+          value: 'self',
+          label: 'собствен',
+          count: everyone.filter((r) => r.stakeKind !== 'family').length,
+        },
+        {
+          value: 'family',
+          label: 'на свързано лице',
+          count: everyone.filter((r) => r.stakeKind !== 'self').length,
+        },
+      ],
+    },
+    {
+      key: 'signal',
+      label: 'Признаци',
+      type: 'checkbox',
+      selected: filters.signals,
+      options: [
+        {
+          value: 'own',
+          label: 'от собствената институция',
+          count: everyone.filter((r) => r.ownInstitution).length,
+        },
+        {
+          value: 'window',
+          label: 'към момента на договор',
+          count: everyone.filter((r) => r.hasContemporaneous).length,
+        },
+      ],
+    },
+    {
+      key: 'institution',
+      label: 'Институция на лицето',
+      type: 'checkbox',
+      selected: filters.institutions,
+      options: institutionOptions(everyone, filters.institutions),
+    },
+  ];
+  const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const page = Math.min(Math.max(1, Math.floor(Number(sp.get('page')) || 1)), pageCount);
   const pageRows = persons.slice((page - 1) * PER_PAGE, page * PER_PAGE);
@@ -282,15 +339,44 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Деклариран дял в компании изпълнители"
-              hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
+              hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. По подразбиране са подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
             >
-              <DataTable
-                columns={columns}
-                rows={pageRows}
-                getKey={(r) => r.officialSlug}
-                caption="Длъжностни лица с деклариран дял в компании изпълнители"
-              />
-              {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="лица" />}
+              <div className="split">
+                <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
+                <section>
+                  <ListControls
+                    base={sp}
+                    activeSort={filters.sort}
+                    searchLabel="Търсене сред лицата"
+                    sorts={[
+                      { value: 'nexus', label: 'сила на връзката' },
+                      { value: 'value', label: 'публични средства' },
+                      { value: 'contracts', label: 'договори' },
+                    ]}
+                    count={
+                      <>
+                        Показани са <strong>{count(pageRows.length)}</strong> от{' '}
+                        <strong>{count(persons.length)}</strong> лица
+                      </>
+                    }
+                  />
+                  {persons.length === 0 ? (
+                    <p className="muted">
+                      Няма лица за избраните филтри. <Link to={clearHref}>Изчисти филтрите</Link>
+                    </p>
+                  ) : (
+                    <>
+                      <DataTable
+                        columns={columns}
+                        rows={pageRows}
+                        getKey={(r) => r.officialSlug}
+                        caption="Длъжностни лица с деклариран дял в компании изпълнители"
+                      />
+                      {pageCount > 1 && <Pagination nav={nav} pageSize={PER_PAGE} unit="лица" />}
+                    </>
+                  )}
+                </section>
+              </div>
             </Section>
           </>
         )}

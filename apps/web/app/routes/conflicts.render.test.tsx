@@ -99,6 +99,7 @@ afterEach(() => {
 async function renderConflicts(
   links: ConflictLink[],
   authority: { slug: string; name: string } | null = null,
+  url = '/conflicts',
 ) {
   const Stub = createRoutesStub([
     { path: '/conflicts', Component: Conflicts, loader: () => ({ links, authority }) },
@@ -109,7 +110,7 @@ async function renderConflicts(
     { path: '/', Component: () => null },
   ]);
   await act(async () => {
-    root.render(<Stub initialEntries={['/conflicts']} />);
+    root.render(<Stub initialEntries={[url]} />);
   });
 }
 
@@ -128,6 +129,24 @@ describe('/conflicts route — render', () => {
       loaderHeaders: new Headers({ 'Cache-Control': 'public, max-age=42' }),
     } as never);
     expect(h['Cache-Control']).toBe('public, max-age=42');
+  });
+
+  it('filters the persons by whose stake it is, and says so when nothing is left', async () => {
+    await renderConflicts([link(), familyLink], null, '/conflicts?stake=family');
+    const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
+    expect(names).toEqual(['Кмет Тестов']);
+    await renderConflicts([link()], null, '/conflicts?stake=family');
+    expect(text()).toContain('Няма лица за избраните филтри');
+    expect(container.querySelector('table')).toBeNull();
+  });
+
+  it('offers the filters and the sorts, and sorts by public money when asked', async () => {
+    await renderConflicts([familyLink, link()], null, '/conflicts?sort=value');
+    expect(container.querySelector('.filter-rail')).not.toBeNull();
+    for (const label of ['Чий е делът', 'Признаци', 'Институция на лицето'])
+      expect(text()).toContain(label);
+    const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
+    expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k
   });
 
   it('says which institution the list is narrowed to, and how to widen it', async () => {

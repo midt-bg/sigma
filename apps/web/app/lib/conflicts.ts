@@ -1,4 +1,5 @@
 import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
+import { getMulti } from './filters';
 import { count, moneyBare } from '@sigma/shared';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -645,4 +646,107 @@ export function officialRole(o: {
 }): string | null {
   const parts = [o.position, o.institution].map((s) => s?.trim()).filter(Boolean);
   return parts.length ? parts.join(' · ') : null;
+}
+
+// ── /conflicts list filters ────────────────────────────────────────────────────────────────────────
+// The whole surfaced set is loaded (≤1000 links), so the list filters, sorts and pages in memory: the same
+// rows on the server render and in the browser, and no extra query per filter.
+
+export type ConflictStakeFilter = 'self' | 'family';
+export type ConflictSignal = 'own' | 'window';
+export type ConflictSort = 'nexus' | 'value' | 'contracts';
+
+export interface ConflictListFilters {
+  stake: ConflictStakeFilter | null;
+  signals: ConflictSignal[];
+  /** Institution keys (see `institutionKey`). */
+  institutions: string[];
+  sort: ConflictSort;
+  q: string | null;
+}
+
+/** The /conflicts filter state from the URL. A value it does not know is dropped, not an error. */
+export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
+  const stake = sp.get('stake');
+  const sort = sp.get('sort');
+  return {
+    stake: stake === 'self' || stake === 'family' ? stake : null,
+    signals: getMulti(sp, 'signal').filter(
+      (s): s is ConflictSignal => s === 'own' || s === 'window',
+    ),
+    institutions: getMulti(sp, 'institution').map(institutionKey).filter(Boolean),
+    sort: sort === 'value' || sort === 'contracts' ? sort : 'nexus',
+    q: sp.get('q')?.trim() || null,
+  };
+}
+
+/** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together. */
+export function institutionKey(name: string | null | undefined): string {
+  return (name ?? '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('bg');
+}
+
+const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
+
+/** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both
+ *  stake filters; every chosen signal must hold; the search matches the name, position or institution. */
+export function filterConflictRows(
+  rows: ConflictPersonRow[],
+  f: ConflictListFilters,
+): ConflictPersonRow[] {
+  const q = f.q ? matchText(f.q) : null;
+  const institutions = new Set(f.institutions);
+  return rows.filter(
+    (r) =>
+      (f.stake == null || r.stakeKind === 'mixed' || r.stakeKind === f.stake) &&
+      (!f.signals.includes('own') || r.ownInstitution) &&
+      (!f.signals.includes('window') || r.hasContemporaneous) &&
+      (institutions.size === 0 || institutions.has(institutionKey(r.institution))) &&
+      (q == null ||
+        matchText(`${r.official} ${r.position ?? ''} ${r.institution ?? ''}`).includes(q)),
+  );
+}
+
+/** 'nexus' keeps groupByPerson's own order (strongest link first); the other two rank by the person's
+ *  public money or contract count — a missing sum last — with the slug breaking ties so the order is total. */
+export function sortConflictRows(
+  rows: ConflictPersonRow[],
+  sort: ConflictSort,
+): ConflictPersonRow[] {
+  if (sort === 'nexus') return rows;
+  const key = (r: ConflictPersonRow) =>
+    sort === 'value' ? (r.contractValueEur ?? -1) : r.contractCount;
+  return [...rows].sort(
+    (a, b) =>
+      key(b) - key(a) ||
+      (a.officialSlug < b.officialSlug ? -1 : a.officialSlug > b.officialSlug ? 1 : 0),
+  );
+}
+
+/** The institution options for the filter rail: the officials' institutions by how many persons each
+ *  carries — the top ones, plus any already selected — each under its most common spelling. */
+export function institutionOptions(
+  rows: ConflictPersonRow[],
+  selected: string[],
+  top = 12,
+): { value: string; label: string; count: number }[] {
+  const byKey = new Map<string, { count: number; spellings: Map<string, number> }>();
+  for (const r of rows) {
+    const key = institutionKey(r.institution);
+    if (!key || !r.institution) continue;
+    const e = byKey.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+    e.count++;
+    e.spellings.set(r.institution, (e.spellings.get(r.institution) ?? 0) + 1);
+    byKey.set(key, e);
+  }
+  const ranked = [...byKey.entries()].sort(
+    (a, b) => b[1].count - a[1].count || (a[0] < b[0] ? -1 : 1),
+  );
+  const keep = new Set([...ranked.slice(0, top).map(([k]) => k), ...selected]);
+  return ranked
+    .filter(([k]) => keep.has(k))
+    .map(([value, e]) => ({
+      value,
+      label: [...e.spellings.entries()].sort((a, b) => b[1] - a[1])[0]![0],
+      count: e.count,
+    }));
 }

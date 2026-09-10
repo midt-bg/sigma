@@ -7,6 +7,7 @@ import {
   companyConflictsHref,
   companyProfileHref,
   conflictHeadline,
+  conflictListFilters,
   contractHref,
   contractsCountLabel,
   contractTemporal,
@@ -14,10 +15,12 @@ import {
   contractYear,
   contractYearsLabel,
   declaredStakeNoun,
+  filterConflictRows,
   fundsCellLabel,
   fundsMagnitude,
   groupByPerson,
   hasContemporaneousContracts,
+  institutionOptions,
   isHttpsUrl,
   markContracts,
   officialHref,
@@ -26,7 +29,9 @@ import {
   personFundsCell,
   registryEvidenceLabel,
   relationLabel,
+  sortConflictRows,
   temporalLabel,
+  type ConflictPersonRow,
 } from './conflicts';
 
 function link(over: Partial<ConflictLink> = {}): ConflictLink {
@@ -1059,5 +1064,117 @@ describe('officialRole', () => {
     expect(officialRole({ position: null, institution: 'Община Ямбол' })).toBe('Община Ямбол');
     expect(officialRole({ position: ' Кмет ', institution: '' })).toBe('Кмет');
     expect(officialRole({ position: null, institution: null })).toBeNull();
+  });
+});
+
+describe('/conflicts list filters', () => {
+  const row = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
+    official: 'Иван Минев',
+    officialSlug: 'a',
+    institution: 'Община Русе',
+    position: 'Кмет',
+    companyCount: 1,
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 100,
+    contemporaneousValueEur: null,
+    stakeKind: 'self',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    ...over,
+  });
+  const sp = (qs: string) => new URLSearchParams(qs);
+
+  it('reads the state from the URL and drops what it does not know', () => {
+    expect(
+      conflictListFilters(
+        sp('stake=family&signal=own&signal=bogus&institution=Община Русе&sort=value&q= Иван '),
+      ),
+    ).toEqual({
+      stake: 'family',
+      signals: ['own'],
+      institutions: ['ОБЩИНА РУСЕ'],
+      sort: 'value',
+      q: 'Иван',
+    });
+    expect(conflictListFilters(sp('stake=x&sort=y'))).toEqual({
+      stake: null,
+      signals: [],
+      institutions: [],
+      sort: 'nexus',
+      q: null,
+    });
+  });
+
+  it('lets a person with both kinds of stake answer both stake filters', () => {
+    const rows = [
+      row({ officialSlug: 's' }),
+      row({ officialSlug: 'f', stakeKind: 'family' }),
+      row({ officialSlug: 'm', stakeKind: 'mixed' }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('stake=self')).toEqual(['s', 'm']);
+    expect(slugs('stake=family')).toEqual(['f', 'm']);
+    expect(slugs('')).toEqual(['s', 'f', 'm']);
+  });
+
+  it('requires every chosen signal', () => {
+    const rows = [
+      row({ officialSlug: 'o', ownInstitution: true }),
+      row({ officialSlug: 'w', hasContemporaneous: true }),
+      row({ officialSlug: 'b', ownInstitution: true, hasContemporaneous: true }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('signal=own')).toEqual(['o', 'b']);
+    expect(slugs('signal=own&signal=window')).toEqual(['b']);
+  });
+
+  it('filters by the official’s institution whatever its spelling, and searches name, position and institution', () => {
+    const rows = [
+      row({ officialSlug: 'r', institution: 'ОБЩИНА РУСЕ' }),
+      row({
+        officialSlug: 'v',
+        official: 'Петя Колева',
+        institution: 'Община Варна',
+        position: 'Общински съветник',
+      }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('institution=Община Русе')).toEqual(['r']);
+    expect(slugs('q=петя')).toEqual(['v']);
+    expect(slugs('q=съветник')).toEqual(['v']);
+    expect(slugs('q=варна')).toEqual(['v']);
+  });
+
+  it('sorts by money (a missing sum last) or by contracts, and keeps the nexus order by default', () => {
+    const rows = [
+      row({ officialSlug: 'a', contractValueEur: null, contractCount: 9 }),
+      row({ officialSlug: 'b', contractValueEur: 500, contractCount: 1 }),
+      row({ officialSlug: 'c', contractValueEur: 900, contractCount: 1 }),
+    ];
+    expect(sortConflictRows(rows, 'value').map((r) => r.officialSlug)).toEqual(['c', 'b', 'a']);
+    expect(sortConflictRows(rows, 'contracts').map((r) => r.officialSlug)).toEqual(['a', 'b', 'c']);
+    expect(sortConflictRows(rows, 'nexus')).toBe(rows);
+  });
+
+  it('offers the institutions by how many officials each carries, under the most common spelling, keeping a selected one', () => {
+    const rows = [
+      row({ officialSlug: '1', institution: 'Община Русе' }),
+      row({ officialSlug: '2', institution: 'Община Русе' }),
+      row({ officialSlug: '3', institution: 'ОБЩИНА РУСЕ' }),
+      row({ officialSlug: '4', institution: 'Община Варна' }),
+      row({ officialSlug: '5', institution: null }),
+    ];
+    expect(institutionOptions(rows, [])).toEqual([
+      { value: 'ОБЩИНА РУСЕ', label: 'Община Русе', count: 3 },
+      { value: 'ОБЩИНА ВАРНА', label: 'Община Варна', count: 1 },
+    ]);
+    expect(institutionOptions(rows, ['ОБЩИНА ВАРНА'], 1).map((o) => o.value)).toEqual([
+      'ОБЩИНА РУСЕ',
+      'ОБЩИНА ВАРНА',
+    ]);
   });
 });

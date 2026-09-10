@@ -11,13 +11,16 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'eu',
   'funding',
   'g',
+  'institution', // /conflicts — the official's institution
   'kind',
   'p',
   'page', // keyed unconditionally — harmless over-key when there's no cursor
   'procedure',
   'q',
   'sector',
+  'signal', // /conflicts — own institution / in the declared window
   'sort',
+  'stake', // /conflicts — own stake vs a relative's
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
