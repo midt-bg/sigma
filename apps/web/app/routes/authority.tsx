@@ -26,6 +26,7 @@ import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
 import { TrendBlock } from '../components/TrendBlock';
+import { layoutTies } from '../lib/tie-layout.server';
 import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
@@ -69,7 +70,16 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       ],
     );
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage, trend, ties, competition, procedure, conflicts };
+    return {
+      authority,
+      coverage,
+      trend,
+      ties,
+      tieLayout: layoutTies(ties),
+      competition,
+      procedure,
+      conflicts,
+    };
   });
 }
 
@@ -82,7 +92,7 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
-  const { trend, ties, competition, procedure, conflicts } = loaderData;
+  const { trend, ties, tieLayout, competition, procedure, conflicts } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
   const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
@@ -279,9 +289,9 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </span>
           }
         >
-          {ties.center && ties.nodes.length >= 2 ? (
+          {tieLayout ? (
             <>
-              <TieGraph data={ties} />
+              <TieGraph layout={tieLayout} />
               <div className="sr-only">
                 <DataTable
                   columns={tieColumns}

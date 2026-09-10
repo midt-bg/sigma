@@ -760,32 +760,53 @@
 .tie-svg .tie-arrow-head {
   fill: var(--ink-mid);
 }
+/* Boxes, as in a flowchart: a company is a plain box, an institution a rounded dashed one, the centre
+   the one filled box — the page is about it. The name sits inside the box. */
 .tie-svg .tie-node {
-  fill: var(--ink-mid);
-  stroke: var(--paper);
-  stroke-width: 1.5;
-}
-.tie-svg .tie-node-center {
-  fill: var(--accent);
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1;
 }
 .tie-svg .tie-node-authority {
+  stroke: var(--ink-mid);
+  stroke-dasharray: 3 2;
+}
+.tie-svg .tie-node-center {
   fill: var(--ink);
 }
 .tie-svg .tie-node-label {
   fill: var(--ink);
   font: 11px var(--font-mono, monospace);
+  text-decoration: none;
+  pointer-events: none;
+}
+.tie-svg .tie-node-center + .tie-node-label {
+  fill: var(--paper);
+  font-weight: 600;
+}
+/* The kind of tie, written on its edge, on a paper plate so it reads over the line. */
+.tie-svg .tie-edge-plate {
+  fill: var(--paper);
+}
+.tie-svg .tie-edge-label {
+  fill: var(--ink-soft);
+  font: 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 .tie-svg .tie-node-link {
   cursor: pointer;
+  text-decoration: none; /* the site underlines links; a box name is not underlined until hovered */
 }
 .tie-svg .tie-node-link:hover .tie-node,
 .tie-svg .tie-node-link:focus-visible .tie-node {
   stroke: var(--accent);
-  stroke-width: 3;
+  stroke-width: 2;
 }
 .tie-svg .tie-node-link:hover .tie-node-label,
 .tie-svg .tie-node-link:focus-visible .tie-node-label {
-  fill: var(--accent);
   text-decoration: underline;
 }
 .tie-svg .tie-node-link:focus-visible {
@@ -822,9 +843,4 @@
 }
 .tie-key.tie-money {
   border-top-color: #d8d6cf;
-}
-@media (max-width: 760px) {
-  .flow-scroll .tie-svg {
-    min-width: 700px;
-  }
 }

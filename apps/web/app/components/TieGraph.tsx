@@ -1,10 +1,11 @@
 import { Link } from 'react-router';
-import type { CompanyTieEdge, CompanyTieKind, CompanyTieNetwork } from '@sigma/api-contract';
+import type { CompanyTieEdge, CompanyTieKind } from '@sigma/api-contract';
 import { count, money } from '@sigma/shared';
+import type { TieLayout, TieLayoutEdge } from '../lib/tie-layout';
 
-// The company tie graph: the centre company and the companies it is tied to, with the KIND
-// of tie drawn on the edge. Static server-rendered SVG, no chart library — same approach as NetworkGraph
-// and SankeyDiagram.
+// The company tie graph, drawn as a flowchart: boxes with the name inside and the kind of tie written
+// on each edge, in a layered layout computed on the server (lib/tie-layout.server.ts). Static SVG, no chart
+// code in the browser — same approach as NetworkGraph and SankeyDiagram.
 //
 // This is a different graph from `NetworkGraph`, not a restyle of it. That one draws `flow_pairs`: an
 // authority ⇄ winner money flow with no company↔company edge in it at all. Here the edges ARE between
@@ -13,17 +14,10 @@ import { count, money } from '@sigma/shared';
 //   consortium     solid       joint bidding: both are named members of the same обединение that won
 //   subcontract    dashed →    one was recorded as the other's subcontractor (directed, prime → sub)
 //   declared_stake dotted      the same office-holder declared an interest in both
-//   money          hairline →  an institution that paid the centre (context layer, off by default)
+//   money          hairline →  an institution that paid the centre (context layer)
 //
 // PRIVACY: a person is never a node here and never named. The shared-official tie is drawn between the two
-// COMPANIES and links to /conflicts, the noindex surface where that name is already published under the
-// LIA. The company profile is indexed, so it gains no personal name from this graph (ADR-0010).
-
-const W = 760;
-const H = 520;
-const CX = W / 2;
-const CY = H / 2;
-const R = 190;
+// COMPANIES and links to /conflicts, the noindex surface where that name is already published.
 
 const TIE_LABEL: Record<CompanyTieKind, string> = {
   consortium: 'общо обединение',
@@ -31,10 +25,6 @@ const TIE_LABEL: Record<CompanyTieKind, string> = {
   declared_stake: 'общо свързано лице',
   money: 'плаща на',
 };
-
-function truncate(s: string, n = 24): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
 
 /** How an edge is described in words — the accessible table and the tooltip use the same sentence. */
 export function tieDescription(e: CompanyTieEdge): string {
@@ -48,33 +38,29 @@ export function tieDescription(e: CompanyTieEdge): string {
   return `${TIE_LABEL[e.kind]}${n}, ${money(e.weightEur)}`;
 }
 
-export function TieGraph({ data }: { data: CompanyTieNetwork }) {
-  const { center, nodes, edges } = data;
-  if (!center || nodes.length < 2) return null;
+const pathD = (e: TieLayoutEdge) =>
+  e.points.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ');
 
-  const ring = nodes.filter((n) => n.id !== center.id);
-  const pos = new Map<string, { x: number; y: number }>([[center.id, { x: CX, y: CY }]]);
-  ring.forEach((n, i) => {
-    const a = (i / ring.length) * Math.PI * 2 - Math.PI / 2;
-    pos.set(n.id, { x: CX + Math.cos(a) * R, y: CY + Math.sin(a) * R * 0.82 });
-  });
-
-  const maxVal = Math.max(1, ...nodes.map((n) => n.valueEur));
-  const radius = (v: number) => 7 + Math.sqrt(Math.max(0, v) / maxVal) * 20;
-  // Only monetary ties are sized by money; a declared-stake tie has no sum and must not be drawn as if
-  // it were worth nothing — it gets a fixed, clearly visible weight instead.
+export function TieGraph({ layout }: { layout: TieLayout | null }) {
+  if (!layout) return null;
+  const { width, height, nodes, edges } = layout;
+  // Only monetary ties are sized by money; a declared-stake tie has no sum and must not be drawn as if it
+  // were worth nothing — it gets a fixed, clearly visible weight instead.
   const maxEdge = Math.max(1, ...edges.map((e) => e.weightEur));
-  const strokeW = (e: CompanyTieEdge) =>
-    e.kind === 'declared_stake' ? 2 : 1 + (e.weightEur / maxEdge) * 4;
+  const strokeW = (e: TieLayoutEdge) =>
+    e.kind === 'declared_stake' ? 2 : 1 + (e.weightEur / maxEdge) * 3;
 
   return (
     <>
       <div className="flow-scroll">
         <svg
-          viewBox={`-110 -10 ${W + 220} ${H + 20}`}
+          viewBox={`0 0 ${width} ${height}`}
           role="group"
-          aria-label={`Връзки на ${center.label} с други дружества`}
+          aria-label={`Връзки на ${layout.centerName} с други дружества`}
           className="tie-svg"
+          // Never drawn larger than laid out (a small graph must not balloon), and on a narrow screen kept
+          // legible and scrolled rather than shrunk.
+          style={{ maxWidth: width, minWidth: Math.min(width, 640) }}
         >
           <defs>
             <marker
@@ -82,72 +68,67 @@ export function TieGraph({ data }: { data: CompanyTieNetwork }) {
               viewBox="0 0 10 10"
               refX="9"
               refY="5"
-              markerWidth="5"
-              markerHeight="5"
+              // A fixed size, not one that grows with the stroke: a heavy money edge must not carry a
+              // head larger than the box it points at.
+              markerUnits="userSpaceOnUse"
+              markerWidth="9"
+              markerHeight="9"
               orient="auto-start-reverse"
             >
               <path d="M 0 0 L 10 5 L 0 10 z" className="tie-arrow-head" />
             </marker>
           </defs>
-          {edges.map((e, i) => {
-            const a = pos.get(e.from);
-            const b = pos.get(e.to);
-            if (!a || !b) return null;
-            return (
-              <line
-                key={`e${i}`}
+          {edges.map((e, i) => (
+            <g key={`e${i}`}>
+              <path
                 className={`tie-edge tie-${e.kind}`}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
+                d={pathD(e)}
                 style={{ strokeWidth: strokeW(e) }}
                 markerEnd={e.directed ? 'url(#tie-arrow)' : undefined}
               >
                 <title>{tieDescription(e)}</title>
-              </line>
-            );
-          })}
-          {nodes.map((n) => {
-            const pt = pos.get(n.id);
-            if (!pt) return null;
-            const r = radius(n.valueEur);
-            const right = pt.x >= CX;
-            const isCenter = n.id === center.id;
-            const href = n.kind === 'authority' ? `/authorities/${n.slug}` : `/companies/${n.slug}`;
-            return (
-              <Link
-                key={n.id}
-                to={href}
-                className="tie-node-link"
-                aria-label={`${n.label} — ${n.kind === 'authority' ? 'институция' : 'дружество'}, ${money(n.valueEur)}`}
+              </path>
+              {/* A paper plate under the words, so a dashed or dotted line never shows through them. */}
+              <rect
+                className="tie-edge-plate"
+                x={e.label.x - e.label.width / 2}
+                y={e.label.y - 7}
+                width={e.label.width}
+                height={14}
+                aria-hidden="true"
+              />
+              <text
+                className="tie-edge-label"
+                x={e.label.x}
+                y={e.label.y + 3}
+                textAnchor="middle"
+                aria-hidden="true"
               >
-                <title>{`${n.label}: ${money(n.valueEur)}`}</title>
-                {n.kind === 'authority' ? (
-                  <circle className="tie-node tie-node-authority" cx={pt.x} cy={pt.y} r={r} />
-                ) : (
-                  <rect
-                    className={`tie-node${isCenter ? ' tie-node-center' : ''}`}
-                    x={pt.x - r}
-                    y={pt.y - r}
-                    width={r * 2}
-                    height={r * 2}
-                    rx={3}
-                  />
-                )}
-                {!isCenter && (
-                  <text
-                    className="tie-node-label"
-                    x={right ? pt.x + r + 5 : pt.x - r - 5}
-                    y={pt.y + 4}
-                    textAnchor={right ? 'start' : 'end'}
-                  >
-                    {truncate(n.label)}
-                  </text>
-                )}
-              </Link>
-            );
-          })}
+                {e.label.text}
+              </text>
+            </g>
+          ))}
+          {nodes.map((n) => (
+            <Link
+              key={n.id}
+              to={n.href}
+              className="tie-node-link"
+              aria-label={`${n.name} — ${n.kind === 'authority' ? 'институция' : 'дружество'}, ${money(n.valueEur)}`}
+            >
+              <title>{`${n.name}: ${money(n.valueEur)}`}</title>
+              <rect
+                className={`tie-node${n.kind === 'authority' ? ' tie-node-authority' : ''}${n.center ? ' tie-node-center' : ''}`}
+                x={n.x - n.width / 2}
+                y={n.y - n.height / 2}
+                width={n.width}
+                height={n.height}
+                rx={n.kind === 'authority' ? 10 : 3}
+              />
+              <text className="tie-node-label" x={n.x} y={n.y + 4} textAnchor="middle">
+                {n.label}
+              </text>
+            </Link>
+          ))}
         </svg>
       </div>
       <ul className="tie-legend" aria-hidden="true">

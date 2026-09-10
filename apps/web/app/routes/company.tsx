@@ -16,6 +16,7 @@ import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
 import { TrendBlock } from '../components/TrendBlock';
+import { layoutTies } from '../lib/tie-layout.server';
 import { TieGraph, tieDescription } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
@@ -74,13 +75,13 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       getCompanyTies(db, id, { includeFunders: true }),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
-    return { company, coverage, trend, ties };
+    return { company, coverage, trend, ties, tieLayout: layoutTies(ties) };
   });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
-  const { trend, ties } = loaderData;
+  const { trend, ties, tieLayout } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
@@ -345,9 +346,9 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             </span>
           }
         >
-          {ties.center && ties.nodes.length >= 2 ? (
+          {tieLayout ? (
             <>
-              <TieGraph data={ties} />
+              <TieGraph layout={tieLayout} />
               {/* The graph's content as a table — the same links and the same sentences, for a screen
                   reader and for anyone who wants to read rather than look. */}
               <div className="sr-only">

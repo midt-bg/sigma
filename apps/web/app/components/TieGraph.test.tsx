@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-// The company tie graph. Two things are load-bearing and both are pinned here:
+// The company tie graph, drawn from its server-side layout. Two things are load-bearing and both are
+// pinned here (the layout itself is pinned in lib/tie-layout.server.test.ts):
 //
 //  1. The EDGE carries the meaning. Unlike the money graph, where every edge means the same thing, here a
-//     solid line and a dotted one are different claims — so each kind must reach the DOM as its own class,
-//     and a declared-stake tie must not be sized by money it does not have.
+//     solid line and a dotted one are different claims — so each kind must reach the DOM as its own class
+//     and its own written label, and a declared-stake tie must not be sized by money it does not have.
 //  2. No person is ever a node and no personal name appears. The shared-official tie is drawn between the
 //     two COMPANIES and links to /conflicts, the noindex surface where that name is already published.
 import { act } from 'react';
@@ -11,6 +12,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CompanyTieNetwork } from '@sigma/api-contract';
+import { layoutTies } from '../lib/tie-layout.server';
 import { TieGraph, tieDescription } from './TieGraph';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,8 +58,9 @@ const base: CompanyTieNetwork = {
 };
 
 function render(data: CompanyTieNetwork) {
+  const layout = layoutTies(data);
   const Stub = createRoutesStub([
-    { path: '/', Component: () => <TieGraph data={data} /> },
+    { path: '/', Component: () => <TieGraph layout={layout} /> },
     { path: '/companies/:slug', Component: () => null },
     { path: '/authorities/:slug', Component: () => null },
   ]);
@@ -68,7 +71,7 @@ function render(data: CompanyTieNetwork) {
 }
 
 describe('TieGraph', () => {
-  it('gives each tie kind its own class so the edges can be told apart', () => {
+  it('gives each tie kind its own class and its own written label', () => {
     const c = render({
       ...base,
       nodes: [...base.nodes, node({ id: 'eik:3', slug: '3', label: 'ГАМА ООД', hop: 1 })],
@@ -87,6 +90,8 @@ describe('TieGraph', () => {
     });
     expect(c.querySelector('.tie-edge.tie-consortium')).not.toBeNull();
     expect(c.querySelector('.tie-edge.tie-subcontract')).not.toBeNull();
+    const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);
+    expect(labels).toEqual(['обединение', 'подизпълнител']);
   });
 
   it('marks a directed tie with an arrow and leaves a symmetric one unmarked', () => {
@@ -152,11 +157,11 @@ describe('TieGraph', () => {
     expect(svg.getAttribute('aria-label')).toContain('АЛФА СТРОЙ АД');
   });
 
-  it('labels the ring but not the centre, which the page title already names', () => {
+  it('names every box inside it, the centre included', () => {
     const labels = [...render(base).querySelectorAll('text.tie-node-label')].map(
       (t) => t.textContent,
     );
-    expect(labels).toEqual(['БЕТА ИНЖЕНЕРИНГ АД']);
+    expect(labels).toEqual(['АЛФА СТРОЙ АД', 'БЕТА ИНЖЕНЕРИНГ АД']);
   });
 
   it('lists only the tie kinds actually drawn', () => {
@@ -166,30 +171,15 @@ describe('TieGraph', () => {
     expect(legend).toEqual(['общо обединение']);
   });
 
-  it('truncates a long label and anchors labels on both sides of the centre', () => {
-    const long = 'ОБЕДИНЕНИЕ С МНОГО ДЪЛГО ИМЕ, КОЕТО НЯМА ДА СЕ ПОБЕРЕ';
+  it('gives the full name to a reader even where the box cuts it', () => {
+    const long = 'ОБЕДИНЕНИЕ С МНОГО ДЪЛГО ИМЕ, КОЕТО НЯМА ДА СЕ ПОБЕРЕ В НИТО ЕДНА КУТИЯ';
     const c = render({
       ...base,
-      nodes: [
-        node(),
-        node({ id: 'eik:2', slug: '2', label: long, hop: 1 }),
-        node({ id: 'eik:3', slug: '3', label: 'ГАМА ООД', hop: 1 }),
-        node({ id: 'eik:4', slug: '4', label: 'ДЕЛТА ООД', hop: 1 }),
-      ],
+      nodes: [node(), node({ id: 'eik:2', slug: '2', label: long, hop: 1 })],
     });
-    const labels = [...c.querySelectorAll('text.tie-node-label')];
-    expect(labels.find((t) => t.textContent?.includes('…'))).toBeDefined();
-    const anchors = labels.map((t) => t.getAttribute('text-anchor'));
-    expect(anchors).toContain('start');
-    expect(anchors).toContain('end');
-  });
-
-  it('skips an edge or node the layout could not place, rather than drawing it at the origin', () => {
-    const c = render({
-      ...base,
-      edges: [...base.edges, { ...base.edges[0]!, to: 'eik:missing' }],
-    });
-    expect(c.querySelectorAll('line.tie-edge').length).toBe(1);
+    const link = [...c.querySelectorAll('a.tie-node-link')][1]!;
+    expect(link.querySelector('text')!.textContent).toContain('…');
+    expect(link.getAttribute('aria-label')).toContain(long);
   });
 
   it('renders nothing without a centre or with a lone node', () => {
