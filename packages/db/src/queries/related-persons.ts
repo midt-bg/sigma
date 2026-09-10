@@ -23,6 +23,8 @@ const CONFLICT_TABLES = [
   // 0006 (#279, ADR-0033). Listed here for the same reason as the rest: on an environment where 0006
   // has not been applied yet, the evidence join must degrade to an empty surface rather than a 500.
   'interest_link_evidence',
+  // 0012 (ADR-0040): an environment without it has no old ids to redirect — a 404, not a 500.
+  'person_redirects',
 ];
 // „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
 const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;
@@ -68,6 +70,7 @@ interface LinkRow {
   person_id: string;
   official: string;
   institution: string | null;
+  position: string | null;
   company: string;
   eik: string;
   relation: string;
@@ -83,6 +86,7 @@ interface LinkRow {
   first_contract_year: string | null;
   last_contract_year: string | null;
   source_url: string | null;
+  source_year: string | null;
   evidence_kind: string | null;
   registry_role: string | null;
   entry_number: string | null;
@@ -179,12 +183,19 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- the office-holder's document, never a relative's (ConflictDetail renders it as „декларация").
     (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
      WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
-     ORDER BY d.declared_year DESC LIMIT 1) AS source_url,
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_url,
+    -- …and the year of that same filing (same order, same tiebreak), so the card says which one it is.
+    (SELECT d.declared_year FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
+     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_year,
     -- The official's LATEST declared institution — disambiguates namesakes on the surface (person grain is
     -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
     -- leaderboard is ≤1000 rows and hourly-cached, so the extra scan is immaterial.
     (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-     ORDER BY d.declared_year DESC LIMIT 1) AS institution,
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS institution,
+    -- …and the position from the SAME filing (same order, same tiebreak), so the pair reads as one role.
+    (SELECT d.position FROM declarations d WHERE d.person_id = il.person_id
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS position,
     -- The evidence the link rests on, so the card can explain itself (ADR-0033 decision 7). LEFT JOIN
     -- rather than an inner one: SURFACED_OWNERSHIP already requires a publishing seal, and an inner join
     -- here would silently re-filter rather than surface a contradiction.
@@ -230,6 +241,8 @@ function toLink(r: LinkRow): ConflictLink {
     officialSlug: personSlug(r.person_id),
     official: r.official,
     institution: r.institution,
+    position: r.position || null, // an empty filing field is no position
+
     company: r.company,
     eik: r.eik,
     relation: r.relation as ConflictRelation,
@@ -245,6 +258,7 @@ function toLink(r: LinkRow): ConflictLink {
     firstContractYear: r.first_contract_year,
     lastContractYear: r.last_contract_year,
     sourceUrl: r.source_url,
+    sourceYear: r.source_year ?? null,
     // Narrowed, not defaulted — `sealed()` above has already dropped every other value, so this asserts
     // what the filter guarantees instead of inventing a rung the row never carried.
     evidenceKind: r.evidence_kind as 'document' | 'confirmed',
@@ -546,4 +560,19 @@ export async function getLinkContracts(
     throw e;
   }
   return rows.map(toContract);
+}
+
+/** Where an official page asked for under an id that no longer exists moved to (ADR-0040): the id the loader
+ *  carried it to, or null. Soft-fails to null where the table is not there yet. */
+export async function getPersonRedirect(db: D1Database, personId: string): Promise<string | null> {
+  try {
+    const r = await db
+      .prepare('SELECT new_id FROM person_redirects WHERE old_id = ?')
+      .bind(personId)
+      .first<{ new_id: string }>();
+    return r?.new_id ?? null;
+  } catch (e) {
+    if (conflictSchemaAbsent(e, 'person redirect')) return null;
+    throw e;
+  }
 }

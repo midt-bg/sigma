@@ -15,6 +15,7 @@ import {
   conflictHeadline,
   groupByPerson,
   officialHref,
+  officialRole,
   personFundsCell,
   type ConflictPersonRow,
 } from '../lib/conflicts';
@@ -117,10 +118,10 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       cell: (r) => (
         <>
           <Link to={officialHref(r.officialSlug)}>{r.official}</Link>
-          {r.institution && (
+          {officialRole(r) && (
             <>
               <br />
-              <span className="small muted">{r.institution}</span>
+              <span className="small muted">{officialRole(r)}</span>
             </>
           )}
           {/* Identity-free qualifier: a family-ONLY row must not read as the official's own stake (ADR-0032).

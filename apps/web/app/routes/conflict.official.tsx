@@ -1,5 +1,11 @@
-import { Link } from 'react-router';
-import { getOfficialConflicts, personIdFromSlug, getDb } from '@sigma/db';
+import { Link, redirect } from 'react-router';
+import {
+  getOfficialConflicts,
+  getPersonRedirect,
+  personIdFromSlug,
+  personSlug,
+  getDb,
+} from '@sigma/db';
 import type { Route } from './+types/conflict.official';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -9,7 +15,7 @@ import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { conflictHeadline, declaredStakeNoun } from '../lib/conflicts';
+import { conflictHeadline, declaredStakeNoun, officialRole } from '../lib/conflicts';
 import { count, money, plural } from '@sigma/shared';
 
 // One office-holder's declared ownership links. Reads published interest_links, which per ADR-0032
@@ -37,7 +43,12 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!personId) throw new Response('Not Found', { status: 404 });
   const db = getDb(context.cloudflare.env);
   const data = await withDbRetry(() => getOfficialConflicts(db, personId));
-  if (!data) throw new Response('Not Found', { status: 404 });
+  if (!data) {
+    // An id the identity grain no longer produces (ADR-0040) has moved: follow it rather than 404.
+    const moved = await withDbRetry(() => getPersonRedirect(db, personId));
+    if (moved) throw redirect(`/conflicts/official/${personSlug(moved)}`, 301);
+    throw new Response('Not Found', { status: 404 });
+  }
   return data;
 }
 
@@ -62,7 +73,7 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
       />
       <main id="main">
         <PageHeader
-          kicker={links[0]?.institution ?? 'Длъжностно лице'}
+          kicker={(links[0] && officialRole(links[0])) ?? 'Длъжностно лице'}
           title={official}
           lede={`Дружества, спечелили обществени поръчки, за които това лице е декларирало ${stake} пред КПКОНПИ. Всяка връзка почива на проверим факт от Търговския регистър — деклариран интерес, не установено нарушение.`}
         />

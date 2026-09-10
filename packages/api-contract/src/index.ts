@@ -743,6 +743,7 @@ export interface ConflictLink {
   institution: string | null; // the official's latest declared institution — disambiguates namesakes
   //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct
   //   people, so the surface must SHOW the body rather than render two identical bare names.
+  position: string | null; // the official's position from the same (latest) declaration as `institution`
   company: string; // winner company name as registered
   eik: string; // winner ЕИК
   relation: ConflictRelation; // 'related' ⇒ the stake is a close relative's (anonymized), not the official's own
@@ -762,6 +763,7 @@ export interface ConflictLink {
   firstContractYear: string | null;
   lastContractYear: string | null;
   sourceUrl: string | null; // a representative declaration URL — provenance, never a fabricated value
+  sourceYear: string | null; // the declared year of the filing `sourceUrl` points to
   // Trade Register evidence (#279, ADR-0033). A link only reaches this DTO when its identity rests on a
   // checkable registry fact, so these describe WHICH fact — the surface's whole point is that every shown
   // link can explain itself. `registryRole` is the role the register records, NOT a claim about who owns

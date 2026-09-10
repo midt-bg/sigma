@@ -6,26 +6,27 @@ import {
   authorityShares,
   companyConflictsHref,
   companyProfileHref,
+  conflictHeadline,
   contractHref,
+  contractsCountLabel,
   contractTemporal,
   contractTimeline,
   contractYear,
   contractYearsLabel,
-  contractsCountLabel,
   declaredStakeNoun,
   fundsCellLabel,
   fundsMagnitude,
-  hasContemporaneousContracts,
-  conflictHeadline,
   groupByPerson,
+  hasContemporaneousContracts,
   isHttpsUrl,
   markContracts,
   officialHref,
+  officialRole,
   partitionContracts,
   personFundsCell,
+  registryEvidenceLabel,
   relationLabel,
   temporalLabel,
-  registryEvidenceLabel,
 } from './conflicts';
 
 function link(over: Partial<ConflictLink> = {}): ConflictLink {
@@ -55,6 +56,8 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     registryEntryNumber: '20110502101007',
     registryEntryDate: '2011-05-02',
     registryLookupDate: '2026-08-05',
+    position: null,
+    sourceYear: null,
     ...over,
   };
 }
@@ -900,6 +903,7 @@ describe('groupByPerson', () => {
         'official',
         'officialSlug',
         'ownInstitution',
+        'position',
         'soleCompany',
         'stakeKind',
       ].sort(),
@@ -1041,5 +1045,19 @@ describe('declaredStakeNoun — page prose must not out-claim the cards', () => 
     const mixed = 'деклариран дял — собствен или на свързано лице';
     expect(declaredStakeNoun([self, family])).toBe(mixed);
     expect(declaredStakeNoun([family, self])).toBe(mixed); // order must not decide the claim
+  });
+});
+
+describe('officialRole', () => {
+  it('says who the official is — position and institution, in that order', () => {
+    expect(officialRole({ position: 'Кмет', institution: 'Община Ямбол' })).toBe(
+      'Кмет · Община Ямбол',
+    );
+  });
+
+  it('keeps whichever one is on record, and says nothing when neither is', () => {
+    expect(officialRole({ position: null, institution: 'Община Ямбол' })).toBe('Община Ямбол');
+    expect(officialRole({ position: ' Кмет ', institution: '' })).toBe('Кмет');
+    expect(officialRole({ position: null, institution: null })).toBeNull();
   });
 });

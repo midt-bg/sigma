@@ -146,6 +146,10 @@ function run() {
           template: d.templateType, // the divest horizon is compared PER declaration type (B1/#226)
           person,
           institution: c.institution ?? '',
+          category: c.category ?? '',
+          // The declarant's own „Месторабота" — the institution where the listing only names the declaration
+          // type (ADR-0040). Carried on every record so load.mjs keys all three the same way.
+          work: d.work ?? '',
         }) + '\n',
       );
       stats.filings++;
@@ -158,6 +162,7 @@ function run() {
             template: d.templateType,
             category: c.category ?? '',
             institution: c.institution ?? '',
+            work: d.work ?? '',
             person,
             position: c.position ?? d.position ?? '',
             entity: it.entity,
@@ -180,6 +185,8 @@ function run() {
             year: d.year,
             person,
             institution: c.institution ?? '',
+            category: c.category ?? '',
+            work: d.work ?? '',
             related_name: rp.name,
             related_kind: rp.kind,
             info: rp.info,

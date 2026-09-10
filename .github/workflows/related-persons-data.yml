@@ -443,6 +443,10 @@ jobs:
           pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
             --config wrangler.deploy.jsonc --remote --yes \
             --file ../../packages/db/migrations/0010_publishing_gate_constraints.sql
+          # 0012 — old official ids → the id each became (ADR-0040). CREATE … IF NOT EXISTS, idempotent.
+          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0012_person_redirects.sql
 
       - name: Ship свързани-лица tables → D1
         # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it

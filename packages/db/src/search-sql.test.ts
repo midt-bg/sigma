@@ -124,8 +124,12 @@ SELECT 'company', ct.bidder_id, ct.name, COALESCE(ct.eik, ''), COALESCE(ct.settl
 FROM company_totals ct;
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'official', il.person_id, p.name, NULL,
-  (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-   ORDER BY d.declared_year DESC LIMIT 1),
+  -- subtitle: „позиция · институция" from the official's latest filing — both from the same row.
+  (SELECT CASE WHEN COALESCE(d.position, '') <> '' AND COALESCE(d.institution, '') <> ''
+               THEN d.position || ' · ' || d.institution
+               ELSE COALESCE(NULLIF(d.position, ''), d.institution) END
+   FROM declarations d WHERE d.person_id = il.person_id
+   ORDER BY d.declared_year DESC, d.id DESC LIMIT 1),
   SUM(il.contract_value_eur)
 FROM interest_links il JOIN persons p ON p.id = il.person_id
 WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
@@ -238,6 +242,19 @@ describe('search свързани-лица SQL', () => {
       expect(hit).toHaveLength(1);
       expect(typeof hit[0]!.rank).toBe('number');
       expect(hit[0]!.has_conflict).toBe(1); // ГАМА is Иван's second stake
+    });
+  });
+
+  it('subtitles an official „позиция · институция", both from the same latest filing', () => {
+    withDb((dbPath) => {
+      exec(
+        dbPath,
+        `UPDATE declarations SET position = 'Кмет' WHERE id = 'decl:i';
+         DELETE FROM search_index;
+         ${POPULATE_INDEX}`,
+      );
+      const [ivan] = rows(dbPath, lit(SEARCH_HITS_SQL, 'official', 'иван*', 10));
+      expect(ivan!.subtitle).toBe('Кмет · ОБЩИНА РУСЕ');
     });
   });
 

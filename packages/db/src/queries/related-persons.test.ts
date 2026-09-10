@@ -7,6 +7,7 @@ import {
   LINK_CONTRACTS_SQL,
   getAuthorityConflictSummary,
   getCompanyConflicts,
+  getPersonRedirect,
   isMissingConflictTableError,
   getConflictLeaderboard,
   getLinkContracts,
@@ -404,5 +405,41 @@ describe('getConflictLeaderboard — narrowed to one awarding body', () => {
     expect(calls[0]!.sql).toBe(AUTHORITY_LEADERBOARD_SQL);
     expect(calls[0]!.binds).toEqual(['auth:1', 10]);
     expect(calls[1]!.binds).toEqual([10]);
+  });
+});
+
+describe('getPersonRedirect', () => {
+  it('names the id an old official id became, and null when it became none', async () => {
+    const moved = fakeD1([{ when: 'FROM person_redirects', first: { new_id: 'person:new' } }]);
+    expect(await getPersonRedirect(moved.db, 'person:old')).toBe('person:new');
+    expect(moved.calls[0]!.binds).toEqual(['person:old']);
+    const stayed = fakeD1([{ when: 'FROM person_redirects', first: null }]);
+    expect(await getPersonRedirect(stayed.db, 'person:x')).toBeNull();
+  });
+
+  it('is a 404, not a 500, where the table is not there yet — and rethrows anything else', async () => {
+    const missing = throwingD1(
+      new Error('D1_ERROR: no such table: person_redirects: SQLITE_ERROR'),
+    );
+    expect(await getPersonRedirect(missing.db, 'person:old')).toBeNull();
+    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
+    await expect(getPersonRedirect(boom.db, 'person:old')).rejects.toThrow(/syntax error/);
+  });
+});
+
+describe('the official’s role and the filing on a link', () => {
+  it('carries the position and the filing year through, and reads an empty position as none', async () => {
+    const { db } = fakeD1([
+      {
+        when: 'FROM interest_links il',
+        all: [
+          row({ link_key: 'a|1', position: 'Кмет', source_year: '2023' }),
+          row({ link_key: 'b|2', position: '', source_year: null }),
+        ],
+      },
+    ]);
+    const [a, b] = await getConflictLeaderboard(db, 10);
+    expect([a!.position, a!.sourceYear]).toEqual(['Кмет', '2023']);
+    expect([b!.position, b!.sourceYear]).toEqual([null, null]);
   });
 });

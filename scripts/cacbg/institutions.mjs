@@ -52,3 +52,71 @@ export function canonicalInstitution(name) {
   if (!trimmed) return '';
   return ALIAS_BY_KEY.get(trimmed.toUpperCase()) ?? trimmed;
 }
+
+// Latin capitals indistinguishable from Cyrillic ones in print. A register string that is otherwise
+// Cyrillic but carries one of these („НАРОДНО СЪБРАНИE" with a Latin E) names the same institution; left
+// alone, the homoglyph silently splits one official into two identities.
+const LATIN_LOOKALIKE = {
+  A: 'А',
+  B: 'В',
+  C: 'С',
+  E: 'Е',
+  H: 'Н',
+  K: 'К',
+  M: 'М',
+  O: 'О',
+  P: 'Р',
+  T: 'Т',
+  X: 'Х',
+  Y: 'У',
+};
+
+/**
+ * The institution one declaration belongs to (ADR-0040). The register's listing names it — except in the
+ * folders of inaugural/final and of annual declarations, where the listing node is the declaration TYPE
+ * (its name is the category's) and the only institution on record is the declarant's own <Work> field.
+ * @param {{institution?: string|null, category?: string|null, work?: string|null}} rec
+ * @returns {string}
+ */
+export function declarationInstitution(rec) {
+  const listed = String(rec.institution ?? '').trim();
+  const category = String(rec.category ?? '').trim();
+  const own = String(rec.work ?? '').trim();
+  if (listed && listed.toLowerCase() !== category.toLowerCase()) return listed;
+  return own || listed;
+}
+
+/**
+ * The institution as an identity key (ADR-0040): the spellings of one body fold together, so an official
+ * keeps one identity across the years and forms of their filings. Only folds that cannot join two different
+ * bodies — the same municipality under its council's name, the same assembly under another number, the
+ * same body with or without a place qualifier. Anything else passes through: a split is safe, a wrong
+ * merge is not.
+ * @param {string|null|undefined} name
+ * @returns {string}
+ */
+export function identityInstitution(name) {
+  let t = canonicalInstitution(name).toUpperCase();
+  if (/[А-Я]/u.test(t)) t = t.replace(/[ABCEHKMOPTXY]/g, (c) => LATIN_LOOKALIKE[c]);
+  return (
+    t
+      // „47-мо Народно събрание" — an MP re-elected to the next assembly is the same person.
+      .replace(/^\d+\s*-?\s*[А-Я]{0,2}\s+(?=НАРОДНО СЪБРАНИЕ)/u, '')
+      .replace(/\s+НА\s+(?:РБ|РЕПУБЛИКА БЪЛГАРИЯ)$/u, '')
+      // „…, гр. София" and a leading „гр. " qualify the place, not the body.
+      .replace(/,\s*(?:ГР|С)\.\s*[^,]+$/u, '')
+      .replace(/^(?:ГР|С)\.\s*/u, '')
+      // „Община Карнобат", „ОбС Карнобат", „Общински съвет - Карнобат" and the listing's bare „Карнобат".
+      .replace(
+        /^(?:ОБЩИНА|ОБЩИНСКИ СЪВЕТ|ОБЩ\.?\s*СЪВЕТ|ОБС)(?=[\s,–—-])\s*(?:[-–—,]\s*)?(?:НА\s+)?(?=\S)/u,
+        '',
+      )
+      // „Област - Смолян" and „Областна администрация - Смолян" — an oblast stays apart from its town.
+      .replace(
+        /^(?:ОБЛАСТНА АДМИНИСТРАЦИЯ|ОБЛАСТ)(?=[\s,–—-])\s*(?:[-–—,]\s*)?(?:НА\s+)?(?=\S)/u,
+        'ОБЛАСТ ',
+      )
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+}

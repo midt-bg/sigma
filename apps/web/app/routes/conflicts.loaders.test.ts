@@ -13,6 +13,8 @@ const q = vi.hoisted(() => ({
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
   getAuthorityName: vi.fn(),
+  getPersonRedirect: vi.fn(),
+  personSlug: vi.fn((id: string) => `slug-of-${id}`),
   authorityIdFromSlug: vi.fn((slug: string) => `auth:${slug}`),
   personIdFromSlug: vi.fn(),
   // #199 chokepoint: loaders wrap env with getDb(env) → returns the read-only D1. In the test the env's
@@ -135,6 +137,23 @@ describe('official loader (/conflicts/official/:id)', () => {
     q.personIdFromSlug.mockReturnValue('person:1');
     q.getOfficialConflicts.mockResolvedValue(null);
     await expectStatus(call(officialLoader, { id: 'ivan-petrov-1' }), 404);
+  });
+
+  it('301s an id the identity grain no longer produces to the one it became', async () => {
+    q.personIdFromSlug.mockReturnValue('person:old');
+    q.getOfficialConflicts.mockResolvedValue(null);
+    q.getPersonRedirect.mockResolvedValue('person:new');
+    try {
+      await call(officialLoader, { id: 'old-slug' });
+      throw new Error('expected a redirect');
+    } catch (thrown) {
+      expect(thrown).toBeInstanceOf(Response);
+      expect((thrown as Response).status).toBe(301);
+      expect((thrown as Response).headers.get('Location')).toBe(
+        '/conflicts/official/slug-of-person:new',
+      );
+    }
+    expect(q.getPersonRedirect).toHaveBeenCalledWith(DB, 'person:old');
   });
 
   it('returns the conflict payload for a valid official', async () => {

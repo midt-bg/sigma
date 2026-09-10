@@ -42,6 +42,8 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     registryEntryNumber: '20110502101007',
     registryEntryDate: '2011-05-02',
     registryLookupDate: '2026-08-05',
+    position: null,
+    sourceYear: null,
     ...over,
   };
 }
@@ -184,6 +186,11 @@ describe('ConflictDetail — provenance on the thinner link shapes', () => {
     const link_ = statValue('Източник').querySelector('a')!;
     expect(link_.getAttribute('href')).toBe('https://register.cacbg.bg/2024/x.xml');
     expect(link_.textContent).toBe('декларация');
+  });
+
+  it('names the filing the stake comes from when its year is known', async () => {
+    await render([link({ sourceYear: '2023' })], { '111': [facts()] });
+    expect(statValue('Източник').querySelector('a')!.textContent).toBe('декларация за 2023 г.');
   });
 
   it('omits the declared-period line entirely when the declaration carries no usable years', async () => {

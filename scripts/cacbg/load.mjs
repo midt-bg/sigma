@@ -41,7 +41,11 @@ import {
   loadSuppressions,
   SUPPRESSION_KEY_VERSION,
 } from './suppressions.mjs';
-import { canonicalInstitution } from './institutions.mjs';
+import {
+  canonicalInstitution,
+  declarationInstitution,
+  identityInstitution,
+} from './institutions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DB = process.env.CACBG_DB || path.join(ROOT, 'data/work/backfill.sqlite');
@@ -54,6 +58,9 @@ const MIGRATION_EVIDENCE = path.join(
   ROOT,
   'packages/db/migrations/0009_interest_link_evidence.sql',
 );
+// 0012: old official ids → the id they became under the identity grain now in force (ADR-0040). Rebuilt here
+// on every run from the same staging, so it never accumulates and never goes stale.
+const MIGRATION_REDIRECTS = path.join(ROOT, 'packages/db/migrations/0012_person_redirects.sql');
 const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
@@ -211,16 +218,14 @@ if (!EMIT_CANDIDATES_ONLY) {
 // does NOT swallow a parse failure here (only ENOENT is a legitimate first run). A torn snapshot would
 // therefore wedge every subsequent audit until a human cleared the file by hand. The raw deeds already
 // land this way; the gate's own input deserves the same.
-if (!EMIT_CANDIDATES_ONLY) {
-  const snapPath = path.join(STAGING, 'published-snapshot.json');
-  const snapTmp = `${snapPath}.tmp`;
-  fs.writeFileSync(snapTmp, JSON.stringify(snapshot, null, 2) + '\n');
-  fs.renameSync(snapTmp, snapPath);
-}
+// Written once the links exist — see „the monotonicity snapshot" after the link build: a prior key names
+// the official by the id they carried then, and across a change of identity grain it has to be carried to
+// the id they carry now before the gate can compare like with like.
 
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
+  'person_redirects', // no references either way
   // FIRST: interest_link_evidence references interest_links, so it must go before its parent.
   'interest_link_evidence',
   'interest_link_authorities',
@@ -233,6 +238,7 @@ for (const t of [
   db.exec(`DROP TABLE IF EXISTS ${t}`);
 db.exec(fs.readFileSync(MIGRATION, 'utf8'));
 db.exec(fs.readFileSync(MIGRATION_EVIDENCE, 'utf8'));
+db.exec(fs.readFileSync(MIGRATION_REDIRECTS, 'utf8'));
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
 const isSuppressed = (linkKey) => {
@@ -347,8 +353,24 @@ const insRP = db.prepare(
 // Institution is canonicalized (N10) so an official's „МВР" / „Министерство на вътрешните работи" filings
 // fold to ONE identity instead of splitting into two person-pages. An unknown/ambiguous string passes
 // through unchanged (a safe split), never a wrong merge.
+// ADR-0040: the institution is the declaration's own (declarationInstitution) and its spellings fold
+// (identityInstitution) — the listing alone gave the declaration TYPE for a sixth of the filings and split
+// one body across its spellings.
 const personId = (name, institution) =>
-  `person:${companyNameKey(name)}|${companyNameKey(canonicalInstitution(institution))}`;
+  `person:${companyNameKey(name)}|${companyNameKey(identityInstitution(institution))}`;
+const personOf = (rec) => personId(rec.person, declarationInstitution(rec));
+// The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
+// nothing else. Kept only to redirect old official URLs and to carry the monotonicity snapshot across the
+// change of grain; nothing is keyed on it.
+const legacyPersonOf = (rec) =>
+  `person:${companyNameKey(rec.person)}|${companyNameKey(canonicalInstitution(rec.institution))}`;
+const legacyToCurrent = new Map();
+const noteLegacy = (rec, pid) => {
+  const old = legacyPersonOf(rec);
+  const now = legacyToCurrent.get(old) ?? new Set();
+  now.add(pid);
+  legacyToCurrent.set(old, now);
+};
 // Financial-interest kinds (a genuine stake), as opposed to management-only or listed securities.
 const OWN_KINDS = new Set(['shares', 'participation', 'sole_trader']);
 const agg = new Map();
@@ -399,7 +421,7 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
     }
     filingFolderDated++;
   }
-  const k = `${personId(f.person, f.institution)}|${f.template ?? ''}`;
+  const k = `${personOf(f)}|${f.template ?? ''}`;
   filingMaxByPersonType.set(k, Math.max(filingMaxByPersonType.get(k) ?? fy, fy));
 }
 if (filingFolderDated > 0 || filingUndatable > 0) {
@@ -417,7 +439,8 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     namelessPerson++;
     continue;
   }
-  const pid = personId(h.person, h.institution);
+  const pid = personOf(h);
+  noteLegacy(h, pid);
   // Namespace the declaration id by FOLDER, not the bare xmlFile. The register splits years across
   // suffixed folders; keying on the basename alone means two officials whose declarations share an
   // xmlFile across folders collapse to one `did` under INSERT OR IGNORE — the second's interests would
@@ -434,7 +457,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.year ?? null,
     h.template,
     h.category ?? '',
-    h.institution ?? '',
+    declarationInstitution(h),
     h.position ?? '',
     `https://register.cacbg.bg/${h.folder}/${h.xmlFile}`,
   );
@@ -461,7 +484,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // distinguish two same-named officials, so forming a link would risk attributing one person's stake to a
   // homonym (false attribution — libel). Withhold from link formation; the declaration + declared interest
   // are already recorded above for census. Counted so the dropped volume is visible in the Phase-0 report.
-  if (!isMatchableKey(companyNameKey(canonicalInstitution(h.institution)))) {
+  if (!isMatchableKey(companyNameKey(identityInstitution(declarationInstitution(h))))) {
     namelessInstitution++;
     continue;
   }
@@ -528,7 +551,8 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     if (Number.isFinite(y)) rec.ownYears.add(y);
   }
   if (h.seat) rec.seats.add(h.seat);
-  if (h.institution) rec.institutions.add(h.institution);
+  const declaredInstitution = declarationInstitution(h);
+  if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
 // related persons (internal/PII)
 let rpN = 0;
@@ -537,17 +561,17 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
   // the very declaration the holdings loop inserted (and so cross-folder xmlFile clashes can't merge).
   const did = `decl:${r.folder}:${r.xmlFile}`;
   if (!db.prepare('SELECT 1 FROM declarations WHERE id=?').get(did)) {
-    insPerson.run(personId(r.person, r.institution), r.person);
+    insPerson.run(personOf(r), r.person);
     insDecl.run(
       did,
-      personId(r.person, r.institution),
+      personOf(r),
       r.xmlFile,
       null,
       r.folder,
       r.year ?? null,
       'interests',
       '',
-      r.institution ?? '',
+      declarationInstitution(r),
       '',
       `https://register.cacbg.bg/${r.folder}/${r.xmlFile}`,
     );
@@ -1017,6 +1041,59 @@ for (const rec of agg.values()) {
     insILA.run(linkKey, auth_id, a.name, a.count, a.value || null, a.own);
 }
 db.exec('COMMIT');
+
+// The monotonicity snapshot (§8). A prior key names the official by the id they carried when it was
+// published; across a change of identity grain (ADR-0040) it is carried to the id they carry now before
+// the gate compares — the same claim under a new id is not a disappearance. A legacy id that now splits
+// (namesakes the old grain merged) resolves by the one id that built this very link; a key that resolves to
+// nothing keeps its old form and the gate reports it, which is right: that claim is gone.
+//
+// Not written by the bootstrap pass (it exited above), which works on a throwaway copy and has no business
+// restating what the real run is about to record. tmp + rename, not a bare write: a crash mid-write leaves a
+// truncated file, and audit.mjs deliberately does NOT swallow a parse failure here (only ENOENT is a
+// legitimate first run), so a torn snapshot would wedge every subsequent audit until cleared by hand.
+const builtKeys = new Set(
+  db
+    .prepare('SELECT link_key FROM interest_links')
+    .all()
+    .map((r) => r.link_key),
+);
+const carryKey = (key) => {
+  const parts = key.split('|');
+  const rest = parts.slice(2).join('|');
+  const now = [...(legacyToCurrent.get(`${parts[0]}|${parts[1]}`) ?? [])]
+    .map((pid) => `${pid}|${rest}`)
+    .filter((k) => builtKeys.has(k));
+  return now.length === 1 ? now[0] : key;
+};
+{
+  const snapPath = path.join(STAGING, 'published-snapshot.json');
+  const snapTmp = `${snapPath}.tmp`;
+  const carried = snapshot.map((p) => ({ ...p, link_key: carryKey(p.link_key) }));
+  fs.writeFileSync(snapTmp, JSON.stringify(carried, null, 2) + '\n');
+  fs.renameSync(snapTmp, snapPath);
+}
+
+// Old official URLs (ADR-0040): a legacy id that became exactly ONE published official 301s there. One that
+// split into several ids named two people and redirects nowhere; one that is itself a live page stays one.
+const publishedPids = new Set(
+  db
+    .prepare("SELECT DISTINCT person_id FROM interest_links WHERE status = 'published'")
+    .all()
+    .map((r) => r.person_id),
+);
+const insRedirect = db.prepare('INSERT INTO person_redirects(old_id, new_id) VALUES (?, ?)');
+let personRedirects = 0;
+db.exec('BEGIN');
+for (const [old, now] of legacyToCurrent) {
+  if (now.size !== 1 || publishedPids.has(old)) continue;
+  const [pid] = now;
+  if (pid === old || !publishedPids.has(pid)) continue;
+  insRedirect.run(old, pid);
+  personRedirects++;
+}
+db.exec('COMMIT');
+console.log(`  person redirects: ${personRedirects} old official id(s) → the id they became`);
 
 // B3 unused-suppression gate: every entry in the version-controlled list MUST have matched exactly one built
 // link. A fingerprint that matched NOTHING (a changed institution in the key, a reformatted ЕИК, or a wrong

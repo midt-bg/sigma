@@ -44,6 +44,8 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     registryEntryNumber: '20110502101007',
     registryEntryDate: '2011-05-02',
     registryLookupDate: '2026-08-05',
+    position: null,
+    sourceYear: null,
     ...over,
   };
 }

@@ -16,6 +16,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+import { canonicalInstitution, identityInstitution } from './institutions.mjs';
+
+const { companyNameKey } = await import('../../packages/shared/src/company-name-key.ts');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -113,6 +116,10 @@ function buildTrCache(owners) {
 
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
+// The official's id under the grain before ADR-0040 (listing institution, abbreviations only) and now.
+const LEGACY_PID = `person:${companyNameKey('Мария Петрова Иванова')}|${companyNameKey(canonicalInstitution('Встъпителни и финални декларации'))}`;
+const CURRENT_PID = `person:${companyNameKey('Мария Петрова Иванова')}|${companyNameKey(identityInstitution('Община Ямбол'))}`;
+
 before(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-homonym-'));
   TR_DB = path.join(dir, 'tr-cache.sqlite');
@@ -134,7 +141,39 @@ before(() => {
     INSERT INTO bidders VALUES ('eik:200000002','ВИН ДВЕ 6 ЕООД','200000002',1,'Пловдив');
     INSERT INTO contracts VALUES ('c1','t1','eik:100000001','2021-05-01',50000);
     INSERT INTO contracts VALUES ('c2','t2','eik:200000002','2021-06-01',60000);
+    INSERT INTO tenders VALUES ('t3','auth:1');
+    INSERT INTO bidders VALUES ('eik:300000003','ВИН ТРИ 7 ЕООД','300000003',1,'Ямбол');
+    INSERT INTO contracts VALUES ('c3','t3','eik:300000003','2023-06-01',70000);
   `);
+  // ADR-0040: a claim published last run under the id the OLD grain gave the official — the listing's
+  // declaration-type node. The loader must carry it to her current id, not report it as gone.
+  db.exec(
+    fs.readFileSync(
+      path.join(ROOT, 'packages/db/migrations/0003_related_persons_foundation.sql'),
+      'utf8',
+    ),
+  );
+  db.exec(
+    fs.readFileSync(
+      path.join(ROOT, 'packages/db/migrations/0009_interest_link_evidence.sql'),
+      'utf8',
+    ),
+  );
+  db.prepare('INSERT INTO persons (id, name) VALUES (?, ?)').run(
+    LEGACY_PID,
+    'Мария Петрова Иванова',
+  );
+  db.prepare(
+    `INSERT INTO interest_links (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version,
+       publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count,
+       first_declared_year, last_declared_year, contract_count, contract_value_eur, status)
+     VALUES ('il:prior', ?, ?, 'eik:300000003', '300000003', 'ВИН ТРИ 7 ЕООД', 'exact_name_key', 'v1',
+       'A_seat', 'owns', 'private_ownership', 1, 'none', 1, '2023', '2023', 1, 70000, 'published')`,
+  ).run(`${LEGACY_PID}|300000003`, LEGACY_PID);
+  db.prepare(
+    `INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date,
+       rules_version, live_status) VALUES (?, 'document', 'owner', 'role:owner:CR_F_19_L', '2026-08-05', 'tr-rules-2', 'live')`,
+  ).run(`${LEGACY_PID}|300000003`);
 
   const holdings = [
     // Namesake A: „Георги Иванов" at ОБЩИНА СОФИЯ owns winner ВИН ЕДНО 5 (seat София → published).
@@ -190,6 +229,43 @@ before(() => {
       seat: 'София',
       controlHash: 'A2',
     },
+    // ADR-0040: the same official filed in a declaration-TYPE folder (the listing node is the type; her
+    // institution is only in the declaration's own „Месторабота") and in her municipality's own folder
+    // under another spelling. One person, one link.
+    {
+      folder: '2023f1',
+      xmlFile: 'MP_IN.xml',
+      year: '2023',
+      template: 'assets',
+      category: 'Встъпителни и финални декларации',
+      institution: 'Встъпителни и финални декларации',
+      work: 'Община Ямбол',
+      person: 'Мария Петрова Иванова',
+      position: 'Общински съветник',
+      entity: 'ВИН ТРИ 7 ЕООД',
+      kind: 'shares',
+      detail: '50%',
+      timing: 'annual',
+      seat: 'Ямбол',
+      controlHash: 'M1',
+    },
+    {
+      folder: '2024',
+      xmlFile: 'MP_AN.xml',
+      year: '2024',
+      template: 'assets',
+      category: 'Кметове и общински съветници',
+      institution: 'Ямбол',
+      work: 'ОбС Ямбол',
+      person: 'Мария Петрова Иванова',
+      position: 'Общински съветник',
+      entity: 'ВИН ТРИ 7 ЕООД',
+      kind: 'shares',
+      detail: '50%',
+      timing: 'annual',
+      seat: 'Ямбол',
+      controlHash: 'M2',
+    },
   ];
   fs.writeFileSync(
     path.join(STAGING, 'holdings.jsonl'),
@@ -200,6 +276,7 @@ before(() => {
   buildTrCache({
     100000001: 'ГЕОРГИ ИВАНОВ ПЕТРОВ',
     200000002: 'ГЕОРГИ ИВАНОВ ПЕТРОВ',
+    300000003: 'МАРИЯ ПЕТРОВА ИВАНОВА',
   });
 });
 
@@ -235,4 +312,43 @@ test('same-named officials at different institutions do NOT merge into one perso
     .get('100000001');
   assert.equal(aLink.first_declared_year, '2021');
   assert.equal(aLink.last_declared_year, '2023');
+});
+
+test('ADR-0040: the declaration’s own institution keys the official; the old id redirects, the prior claim carries', () => {
+  const db = open();
+  const ids = db
+    .prepare('SELECT id FROM persons WHERE name = ?')
+    .all('Мария Петрова Иванова')
+    .map((p) => p.id);
+  assert.deepEqual(
+    ids,
+    [CURRENT_PID],
+    'one official, keyed on her municipality — not on the declaration type',
+  );
+  assert.equal(
+    db.prepare("SELECT institution FROM declarations WHERE xml_file = 'MP_IN.xml'").get()
+      .institution,
+    'Община Ямбол',
+    'the stored (and shown) institution is the declaration’s own',
+  );
+  const links = db.prepare("SELECT status FROM interest_links WHERE eik = '300000003'").all();
+  assert.deepEqual(
+    links.map((l) => l.status),
+    ['published'],
+  );
+
+  const redirects = db.prepare('SELECT old_id, new_id FROM person_redirects').all();
+  assert.ok(
+    redirects.some((r) => r.old_id === LEGACY_PID && r.new_id === CURRENT_PID),
+    'the old official URL 301s to the current one',
+  );
+  assert.ok(!redirects.some((r) => r.old_id === r.new_id));
+
+  const snap = JSON.parse(fs.readFileSync(path.join(STAGING, 'published-snapshot.json'), 'utf8'));
+  const keys = snap.map((p) => p.link_key);
+  assert.ok(
+    keys.includes(`${CURRENT_PID}|300000003`),
+    'the prior claim is carried to the current id',
+  );
+  assert.ok(!keys.some((k) => k.startsWith(`${LEGACY_PID}|`)), 'nothing is left under the old id');
 });

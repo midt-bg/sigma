@@ -31,11 +31,14 @@ export const TABLES = [
   // AFTER interest_links: a seal references its link, so inserting it first fails the FK (#279).
   'interest_link_evidence',
   'interest_link_authorities',
+  // Old official ids → current ones (ADR-0040). References nothing, so its place here is free.
+  'person_redirects',
 ];
 // DELETE order for the pre-insert wipe — children before parents. related_persons_internal (PII, never
 // re-shipped) also REFERENCES declarations, so it is wiped before declarations; otherwise a populated D1
 // carrying internal rows would block DELETE FROM declarations.
 export const WIPE_ORDER = [
+  'person_redirects',
   'interest_link_authorities',
   // BEFORE interest_links, for the mirror reason: deleting a link whose seal survives fails the FK.
   'interest_link_evidence',

@@ -6,25 +6,26 @@ import { Chip, ExternalEikLink, Section, ShareBar } from './ui';
 import { FactsList } from './FactsList';
 import { DataTable, type Column } from './DataTable';
 import {
-  authorityShares,
   authorityShareDisplay,
-  type AuthorityShare,
+  authorityShares,
   companyProfileHref,
   contractHref,
+  contractsCountLabel,
   contractTimeline,
   contractYear,
   contractYearsLabel,
-  contractsCountLabel,
   fundsCellLabel,
   fundsMagnitude,
   hasContemporaneousContracts,
   isHttpsUrl,
   markContracts,
   officialHref,
+  officialRole,
   partitionContracts,
   registryEvidenceLabel,
   relationLabel,
   temporalLabel,
+  type AuthorityShare,
 } from '../lib/conflicts';
 
 // The rich per-link case detail, rendered EAGERLY (no lazy fetcher — these pages exist to show the detail,
@@ -100,7 +101,7 @@ function ConflictDetailBlock({
     ) : (
       <Link to={officialHref(l.officialSlug)}>{l.official}</Link>
     );
-  const subLabel = perspective === 'official' ? `ЕИК\u00a0${l.eik}` : l.institution;
+  const subLabel = perspective === 'official' ? `ЕИК\u00a0${l.eik}` : officialRole(l);
 
   return (
     <Section id={domId} title={title} hint={subLabel ?? undefined}>
@@ -146,7 +147,7 @@ function ConflictDetailBlock({
             term: 'Източник',
             value: isHttpsUrl(l.sourceUrl) ? (
               <a href={l.sourceUrl!} target="_blank" rel="noopener noreferrer">
-                декларация
+                {l.sourceYear ? `декларация за ${l.sourceYear} г.` : 'декларация'}
               </a>
             ) : (
               <span className="muted">—</span>

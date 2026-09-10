@@ -464,6 +464,8 @@ export interface ConflictPersonRow {
   officialSlug: string;
   /** The official's latest declared institution — disambiguates namesakes; from the strongest link. */
   institution: string | null;
+  /** The official's position, from the same filing as `institution`. */
+  position: string | null;
   /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
   companyCount: number;
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
@@ -604,6 +606,7 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         official: strongest.official,
         officialSlug: strongest.officialSlug,
         institution: strongest.institution,
+        position: strongest.position,
         companyCount,
         soleCompany,
         contractCount,
@@ -632,4 +635,14 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         : 0;
   });
   return rows.map((r) => r.row);
+}
+
+/** „Позиция · институция" — the two facts that say which official this is, in one line, wherever a name is
+ *  shown. Null when neither is on record. */
+export function officialRole(o: {
+  position: string | null;
+  institution: string | null;
+}): string | null {
+  const parts = [o.position, o.institution].map((s) => s?.trim()).filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
 }

@@ -2615,8 +2615,12 @@ FROM authority_totals at;
 DELETE FROM search_index WHERE kind = 'official';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'official', il.person_id, p.name, NULL,
-  (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-   ORDER BY d.declared_year DESC LIMIT 1),
+  -- subtitle: „позиция · институция" from the official's latest filing — both from the same row.
+  (SELECT CASE WHEN COALESCE(d.position, '') <> '' AND COALESCE(d.institution, '') <> ''
+               THEN d.position || ' · ' || d.institution
+               ELSE COALESCE(NULLIF(d.position, ''), d.institution) END
+   FROM declarations d WHERE d.person_id = il.person_id
+   ORDER BY d.declared_year DESC, d.id DESC LIMIT 1),
   -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), the same
   -- per-link subquery as LINK_SELECT.contemporaneous_value_eur, summed across the official's SURFACED links.
   -- The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no winner's €
