@@ -6,7 +6,17 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Callout, Chip, ExternalEikLink, Flag, OwnershipChip, Section, ShareBar } from './ui';
+import {
+  Callout,
+  Chip,
+  ExternalEikLink,
+  Flag,
+  OwnershipChip,
+  RegistryCta,
+  Section,
+  ShareBar,
+  registryUrl,
+} from './ui';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,6 +64,19 @@ describe('ExternalEikLink', () => {
 
     const withClass = render(<ExternalEikLink eik="111" className="inline" />).querySelector('a')!;
     expect(withClass.className).toBe('external-eik-link inline');
+  });
+});
+
+describe('RegistryCta', () => {
+  it("opens the ЕИК's register report in a new tab, as a labelled header action", () => {
+    const a = render(<RegistryCta eik="831646048" />).querySelector('a')!;
+    expect(a.getAttribute('href')).toBe(registryUrl('831646048'));
+    expect(a.getAttribute('href')).toContain('uic=831646048');
+    expect(a.className).toBe('source-cta'); // the header-action style, :visited guard included
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.textContent).toContain('Виж в Търговския регистър');
+    expect(a.textContent).toContain('в нов раздел'); // said, not just drawn as ↗
   });
 });
 

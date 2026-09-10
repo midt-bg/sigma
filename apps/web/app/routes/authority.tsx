@@ -1,6 +1,14 @@
 import { Link } from 'react-router';
 import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
-import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
+import {
+  count,
+  money,
+  moneyBare,
+  pct,
+  periodRange,
+  plural,
+  tradeRegisterLegalForm,
+} from '@sigma/shared';
 import {
   authorityIdFromSlug,
   getAuthority,
@@ -20,7 +28,7 @@ import { TrendBlock } from '../components/TrendBlock';
 import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
-import { ShareBar, Chip, Section } from '../components/ui';
+import { ShareBar, Chip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
@@ -103,11 +111,16 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   · <Chip>{a.typeLabel}</Chip>
                 </>
               )}
+              {' · '}ЕИК&nbsp;{a.eik}
             </>
           }
           title={a.name}
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
-        />
+        >
+          {/* Only a trader has a partida in the Търговски регистър; a municipality or a school is registered
+              in БУЛСТАТ alone, and the register would open an empty report for it. */}
+          {tradeRegisterLegalForm(a.name) && <RegistryCta eik={a.eik} />}
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"

@@ -18,7 +18,7 @@ import { DataTable } from '../components/DataTable';
 import { TrendBlock } from '../components/TrendBlock';
 import { TieGraph, tieDescription } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
-import { ShareBar, Chip, OwnershipChip, Section, ExternalEikLink } from '../components/ui';
+import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
@@ -120,14 +120,15 @@ export default function Company({ loaderData }: Route.ComponentProps) {
               {c.hasEik && c.eik && (
                 <>
                   {' · '}ЕИК&nbsp;{c.eik}
-                  <ExternalEikLink eik={c.eik} />
                 </>
               )}
             </>
           }
           title={c.displayName}
           lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
-        />
+        >
+          {c.hasEik && c.eik && <RegistryCta eik={c.eik} />}
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"

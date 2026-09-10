@@ -13,10 +13,43 @@ export function Chip({ children, tone }: { children: ReactNode; tone?: 'strong' 
 
 const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult';
 
+/** The public Търговски регистър report for one ЕИК — the partida's current state. */
+export function registryUrl(eik: string): string {
+  return `${REGISTRY_URL}?uic=${encodeURIComponent(eik)}`;
+}
+
+// The profile header's way to the entity's official record: a labelled action in the page header, the same
+// `.source-cta` the contract page uses for „Виж документите в ЦАИС ЕОП" (with its :visited guard). The bare
+// icon link below stays for dense blocks; in a header the meaning has to be readable without a mouse.
+export function RegistryCta({ eik }: { eik: string }) {
+  return (
+    <a className="source-cta" href={registryUrl(eik)} target="_blank" rel="noopener noreferrer">
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        aria-hidden="true"
+      >
+        <path d="M2 5.25 8 1.75l6 3.5z" />
+        <path d="M3.5 6.5v5.5M6.5 6.5v5.5M9.5 6.5v5.5M12.5 6.5v5.5" />
+        <path d="M2.5 14.25h11" />
+      </svg>
+      Виж в Търговския регистър
+      <span className="sr-only"> (в нов раздел)</span>
+      <span className="cta-ext" aria-hidden="true">
+        ↗
+      </span>
+    </a>
+  );
+}
+
 export function ExternalEikLink({ eik, className }: { eik: string; className?: string }) {
   return (
     <a
-      href={`${REGISTRY_URL}?uic=${encodeURIComponent(eik)}`}
+      href={registryUrl(eik)}
       target="_blank"
       rel="noopener noreferrer"
       className={`external-eik-link${className ? ` ${className}` : ''}`}
