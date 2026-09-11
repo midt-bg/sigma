@@ -137,12 +137,11 @@ export async function nextQueued(db: D1Database, limit: number): Promise<string[
   return rows.results.map((r) => r.eik);
 }
 
-const ROLE_INSERT = `INSERT INTO registry_roles (eik, field_ident, record_id, role, subject_kind, subject_id,
+const ROLE_INSERT = `INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id,
   subject_name, share, country, entry_number, added_on, removed_on) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-  ON CONFLICT(eik, field_ident, record_id, subject_id) DO UPDATE SET role = excluded.role,
+  ON CONFLICT(eik, sub_uic, field_ident, subject_id, entry_number) DO UPDATE SET role = excluded.role,
   subject_kind = excluded.subject_kind, subject_name = excluded.subject_name, share = excluded.share,
-  country = excluded.country, entry_number = excluded.entry_number, added_on = excluded.added_on,
-  removed_on = excluded.removed_on`;
+  country = excluded.country, added_on = excluded.added_on, removed_on = excluded.removed_on`;
 const PERSON_UPSERT = `INSERT INTO registry_persons (indent, name, indent_type) VALUES (?1, ?2, ?3)
   ON CONFLICT(indent) DO UPDATE SET name = excluded.name, indent_type = excluded.indent_type`;
 const DEED_UPSERT = `INSERT INTO registry_deeds (eik, name, legal_form, status, outcome, fetched_at)
@@ -175,8 +174,8 @@ export async function storeDeed(
           .prepare(ROLE_INSERT)
           .bind(
             r.eik,
+            r.subUic,
             r.fieldIdent,
-            r.recordId,
             r.role,
             r.subjectKind,
             r.subjectId,

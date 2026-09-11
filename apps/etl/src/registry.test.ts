@@ -64,7 +64,8 @@ const partida = (
 // The register identifies a person by a 64-character hash.
 const H1 = '1'.repeat(64);
 const H2 = '2'.repeat(64);
-const manager = (recordId: string, indent: string, name: string) => ({
+// One entry of the managers field, listing them in full.
+const managers = (...people: [indent: string, name: string][]) => ({
   fieldIdent: '00070',
   element: 'Managers',
   operation: 'Add',
@@ -72,7 +73,10 @@ const manager = (recordId: string, indent: string, name: string) => ({
   actionDate: '2020-01-01T10:00:00',
   entryDate: '2020-01-01T10:00:00',
   value: {
-    Manager: [{ RecordID: recordId, Person: { Indent: indent, IndentType: 'EGN', Name: name } }],
+    Manager: people.map(([indent, name], i) => ({
+      RecordID: String(i + 1),
+      Person: { Indent: indent, IndentType: 'EGN', Name: name },
+    })),
   },
 });
 
@@ -137,7 +141,7 @@ describe('storeDeed', () => {
       '111111111',
       {
         status: 'ok',
-        deed: partida('111111111', [manager('1', H1, 'ИМЕ ЕДНО'), manager('2', H2, 'ИМЕ ДВЕ')]),
+        deed: partida('111111111', [managers([H1, 'ИМЕ ЕДНО'], [H2, 'ИМЕ ДВЕ'])]),
       },
       '2026-09-10T02:00:00Z',
     );
@@ -161,14 +165,14 @@ describe('storeDeed', () => {
       '111111111',
       {
         status: 'ok',
-        deed: partida('111111111', [manager('1', H1, 'ИМЕ'), manager('2', H2, 'ДРУГ')]),
+        deed: partida('111111111', [managers([H1, 'ИМЕ'], [H2, 'ДРУГ'])]),
       },
       't1',
     );
     await storeDeed(
       db,
       '111111111',
-      { status: 'ok', deed: partida('111111111', [manager('2', H2, 'ДРУГ')]) },
+      { status: 'ok', deed: partida('111111111', [managers([H2, 'ДРУГ'])]) },
       't2',
     );
     expect(sqlite.prepare('SELECT subject_id FROM registry_roles').all()).toEqual([

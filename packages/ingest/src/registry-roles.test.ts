@@ -1,6 +1,7 @@
-// The partida-to-roles mapper, on records in the register's real shapes (fictional values): a role field is
-// entries of records, an Erase entry strikes records by their RecordID, and a record carries its holder as a
-// Person or a Subject — Indent, IndentType, Name, country, legal form — with the share beside it.
+// The partida-to-roles mapper, on entries in the register's real shape (fictional values). An Add entry lists
+// a field's holders in full, as they stand after it; an Erase entry carries no records and removes the whole
+// field. A record carries its holder as a Person or a Subject — Indent, IndentType, Name, country, legal form
+// — with the share beside it.
 import { describe, expect, it } from 'vitest';
 import type { RegistryDeed, RegistryField } from './registry';
 import { ROLE_FIELDS, rolesFromDeed } from './registry-roles';
@@ -15,61 +16,157 @@ const field = (over: Partial<RegistryField>): RegistryField => ({
   value: {},
   ...over,
 });
-const partida = (...fields: RegistryField[]): RegistryDeed => {
+/** An entry made on a given day; its number follows the day, as the register's do. */
+const on = (d: string, over: Partial<RegistryField>): RegistryField =>
+  field({
+    entryNumber: `${d.replaceAll('-', '')}090000`,
+    actionDate: `${d}T09:00:00`,
+    entryDate: `${d}T09:00:00`,
+    ...over,
+  });
+const partidaOf = (...subDeeds: { subUic: string; fields: RegistryField[] }[]): RegistryDeed => {
   const body = {
     uic: '101010101',
     name: 'ПРИМЕР ЕООД',
     status: 'N',
     guid: 'g',
     legalForm: 'EOOD',
-    subDeeds: [{ subUic: '0014', subUicType: 'MainCircumstances', status: 'A', fields }],
+    subDeeds: subDeeds.map((s) => ({
+      subUic: s.subUic,
+      subUicType: 'MainCircumstances',
+      status: 'A',
+      fields: s.fields,
+    })),
   };
   return { deed: body, deedActualState: body };
 };
+const partida = (...fields: RegistryField[]) => partidaOf({ subUic: '0000', fields });
 // The register's person hash is 64 hex characters.
 const hash = (c: string) => c.repeat(64).slice(0, 64);
 const person = (c: string, name: string) => ({ Indent: hash(c), IndentType: 'EGN', Name: name });
+const managers = (...people: [c: string, name: string, recordId?: string][]) => ({
+  Manager: people.map(([c, name, recordId], i) => ({
+    RecordID: recordId ?? String(i + 1),
+    GroupID: '1',
+    Person: person(c, name),
+  })),
+});
 
 describe('rolesFromDeed', () => {
-  it('reads a manager added by one entry and struck off by a later one', () => {
+  it('ends a role at the first later entry that no longer lists the holder, whatever its record id', () => {
     const { roles, persons } = rolesFromDeed(
       '101010101',
       partida(
-        field({
-          value: { Manager: [{ RecordID: '6477', GroupID: '1', Person: person('a', 'ИМЕ ЕДНО') }] },
-        }),
-        field({
-          operation: 'Erase',
-          entryNumber: '20150601090000',
-          entryDate: '2015-06-01T09:00:00',
-          value: { Manager: [{ RecordID: '6477', GroupID: '1' }] },
-        }),
-        field({
-          entryNumber: '20150601090000',
-          entryDate: '2015-06-01T09:00:00',
-          value: { Manager: [{ RecordID: '9001', GroupID: '2', Person: person('b', 'ИМЕ ДВЕ') }] },
-        }),
+        on('2008-01-03', { value: managers(['a', 'ИМЕ ЕДНО', '10']) }),
+        // The first stays — under a new record id — and a second joins; the entry lists both.
+        on('2015-06-01', { value: managers(['a', 'ИМЕ ЕДНО', '31'], ['b', 'ИМЕ ДВЕ', '32']) }),
+        on('2018-02-20', { value: managers(['b', 'ИМЕ ДВЕ', '32']) }),
       ),
     );
-    expect(roles).toEqual([
-      expect.objectContaining({
-        recordId: '6477',
-        role: 'manager',
-        subjectKind: 'person',
-        subjectId: hash('a'),
-        addedOn: '2008-01-03',
-        removedOn: '2015-06-01',
-      }),
-      expect.objectContaining({
-        recordId: '9001',
-        subjectId: hash('b'),
-        addedOn: '2015-06-01',
-        removedOn: null,
-      }),
+    expect(roles.map((r) => [r.subjectId, r.addedOn, r.removedOn])).toEqual([
+      [hash('a'), '2008-01-03', '2018-02-20'],
+      [hash('b'), '2015-06-01', null],
     ]);
+    expect(roles[0]).toMatchObject({
+      subUic: '0000',
+      fieldIdent: '00070',
+      role: 'manager',
+      subjectKind: 'person',
+      entryNumber: '20080103090000',
+    });
     expect(persons).toEqual([
       { indent: hash('a'), name: 'ИМЕ ЕДНО', indentType: 'EGN' },
       { indent: hash('b'), name: 'ИМЕ ДВЕ', indentType: 'EGN' },
+    ]);
+  });
+
+  it('ends every role of a field at an Erase, which carries no records, and opens a new one for a holder who returns', () => {
+    const partners = (...cs: string[]) => ({
+      Partner: cs.map((c, i) => ({
+        RecordID: String(i + 1),
+        share: '100',
+        Subject: person(c, `СЪДРУЖНИК ${c}`),
+      })),
+    });
+    const { roles } = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2010-01-01', { fieldIdent: '00190', element: 'Partners', value: partners('1', '2') }),
+        on('2012-05-05', {
+          fieldIdent: '00190',
+          element: 'Partners',
+          operation: 'Erase',
+          value: '',
+        }),
+        on('2014-09-09', { fieldIdent: '00190', element: 'Partners', value: partners('2') }),
+      ),
+    );
+    expect(roles.map((r) => [r.subjectId, r.addedOn, r.removedOn])).toEqual([
+      [hash('1'), '2010-01-01', '2012-05-05'],
+      [hash('2'), '2010-01-01', '2012-05-05'],
+      [hash('2'), '2014-09-09', null],
+    ]);
+  });
+
+  it('keeps the entry that added a holder who stays, and what the latest entry says of them', () => {
+    const partner = (share: string, name: string) => ({
+      Partner: [{ RecordID: '1', share, currency: 'BGN', Subject: person('3', name) }],
+    });
+    const { roles, persons } = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2011-01-01', { fieldIdent: '00190', value: partner('5000', 'ИМЕ ПО СТАРОМУ') }),
+        on('2016-01-01', { fieldIdent: '00190', value: partner('7000', 'ИМЕ ПО НОВОМУ') }),
+      ),
+    );
+    expect(roles).toHaveLength(1);
+    expect(roles[0]).toMatchObject({
+      addedOn: '2011-01-01',
+      entryNumber: '20110101090000',
+      removedOn: null,
+      share: '7000 BGN',
+      subjectName: 'ИМЕ ПО НОВОМУ',
+    });
+    expect(persons).toEqual([{ indent: hash('3'), name: 'ИМЕ ПО НОВОМУ', indentType: 'EGN' }]);
+  });
+
+  it('follows each field of each sub-partida on its own', () => {
+    const { roles } = rolesFromDeed(
+      '101010101',
+      partidaOf(
+        {
+          subUic: '0000',
+          fields: [
+            on('2010-01-01', { value: managers(['4', 'УПРАВИТЕЛ']) }),
+            on('2010-01-01', {
+              fieldIdent: '00190',
+              element: 'Partners',
+              value: { Partner: [{ RecordID: '1', Subject: person('4', 'УПРАВИТЕЛ') }] },
+            }),
+          ],
+        },
+        {
+          subUic: '0001',
+          fields: [
+            on('2012-01-01', {
+              fieldIdent: '00530',
+              element: 'BranchManagers',
+              value: { BranchManager: [{ RecordID: '1', Person: person('5', 'КЛОН') }] },
+            }),
+            on('2013-01-01', {
+              fieldIdent: '00530',
+              element: 'BranchManagers',
+              operation: 'Erase',
+              value: '',
+            }),
+          ],
+        },
+      ),
+    );
+    expect(roles.map((r) => [r.subUic, r.role, r.subjectId, r.removedOn])).toEqual([
+      ['0000', 'manager', hash('4'), null],
+      ['0000', 'partner', hash('4'), null],
+      ['0001', 'branch_manager', hash('5'), '2013-01-01'],
     ]);
   });
 
@@ -116,7 +213,7 @@ describe('rolesFromDeed', () => {
     expect(JSON.stringify(roles)).not.toContain('УЛИЦА');
   });
 
-  it('reads a partner’s share with its currency, and a single partner that comes as an object', () => {
+  it('reads a partner’s share with its currency, a single partner that comes as an object, and numbers as text', () => {
     const subject = (over: Record<string, unknown>) => ({
       Indent: hash('e'),
       IndentType: 'EGN',
@@ -219,12 +316,12 @@ describe('rolesFromDeed', () => {
           value: { RecordID: '6', $text: 'ПРИМЕР ЕООД' },
         }),
         field({
-          fieldIdent: '00070',
-          value: { Manager: [{ GroupID: '1', Person: person('6', 'БЕЗ ЗАПИС') }] },
+          fieldIdent: '00100',
+          value: { Representative: [{ GroupID: '1', Person: person('6', 'БЕЗ ЗАПИС') }] },
         }),
         field({
-          fieldIdent: '00070',
-          value: { Manager: [{ RecordID: '8', Person: { Indent: hash('7') } }] },
+          fieldIdent: '00410',
+          value: { Procurator: [{ RecordID: '8', Person: { Indent: hash('7') } }] },
         }),
       ),
     );

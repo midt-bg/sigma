@@ -1,17 +1,22 @@
 // A partida's people and owners, as registered (ADR-0041): who manages, represents, owns and controls the
-// company, each fact with the entry that added it and, once struck off, the entry that removed it.
+// company, each fact with the entry that added it and, once it stopped, the day of the entry that ended it.
 //
-// The register stores a role field as entries of records: an entry adds records (a manager, a partner, an
-// actual owner) and a later entry with operation Erase strikes records it names by their RecordID. A record
-// carries its holder as `Person` or `Subject` — the same shape either way: Indent, IndentType, Name, the
-// country, the legal form. What Indent holds depends on IndentType:
+// The register keeps a role field as a sequence of entries, per sub-partida (the company, or one of its
+// branches). An Add entry lists the field's holders in full, as they stand after it — not only the ones it
+// adds — so a holder's role ends at the first later entry of the field that leaves them out. An Erase entry
+// carries no records: it removes the whole field. The current state is the last entry of each field.
+//
+// A record carries its holder as `Person` or `Subject` — the same shape either way: Indent, IndentType, Name,
+// the country, the legal form. What Indent holds depends on IndentType:
 //
 //   EGN, LNCH, BirthDate   the register's salted hash of the personal number — a natural person
 //   UIC                    the entity's ЕИК
 //   Undefined, or empty    a raw string (a foreign number, a date, nothing) — identifies no one
 //
-// The share sits beside the holder: `share` (and `currency`) on a partner's record; on an actual owner's, the
-// size of each owned right in OwnedRightsDetails, or the OwnedRights text.
+// A holder is followed from entry to entry by that identity, not by the record's RecordID, which the register
+// does not always keep for a holder who stays. The share sits beside the holder: `share` (and `currency`) on a
+// partner's record; on an actual owner's, the size of each owned right in OwnedRightsDetails, or the
+// OwnedRights text.
 import type { RegistryDeed, RegistryField } from './registry';
 
 export type RegistryRoleKind =
@@ -56,8 +61,9 @@ export const ROLE_FIELDS: Readonly<Record<string, RegistryRoleKind>> = {
 
 export interface RegistryRole {
   eik: string;
+  /** The sub-partida the field belongs to: the company itself, or one of its branches. */
+  subUic: string;
   fieldIdent: string;
-  recordId: string;
   role: RegistryRoleKind;
   subjectKind: 'person' | 'entity';
   /** The register's person identifier, or the entity's ЕИК — its name when it has none. */
@@ -65,8 +71,10 @@ export interface RegistryRole {
   subjectName: string;
   share: string | null;
   country: string | null;
+  /** The entry that added the holder to the field. */
   entryNumber: string;
   addedOn: string;
+  /** The day of the first later entry that left the holder out or erased the field; null while it stands. */
   removedOn: string | null;
 }
 
@@ -110,10 +118,14 @@ function holders(rec: Obj): Obj[] {
 // The holder as an identity. A person the register identifies by its hash is joinable across companies; a
 // person it does not (Undefined, empty) is known only inside this partida, so the id says so and nothing
 // joins on it. An entity is its ЕИК, or its name where it has none (a foreign company).
-function subjectOf(
-  eik: string,
-  holder: Obj,
-): { kind: 'person' | 'entity'; id: string; name: string; indentType: string | null } | null {
+interface Subject {
+  kind: 'person' | 'entity';
+  id: string;
+  name: string;
+  indentType: string | null;
+}
+
+function subjectOf(eik: string, holder: Obj): Subject | null {
   const name = str(holder.Name);
   if (!name) return null;
   const indent = str(holder.Indent);
@@ -153,54 +165,81 @@ function countryOf(rec: Obj, holder: Obj): string | null {
   return residence ?? str(holder.CountryName);
 }
 
+/** The holders an entry lists, by identity, each once, with the record each sits in. */
+function listed(
+  eik: string,
+  value: unknown,
+): Map<string, { subject: Subject; rec: Obj; holder: Obj }> {
+  const out = new Map<string, { subject: Subject; rec: Obj; holder: Obj }>();
+  for (const rec of records(value))
+    for (const holder of holders(rec)) {
+      const subject = subjectOf(eik, holder);
+      if (subject && !out.has(subject.id)) out.set(subject.id, { subject, rec, holder });
+    }
+  return out;
+}
+
+/** Oldest first, so each entry lands after the ones it follows. */
+const chronological = (a: RegistryField, b: RegistryField) =>
+  a.entryDate.localeCompare(b.entryDate) || a.entryNumber.localeCompare(b.entryNumber);
+
 /** Every role fact of a partida, from its full history, with the persons it names. */
 export function rolesFromDeed(
   eik: string,
   partida: RegistryDeed,
 ): { roles: RegistryRole[]; persons: RegistryPerson[] } {
-  const fields: RegistryField[] = partida.deed.subDeeds.flatMap((s) => s.fields);
-  const byKey = new Map<string, RegistryRole>();
+  const roles: RegistryRole[] = [];
   const persons = new Map<string, RegistryPerson>();
-  // Oldest first, so a later entry — a correction, an erase — lands after what it acts on.
-  const ordered = [...fields].sort(
-    (a, b) => a.entryDate.localeCompare(b.entryDate) || a.entryNumber.localeCompare(b.entryNumber),
-  );
-  for (const f of ordered) {
-    const role = ROLE_FIELDS[f.fieldIdent];
-    if (!role) continue;
-    for (const rec of records(f.value)) {
-      const recordId = str(rec.RecordID);
-      if (!recordId) continue;
-      if (f.operation === 'Erase') {
-        for (const r of byKey.values())
-          if (r.fieldIdent === f.fieldIdent && r.recordId === recordId && !r.removedOn)
-            r.removedOn = day(f.entryDate);
-        continue;
-      }
-      for (const holder of holders(rec)) {
-        const s = subjectOf(eik, holder);
-        if (!s) continue;
-        const key = `${f.fieldIdent}|${recordId}|${s.id}`;
-        if (!byKey.has(key))
-          byKey.set(key, {
-            eik,
-            fieldIdent: f.fieldIdent,
-            recordId,
-            role,
-            subjectKind: s.kind,
-            subjectId: s.id,
-            subjectName: s.name,
-            share: shareOf(rec),
-            country: countryOf(rec, holder),
-            entryNumber: f.entryNumber,
-            addedOn: day(f.entryDate),
-            removedOn: null,
-          });
-        // Only a person the register identifies by its hash is a person across companies.
-        if (s.kind === 'person' && !s.id.startsWith('local:'))
-          persons.set(s.id, { indent: s.id, name: s.name, indentType: s.indentType });
+  for (const sub of partida.deed.subDeeds) {
+    const byField = new Map<string, RegistryField[]>();
+    for (const f of sub.fields)
+      if (ROLE_FIELDS[f.fieldIdent])
+        byField.set(f.fieldIdent, [...(byField.get(f.fieldIdent) ?? []), f]);
+    for (const [fieldIdent, entries] of byField) {
+      const role = ROLE_FIELDS[fieldIdent]!;
+      // The holders the field lists as it stands, by identity.
+      const standing = new Map<string, RegistryRole>();
+      for (const f of [...entries].sort(chronological)) {
+        const on = day(f.entryDate);
+        const now = f.operation === 'Erase' ? new Map<string, never>() : listed(eik, f.value);
+        for (const [id, r] of standing)
+          if (!now.has(id)) {
+            r.removedOn = on;
+            standing.delete(id);
+          }
+        for (const [id, { subject, rec, holder }] of now) {
+          const share = shareOf(rec);
+          const country = countryOf(rec, holder);
+          const stays = standing.get(id);
+          if (stays) {
+            // Still listed: the role goes on, as the latest entry has it.
+            stays.subjectName = subject.name;
+            stays.share = share;
+            stays.country = country;
+          } else {
+            const added: RegistryRole = {
+              eik,
+              subUic: sub.subUic,
+              fieldIdent,
+              role,
+              subjectKind: subject.kind,
+              subjectId: id,
+              subjectName: subject.name,
+              share,
+              country,
+              entryNumber: f.entryNumber,
+              addedOn: on,
+              removedOn: null,
+            };
+            roles.push(added);
+            standing.set(id, added);
+          }
+          // Only a person the register identifies by its hash is a person across companies.
+          if (subject.kind === 'person' && !id.startsWith('local:'))
+            persons.set(id, { indent: id, name: subject.name, indentType: subject.indentType });
+        }
       }
     }
   }
-  return { roles: [...byKey.values()], persons: [...persons.values()] };
+  return { roles, persons: [...persons.values()] };
 }

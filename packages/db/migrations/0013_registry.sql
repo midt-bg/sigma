@@ -17,12 +17,12 @@ CREATE TABLE IF NOT EXISTS registry_persons (
   indent_type TEXT
 );
 
--- One registered fact: a person or an entity in a role at a company, from the entry that added it until the
--- entry that struck it off.
+-- One registered fact: a person or an entity in a role at a company, from the entry that added it to the field
+-- until the first later entry of the field that left it out, or erased the field.
 CREATE TABLE IF NOT EXISTS registry_roles (
   eik          TEXT NOT NULL,     -- the company
+  sub_uic      TEXT NOT NULL,     -- the sub-partida: the company itself, or one of its branches
   field_ident  TEXT NOT NULL,     -- the register field (00070 managers … 05500 actual owners)
-  record_id    TEXT NOT NULL,     -- the register's record within the field
   role         TEXT NOT NULL,
   subject_kind TEXT NOT NULL CHECK (subject_kind IN ('person', 'entity')),
   subject_id   TEXT NOT NULL,     -- the register's person identifier, or the entity's ЕИК / name
@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS registry_roles (
   country      TEXT,
   entry_number TEXT NOT NULL,     -- the registration that added it
   added_on     TEXT NOT NULL,
-  removed_on   TEXT,              -- the registration date that struck it off; NULL while it stands
-  PRIMARY KEY (eik, field_ident, record_id, subject_id)
+  removed_on   TEXT,              -- the day of the registration that ended it; NULL while it stands
+  PRIMARY KEY (eik, sub_uic, field_ident, subject_id, entry_number)
 );
 CREATE INDEX IF NOT EXISTS idx_registry_roles_subject ON registry_roles (subject_id);
 
