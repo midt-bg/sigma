@@ -1,7 +1,7 @@
 // The registry layer's D1 side (ADR-0041): which partidas still need reading, the run's lease, and writing one
 // partida's facts. The register itself is read through @sigma/ingest's client; nothing here touches the net.
 import type { DeedLookup, RegistryPerson, RegistryRole } from '@sigma/ingest';
-import { rolesFromDeed } from '@sigma/ingest';
+import { deedFacts, rolesFromDeed } from '@sigma/ingest';
 
 export const REGISTRY_LEASE_TTL_MS = 30 * 60 * 1000;
 
@@ -144,9 +144,11 @@ const ROLE_INSERT = `INSERT INTO registry_roles (eik, sub_uic, field_ident, role
   country = excluded.country, added_on = excluded.added_on, removed_on = excluded.removed_on`;
 const PERSON_UPSERT = `INSERT INTO registry_persons (indent, name, indent_type) VALUES (?1, ?2, ?3)
   ON CONFLICT(indent) DO UPDATE SET name = excluded.name, indent_type = excluded.indent_type`;
-const DEED_UPSERT = `INSERT INTO registry_deeds (eik, name, legal_form, status, outcome, fetched_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(eik) DO UPDATE SET name = excluded.name,
-  legal_form = excluded.legal_form, status = excluded.status, outcome = excluded.outcome, fetched_at = excluded.fetched_at`;
+const DEED_UPSERT = `INSERT INTO registry_deeds (eik, name, legal_form, status, seat_settlement, seat_entry_on,
+  owners_entry_on, outcome, fetched_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(eik) DO UPDATE SET
+  name = excluded.name, legal_form = excluded.legal_form, status = excluded.status,
+  seat_settlement = excluded.seat_settlement, seat_entry_on = excluded.seat_entry_on,
+  owners_entry_on = excluded.owners_entry_on, outcome = excluded.outcome, fetched_at = excluded.fetched_at`;
 
 /** Replace one partida's facts with what the register says now, in one batch, and take it off the queue. */
 export async function storeDeed(
@@ -163,8 +165,21 @@ export async function storeDeed(
   if (lookup.status === 'ok') {
     ({ roles, persons } = rolesFromDeed(eik, lookup.deed));
     const d = lookup.deed.deed;
+    const f = deedFacts(lookup.deed);
     statements.push(
-      db.prepare(DEED_UPSERT).bind(eik, d.name, d.legalForm, d.status, 'ok', fetchedAt),
+      db
+        .prepare(DEED_UPSERT)
+        .bind(
+          eik,
+          d.name,
+          d.legalForm,
+          d.status,
+          f.seatSettlement,
+          f.seatEntryOn,
+          f.ownersEntryOn,
+          'ok',
+          fetchedAt,
+        ),
     );
     for (const p of persons)
       statements.push(db.prepare(PERSON_UPSERT).bind(p.indent, p.name, p.indentType));
@@ -188,7 +203,9 @@ export async function storeDeed(
           ),
       );
   } else {
-    statements.push(db.prepare(DEED_UPSERT).bind(eik, null, null, null, 'absent', fetchedAt));
+    statements.push(
+      db.prepare(DEED_UPSERT).bind(eik, null, null, null, null, null, null, 'absent', fetchedAt),
+    );
   }
   statements.push(db.prepare('DELETE FROM registry_queue WHERE eik = ?').bind(eik));
   await db.batch(statements);

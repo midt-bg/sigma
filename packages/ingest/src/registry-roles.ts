@@ -243,3 +243,52 @@ export function rolesFromDeed(
   }
   return { roles, persons: [...persons.values()] };
 }
+
+/** The fields that record who owns the company: its partners, its sole owner, the trader himself. */
+export const OWNERSHIP_FIELDS: readonly string[] = [
+  '00180',
+  '00190',
+  '00200',
+  '00210',
+  '00230',
+  '00231',
+];
+/** The field that records its managers. */
+export const MANAGER_FIELD = '00070';
+/** The registered seat. */
+const SEAT_FIELD = '00050';
+
+/** What the evidence for a declared stake reads from a partida besides its people. */
+export interface RegistryDeedFacts {
+  /** The settlement of the registered seat, as registered („гр. Варна") — nothing else of the address. */
+  seatSettlement: string | null;
+  /** The day of the entry that registered the seat as it stands. */
+  seatEntryOn: string | null;
+  /** The day of the latest entry across the ownership fields that stand. */
+  ownersEntryOn: string | null;
+}
+
+/** The seat, and the date of the ownership record, as they stand: the last entry of each field decides. */
+export function deedFacts(partida: RegistryDeed): RegistryDeedFacts {
+  const facts: RegistryDeedFacts = { seatSettlement: null, seatEntryOn: null, ownersEntryOn: null };
+  for (const sub of partida.deed.subDeeds) {
+    const last = new Map<string, RegistryField>();
+    for (const f of sub.fields) {
+      const prev = last.get(f.fieldIdent);
+      if (!prev || chronological(prev, f) < 0) last.set(f.fieldIdent, f);
+    }
+    for (const [ident, f] of last) {
+      if (f.operation === 'Erase') continue;
+      if (ident === SEAT_FIELD && sub.subUicType === 'MainCircumstances') {
+        const address = isObj(f.value) && isObj(f.value.Address) ? f.value.Address : null;
+        facts.seatSettlement = address ? str(address.Settlement) : null;
+        facts.seatEntryOn = day(f.entryDate);
+      }
+      if (OWNERSHIP_FIELDS.includes(ident)) {
+        const on = day(f.entryDate);
+        if (!facts.ownersEntryOn || on > facts.ownersEntryOn) facts.ownersEntryOn = on;
+      }
+    }
+  }
+  return facts;
+}

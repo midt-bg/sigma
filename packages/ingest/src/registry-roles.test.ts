@@ -4,7 +4,7 @@
 // — with the share beside it.
 import { describe, expect, it } from 'vitest';
 import type { RegistryDeed, RegistryField } from './registry';
-import { ROLE_FIELDS, rolesFromDeed } from './registry-roles';
+import { ROLE_FIELDS, deedFacts, rolesFromDeed } from './registry-roles';
 
 const field = (over: Partial<RegistryField>): RegistryField => ({
   fieldIdent: '00070',
@@ -376,5 +376,70 @@ describe('rolesFromDeed', () => {
   it('maps every role field it knows to a role', () => {
     expect(ROLE_FIELDS['05500']).toBe('beneficial_owner');
     expect(Object.values(ROLE_FIELDS).length).toBeGreaterThan(15);
+  });
+});
+
+describe('deedFacts', () => {
+  const seat = (d: string, settlement: string, over: Partial<RegistryField> = {}) =>
+    on(d, {
+      fieldIdent: '00050',
+      element: 'Seat',
+      value: {
+        RecordID: '1',
+        Address: {
+          Country: 'БЪЛГАРИЯ',
+          Settlement: settlement,
+          Street: 'ул. ТАЙНА',
+          StreetNumber: '7',
+        },
+        Contacts: { Phone: '02/000' },
+      },
+      ...over,
+    });
+
+  it('reads the seat as it stands — the settlement and the day it was registered, nothing else of the address', () => {
+    const f = deedFacts(partida(seat('2008-02-06', 'гр. Варна'), seat('2013-05-23', 'гр. София')));
+    expect(f).toMatchObject({ seatSettlement: 'гр. София', seatEntryOn: '2013-05-23' });
+    expect(JSON.stringify(f)).not.toContain('ТАЙНА');
+  });
+
+  it('knows no seat once the field is erased, and none from a branch', () => {
+    const erased = deedFacts(
+      partida(
+        seat('2008-02-06', 'гр. Варна'),
+        seat('2010-01-01', '', { operation: 'Erase', value: '' }),
+      ),
+    );
+    expect(erased).toMatchObject({ seatSettlement: null, seatEntryOn: null });
+    const branch = partida(seat('2008-02-06', 'гр. Варна'));
+    branch.deed.subDeeds[0]!.subUicType = 'B2_Branch';
+    expect(deedFacts(branch).seatSettlement).toBeNull();
+  });
+
+  it('dates the ownership record by the latest entry of the ownership fields that stand', () => {
+    const partner = { Partner: [{ RecordID: '1', Subject: person('1', 'СЪДРУЖНИК') }] };
+    const f = deedFacts(
+      partida(
+        on('2010-01-01', { fieldIdent: '00190', value: partner }),
+        on('2016-03-03', { fieldIdent: '00190', value: partner }),
+        on('2012-02-02', {
+          fieldIdent: '00230',
+          value: { RecordID: '2', Subject: person('2', 'СОБСТВЕНИК') },
+        }),
+        // An erased field stands for nothing, however late its erasure.
+        on('2018-04-04', { fieldIdent: '00230', operation: 'Erase', value: '' }),
+        // Managers do not date the ownership record.
+        on('2020-01-01', { value: managers(['3', 'УПРАВИТЕЛ']) }),
+      ),
+    );
+    expect(f.ownersEntryOn).toBe('2016-03-03');
+  });
+
+  it('knows nothing of a partida that has neither', () => {
+    expect(deedFacts(partida())).toEqual({
+      seatSettlement: null,
+      seatEntryOn: null,
+      ownersEntryOn: null,
+    });
   });
 });

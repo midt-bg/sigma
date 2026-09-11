@@ -57,7 +57,7 @@ const partida = (
     status: 'N',
     guid: 'g',
     legalForm: 'EOOD',
-    subDeeds: [{ subUic: '0014', subUicType: 'Main', status: 'A', fields }],
+    subDeeds: [{ subUic: '0014', subUicType: 'MainCircumstances', status: 'A', fields }],
   };
   return { deed: body, deedActualState: body };
 };
@@ -133,6 +133,49 @@ describe('the queue', () => {
 });
 
 describe('storeDeed', () => {
+  it('keeps the settlement of the seat and the date of the ownership record — never the street', async () => {
+    const { db, sqlite } = served();
+    const entry = (fieldIdent: string, element: string, on: string, value: unknown) => ({
+      fieldIdent,
+      element,
+      operation: 'Add',
+      entryNumber: `${on.replaceAll('-', '')}100000`,
+      actionDate: `${on}T10:00:00`,
+      entryDate: `${on}T10:00:00`,
+      value,
+    });
+    await storeDeed(
+      db,
+      '111111111',
+      {
+        status: 'ok',
+        deed: partida('111111111', [
+          entry('00050', 'Seat', '2021-02-19', {
+            RecordID: '1',
+            Address: { Settlement: 'гр. София', Street: 'бул. Цар Освободител', StreetNumber: '6' },
+          }),
+          entry('00230', 'SoleCapitalOwner', '2015-01-01', {
+            RecordID: '2',
+            Subject: { Indent: H1, IndentType: 'EGN', Name: 'ИМЕ' },
+          }),
+        ]),
+      },
+      't1',
+    );
+    expect(
+      sqlite
+        .prepare('SELECT seat_settlement, seat_entry_on, owners_entry_on FROM registry_deeds')
+        .get(),
+    ).toEqual({
+      seat_settlement: 'гр. София',
+      seat_entry_on: '2021-02-19',
+      owners_entry_on: '2015-01-01',
+    });
+    expect(JSON.stringify(sqlite.prepare('SELECT * FROM registry_deeds').all())).not.toContain(
+      'Цар',
+    );
+  });
+
   it('writes the partida, its roles and the persons they name, and takes it off the queue', async () => {
     const { db, sqlite } = served();
     await queueNewWinners(db, '2026-09-10T00:00:00Z', 10);
