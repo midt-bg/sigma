@@ -3,8 +3,15 @@
 //
 // The register stores a role field as entries of records: an entry adds records (a manager, a partner, an
 // actual owner) and a later entry with operation Erase strikes records it names by their RecordID. A record
-// carries the holder — a natural person (`Person`: the register's salted identifier, its type, the name) or a
-// subject (`Subject`: a company or a person) — and, in some fields, the share and the country beside it.
+// carries its holder as `Person` or `Subject` — the same shape either way: Indent, IndentType, Name, the
+// country, the legal form. What Indent holds depends on IndentType:
+//
+//   EGN, LNCH, BirthDate   the register's salted hash of the personal number — a natural person
+//   UIC                    the entity's ЕИК
+//   Undefined, or empty    a raw string (a foreign number, a date, nothing) — identifies no one
+//
+// The share sits beside the holder: `share` (and `currency`) on a partner's record; on an actual owner's, the
+// size of each owned right in OwnedRightsDetails, or the OwnedRights text.
 import type { RegistryDeed, RegistryField } from './registry';
 
 export type RegistryRoleKind =
@@ -74,13 +81,17 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const str = (v: unknown): string | null =>
   typeof v === 'string' && v.trim()
     ? v.trim()
-    : isObj(v) && typeof v.$text === 'string' && v.$text.trim()
-      ? v.$text.trim()
-      : null;
+    : typeof v === 'number' && Number.isFinite(v)
+      ? String(v)
+      : isObj(v) && typeof v.$text === 'string' && v.$text.trim()
+        ? v.$text.trim()
+        : null;
 const day = (s: string) => s.slice(0, 10);
 
-// Natural persons are identified by the register's salted personal-number hash; anything else is an entity.
-const PERSON_INDENT = new Set(['EGN', 'LNCH', 'LNC', 'PERSON']);
+// A natural person is identified by the register's salted hash of the personal number; 64 hex characters.
+const PERSON_INDENT = new Set(['EGN', 'LNCH', 'BIRTHDATE']);
+const HASH = /^[0-9a-f]{64}$/i;
+const EIK = /^\d{9}(\d{4})?$/;
 
 /** The records of one field entry: the value itself when it is a record, else every record under it. */
 function records(value: unknown): Obj[] {
@@ -90,43 +101,56 @@ function records(value: unknown): Obj[] {
   return Object.values(value).flatMap(records);
 }
 
-/** The holders a record names — `Person` or `Subject`, nested however deep — with what sits beside them. */
-function holders(rec: Obj): { holder: Obj; beside: Obj }[] {
-  const out: { holder: Obj; beside: Obj }[] = [];
-  const walk = (node: Obj) => {
-    for (const [k, v] of Object.entries(node)) {
-      const items = Array.isArray(v) ? v : [v];
-      for (const item of items) {
-        if (!isObj(item)) continue;
-        if (k === 'Person' || k === 'Subject') out.push({ holder: item, beside: node });
-        else walk(item);
-      }
-    }
-  };
-  walk(rec);
-  return out;
+// The holders a record names: its own `Person` or `Subject`, one or several. A person nested deeper — one
+// who represents the holder, say — is not the holder.
+function holders(rec: Obj): Obj[] {
+  return [rec.Person, rec.Subject].flatMap((v) => (Array.isArray(v) ? v : [v])).filter(isObj);
 }
 
-const pick = (o: Obj, re: RegExp): string | null => {
-  for (const [k, v] of Object.entries(o))
-    if (re.test(k)) {
-      const s = str(v);
-      if (s) return s;
-    }
-  return null;
-};
-
+// The holder as an identity. A person the register identifies by its hash is joinable across companies; a
+// person it does not (Undefined, empty) is known only inside this partida, so the id says so and nothing
+// joins on it. An entity is its ЕИК, or its name where it has none (a foreign company).
 function subjectOf(
+  eik: string,
   holder: Obj,
 ): { kind: 'person' | 'entity'; id: string; name: string; indentType: string | null } | null {
-  const name = str(holder.Name) ?? str(holder.CompanyName) ?? str(holder.FullName);
+  const name = str(holder.Name);
   if (!name) return null;
   const indent = str(holder.Indent);
   const indentType = str(holder.IndentType);
-  if (indent && (!indentType || PERSON_INDENT.has(indentType.toUpperCase())))
-    return { kind: 'person', id: indent, name, indentType };
-  const uic = str(holder.UIC) ?? str(holder.Bulstat) ?? (indent && indentType ? indent : null);
-  return { kind: 'entity', id: uic ?? `name:${name.toUpperCase()}`, name, indentType };
+  const type = indentType?.toUpperCase() ?? '';
+  if (indent && PERSON_INDENT.has(type) && HASH.test(indent))
+    return { kind: 'person', id: indent.toLowerCase(), name, indentType };
+  if (indent && type === 'UIC' && EIK.test(indent))
+    return { kind: 'entity', id: indent, name, indentType };
+  const company =
+    str(holder.LegalForm) ?? str(holder.ForeignLegalFormCode) ?? str(holder.RegistrationNumber);
+  if (company || type === 'UIC')
+    return { kind: 'entity', id: `name:${name.toUpperCase()}`, name, indentType };
+  return { kind: 'person', id: `local:${eik}:${name.toUpperCase()}`, name, indentType };
+}
+
+/** The share as registered: a partner's `share` (with its currency), else an actual owner's right sizes. */
+function shareOf(rec: Obj): string | null {
+  const share = str(rec.share);
+  if (share) {
+    const currency = str(rec.currency);
+    return currency ? `${share} ${currency}` : share;
+  }
+  const details = isObj(rec.OwnedRightsDetails)
+    ? rec.OwnedRightsDetails.OwnedRightsDetail
+    : undefined;
+  const sizes = (Array.isArray(details) ? details : details ? [details] : [])
+    .map((d) => (isObj(d) ? str(d.OwnedRightSize) : null))
+    .filter((v): v is string => Boolean(v));
+  if (sizes.length) return sizes.join('; ');
+  return str(rec.OwnedRights);
+}
+
+/** The country: where an actual owner resides, else the holder's own country. */
+function countryOf(rec: Obj, holder: Obj): string | null {
+  const residence = isObj(rec.CountryOfResidence) ? str(rec.CountryOfResidence.Country) : null;
+  return residence ?? str(holder.CountryName);
 }
 
 /** Every role fact of a partida, from its full history, with the persons it names. */
@@ -153,8 +177,8 @@ export function rolesFromDeed(
             r.removedOn = day(f.entryDate);
         continue;
       }
-      for (const { holder, beside } of holders(rec)) {
-        const s = subjectOf(holder);
+      for (const holder of holders(rec)) {
+        const s = subjectOf(eik, holder);
         if (!s) continue;
         const key = `${f.fieldIdent}|${recordId}|${s.id}`;
         if (!byKey.has(key))
@@ -166,13 +190,14 @@ export function rolesFromDeed(
             subjectKind: s.kind,
             subjectId: s.id,
             subjectName: s.name,
-            share: pick(beside, /share|percent|quota|part/i),
-            country: pick(beside, /country/i) ?? pick(holder, /country/i),
+            share: shareOf(rec),
+            country: countryOf(rec, holder),
             entryNumber: f.entryNumber,
             addedOn: day(f.entryDate),
             removedOn: null,
           });
-        if (s.kind === 'person')
+        // Only a person the register identifies by its hash is a person across companies.
+        if (s.kind === 'person' && !s.id.startsWith('local:'))
           persons.set(s.id, { indent: s.id, name: s.name, indentType: s.indentType });
       }
     }

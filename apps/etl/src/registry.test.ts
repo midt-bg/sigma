@@ -61,6 +61,9 @@ const partida = (
   };
   return { deed: body, deedActualState: body };
 };
+// The register identifies a person by a 64-character hash.
+const H1 = '1'.repeat(64);
+const H2 = '2'.repeat(64);
 const manager = (recordId: string, indent: string, name: string) => ({
   fieldIdent: '00070',
   element: 'Managers',
@@ -134,7 +137,7 @@ describe('storeDeed', () => {
       '111111111',
       {
         status: 'ok',
-        deed: partida('111111111', [manager('1', 'h1', 'ИМЕ ЕДНО'), manager('2', 'h2', 'ИМЕ ДВЕ')]),
+        deed: partida('111111111', [manager('1', H1, 'ИМЕ ЕДНО'), manager('2', H2, 'ИМЕ ДВЕ')]),
       },
       '2026-09-10T02:00:00Z',
     );
@@ -145,8 +148,8 @@ describe('storeDeed', () => {
     expect(
       sqlite.prepare('SELECT subject_id, role FROM registry_roles ORDER BY subject_id').all(),
     ).toEqual([
-      { subject_id: 'h1', role: 'manager' },
-      { subject_id: 'h2', role: 'manager' },
+      { subject_id: H1, role: 'manager' },
+      { subject_id: H2, role: 'manager' },
     ]);
     expect(await nextQueued(db, 10)).toEqual(['222222222']);
   });
@@ -158,18 +161,18 @@ describe('storeDeed', () => {
       '111111111',
       {
         status: 'ok',
-        deed: partida('111111111', [manager('1', 'h1', 'ИМЕ'), manager('2', 'h2', 'ДРУГ')]),
+        deed: partida('111111111', [manager('1', H1, 'ИМЕ'), manager('2', H2, 'ДРУГ')]),
       },
       't1',
     );
     await storeDeed(
       db,
       '111111111',
-      { status: 'ok', deed: partida('111111111', [manager('2', 'h2', 'ДРУГ')]) },
+      { status: 'ok', deed: partida('111111111', [manager('2', H2, 'ДРУГ')]) },
       't2',
     );
     expect(sqlite.prepare('SELECT subject_id FROM registry_roles').all()).toEqual([
-      { subject_id: 'h2' },
+      { subject_id: H2 },
     ]);
     await storeDeed(db, '111111111', { status: 'absent' }, 't3');
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM registry_roles').get()).toEqual({ n: 0 });
