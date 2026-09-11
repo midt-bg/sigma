@@ -476,18 +476,19 @@ export interface NetworkEdge {
   contracts: number;
 }
 
-/** How two companies are tied (`company_links`). Deliberately NOT a person node: a shared
- *  office-holder is drawn as a tie between the two COMPANIES and points at /conflicts, where the name is
- *  already published under the LIA — nothing here puts a personal name on an indexed page. */
-export type CompanyTieKind = 'consortium' | 'subcontract' | 'declared_stake' | 'money';
+/** How two entities are tied. Company ties come from `company_links`; a shared office-holder
+ *  (declared_stake) is drawn as a tie between the two COMPANIES and points at /conflicts, where the name is
+ *  published under its own rules. A `role` tie is a role the Trade Register records: its holder — a person
+ *  node, or a company — holds it at the company it points to (ADR-0039). */
+export type CompanyTieKind = 'consortium' | 'subcontract' | 'declared_stake' | 'money' | 'role';
 
 export interface CompanyTieNode {
-  id: string; // domain id ('eik:ЕИК' | 'name:…' | 'auth:ЕИК' for a paying institution)
-  kind: 'company' | 'authority';
+  id: string; // domain id ('eik:ЕИК' | 'name:…' | 'auth:ЕИК' for a paying institution | 'rp:…' for a person)
+  kind: 'company' | 'authority' | 'person';
   label: string;
-  slug: string; // /companies/:slug | /authorities/:slug
-  valueEur: number; // the entity's total procurement — node size
-  hop: number; // 0 centre, 1 tied directly
+  slug: string; // /companies/:slug | /authorities/:slug | /persons/:slug
+  valueEur: number; // the entity's total procurement — node size; 0 for a person
+  hop: number; // 0 centre, 1 tied directly, 2 tied through a node of hop 1
   /** Set when the entity has published declared-interest links; the surface offers the /conflicts page. */
   conflictsHref: string | null;
 }
@@ -496,11 +497,15 @@ export interface CompanyTieEdge {
   from: string; // node id
   to: string; // node id
   kind: CompanyTieKind;
-  directed: boolean; // subcontract: from = prime, to = subcontractor
-  weightEur: number; // 0 for declared_stake — that tie is not monetary and must not be sized by money
-  occurrences: number; // shared consortia / contracts / officials
+  directed: boolean; // subcontract: from = prime, to = subcontractor; role between companies: holder → company
+  weightEur: number; // 0 for declared_stake and role — those ties are not monetary and must not be sized by money
+  occurrences: number; // shared consortia / contracts / officials; roles held
   /** For a declared_stake tie: where the reader can see the named, already-published basis. */
   href: string | null;
+  /** For a role tie: the roles `from` holds at `to`, each once, most senior first. */
+  roles?: RegistryRoleKind[];
+  /** For a role tie: whether any of those roles still stands (false: every one was struck off). */
+  current?: boolean;
 }
 
 /** The tie network around ONE company: who it is connected to, and how. */
@@ -510,6 +515,80 @@ export interface CompanyTieNetwork {
   edges: CompanyTieEdge[];
   /** Ties that exist but did not fit the drawn set, so the surface can say so honestly. */
   omitted: number;
+}
+
+// ---- Trade Register roles (ADR-0039, ADR-0041) --------------------------------------------------------------
+
+/** A role the Trade Register records at a company. */
+export type RegistryRoleKind =
+  | 'manager'
+  | 'representative'
+  | 'chair'
+  | 'board_of_directors'
+  | 'management_board'
+  | 'supervisory_board'
+  | 'controlling_board'
+  | 'partner'
+  | 'sole_owner'
+  | 'trader'
+  | 'procurator'
+  | 'branch_manager'
+  | 'liquidator'
+  | 'trustee'
+  | 'beneficial_owner';
+
+/** Who holds a role: a natural person or a company, with their page here where there is one. */
+export interface RoleHolder {
+  kind: 'person' | 'entity';
+  name: string;
+  href: string | null;
+  /** A company's ЕИК, where the register gives one. Never set for a person. */
+  eik: string | null;
+  /** A company's country, where the register gives one. Never set for a person. */
+  country: string | null;
+}
+
+/** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */
+export interface CompanyRole {
+  holder: RoleHolder;
+  role: RegistryRoleKind;
+  /** As registered, where the field carries one (a partner's share). */
+  share: string | null;
+  addedOn: string;
+  removedOn: string | null;
+  entryNumber: string;
+}
+
+/** A company's management and ownership as the Trade Register records them. */
+export interface CompanyPeople {
+  /** Standing roles first, most senior first; then the struck-off ones, most recent first. */
+  roles: CompanyRole[];
+  /** The day the register was last read for this company; null when it has not been. */
+  asOf: string | null;
+}
+
+/** One role a person holds, or held, at one company. */
+export interface PersonRole {
+  company: { name: string; eik: string; href: string | null };
+  role: RegistryRoleKind;
+  share: string | null;
+  addedOn: string;
+  removedOn: string | null;
+  entryNumber: string;
+}
+
+/** A natural person the Trade Register records in a role at a company in the corpus. */
+export interface PersonProfile {
+  slug: string;
+  name: string;
+  roles: PersonRole[];
+  /** Distinct companies, and what they won by public procurement between them. */
+  companies: number;
+  wonEur: number;
+  /** The latest day the register was read for any of those companies. */
+  asOf: string | null;
+  /** The person at the centre, the companies around. */
+  network: CompanyTieNetwork;
 }
 
 export interface NetworkCenterOption {

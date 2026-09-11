@@ -62,6 +62,18 @@ export function personIdFromSlug(slug: string): string | null {
   }
 }
 
+/** A person the Trade Register identifies → `/persons/:slug` segment: the identifier the register publishes
+ *  for them in place of the personal number (a salted hash, 64 hex characters), the same on every read. */
+export function registryPersonSlug(indent: string): string {
+  return indent.toLowerCase();
+}
+
+/** `/persons/:slug` segment → the register's identifier, or null for anything that is not one. */
+export function registryPersonIdFromSlug(slug: string): string | null {
+  const id = slug.toLowerCase();
+  return /^[0-9a-f]{64}$/.test(id) ? id : null;
+}
+
 /** authority id (`auth:ЕИК`) → `/authorities/:eik` segment. */
 export function authoritySlug(authorityId: string): string {
   return authorityId.startsWith('auth:') ? authorityId.slice(5) : authorityId;

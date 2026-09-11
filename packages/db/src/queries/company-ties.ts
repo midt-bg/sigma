@@ -2,29 +2,51 @@
 //
 // The profile graph used to draw `flow_pairs` only: authority ⇄ winner, i.e. money and nothing else, with
 // no company↔company edge in it at all. The question a reader brings to a company profile is „who is this
-// company tied to", and three kinds of answer are already in the corpus:
+// company tied to", and four kinds of answer are in the corpus:
 //
 //   consortium     joint bidding — both are named members of the same обединение that won
 //   subcontract    one was recorded as the other's subcontractor
 //   declared_stake the same office-holder declared an interest in both
+//   role           a person, or a company, the Trade Register records in a role at the company (ADR-0039)
 //
 // plus the money layer (`flow_pairs`) kept as context: which institutions the money comes from.
 //
-// The tie edges come precomputed from `company_links` (see migration 0011 + precompute.sql §5b), so this
-// is two indexed reads and no string work per request.
+// The company ties come precomputed from `company_links` (see migration 0011 + precompute.sql §5b). The role
+// ties come from the registry layer (`registry_roles`, ADR-0041) by indexed reads: the centre's partida, then
+// the other partidas its people hold a role in.
 //
-// PRIVACY: a person is never a node and never named here. A shared official is drawn as an edge BETWEEN
-// the two companies, carrying only a link to /conflicts — the noindex surface where that name is already
-// published under the LIA. Nothing on the company profile (which IS indexed) gains a personal name.
-import type { CompanyTieEdge, CompanyTieNetwork, CompanyTieNode } from '@sigma/api-contract';
-import { cleanName, entityName } from '@sigma/shared';
+// A declared-stake office-holder is never a node: that tie is drawn between the two COMPANIES and links to
+// /conflicts, where the name is published under its own rules. The people drawn as nodes are the ones the
+// Trade Register records in a role, named as it names them.
+import type {
+  CompanyTieEdge,
+  CompanyTieNetwork,
+  CompanyTieNode,
+  RegistryRoleKind,
+} from '@sigma/api-contract';
+import { cleanName } from '@sigma/shared';
 import { SURFACED_OWNERSHIP } from './related-persons';
 import { authoritySlug, companySlug } from './identity';
+import {
+  joinablePerson,
+  partidaEik,
+  publicRole,
+  registryRead,
+  roleEdge,
+  roleRank,
+} from './registry';
+import { companyNode, personNode, personNodeId } from './tie-node';
 
 /** Tied companies drawn around the centre. Beyond this the ring stops being readable. */
 const MAX_TIES = 8;
 /** Paying institutions drawn as the money layer, when asked for. */
 const MAX_FUNDERS = 3;
+/** People drawn at the centre, the other companies they reach, and the centre's owners and holdings. */
+const MAX_PERSONS = 6;
+const MAX_VIA_PERSONS = 6;
+const MAX_HOLDINGS = 4;
+/** People of the centre whose other roles are looked up: a bound on the IN-list, well inside D1's binds. */
+const MAX_LOOKUP = 40;
 
 interface LinkRow {
   a_bidder_id: string;
@@ -96,26 +118,216 @@ const CENTER_SQL = `
   FROM bidders b LEFT JOIN company_totals ct ON ct.bidder_id = b.id
   WHERE b.id = ?1`;
 
-function companyNode(
-  id: string,
-  name: string,
-  kind: 'company' | 'consortium',
-  wonEur: number | null,
-  conflicts: number,
-  hop: number,
-): CompanyTieNode {
-  const slug = companySlug(id);
-  return {
-    id,
-    kind: 'company',
-    label: entityName(cleanName(name), kind),
-    slug,
-    valueEur: wonEur ?? 0,
-    hop,
-    // Only offered when the company actually has a published link — otherwise the reader is sent to a 404,
-    // and an empty page under a company's name is exactly what the conflicts surface refuses to render.
-    conflictsHref: conflicts > 0 ? `/conflicts/company/${slug}` : null,
-  };
+// ---- the registry layer -------------------------------------------------------------------------------------
+
+interface HolderRow {
+  indent: string;
+  name: string;
+  role: RegistryRoleKind;
+  removed_on: string | null;
+}
+
+interface SharedRow extends HolderRow {
+  eik: string;
+}
+
+interface ViaRow {
+  indent: string;
+  role: RegistryRoleKind;
+  removed_on: string | null;
+  bidder_id: string;
+  name: string;
+  kind: 'company' | 'consortium';
+  won_eur: number | null;
+  conflicts: number;
+}
+
+interface HoldingRow {
+  side: 'owner' | 'owned';
+  role: RegistryRoleKind;
+  removed_on: string | null;
+  bidder_id: string;
+  name: string;
+  kind: 'company' | 'consortium';
+  won_eur: number | null;
+  conflicts: number;
+}
+
+// The people the register records at the centre, by the name it last registered for them.
+const CENTRE_PEOPLE_SQL = `
+  SELECT r.subject_id AS indent, COALESCE(p.name, r.subject_name) AS name, r.role, r.removed_on
+  FROM registry_roles r LEFT JOIN registry_persons p ON p.indent = r.subject_id
+  WHERE r.eik = ?1 AND ${joinablePerson('r')} AND ${publicRole('r')}`;
+
+// The other companies in the corpus those people hold a role in.
+const viaPeopleSql = (n: number) => `
+  SELECT r.subject_id AS indent, r.role, r.removed_on, b.id AS bidder_id, b.name, b.kind, ct.won_eur,
+         ${surfacedConflicts('b.id')} AS conflicts
+  FROM registry_roles r
+  JOIN bidders b ON b.id = 'eik:' || r.eik
+  LEFT JOIN company_totals ct ON ct.bidder_id = b.id
+  WHERE r.subject_id IN (${Array.from({ length: n }, (_, i) => `?${i + 2}`).join(', ')})
+    AND r.subject_kind = 'person' AND r.eik <> ?1 AND ${publicRole('r')}`;
+
+// Companies in the corpus that hold a role at the centre — its owners, mostly — and those it holds one at.
+const HOLDINGS_SQL = `
+  SELECT 'owner' AS side, r.role, r.removed_on, b.id AS bidder_id, b.name, b.kind, ct.won_eur,
+         ${surfacedConflicts('b.id')} AS conflicts
+  FROM registry_roles r
+  JOIN bidders b ON b.id = 'eik:' || r.subject_id
+  LEFT JOIN company_totals ct ON ct.bidder_id = b.id
+  WHERE r.eik = ?1 AND r.subject_kind = 'entity' AND r.subject_id <> ?1 AND ${publicRole('r')}
+  UNION ALL
+  SELECT 'owned' AS side, r.role, r.removed_on, b.id AS bidder_id, b.name, b.kind, ct.won_eur,
+         ${surfacedConflicts('b.id')} AS conflicts
+  FROM registry_roles r
+  JOIN bidders b ON b.id = 'eik:' || r.eik
+  LEFT JOIN company_totals ct ON ct.bidder_id = b.id
+  WHERE r.subject_kind = 'entity' AND r.subject_id = ?1 AND r.eik <> ?1 AND ${publicRole('r')}`;
+
+/** What a layer adds to a network. */
+interface Layer {
+  nodes: CompanyTieNode[];
+  edges: CompanyTieEdge[];
+  omitted: number;
+}
+
+/** The roles one holder holds at one company, each once, and whether any still stands. */
+interface Held {
+  roles: RegistryRoleKind[];
+  current: boolean;
+}
+
+function hold(
+  into: Map<string, Held>,
+  key: string,
+  role: RegistryRoleKind,
+  removedOn: string | null,
+): void {
+  const h = into.get(key) ?? { roles: [], current: false };
+  if (!h.roles.includes(role)) h.roles.push(role);
+  h.current ||= removedOn === null;
+  into.set(key, h);
+}
+
+const seniority = (h: Held) => Math.min(...h.roles.map(roleRank));
+
+/** The registry layer around a company: its people, the companies they reach, its owners and holdings. */
+async function companyRegistryLayer(
+  db: D1Database,
+  centreId: string,
+  eik: string,
+  drawnIds: ReadonlySet<string>,
+): Promise<Layer> {
+  const [people, holdings] = await Promise.all([
+    db.prepare(CENTRE_PEOPLE_SQL).bind(eik).all<HolderRow>(),
+    db.prepare(HOLDINGS_SQL).bind(eik).all<HoldingRow>(),
+  ]);
+  const names = new Map<string, string>();
+  const atCentre = new Map<string, Held>();
+  for (const r of people.results) {
+    names.set(r.indent, r.name);
+    hold(atCentre, r.indent, r.role, r.removed_on);
+  }
+  // Standing people first, the more senior first: the lookup is bounded, and these are the ones to keep.
+  const standing = [...atCentre.keys()].sort((a, b) => {
+    const [x, y] = [atCentre.get(a)!, atCentre.get(b)!];
+    return (
+      Number(y.current) - Number(x.current) ||
+      seniority(x) - seniority(y) ||
+      names.get(a)!.localeCompare(names.get(b)!, 'bg')
+    );
+  });
+  const asked = standing.slice(0, MAX_LOOKUP);
+  const via = asked.length
+    ? (
+        await db
+          .prepare(viaPeopleSql(asked.length))
+          .bind(eik, ...asked)
+          .all<ViaRow>()
+      ).results
+    : [];
+
+  // A person who also holds a role at another company is what the graph is for: drawn first.
+  const reach = new Map<string, Set<string>>();
+  for (const v of via)
+    reach.set(v.indent, (reach.get(v.indent) ?? new Set<string>()).add(v.bidder_id));
+  const ranked = [...standing].sort(
+    (a, b) => (reach.get(b)?.size ?? 0) - (reach.get(a)?.size ?? 0),
+  );
+  const drawnPeople = ranked.slice(0, MAX_PERSONS);
+  const layer: Layer = { nodes: [], edges: [], omitted: ranked.length - drawnPeople.length };
+  for (const i of drawnPeople) {
+    const h = atCentre.get(i)!;
+    layer.nodes.push(personNode(i, names.get(i)!, 1));
+    layer.edges.push(roleEdge(personNodeId(i), centreId, h.roles, h.current, false));
+  }
+
+  // The other companies the drawn people hold a role in, the ones most of them share first.
+  const drawnSet = new Set(drawnPeople);
+  const reached = new Map<string, { row: ViaRow; held: Map<string, Held> }>();
+  for (const v of via) {
+    if (!drawnSet.has(v.indent)) continue;
+    const c = reached.get(v.bidder_id) ?? { row: v, held: new Map<string, Held>() };
+    hold(c.held, v.indent, v.role, v.removed_on);
+    reached.set(v.bidder_id, c);
+  }
+  const shown = new Set(drawnIds);
+  let added = 0;
+  const byShared = [...reached.values()].sort(
+    (a, b) =>
+      b.held.size - a.held.size ||
+      (b.row.won_eur ?? 0) - (a.row.won_eur ?? 0) ||
+      a.row.bidder_id.localeCompare(b.row.bidder_id),
+  );
+  for (const c of byShared) {
+    const id = c.row.bidder_id;
+    if (!shown.has(id)) {
+      if (added === MAX_VIA_PERSONS) {
+        layer.omitted++;
+        continue;
+      }
+      added++;
+      shown.add(id);
+      layer.nodes.push(companyNode(id, c.row.name, c.row.kind, c.row.won_eur, c.row.conflicts, 2));
+    }
+    for (const [i, h] of c.held)
+      layer.edges.push(roleEdge(personNodeId(i), id, h.roles, h.current, false));
+  }
+
+  // The companies that hold a role at the centre, and those it holds one at — standing ones first.
+  const rows = new Map<string, HoldingRow>();
+  const held = new Map<string, Held>();
+  for (const o of holdings.results) {
+    const key = `${o.side}|${o.bidder_id}`;
+    if (!rows.has(key)) rows.set(key, o);
+    hold(held, key, o.role, o.removed_on);
+  }
+  const byStanding = [...rows.keys()].sort(
+    (a, b) =>
+      Number(held.get(b)!.current) - Number(held.get(a)!.current) ||
+      (rows.get(b)!.won_eur ?? 0) - (rows.get(a)!.won_eur ?? 0) ||
+      a.localeCompare(b),
+  );
+  let holdingsAdded = 0;
+  for (const key of byStanding) {
+    const [o, h] = [rows.get(key)!, held.get(key)!];
+    if (!shown.has(o.bidder_id)) {
+      if (holdingsAdded === MAX_HOLDINGS) {
+        layer.omitted++;
+        continue;
+      }
+      holdingsAdded++;
+      shown.add(o.bidder_id);
+      layer.nodes.push(companyNode(o.bidder_id, o.name, o.kind, o.won_eur, o.conflicts, 1));
+    }
+    layer.edges.push(
+      o.side === 'owner'
+        ? roleEdge(o.bidder_id, centreId, h.roles, h.current, true)
+        : roleEdge(centreId, o.bidder_id, h.roles, h.current, true),
+    );
+  }
+  return layer;
 }
 
 export interface CompanyTieOptions {
@@ -196,6 +408,19 @@ export async function getCompanyTies(
       href: r.kind === 'declared_stake' ? `/conflicts/company/${companySlug(bidderId)}` : null,
     });
   }
+  let omitted = Math.max(0, ranked.length - drawn.size);
+
+  // The Trade Register layer: the centre's people, the companies they reach, its owners and holdings.
+  const eik = partidaEik(bidderId);
+  if (eik) {
+    const layer = await registryRead(() => companyRegistryLayer(db, bidderId, eik, seen), null);
+    if (layer) {
+      for (const n of layer.nodes) seen.add(n.id);
+      nodes.push(...layer.nodes);
+      edges.push(...layer.edges);
+      omitted += layer.omitted;
+    }
+  }
 
   if (opts.includeFunders) {
     const funders = await db.prepare(FUNDERS_SQL).bind(bidderId, MAX_FUNDERS).all<FunderRow>();
@@ -223,11 +448,13 @@ export async function getCompanyTies(
     }
   }
 
-  return { center, nodes, edges, omitted: Math.max(0, ranked.length - drawn.size) };
+  return { center, nodes, edges, omitted };
 }
 
 /** Suppliers drawn around an authority. Enough to show a cluster without becoming a hairball. */
 const MAX_SUPPLIERS = 9;
+/** People drawn between the suppliers. */
+const MAX_SHARED_PERSONS = 6;
 
 interface SupplierRow {
   bidder_id: string;
@@ -245,13 +472,80 @@ const SUPPLIERS_SQL = `
 
 const AUTHORITY_SQL = `SELECT name, spent_eur FROM authority_totals WHERE authority_id = ?1`;
 
+/** The registry layer between suppliers: people at two or more of them, and suppliers holding roles at others. */
+async function supplierRegistryLayer(
+  db: D1Database,
+  partidas: ReadonlyMap<string, string>,
+): Promise<Layer> {
+  const eiks = [...partidas.keys()];
+  const marks = eiks.map(() => '?').join(', ');
+  const [people, holdings] = await Promise.all([
+    db
+      .prepare(
+        `SELECT r.subject_id AS indent, COALESCE(p.name, r.subject_name) AS name, r.eik, r.role, r.removed_on
+           FROM registry_roles r LEFT JOIN registry_persons p ON p.indent = r.subject_id
+          WHERE r.eik IN (${marks}) AND ${joinablePerson('r')} AND ${publicRole('r')}`,
+      )
+      .bind(...eiks)
+      .all<SharedRow>(),
+    db
+      .prepare(
+        `SELECT r.eik, r.subject_id, r.role, r.removed_on
+           FROM registry_roles r
+          WHERE r.eik IN (${marks}) AND r.subject_kind = 'entity' AND r.subject_id IN (${marks})
+            AND r.subject_id <> r.eik AND ${publicRole('r')}`,
+      )
+      .bind(...eiks, ...eiks)
+      .all<{
+        eik: string;
+        subject_id: string;
+        role: RegistryRoleKind;
+        removed_on: string | null;
+      }>(),
+  ]);
+
+  const names = new Map<string, string>();
+  const byPerson = new Map<string, Map<string, Held>>();
+  for (const r of people.results) {
+    names.set(r.indent, r.name);
+    const at = byPerson.get(r.indent) ?? new Map<string, Held>();
+    hold(at, r.eik, r.role, r.removed_on);
+    byPerson.set(r.indent, at);
+  }
+  const standing = (i: string) => [...byPerson.get(i)!.values()].some((h) => h.current);
+  const shared = [...byPerson.keys()]
+    .filter((i) => byPerson.get(i)!.size >= 2)
+    .sort(
+      (a, b) =>
+        byPerson.get(b)!.size - byPerson.get(a)!.size ||
+        Number(standing(b)) - Number(standing(a)) ||
+        names.get(a)!.localeCompare(names.get(b)!, 'bg'),
+    );
+  const drawn = shared.slice(0, MAX_SHARED_PERSONS);
+  const layer: Layer = { nodes: [], edges: [], omitted: shared.length - drawn.length };
+  for (const i of drawn) {
+    layer.nodes.push(personNode(i, names.get(i)!, 2));
+    for (const [eik, h] of byPerson.get(i)!)
+      layer.edges.push(roleEdge(personNodeId(i), partidas.get(eik)!, h.roles, h.current, false));
+  }
+
+  const cross = new Map<string, Held>();
+  for (const r of holdings.results) hold(cross, `${r.subject_id}|${r.eik}`, r.role, r.removed_on);
+  for (const [key, h] of cross) {
+    const [holder, eik] = key.split('|') as [string, string];
+    layer.edges.push(roleEdge(partidas.get(holder)!, partidas.get(eik)!, h.roles, h.current, true));
+  }
+  return layer;
+}
+
 /**
  * „The biggest suppliers of this institution, and which of them are tied to each other" — the authority
  * half of the same question. The ring is the authority's top suppliers by spend; the edges
  * are the money that put them there PLUS every tie that exists between two of them.
  *
  * The interesting edge is the second kind: two of one body's largest suppliers who bid together, or
- * subcontract to each other, or share a declared interest. That is invisible on a leaderboard.
+ * subcontract to each other, share a declared interest, or share a manager or an owner. That is invisible
+ * on a leaderboard.
  */
 export async function getAuthoritySupplierTies(
   db: D1Database,
@@ -323,5 +617,22 @@ export async function getAuthoritySupplierTies(
     });
   }
 
-  return { center, nodes, edges, omitted: 0 };
+  // The Trade Register layer: people who hold a role at two or more of the drawn suppliers, and suppliers
+  // that hold a role at one another.
+  const partidas = new Map<string, string>();
+  for (const id of ids) {
+    const eik = partidaEik(id);
+    if (eik) partidas.set(eik, id);
+  }
+  let omitted = 0;
+  if (partidas.size >= 2) {
+    const layer = await registryRead(() => supplierRegistryLayer(db, partidas), null);
+    if (layer) {
+      nodes.push(...layer.nodes);
+      edges.push(...layer.edges);
+      omitted = layer.omitted;
+    }
+  }
+
+  return { center, nodes, edges, omitted };
 }

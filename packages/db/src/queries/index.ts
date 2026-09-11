@@ -22,3 +22,4 @@ export * from './search';
 export * from './details';
 export * from './sitemaps';
 export * from './related-persons';
+export * from './registry';

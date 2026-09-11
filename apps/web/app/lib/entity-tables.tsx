@@ -3,12 +3,14 @@ import { count, money, signedPct } from '@sigma/shared';
 import type {
   CompanyTieKind,
   CompanyTieNetwork,
-  CompanyTieNode,
   NetworkData,
   TrendYear,
 } from '@sigma/api-contract';
 import { tieDescription } from '../components/TieGraph';
 import { type Column } from '../components/DataTable';
+import { nodeHref } from './tie-layout';
+
+export { nodeHref };
 
 export interface LinkRow {
   from: string;
@@ -19,11 +21,6 @@ export interface LinkRow {
   toHref: string | null;
   valueEur: number;
   contracts: number;
-}
-
-/** `/authorities/:slug` | `/companies/:slug` for a graph node. */
-export function nodeHref(n: { kind: 'authority' | 'company'; slug: string }): string {
-  return n.kind === 'authority' ? `/authorities/${n.slug}` : `/companies/${n.slug}`;
 }
 
 export const trendYearColumns: Column<TrendYear>[] = [
@@ -63,12 +60,12 @@ export interface TieRow {
 export const tieColumns: Column<TieRow>[] = [
   {
     key: 'from',
-    header: 'Дружество',
+    header: 'От',
     isTitle: true,
     cell: (r) => <Link to={r.fromHref}>{r.from}</Link>,
   },
   { key: 'relation', header: 'Връзка', cell: (r) => r.relation },
-  { key: 'to', header: 'С', cell: (r) => <Link to={r.toHref}>{r.to}</Link> },
+  { key: 'to', header: 'Към', cell: (r) => <Link to={r.toHref}>{r.to}</Link> },
   {
     key: 'basis',
     header: 'Основание',
@@ -79,8 +76,6 @@ export const tieColumns: Column<TieRow>[] = [
 
 export function tieRows(data: CompanyTieNetwork): TieRow[] {
   const byId = new Map(data.nodes.map((n) => [n.id, n] as const));
-  const hrefOf = (n: CompanyTieNode) =>
-    n.kind === 'authority' ? `/authorities/${n.slug}` : `/companies/${n.slug}`;
   const rows: TieRow[] = [];
   for (const e of data.edges) {
     const a = byId.get(e.from);
@@ -89,8 +84,8 @@ export function tieRows(data: CompanyTieNetwork): TieRow[] {
     rows.push({
       from: a.label,
       to: b.label,
-      fromHref: hrefOf(a),
-      toHref: hrefOf(b),
+      fromHref: nodeHref(a),
+      toHref: nodeHref(b),
       kind: e.kind,
       relation: tieDescription(e),
       href: e.href,

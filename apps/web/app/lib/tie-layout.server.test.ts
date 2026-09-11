@@ -100,6 +100,96 @@ describe('layoutTies', () => {
     expect(l.nodes.map((n) => n.id)).toEqual(['eik:1', 'eik:2']);
   });
 
+  it('stands the people at the centre right of it, and the companies they reach one column further', () => {
+    const l = layoutTies(
+      net({
+        nodes: [
+          node(),
+          node({
+            id: 'rp:ab',
+            kind: 'person',
+            slug: 'ab',
+            label: 'АННА ПЕТРОВА',
+            valueEur: 0,
+            hop: 1,
+          }),
+          node({ id: 'eik:3', slug: '3', label: 'ГАМА ЕООД', hop: 2 }),
+        ],
+        edges: [
+          edge({
+            from: 'rp:ab',
+            to: 'eik:1',
+            kind: 'role',
+            weightEur: 0,
+            occurrences: 1,
+            roles: ['manager'],
+            current: true,
+          }),
+          edge({
+            from: 'rp:ab',
+            to: 'eik:3',
+            kind: 'role',
+            weightEur: 0,
+            occurrences: 1,
+            roles: ['partner'],
+            current: false,
+          }),
+        ],
+      }),
+    )!;
+    const x = (id: string) => l.nodes.find((n) => n.id === id)!.x;
+    expect(x('eik:1')).toBeLessThan(x('rp:ab'));
+    expect(x('rp:ab')).toBeLessThan(x('eik:3'));
+    expect(l.nodes.find((n) => n.id === 'rp:ab')!.href).toBe('/persons/ab');
+    // The roles, not the kind, are what a role tie says on its edge.
+    expect(l.edges.map((e) => e.label.text)).toEqual(['управител', 'бивш съдружник']);
+  });
+
+  it('stands the people an authority’s suppliers share to the right of the suppliers', () => {
+    const l = layoutTies(
+      net({
+        center: node({ id: 'auth:9', kind: 'authority', slug: '9', label: 'ОБЩИНА ТЕСТОВО' }),
+        nodes: [
+          node({ id: 'auth:9', kind: 'authority', slug: '9', label: 'ОБЩИНА ТЕСТОВО' }),
+          node({ id: 'eik:1', hop: 1 }),
+          node({ id: 'eik:2', slug: '2', label: 'БЕТА ИНЖЕНЕРИНГ АД', hop: 1 }),
+          node({
+            id: 'rp:ab',
+            kind: 'person',
+            slug: 'ab',
+            label: 'АННА ПЕТРОВА',
+            valueEur: 0,
+            hop: 2,
+          }),
+        ],
+        edges: [
+          edge({ from: 'auth:9', to: 'eik:1', kind: 'money', directed: true }),
+          edge({ from: 'auth:9', to: 'eik:2', kind: 'money', directed: true }),
+          edge({
+            from: 'rp:ab',
+            to: 'eik:1',
+            kind: 'role',
+            weightEur: 0,
+            roles: ['manager'],
+            current: true,
+          }),
+          edge({
+            from: 'rp:ab',
+            to: 'eik:2',
+            kind: 'role',
+            weightEur: 0,
+            roles: ['partner'],
+            current: true,
+          }),
+        ],
+      }),
+    )!;
+    const x = (id: string) => l.nodes.find((n) => n.id === id)!.x;
+    expect(x('auth:9')).toBeLessThan(x('eik:1'));
+    expect(x('eik:1')).toBeLessThan(x('rp:ab'));
+    expect(x('eik:2')).toBeLessThan(x('rp:ab'));
+  });
+
   it('lays out nothing without a centre or with a lone node', () => {
     expect(layoutTies(net({ center: null }))).toBeNull();
     expect(layoutTies(net({ nodes: [node()] }))).toBeNull();

@@ -1,33 +1,39 @@
 import { Link } from 'react-router';
 import type { CompanyTieEdge, CompanyTieKind } from '@sigma/api-contract';
 import { count, money } from '@sigma/shared';
-import type { TieLayout, TieLayoutEdge } from '../lib/tie-layout';
+import type { TieLayout, TieLayoutEdge, TieLayoutNode } from '../lib/tie-layout';
+import { roleSentence } from '../lib/registry-roles';
 
-// The company tie graph, drawn as a flowchart: boxes with the name inside and the kind of tie written
-// on each edge, in a layered layout computed on the server (lib/tie-layout.server.ts). Static SVG, no chart
-// code in the browser — same approach as NetworkGraph and SankeyDiagram.
+// The tie graph, drawn as a flowchart: boxes with the name inside and what the tie is written on each edge,
+// in a layered layout computed on the server (lib/tie-layout.server.ts). Static SVG, no chart code in the
+// browser — same approach as NetworkGraph and SankeyDiagram.
 //
 // This is a different graph from `NetworkGraph`, not a restyle of it. That one draws `flow_pairs`: an
-// authority ⇄ winner money flow with no company↔company edge in it at all. Here the edges ARE between
-// companies, and the edge — not the node — carries the meaning:
+// authority ⇄ winner money flow with no company↔company edge in it at all. Here the edge — not the node —
+// carries the meaning:
 //
 //   consortium     solid       joint bidding: both are named members of the same обединение that won
 //   subcontract    dashed →    one was recorded as the other's subcontractor (directed, prime → sub)
 //   declared_stake dotted      the same office-holder declared an interest in both
+//   role           thin        a role the Trade Register records: a person (a rounded box) or a company
+//                              holds it at the company it points to; faded once every such role has ended
 //   money          hairline →  an institution that paid the centre (context layer)
 //
-// PRIVACY: a person is never a node here and never named. The shared-official tie is drawn between the two
-// COMPANIES and links to /conflicts, the noindex surface where that name is already published.
+// A declared-stake office-holder is never a node and never named here: that tie is drawn between the two
+// COMPANIES and links to /conflicts. The people drawn are the ones the Trade Register records in a role, named
+// as it names them, each linking to their page (ADR-0039).
 
 const TIE_LABEL: Record<CompanyTieKind, string> = {
   consortium: 'общо обединение',
   subcontract: 'подизпълнител',
   declared_stake: 'общо свързано лице',
+  role: 'роля по Търговския регистър',
   money: 'плаща на',
 };
 
 /** How an edge is described in words — the accessible table and the tooltip use the same sentence. */
 export function tieDescription(e: CompanyTieEdge): string {
+  if (e.kind === 'role') return roleSentence(e);
   if (e.kind === 'money') return `${TIE_LABEL.money} ${money(e.weightEur)}`;
   if (e.kind === 'declared_stake') {
     return e.occurrences > 1
@@ -38,17 +44,32 @@ export function tieDescription(e: CompanyTieEdge): string {
   return `${TIE_LABEL[e.kind]}${n}, ${money(e.weightEur)}`;
 }
 
+const KIND_WORD: Record<TieLayoutNode['kind'], string> = {
+  company: 'дружество',
+  authority: 'институция',
+  person: 'лице',
+};
+
+// A person wins nothing, so a person's box is never labelled with a sum.
+const nodeTitle = (n: TieLayoutNode) =>
+  n.kind === 'person' ? n.name : `${n.name}: ${money(n.valueEur)}`;
+const nodeAria = (n: TieLayoutNode) =>
+  n.kind === 'person'
+    ? `${n.name} — ${KIND_WORD.person}`
+    : `${n.name} — ${KIND_WORD[n.kind]}, ${money(n.valueEur)}`;
+
 const pathD = (e: TieLayoutEdge) =>
   e.points.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ');
 
 export function TieGraph({ layout }: { layout: TieLayout | null }) {
   if (!layout) return null;
   const { width, height, nodes, edges } = layout;
-  // Only monetary ties are sized by money; a declared-stake tie has no sum and must not be drawn as if it
-  // were worth nothing — it gets a fixed, clearly visible weight instead.
+  // Only monetary ties are sized by money; a declared-stake or a role tie has no sum and must not be drawn
+  // as if it were worth nothing — each gets a fixed, clearly visible weight instead.
   const maxEdge = Math.max(1, ...edges.map((e) => e.weightEur));
   const strokeW = (e: TieLayoutEdge) =>
-    e.kind === 'declared_stake' ? 2 : 1 + (e.weightEur / maxEdge) * 3;
+    e.kind === 'declared_stake' ? 2 : e.kind === 'role' ? 1.5 : 1 + (e.weightEur / maxEdge) * 3;
+  const past = (e: TieLayoutEdge) => e.kind === 'role' && e.current === false;
 
   return (
     <>
@@ -56,7 +77,7 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
         <svg
           viewBox={`0 0 ${width} ${height}`}
           role="group"
-          aria-label={`Връзки на ${layout.centerName} с други дружества`}
+          aria-label={`Връзки на ${layout.centerName}`}
           className="tie-svg"
           // Never drawn larger than laid out (a small graph must not balloon), and on a narrow screen kept
           // legible and scrolled rather than shrunk.
@@ -81,7 +102,7 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
           {edges.map((e, i) => (
             <g key={`e${i}`}>
               <path
-                className={`tie-edge tie-${e.kind}`}
+                className={`tie-edge tie-${e.kind}${past(e) ? ' tie-past' : ''}`}
                 d={pathD(e)}
                 style={{ strokeWidth: strokeW(e) }}
                 markerEnd={e.directed ? 'url(#tie-arrow)' : undefined}
@@ -109,20 +130,15 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
             </g>
           ))}
           {nodes.map((n) => (
-            <Link
-              key={n.id}
-              to={n.href}
-              className="tie-node-link"
-              aria-label={`${n.name} — ${n.kind === 'authority' ? 'институция' : 'дружество'}, ${money(n.valueEur)}`}
-            >
-              <title>{`${n.name}: ${money(n.valueEur)}`}</title>
+            <Link key={n.id} to={n.href} className="tie-node-link" aria-label={nodeAria(n)}>
+              <title>{nodeTitle(n)}</title>
               <rect
-                className={`tie-node${n.kind === 'authority' ? ' tie-node-authority' : ''}${n.center ? ' tie-node-center' : ''}`}
+                className={`tie-node${n.kind === 'authority' ? ' tie-node-authority' : ''}${n.kind === 'person' ? ' tie-node-person' : ''}${n.center ? ' tie-node-center' : ''}`}
                 x={n.x - n.width / 2}
                 y={n.y - n.height / 2}
                 width={n.width}
                 height={n.height}
-                rx={n.kind === 'authority' ? 10 : 3}
+                rx={n.kind === 'person' ? n.height / 2 : n.kind === 'authority' ? 10 : 3}
               />
               <text className="tie-node-label" x={n.x} y={n.y + 4} textAnchor="middle">
                 {n.label}
@@ -132,13 +148,18 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
         </svg>
       </div>
       <ul className="tie-legend" aria-hidden="true">
-        {(['consortium', 'subcontract', 'declared_stake'] as const)
+        {(['consortium', 'subcontract', 'declared_stake', 'role'] as const)
           .filter((k) => edges.some((e) => e.kind === k))
           .map((k) => (
             <li key={k}>
               <span className={`tie-key tie-${k}`} /> {TIE_LABEL[k]}
             </li>
           ))}
+        {edges.some(past) && (
+          <li>
+            <span className="tie-key tie-role tie-past" /> прекратена роля
+          </li>
+        )}
         {edges.some((e) => e.kind === 'money') && (
           <li>
             <span className="tie-key tie-money" /> институция платец

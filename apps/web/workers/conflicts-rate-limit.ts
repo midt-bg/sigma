@@ -12,10 +12,13 @@ interface ConflictsRateLimitEnv {
 // duplicate/trailing slashes), so the twin is covered by the SAME limit as the canonical path — it can't
 // be used to bypass. The leaderboard itself is edge-cached, so cache HITs never reach this (app.ts runs the
 // cache check first); only uncached distinct URLs — exactly the scrape pattern — consume the budget.
+//
+// /persons/:slug is the same kind of surface — a named person's roles across companies (ADR-0039) — and
+// shares the budget.
 function isConflictsRequest(request: Request): boolean {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   const p = normalizedPathname(request);
-  return p === '/conflicts' || p.startsWith('/conflicts/');
+  return p === '/conflicts' || p.startsWith('/conflicts/') || p.startsWith('/persons/');
 }
 
 export async function rateLimitConflictsRoute(

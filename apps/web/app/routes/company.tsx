@@ -8,7 +8,14 @@ import {
   periodRange,
   plural,
 } from '@sigma/shared';
-import { bidderIdFromSlug, getCompany, getCompanyTies, getSpendingTrend, getDb } from '@sigma/db';
+import {
+  bidderIdFromSlug,
+  getCompany,
+  getCompanyPeople,
+  getCompanyTies,
+  getSpendingTrend,
+  getDb,
+} from '@sigma/db';
 import type { Route } from './+types/company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -19,6 +26,7 @@ import { TrendBlock } from '../components/TrendBlock';
 import { layoutTies } from '../lib/tie-layout.server';
 import { TieGraph, tieDescription } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
+import { CompanyRolesTables, RegistrySource } from '../components/RegistryRoles';
 import { ShareBar, Chip, OwnershipChip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
@@ -68,20 +76,21 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!id) throw new Response('Not Found', { status: 404 });
   const db = getDb(context.cloudflare.env);
   return withDbRetry(async () => {
-    const [company, coverage, trend, ties] = await Promise.all([
+    const [company, coverage, trend, ties, people] = await Promise.all([
       getCompany(db, id),
       getCoverageMeta(db),
       getSpendingTrend(db, { bidderId: id, granularity: 'year' }, { includeSectors: false }),
       getCompanyTies(db, id, { includeFunders: true }),
+      getCompanyPeople(db, id),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
-    return { company, coverage, trend, ties, tieLayout: layoutTies(ties) };
+    return { company, coverage, trend, ties, people, tieLayout: layoutTies(ties) };
   });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
-  const { trend, ties, tieLayout } = loaderData;
+  const { trend, ties, people, tieLayout } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
@@ -334,14 +343,26 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           )}
         </Section>
 
+        {people.asOf && (
+          <Section
+            id="people"
+            title="Управление и собственост"
+            hint="Управители, представители, съдружници и членове на органите, както са вписани в Търговския регистър, с датата на всяко вписване."
+          >
+            <CompanyRolesTables roles={people.roles} />
+            <RegistrySource asOf={people.asOf} />
+          </Section>
+        )}
+
         <Section
           id="network"
-          title="Връзки с други дружества"
+          title="Връзки с дружества и лица"
           hint={
             <span>
-              С кои дружества {subjectPhrase} е свързана: съвместно участие в обединение, възлагане
-              на подизпълнител, или деклариран интерес на едно и също длъжностно лице. Показани са и
-              институциите, от които идват парите.{' '}
+              С кои дружества и лица {subjectPhrase} е свързана: съвместно участие в обединение,
+              възлагане на подизпълнител, деклариран интерес на едно и също длъжностно лице, или
+              роля по Търговския регистър — управители, съдружници, членове на органите — и другите
+              дружества, в които те имат роля. Показани са и институциите, от които идват парите.{' '}
               <Link to={`/network?center=c:${c.slug}`}>Виж паричната мрежа →</Link>
             </span>
           }
@@ -356,7 +377,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   columns={tieColumns}
                   rows={tieRows(ties)}
                   getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
-                  caption="Връзки с други дружества"
+                  caption="Връзки с дружества и лица"
                 />
               </div>
               {ties.omitted > 0 && (
@@ -368,8 +389,8 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             </>
           ) : (
             <p className="muted">
-              Не намираме връзки с други дружества — нито общо обединение, нито подизпълнителство,
-              нито деклариран интерес на длъжностно лице.
+              Не намираме връзки — нито общо обединение, нито подизпълнителство, нито деклариран
+              интерес на длъжностно лице, нито общи лица по Търговския регистър.
             </p>
           )}
         </Section>

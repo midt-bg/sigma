@@ -5,8 +5,9 @@
 //  1. The EDGE carries the meaning. Unlike the money graph, where every edge means the same thing, here a
 //     solid line and a dotted one are different claims — so each kind must reach the DOM as its own class
 //     and its own written label, and a declared-stake tie must not be sized by money it does not have.
-//  2. No person is ever a node and no personal name appears. The shared-official tie is drawn between the
-//     two COMPANIES and links to /conflicts, the noindex surface where that name is already published.
+//  2. A declared-stake office-holder is never a node: that tie is drawn between the two COMPANIES and links
+//     to /conflicts. A person the Trade Register records in a role is a node of its own — a rounded box that
+//     links to the person's page and is never labelled with a sum (ADR-0039).
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
@@ -57,12 +58,37 @@ const base: CompanyTieNetwork = {
   omitted: 0,
 };
 
+const person: CompanyTieNetwork['nodes'][number] = {
+  id: 'rp:ab',
+  kind: 'person',
+  label: 'АННА ПЕТРОВА',
+  slug: 'ab',
+  valueEur: 0,
+  hop: 1,
+  conflictsHref: null,
+};
+const roleTie = (
+  over: Partial<CompanyTieNetwork['edges'][number]> = {},
+): CompanyTieNetwork['edges'][number] => ({
+  from: 'rp:ab',
+  to: 'eik:1',
+  kind: 'role',
+  directed: false,
+  weightEur: 0,
+  occurrences: 2,
+  href: null,
+  roles: ['manager', 'partner'],
+  current: true,
+  ...over,
+});
+
 function render(data: CompanyTieNetwork) {
   const layout = layoutTies(data);
   const Stub = createRoutesStub([
     { path: '/', Component: () => <TieGraph layout={layout} /> },
     { path: '/companies/:slug', Component: () => null },
     { path: '/authorities/:slug', Component: () => null },
+    { path: '/persons/:slug', Component: () => null },
   ]);
   act(() => {
     root.render(<Stub initialEntries={['/']} />);
@@ -127,7 +153,7 @@ describe('TieGraph', () => {
     expect(width('.tie-declared_stake')).toBeGreaterThan(1);
   });
 
-  it('never renders a person node, only companies and institutions', () => {
+  it('links every company and institution to its profile', () => {
     const c = render({
       ...base,
       nodes: [
@@ -149,6 +175,32 @@ describe('TieGraph', () => {
     });
     const hrefs = [...c.querySelectorAll('a.tie-node-link')].map((a) => a.getAttribute('href'));
     expect(hrefs).toEqual(['/companies/1', '/companies/2', '/authorities/9']);
+  });
+
+  it('draws a person the register records as a rounded box that links to their page, never with a sum', () => {
+    const c = render({
+      ...base,
+      nodes: [...base.nodes, person],
+      edges: [...base.edges, roleTie()],
+    });
+    const link = c.querySelector('a.tie-node-link[href="/persons/ab"]')!;
+    expect(link.getAttribute('aria-label')).toBe('АННА ПЕТРОВА — лице');
+    expect(link.querySelector('title')!.textContent).toBe('АННА ПЕТРОВА');
+    expect(link.querySelector('rect')!.classList.contains('tie-node-person')).toBe(true);
+    expect(c.querySelector('.tie-edge.tie-role')).not.toBeNull();
+    const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);
+    expect(labels).toContain('управител и съдружник');
+  });
+
+  it('fades a role that has ended, and says so in the legend', () => {
+    const c = render({
+      ...base,
+      nodes: [...base.nodes, person],
+      edges: [roleTie({ current: false })],
+    });
+    expect(c.querySelector('.tie-role.tie-past')).not.toBeNull();
+    const legend = [...c.querySelectorAll('.tie-legend li')].map((l) => l.textContent?.trim());
+    expect(legend).toEqual(['роля по Търговския регистър', 'прекратена роля']);
   });
 
   it('is a group of links, not one image — role="img" would hide the nodes', () => {
@@ -207,5 +259,10 @@ describe('tieDescription', () => {
 
   it('describes the money layer as a payment', () => {
     expect(tieDescription(e({ kind: 'money', weightEur: 1000 }))).toContain('плаща');
+  });
+
+  it('describes a role tie by its roles, and as past once they all ended', () => {
+    expect(tieDescription(roleTie())).toBe('управител и съдружник');
+    expect(tieDescription(roleTie({ roles: ['manager'], current: false }))).toBe('бивш управител');
   });
 });

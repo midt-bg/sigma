@@ -27,6 +27,19 @@ describe('rateLimitConflictsRoute', () => {
     }
   });
 
+  it('limits a person’s page the same — a named person’s roles across companies', async () => {
+    for (const path of [`/persons/${'a'.repeat(64)}`, `/persons/${'a'.repeat(64)}.data`]) {
+      const { limiter, limit } = rateLimiter(false);
+      const response = await rateLimitConflictsRoute(
+        new Request(`http://local${path}`, { headers: { 'CF-Connecting-IP': '203.0.113.43' } }),
+        { CONFLICTS_RATE_LIMITER: limiter },
+        false,
+      );
+      expect(limit, path).toHaveBeenCalledWith({ key: '203.0.113.43' });
+      expect(response?.status, path).toBe(429);
+    }
+  });
+
   it('limits the single-fetch .data twins the same as the bare paths (the scrape vector)', async () => {
     for (const path of ['/conflicts.data', '/conflicts/official/ivan-petrov.data']) {
       const { limiter } = rateLimiter(false);

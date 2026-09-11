@@ -1,4 +1,4 @@
-import type { CompanyTieEdge } from '@sigma/api-contract';
+import type { CompanyTieEdge, CompanyTieNode } from '@sigma/api-contract';
 
 // The tie network laid out for drawing — boxes and routed edges, positioned on the server
 // (tie-layout.server.ts) so the layout engine never reaches the browser. Plain data: it travels in the
@@ -6,7 +6,7 @@ import type { CompanyTieEdge } from '@sigma/api-contract';
 
 export interface TieLayoutNode {
   id: string;
-  kind: 'company' | 'authority';
+  kind: CompanyTieNode['kind'];
   /** The full name — for the accessible label and the tooltip. */
   name: string;
   /** The name as drawn in the box: whole when it fits the widest box, else cut with an ellipsis. */
@@ -24,7 +24,7 @@ export interface TieLayoutNode {
 export interface TieLayoutEdge extends CompanyTieEdge {
   /** The routed line, from `from` to `to` in the tie's own direction (so an arrow sits at `to`). */
   points: { x: number; y: number }[];
-  /** The kind of tie, written on the edge — centre point and the width reserved for it. */
+  /** What the edge says — the kind of tie, or the roles — its centre point and the width reserved for it. */
   label: { text: string; x: number; y: number; width: number };
 }
 
@@ -34,4 +34,11 @@ export interface TieLayout {
   centerName: string;
   nodes: TieLayoutNode[];
   edges: TieLayoutEdge[];
+}
+
+/** A graph node's page: `/authorities/:slug` | `/companies/:slug` | `/persons/:slug`. */
+export function nodeHref(n: { kind: CompanyTieNode['kind']; slug: string }): string {
+  if (n.kind === 'authority') return `/authorities/${n.slug}`;
+  if (n.kind === 'person') return `/persons/${n.slug}`;
+  return `/companies/${n.slug}`;
 }

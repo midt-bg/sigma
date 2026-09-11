@@ -229,3 +229,42 @@ describe('tieColumns', () => {
     expect(table.querySelector('a[href="/conflicts/company/1"]')).not.toBeNull();
   });
 });
+
+describe('a person in the tie table', () => {
+  it('links the person to their page and says their roles in words', () => {
+    const rows = tieRows({
+      ...tieNet,
+      nodes: [
+        ...tieNet.nodes,
+        tieNode({
+          id: 'rp:ab',
+          kind: 'person',
+          slug: 'ab',
+          label: 'АННА ПЕТРОВА',
+          valueEur: 0,
+          hop: 1,
+        }),
+      ],
+      edges: [
+        {
+          from: 'rp:ab',
+          to: 'eik:1',
+          kind: 'role',
+          directed: false,
+          weightEur: 0,
+          occurrences: 1,
+          href: null,
+          roles: ['manager'],
+          current: false,
+        },
+      ],
+    });
+    expect(rows[0]).toMatchObject({
+      from: 'АННА ПЕТРОВА',
+      fromHref: '/persons/ab',
+      to: 'АЛФА СТРОЙ АД',
+      relation: 'бивш управител',
+    });
+    expect(nodeHref({ kind: 'person', slug: 'ab' })).toBe('/persons/ab');
+  });
+});

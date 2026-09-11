@@ -757,6 +757,14 @@
 .tie-svg .tie-money {
   stroke: #d8d6cf;
 }
+/* A role the Trade Register records: a person — or a company — holding it at the company it points to.
+   Faded once every such role has ended, so the history stays in the picture without reading as standing. */
+.tie-svg .tie-role {
+  stroke: var(--ink-mid);
+}
+.tie-svg .tie-past {
+  stroke-opacity: 0.4;
+}
 .tie-svg .tie-arrow-head {
   fill: var(--ink-mid);
 }
@@ -770,6 +778,10 @@
 .tie-svg .tie-node-authority {
   stroke: var(--ink-mid);
   stroke-dasharray: 3 2;
+}
+/* A person is a rounded box, as a flowchart draws one. */
+.tie-svg .tie-node-person {
+  stroke: var(--ink-mid);
 }
 .tie-svg .tie-node-center {
   fill: var(--ink);
@@ -843,4 +855,18 @@
 }
 .tie-key.tie-money {
   border-top-color: #d8d6cf;
+}
+.tie-key.tie-role {
+  border-top-width: 1.5px;
+  border-top-color: var(--ink-mid);
+}
+.tie-key.tie-past {
+  opacity: 0.4;
+}
+.registry-ended {
+  margin-top: var(--s-3);
+}
+.registry-ended > summary {
+  cursor: pointer;
+  color: var(--ink-soft);
 }
