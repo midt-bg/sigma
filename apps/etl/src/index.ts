@@ -458,7 +458,7 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
 interface RegistryParams {
   /** Operator override for tests/manual runs. Normal cron uses UTC today. */
   today?: string;
-  /** Partidas read per run; the default fills a winners' scope of ~18k in a couple of days. */
+  /** Partidas read per run; the default fills a winners' scope of ~13k in under two days. */
   maxDeeds?: number;
   /** Pause between two reads, under the API's per-client limit; 0 in tests. */
   paceMs?: number;
@@ -551,12 +551,27 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
         );
       } else {
         for (let day = from; day <= yesterday; day = addDays(day, 1)) {
-          result.changed += await fenced(`changes:${day}`, async () => {
-            const uics = await client.changedUics(day);
-            const queued = await queueChanged(this.env.DB, uics, new Date().toISOString());
+          const followed = await fenced(`changes:${day}`, async () => {
+            const feed = await client.changedUics(day);
+            const now = new Date().toISOString();
+            // A day longer than the feed is followed for is a reload of the API, not a day of the register:
+            // every partida already read is read again, rather than a guess at which of them changed.
+            const queued = feed.complete
+              ? await queueChanged(this.env.DB, feed.uics, now)
+              : await queueAllRead(this.env.DB, now);
             await setRegistryChangesThrough(this.env.DB, day);
-            return queued;
+            return { queued, overflow: !feed.complete };
           });
+          if (followed.overflow)
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                event: 'registry_changes_overflow',
+                day,
+                requeued: followed.queued,
+              }),
+            );
+          result.changed += followed.queued;
           result.changeDays++;
         }
       }

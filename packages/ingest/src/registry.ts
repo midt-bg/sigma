@@ -61,8 +61,10 @@ export class RegistryError extends Error {}
 
 /** Rows per page of the changes feed — the API's own default. */
 export const REGISTRY_CHANGES_PAGE = 1000;
-// A day with more pages than this is not a day of the register; it is a loop.
-const MAX_CHANGE_PAGES = 1000;
+// The pages of one day's feed the client follows. The register records a few thousand fields on an ordinary
+// day, so a day that runs past this is a reload of the API — every field stamped with one load day — not a
+// day of the register; the caller re-reads what it holds rather than walk the whole register page by page.
+const MAX_CHANGE_PAGES = 100;
 const MAX_RETRY_WAIT_MS = 120_000;
 const UIC = /^\d{9}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -152,19 +154,22 @@ export function registryClient(opts: RegistryClientOptions) {
     return { items: body.items ?? [], hasMore: Boolean(body.hasMore) };
   }
 
-  /** Every partida the register touched on `date` (the API's load day), once each. */
-  async function changedUics(date: string): Promise<string[]> {
+  /**
+   * Every partida the register touched on `date` (the API's load day), once each — and whether that is all of
+   * them: `complete` is false for a day longer than the client follows, which the caller treats as „anything
+   * may have changed".
+   */
+  async function changedUics(date: string): Promise<{ uics: string[]; complete: boolean }> {
     const uics = new Set<string>();
     let offset = 0;
     for (let page = 0; ; page++) {
-      if (page >= MAX_CHANGE_PAGES)
-        throw new RegistryError(`changes feed for ${date} did not end within ${page} pages`);
+      if (page >= MAX_CHANGE_PAGES) return { uics: [...uics].sort(), complete: false };
       const { items, hasMore } = await changes(date, offset);
       for (const c of items) if (UIC.test(c.uic)) uics.add(c.uic);
       if (!hasMore || items.length === 0) break;
       offset += items.length;
     }
-    return [...uics].sort();
+    return { uics: [...uics].sort(), complete: true };
   }
 
   return { deed, changes, changedUics };

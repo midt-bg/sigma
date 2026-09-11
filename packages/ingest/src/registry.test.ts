@@ -100,9 +100,36 @@ describe('registryClient.changedUics', () => {
       json({ items: [change('111111111'), change('222222222')], hasMore: true }),
       json({ items: [change('111111111'), change('33')], hasMore: false }),
     );
-    expect(await client().changedUics('2026-09-09')).toEqual(['111111111', '222222222']);
+    expect(await client().changedUics('2026-09-09')).toEqual({
+      uics: ['111111111', '222222222'],
+      complete: true,
+    });
     expect(calls[0]).toBe(`${BASE}/deeds/changes?date=2026-09-09&by=loaded&limit=1000&offset=0`);
     expect(calls[1]).toContain('offset=2');
+  });
+
+  it('stops at the page bound and says the day is not complete — a reload of the API, not a day', async () => {
+    const page = () =>
+      json({
+        items: [
+          {
+            uic: '111111111',
+            companyName: '',
+            entryNumber: '1',
+            entryDate: '',
+            fieldIdent: '00070',
+            operation: 'Add',
+          },
+        ],
+        hasMore: true,
+      });
+    // Exactly the bound's worth of answers: a request past it would meet „unexpected request".
+    const calls = stub(...Array.from({ length: 100 }, page));
+    expect(await client().changedUics('2026-09-11')).toEqual({
+      uics: ['111111111'],
+      complete: false,
+    });
+    expect(calls).toHaveLength(100);
   });
 
   it('refuses a malformed day and a feed that is not there', async () => {

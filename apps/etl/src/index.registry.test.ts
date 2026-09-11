@@ -60,7 +60,7 @@ function happyDefaults() {
   reg.acquireRegistryLease.mockResolvedValue(true);
   reg.renewRegistryLease.mockResolvedValue(true);
   reg.registryChangesThrough.mockResolvedValue('2026-09-09');
-  client.changedUics.mockResolvedValue(['111111111']);
+  client.changedUics.mockResolvedValue({ uics: ['111111111'], complete: true });
   reg.queueChanged.mockResolvedValue(1);
   reg.queueNewWinners.mockResolvedValue(1);
   reg.nextQueued.mockResolvedValueOnce(['111111111', '222222222']).mockResolvedValue([]);
@@ -139,6 +139,21 @@ describe('RegistryWorkflow', () => {
     expect(steps).toContain('requeue-all');
     expect(client.changedUics).not.toHaveBeenCalled();
     expect(reg.setRegistryChangesThrough).toHaveBeenCalledWith(DB, '2026-09-10');
+  });
+
+  it('re-reads every partida after a day longer than the feed is followed for — a reload of the API', async () => {
+    happyDefaults();
+    client.changedUics.mockResolvedValue({ uics: ['111111111'], complete: false });
+    reg.queueAllRead.mockResolvedValue(40);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { out } = run(CONFIGURED);
+    expect(await out).toMatchObject({ changeDays: 1, changed: 40 });
+    expect(reg.queueChanged).not.toHaveBeenCalled();
+    expect(reg.setRegistryChangesThrough).toHaveBeenCalledWith(DB, '2026-09-10');
+    expect(warn.mock.calls.some(([m]) => String(m).includes('registry_changes_overflow'))).toBe(
+      true,
+    );
+    warn.mockRestore();
   });
 
   it('stops for good once the lease is lost, and still releases what it may hold', async () => {
