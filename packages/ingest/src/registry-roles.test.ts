@@ -384,6 +384,28 @@ describe('rolesFromDeed', () => {
     ]);
   });
 
+  it('reads the same role under the field each legal form files it under', () => {
+    const one = (fieldIdent: string, value: unknown) =>
+      rolesFromDeed('101010101', partida(field({ fieldIdent, value }))).roles.map((r) => r.role);
+    const rec = (c: string) => ({ RecordID: c, Person: person(c, `ЛИЦЕ ${c}`) });
+    expect(one('00071', { AssignedManager: [rec('1')] })).toEqual(['manager']);
+    expect(one('00103', { Representative103: [rec('2')] })).toEqual(['representative']);
+    expect(one('00125', { ManagementBody12d: [rec('3')] })).toEqual(['governing_body']);
+    expect(one('00132', { BoardOfManager2: [rec('4')] })).toEqual(['management_board']);
+    expect(one('00135', { BoardOfTrustie13g: [rec('5')] })).toEqual(['board_of_trustees']);
+    expect(one('00152', { VerificationCommission: [rec('6')] })).toEqual([
+      'verification_commission',
+    ]);
+    expect(
+      one('00201', { Partner: [{ RecordID: '7', Subject: person('7', 'СЪДРУЖНИК') }] }),
+    ).toEqual(['partner']);
+    expect(one('09122', { Trustee: [rec('8')] })).toEqual(['trustee']);
+    // A share transfer names people too, but records a transaction, not a role.
+    expect(
+      one('00240', { ShareTransfer: [{ RecordID: '9', OldOwner: person('9', 'ПРОДАВАЧ') }] }),
+    ).toEqual([]);
+  });
+
   it('maps every role field it knows to a role', () => {
     expect(ROLE_FIELDS['05500']).toBe('beneficial_owner');
     expect(Object.values(ROLE_FIELDS).length).toBeGreaterThan(15);

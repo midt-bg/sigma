@@ -280,7 +280,15 @@ test('rung 3 — name uniqueness does NOT gate the stronger „Документ"
 test('rung 2 — every OWNERSHIP field can carry the match: partners, sole owner, the trader', () => {
   // A sole owner (the commonest ЕООД form) publishing as „Неизвестна" would be a recall hole with no
   // symptom, so every ownership field is exercised, not just the partners'.
-  assert.deepEqual(OWNERSHIP_FIELDS, ['00180', '00190', '00200', '00210', '00230', '00231']);
+  assert.deepEqual(OWNERSHIP_FIELDS, [
+    '00180',
+    '00190',
+    '00200',
+    '00201',
+    '00210',
+    '00230',
+    '00231',
+  ]);
   for (const code of OWNERSHIP_FIELDS) {
     const v = evidenceVerdict({
       ...base,

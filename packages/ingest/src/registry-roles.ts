@@ -25,8 +25,11 @@ export type RegistryRoleKind =
   | 'chair'
   | 'board_of_directors'
   | 'management_board'
+  | 'governing_body'
+  | 'board_of_trustees'
   | 'supervisory_board'
   | 'controlling_board'
+  | 'verification_commission'
   | 'partner'
   | 'sole_owner'
   | 'trader'
@@ -36,18 +39,33 @@ export type RegistryRoleKind =
   | 'trustee'
   | 'beneficial_owner';
 
-/** The register fields that name a holder, and the role each one records. */
+/**
+ * The register fields that name a holder, and the role each one records. The key is the field's ident, not
+ * the number its form shows: „10. Представители" is 00100 for a company, 00101 for a partnership, and a
+ * non-profit's „10а. Представляващи" is 00103.
+ */
 export const ROLE_FIELDS: Readonly<Record<string, RegistryRoleKind>> = {
   '00070': 'manager',
+  '00071': 'manager', // събирателно и командитно дружество: лица, на които е възложено управлението
   '00090': 'chair',
   '00100': 'representative',
+  '00101': 'representative', // събирателно и командитно дружество
+  '00102': 'representative', // клон на чуждестранен търговец
+  '00103': 'representative', // сдружение, фондация, читалище: представляващи
   '00120': 'board_of_directors',
+  '00125': 'governing_body', // сдружение, фондация: органи на управление
   '00130': 'management_board',
+  '00131': 'management_board', // кооперация
+  '00132': 'management_board', // акционерно дружество с надзорен съвет
+  '00135': 'board_of_trustees', // читалище: настоятелство
   '00140': 'supervisory_board',
   '00150': 'controlling_board',
+  '00151': 'controlling_board', // кооперация
+  '00152': 'verification_commission', // читалище: проверителна комисия
   '00180': 'trader',
   '00190': 'partner',
   '00200': 'partner',
+  '00201': 'partner', // европейско обединение по икономически интереси
   '00210': 'partner',
   '00230': 'sole_owner',
   '00231': 'sole_owner',
@@ -57,6 +75,8 @@ export const ROLE_FIELDS: Readonly<Record<string, RegistryRoleKind>> = {
   '05030': 'representative',
   '05500': 'beneficial_owner',
   '09120': 'trustee',
+  '09122': 'trustee', // синдик по производство пред по-горна инстанция
+  '09123': 'trustee',
 };
 
 export interface RegistryRole {
@@ -249,6 +269,7 @@ export const OWNERSHIP_FIELDS: readonly string[] = [
   '00180',
   '00190',
   '00200',
+  '00201',
   '00210',
   '00230',
   '00231',

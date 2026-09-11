@@ -34,7 +34,7 @@ describe('a role tie in words', () => {
   });
 
   it('has words for every role the register records', () => {
-    expect(Object.keys(ROLE_LABEL)).toHaveLength(15);
+    expect(Object.keys(ROLE_LABEL)).toHaveLength(18);
     expect(ROLE_LABEL.beneficial_owner).toBe('действителен собственик');
   });
 });
