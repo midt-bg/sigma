@@ -411,9 +411,9 @@ describe('/conflicts/methodology — render', () => {
     // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
     expect(t).toContain('Акционерна форма');
     expect(t).toContain('не е публична');
-    // rung 2 — all three names, one record, and the two refusals
+    // rung 2 — all three names, one registered person, and the two refusals
     expect(t).toContain('пълно съвпадение и на трите имена');
-    expect(t).toContain('един и същ запис');
+    expect(t).toContain('едно и също вписано лице');
     // ADR-0035 — the company gate, the part a reader most needs to judge the claim
     expect(t).toContain('Съвпадението по име само по себе си не стига');
     // R10 — the seat's temporal guard, both halves

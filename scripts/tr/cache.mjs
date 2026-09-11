@@ -1,22 +1,20 @@
-// The deed cache — resumability, and the PII rail (issue #279, ADR-0033 decision 5).
+// The verdict cache — the hand-off between the decision pass and the loader, and the PII rail on it
+// (issue #279, ADR-0033 decision 5, ADR-0037, ADR-0041).
 //
-// A registry deed contains third-party personal data: the names of owners and managers who hold no
-// public office, and the company's street address. Two rails follow from that, and both live here:
+// The decision pass (decide.mjs) decides every link against the registry facts of its company and records
+// the verdict here; load.mjs reads it back. A verdict is the one registry-derived row the served tables are
+// built from, so two rails live here:
 //
-//   1. The INDEX stores no name at all — ЕИК, dates, codes, verdicts, and a hash of the body. Names
-//      exist only in the raw JSON under git-ignored scratch/, are read only to produce a boolean, and
-//      never enter a public table, a response or a log. A hash rather than an excerpt, because an
-//      excerpt of a deed IS third-party personal data.
+//   1. The INDEX stores no name at all — ЕИК, dates, codes, verdicts. A registry fact is read only to
+//      produce a boolean, and no name from it enters this file, a response or a log.
 //   2. Nothing may carry a STANDALONE ten-digit run. That is the ЕГН shape, and the check is sound
 //      precisely because an ЕИК is 9 or 13 digits — never 10 — so it cannot reject a legitimate
 //      identifier. „Standalone" is load-bearing: a 13-digit ЕИК contains ten-digit substrings, so an
 //      unanchored match would refuse every клон. ЕГН was absent from every payload examined; this is
 //      the rail for the day one leaks.
 //
-// Resumability is the other job, and it now spans runs rather than just interruptions. The register
-// allows ~5 requests per window and the block clears in ~161s (ADR-0036), so a crawl is bounded by
-// wall-clock rather than finished in one pass: it must pick up exactly where it stopped without
-// re-requesting what it already holds. That is what the verdict rows below are for (ADR-0037).
+// The file is rebuilt from nothing on every run: every fact is at hand, so nothing decided against an
+// older registry can linger.
 
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
@@ -31,7 +29,7 @@ CREATE TABLE IF NOT EXISTS deeds (
   status               TEXT NOT NULL,     -- fetched | outside_tr_pending | outside_tr
   http_status          INTEGER,
   fetched_at           TEXT NOT NULL,
-  raw_path             TEXT,              -- relative to the raw dir; the ONLY place names live
+  raw_path             TEXT,              -- unused since the registry layer (ADR-0041): no deed is written
   body_sha256          TEXT,              -- integrity + change detection, never an excerpt
   legal_form_code      INTEGER,
   legal_form_verdict   TEXT,              -- closely_held | joint_stock | unknown  (unknown WITHHOLDS)
@@ -42,8 +40,7 @@ CREATE TABLE IF NOT EXISTS deeds (
   outside_reason       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_deeds_status ON deeds(status);
--- The decision itself, per (link, ЕИК) — ADR-0037. This is what survives a run boundary while the
--- deed that produced it does not: a role, an entry reference and booleans. link_key is
+-- The decision itself, per (link, ЕИК) — ADR-0037: a role, an entry reference and booleans. link_key is
 -- person:<name>|<institution>|<eik>[|family], so it carries the OFFICIAL's name — a person the
 -- surface publishes by design — and never the relative's (ADR-0032 never names them) nor any
 -- co-owner's. That is strictly less than scratch/cacbg/raw, which already crosses this boundary.
@@ -60,8 +57,8 @@ CREATE TABLE IF NOT EXISTS verdicts (
   entry_date    TEXT,
   short_name    INTEGER NOT NULL DEFAULT 0,
   latin_in_name INTEGER NOT NULL DEFAULT 0,
-  -- reconcileTermination's answer, cached for the same reason as the verdict: it too is a question
-  -- about the deed (is this declarant still a registered owner?) whose answer is a boolean and a role
+  -- reconcileTermination's answer, kept for the same reason as the verdict: it too is a question
+  -- about the register (is this declarant still a registered owner?) whose answer is a boolean and a role
   -- label. Without it a divested self stake would fall to deed == null, be read as terminated and get
   -- WITHDRAWN — a silent recall regression rather than a fail-closed hold.
   recon_terminated INTEGER,
@@ -103,12 +100,8 @@ function cacheIsUsable(file) {
 /**
  * Open (creating if absent) the cache at `file`. Idempotent — never wipes a HEALTHY existing cache.
  *
- * A corrupt one is a different matter, and it became one the moment this cache started travelling
- * between runs (ADR-0037): a truncated restore would throw here, the workflow's `if: always()` save
- * would then store that same corrupt file under a NEWER key, and every later run would restore it in
- * preference to the good one. Self-perpetuating, with no way out but a human deleting the cache. So an
- * unusable file is moved aside and the run starts empty — losing progress, which is recoverable,
- * rather than the pipeline, which by then is not.
+ * A corrupt one is moved aside and the run starts empty rather than failing on it: the decision pass
+ * rebuilds the verdicts from the registry facts anyway, so what is lost is only what it would redo.
  */
 export function openCache(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -117,16 +110,15 @@ export function openCache(file) {
     fs.renameSync(file, quarantined);
     console.error(
       `TR cache at ${file} failed its integrity check — moved to ${quarantined}, starting empty. ` +
-        `Progress is lost; the crawl resumes from scratch rather than compounding the damage.`,
+        `The verdicts are decided again from the registry facts rather than read from a damaged file.`,
     );
   }
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
-  // CREATE TABLE IF NOT EXISTS is a no-op on an existing cache, and this cache now SURVIVES between
-  // runs (ADR-0037) — so a restored older one would meet a query naming a column it does not have.
-  // Added idempotently rather than by recreating the table, because recreating it would throw away
-  // exactly the progress the cache exists to keep.
+  // CREATE TABLE IF NOT EXISTS is a no-op on an existing cache, so an older file would meet a query
+  // naming a column it does not have. Added idempotently rather than by recreating the table, so an
+  // existing file keeps its rows.
   const have = new Set(
     db
       .prepare(`SELECT name FROM pragma_table_info('verdicts')`)
@@ -142,9 +134,8 @@ export function openCache(file) {
 // ── the ЕГН rail ──────────────────────────────────────────────────────────────
 // ANCHORED, and that is the whole correctness of the rail. An ЕИК is 9 or 13 digits — never 10 — so
 // a ten-digit run cannot be a legitimate identifier here. But that reasoning only holds when the run
-// is matched as a WHOLE: an unanchored /\d{10}/ matches INSIDE the 13-digit ЕИК of a клон, and
-// rawPath on the fetched path is `<eik>.json`, so every branch office would be refused and the crawl
-// would abort on the first one.
+// is matched as a WHOLE: an unanchored /\d{10}/ matches INSIDE the 13-digit ЕИК of a клон — and inside
+// every value derived from one — so every branch office would be refused.
 const EGN_SHAPE = /(?<!\d)\d{10}(?!\d)/;
 /**
  * Refuse any value destined for the index that carries a standalone ten-digit run — the ЕГН shape.
@@ -264,9 +255,9 @@ export function readDeed(db, eik) {
 /**
  * The declaration-side arguments of `evidenceVerdict`, in the order they are hashed.
  *
- * DEED-side inputs (`deed`, `outsideTr`) are deliberately absent: they are not what this hash
- * invalidates against. A changed deed is caught by `--max-age-days` freshness, and re-fetching
- * recomputes and overwrites the verdict outright.
+ * REGISTRY-side inputs (`registry`, `outsideTr`) are deliberately absent: they are not what this hash
+ * invalidates against. The decision pass decides every link again against the registry as it stands,
+ * so a changed partida recomputes and overwrites the verdict outright.
  */
 const HASHED_INPUTS = [
   'declarantName',
@@ -277,7 +268,7 @@ const HASHED_INPUTS = [
   'nameGloballyUnique',
   'companyNameDistinctive',
 ];
-const DEED_SIDE_INPUTS = new Set(['deed', 'outsideTr']);
+const REGISTRY_SIDE_INPUTS = new Set(['registry', 'outsideTr']);
 
 /**
  * Canonical hash of everything on the declaration side of one `evidenceVerdict` call.
@@ -291,7 +282,7 @@ const DEED_SIDE_INPUTS = new Set(['deed', 'outsideTr']);
  */
 export function verdictInputsHash(input) {
   const unknown = Object.keys(input).filter(
-    (k) => !HASHED_INPUTS.includes(k) && !DEED_SIDE_INPUTS.has(k),
+    (k) => !HASHED_INPUTS.includes(k) && !REGISTRY_SIDE_INPUTS.has(k),
   );
   if (unknown.length) {
     throw new Error(
@@ -311,9 +302,9 @@ export function verdictInputsHash(input) {
 /**
  * Split a link record into its routing keys and its decision inputs, and hash the latter.
  *
- * The ONE definition of what a link record is. Both sides of the boundary go through it — the crawler
- * reading the emitted JSONL, and the loader looking a verdict up — because a hash computed over even
- * slightly different objects would miss every cache entry and silently re-crawl the whole register.
+ * The ONE definition of what a link record is. Both sides of the boundary go through it — the decision
+ * pass reading the emitted JSONL, and the loader looking a verdict up — because a hash computed over even
+ * slightly different objects would miss every verdict and silently hold the whole surface.
  */
 export function splitLinkRecord(rec) {
   const { linkKey, eik, ...input } = rec;
@@ -323,10 +314,9 @@ export function splitLinkRecord(rec) {
 /**
  * The closed vocabularies a stored verdict may use, enforced at WRITE.
  *
- * `load.mjs` already refuses to seal a matched_fact outside the vocabulary — but that runs a month
- * later, on a row that has by then crossed into a cache which travels between runs (ADR-0037). The
- * schema's promise is „a ROLE, never the person holding it"; a promise checked only by the eventual
- * reader is a promise the writer never made. Sourced from evidence.mjs so there is one definition:
+ * `load.mjs` already refuses to seal a matched_fact outside the vocabulary — but the schema's promise
+ * is „a ROLE, never the person holding it", and a promise checked only by the eventual reader is a
+ * promise the writer never made. Sourced from evidence.mjs so there is one definition:
  * `isSealedFact` for the fact, and these two for the columns beside it.
  */
 const VERDICT_KINDS = new Set([
@@ -434,100 +424,6 @@ export function verdictIsCurrent(row, link, { rulesVersion, maxAgeDays = null, n
 }
 
 /**
- * How much of `links` the verdict cache currently covers — the input to the incremental load gate.
- * `links` are `{linkKey, eik, inputsHash}`.
- */
-export function verdictCoverage(db, links, opts) {
-  let current = 0;
-  for (const link of links) {
-    if (verdictIsCurrent(readVerdict(db, link.linkKey), link, opts)) current++;
-  }
-  return {
-    wanted: links.length,
-    current,
-    missing: links.length - current,
-    ratio: links.length === 0 ? 1 : current / links.length,
-  };
-}
-
-/**
- * The ЕИК that still need a deed fetched, because at least one link on them has no current verdict —
- * **oldest first**, never-decided before that.
- *
- * The ordering is load-bearing, not cosmetic. A run bounded by `--max-runtime-min` consumes this list
- * from the front and stops; sorted by ЕИК it would serve the SAME prefix every time and the tail would
- * never be decided at all, then lose its rows to the purge and take the published links with it. Sorted
- * by staleness the queue rotates: whatever waited longest goes first, so every ЕИК comes round.
- *
- * Deliberately keyed on links rather than on ЕИК: one company can carry several links, and a rules
- * bump invalidates them independently of when the deed was last seen. A company's position is its
- * WORST link's — the one waiting longest — so a company is never held back by its freshest claim.
- */
-export function pendingVerdictEiks(db, links, opts) {
-  const oldest = new Map();
-  for (const link of links) {
-    const row = readVerdict(db, link.linkKey);
-    if (verdictIsCurrent(row, link, opts)) continue;
-    const eik = safeEik(link.eik);
-    // '' for never-decided, so it sorts ahead of every ISO timestamp: a link that has never had a
-    // verdict is further from being publishable than one whose verdict merely went stale.
-    const waitingSince = row?.decidedAt ?? '';
-    const prev = oldest.get(eik);
-    if (prev === undefined || waitingSince < prev) oldest.set(eik, waitingSince);
-  }
-  // Tie-broken on ЕИК so the order is total and a run is reproducible.
-  return [...oldest.entries()]
-    .sort((a, b) => (a[1] === b[1] ? (a[0] < b[0] ? -1 : 1) : a[1] < b[1] ? -1 : 1))
-    .map(([eik]) => eik);
-}
-
-/**
- * Deed retention. ADR-0033 decision 5 — a PRIVACY obligation over third-party personal data, and the
- * reason this number exists at all. One refresh cycle plus slack. See purgeExpired.
- */
-export const RETENTION_DAYS = 35;
-
-/**
- * Verdict retention, and deliberately a DIFFERENT number for a different reason.
- *
- * A verdict holds no personal data (ADR-0037), so nothing obliges us to delete it on a privacy clock;
- * what the number bounds is how stale a published claim's evidence may be. It must therefore exceed
- * the time it takes for a link to come round again — `--max-age-days` (30) plus one cadence gap (7)
- * plus queue slack — or the purge would delete verdicts before the crawl could refresh them, and the
- * surface would shrink on its own schedule. 45 carries that margin.
- */
-export const VERDICT_RETENTION_DAYS = 45;
-
-/**
- * Which of `wanted` still need a request — the resumability primitive.
- *
- * `maxAgeDays` is a FRESHNESS knob, not the retention rail: past it a cached row becomes pending and
- * is re-requested. Retention — actually deleting the personal data — is purgeExpired below. Refreshing
- * a deed rewrites it; only purging removes it, and conflating the two is how a documented TTL ends up
- * never deleting anything. Pass no `maxAgeDays` to treat any cached row as current.
- */
-export function pendingEiks(db, wanted, { maxAgeDays = null, now = new Date() } = {}) {
-  const cutoff = maxAgeDays == null ? null : now.getTime() - maxAgeDays * 86_400_000;
-  const out = [];
-  const stmt = db.prepare('SELECT fetched_at, status FROM deeds WHERE eik = ?');
-  for (const raw of wanted) {
-    const row = stmt.get(safeEik(raw));
-    if (!row) {
-      out.push(String(raw));
-      continue;
-    }
-    // A provisional negative is an observation, not an answer — it must be re-asked regardless of how
-    // fresh it is, or the second look that confirms it would never happen.
-    if (row.status === 'outside_tr_pending') {
-      out.push(String(raw));
-      continue;
-    }
-    if (cutoff != null && Date.parse(row.fetched_at) < cutoff) out.push(String(raw));
-  }
-  return out;
-}
-
-/**
  * How much of `wanted` the cache actually covers — the input to the fail-closed load gate.
  * `outside_tr` counts as COVERED: it is a known, resolved outcome, not a gap. A partial cache must
  * make the loader throw rather than publish a decimated surface (ADR-0033 decision 7).
@@ -553,95 +449,4 @@ export function coverage(db, wanted) {
     missing: wanted.length - covered,
     ratio: wanted.length === 0 ? 1 : covered / wanted.length,
   };
-}
-
-/**
- * Delete deed data past its retention — ADR-0033 decision 5's purge step.
- *
- * This is a PRIVACY rail, not a cache-eviction policy, and the distinction decides the design. The raw
- * JSON under scratch/tr/deeds/ is the only place third-party names live: co-owners and managers who
- * hold no public office, and the company's street address. We keep it because re-deriving a boolean is
- * cheaper than re-requesting somebody else's register — not because we are entitled to hold it.
- *
- * Retention is 35 days: one monthly refresh cycle plus slack. Under normal operation nothing is ever
- * purged, because the refresh at ~30 days rewrites the row first. What this actually catches is the
- * residue — a company that dropped out of the candidate set, or a refresh that failed — which is
- * exactly the data with no remaining reason to exist.
- *
- * Orphaned files are removed too: a raw deed with no index row is unreachable by every read path here,
- * so it is pure retained personal data.
- *
- * @returns {{rows:number, files:number, orphans:number}} what was removed
- */
-export function purgeExpired(
-  db,
-  rawDir,
-  {
-    retentionDays = RETENTION_DAYS,
-    verdictRetentionDays = VERDICT_RETENTION_DAYS,
-    now = new Date(),
-    unlink = fs.unlinkSync,
-  } = {},
-) {
-  const cutoff = new Date(now.getTime() - retentionDays * 86_400_000).toISOString();
-  const verdictCutoff = new Date(now.getTime() - verdictRetentionDays * 86_400_000).toISOString();
-  const expired = db.prepare('SELECT eik, raw_path FROM deeds WHERE fetched_at < ?').all(cutoff);
-
-  let files = 0;
-  for (const row of expired) {
-    if (!row.raw_path) continue;
-    // Resolve through the same safeEik path-traversal rail the writer used, never the stored string.
-    try {
-      unlink(path.join(rawDir, `${safeEik(row.eik)}.json`));
-      files++;
-    } catch (e) {
-      // Already gone is the goal state, not a failure. Anything else must surface — a purge that
-      // silently fails to delete is worse than no purge, because it reports success.
-      if (e.code !== 'ENOENT') throw e;
-    }
-  }
-  db.prepare('DELETE FROM deeds WHERE fetched_at < ?').run(cutoff);
-
-  let orphans = 0;
-  let names = [];
-  try {
-    names = fs.readdirSync(rawDir);
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e; // no raw dir yet — nothing to orphan
-  }
-  const known = new Set(
-    db
-      .prepare('SELECT eik FROM deeds')
-      .all()
-      .map((r) => `${r.eik}.json`),
-  );
-  for (const name of names) {
-    // `.tmp-<pid>` files are atomicWrite's half-written deeds. A crash between write and rename leaves
-    // one holding third-party names under a name no `.json` filter ever sees — so sweep those too.
-    const isTemp = /\.tmp-\d+$/.test(name);
-    if ((!name.endsWith('.json') && !isTemp) || known.has(name)) continue;
-    // The same ENOENT tolerance the expired loop above has, and for a sharper reason here: this loop
-    // runs AFTER the DB DELETE has committed, so an unguarded throw half-purges — rows gone, files
-    // still on disk — and reports the whole run as failed. The listing is a snapshot, so a name can
-    // legitimately be gone by the time we reach it (a concurrent purge, an operator clearing scratch).
-    // Already gone is the goal state. Anything else still surfaces: a purge that cannot delete has
-    // left third-party names on disk, and reporting success would be the failure it exists to prevent.
-    try {
-      unlink(path.join(rawDir, name));
-      orphans++;
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e;
-    }
-  }
-
-  // Verdicts age out on their OWN clock, longer than the deeds'. They hold no third-party name
-  // (ADR-0037), so this is not the privacy rail the deed purge is — it is the promise that a published
-  // claim rests on a lookup made inside a stated window. Sharing the deed's 35 days would delete
-  // verdicts faster than a budget-bounded crawl can refresh them, and the surface would then shrink
-  // for no reason but the clock.
-  // Counted off the DELETE itself rather than a SELECT COUNT(*) before it. Two statements asking one
-  // question can only ever agree or be wrong; `changes` is what was actually deleted, by construction.
-  const verdicts = db.prepare('DELETE FROM verdicts WHERE decided_at < ?').run(verdictCutoff);
-
-  return { rows: expired.length, files, orphans, verdicts: verdicts.changes };
 }

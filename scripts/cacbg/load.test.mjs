@@ -15,7 +15,7 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
 
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
@@ -40,97 +40,39 @@ function runLoad(extraEnv = {}) {
 }
 
 /**
- * Build a Trade Register cache + raw deeds covering the fixture's winners.
+ * Decide the Trade Register verdicts covering the fixture's winners, from fixture registry facts.
  *
- * `spec[eik]` describes one deed: `owners` / `managers` are full names placed in SEPARATE registry
- * entities (so the entity-boundary rule is exercised end to end), `form` is the numeric legalForm and
- * `suffix` the ЗТРРЮЛНЦ form on fullName. Anything omitted from `spec` is still cached — as a deed
- * naming somebody else — because the loader must FAIL CLOSED on a cache that does not cover every
- * candidate, and a test that silently left ЕИК uncovered would exercise that path by accident.
+ * `spec[eik]` describes one company: `owners` / `managers` are full names of persons standing in those
+ * roles — each its own registered holder — `form` is the legal form (a numeric code, mapped by
+ * fixtureRegistry) and `suffix` the ЗТРРЮЛНЦ form on the name. Anything omitted from `spec` is still read —
+ * as a company naming somebody else — because the loader must FAIL CLOSED on evidence that does not cover
+ * every candidate, and a test that silently left an ЕИК unread would exercise that path by accident.
+ * `omit` leaves an ЕИК unread on purpose.
  */
-function buildTrCache(dbFile, rawDir, spec = {}, { omit = [] } = {}) {
-  fs.mkdirSync(rawDir, { recursive: true });
-  const cache = new DatabaseSync(dbFile);
-  cache.exec(`CREATE TABLE IF NOT EXISTS deeds (
-    eik TEXT PRIMARY KEY, status TEXT NOT NULL, http_status INTEGER, fetched_at TEXT NOT NULL,
-    raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
-    seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
-    attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT)`);
-  const src = new DatabaseSync(DB, { readOnly: true });
-  const eiks = src
-    .prepare('SELECT eik_normalized e FROM bidders WHERE eik_normalized IS NOT NULL')
-    .all()
-    .map((r) => r.e);
-  src.close();
-
-  const container = (t) =>
-    `<div class='record-container record-container--preview'><p class='field-text'>${t}</p></div>`;
-  const joinEntities = (names) => names.map(container).join(`<hr class='hr--report' />`);
-
-  for (const eik of eiks) {
-    if (omit.includes(eik)) continue;
-    const d = spec[eik] ?? {};
-    if (d.outsideTr) {
-      cache
-        .prepare(
-          'INSERT OR REPLACE INTO deeds(eik,status,fetched_at,outside_reason) VALUES(?,?,?,?)',
-        )
-        .run(eik, 'outside_tr', '2026-08-05T00:00:00Z', 'HTTP 200, empty body');
-      continue;
-    }
-    const fields = [];
-    const push = (nameCode, names, entryDate) =>
-      names?.length &&
-      fields.push({
-        nameCode,
-        htmlData: joinEntities(names),
-        fieldEntryNumber: '20110502101007',
-        fieldEntryDate: `${entryDate ?? '2011-05-02'}T00:00:00`,
-      });
-    push('CR_F_19_L', d.owners ?? ['НЯКОЙ ДРУГ СОБСТВЕНИК'], d.ownEntryDate);
-    push('CR_F_7_L', d.managers, d.ownEntryDate);
-    if (d.seat) push('CR_F_5_L', [`Населено място: ${d.seat}`], d.seatEntryDate ?? d.ownEntryDate);
-    const deed = {
-      uic: eik,
-      fullName: `"ФИКС" ${d.suffix ?? 'ООД'}`,
-      legalForm: d.form ?? 4,
-      sections: [{ subDeeds: [{ groups: [{ fields }] }] }],
-    };
-    fs.writeFileSync(path.join(rawDir, `${eik}.json`), JSON.stringify(deed));
-    cache
-      .prepare(
-        `INSERT OR REPLACE INTO deeds(eik,status,http_status,fetched_at,raw_path,legal_form_code,
-           legal_form_verdict,seat_normalized,latest_own_entry_date)
-         VALUES(?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        eik,
-        'fetched',
-        200,
-        '2026-08-05T00:00:00Z',
-        `${eik}.json`,
-        d.form ?? 4,
-        d.suffix && /АД|КДА/.test(d.suffix) ? 'joint_stock' : 'closely_held',
-        d.seat ? d.seat.replace(/^гр\.\s*/, '').toUpperCase() : null,
-        d.ownEntryDate ?? '2011-05-02',
-      );
-  }
-  cache.close();
-
-  // The deeds alone decide nothing now: since ADR-0037 the verdict is reached by the crawler and the
-  // loader only reads it. Run the REAL decision over these fixture deeds, so these tests keep
-  // exercising the evidence ladder end to end instead of hand-written verdict rows.
+function buildTrCache(dbFile, _rawDir, spec = {}, { omit = [] } = {}) {
   seedVerdicts({
     workDb: DB,
     staging: STAGING,
     trDb: dbFile,
-    deedFor: (eik) => {
-      if (omit.includes(eik)) return null; // never reached — no verdict, an incomplete cache
-      if ((spec[eik] ?? {}).outsideTr) return { outsideTr: true };
-      return readFixtureDeed(rawDir, eik);
+    registryFor: (eik) => {
+      if (omit.includes(eik)) return null; // never read — no verdict, an incomplete registry
+      const d = spec[eik] ?? {};
+      if (d.outsideTr) return { outsideTr: true };
+      return {
+        registry: fixtureRegistry(eik, {
+          owners: d.owners ?? ['НЯКОЙ ДРУГ СОБСТВЕНИК'],
+          managers: d.managers ?? [],
+          seat: d.seat ?? null,
+          seatEntryDate: d.seatEntryDate ?? null,
+          ownEntryDate: d.ownEntryDate ?? '2011-05-02',
+          form: d.form ?? 4,
+          suffix: d.suffix ?? 'ООД',
+        }),
+      };
     },
   });
 }
+
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
 before(() => {

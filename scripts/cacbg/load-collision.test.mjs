@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -38,84 +38,31 @@ function runLoad() {
 }
 
 /**
- * Minimal Trade Register evidence for this fixture (#279, ADR-0033). Publishing now rests on a registry
- * fact, so a loader test without a cache would only ever exercise the fail-closed path. Each winner's
- * deed names its own declarant as съдружник, which is the „Документ" rung.
+ * Minimal Trade Register evidence for this fixture (#279, ADR-0033). Publishing rests on a registry fact,
+ * so a loader test without verdicts would only ever exercise the fail-closed path. Each winner's registry
+ * facts name its own declarant as съдружник, which is the „Документ" rung — and register the seat this
+ * official declared. Both фирми here are generic („КОМПАНИЯ ЕДНО/ДВЕ" — two content words), so under
+ * ADR-0035 a name match alone cannot establish which company was declared; the agreeing seat is what does.
  */
 function buildTrCache(owners) {
-  fs.mkdirSync(TR_RAW, { recursive: true });
-  const cache = new DatabaseSync(TR_DB);
-  cache.exec(`CREATE TABLE IF NOT EXISTS deeds (
-    eik TEXT PRIMARY KEY, status TEXT NOT NULL, http_status INTEGER, fetched_at TEXT NOT NULL,
-    raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
-    seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
-    attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT)`);
-  for (const [eik, spec] of Object.entries(owners)) {
-    const { name, seat } = spec;
-    const deed = {
-      uic: eik,
-      fullName: '"ФИКС" ЕООД',
-      legalForm: 4,
-      sections: [
-        {
-          subDeeds: [
-            {
-              groups: [
-                {
-                  fields: [
-                    {
-                      nameCode: 'CR_F_19_L',
-                      htmlData: `<div class='record-container'><p class='field-text'>${name}</p></div>`,
-                      fieldEntryNumber: '20110502101007',
-                      fieldEntryDate: '2011-05-02T00:00:00',
-                    },
-                    // The REGISTERED seat, matching what this official declared. Both фирми here are
-                    // generic („КОМПАНИЯ ЕДНО/ДВЕ" — two content words), so under ADR-0035 a name match
-                    // alone cannot establish which company was declared; the agreeing seat is what does.
-                    // Without it this fixture would exercise the withholding path instead of the
-                    // cross-folder attribution it exists to test.
-                    {
-                      nameCode: 'CR_F_5_L',
-                      htmlData: `<div class='record-container'><p class='field-text'>Държава: БЪЛГАРИЯ<br/>Населено място: гр. ${seat}</p></div>`,
-                      fieldEntryNumber: '20110502101008',
-                      fieldEntryDate: '2011-05-02T00:00:00',
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-    fs.writeFileSync(path.join(TR_RAW, `${eik}.json`), JSON.stringify(deed));
-    cache
-      .prepare(
-        'INSERT OR REPLACE INTO deeds(eik,status,http_status,fetched_at,raw_path,legal_form_code,legal_form_verdict,latest_own_entry_date) VALUES(?,?,?,?,?,?,?,?)',
-      )
-      .run(
-        eik,
-        'fetched',
-        200,
-        '2026-08-05T00:00:00Z',
-        `${eik}.json`,
-        4,
-        'closely_held',
-        '2011-05-02',
-      );
-  }
-  cache.close();
-
-  // The deeds alone decide nothing since ADR-0037: the verdict is reached by the crawler and the
-  // loader only reads it. Run the REAL decision over these fixture deeds so this test keeps
-  // exercising the evidence ladder rather than a hand-written verdict row.
   seedVerdicts({
     workDb: DB,
     staging: STAGING,
     trDb: TR_DB,
-    deedFor: (eik) => readFixtureDeed(TR_RAW, eik),
+    registryFor: (eik) =>
+      eik in owners
+        ? {
+            registry: fixtureRegistry(eik, {
+              owners: [owners[eik].name],
+              seat: `гр. ${owners[eik].seat}`,
+              form: 4,
+              suffix: 'ЕООД',
+            }),
+          }
+        : null,
   });
 }
+
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
 before(() => {

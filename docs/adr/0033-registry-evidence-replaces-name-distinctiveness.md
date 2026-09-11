@@ -1,6 +1,6 @@
 # ADR-0033: A link publishes only against a Trade Register fact — the evidence ladder replaces the name-distinctiveness tier
 
-- Status: Accepted (design; implemented as the #279 pipeline change)
+- Status: Accepted (design; implemented as the #279 pipeline change) · amended by [ADR-0041](0041-registry-layer-in-the-daily-etl.md): the registry facts come from the registry layer
 - Date: 2026-08-05
 - Deciders: Todor (maintainer), Claude
 - Supersedes: [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md), [ADR-0015](0015-tr-name-uniqueness-census.md), [ADR-0017](0017-name-collision-tier-gate.md)
