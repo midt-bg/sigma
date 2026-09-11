@@ -251,6 +251,17 @@ describe('rolesFromDeed', () => {
     ]);
   });
 
+  it('reads a single record the same whether it comes as an object or as a list of one', () => {
+    // The API is moving every such container to a list; until it has, a lone record may still come bare.
+    const rec = { RecordID: '1', share: '10', Subject: person('e', 'СЪДРУЖНИК') };
+    const read = (value: unknown) =>
+      rolesFromDeed('101010101', partida(field({ fieldIdent: '00210', value }))).roles;
+    expect(read({ LimitedLiabilityPartner: rec })).toEqual(
+      read({ LimitedLiabilityPartner: [rec] }),
+    );
+    expect(read({ LimitedLiabilityPartner: [rec] })).toHaveLength(1);
+  });
+
   it('knows a person only by the register’s hash, and an entity by its ЕИК', () => {
     const { roles, persons } = rolesFromDeed(
       '101010101',
