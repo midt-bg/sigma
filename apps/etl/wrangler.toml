@@ -19,6 +19,9 @@ port = 8789
 
 [vars]
 EOP_OPEN_DATA_BASE_URL = "https://storage.eop.bg"
+# The Trade Register API the register layer reads (ADR-0041). Empty: the layer does not run. Local dev points it
+# at a local instance through .dev.vars.
+REGISTRY_API_BASE_URL = ""
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -32,6 +35,11 @@ database_id = "00000000-0000-0000-0000-000000000000"
 binding = "REFRESH"
 name = "sigma-refresh"
 class_name = "RefreshWorkflow"
+
+[[workflows]]
+binding = "REGISTRY"
+name = "sigma-registry"
+class_name = "RegistryWorkflow"
 
 [triggers]
 crons = ["0 */6 * * *"]

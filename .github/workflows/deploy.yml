@@ -165,6 +165,15 @@ jobs:
           pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
             --config wrangler.deploy.jsonc --remote --yes \
             --file ../../packages/db/migrations/0010_publishing_gate_constraints.sql
+          # 0012: old official ids → the id each became (ADR-0040), read by the official pages; the
+          # related-persons job fills it. 0013: the register layer's tables (ADR-0041), which the ETL
+          # Worker writes. Both CREATE … IF NOT EXISTS, so re-applying them on each deploy is a no-op.
+          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0012_person_redirects.sql
+          pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
+            --config wrangler.deploy.jsonc --remote --yes \
+            --file ../../packages/db/migrations/0013_registry.sql
       # The base schema was created out-of-band with `d1 execute --file`, so wrangler's migration
       # ledger is empty and `d1 migrations apply` would collide on 0000. Probe the actual table
       # instead. SQLite has no `ADD COLUMN IF NOT EXISTS`; a completion-marker table is created only
