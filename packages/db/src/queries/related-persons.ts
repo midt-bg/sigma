@@ -1,3 +1,5 @@
+import { declarationMatchesLink } from './declaration-source';
+import { getPersonDeclarations } from './declarations';
 import type {
   ConflictLink,
   ConflictContract,
@@ -18,11 +20,14 @@ const CONFLICT_TABLES = [
   'persons',
   'declarations',
   'declared_interests',
+  'declaration_companies',
   'interest_link_authorities',
   'related_persons_internal',
   // 0006 (#279, ADR-0033). Listed here for the same reason as the rest: on an environment where 0006
   // has not been applied yet, the evidence join must degrade to an empty surface rather than a 500.
   'interest_link_evidence',
+  'interest_link_history',
+  'person_registry_links',
   // 0012 (ADR-0040): an environment without it has no old ids to redirect — a 404, not a 500.
   'person_redirects',
 ];
@@ -61,7 +66,7 @@ function conflictSchemaAbsent(e: unknown, op: string): boolean {
 // own stake in the same winner (NOT_REDUNDANT_FAMILY below) — showing both re-identifies the relative via a ТР
 // owner lookup. Management/board roles without a declared stake, and listed securities, are still never
 // surfaced (noise at best, defamatory at worst). Only status='published' rows leave the pipeline; held,
-// suppressed and withdrawn (divested) links never surface. Ranking is NEXUS-first
+// suppressed and refuted links never surface. Proven history remains published. Ranking is NEXUS-first
 // (own-institution, then contemporaneous) so the strongest signals lead — never company revenue, which
 // surfaced blue-chip noise first.
 
@@ -92,6 +97,11 @@ interface LinkRow {
   entry_number: string | null;
   entry_date: string | null;
   lookup_date: string | null;
+  later_declaration_year: string | null;
+  registry_role_ended_on: string | null;
+  registry_person_id: string | null;
+  person_company_value_eur: number | null;
+  declared_offices: string | null;
 }
 
 // The winner's contracts, joined exactly as the ETL aggregate does (contracts→tenders→authorities→bidders,
@@ -181,12 +191,12 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- relative's stake is declared IN the official's own asset declaration (parse.mjs reads it from that one
     -- document), so d.person_id = il.person_id resolves to the office-holder either way — the URL always names
     -- the office-holder's document, never a relative's (ConflictDetail renders it as „декларация").
-    (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
-     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
+    (SELECT d.source_url FROM declarations d
+     WHERE d.person_id = il.person_id AND ${declarationMatchesLink()}
      ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_url,
     -- …and the year of that same filing (same order, same tiebreak), so the card says which one it is.
-    (SELECT d.declared_year FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
-     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
+    (SELECT d.declared_year FROM declarations d
+     WHERE d.person_id = il.person_id AND ${declarationMatchesLink()}
      ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_year,
     -- The official's LATEST declared institution — disambiguates namesakes on the surface (person grain is
     -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
@@ -199,9 +209,27 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- The evidence the link rests on, so the card can explain itself (ADR-0033 decision 7). LEFT JOIN
     -- rather than an inner one: SURFACED_OWNERSHIP already requires a publishing seal, and an inner join
     -- here would silently re-filter rather than surface a contradiction.
-    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date
+    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date,
+    hist.later_declaration_year, hist.registry_role_ended_on, pl.registry_indent AS registry_person_id,
+    (SELECT json_group_array(json_object('institution', office.institution, 'position', office.position, 'year', office.declared_year))
+     FROM (SELECT DISTINCT institution, position, declared_year FROM declarations d
+           WHERE d.person_id=il.person_id AND COALESCE(d.institution,'')<>'') office) AS declared_offices,
+    -- The leaderboard combines proven aliases of one human. Count each contract
+    -- once across their separate declaration windows; never fill gaps or add overlaps.
+    (SELECT SUM(cc.amount_eur) ${CONTRACT_JOIN}
+     WHERE bb.eik_normalized=il.eik AND EXISTS (
+       SELECT 1 FROM interest_links alias_link
+       LEFT JOIN person_registry_links alias_person ON alias_person.person_id=alias_link.person_id
+       WHERE alias_link.eik=il.eik
+         AND (alias_link.person_id=il.person_id OR (pl.registry_indent IS NOT NULL AND alias_person.registry_indent=pl.registry_indent))
+         AND ${SURFACED_OWNERSHIP.replaceAll('il.', 'alias_link.')}
+         AND ${NOT_REDUNDANT_FAMILY.replaceAll('il.', 'alias_link.')}
+         AND strftime('%Y',cc.signed_at) BETWEEN alias_link.first_declared_year AND alias_link.last_declared_year
+     )) AS person_company_value_eur
   FROM interest_links il
   LEFT JOIN interest_link_evidence ev ON ev.link_key = il.link_key
+  LEFT JOIN interest_link_history hist ON hist.link_key = il.link_key
+  LEFT JOIN person_registry_links pl ON pl.person_id = il.person_id
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
   WHERE ${SURFACED_OWNERSHIP}
@@ -250,6 +278,11 @@ function toLink(r: LinkRow): ConflictLink {
     ownInstitution: r.own_institution === 'exact',
     firstDeclaredYear: r.first_declared_year,
     lastDeclaredYear: r.last_declared_year,
+    laterDeclarationYear: r.later_declaration_year ?? null,
+    registryRoleEndedOn: r.registry_role_ended_on ?? null,
+    registryPersonId: r.registry_person_id ?? null,
+    personCompanyValueEur: r.person_company_value_eur ?? null,
+    declaredOffices: JSON.parse(r.declared_offices ?? '[]'),
     matchMethod: r.match_method,
     contractCount: r.contract_count,
     contractValueEur: r.contract_value_eur,
@@ -313,7 +346,7 @@ export async function getConflictLeaderboard(
 export const DETAIL_LINKS_LIMIT = 50;
 
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
-  ORDER BY ${NEXUS_ORDER} LIMIT ${DETAIL_LINKS_LIMIT}`;
+  ORDER BY ${NEXUS_ORDER}`;
 
 // The union declared window across the links on ONE ЕИК: [min firstDeclaredYear, max lastDeclaredYear]. The
 // ЕИК read orders contracts INSIDE this union first, so the LIMIT can never drop a contract that falls in ANY
@@ -373,6 +406,18 @@ export async function getOfficialConflicts(
     const rows = sealed((await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
+    const documentSets = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.person_id))].map(
+          async (id) => [id, await getPersonDeclarations(db, id)] as const,
+        ),
+      ),
+    );
+    links.forEach((link, i) => {
+      link.declarations = (documentSets.get(rows[i]!.person_id) ?? []).filter((d) =>
+        d.companyEiks.includes(link.eik),
+      );
+    });
     const contracts = await loadLinkContracts(db, links);
     return { official: links[0]!.official, links, contracts };
   } catch (e) {
@@ -394,6 +439,18 @@ export async function getCompanyConflicts(
     const rows = sealed((await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
+    const documentSets = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.person_id))].map(
+          async (id) => [id, await getPersonDeclarations(db, id)] as const,
+        ),
+      ),
+    );
+    links.forEach((link, i) => {
+      link.declarations = (documentSets.get(rows[i]!.person_id) ?? []).filter((d) =>
+        d.companyEiks.includes(link.eik),
+      );
+    });
     const contracts = await loadLinkContracts(db, links);
     return { company: rows[0]!.company, eik, links, contracts };
   } catch (e) {

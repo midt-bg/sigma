@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Form, Link } from 'react-router';
 import { count, money, plural, searchTokens } from '@sigma/shared';
 import { MAX_QUERY_TOKENS, search, getDb } from '@sigma/db';
 import type { SearchHit } from '@sigma/api-contract';
@@ -180,7 +180,21 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           kicker="Резултати от търсене"
           title={hasQuery ? results.query : 'Търсене'}
           lede={lede}
-        />
+        >
+          <Form method="get" className="page-search" role="search">
+            <label htmlFor="page-query">Търси по име, ЕИК, договор или преписка</label>
+            <div>
+              <input
+                id="page-query"
+                type="search"
+                name="q"
+                defaultValue={results.query}
+                key={results.query}
+              />
+              <button type="submit">Търси</button>
+            </div>
+          </Form>
+        </PageHeader>
 
         {hasQuery && results.empty && (
           <p className="muted">

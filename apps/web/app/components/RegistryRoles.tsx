@@ -31,7 +31,12 @@ const share: Column<{ share: string | null }> = {
   key: 'share',
   header: 'Дял',
   secondary: true,
-  cell: (r) => r.share ?? '',
+  cell: (r) =>
+    r.share ?? (
+      <span className="muted" aria-label="Няма данни за дял">
+        —
+      </span>
+    ),
 };
 const entry: Column<{ entryNumber: string }> = {
   key: 'entry',

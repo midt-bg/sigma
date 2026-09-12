@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Loader-level tests for the свързани-лица routes. The rendered surface is covered by Playwright E2E;
 // these prove the loader GLUE in isolation (node env, no DOM) — the 404 guards that keep a bare page from
@@ -10,6 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const q = vi.hoisted(() => ({
   getConflictLeaderboard: vi.fn(),
   getOfficialConflicts: vi.fn(),
+  getRegistryIdentity: vi.fn(),
+  getRegistryPerson: vi.fn(),
+  getRegistryOfficials: vi.fn(),
+  getPersonDeclarations: vi.fn(),
+  getPersonActivity: vi.fn(),
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
   getAuthorityName: vi.fn(),
@@ -28,12 +33,26 @@ import { loader as officialLoader } from './conflict.official';
 import { loader as companyLoader } from './conflict.company';
 import { loader as contractsLoader } from './conflict.contracts';
 
+import { emptyActivity } from '../lib/person-profile.test-support';
+beforeEach(() => {
+  q.getRegistryIdentity.mockResolvedValue(null);
+  q.getPersonDeclarations.mockResolvedValue([]);
+  q.getPersonActivity.mockResolvedValue(emptyActivity);
+});
+
 const DB = {}; // the loaders only forward it to the (mocked) query fns; identity is all we assert on
 const context = { cloudflare: { env: { DB } } };
 const call = (loader: unknown, params: Record<string, string | undefined>) =>
-  (loader as (a: { params: typeof params; context: typeof context }) => Promise<unknown>)({
+  (
+    loader as (a: {
+      params: typeof params;
+      context: typeof context;
+      request: Request;
+    }) => Promise<unknown>
+  )({
     params,
     context,
+    request: new Request('http://localhost:5173/conflicts/official/test'),
   });
 
 const req = (qs = '') => new Request(`https://sigma.test/conflicts${qs}`);
@@ -139,21 +158,12 @@ describe('official loader (/conflicts/official/:id)', () => {
     await expectStatus(call(officialLoader, { id: 'ivan-petrov-1' }), 404);
   });
 
-  it('301s an id the identity grain no longer produces to the one it became', async () => {
+  it('does not redirect obsolete identities; an absent profile returns 404', async () => {
     q.personIdFromSlug.mockReturnValue('person:old');
-    q.getOfficialConflicts.mockResolvedValue(null);
     q.getPersonRedirect.mockResolvedValue('person:new');
-    try {
-      await call(officialLoader, { id: 'old-slug' });
-      throw new Error('expected a redirect');
-    } catch (thrown) {
-      expect(thrown).toBeInstanceOf(Response);
-      expect((thrown as Response).status).toBe(301);
-      expect((thrown as Response).headers.get('Location')).toBe(
-        '/conflicts/official/slug-of-person:new',
-      );
-    }
-    expect(q.getPersonRedirect).toHaveBeenCalledWith(DB, 'person:old');
+    q.getOfficialConflicts.mockResolvedValue(null);
+    await expectStatus(call(officialLoader, { id: 'old-slug' }), 404);
+    expect(q.getPersonRedirect).not.toHaveBeenCalled();
   });
 
   it('returns the conflict payload for a valid official', async () => {
@@ -161,9 +171,35 @@ describe('official loader (/conflicts/official/:id)', () => {
     // Match the real OfficialConflicts DTO shape — incl. the eager `contracts` map added in #287 (niki #312
     // LOW 1: the untyped mock previously omitted it, the one gap the api-contract type exists to catch).
     q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
-    const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { official: string };
-    expect(res.official).toBe('Иван Петров');
+    const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { name: string };
+    expect(res.name).toBe('Иван Петров');
     expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1');
+  });
+
+  it('renders a bridged registry identity at the requested official address without redirecting', async () => {
+    q.personIdFromSlug.mockReturnValue('person:1');
+    q.getRegistryIdentity.mockResolvedValue('a'.repeat(64));
+    q.getRegistryPerson.mockResolvedValue({
+      name: 'Иван Петров',
+      network: { center: null, nodes: [], edges: [] },
+    });
+    q.getRegistryOfficials.mockResolvedValue(['person:1']);
+    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
+    const res = (await call(officialLoader, { id: 'current-official' })) as {
+      name: string;
+      person: unknown;
+    };
+    expect(res).not.toBeInstanceOf(Response);
+    expect(res.name).toBe('Иван Петров');
+    expect(res.person).not.toBeNull();
+    expect(q.getPersonRedirect).not.toHaveBeenCalled();
+    expect(q.getPersonActivity).toHaveBeenCalledWith(
+      DB,
+      'a'.repeat(64),
+      ['person:1'],
+      expect.any(URLSearchParams),
+      'all',
+    );
   });
 });
 

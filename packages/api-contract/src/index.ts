@@ -494,6 +494,7 @@ export interface CompanyTieNode {
 }
 
 export interface CompanyTieEdge {
+  people?: { id: string; name: string; href: string }[];
   from: string; // node id
   to: string; // node id
   kind: CompanyTieKind;
@@ -819,6 +820,7 @@ export type ConflictRelation = 'owns' | 'manages' | 'owns+manages' | 'related';
 
 /** One office-holder↔company ownership link with its contract facts and a provenance URL. */
 export interface ConflictLink {
+  declarations?: PersonDeclaration[];
   linkKey: string;
   officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
   official: string; // declarant (office-holder) name as declared
@@ -832,7 +834,16 @@ export interface ConflictLink {
   contemporaneous: boolean; // stake declared in a year overlapping a contract award
   ownInstitution: boolean; // ≥1 contract from the official's OWN institution (deterministic 'exact' only)
   firstDeclaredYear: string | null; // declared span — the link is DATED, never asserted "current"
-  lastDeclaredYear: string | null; // divested links (later filing omits the company) are withdrawn upstream
+  lastDeclaredYear: string | null; // historical links retain the observed declaration window
+  /** Later comparable filing which omits this stake; NOT a sale date. */
+  laterDeclarationYear?: string | null;
+  /** The end of the particular registry role cited as evidence; NOT a relative's ownership end. */
+  registryRoleEndedOn?: string | null;
+  /** Proven registry identity for grouping declaration profiles across institutions. */
+  registryPersonId?: string | null;
+  /** Union of this person's declared windows in this company; each contract once. */
+  personCompanyValueEur?: number | null;
+  declaredOffices?: { institution: string; position: string | null; year: string | null }[];
   matchMethod: string;
   contractCount: number;
   contractValueEur: number | null;
@@ -906,4 +917,18 @@ export interface CompanyConflicts {
   eik: string;
   links: ConflictLink[];
   contracts: Record<string, ConflictContractFacts[]>; // ЕИК → the winner's contract facts
+}
+
+/** A source document, with dates kept distinct from the reporting year. */
+export interface PersonDeclaration {
+  id: string;
+  year: string | null;
+  template: string;
+  type: string | null;
+  declaredOn: string | null;
+  submittedOn: string | null;
+  institution: string | null;
+  position: string | null;
+  url: string;
+  companyEiks: string[];
 }

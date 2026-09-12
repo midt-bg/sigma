@@ -19,8 +19,8 @@ import { roleSentence } from '../lib/registry-roles';
 //                              holds it at the company it points to; faded once every such role has ended
 //   money          hairline →  an institution that paid the centre (context layer)
 //
-// A declared-stake office-holder is never a node and never named here: that tie is drawn between the two
-// COMPANIES and links to /conflicts. The people drawn are the ones the Trade Register records in a role, named
+// A declared-stake office-holder is identified on the company-to-company edge and in its source links.
+// The people drawn as nodes are the ones the Trade Register records in a role, named
 // as it names them, each linking to their page (ADR-0039).
 
 const TIE_LABEL: Record<CompanyTieKind, string> = {
@@ -36,6 +36,8 @@ export function tieDescription(e: CompanyTieEdge): string {
   if (e.kind === 'role') return roleSentence(e);
   if (e.kind === 'money') return `${TIE_LABEL.money} ${money(e.weightEur)}`;
   if (e.kind === 'declared_stake') {
+    if (e.people?.length)
+      return `Общ деклариран интерес: ${e.people.map((p) => p.name).join(', ')}`;
     return e.occurrences > 1
       ? `${TIE_LABEL.declared_stake} — ${count(e.occurrences)} лица`
       : TIE_LABEL.declared_stake;
@@ -147,6 +149,29 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
           ))}
         </svg>
       </div>
+      {edges.some((e) => e.people?.length) && (
+        <div className="graph-evidence">
+          <p className="small muted">Общи декларатори — източници и профили:</p>
+          <ul>
+            {edges
+              .filter((e) => e.people?.length)
+              .map((e) => (
+                <li key={`${e.from}-${e.to}`}>
+                  <span>
+                    {nodes.find((n) => n.id === e.from)?.name} ·{' '}
+                    {nodes.find((n) => n.id === e.to)?.name}:{' '}
+                  </span>
+                  {e.people!.map((p, i) => (
+                    <span key={p.id}>
+                      {i > 0 && '; '}
+                      <Link to={p.href}>{p.name}</Link>
+                    </span>
+                  ))}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
       <ul className="tie-legend" aria-hidden="true">
         {(['consortium', 'subcontract', 'declared_stake', 'role'] as const)
           .filter((k) => edges.some((e) => e.kind === k))

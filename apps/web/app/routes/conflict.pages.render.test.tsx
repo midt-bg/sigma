@@ -1,3 +1,4 @@
+import { emptyActivity } from '../lib/person-profile.test-support';
 // @vitest-environment jsdom
 // Deep render tests for the per-entity conflict pages (official, company) and the static methodology page.
 // Each is mounted as a real route through createRoutesStub so ConflictDetail/Link resolve, and the
@@ -10,7 +11,7 @@ import { act, type ComponentType } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictLink, PersonDeclaration } from '@sigma/api-contract';
 import ConflictOfficial, { meta as officialMeta } from './conflict.official';
 import ConflictCompany, { meta as companyMeta } from './conflict.company';
 import ConflictMethodology from './conflict.methodology';
@@ -80,6 +81,30 @@ afterEach(() => {
 });
 
 async function mount(Component: ComponentType<{ loaderData: never }>, loaderData: unknown) {
+  if (Component === (ConflictOfficial as unknown)) {
+    const d = loaderData as {
+      official: string;
+      links: ConflictLink[];
+      contracts?: unknown;
+      declarations?: PersonDeclaration[];
+    };
+    loaderData = {
+      ...d,
+      name: d.official,
+      person: null,
+      declarations: d.declarations ?? [],
+      tieLayout: null,
+      activity: emptyActivity,
+      totals: {
+        companies: new Set(d.links.map((l) => l.eik)).size,
+        contracts: 0,
+        valueEur: null,
+        declaredCount: 0,
+        declaredEur: null,
+      },
+      contracts: d.contracts ?? {},
+    };
+  }
   const Stub = createRoutesStub([
     {
       path: '/x',
@@ -114,6 +139,44 @@ function detailBlock(): HTMLElement {
 }
 
 describe('/conflicts/official/:id — render', () => {
+  it('puts distinct declared institutions, positions and observed years above the source documents', async () => {
+    const declaration = (
+      institution: string,
+      position: string,
+      year: string,
+    ): PersonDeclaration => ({
+      id: year,
+      year,
+      institution,
+      position,
+      template: 'assets',
+      type: 'Annualy',
+      declaredOn: null,
+      submittedOn: null,
+      url: `https://example.test/${year}`,
+      companyEiks: ['111'],
+    });
+    await mount(ConflictOfficial as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        declaration('Община Русе', 'Съветник', '2019'),
+        declaration('Народно събрание', 'Народен представител', '2025'),
+      ],
+    });
+    const institutions = container.querySelector('#institutions')!.closest('section')!;
+    expect(institutions.textContent).toContain('Община Русе');
+    expect(institutions.textContent).toContain('Съветник');
+    expect(institutions.textContent).toContain('2019');
+    expect(institutions.textContent).toContain('Народно събрание');
+    expect(institutions.textContent).toContain('Народен представител');
+    expect(institutions.textContent).toContain('2025');
+    expect(institutions.textContent).toContain('не точни мандати');
+    expect(
+      institutions.compareDocumentPosition(container.querySelector('#declarations')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
       linkKey: 'k1',
@@ -140,7 +203,7 @@ describe('/conflicts/official/:id — render', () => {
     expect(block.textContent).not.toContain('Кмет Тестов');
   });
 
-  it('renders the rich detail EAGERLY — timeline, per-authority shares, contract split — no expand click', async () => {
+  it('keeps the timeline visible and sends company contracts to the one common list', async () => {
     const l = link({ linkKey: 'k1', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' });
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
@@ -159,17 +222,14 @@ describe('/conflicts/official/:id — render', () => {
       },
     });
     const t = text();
-    // timeline heading + the per-authority share section, both from the eagerly-loaded contracts
     expect(t).toContain('Времева ос');
-    expect(t).toContain('Дял при възложителите');
-    // contracts split in/out the declared period — the in-window heading is present with no toggle
-    expect(t).toContain('Договори, сключени в декларирания период');
-    expect(t).toContain('Извън периода');
-    // no expand affordance survives — the detail is inlined, not behind a „Виж договорите" button
+    expect(t).toContain('Договори по свързаните дружества');
+    expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain(
+      '/x?company=333&basis=declaration#contracts',
+    );
+    expect(detailBlock().querySelector('a[href*="/contracts/"]')).toBeNull();
+    expect(t).not.toContain('Дял при възложителите');
     expect(container.querySelector('.cc-toggle')).toBeNull();
-    expect(t).not.toContain('Виж договорите');
-    // a contract is actually listed (its number links to the contract page)
-    expect(container.querySelector('a[href*="/contracts/"]')).not.toBeNull();
   });
 
   it('a family-only page never asserts the official owns the stake (§2.6)', async () => {
@@ -182,7 +242,10 @@ describe('/conflicts/official/:id — render', () => {
       ],
       contracts: {},
     });
-    expect(text()).not.toContain('собствен дял');
+    expect(container.querySelector('#declared-overview')?.textContent).not.toContain(
+      'собствен дял',
+    );
+    expect(detailBlock().textContent).not.toContain('собствен дял');
     expect(text()).toContain('деклариран дял на свързано лице');
   });
 
@@ -211,7 +274,7 @@ describe('/conflicts/official/:id — render', () => {
 
   it('meta() names the person in the title and marks the page noindex', () => {
     const tags = officialMeta({
-      data: { official: 'Иван Петров', links: [], contracts: {} },
+      data: { name: 'Иван Петров', links: [], contracts: {} },
       matches: [],
       params: { id: 'aXZhbg' },
     } as never);
@@ -285,7 +348,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
       contracts: {},
     });
     const t = text();
-    expect(t).toContain('самоличност, потвърдена по декларирани данни');
+    expect(t).toContain('дружеството е потвърдено по декларирани данни');
     expect(t).not.toContain('вписано като');
   });
 
@@ -309,7 +372,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     });
     const block = detailBlock();
     expect(block.textContent).toContain('деклариран дял на свързано лице');
-    expect(block.textContent).toContain('самоличност, потвърдена по декларирани данни');
+    expect(block.textContent).toContain('дружеството е потвърдено по декларирани данни');
     expect(block.textContent).not.toContain('вписано като');
   });
 

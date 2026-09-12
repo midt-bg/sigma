@@ -3,9 +3,11 @@
 // (#56 / #197). The cache-key.test.ts drift guard keeps it a complete superset of what the app reads.
 export const CANONICAL_QUERY_PARAMS = new Set([
   'authority',
+  'basis', // evidence basis in the unified person contract list
   'bidder',
   'bids', // single-bid filter — changes the result set + totals
   'center',
+  'company', // person profile company filter
   'count',
   'cursor',
   'eu',

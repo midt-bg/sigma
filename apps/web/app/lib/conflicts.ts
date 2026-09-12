@@ -36,8 +36,11 @@ const RELATION_LABEL: Record<string, string> = {
 export function registryEvidenceLabel(l: {
   evidenceKind: 'document' | 'confirmed';
   registryRole: 'owner' | 'manager' | null;
+  registryRoleEndedOn?: string | null;
 }): string {
-  if (l.evidenceKind === 'confirmed') return 'самоличност, потвърдена по декларирани данни';
+  if (l.evidenceKind === 'confirmed') return 'дружеството е потвърдено по декларирани данни';
+  if (l.registryRoleEndedOn)
+    return `лицето е било вписано като ${l.registryRole === 'manager' ? 'управител' : 'съдружник/собственик'} до ${l.registryRoleEndedOn}`;
   return l.registryRole === 'manager'
     ? 'лицето е вписано като управител'
     : 'лицето е вписано като съдружник/собственик';
@@ -434,8 +437,13 @@ export function conflictHeadline(links: ConflictLink[]): {
   totalEur: number;
   contemporaneousEur: number;
 } {
-  const officials = new Set(links.map((l) => l.officialSlug));
-  const perEik = dedupeMoneyPerEik(links);
+  const officials = new Set(links.map((l) => l.registryPersonId ?? l.officialSlug));
+  const perEik = dedupeMoneyPerEik(
+    links.map((l) => ({
+      ...l,
+      contemporaneousValueEur: l.personCompanyValueEur ?? l.contemporaneousValueEur,
+    })),
+  );
   let totalEur = 0;
   let contemporaneousEur = 0;
   for (const v of perEik.values()) {
@@ -463,6 +471,7 @@ export interface ConflictPersonRow {
   official: string;
   /** URL-safe person id → /conflicts/official/:slug — the group key. */
   officialSlug: string;
+  personIdentity?: string;
   /** The official's latest declared institution — disambiguates namesakes; from the strongest link. */
   institution: string | null;
   /** The official's position, from the same filing as `institution`. */
@@ -490,6 +499,8 @@ export interface ConflictPersonRow {
   ownInstitution: boolean;
   /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
   hasContemporaneous: boolean;
+  hasHistoricalLinks: boolean;
+  declaredInstitutions?: DeclaredInstitution[];
 }
 
 /** Public-funds cell for a collapsed person row (#287): the same lead/total split as the per-link
@@ -549,9 +560,10 @@ function isStrongerLink(a: ConflictLink, b: ConflictLink): boolean {
 export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
   const groups = new Map<string, { strongest: ConflictLink; links: ConflictLink[] }>();
   for (const l of links) {
-    const g = groups.get(l.officialSlug);
+    const identity = l.registryPersonId ?? l.officialSlug;
+    const g = groups.get(identity);
     if (!g) {
-      groups.set(l.officialSlug, { strongest: l, links: [l] });
+      groups.set(identity, { strongest: l, links: [l] });
     } else {
       g.links.push(l);
       if (isStrongerLink(l, g.strongest)) g.strongest = l;
@@ -562,7 +574,12 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
   for (const { strongest, links: groupLinks } of groups.values()) {
     // Per-ЕИК money dedup (shared with conflictHeadline). Null-aware: a per-ЕИК value contributes only when
     // non-null, and the row stays NULL when NO winner carries a summable value — so „—", not a fabricated „0".
-    const perEik = dedupeMoneyPerEik(groupLinks);
+    const perEik = dedupeMoneyPerEik(
+      groupLinks.map((l) => ({
+        ...l,
+        contemporaneousValueEur: l.personCompanyValueEur ?? l.contemporaneousValueEur,
+      })),
+    );
     let contractValueEur: number | null = null;
     let contemporaneousValueEur: number | null = null;
     for (const v of perEik.values()) {
@@ -606,6 +623,7 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
       row: {
         official: strongest.official,
         officialSlug: strongest.officialSlug,
+        personIdentity: strongest.registryPersonId ?? strongest.officialSlug,
         institution: strongest.institution,
         position: strongest.position,
         companyCount,
@@ -616,6 +634,16 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         stakeKind,
         ownInstitution: groupLinks.some((l) => l.ownInstitution),
         hasContemporaneous: groupLinks.some((l) => l.contemporaneousContractCount > 0),
+        hasHistoricalLinks: groupLinks.some((l) =>
+          Boolean(l.laterDeclarationYear || l.registryRoleEndedOn),
+        ),
+        declaredInstitutions: groupDeclaredInstitutions(
+          groupLinks.flatMap((l) =>
+            l.declaredOffices?.length
+              ? l.declaredOffices
+              : [{ institution: l.institution ?? '', position: l.position, year: null }],
+          ),
+        ),
       },
     });
   }
@@ -682,8 +710,67 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
 
 /** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together. */
 export function institutionKey(name: string | null | undefined): string {
-  return (name ?? '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('bg');
+  let value = (name ?? '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('bg');
+  if (/[А-Я]/u.test(value)) {
+    const lookalikes: Record<string, string> = {
+      A: 'А',
+      B: 'В',
+      C: 'С',
+      E: 'Е',
+      H: 'Н',
+      K: 'К',
+      M: 'М',
+      O: 'О',
+      P: 'Р',
+      T: 'Т',
+      X: 'Х',
+      Y: 'У',
+    };
+    value = value.replace(/[ABCEHKMOPTXY]/g, (c) => lookalikes[c]!);
+  }
+  return value;
 }
+
+export interface DeclaredInstitution {
+  institution: string;
+  positions: string[];
+  years: string[];
+}
+
+/** Years are observations in declarations, never an inferred continuous mandate. */
+export function groupDeclaredInstitutions(
+  offices: {
+    institution: string | null;
+    position: string | null;
+    year: string | null;
+  }[],
+): DeclaredInstitution[] {
+  const groups = new Map<string, DeclaredInstitution>();
+  for (const o of offices) {
+    const key = institutionKey(o.institution);
+    if (!key || !o.institution) continue;
+    const g = groups.get(key) ?? { institution: o.institution, positions: [], years: [] };
+    const position = o.position?.trim();
+    if (position && !g.positions.some((p) => institutionKey(p) === institutionKey(position)))
+      g.positions.push(position);
+    if (o.year && /^\d{4}$/.test(o.year) && !g.years.includes(o.year)) g.years.push(o.year);
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, years: g.years.sort(), positions: g.positions.sort() }))
+    .sort(
+      (a, b) =>
+        (b.years.at(-1) ?? '').localeCompare(a.years.at(-1) ?? '') ||
+        a.institution.localeCompare(b.institution, 'bg'),
+    );
+}
+
+const rowInstitutions = (r: ConflictPersonRow): DeclaredInstitution[] =>
+  r.declaredInstitutions?.length
+    ? r.declaredInstitutions
+    : r.institution
+      ? [{ institution: r.institution, positions: r.position ? [r.position] : [], years: [] }]
+      : [];
 
 const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
 
@@ -700,9 +787,14 @@ export function filterConflictRows(
       (f.stake == null || r.stakeKind === 'mixed' || r.stakeKind === f.stake) &&
       (!f.signals.includes('own') || r.ownInstitution) &&
       (!f.signals.includes('window') || r.hasContemporaneous) &&
-      (institutions.size === 0 || institutions.has(institutionKey(r.institution))) &&
+      (institutions.size === 0 ||
+        rowInstitutions(r).some((i) => institutions.has(institutionKey(i.institution)))) &&
       (q == null ||
-        matchText(`${r.official} ${r.position ?? ''} ${r.institution ?? ''}`).includes(q)),
+        matchText(
+          `${r.official} ${r.position ?? ''} ${r.institution ?? ''} ${rowInstitutions(r)
+            .map((i) => `${i.institution} ${i.positions.join(' ')}`)
+            .join(' ')}`,
+        ).includes(q)),
   );
 }
 
@@ -731,12 +823,14 @@ export function institutionOptions(
 ): { value: string; label: string; count: number }[] {
   const byKey = new Map<string, { count: number; spellings: Map<string, number> }>();
   for (const r of rows) {
-    const key = institutionKey(r.institution);
-    if (!key || !r.institution) continue;
-    const e = byKey.get(key) ?? { count: 0, spellings: new Map<string, number>() };
-    e.count++;
-    e.spellings.set(r.institution, (e.spellings.get(r.institution) ?? 0) + 1);
-    byKey.set(key, e);
+    for (const { institution } of rowInstitutions(r)) {
+      const key = institutionKey(institution);
+      if (!key) continue;
+      const e = byKey.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+      e.count++;
+      e.spellings.set(institution, (e.spellings.get(institution) ?? 0) + 1);
+      byKey.set(key, e);
+    }
   }
   const ranked = [...byKey.entries()].sort(
     (a, b) => b[1].count - a[1].count || (a[0] < b[0] ? -1 : 1),

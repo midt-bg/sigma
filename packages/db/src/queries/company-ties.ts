@@ -25,8 +25,8 @@ import type {
   RegistryRoleKind,
 } from '@sigma/api-contract';
 import { cleanName } from '@sigma/shared';
-import { SURFACED_OWNERSHIP } from './related-persons';
-import { authoritySlug, companySlug } from './identity';
+import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
+import { authoritySlug, companySlug, personSlug } from './identity';
 import {
   joinablePerson,
   partidaEik,
@@ -448,6 +448,7 @@ export async function getCompanyTies(
     }
   }
 
+  await attachDeclaredPeople(db, edges);
   return { center, nodes, edges, omitted };
 }
 
@@ -634,5 +635,31 @@ export async function getAuthoritySupplierTies(
     }
   }
 
+  await attachDeclaredPeople(db, edges);
   return { center, nodes, edges, omitted };
+}
+
+/** Re-read the named basis through the publication gate; a precomputed count alone is not evidence. */
+async function attachDeclaredPeople(db: D1Database, edges: CompanyTieEdge[]) {
+  await Promise.all(
+    edges
+      .filter((e) => e.kind === 'declared_stake')
+      .map(async (edge) => {
+        const rows = await db
+          .prepare(
+            `WITH surfaced AS (
+      SELECT DISTINCT il.person_id, il.bidder_id FROM interest_links il
+      WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
+    ) SELECT DISTINCT p.id, p.name FROM surfaced x JOIN surfaced y ON y.person_id=x.person_id
+      JOIN persons p ON p.id=x.person_id WHERE x.bidder_id=? AND y.bidder_id=? ORDER BY p.name`,
+          )
+          .bind(edge.from, edge.to)
+          .all<{ id: string; name: string }>();
+        edge.people = rows.results.map((p) => ({
+          ...p,
+          href: `/conflicts/official/${personSlug(p.id)}`,
+        }));
+        edge.occurrences = edge.people.length;
+      }),
+  );
 }

@@ -2,7 +2,8 @@ import { type CSSProperties, type ReactNode, useId } from 'react';
 import { Link } from 'react-router';
 import { count, money, moneyBare, pct, plural } from '@sigma/shared';
 import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
-import { Chip, ExternalEikLink, Section, ShareBar } from './ui';
+import { Chip, ExternalEikLink, RegistryCta, Section, ShareBar } from './ui';
+import { Declarations } from './Declarations';
 import { FactsList } from './FactsList';
 import { DataTable, type Column } from './DataTable';
 import {
@@ -16,6 +17,7 @@ import {
   contractYearsLabel,
   fundsCellLabel,
   fundsMagnitude,
+  groupDeclaredInstitutions,
   hasContemporaneousContracts,
   isHttpsUrl,
   markContracts,
@@ -51,10 +53,12 @@ export function ConflictDetail({
   links,
   contracts,
   perspective,
+  contractListHref,
 }: {
   links: ConflictLink[];
   contracts: Record<string, ConflictContractFacts[]>;
   perspective: 'official' | 'company';
+  contractListHref?: string;
 }) {
   return (
     <>
@@ -68,6 +72,7 @@ export function ConflictDetail({
           domId={`link-${i + 1}-${l.eik}`}
           contracts={markContracts(contracts[l.eik] ?? [], l.firstDeclaredYear, l.lastDeclaredYear)}
           perspective={perspective}
+          contractListHref={contractListHref}
         />
       ))}
     </>
@@ -81,15 +86,18 @@ function ConflictDetailBlock({
   domId,
   contracts,
   perspective,
+  contractListHref,
 }: {
   link: ConflictLink;
   domId: string;
   contracts: ConflictContract[];
   perspective: 'official' | 'company';
+  contractListHref?: string;
 }) {
   const conflict = hasContemporaneousContracts(l);
   const funds = fundsCellLabel(l);
   const mag = fundsMagnitude(l);
+  const sourceInstitutions = groupDeclaredInstitutions(l.declarations ?? []);
   // The heading names the OTHER party (the page's own subject is in the PageHeader). Official page → the
   // winning company (ЕИК + profile link); company page → the official (institution sub-label + link).
   const title =
@@ -107,11 +115,12 @@ function ConflictDetailBlock({
     <Section id={domId} title={title} hint={subLabel ?? undefined}>
       <div className="cc-interest">
         <span>{relationLabel(l.relation)}</span>
+        {(l.laterDeclarationYear || l.registryRoleEndedOn) && <Chip>исторически данни</Chip>}
         {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
         {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
-            so the chip can't claim „към момента на договор" from a flag that drifted out of sync with the
+            so the chip can't claim „съвпадение по години" from a flag that drifted out of sync with the
             current contract set. */}
-        {conflict && <Chip tone="window">към момента на договор</Chip>}
+        {conflict && <Chip tone="window">съвпадение по години</Chip>}
         {(l.firstDeclaredYear || l.lastDeclaredYear) && (
           <span className="small muted">
             деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.
@@ -119,9 +128,24 @@ function ConflictDetailBlock({
         )}
       </div>
 
+      {l.laterDeclarationYear && (
+        <p className="small muted">
+          Участието е запазено за декларираните години. То не присъства в по-късна съпоставима
+          декларация; това не установява точна дата на прекратяване.
+        </p>
+      )}
+
       <FactsList
         label="Ключови показатели за връзката"
         rows={[
+          ...(sourceInstitutions.length
+            ? [
+                {
+                  term: 'Институции в източниците',
+                  value: sourceInstitutions.map((i) => i.institution).join('; '),
+                },
+              ]
+            : []),
           { term: 'Договори', value: contractsCountLabel(l) },
           {
             // „Публични средства" alone left the reader to guess that the lead figure is the
@@ -132,7 +156,9 @@ function ConflictDetailBlock({
             value: (
               <>
                 <span className="cc-funds-primary">{funds.primary}</span>
-                <span className="cc-funds-window"> в декларирания период</span>
+                <span className="cc-funds-window">
+                  {conflict ? ' в декларирания период' : ' общо за дружеството'}
+                </span>
               </>
             ),
             sub: funds.total ? (
@@ -144,8 +170,18 @@ function ConflictDetailBlock({
           },
           { term: 'Период', value: contractYearsLabel(l.firstContractYear, l.lastContractYear) },
           {
-            term: 'Източник',
-            value: isHttpsUrl(l.sourceUrl) ? (
+            term: 'Източници',
+            value: l.declarations?.length ? (
+              <a
+                href={`#sources-${domId}`}
+                onClick={() => {
+                  const details = document.getElementById(`sources-${domId}`);
+                  if (details instanceof HTMLDetailsElement) details.open = true;
+                }}
+              >
+                Виж всички декларации ({l.declarations.length})
+              </a>
+            ) : isHttpsUrl(l.sourceUrl) ? (
               <a href={l.sourceUrl!} target="_blank" rel="noopener noreferrer">
                 {l.sourceYear ? `декларация за ${l.sourceYear} г.` : 'декларация'}
               </a>
@@ -157,7 +193,7 @@ function ConflictDetailBlock({
             // The Trade Register fact the link's identity rests on (#279, ADR-0033) — the register records
             // a ROLE, it does not certify the ownership claim, which comes from the official's declaration.
             term: 'Регистър',
-            value: <ExternalEikLink eik={l.eik} />,
+            value: <RegistryCta eik={l.eik} />,
             sub: (
               <>
                 {registryEvidenceLabel(l)}
@@ -171,7 +207,30 @@ function ConflictDetailBlock({
         ]}
       />
 
-      {l.contractCount > 0 && <CaseDetail link={l} contracts={contracts} />}
+      {l.declarations && (
+        <details className="source-documents" id={`sources-${domId}`}>
+          <summary>Декларации за тази връзка ({l.declarations.length})</summary>
+          <Declarations declarations={l.declarations} compact />
+        </details>
+      )}
+      {contracts.length < l.contractCount && (
+        <p className="small muted">
+          Времевата ос показва {count(contracts.length)} от {count(l.contractCount)} договора.{' '}
+          <Link to={`${officialHref(l.officialSlug)}?company=${l.eik}#contracts`}>
+            Всички договори с филтри и страници →
+          </Link>
+        </p>
+      )}
+      {l.contractCount > 0 && (
+        <CaseDetail link={l} contracts={contracts} showContracts={!contractListHref} />
+      )}
+      {contractListHref && (
+        <p className="detail-contract-action">
+          <Link to={`${contractListHref}?company=${l.eik}&basis=declaration#contracts`}>
+            Виж договорите на {l.company} в общия списък →
+          </Link>
+        </p>
+      )}
     </Section>
   );
 }
@@ -185,15 +244,17 @@ function ConflictDetailBlock({
 export function CaseDetail({
   link: l,
   contracts,
+  showContracts = true,
 }: {
   link: ConflictLink;
   contracts: ConflictContract[];
+  showContracts?: boolean;
 }) {
   return (
     <>
       <Timeline link={l} contracts={contracts} />
-      <AuthorityShares contracts={contracts} />
-      <ContractList contracts={contracts} />
+      {showContracts && <AuthorityShares contracts={contracts} />}
+      {showContracts && <ContractList contracts={contracts} />}
     </>
   );
 }

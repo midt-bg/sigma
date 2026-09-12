@@ -69,6 +69,7 @@ function fakeDb(byKey: Record<string, unknown[]>): D1Database & { calls: FakeD1C
       return byKey[`contracts:${String(call.binds[0])}`] ?? [];
     };
   const fake = fakeD1([
+    { when: 'SELECT d.id, d.declared_year', all: [] },
     { when: EIK_CONTRACTS_SQL, all: contracts(EIK_CONTRACTS_SQL) },
     { when: LINK_CONTRACTS_SQL, all: contracts(LINK_CONTRACTS_SQL) },
     { when: 'FROM interest_links il', all: (call) => byKey[String(call.binds[0])] ?? [] },

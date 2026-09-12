@@ -113,7 +113,7 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
         <Section
           id="officials"
           title="Длъжностни лица с деклариран дял"
-          hint="Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
+          hint="Подредени по силата на връзката: първо договори от собствената институция, после съвпадение по години между декларации и договори."
         >
           <ConflictDetail links={links} contracts={contracts} perspective="company" />
         </Section>

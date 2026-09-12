@@ -118,6 +118,27 @@ const text = () => container.textContent ?? '';
 const bodyRows = () => [...container.querySelectorAll('tbody tr')];
 
 describe('/conflicts route — render', () => {
+  it('shows one proven person with their different declared institutions and years', async () => {
+    await renderConflicts([
+      link({
+        officialSlug: 'a',
+        registryPersonId: 'identity',
+        declaredOffices: [{ institution: 'Община Русе', position: 'Съветник', year: '2019' }],
+      }),
+      link({
+        officialSlug: 'b',
+        registryPersonId: 'identity',
+        declaredOffices: [
+          { institution: 'Народно събрание', position: 'Народен представител', year: '2025' },
+        ],
+      }),
+    ]);
+    expect(bodyRows()).toHaveLength(1);
+    expect(bodyRows()[0].textContent).toContain('Институции в декларациите');
+    expect(bodyRows()[0].textContent).toContain('Община Русе · 2019');
+    expect(bodyRows()[0].textContent).toContain('Народно събрание · 2025');
+    expect(text()).toContain('2 връзки'); // the summary retains both source profiles after grouping
+  });
   it('meta() marks the page noindex and titles it', () => {
     const tags = meta({ matches: [] } as never);
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
@@ -316,7 +337,7 @@ describe('/conflicts route — render', () => {
     const signals = row.querySelector('td[data-label="Признаци"]')!;
     expect(signals.classList.contains('col-secondary')).toBe(true);
     expect(signals.textContent).toContain('от собствената институция'); // from the SECOND link
-    expect(signals.textContent).toContain('към момента на договор');
+    expect(signals.textContent).toContain('съвпадение по години');
     // Restrained chips, no new colour: chip class present, no inline style attribute.
     const chips = signals.querySelectorAll('.chip');
     expect(chips.length).toBeGreaterThan(0);

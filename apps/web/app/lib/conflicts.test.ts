@@ -19,6 +19,7 @@ import {
   fundsCellLabel,
   fundsMagnitude,
   groupByPerson,
+  groupDeclaredInstitutions,
   hasContemporaneousContracts,
   institutionOptions,
   isHttpsUrl,
@@ -615,7 +616,7 @@ describe('registryEvidenceLabel', () => {
     // „Потвърдено" means the COMPANY was identified from something the official declared — nobody was
     // found in the act, so the label must not imply anyone was.
     const label = registryEvidenceLabel({ evidenceKind: 'confirmed', registryRole: null });
-    expect(label).toBe('самоличност, потвърдена по декларирани данни');
+    expect(label).toBe('дружеството е потвърдено по декларирани данни');
     expect(label).not.toMatch(/вписан/);
   });
 
@@ -627,6 +628,29 @@ describe('registryEvidenceLabel', () => {
 });
 
 describe('groupByPerson', () => {
+  it('combines institutions only through proven registry identity and uses the union of their windows', () => {
+    const first = link({
+      officialSlug: 'a',
+      registryPersonId: 'registry-person',
+      contemporaneousValueEur: 60,
+      personCompanyValueEur: 120,
+      laterDeclarationYear: '2025',
+    });
+    const second = link({
+      officialSlug: 'b',
+      registryPersonId: 'registry-person',
+      contemporaneousValueEur: 80,
+      personCompanyValueEur: 120,
+    });
+    const grouped = groupByPerson([first, second]);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].contemporaneousValueEur).toBe(120);
+    expect(grouped[0].hasHistoricalLinks).toBe(true);
+    expect(grouped[0].contractCount).toBe(first.contractCount);
+    expect(conflictHeadline([first, second]).officialCount).toBe(1);
+    // Identical names are insufficient evidence of one human.
+    expect(groupByPerson([first, { ...second, registryPersonId: null }])).toHaveLength(2);
+  });
   // Collapses per-relationship links into one row per PERSON for the /conflicts leaderboard (#287). The DB
   // returns links NEXUS-sorted, but the helper must be correct for ANY input order — it computes the
   // strongest link explicitly and sorts rows itself.
@@ -904,6 +928,9 @@ describe('groupByPerson', () => {
         'contractCount',
         'contractValueEur',
         'hasContemporaneous',
+        'hasHistoricalLinks',
+        'declaredInstitutions',
+        'personIdentity',
         'institution',
         'official',
         'officialSlug',
@@ -1068,6 +1095,31 @@ describe('officialRole', () => {
 });
 
 describe('/conflicts list filters', () => {
+  it('keeps each declared institution searchable and filterable without inventing continuous years', () => {
+    const offices = [
+      { institution: 'Община Русе', position: 'Съветник', year: '2019' },
+      { institution: 'ОБЩИНА РУСЕ', position: 'Съветник', year: '2021' },
+      { institution: 'Народно събрание', position: 'Народен представител', year: '2025' },
+    ];
+    const institutions = groupDeclaredInstitutions(offices);
+    expect(institutions).toHaveLength(2);
+    expect(institutions.find((i) => i.institution === 'Община Русе')?.years).toEqual([
+      '2019',
+      '2021',
+    ]);
+    const rows = groupByPerson([link({ declaredOffices: offices })]);
+    expect(
+      filterConflictRows(rows, conflictListFilters(new URLSearchParams('institution=Община Русе'))),
+    ).toHaveLength(1);
+    expect(
+      filterConflictRows(rows, conflictListFilters(new URLSearchParams('q=Народен представител'))),
+    ).toHaveLength(1);
+    expect(
+      institutionOptions(rows, [])
+        .map((i) => i.value)
+        .sort(),
+    ).toEqual(['НАРОДНО СЪБРАНИЕ', 'ОБЩИНА РУСЕ']);
+  });
   const row = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
     official: 'Иван Минев',
     officialSlug: 'a',
@@ -1081,6 +1133,7 @@ describe('/conflicts list filters', () => {
     stakeKind: 'self',
     ownInstitution: false,
     hasContemporaneous: false,
+    hasHistoricalLinks: false,
     ...over,
   });
   const sp = (qs: string) => new URLSearchParams(qs);

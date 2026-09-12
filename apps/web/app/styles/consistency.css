@@ -1,0 +1,237 @@
+/* Composition rules: a section/table boundary has one rule; row separators remain. */
+.section > h2 + .facts,
+.section > .section-hint + .facts,
+.section > h2 + .table-wrap,
+.section > .section-hint + .table-wrap,
+.section > h2 + .declarations > .table-wrap,
+.section > .section-hint + .declarations > .table-wrap,
+.tabset .tab-panel > .table-wrap {
+  border-top: 0;
+}
+.section > h2 + .glossary > dt:first-child,
+.section > h2 + .glossary > dd:nth-child(2) {
+  border-top: 0;
+}
+.section .section {
+  margin-top: var(--s-6);
+}
+.section .section > h2 {
+  font-size: clamp(24px, 2.5vw, 32px);
+  padding-bottom: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.page-header h1 {
+  hyphens: manual;
+  text-wrap: pretty;
+  max-width: 100%;
+}
+.cc-interest {
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+  align-items: center;
+}
+td .chip {
+  margin-inline-start: var(--s-2);
+}
+.cc-interest .chip {
+  margin: 0;
+}
+.case-mag-compare,
+.case-mag-summary,
+.case-mag-row {
+  gap: var(--s-3);
+}
+.share {
+  margin-inline: 0.35em;
+}
+.registry-ended {
+  margin-top: var(--s-5);
+}
+.registry-ended > summary,
+.source-documents > summary {
+  padding-block: var(--s-3);
+  color: var(--ink);
+  cursor: pointer;
+}
+.registry-ended[open] > summary,
+.source-documents[open] > summary {
+  margin-bottom: var(--s-3);
+}
+.registry-ended .table-wrap {
+  margin-top: var(--s-2);
+}
+.source-documents {
+  margin-block: var(--s-5);
+}
+.results-group > .head {
+  border-bottom-width: 1px;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.page-search {
+  margin-top: var(--s-5);
+  max-width: 760px;
+}
+.page-search label {
+  display: block;
+  margin-bottom: var(--s-2);
+  font-size: 14px;
+}
+.page-search > div {
+  display: flex;
+  gap: var(--s-3);
+}
+.page-search input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--ink-mid);
+  padding: 12px;
+  background: var(--paper);
+}
+.page-search button,
+.profile-filters button {
+  border: 1px solid var(--ink);
+  padding: 10px 20px;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+}
+.profile-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-5);
+  margin-block: var(--s-5);
+}
+.profile-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-block: var(--s-4);
+  align-items: end;
+}
+.profile-filters label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.profile-filters input,
+.profile-filters select {
+  padding: 8px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  max-width: 260px;
+}
+.profile-pagination {
+  display: flex;
+  gap: var(--s-5);
+  margin-block: var(--s-4);
+}
+.profile-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  margin-block: var(--s-4);
+}
+.profile-summary strong {
+  font-variant-numeric: tabular-nums;
+}
+.graph-evidence {
+  margin-top: var(--s-4);
+}
+.graph-evidence li {
+  margin-block: var(--s-2);
+}
+@media (min-width: 901px) {
+  .two-col:has(#how-win, #how-buy) > .section > h2 {
+    min-height: calc(2.1em + var(--s-4) + 1px);
+  }
+  .two-col:has(#how-win, #how-buy) > .section > .section-hint {
+    min-height: 3.1em;
+  }
+}
+@media (max-width: 600px) {
+  .tbl-cards td:not(.cell-title):not(.cell-rank):not(.num):not(.money):not(.center) {
+    display: block;
+    text-align: left;
+  }
+  .tbl-cards td:not(.cell-title):not(.cell-rank):not(.num):not(.money):not(.center)::before {
+    display: block;
+    max-width: none;
+    margin-bottom: 4px;
+  }
+  .tbl-cards td.cell-title {
+    font-size: 19px;
+    line-height: 1.35;
+  }
+  .tbl-cards td .small {
+    overflow-wrap: anywhere;
+  }
+  .profile-filters label {
+    flex: 1 1 140px;
+  }
+}
+/* Reserve side gutters for floating controls, including while the page is scrolled. */
+@media (min-width: 760px) and (max-width: 1500px) {
+  body {
+    --gutter: 76px;
+  }
+}
+@media (max-width: 759px) {
+  .scroll-to-top {
+    left: auto;
+    right: 8px;
+    bottom: 76px;
+    width: 36px;
+    height: 36px;
+  }
+  body {
+    --gutter: 16px;
+  }
+  main,
+  .site-footer {
+    padding-right: 72px;
+  }
+  .a11y-tools__button {
+    max-width: 40px;
+  }
+}
+.case-mag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.case-mag-figures {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+/* Keep the profile trend's table legible beside its chart. */
+.trend-split {
+  grid-template-columns: minmax(0, 1fr) minmax(440px, 1fr);
+}
+@media (max-width: 1000px) {
+  .trend-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.profile-period-note,
+.profile-registry-note {
+  margin-top: var(--s-4);
+}
+.detail-contract-action {
+  margin-block: var(--s-5);
+}
+.person-institutions {
+  margin-top: var(--s-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.person-institutions ul {
+  margin: var(--s-1) 0 0;
+  padding-left: 16px;
+}
+.person-institutions li + li {
+  margin-top: var(--s-1);
+}

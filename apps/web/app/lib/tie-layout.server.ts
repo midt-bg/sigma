@@ -33,6 +33,9 @@ export const TIE_EDGE_LABEL: Record<CompanyTieKind, string> = {
 
 /** What an edge says on itself: the kind of tie — or, for a role tie, the roles. */
 export function edgeText(e: CompanyTieEdge): string {
+  if (e.kind === 'declared_stake' && e.people?.length === 1) return e.people[0]!.name;
+  if (e.kind === 'declared_stake' && e.people && e.people.length > 1)
+    return `${e.people.length} общи декларатори`;
   return e.kind === 'role' ? roleEdgeText(e) : TIE_EDGE_LABEL[e.kind];
 }
 

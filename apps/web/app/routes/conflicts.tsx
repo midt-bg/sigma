@@ -37,7 +37,7 @@ export function meta({ matches }: Route.MetaArgs) {
     path: '/conflicts',
     title: 'Свързани лица — СИГМА',
     description:
-      'Длъжностни лица, декларирали дял в дружества, спечелили обществени поръчки. Само 100% съвпадения.',
+      'Декларирани участия в дружества с обществени поръчки, включително доказани исторически връзки.',
   });
   // Names individuals: keep out of search indices until legal sign-off on going public (prod is live).
   tags.push({ name: 'robots', content: 'noindex' });
@@ -124,11 +124,25 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       cell: (r) => (
         <>
           <Link to={officialHref(r.officialSlug)}>{r.official}</Link>
-          {officialRole(r) && (
-            <>
-              <br />
-              <span className="small muted">{officialRole(r)}</span>
-            </>
+          {(r.declaredInstitutions?.length ?? 0) > 1 ? (
+            <div className="person-institutions">
+              <span className="small muted">Институции в декларациите</span>
+              <ul>
+                {r.declaredInstitutions!.map((i) => (
+                  <li key={i.institution}>
+                    {i.institution}
+                    {i.years.length > 0 && <span className="muted"> · {i.years.join(', ')}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            officialRole(r) && (
+              <>
+                <br />
+                <span className="small muted">{officialRole(r)}</span>
+              </>
+            )
           )}
           {/* Identity-free qualifier: a family-ONLY row must not read as the official's own stake (ADR-0032).
               The relative is never named and the relationship type never asserted — only that a свързано лице
@@ -182,7 +196,13 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
         <>
           {r.ownInstitution && <Chip>от собствената институция</Chip>}
           {r.ownInstitution && r.hasContemporaneous && ' '}
-          {r.hasContemporaneous && <Chip>към момента на договор</Chip>}
+          {r.hasContemporaneous && <Chip>съвпадение по години</Chip>}
+          {r.hasHistoricalLinks && (
+            <>
+              {' '}
+              <Chip>исторически данни</Chip>
+            </>
+          )}
         </>
       ),
     },
@@ -198,8 +218,10 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const everyone = groupByPerson(links);
   const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
   // The summary describes what the filters leave, not the whole set.
-  const shown = new Set(persons.map((p) => p.officialSlug));
-  const headline = conflictHeadline(links.filter((l) => shown.has(l.officialSlug)));
+  const shown = new Set(persons.map((p) => p.personIdentity ?? p.officialSlug));
+  const headline = conflictHeadline(
+    links.filter((l) => shown.has(l.registryPersonId ?? l.officialSlug)),
+  );
   const groups: FilterGroup[] = [
     {
       key: 'stake',
@@ -233,7 +255,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         },
         {
           value: 'window',
-          label: 'към момента на договор',
+          label: 'съвпадение по години',
           count: everyone.filter((r) => r.hasContemporaneous).length,
         },
       ],
@@ -269,17 +291,16 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
               Длъжностни лица, декларирали <em>дял</em> в компании изпълнители
             </>
           }
-          lede="Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Всяка връзка е точно съвпадение между декларацията на лицето и регистъра на изпълнителите — не оценка, а факт с посочен източник."
+          lede="Длъжностни лица, декларирали дял — свой или на свързано лице — в дружество, спечелило обществена поръчка. Показваме и доказани исторически връзки, с декларираните години и проверими източници."
         />
 
         <Callout titleAs="h2" title="Как се извежда връзката — и какво не твърди">
           <p className="m-0">
             Основата са <strong>собствените декларации</strong> на лицата пред КПКОНПИ (публичен
-            регистър). Името на декларираното дружество (с правната форма) се сравнява{' '}
-            <strong>точно</strong> с името на изпълнител, спечелил поръчка — българските фирмени
-            имена са национално уникални, затова точното съвпадение е един и същ субект. Показваме{' '}
-            <strong>само 100% съвпадения</strong> на деклариран дял в дружества с ограничена
-            отговорност (не служебни роли и не борсови акции). Показваме и дял, деклариран на{' '}
+            регистър). Дружеството се установява чрез ЕИК или съгласувани данни за наименование,
+            седалище и вписани роли в Търговския регистър. Неясните и противоречивите съпоставяния
+            се задържат за проверка. <strong>Доказаните исторически връзки се запазват</strong> с
+            периодите и източниците им. Показваме и дял, деклариран на{' '}
             <strong>свързано лице</strong> — наравно със собствения — защото декларацията съществува
             именно за да е видимо дали публични пари стигат до дружество, свързано с човек с власт
             над тези пари. <strong>Името на близкия не се показва и не се съхранява</strong>, а
@@ -339,7 +360,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Деклариран дял в компании изпълнители"
-              hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. По подразбиране са подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
+              hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. По подразбиране са подредени по силата на връзката: първо договори от собствената институция, после съвпадение по години между декларации и договори."
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />

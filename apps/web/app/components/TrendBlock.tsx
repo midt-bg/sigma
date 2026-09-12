@@ -30,7 +30,7 @@ export function TrendBlock({
   if (points.length < 2) return table;
   return (
     <div className={split ? 'trend-split' : undefined}>
-      <TrendChart points={points} granularity={granularity} />
+      <TrendChart points={points} granularity={granularity} compact />
       <div className={split ? undefined : 'mt-8'}>{table}</div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The person page's loader: a 404 — never an empty page under someone's name — for anything that is not the
 // register's identifier and for a person the queries do not return, and the laid-out graph otherwise.
@@ -6,17 +6,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const HASH = 'a'.repeat(64);
 const q = vi.hoisted(() => ({
   getRegistryPerson: vi.fn(),
+  getRegistryOfficials: vi.fn(),
+  getPersonActivity: vi.fn(),
   registryPersonIdFromSlug: vi.fn((slug: string) => (/^[0-9a-f]{64}$/.test(slug) ? slug : null)),
   getDb: vi.fn((env: { DB: unknown }) => env.DB),
 }));
 vi.mock('@sigma/db', () => q);
 
 import { loader } from './person';
+import { emptyActivity } from '../lib/person-profile.test-support';
+beforeEach(() => {
+  q.getRegistryOfficials.mockResolvedValue([]);
+  q.getPersonActivity.mockResolvedValue(emptyActivity);
+});
 
 const DB = {};
 const call = (id: string) =>
   (loader as (a: unknown) => Promise<unknown>)({
     params: { id },
+    request: new Request('http://localhost:5173/persons/' + id),
     context: { cloudflare: { env: { DB } } },
   });
 

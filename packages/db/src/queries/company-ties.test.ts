@@ -36,6 +36,10 @@ function db(ties: ReturnType<typeof tie>[], funders: Record<string, unknown>[] =
     { when: 'FROM bidders b LEFT JOIN company_totals', first: CENTER },
     { when: 'WITH tie AS', all: ties },
     { when: 'FROM flow_pairs fp', all: funders },
+    {
+      when: 'WITH surfaced AS',
+      all: [{ id: 'person:ПУБЛИЧНО ЛИЦЕ|ИНСТИТУЦИЯ', name: 'Публично лице' }],
+    },
   ]).db;
 }
 
@@ -96,6 +100,8 @@ describe('getCompanyTies', () => {
     expect(net.nodes.every((n) => n.kind === 'company' || n.kind === 'authority')).toBe(true);
     expect(net.edges[0]!.weightEur).toBe(0); // not monetary — the UI must not size it by money
     expect(net.edges[0]!.href).toBe('/conflicts/company/1');
+    expect(net.edges[0]!.people?.[0]?.name).toBe('Публично лице');
+    expect(net.edges[0]!.people?.[0]?.href).toMatch(/^\/conflicts\/official\//);
   });
 
   it('adds the paying institutions as a second layer only when asked', async () => {
@@ -215,6 +221,10 @@ describe('getAuthoritySupplierTies', () => {
       { when: 'FROM authority_totals WHERE authority_id', first: AUTH },
       { when: 'FROM flow_pairs fp WHERE fp.authority_id', all: suppliers },
       { when: 'FROM company_links', all: between },
+      {
+        when: 'WITH surfaced AS',
+        all: [{ id: 'person:ПУБЛИЧНО ЛИЦЕ|ИНСТИТУЦИЯ', name: 'Публично лице' }],
+      },
     ]).db;
   }
 

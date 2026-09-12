@@ -103,6 +103,17 @@ async function render(links: ConflictLink[], byEik: Record<string, ConflictContr
   await renderAs('official', links, byEik);
 }
 
+it('shows a later omission separately from the precise end of a cited registry role', async () => {
+  await render([link({ laterDeclarationYear: '2025', registryRoleEndedOn: '2024-03-10' })], {
+    '111': [facts()],
+  });
+  expect(text()).toContain('исторически данни');
+  expect(text()).toContain('по-късна съпоставима декларация');
+  expect(text()).toContain('не установява точна дата на прекратяване');
+  expect(text()).toContain('лицето е било вписано като съдружник/собственик до 2024-03-10');
+  expect(text()).not.toContain('лицето е вписано като съдружник/собственик');
+});
+
 const text = () => container.textContent ?? '';
 
 /**
@@ -164,7 +175,7 @@ describe('ConflictDetail — provenance on the thinner link shapes', () => {
       { '111': [facts()] },
     );
     const evidence = statValue('Регистър').querySelector('.sub')!.textContent ?? '';
-    expect(evidence).toContain('потвърдена');
+    expect(evidence).toContain('дружеството е потвърдено');
     expect(evidence).not.toContain('№');
     expect(evidence).not.toContain('вписване');
     expect(evidence).toContain('справка'); // lookup_date is NOT NULL — it always says when we looked
@@ -174,8 +185,8 @@ describe('ConflictDetail — provenance on the thinner link shapes', () => {
     // Pinned to the „Източник" cell, not the card: the card holds several other „—" (Период, an
     // unresolved authority), so a card-wide assertion would pass with the cell deleted outright.
     await render([link({ sourceUrl: null })], { '111': [facts()] });
-    expect(statValue('Източник').textContent?.trim()).toBe('—');
-    expect(statValue('Източник').querySelector('a')).toBeNull();
+    expect(statValue('Източници').textContent?.trim()).toBe('—');
+    expect(statValue('Източници').querySelector('a')).toBeNull();
     expect(container.querySelector('a[href^="https://register.cacbg.bg"]')).toBeNull();
   });
 
@@ -183,14 +194,14 @@ describe('ConflictDetail — provenance on the thinner link shapes', () => {
     // The negative case above is only meaningful if the finder reaches the right cell — a broken
     // statValue() would make it pass by accident. This is the positive control for it.
     await render([link()], { '111': [facts()] });
-    const link_ = statValue('Източник').querySelector('a')!;
+    const link_ = statValue('Източници').querySelector('a')!;
     expect(link_.getAttribute('href')).toBe('https://register.cacbg.bg/2024/x.xml');
     expect(link_.textContent).toBe('декларация');
   });
 
   it('names the filing the stake comes from when its year is known', async () => {
     await render([link({ sourceYear: '2023' })], { '111': [facts()] });
-    expect(statValue('Източник').querySelector('a')!.textContent).toBe('декларация за 2023 г.');
+    expect(statValue('Източници').querySelector('a')!.textContent).toBe('декларация за 2023 г.');
   });
 
   it('omits the declared-period line entirely when the declaration carries no usable years', async () => {

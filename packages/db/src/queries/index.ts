@@ -23,3 +23,5 @@ export * from './details';
 export * from './sitemaps';
 export * from './related-persons';
 export * from './registry';
+export * from './declarations';
+export * from './person-activity';
