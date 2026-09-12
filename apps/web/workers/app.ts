@@ -124,7 +124,10 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // (publicCache() in apps/web/app/lib/cache.ts). Deterministic and independent of platform
   // HTML-cache heuristics on *.workers.dev; TTL is driven by s-maxage. The X-Edge-Cache:
   // HIT|MISS|BYPASS header lets `curl -I` verify which path a request took.
-  const key = request.method === 'GET' ? cacheKey(request, DEPLOY_TAG) : null;
+  // A persisted emulator cache must not mix an old loader payload with a hot-reloaded UI.
+  // Production caching is unchanged; local development always reads its current database/code.
+  const key =
+    !import.meta.env.DEV && request.method === 'GET' ? cacheKey(request, DEPLOY_TAG) : null;
   if (key) {
     const cached = await edgeCache.match(key);
     if (cached) {
