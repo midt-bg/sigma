@@ -1324,6 +1324,8 @@ test('the published surface is exported BEFORE the wipe, so the audit can gate m
   fs.copyFileSync(DB, firstDb);
   const fdb = new DatabaseSync(firstDb);
   for (const t of [
+    'interest_link_observations',
+    'declaration_identity_evidence',
     'interest_link_history',
     'declaration_companies',
     'person_registry_links',
@@ -1569,7 +1571,7 @@ test('corrections are fail-closed on a missing salt, exactly like suppressions',
   );
 });
 
-test('disposal and pre-appointment rows remain source facts without creating current links', () => {
+test('disposal and pre-appointment facts create historical links without inventing holding years', () => {
   const file = path.join(STAGING, 'holdings.jsonl');
   const original = fs.readFileSync(file, 'utf8');
   const base = JSON.parse(original.trim().split('\n')[0]);
@@ -1582,7 +1584,18 @@ test('disposal and pre-appointment rows remain source facts without creating cur
       timing,
     }));
     fs.writeFileSync(file, original + rows.map((r) => JSON.stringify(r) + '\n').join(''));
-    runLoad();
+    const isolatedCache = path.join(dir, 'historical-cache.sqlite');
+    fs.copyFileSync(TR_DB, isolatedCache);
+    seedVerdicts({
+      workDb: DB,
+      staging: STAGING,
+      trDb: isolatedCache,
+      registryFor: (eik) =>
+        eik === '111111119'
+          ? { registry: fixtureRegistry(eik, { owners: rows.map((r) => r.person) }) }
+          : null,
+    });
+    runLoad({ TR_CACHE_DB: isolatedCache });
     const db = open();
     assert.equal(
       db
@@ -1590,7 +1603,7 @@ test('disposal and pre-appointment rows remain source facts without creating cur
           "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ИСТОРИЧЕСКИ ТЕСТОВ %'",
         )
         .get().n,
-      0,
+      2,
     );
     assert.equal(
       db
@@ -1608,6 +1621,22 @@ test('disposal and pre-appointment rows remain source facts without creating cur
         .get().n,
       3,
       'historical source documents retain their resolved company even without a current link',
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ИСТОРИЧЕСКИ ТЕСТОВ %' AND (first_declared_year IS NOT NULL OR last_declared_year IS NOT NULL)",
+        )
+        .get().n,
+      0,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_link_observations WHERE declaration_id LIKE '%history-%' AND timing IN ('prior','disposed')",
+        )
+        .get().n,
+      2,
     );
     db.close();
   } finally {

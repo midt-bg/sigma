@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { declarantNameKey } from './source-identity.mjs';
 
 const nameKey = (name) =>
   String(name ?? '')
@@ -28,6 +29,54 @@ export function buildPersonRegistryLinks(db, registry, now = new Date().toISOStr
     )
     .all();
   const candidates = new Map();
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='declaration_identity_evidence'").get()) {
+    const sourceProofs = db
+      .prepare(
+        `SELECT d.person_id, e.* FROM declaration_identity_evidence e
+      JOIN declarations d ON d.id=e.declaration_id ORDER BY d.person_id,e.declaration_id,e.eik`,
+      )
+      .all();
+    const sameCompany =
+      registry.prepare(`SELECT subject_id,subject_name,entry_number FROM registry_roles
+      WHERE eik=? AND subject_kind='person' AND role IN ('partner','sole_owner','trader','manager')`);
+    for (const proof of sourceProofs) {
+      const rows = sameCompany.all(proof.eik);
+      const name = declarantNameKey(proof.document_name);
+      if (
+        !rows.some(
+          (r) =>
+            String(r.subject_id).toLowerCase() === proof.registry_indent &&
+            r.entry_number === proof.entry_number &&
+            declarantNameKey(r.subject_name) === name,
+        )
+      )
+        throw new Error(`Source identity has no matching registry entry: ${proof.declaration_id}`);
+      const listed = JSON.parse(proof.listed_names);
+      if (!Array.isArray(listed) || !listed.length)
+        throw new Error('Identity proof has no listing names');
+      for (const alias of new Set(listed.map(declarantNameKey))) {
+        if (alias === name) continue;
+        const ids = new Set(
+          rows
+            .filter(
+              (r) =>
+                declarantNameKey(r.subject_name) === alias && /^[a-f0-9]{64}$/i.test(r.subject_id),
+            )
+            .map((r) => r.subject_id.toLowerCase()),
+        );
+        if (ids.size !== 1 || !ids.has(proof.registry_indent))
+          throw new Error(`Unproven listing alias: ${proof.declaration_id}`);
+      }
+      const group = candidates.get(proof.person_id) ?? [];
+      group.push({
+        indent: proof.registry_indent,
+        eik: proof.eik,
+        link_key: `declaration:${proof.declaration_id}`,
+        entry_number: proof.entry_number,
+      });
+      candidates.set(proof.person_id, group);
+    }
+  }
   const roles = registry.prepare(`SELECT DISTINCT subject_id, subject_name FROM registry_roles
     WHERE eik=? AND entry_number=? AND subject_kind='person' AND role IN ('partner','sole_owner','trader','manager')`);
   for (const link of links) {
@@ -53,7 +102,10 @@ export function buildPersonRegistryLinks(db, registry, now = new Date().toISOStr
         if (ids.size > 1) ambiguous++;
         continue;
       }
-      const m = matches[0];
+      const m = matches.sort(
+        (a, b) =>
+          a.link_key.localeCompare(b.link_key) || a.entry_number.localeCompare(b.entry_number),
+      )[0];
       insert.run(id, m.indent, m.link_key, m.entry_number, now);
       linked++;
     }

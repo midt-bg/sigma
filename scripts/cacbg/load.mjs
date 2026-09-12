@@ -115,7 +115,7 @@ const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
 const stagingManifest = path.join(STAGING, 'manifest.json');
 if (
   !fs.existsSync(stagingManifest) ||
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 5
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 6
 )
   throw new Error('Stale declaration staging: run extract.mjs before load.mjs');
 for (const rec of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
@@ -248,6 +248,8 @@ if (!EMIT_CANDIDATES_ONLY) {
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
+  'interest_link_observations',
+  'declaration_identity_evidence',
   'declaration_companies',
   'person_registry_links',
   'declaration_metadata',
@@ -267,6 +269,9 @@ db.exec(fs.readFileSync(MIGRATION, 'utf8'));
 db.exec(fs.readFileSync(MIGRATION_EVIDENCE, 'utf8'));
 db.exec(fs.readFileSync(MIGRATION_REDIRECTS, 'utf8'));
 db.exec(fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0014_person_profile.sql'), 'utf8'));
+db.exec(
+  fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0015_person_observations.sql'), 'utf8'),
+);
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
 const isSuppressed = (linkKey) => {
@@ -514,7 +519,8 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // Preserve historical/disposal rows as source facts, but never let them establish
   // a positive holding during the filing year. "Prior" is appointment-relative,
   // and a disposal alone proves neither the retained balance nor a full exit date.
-  if (['disposed', 'prior', 'unknown'].includes(h.timing)) continue;
+  if (h.timing === 'unknown') continue;
+  const historical = ['disposed', 'prior'].includes(h.timing);
   // Unknown holder (B4): the holder cell is neither confidently the declarant's own name nor confidently a
   // relative's (an ambiguous 1-token-different / initials-only cell). Counted NOWHERE — it forms no link and
   // never advances a scope's ownership horizon — so a name we cannot resolve never pollutes a published
@@ -572,6 +578,8 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         hasMaterialOwn: false,
         declYears: new Set(),
         ownYears: new Set(),
+        historicalYears: new Set(),
+        observations: new Map(),
         templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
         seats: new Set(),
         institutions: new Set(),
@@ -583,7 +591,14 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   rec.kinds.add(h.kind);
   if (h.template) rec.templates.add(h.template);
   const y = yr(h.year);
-  if (Number.isFinite(y)) rec.declYears.add(y);
+  if (Number.isFinite(y) && !historical) rec.declYears.add(y);
+  if (Number.isFinite(y) && historical) rec.historicalYears.add(y);
+  rec.observations.set(`${did}|${h.kind}|${h.timing ?? 'annual'}`, {
+    declarationId: did,
+    kind: h.kind,
+    timing: h.timing ?? 'annual',
+    reportedYear: Number.isFinite(y) ? String(y) : null,
+  });
   // Per-company material ownership years (this resolved winner only) — `recOwnMax` below dates the link to its
   // last declaration, compared against the person's latest filing OF THE SAME declaration type(s) to detect
   // divestment (§8/E11). Material-ownership only: management filing cadence is unverified (spec §6). A
@@ -591,7 +606,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   // carries a record per declaration, so a stake absent from a later even-empty type-T filing is withdrawn.
   if (material) {
     rec.hasMaterialOwn = true;
-    if (Number.isFinite(y)) rec.ownYears.add(y);
+    if (Number.isFinite(y) && !historical) rec.ownYears.add(y);
     const inventoryKey = annualDocumentKeys.get(did);
     if (inventoryKey && h.kind === 'shares' && h.timing === 'annual') {
       const docs = rec.annualDocuments.get(inventoryKey) ?? new Set();
@@ -662,6 +677,9 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
 // That keeps the document history complete without creating a public profile for every raw name.
 const knownPerson = db.prepare('SELECT 1 FROM persons WHERE id=?');
 const insMetadata = db.prepare('INSERT OR REPLACE INTO declaration_metadata VALUES(?,?,?,?)');
+const insIdentity = db.prepare(
+  'INSERT OR IGNORE INTO declaration_identity_evidence VALUES(?,?,?,?,?,?,?)',
+);
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   const pid = personOf(f);
   if (!f.folder || !f.xmlFile) continue;
@@ -682,6 +700,25 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   );
   noteLegacy(f, pid);
   insMetadata.run(did, f.declarationType ?? null, f.declaredOn ?? null, f.submittedOn ?? null);
+  for (const proof of f.identityEvidence ?? []) {
+    if (
+      !/^[a-f0-9]{64}$/.test(proof.registryIndent) ||
+      !/^\d{9,13}$/.test(proof.eik) ||
+      !proof.entryNumber ||
+      proof.documentName !== f.person ||
+      proof.rule !== 'registry-identity-1'
+    )
+      throw new Error(`Invalid source identity evidence: ${did}`);
+    insIdentity.run(
+      did,
+      proof.registryIndent,
+      proof.eik,
+      proof.entryNumber,
+      proof.documentName,
+      JSON.stringify(proof.listedNames),
+      proof.rule,
+    );
+  }
 }
 db.exec('COMMIT');
 
@@ -708,6 +745,7 @@ const insEvidence = db.prepare(
   'INSERT OR REPLACE INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,entry_number,entry_date,lookup_date,rules_version,live_status) VALUES(?,?,?,?,?,?,?,?,?)',
 );
 const insHistory = db.prepare('INSERT INTO interest_link_history VALUES(?,?,?)');
+const insObservation = db.prepare('INSERT INTO interest_link_observations VALUES(?,?,?,?,?)');
 // classify one authority (whose name may be a ';'-joined blob) against the official's institutions.
 // exact = deterministic name equality; name_contains/locality = DISCLOSED heuristics (candidate, not proof).
 const OWN_RANK = { exact: 3, name_contains: 2, locality: 1, none: 0 };
@@ -770,6 +808,8 @@ function linkRecordFor(rec) {
     declaredSeats: [...rec.seats],
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
+    historicalDeclaredYear:
+      !declYears.length && rec.historicalYears.size ? Math.min(...rec.historicalYears) : null,
     scope: rec.scope,
     nameGloballyUnique: nameGloballyUnique(rec.key),
     companyNameDistinctive: nameDistinctiveness(rec.key) === 'distinctive',
@@ -1137,6 +1177,8 @@ for (const rec of agg.values()) {
     verdict.rulesVersion,
     liveStatus,
   );
+  for (const o of rec.observations.values())
+    insObservation.run(linkKey, o.declarationId, o.kind, o.timing, o.reportedYear);
   if (divested || (usable && cached.roleEndedOn)) {
     insHistory.run(
       linkKey,

@@ -615,3 +615,50 @@ test('reconcileTermination — a FAMILY stake is never reconciled, by an early b
   assert.equal(r.terminated, true);
   assert.equal(r.label, null);
 });
+
+test('a prior ownership fact can use a ended role without manufacturing a declaration window', () => {
+  const past = registry([
+    holder('00190', base.declarantName, '2010-01-01', {
+      removed_on: '2018-01-01',
+      subject_id: 'a'.repeat(64),
+    }),
+  ]);
+  const historical = evidenceVerdict({
+    ...base,
+    registry: past,
+    firstDeclaredYear: null,
+    historicalDeclaredYear: 2021,
+    declaredEik: true,
+  });
+  assert.equal(historical.kind, 'document');
+  assert.notEqual(evidenceVerdict({ ...base, registry: past, declaredEik: true }).kind, 'document');
+  assert.notEqual(
+    evidenceVerdict({
+      ...base,
+      registry: past,
+      firstDeclaredYear: null,
+      historicalDeclaredYear: 2009,
+      declaredEik: true,
+    }).kind,
+    'document',
+  );
+});
+test('same-company Indent follows a changed name, while same-name distinct Idents cannot prove a person', () => {
+  const old = holder('00190', base.declarantName, '2010-01-01', {
+    removed_on: '2018-01-01',
+    subject_id: 'a'.repeat(64),
+  });
+  const current = holder('00190', 'Иван Петров Тестов-Примеров', '2018-01-01', {
+    subject_id: 'a'.repeat(64),
+  });
+  assert.equal(
+    evidenceVerdict({ ...base, registry: registry([old, current]), declaredEik: true }).kind,
+    'document',
+  );
+  const homonym = holder('00190', base.declarantName, '2015-01-01', { subject_id: 'b'.repeat(64) });
+  assert.notEqual(
+    evidenceVerdict({ ...base, registry: registry([old, current, homonym]), declaredEik: true })
+      .kind,
+    'document',
+  );
+});

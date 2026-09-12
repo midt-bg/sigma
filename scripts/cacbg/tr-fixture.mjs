@@ -21,7 +21,7 @@ const ROOT = path.resolve(HERE, '../..');
 /** Run `load.mjs --emit-candidates` against a fixture work DB and return the emitted link records. */
 export function emitLinkRecords({ workDb, staging, trDb }) {
   const manifest = path.join(staging, 'manifest.json');
-  if (!fs.existsSync(manifest)) fs.writeFileSync(manifest, JSON.stringify({ schemaVersion: 5 }));
+  if (!fs.existsSync(manifest)) fs.writeFileSync(manifest, JSON.stringify({ schemaVersion: 6 }));
   execFileSync(
     'node',
     [

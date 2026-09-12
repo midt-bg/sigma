@@ -14,6 +14,7 @@ import { parseList, parseDeclaration } from './parse.mjs';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
 import { sentinelPath } from './fetch.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 // Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
 // production behaviour is unchanged when they are unset.
@@ -69,6 +70,19 @@ async function run() {
   assertScratchIgnored();
   assertCorpusComplete();
   fs.mkdirSync(STAGING, { recursive: true });
+  let identify;
+  if (process.env.CACBG_REGISTRY_DB) {
+    await import('./register-ts.mjs');
+    const { registryIdentityResolver } = await import('./registry-identity.mjs');
+    const registry = new DatabaseSync(path.resolve(process.env.CACBG_REGISTRY_DB), {
+      readOnly: true,
+    });
+    try {
+      identify = registryIdentityResolver(registry);
+    } finally {
+      registry.close();
+    }
+  }
   // A failed rerun must not leave an old completion marker beside partial output.
   fs.rmSync(path.join(STAGING, 'manifest.json'), { force: true });
   const holdingsOut = fs.createWriteStream(path.join(STAGING, 'holdings.jsonl'));
@@ -117,7 +131,7 @@ async function run() {
       listedNames.set(r.xmlFile, names);
     }
     let n = 0;
-    for (const file of fs.readdirSync(dir)) {
+    for (const file of fs.readdirSync(dir).sort()) {
       if (file === 'list.xml' || !file.endsWith('.xml')) continue;
       // A single malformed/truncated XML must not abort the whole corpus crawl — skip it and keep going,
       // counting the skip so a rise in skips is visible. (The crawl is a long polite fetch; losing it to
@@ -132,12 +146,16 @@ async function run() {
         console.warn(`  ! skipped ${folder}/${file}: ${err instanceof Error ? err.message : err}`);
         continue;
       }
-      const attribution = declarationAttribution(d.declarant, listedNames.get(file) ?? []);
-      if (attribution !== 'matched') {
+      const identity = identify?.(d, listedNames.get(file) ?? []);
+      const attribution =
+        identity?.attribution ?? declarationAttribution(d.declarant, listedNames.get(file) ?? []);
+      if (!['matched', 'registry_alias'].includes(attribution)) {
         stats[attribution] = (stats[attribution] ?? 0) + 1;
         quarantineOut.write(JSON.stringify({ folder, xmlFile: file, reason: attribution }) + '\n');
         continue;
       }
+      if (attribution === 'registry_alias')
+        stats.registryAliases = (stats.registryAliases ?? 0) + 1;
       const fingerprint = documentFingerprint(xml);
       {
         if (seenHash.has(fingerprint)) {
@@ -171,6 +189,7 @@ async function run() {
           assetInventoryComparable: d.assetInventoryComparable ?? false,
           declaredOn: d.declaredOn ?? null,
           submittedOn: d.submittedOn ?? null,
+          identityEvidence: identity?.evidence ?? [],
         }) + '\n',
       );
       stats.filings++;
@@ -230,7 +249,13 @@ async function run() {
   fs.writeFileSync(
     path.join(STAGING, 'manifest.json'),
     JSON.stringify(
-      { schemaVersion: 5, extractedAt: new Date().toISOString(), raw: RAW, filings: stats.filings },
+      {
+        schemaVersion: 6,
+        identityRules: identify ? 'registry-identity-1' : null,
+        extractedAt: new Date().toISOString(),
+        raw: RAW,
+        filings: stats.filings,
+      },
       null,
       2,
     ) + '\n',

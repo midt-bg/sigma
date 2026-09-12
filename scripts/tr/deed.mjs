@@ -38,6 +38,7 @@ export function registryFacts(deed, roles) {
     .map((r) => ({
       field: String(r.field_ident),
       name: String(r.subject_name ?? ''),
+      ...(r.subject_id ? { subjectId: r.subject_id } : {}),
       // TEXT, never a number: an entry number like 20130716101007 exceeds 2^53 once combined.
       entryNumber: r.entry_number == null ? null : String(r.entry_number),
       entryDate: isoDay(r.added_on),
@@ -56,6 +57,7 @@ export function registryFacts(deed, roles) {
     .map((r) => ({
       field: String(r.field_ident),
       name: String(r.subject_name ?? ''),
+      ...(r.subject_id ? { subjectId: r.subject_id } : {}),
       entryNumber: r.entry_number == null ? null : String(r.entry_number),
       entryDate: isoDay(r.added_on),
       endedOn: isoDay(r.removed_on),

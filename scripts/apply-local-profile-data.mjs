@@ -29,7 +29,7 @@ if (
   throw new Error('Target must be the local web emulator SQLite file');
 if (source === target) throw new Error('Source and target must differ');
 if (
-  JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 5 ||
+  JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 6 ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))
 )
   throw new Error('A current extraction and the prior-publication snapshot are required');
@@ -71,6 +71,9 @@ try {
   db.exec('BEGIN IMMEDIATE');
   db.exec(
     fs.readFileSync(path.join(root, 'packages/db/migrations/0014_person_profile.sql'), 'utf8'),
+  );
+  db.exec(
+    fs.readFileSync(path.join(root, 'packages/db/migrations/0015_person_observations.sql'), 'utf8'),
   );
   for (const t of WIPE_ORDER)
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t))

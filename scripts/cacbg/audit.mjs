@@ -68,11 +68,21 @@ const flag = (link, axis, detail) =>
 
 // History is provenance, never an escape from the publishing evidence gate.
 // Check it independently of the loader's status calculation.
+const observationsPresent = !!db
+  .prepare("SELECT 1 FROM sqlite_master WHERE name='interest_link_observations'")
+  .get();
 const historyRows = db
   .prepare(
     `SELECT il.link_key, il.eik, il.first_declared_year,
   il.last_declared_year, e.evidence_kind, e.entry_number, e.entry_date, e.live_status,
-  h.later_declaration_year, h.registry_role_ended_on
+  h.later_declaration_year, h.registry_role_ended_on,
+  ${
+    observationsPresent
+      ? `(SELECT MIN(o.reported_year) FROM interest_link_observations o
+    WHERE o.link_key=il.link_key AND o.timing IN ('prior','disposed'))`
+      : 'NULL'
+  } AS historical_year,
+  ${observationsPresent ? '(SELECT COUNT(*) FROM interest_link_observations o WHERE o.link_key=il.link_key)' : 'NULL'} AS observation_count
   FROM interest_links il JOIN interest_link_evidence e USING(link_key)
   LEFT JOIN interest_link_history h USING(link_key) WHERE il.status='published'`,
   )
@@ -82,6 +92,13 @@ const validDay = (v) =>
   Number.isFinite(Date.parse(v)) &&
   new Date(v).toISOString().slice(0, 10) === v;
 for (const l of historyRows) {
+  const proofYear = l.first_declared_year ?? l.historical_year;
+  if (l.first_declared_year == null && observationsPresent && !l.observation_count)
+    flag(
+      l,
+      'H_missing_observation',
+      'An undated published link needs a sourced historical observation',
+    );
   if (
     l.later_declaration_year != null &&
     (!/^\d{4}$/.test(l.later_declaration_year) ||
@@ -105,9 +122,10 @@ for (const l of historyRows) {
       !validDay(l.entry_date) ||
       !validDay(l.registry_role_ended_on) ||
       l.entry_date >= l.registry_role_ended_on ||
-      !/^\d{4}$/.test(l.first_declared_year ?? '') ||
-      l.entry_date > `${l.first_declared_year}-12-31` ||
-      l.registry_role_ended_on <= `${l.first_declared_year}-01-01`)
+      !/^\d{4}$/.test(proofYear ?? '') ||
+      l.entry_date > `${proofYear}-12-31` ||
+      (l.first_declared_year != null &&
+        l.registry_role_ended_on <= `${l.first_declared_year}-01-01`))
   )
     flag(
       l,

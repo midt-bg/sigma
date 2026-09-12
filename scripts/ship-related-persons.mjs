@@ -37,11 +37,15 @@ export const TABLES = [
   'declaration_companies',
   'person_registry_links',
   'interest_link_history',
+  'declaration_identity_evidence',
+  'interest_link_observations',
 ];
 // DELETE order for the pre-insert wipe — children before parents. related_persons_internal (PII, never
 // re-shipped) also REFERENCES declarations, so it is wiped before declarations; otherwise a populated D1
 // carrying internal rows would block DELETE FROM declarations.
 export const WIPE_ORDER = [
+  'interest_link_observations',
+  'declaration_identity_evidence',
   'interest_link_history',
   'declaration_companies',
   'person_registry_links',

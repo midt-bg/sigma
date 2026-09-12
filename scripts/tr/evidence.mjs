@@ -23,7 +23,6 @@
 
 import {
   liveHolders,
-  fullSubsetMatch,
   personTokens,
   normalizeSettlement,
   registrySeat,
@@ -33,6 +32,7 @@ import {
   MANAGER_FIELD,
   ROLE_FIELDS,
 } from './deed.mjs';
+import { declarantNameKey } from '../cacbg/source-identity.mjs';
 
 /**
  * Version of the RULES, not of the code. §8's monotonicity gate keys on this: a previously published
@@ -53,7 +53,7 @@ import {
 // r4 also permits an ended, dated role overlapping the first declared year to
 // corroborate company identity. The company gate is unchanged. Absence today
 // does not refute a documented past role; current-role reconciliation stays separate.
-export const RULES_VERSION = 'tr-rules-4';
+export const RULES_VERSION = 'tr-rules-5';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
@@ -98,18 +98,29 @@ const REREGISTRATION_END = '2012-12-31';
  * field is the libel bug.
  * @returns {{field:string, entryNumber:string|null, entryDate:string|null}|null}
  */
+function personMatch(registry, name) {
+  const key = declarantNameKey(name);
+  const all = [...(registry.holders ?? []), ...(registry.endedHolders ?? [])];
+  const ids = new Set(
+    all
+      .filter((h) => declarantNameKey(h.name) === key && /^[a-f0-9]{64}$/i.test(h.subjectId ?? ''))
+      .map((h) => h.subjectId.toLowerCase()),
+  );
+  if (ids.size > 1) return () => false;
+  const indent = [...ids][0];
+  return (holder) =>
+    indent ? holder.subjectId?.toLowerCase() === indent : declarantNameKey(holder.name) === key;
+}
 function findPerson(registry, name, fields) {
-  for (const holder of liveHolders(registry, fields)) {
-    if (fullSubsetMatch(name, holder.name)) {
-      return { field: holder.field, entryNumber: holder.entryNumber, entryDate: holder.entryDate };
-    }
-  }
-  return null;
+  const holder = liveHolders(registry, fields).find(personMatch(registry, name));
+  return holder
+    ? { field: holder.field, entryNumber: holder.entryNumber, entryDate: holder.entryDate }
+    : null;
 }
 
-function findHistoricalPerson(registry, name, fields, year) {
+function findHistoricalPerson(registry, name, fields, year, historicalOnly = false) {
   if (!Number.isInteger(year) || year < 1900 || year > 2100) return null;
-  const key = (v) => String(v).normalize('NFC').trim().toLocaleUpperCase('bg').replace(/\s+/g, ' ');
+  const matches = personMatch(registry, name);
   const day = (v) =>
     /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
     Number.isFinite(Date.parse(v)) &&
@@ -118,13 +129,13 @@ function findHistoricalPerson(registry, name, fields, year) {
     (registry.endedHolders ?? []).find(
       (h) =>
         fields.includes(h.field) &&
-        key(h.name) === key(name) &&
+        matches(h) &&
         h.entryNumber &&
         day(h.entryDate) &&
         day(h.endedOn) &&
         h.entryDate < h.endedOn &&
         h.entryDate <= `${year}-12-31` &&
-        h.endedOn > `${year}-01-01`,
+        (historicalOnly || h.endedOn > `${year}-01-01`),
     ) ?? null
   );
 }
@@ -186,6 +197,7 @@ export function evidenceVerdict(input) {
     declaredSeats = [],
     declaredEik = false,
     firstDeclaredYear = null,
+    historicalDeclaredYear = null,
     scope = 'self',
     nameGloballyUnique = true,
     // Fail-CLOSED, unlike `nameGloballyUnique` above. That one's permissive default is bounded — it gates
@@ -232,7 +244,9 @@ export function evidenceVerdict(input) {
   // guard applied. Computed once and consumed by two rungs: rung 3 publishes „Потвърдено" on it, and rung 2
   // uses it as a COMPANY-IDENTITY corroborator. One implementation, because two copies of "what counts as a
   // seat match" would eventually disagree about which links may be published.
-  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear);
+  const evidenceYear = firstDeclaredYear ?? historicalDeclaredYear;
+  const historicalOnly = firstDeclaredYear == null && historicalDeclaredYear != null;
+  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear);
 
   // ── rung 2 ──────────────────────────────────────────────────────────────────
   // Only a full three-token name may assert. A Latin homoglyph makes the name a non-match rather than
@@ -258,11 +272,23 @@ export function evidenceVerdict(input) {
       liveOwner ??
       (liveManager
         ? null
-        : findHistoricalPerson(registry, declarantName, OWNERSHIP_FIELDS, firstDeclaredYear));
+        : findHistoricalPerson(
+            registry,
+            declarantName,
+            OWNERSHIP_FIELDS,
+            evidenceYear,
+            historicalOnly,
+          ));
     const manager = owner
       ? null
       : (liveManager ??
-        findHistoricalPerson(registry, declarantName, [MANAGER_FIELD], firstDeclaredYear));
+        findHistoricalPerson(
+          registry,
+          declarantName,
+          [MANAGER_FIELD],
+          evidenceYear,
+          historicalOnly,
+        ));
     const hit = owner ?? manager;
     if (hit && !companyCorroborated && !companyNameDistinctive) {
       // A DISTINCT withholding kind, not a fall-through to `unknown`. „We matched a person but could not

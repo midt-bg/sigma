@@ -265,6 +265,7 @@ const HASHED_INPUTS = [
   'declaredSeats',
   'declaredEik',
   'firstDeclaredYear',
+  'historicalDeclaredYear',
   'scope',
   'nameGloballyUnique',
   'companyNameDistinctive',

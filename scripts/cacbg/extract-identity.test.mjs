@@ -65,7 +65,7 @@ test('extraction keeps checksum collisions, deduplicates identical XML and isola
     assert.deepEqual(read('source-quarantine.jsonl'), [
       { folder: '2025', xmlFile: 'ff.xml', reason: 'declarant_mismatch' },
     ]);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 5);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 6);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
