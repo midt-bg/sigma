@@ -54,18 +54,30 @@ export function buildPersonRegistryLinks(db, registry, now = new Date().toISOStr
       const listed = JSON.parse(proof.listed_names);
       if (!Array.isArray(listed) || !listed.length)
         throw new Error('Identity proof has no listing names');
-      for (const alias of new Set(listed.map(declarantNameKey))) {
-        if (alias === name) continue;
-        const ids = new Set(
-          rows
-            .filter(
-              (r) =>
-                declarantNameKey(r.subject_name) === alias && /^[a-f0-9]{64}$/i.test(r.subject_id),
-            )
-            .map((r) => r.subject_id.toLowerCase()),
+      const aliases = [...new Set(listed.map(declarantNameKey))];
+      if (aliases.some((alias) => alias !== name)) {
+        const documentProofs = sourceProofs.filter(
+          (p) => p.declaration_id === proof.declaration_id,
         );
-        if (ids.size !== 1 || !ids.has(proof.registry_indent))
-          throw new Error(`Unproven listing alias: ${proof.declaration_id}`);
+        const allIds = new Set(documentProofs.map((p) => p.registry_indent));
+        const aliasProven =
+          allIds.size === 1 &&
+          documentProofs.some((p) => {
+            const companyRows = sameCompany.all(p.eik);
+            return [name, ...aliases].every((alias) => {
+              const ids = new Set(
+                companyRows
+                  .filter(
+                    (r) =>
+                      declarantNameKey(r.subject_name) === alias &&
+                      /^[a-f0-9]{64}$/i.test(r.subject_id),
+                  )
+                  .map((r) => r.subject_id.toLowerCase()),
+              );
+              return ids.size === 1 && ids.has(proof.registry_indent);
+            });
+          });
+        if (!aliasProven) throw new Error(`Unproven listing alias: ${proof.declaration_id}`);
       }
       const group = candidates.get(proof.person_id) ?? [];
       group.push({

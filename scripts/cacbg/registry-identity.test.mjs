@@ -5,9 +5,9 @@ import { registryIdentityResolver } from './registry-identity.mjs';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE registry_deeds(eik,name,seat_settlement,outcome);
+  db.exec(`CREATE TABLE registry_deeds(eik,name,legal_form,seat_settlement,outcome);
     CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
-    INSERT INTO registry_deeds VALUES('123456789','А ДЕЙТА ПРО ООД','София','ok'),('987654321','ДРУГА ФИРМА ООД','Пловдив','ok');`);
+    INSERT INTO registry_deeds VALUES('123456789','А ДЕЙТА ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
   const add = (eik, id, name) =>
     db
       .prepare("INSERT INTO registry_roles VALUES(?,?,?,'20190101120000','person','partner')")

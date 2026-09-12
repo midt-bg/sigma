@@ -32,3 +32,39 @@ test('requires a unique same-company, same-entry, full-name self claim; never ma
     registry.close();
   }
 });
+
+test('rechecks a source alias across its proven same-Indent company entries, even without a published interest', () => {
+  const db = new DatabaseSync(':memory:'),
+    registry = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE persons(id TEXT PRIMARY KEY,name); CREATE TABLE declarations(id TEXT PRIMARY KEY,person_id);
+      CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,relation);
+      CREATE TABLE interest_link_evidence(link_key,entry_number,evidence_kind);
+      CREATE TABLE declaration_identity_evidence(declaration_id,registry_indent,eik,entry_number,document_name,listed_names,rule_version);
+      INSERT INTO persons VALUES('p','Ивана Петрова Тестова');INSERT INTO declarations VALUES('doc','p');`);
+    registry.exec(
+      'CREATE TABLE registry_roles(eik,entry_number,subject_kind,role,subject_id,subject_name)',
+    );
+    const put = registry.prepare(
+      "INSERT INTO registry_roles VALUES(?,'entry','person','partner',?,?)",
+    );
+    const id = 'a'.repeat(64),
+      name = 'Ивана Петрова Тестова',
+      alias = 'Ивана Петрова Тестова-Примерова';
+    put.run('1', id, name);
+    put.run('1', id, alias);
+    put.run('2', id, name);
+    const proof = db.prepare(
+      "INSERT INTO declaration_identity_evidence VALUES('doc',?,?,'entry',?,?,'registry-identity-1')",
+    );
+    for (const eik of ['1', '2']) proof.run(id, eik, name, JSON.stringify([alias]));
+    assert.equal(buildPersonRegistryLinks(db, registry).linked, 1);
+    registry
+      .prepare('UPDATE registry_roles SET subject_id=? WHERE subject_name=?')
+      .run('b'.repeat(64), alias);
+    assert.throws(() => buildPersonRegistryLinks(db, registry), /Unproven listing alias/);
+  } finally {
+    db.close();
+    registry.close();
+  }
+});

@@ -14,12 +14,25 @@ export function registryIdentityResolver(registry) {
   const bidderByEik = new Map();
   const seats = new Map();
   for (const r of registry
-    .prepare("SELECT eik,name,seat_settlement FROM registry_deeds WHERE outcome='ok'")
+    .prepare("SELECT eik,name,legal_form,seat_settlement FROM registry_deeds WHERE outcome='ok'")
     .all()) {
-    const company = { eik: r.eik, name: r.name, valid: true };
+    const suffix = {
+      OOD: 'ООД',
+      EOOD: 'ЕООД',
+      AD: 'АД',
+      EAD: 'ЕАД',
+      ET: 'ЕТ',
+      SD: 'СД',
+      KD: 'КД',
+      KDA: 'КДА',
+    }[r.legal_form];
+    // Registry names and legal forms are separate fields. Preserve the form in the match key.
+    const fullName =
+      suffix && !companyNameKey(r.name).endsWith(` ${suffix}`) ? `${r.name} ${suffix}` : r.name;
+    const company = { eik: r.eik, name: fullName, valid: true };
     bidderByEik.set(r.eik, company);
     seats.set(r.eik, normalizeSettlement(r.seat_settlement));
-    const key = companyNameKey(r.name);
+    const key = companyNameKey(fullName);
     const companies = byKey.get(key) ?? new Map();
     companies.set(r.eik, company);
     byKey.set(key, companies);
