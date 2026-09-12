@@ -53,6 +53,7 @@ function buildTrCache(owners) {
         ? {
             registry: fixtureRegistry(eik, {
               owners: [].concat(owners[eik]),
+              seat: 'София',
               form: 4,
               suffix: 'ЕООД',
             }),
@@ -162,6 +163,7 @@ before(() => {
     xmlFile: h.xmlFile,
     year: h.year,
     template: h.template,
+    declarationType: 'Annualy',
     person: h.person,
     institution: h.institution,
   }));
@@ -173,7 +175,7 @@ before(() => {
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-test('a later NON-winner ownership filing still withdraws a divested winner stake (E11 horizon)', () => {
+test('a later non-winner filing dates proven history without withdrawing it', () => {
   runLoad();
   const db = open();
   const link = (eik, person) =>
@@ -186,9 +188,17 @@ test('a later NON-winner ownership filing still withdraws a divested winner stak
   const dian = link('100000001', 'Диан Иванов Дивестов');
   const veren = link('200000002', 'Верен Иванов Държателев');
 
-  // The divested winner stake is dated to its last declaration and excluded from the public surface.
-  assert.equal(dian.status, 'withdrawn');
+  // The company is independently confirmed by the declared seat. A later omission
+  // does not invalidate the earlier ownership observation or extend its period.
+  assert.equal(dian.status, 'published');
   assert.equal(dian.last_declared_year, '2019');
+  assert.equal(
+    db
+      .prepare('SELECT later_declaration_year FROM interest_link_history WHERE link_key=?')
+      .get(dian.link_key).later_declaration_year,
+    '2022',
+  );
   // The control stake — no later filing to contradict it — remains current. (Guards against over-withdrawal.)
   assert.equal(veren.status, 'published');
+  db.close();
 });

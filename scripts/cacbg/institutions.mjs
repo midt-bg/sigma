@@ -82,8 +82,13 @@ export function declarationInstitution(rec) {
   const listed = String(rec.institution ?? '').trim();
   const category = String(rec.category ?? '').trim();
   const own = String(rec.work ?? '').trim();
-  if (listed && listed.toLowerCase() !== category.toLowerCase()) return listed;
-  return own || listed;
+  const isCategory = (s) =>
+    /^(?:встъпителни и финални декларации|ежегодни декларации|държавни предприятия|общински предприятия|училища|процедури по ЗОП|ДКЦ, МЦ, ЦТХ|детски градини, ясли, детка кухня|социални домове и центрове|политически кабинет|финсово управление на средства от ЕС|членовете на управителните и контролните органи на дъщерни дружества)$/iu.test(
+      s,
+    );
+  if (listed && !isCategory(listed) && listed.toLowerCase() !== category.toLowerCase())
+    return listed;
+  return own && !isCategory(own) ? own : '';
 }
 
 /**
@@ -96,7 +101,7 @@ export function declarationInstitution(rec) {
  * @returns {string}
  */
 export function identityInstitution(name) {
-  let t = canonicalInstitution(name).toUpperCase();
+  let t = institutionMatchKey(name);
   if (/[А-Я]/u.test(t)) t = t.replace(/[ABCEHKMOPTXY]/g, (c) => LATIN_LOOKALIKE[c]);
   return (
     t
@@ -116,7 +121,21 @@ export function identityInstitution(name) {
         /^(?:ОБЛАСТНА АДМИНИСТРАЦИЯ|ОБЛАСТ)(?=[\s,–—-])\s*(?:[-–—,]\s*)?(?:НА\s+)?(?=\S)/u,
         'ОБЛАСТ ',
       )
+      // The declarant's Work may repeat the territorial qualifier after the body name.
+      .replace(/^ОБЛАСТ\s+ОБЛАСТ\s+/u, 'ОБЛАСТ ')
       .replace(/\s+/g, ' ')
       .trim()
   );
+}
+
+/** Exact organisation matching must not reuse identityInstitution's municipality/council folding. */
+export function institutionMatchKey(name) {
+  let s = canonicalInstitution(name).toUpperCase();
+  if (/[А-Я]/u.test(s)) s = s.replace(/[ABCEHKMOPTXY]/g, (c) => LATIN_LOOKALIKE[c]);
+  return s
+    .replace(/\s+НА\s+(?:РБ|РЕПУБЛИКА БЪЛГАРИЯ)$/u, '')
+    .replace(/[„“”"«»]/g, '')
+    .replace(/\s*[-–—]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

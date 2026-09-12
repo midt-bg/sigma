@@ -684,7 +684,14 @@ before(() => {
   });
   fs.writeFileSync(
     path.join(STAGING, 'filings.jsonl'),
-    filings.map((f) => JSON.stringify(f)).join('\n') + '\n',
+    filings
+      .map((f) =>
+        JSON.stringify({
+          ...f,
+          declarationType: f.template === 'assets' ? 'Annualy' : 'interests',
+        }),
+      )
+      .join('\n') + '\n',
   );
 
   // The Trade Register evidence each link now has to rest on (#279, ADR-0033). Shaped so every
@@ -790,7 +797,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // his current ДИВЕСТ 2 stake stays published. A later ownership filing that drops a company ends that link.
   const gone = link('666666665', 'Николай Иванов Дивестов');
   const kept = link('777777773', 'Николай Иванов Дивестов');
-  assert.equal(gone.status, 'withdrawn'); // divested — excluded from the published surface
+  assert.equal(gone.status, 'held'); // unconfirmed company; history alone cannot publish
   assert.equal(gone.interest_class, 'private_ownership');
   assert.equal(gone.last_declared_year, '2019'); // dated to its last declaration, never asserted "current"
   assert.equal(kept.status, 'published');
@@ -908,7 +915,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   const divZero = link('101010104', 'Пълен Иванов Дивестов');
   assert.equal(divZero.interest_class, 'private_ownership');
   assert.equal(divZero.last_declared_year, '2019'); // dated to its last declaration, never asserted current
-  assert.equal(divZero.status, 'withdrawn'); // caught by the empty later filing (B1)
+  assert.equal(divZero.status, 'held'); // unconfirmed company remains held despite the dated history
 
   // #226 (Todor B1) PER-TYPE horizon: Интер declared ИНТЕР ТЕХ 8 only in an INTERESTS declaration (2020) and
   // later filed only an ASSET declaration (2023) that, for him, lists no company. A per-person horizon reads
@@ -938,7 +945,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // false and a stake he no longer holds keeps naming him on the public surface. The folder must date it.
   const noYear = link('212121218', 'Безгодин Иванов Дивестов');
   assert.equal(noYear.interest_class, 'private_ownership');
-  assert.equal(noYear.status, 'withdrawn');
+  assert.equal(noYear.status, 'published'); // the proven 2019 link remains historical
   // POSITIVE CONTROL: datable by NEITHER field ⇒ ignored, not guessed. The fallback must not become a
   // licence to invent a horizon — an undatable filing is no evidence of a sale, so this link stays up.
   const noDate = link('232323231', 'Дрънкан Иванов Тестов');
@@ -1317,6 +1324,10 @@ test('the published surface is exported BEFORE the wipe, so the audit can gate m
   fs.copyFileSync(DB, firstDb);
   const fdb = new DatabaseSync(firstDb);
   for (const t of [
+    'interest_link_history',
+    'declaration_companies',
+    'person_registry_links',
+    'declaration_metadata',
     'interest_link_evidence',
     'interest_link_authorities',
     'interest_links',
@@ -1556,4 +1567,343 @@ test('corrections are fail-closed on a missing salt, exactly like suppressions',
     () => runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: '' }),
     (err) => /SUPPRESSION_SALT is unset/.test(String(err.stderr ?? '') + String(err.message ?? '')),
   );
+});
+
+test('disposal and pre-appointment rows remain source facts without creating current links', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const base = JSON.parse(original.trim().split('\n')[0]);
+  try {
+    const rows = ['disposed', 'prior', 'unknown'].map((timing, i) => ({
+      ...base,
+      person: `Исторически Тестов ${i === 0 ? 'Прехвърлител' : 'Предходов'}`,
+      xmlFile: `history-${i}.xml`,
+      controlHash: `history-${i}`,
+      timing,
+    }));
+    fs.writeFileSync(file, original + rows.map((r) => JSON.stringify(r) + '\n').join(''));
+    runLoad();
+    const db = open();
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ИСТОРИЧЕСКИ ТЕСТОВ %'",
+        )
+        .get().n,
+      0,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declared_interests WHERE timing IN ('disposed','prior','unknown') AND declaration_id LIKE '%history-%'",
+        )
+        .get().n,
+      3,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declaration_companies WHERE declaration_id LIKE '%history-%'",
+        )
+        .get().n,
+      3,
+      'historical source documents retain their resolved company even without a current link',
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a conflicting stated EIK creates neither a link nor a company-source association', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const base = JSON.parse(original.trim().split('\n')[0]);
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        ...base,
+        person: 'Проверка Противоречив Идентификатор',
+        xmlFile: 'conflicting-eik.xml',
+        controlHash: 'conflicting-eik',
+        entity: 'ДИСТИНКТ ТЕХ 7 ЕООД, ЕИК 222222229',
+      }) + '\n',
+    );
+    runLoad();
+    const db = open();
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declared_interests WHERE declaration_id LIKE '%conflicting-eik.xml'",
+        )
+        .get().n,
+      1,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declaration_companies WHERE declaration_id LIKE '%conflicting-eik.xml'",
+        )
+        .get().n,
+      0,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ПРОВЕРКА ПРОТИВОРЕЧИВ ИДЕНТИФИКАТОР|%'",
+        )
+        .get().n,
+      0,
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later partial change does not erase a family holding absent from its rows', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.link_key, p.name, d.institution FROM interest_links il JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'partial.xml',
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Change',
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after.prepare('SELECT status FROM interest_links WHERE link_key=?').get(link.link_key).status,
+      'published',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a comparable later omission preserves a proven family link as history without extending its years', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      `SELECT il.*, p.name, d.institution FROM interest_links il
+    JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id
+    WHERE il.status='published' AND il.relation='related' LIMIT 1`,
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'later-empty.xml',
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Annualy',
+        assetInventoryComparable: true,
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    const historical = after
+      .prepare('SELECT * FROM interest_links WHERE link_key=?')
+      .get(link.link_key);
+    assert.equal(historical.status, 'published');
+    assert.equal(historical.last_declared_year, link.last_declared_year);
+    assert.equal(
+      after
+        .prepare('SELECT later_declaration_year FROM interest_link_history WHERE link_key=?')
+        .get(link.link_key).later_declaration_year,
+      '2030',
+    );
+    assert.equal(
+      after
+        .prepare('SELECT live_status FROM interest_link_evidence WHERE link_key=?')
+        .get(link.link_key).live_status,
+      'terminated',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later document without a visible comparable inventory cannot erase a family holding', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.link_key, p.name, d.institution FROM interest_links il JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'partial.xml',
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Annualy',
+        assetInventoryComparable: false,
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after.prepare('SELECT status FROM interest_links WHERE link_key=?').get(link.link_key).status,
+      'published',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('old staging without disposal semantics is refused before modifying the database', () => {
+  const file = path.join(STAGING, 'manifest.json');
+  const original = fs.readFileSync(file, 'utf8');
+  const db = open();
+  const before = db.prepare('SELECT COUNT(*) n FROM interest_links').get().n;
+  db.close();
+  try {
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 2 }));
+    assert.throws(
+      () => runLoad(),
+      (e) => /Stale declaration staging/.test(String(e.stderr)),
+    );
+    const after = open();
+    assert.equal(after.prepare('SELECT COUNT(*) n FROM interest_links').get().n, before);
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later management declaration cannot extend the published ownership period', () => {
+  runLoad();
+  const db = open();
+  const links = db
+    .prepare(
+      "SELECT il.*,p.name FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE il.status='published' AND il.interest_class='private_ownership'",
+    )
+    .all();
+  db.close();
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const rows = original.trim().split('\n').map(JSON.parse);
+  const link = links.find((l) => rows.some((h) => h.person === l.name && h.kind === 'shares'));
+  assert.ok(link);
+  const base = rows.find((h) => h.person === link.name && h.kind === 'shares');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        ...base,
+        folder: '2030',
+        year: '2030',
+        xmlFile: 'later-management.xml',
+        kind: 'management',
+        timing: 'current',
+        template: 'interests',
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after
+        .prepare('SELECT last_declared_year FROM interest_links WHERE link_key=?')
+        .get(link.link_key).last_declared_year,
+      link.last_declared_year,
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('same-year annual corrections need consistent ownership snapshots; unknown inventories cannot refute them', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.*,p.name FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const holdingsFile = path.join(STAGING, 'holdings.jsonl');
+  const filingsFile = path.join(STAGING, 'filings.jsonl');
+  const holdings = fs.readFileSync(holdingsFile, 'utf8');
+  const filings = fs.readFileSync(filingsFile, 'utf8');
+  const base = holdings
+    .trim()
+    .split('\n')
+    .map(JSON.parse)
+    .find((h) => h.person === link.name && h.holderRelation === 'related');
+  assert.ok(base);
+  try {
+    for (const variant of ['duplicate', 'contradictory', 'not_comparable']) {
+      fs.writeFileSync(holdingsFile, holdings);
+      fs.writeFileSync(filingsFile, filings);
+      const extra = { ...base, xmlFile: 'same-year-correction.xml', controlHash: 'correction' };
+      fs.appendFileSync(
+        filingsFile,
+        JSON.stringify({
+          ...extra,
+          declarationType: 'Annualy',
+          assetInventoryComparable: variant !== 'not_comparable',
+        }) + '\n',
+      );
+      if (variant === 'duplicate') fs.appendFileSync(holdingsFile, JSON.stringify(extra) + '\n');
+      runLoad();
+      const after = open();
+      const actual = after
+        .prepare(
+          'SELECT status,contract_count,contract_value_eur FROM interest_links WHERE link_key=?',
+        )
+        .get(link.link_key);
+      assert.equal(actual.status, variant === 'contradictory' ? 'held' : 'published', variant);
+      assert.equal(
+        actual.contract_count,
+        link.contract_count,
+        'additional sources never multiply contracts',
+      );
+      assert.equal(actual.contract_value_eur, link.contract_value_eur);
+      after.close();
+    }
+  } finally {
+    fs.writeFileSync(holdingsFile, holdings);
+    fs.writeFileSync(filingsFile, filings);
+  }
 });

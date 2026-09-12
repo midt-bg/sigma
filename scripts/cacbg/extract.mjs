@@ -9,9 +9,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { finished } from 'node:stream/promises';
 import { parseList, parseDeclaration } from './parse.mjs';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
 import { sentinelPath } from './fetch.mjs';
+import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
 
 // Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
 // production behaviour is unchanged when they are unset.
@@ -63,15 +65,18 @@ function assertCorpusComplete() {
   );
 }
 
-function run() {
+async function run() {
   assertScratchIgnored();
   assertCorpusComplete();
   fs.mkdirSync(STAGING, { recursive: true });
+  // A failed rerun must not leave an old completion marker beside partial output.
+  fs.rmSync(path.join(STAGING, 'manifest.json'), { force: true });
   const holdingsOut = fs.createWriteStream(path.join(STAGING, 'holdings.jsonl'));
   const relatedOut = fs.createWriteStream(path.join(STAGING, 'related.jsonl'));
   // filings.jsonl — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
   // The loader builds each person's latest-filing horizon from this to catch a divest-to-ZERO (B1, #226).
   const filingsOut = fs.createWriteStream(path.join(STAGING, 'filings.jsonl'));
+  const quarantineOut = fs.createWriteStream(path.join(STAGING, 'source-quarantine.jsonl'));
   const stats = {
     decls: 0,
     assets: 0,
@@ -85,11 +90,8 @@ function run() {
     byKind: {},
   };
 
-  // Same declaration is republished across sets (filing set + end-of-year *y + compliance nc/nonc). It
-  // carries the SAME ControlHash (content hash) everywhere, so dedup globally by ControlHash — first
-  // folder wins — or holdings/evidence double-count. A corrected re-filing has a DIFFERENT hash and is
-  // legitimately kept (the loader aggregates per person→company). Bare-year/filing folders sort before
-  // their *y republication, so the primary copy is the one retained.
+  // Deduplicate only identical source bytes; ControlHash is not a unique document ID.
+  // Attribution is checked before deduplication, so a bad first listing cannot mask a valid copy.
   const seenHash = new Set();
   const folderRe = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
   const folders = fs.existsSync(RAW)
@@ -107,8 +109,12 @@ function run() {
     }
     // xmlFile → context (first listing wins; a person with multiple positions shares one filing)
     const ctx = new Map();
+    const listedNames = new Map();
     for (const r of parseList(fs.readFileSync(listPath, 'utf8'))) {
       if (!ctx.has(r.xmlFile)) ctx.set(r.xmlFile, r);
+      const names = listedNames.get(r.xmlFile) ?? [];
+      names.push(r.person);
+      listedNames.set(r.xmlFile, names);
     }
     let n = 0;
     for (const file of fs.readdirSync(dir)) {
@@ -117,25 +123,34 @@ function run() {
       // counting the skip so a rise in skips is visible. (The crawl is a long polite fetch; losing it to
       // one bad file mid-run wastes hours.)
       let d;
+      let xml;
       try {
-        d = parseDeclaration(fs.readFileSync(path.join(dir, file), 'utf8'));
+        xml = fs.readFileSync(path.join(dir, file), 'utf8');
+        d = parseDeclaration(xml);
       } catch (err) {
         stats.parseErrors = (stats.parseErrors ?? 0) + 1;
         console.warn(`  ! skipped ${folder}/${file}: ${err instanceof Error ? err.message : err}`);
         continue;
       }
-      if (d.controlHash) {
-        if (seenHash.has(d.controlHash)) {
+      const attribution = declarationAttribution(d.declarant, listedNames.get(file) ?? []);
+      if (attribution !== 'matched') {
+        stats[attribution] = (stats[attribution] ?? 0) + 1;
+        quarantineOut.write(JSON.stringify({ folder, xmlFile: file, reason: attribution }) + '\n');
+        continue;
+      }
+      const fingerprint = documentFingerprint(xml);
+      {
+        if (seenHash.has(fingerprint)) {
           stats.dupSkipped++;
           continue;
         } // republished declaration
-        seenHash.add(d.controlHash);
+        seenHash.add(fingerprint);
       }
       stats.decls++;
       stats[d.templateType] = (stats[d.templateType] ?? 0) + 1;
       if (d.egnPresent) stats.egnHits++;
       const c = ctx.get(file) ?? {};
-      const person = c.person || d.declarant;
+      const person = d.declarant;
       // Emit the filing record UNCONDITIONALLY — before the interests loop — so a declaration with zero
       // material holdings (a divest-to-zero, an empty filing) still advances the person's horizon (B1).
       filingsOut.write(
@@ -150,6 +165,12 @@ function run() {
           // The declarant's own „Месторабота" — the institution where the listing only names the declaration
           // type (ADR-0040). Carried on every record so load.mjs keys all three the same way.
           work: d.work ?? '',
+          position: c.position || d.position || '',
+          controlHash: d.controlHash,
+          declarationType: d.declarationType,
+          assetInventoryComparable: d.assetInventoryComparable ?? false,
+          declaredOn: d.declaredOn ?? null,
+          submittedOn: d.submittedOn ?? null,
         }) + '\n',
       );
       stats.filings++;
@@ -202,10 +223,22 @@ function run() {
   holdingsOut.end();
   relatedOut.end();
   filingsOut.end();
+  quarantineOut.end();
+  await Promise.all(
+    [holdingsOut, relatedOut, filingsOut, quarantineOut].map((stream) => finished(stream)),
+  );
+  fs.writeFileSync(
+    path.join(STAGING, 'manifest.json'),
+    JSON.stringify(
+      { schemaVersion: 5, extractedAt: new Date().toISOString(), raw: RAW, filings: stats.filings },
+      null,
+      2,
+    ) + '\n',
+  );
   console.log('\n=== extract summary ===');
   console.log(JSON.stringify(stats, null, 2));
 }
 
 // Only run when invoked directly — importing the module (e.g. a future unit test of a pure helper) must
 // not trigger a real extraction pass over the raw cache. Matches the guard in fetch.mjs.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) run();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await run();

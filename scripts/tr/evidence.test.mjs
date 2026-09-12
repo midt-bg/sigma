@@ -137,11 +137,79 @@ test('rung 2 — the match must fall inside ONE registered person (the libel gua
   assert.notEqual(v.kind, 'document');
 });
 
-test('rung 2 — an ENDED role cannot produce a document match', () => {
+test('rung 2 — an ended role outside the declared year cannot produce a document match', () => {
   const gone = registry([
     holder('00230', 'ИВАН ПЕТРОВ ТЕСТОВ', '2013-07-16', { removed_on: '2015-01-01' }),
   ]);
   assert.notEqual(evidenceVerdict({ ...base, registry: gone }).kind, 'document');
+});
+
+test('a documented past owner corroborates historical identity without becoming a current owner', () => {
+  const past = registry([
+    holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2013-07-16', { removed_on: '2022-01-01' }),
+  ]);
+  const v = evidenceVerdict({ ...base, registry: past });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.registryRole, 'owner');
+  assert.equal(v.roleEndedOn, '2022-01-01');
+  assert.equal(v.entryDate, '2013-07-16');
+  assert.deepEqual(reconcileTermination({ registry: past, declarantName: base.declarantName }), {
+    terminated: true,
+    label: null,
+  });
+});
+
+test('historical matches still require company corroboration and one exact full person name', () => {
+  const past = registry([
+    holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2013-07-16', { removed_on: '2022-01-01' }),
+  ]);
+  assert.equal(
+    evidenceVerdict({ ...base, registry: past, companyNameDistinctive: false }).kind,
+    'document_uncorroborated',
+  );
+  assert.notEqual(
+    evidenceVerdict({ ...base, registry: past, declarantName: 'Иван Тестов' }).kind,
+    'document',
+  );
+  assert.notEqual(
+    evidenceVerdict({ ...base, registry: past, declarantName: 'Иван Петров Другов' }).kind,
+    'document',
+  );
+  assert.equal(
+    evidenceVerdict({ ...base, registry: past, companyNameDistinctive: false, declaredEik: true })
+      .kind,
+    'document',
+  );
+});
+
+test('historical identity requires valid dates, a real entry and overlap with the first declared year', () => {
+  for (const over of [
+    { added_on: null },
+    { added_on: '2021-02-30' },
+    { removed_on: '2021-02-30' },
+    { added_on: '2022-01-01' },
+    { removed_on: '2021-01-01' },
+    { added_on: '2022-02-01', removed_on: '2022-01-01' },
+    { entry_number: null },
+    { subject_kind: 'entity' },
+  ]) {
+    const past = registry([
+      holder('00190', base.declarantName, '2020-01-01', { removed_on: '2022-01-01', ...over }),
+    ]);
+    assert.notEqual(
+      evidenceVerdict({ ...base, registry: past }).kind,
+      'document',
+      JSON.stringify(over),
+    );
+  }
+  const past = registry([
+    holder('00070', base.declarantName, '2021-12-31', { removed_on: '2022-01-01' }),
+  ]);
+  assert.equal(evidenceVerdict({ ...base, registry: past }).registryRole, 'manager');
+  assert.notEqual(
+    evidenceVerdict({ ...base, registry: past, firstDeclaredYear: null }).kind,
+    'document',
+  );
 });
 
 test('rung 2 — a company the register names is no declarant, whatever its name', () => {

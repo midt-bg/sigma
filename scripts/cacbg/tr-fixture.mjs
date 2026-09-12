@@ -9,6 +9,7 @@
 // `evidenceVerdict` actually returns.
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openCache, upsertDeed, markOutsideTr, readDeed } from '../tr/cache.mjs';
 import { readLinksFile, decideLinks } from '../tr/decide.mjs';
@@ -19,6 +20,8 @@ const ROOT = path.resolve(HERE, '../..');
 
 /** Run `load.mjs --emit-candidates` against a fixture work DB and return the emitted link records. */
 export function emitLinkRecords({ workDb, staging, trDb }) {
+  const manifest = path.join(staging, 'manifest.json');
+  if (!fs.existsSync(manifest)) fs.writeFileSync(manifest, JSON.stringify({ schemaVersion: 5 }));
   execFileSync(
     'node',
     [

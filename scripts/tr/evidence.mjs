@@ -50,7 +50,10 @@ import {
  * „Документ" cites is the one that added the holder rather than the field's latest. A different reading
  * is exactly what this constant exists to record.
  */
-export const RULES_VERSION = 'tr-rules-3';
+// r4 also permits an ended, dated role overlapping the first declared year to
+// corroborate company identity. The company gate is unchanged. Absence today
+// does not refute a documented past role; current-role reconciliation stays separate.
+export const RULES_VERSION = 'tr-rules-4';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
@@ -102,6 +105,28 @@ function findPerson(registry, name, fields) {
     }
   }
   return null;
+}
+
+function findHistoricalPerson(registry, name, fields, year) {
+  if (!Number.isInteger(year) || year < 1900 || year > 2100) return null;
+  const key = (v) => String(v).normalize('NFC').trim().toLocaleUpperCase('bg').replace(/\s+/g, ' ');
+  const day = (v) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
+    Number.isFinite(Date.parse(v)) &&
+    new Date(v).toISOString().slice(0, 10) === v;
+  return (
+    (registry.endedHolders ?? []).find(
+      (h) =>
+        fields.includes(h.field) &&
+        key(h.name) === key(name) &&
+        h.entryNumber &&
+        day(h.entryDate) &&
+        day(h.endedOn) &&
+        h.entryDate < h.endedOn &&
+        h.entryDate <= `${year}-12-31` &&
+        h.endedOn > `${year}-01-01`,
+    ) ?? null
+  );
 }
 
 /**
@@ -184,6 +209,7 @@ export function evidenceVerdict(input) {
     matchedFact: null,
     entryNumber: null,
     entryDate: null,
+    roleEndedOn: null,
     ...telemetry,
     ...extra,
   });
@@ -226,8 +252,17 @@ export function evidenceVerdict(input) {
   const companyCorroborated = declaredEik || matchedSeat != null;
   const eligibleForDocument = !telemetry.shortName && !telemetry.latinInName;
   if (eligibleForDocument) {
-    const owner = findPerson(registry, declarantName, OWNERSHIP_FIELDS);
-    const manager = owner ? null : findPerson(registry, declarantName, [MANAGER_FIELD]);
+    const liveOwner = findPerson(registry, declarantName, OWNERSHIP_FIELDS);
+    const liveManager = liveOwner ? null : findPerson(registry, declarantName, [MANAGER_FIELD]);
+    const owner =
+      liveOwner ??
+      (liveManager
+        ? null
+        : findHistoricalPerson(registry, declarantName, OWNERSHIP_FIELDS, firstDeclaredYear));
+    const manager = owner
+      ? null
+      : (liveManager ??
+        findHistoricalPerson(registry, declarantName, [MANAGER_FIELD], firstDeclaredYear));
     const hit = owner ?? manager;
     if (hit && !companyCorroborated && !companyNameDistinctive) {
       // A DISTINCT withholding kind, not a fall-through to `unknown`. „We matched a person but could not
@@ -243,6 +278,7 @@ export function evidenceVerdict(input) {
         matchedFact: `role:owner:${owner.field}`,
         entryNumber: owner.entryNumber,
         entryDate: owner.entryDate,
+        roleEndedOn: owner.endedOn ?? null,
       });
     }
     if (manager) {
@@ -251,6 +287,7 @@ export function evidenceVerdict(input) {
         matchedFact: `role:manager:${manager.field}`,
         entryNumber: manager.entryNumber,
         entryDate: manager.entryDate,
+        roleEndedOn: manager.endedOn ?? null,
       });
     }
   }

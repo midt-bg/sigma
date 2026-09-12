@@ -262,6 +262,14 @@ test('upsertVerdict replaces on re-decision rather than duplicating', () =>
     assert.equal(readVerdict(db, 'person:ИВАН|МВР|201122335').kind, 'refuted');
   }));
 
+test('a historical role end round-trips and is cleared by a later live verdict', () =>
+  withCache((db) => {
+    upsertVerdict(db, VERDICT({ roleEndedOn: '2022-01-01' }));
+    assert.equal(readVerdict(db, VERDICT().linkKey).roleEndedOn, '2022-01-01');
+    upsertVerdict(db, VERDICT());
+    assert.equal(readVerdict(db, VERDICT().linkKey).roleEndedOn, null);
+  }));
+
 test('a verdict is stale when the rules moved, the declaration moved, or it simply aged', () =>
   withCache((db) => {
     upsertVerdict(db, VERDICT());

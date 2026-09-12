@@ -49,11 +49,8 @@ test('declarationInstitution — the listing names the institution unless it onl
     category: 'Встъпителни и финални декларации',
   };
   assert.equal(declarationInstitution({ ...typeFolder, work: ' Община Ямбол ' }), 'Община Ямбол');
-  // nothing better on record → the listing's node, as before
-  assert.equal(
-    declarationInstitution({ ...typeFolder, work: '' }),
-    'Встъпителни и финални декларации',
-  );
+  // Unknown is not a declaration category posing as an institution.
+  assert.equal(declarationInstitution({ ...typeFolder, work: '' }), '');
   assert.equal(
     declarationInstitution({ institution: '', work: 'Народно събрание' }),
     'Народно събрание',
@@ -76,17 +73,44 @@ test('identityInstitution — one body under its different spellings is one key'
   assert.equal(identityInstitution('СОБАЛ ПЕНТАГРАМ ЕООД, гр. София'), 'СОБАЛ ПЕНТАГРАМ ЕООД');
   assert.equal(identityInstitution('Областна администрация - Смолян'), 'ОБЛАСТ СМОЛЯН');
   assert.equal(identityInstitution('Област - Смолян'), 'ОБЛАСТ СМОЛЯН');
+  assert.equal(
+    identityInstitution('Областна администрация - област Търговище'),
+    identityInstitution('Област - Търговище'),
+  );
   assert.equal(identityInstitution('МВР'), 'МИНИСТЕРСТВО НА ВЪТРЕШНИТЕ РАБОТИ'); // abbreviations still fold
 });
 
 test('identityInstitution — never joins two different bodies', () => {
   assert.equal(
     identityInstitution('Областна дирекция на МВР - Русе'),
-    'ОБЛАСТНА ДИРЕКЦИЯ НА МВР - РУСЕ',
+    'ОБЛАСТНА ДИРЕКЦИЯ НА МВР РУСЕ',
   );
   assert.equal(identityInstitution('Общинска болница Карнобат'), 'ОБЩИНСКА БОЛНИЦА КАРНОБАТ');
-  assert.equal(identityInstitution('Район Южен - Пловдив'), 'РАЙОН ЮЖЕН - ПЛОВДИВ');
+  assert.equal(identityInstitution('Район Южен - Пловдив'), 'РАЙОН ЮЖЕН ПЛОВДИВ');
   assert.equal(identityInstitution('Община'), 'ОБЩИНА'); // a bare generic word is not folded to nothing
   assert.notEqual(identityInstitution('Област Смолян'), identityInstitution('Смолян')); // oblast ≠ town
   assert.equal(identityInstitution(''), '');
+});
+
+test('declaration categories never survive missing workplace data or old category labels', () => {
+  assert.equal(declarationInstitution({ institution: 'Ежегодни декларации' }), '');
+  assert.equal(
+    declarationInstitution({ institution: 'Държавни предприятия', work: 'Държавна компания' }),
+    'Държавна компания',
+  );
+});
+
+test('punctuation cannot split one institution, but substantive organisation names remain distinct', () => {
+  assert.equal(
+    identityInstitution('Диагностично-Консултативен Център 1 Девня ЕООД'),
+    identityInstitution('Диагностично Консултативен Център 1 Девня ЕООД'),
+  );
+  assert.equal(
+    identityInstitution('СУ „Тестово училище“ - София'),
+    identityInstitution('СУ Тестово училище София'),
+  );
+  assert.notEqual(
+    identityInstitution('Министерство на икономиката и индустрията'),
+    identityInstitution('Министерство на икономиката, инвестициите и индустрията'),
+  );
 });

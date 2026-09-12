@@ -49,6 +49,23 @@ export function registryFacts(deed, roles) {
         String(a.entryDate).localeCompare(String(b.entryDate)) ||
         a.name.localeCompare(b.name),
     );
+  // Preserve ended roles separately: they can corroborate a historical declaration,
+  // but must never answer the independent question of who is registered now.
+  const endedHolders = roles
+    .filter((r) => read.has(r.field_ident) && r.subject_kind === 'person' && r.removed_on != null)
+    .map((r) => ({
+      field: String(r.field_ident),
+      name: String(r.subject_name ?? ''),
+      entryNumber: r.entry_number == null ? null : String(r.entry_number),
+      entryDate: isoDay(r.added_on),
+      endedOn: isoDay(r.removed_on),
+    }))
+    .sort(
+      (a, b) =>
+        a.field.localeCompare(b.field) ||
+        String(a.entryDate).localeCompare(String(b.entryDate)) ||
+        a.name.localeCompare(b.name),
+    );
   return {
     uic: String(deed.eik),
     name: deed.name ?? null,
@@ -56,6 +73,7 @@ export function registryFacts(deed, roles) {
     seat: { settlement: deed.seat_settlement ?? '', entryDate: isoDay(deed.seat_entry_on) },
     ownersEntryDate: isoDay(deed.owners_entry_on),
     holders,
+    endedHolders,
   };
 }
 

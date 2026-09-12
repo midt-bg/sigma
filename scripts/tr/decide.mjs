@@ -93,6 +93,7 @@ export function decideLinks(db, { eik, registry, outsideTr, links, now }) {
         matchedFact: verdict.matchedFact,
         entryNumber: verdict.entryNumber,
         entryDate: verdict.entryDate,
+        roleEndedOn: verdict.roleEndedOn,
         shortName: verdict.shortName,
         latinInName: verdict.latinInName,
         reconTerminated: recon.terminated,

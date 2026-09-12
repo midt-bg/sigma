@@ -4,10 +4,10 @@
 // related_persons_internal) into the target SQLite/D1 per migration 0002. Idempotent: it rebuilds the
 // domain tables from staging each run; suppressions are external (version-controlled list, ADR-0031).
 //
-// Certainty 1.0 comes from the resolver, not a loader gate: it publishes ONLY a key that maps to exactly
-// one valid winner ЕИК; any key spanning >1 valid ЕИК is quarantined (never published) and reported as
-// telemetry. The 0-over-merge libel proof is the labelled company-name-key.test.ts (ADR-0027), not this
-// loader. Only tier A|B links are 'published'; every link carries provenance + matcher_version.
+// The resolver requires one consistent company identity; ambiguous names and contradictory identifiers
+// are withheld. Publication additionally requires a current Trade Register evidence seal. These checks
+// constrain the inference; they do not guarantee the source itself is correct. Every link carries
+// provenance + matcher_version, and labelled identity tests cover the normalization boundary (ADR-0027).
 //
 // Run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs
 import { DatabaseSync } from 'node:sqlite';
@@ -34,7 +34,7 @@ import { TR_DB } from '../tr/paths.mjs';
 // which the decision pass (scripts/tr/decide.mjs) reads and this pass does not. It calls them; this pass
 // reads what they decided.
 import { isSealedFact, RULES_VERSION } from '../tr/evidence.mjs';
-import { companyCandidates, declaredEiks } from './extract-companies.mjs';
+import { resolveDeclaredCompany } from './resolve-company.mjs';
 import {
   fingerprint,
   loadCorrections,
@@ -45,6 +45,7 @@ import {
   canonicalInstitution,
   declarationInstitution,
   identityInstitution,
+  institutionMatchKey,
 } from './institutions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -58,14 +59,13 @@ const MIGRATION_EVIDENCE = path.join(
   ROOT,
   'packages/db/migrations/0009_interest_link_evidence.sql',
 );
-// 0012: old official ids → the id they became under the identity grain now in force (ADR-0040). Rebuilt here
-// on every run from the same staging, so it never accumulates and never goes stale.
+// 0012 retains an empty legacy table in the schema. No old URL redirects are generated.
 const MIGRATION_REDIRECTS = path.join(ROOT, 'packages/db/migrations/0012_person_redirects.sql');
 const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — §8's monotonicity gate keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1';
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-2';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // A deliberate, logged override for the coverage gate below. Without it a single permanently
 // unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
@@ -111,6 +111,22 @@ const readJsonl = (f) =>
 // whose only job is to notice a published claim disappearing — would pass unconditionally, for ever.
 // Copying here rather than asking the caller to do it keeps the flag safe wherever it is invoked from.
 const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
+// Check compatibility before opening or rebuilding the database.
+const stagingManifest = path.join(STAGING, 'manifest.json');
+if (
+  !fs.existsSync(stagingManifest) ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 5
+)
+  throw new Error('Stale declaration staging: run extract.mjs before load.mjs');
+for (const rec of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
+  if (
+    /^(встъпителни и финални декларации|ежегодни декларации)$/iu.test(rec.institution ?? '') &&
+    (!Object.hasOwn(rec, 'work') || !Object.hasOwn(rec, 'category'))
+  )
+    throw new Error(
+      'Stale declaration staging lacks work/category: run extract.mjs before load.mjs',
+    );
+}
 if (EMIT_CANDIDATES_ONLY) {
   for (const suffix of ['', '-wal', '-shm']) {
     // -wal/-shm may legitimately be absent (a cleanly closed DB has neither); anything else must surface.
@@ -172,6 +188,15 @@ const priorPublished = (() => {
     return [];
   }
 })();
+// Preserve the identity attached to each exact source document before rebuilding. This
+// carries audit claims through category→institution corrections without matching names.
+const priorDocumentPersons = new Map();
+try {
+  for (const row of db.prepare('SELECT folder_year, xml_file, person_id FROM declarations').all())
+    priorDocumentPersons.set(`${row.folder_year}:${row.xml_file}`, row.person_id);
+} catch (e) {
+  if (!/no such table/i.test(e.message)) throw e;
+}
 // Decision 6's SECOND sanctioned removal: „a correction of wrong input". A link whose input was wrong
 // should never have been published, but correcting the input UNBUILDS it — so a suppression on it
 // would match no built link and trip the B3 gate above, while doing nothing leaves a permanent hard
@@ -223,7 +248,11 @@ if (!EMIT_CANDIDATES_ONLY) {
 // Full idempotent rebuild that also picks up schema changes: drop the CACBG tables (children first —
 // FK-safe) and re-apply the migration. Nothing to preserve — suppressions are external now.
 for (const t of [
+  'declaration_companies',
+  'person_registry_links',
+  'declaration_metadata',
   'person_redirects', // no references either way
+  'interest_link_history',
   // FIRST: interest_link_evidence references interest_links, so it must go before its parent.
   'interest_link_evidence',
   'interest_link_authorities',
@@ -237,6 +266,7 @@ for (const t of [
 db.exec(fs.readFileSync(MIGRATION, 'utf8'));
 db.exec(fs.readFileSync(MIGRATION_EVIDENCE, 'utf8'));
 db.exec(fs.readFileSync(MIGRATION_REDIRECTS, 'utf8'));
+db.exec(fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0014_person_profile.sql'), 'utf8'));
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
 const isSuppressed = (linkKey) => {
@@ -271,37 +301,7 @@ for (const b of bidders) {
 //                     (cross-check blocks a typo'd ЕИК pointing at the wrong company).
 //   extracted_name  — a „NAME"-ФОРМА pulled from prose normalizes to exactly one winner ЕИК.
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
-function resolveEntity(entity) {
-  const key = companyNameKey(entity);
-  const m = byKey.get(key);
-  if (m) {
-    const eiks = new Set([...m.values()].filter((v) => v.eik && v.valid).map((v) => v.eik));
-    if (eiks.size === 1) return { eik: [...eiks][0], method: 'exact_name_key' };
-    if (eiks.size > 1) return { ambiguous: true };
-  }
-  for (const de of declaredEiks(entity)) {
-    const b = bidderByEik.get(de);
-    if (!b) continue;
-    const winnerKey = companyNameKey(b.name);
-    // An empty winner key can't be a meaningful cross-check (a degenerate candidate could spuriously equal
-    // it). Skip it; the ЕИК alone isn't enough here by design.
-    if (!isMatchableKey(winnerKey)) continue;
-    // Name cross-check: the winner's фирма must appear as a proper „NAME" ФОРМА candidate in the declared
-    // text (boundary-safe, exact key). A raw `key.includes(winnerKey)` was REMOVED — it matched a winner
-    // name embedded MID-TOKEN in an unrelated фирма („СТРОЙ 1" inside „МЕГАСТРОЙ 15"), which with a typo'd-
-    // but-valid ЕИК would attach the wrong winner's contracts to the official (a false conflict; ADR-0016).
-    if (companyCandidates(entity).some((c) => companyNameKey(c) === winnerKey)) {
-      return { eik: de, method: 'declared_eik' };
-    }
-  }
-  for (const c of companyCandidates(entity)) {
-    const cm = byKey.get(companyNameKey(c));
-    if (!cm) continue;
-    const eiks = new Set([...cm.values()].filter((v) => v.eik && v.valid).map((v) => v.eik));
-    if (eiks.size === 1) return { eik: [...eiks][0], method: 'extracted_name' };
-  }
-  return null;
-}
+const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik });
 // Is this name key backed by exactly one valid winner ЕИК across the whole bidder set? The distinctiveness
 // tier rests on this being true; declared_eik/extracted_name bypass the resolver's own single-ЕИК guard,
 // so the tier layer must re-assert global name-uniqueness itself.
@@ -338,6 +338,9 @@ const insDecl = db.prepare(
 const insDI = db.prepare(
   'INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind,detail,timing,seat) VALUES(?,?,?,?,?,?,?,?)',
 );
+const insDeclarationCompany = db.prepare(
+  'INSERT OR IGNORE INTO declaration_companies(declaration_id,eik,match_method) VALUES(?,?,?)',
+);
 const insRP = db.prepare(
   'INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind,info,timing) VALUES(?,?,?,?,?,?)',
 );
@@ -356,18 +359,27 @@ const insRP = db.prepare(
 // one body across its spellings.
 const personId = (name, institution) =>
   `person:${companyNameKey(name)}|${companyNameKey(identityInstitution(institution))}`;
-const personOf = (rec) => personId(rec.person, declarationInstitution(rec));
+const personOf = (rec) =>
+  personId(
+    rec.person,
+    declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
+  );
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
-// nothing else. Kept only to redirect old official URLs and to carry the monotonicity snapshot across the
+// nothing else. Kept only to carry the monotonicity snapshot across the
 // change of grain; nothing is keyed on it.
 const legacyPersonOf = (rec) =>
   `person:${companyNameKey(rec.person)}|${companyNameKey(canonicalInstitution(rec.institution))}`;
 const legacyToCurrent = new Map();
 const noteLegacy = (rec, pid) => {
-  const old = legacyPersonOf(rec);
-  const now = legacyToCurrent.get(old) ?? new Set();
-  now.add(pid);
-  legacyToCurrent.set(old, now);
+  for (const old of [
+    legacyPersonOf(rec),
+    priorDocumentPersons.get(`${rec.folder}:${rec.xmlFile}`),
+  ]) {
+    if (!old) continue;
+    const now = legacyToCurrent.get(old) ?? new Set();
+    now.add(pid);
+    legacyToCurrent.set(old, now);
+  }
 };
 // Financial-interest kinds (a genuine stake), as opposed to management-only or listed securities.
 const OWN_KINDS = new Set(['shares', 'participation', 'sole_trader']);
@@ -403,9 +415,26 @@ const familyMaterialByTemplate = new Map();
 //
 // A filing datable by NEITHER field is still ignored: the fallback dates a filing, it does not invent one.
 const filingMaxByPersonType = new Map();
+const annualInventoryDocuments = new Map();
+const annualDocumentKeys = new Map();
+const unresolvedInventoryDocuments = new Set();
+const sourceDocumentId = (r) => `decl:${r.folder}:${r.xmlFile}`;
+for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
+  if (h.kind === 'shares' && h.timing === 'annual' && h.holderRelation === 'unknown')
+    unresolvedInventoryDocuments.add(sourceDocumentId(h));
+}
 let filingFolderDated = 0,
   filingUndatable = 0;
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
+  // Only a recognised asset inventory is comparable with a later holding balance.
+  // An interests document can report a partial change; its silence is not a full inventory.
+  if (
+    f.template !== 'assets' ||
+    f.assetInventoryComparable === false ||
+    unresolvedInventoryDocuments.has(sourceDocumentId(f)) ||
+    !['Annualy', 'Annual', 'Yearly', 'Entry', 'Vacate'].includes(f.declarationType)
+  )
+    continue;
   if (!isMatchableKey(companyNameKey(f.person))) continue;
   let fy = yr(f.year);
   if (!Number.isFinite(fy)) {
@@ -421,6 +450,16 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   }
   const k = `${personOf(f)}|${f.template ?? ''}`;
   filingMaxByPersonType.set(k, Math.max(filingMaxByPersonType.get(k) ?? fy, fy));
+  // Two annual inventories describe the same 31 December snapshot. Their union
+  // is not a correction rule: a positive and a negative statement need review.
+  // Entry/final documents have different observation dates and are not compared here.
+  if (['Annualy', 'Annual', 'Yearly'].includes(f.declarationType) && Number.isFinite(yr(f.year))) {
+    const key = `${personOf(f)}|${fy}`;
+    const docs = annualInventoryDocuments.get(key) ?? new Set();
+    docs.add(sourceDocumentId(f));
+    annualInventoryDocuments.set(key, docs);
+    annualDocumentKeys.set(sourceDocumentId(f), key);
+  }
 }
 if (filingFolderDated > 0 || filingUndatable > 0) {
   console.log(
@@ -470,6 +509,12 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.timing ?? 'annual',
     h.seat ?? '',
   );
+  const res = resolveEntity(h.entity);
+  if (res && !res.ambiguous) insDeclarationCompany.run(did, res.eik, res.method);
+  // Preserve historical/disposal rows as source facts, but never let them establish
+  // a positive holding during the filing year. "Prior" is appointment-relative,
+  // and a disposal alone proves neither the retained balance nor a full exit date.
+  if (['disposed', 'prior', 'unknown'].includes(h.timing)) continue;
   // Unknown holder (B4): the holder cell is neither confidently the declarant's own name nor confidently a
   // relative's (an ambiguous 1-token-different / initials-only cell). Counted NOWHERE — it forms no link and
   // never advances a scope's ownership horizon — so a name we cannot resolve never pollutes a published
@@ -505,7 +550,6 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     familyMaterialByTemplate.set(t, (familyMaterialByTemplate.get(t) ?? 0) + 1);
   }
   // resolve (clean name → declared ЕИК → extracted-from-prose name)
-  const res = resolveEntity(h.entity);
   if (!res || res.ambiguous) {
     if (res?.ambiguous) quarantined++;
     else noMatch++;
@@ -531,6 +575,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
         seats: new Set(),
         institutions: new Set(),
+        annualDocuments: new Map(),
         method: res.method,
       })
       .get(gid);
@@ -547,11 +592,41 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   if (material) {
     rec.hasMaterialOwn = true;
     if (Number.isFinite(y)) rec.ownYears.add(y);
+    const inventoryKey = annualDocumentKeys.get(did);
+    if (inventoryKey && h.kind === 'shares' && h.timing === 'annual') {
+      const docs = rec.annualDocuments.get(inventoryKey) ?? new Set();
+      docs.add(did);
+      rec.annualDocuments.set(inventoryKey, docs);
+    }
   }
   if (h.seat) rec.seats.add(h.seat);
   const declaredInstitution = declarationInstitution(h);
   if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
+const inventoryConflicts = [];
+for (const rec of agg.values()) {
+  for (const [key, positive] of rec.annualDocuments) {
+    const missing = [...annualInventoryDocuments.get(key)].filter((did) => !positive.has(did));
+    if (!missing.length) continue;
+    rec.inventoryConflict = true;
+    inventoryConflicts.push({
+      personId: rec.pid,
+      eik: rec.eik,
+      scope: rec.scope,
+      year: key.split('|').at(-1),
+      positiveDocuments: [...positive],
+      otherDocuments: missing,
+    });
+  }
+}
+fs.writeFileSync(
+  path.join(STAGING, 'inventory-conflicts.jsonl'),
+  inventoryConflicts.map((r) => JSON.stringify(r) + '\n').join(''),
+);
+if (inventoryConflicts.length)
+  console.log(
+    `  ${inventoryConflicts.length} contradictory annual ownership snapshots — affected links held for source review`,
+  );
 // related persons (internal/PII)
 let rpN = 0;
 for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
@@ -583,6 +658,31 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
     r.timing ?? 'current',
   );
 }
+// Include every available filing for a known declarant, including a filing with no company rows.
+// That keeps the document history complete without creating a public profile for every raw name.
+const knownPerson = db.prepare('SELECT 1 FROM persons WHERE id=?');
+const insMetadata = db.prepare('INSERT OR REPLACE INTO declaration_metadata VALUES(?,?,?,?)');
+for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
+  const pid = personOf(f);
+  if (!f.folder || !f.xmlFile) continue;
+  if (!knownPerson.get(pid)) continue;
+  const did = `decl:${f.folder}:${f.xmlFile}`;
+  insDecl.run(
+    did,
+    pid,
+    f.xmlFile,
+    f.controlHash ?? null,
+    f.folder,
+    f.year ?? null,
+    f.template ?? 'unknown',
+    f.category ?? '',
+    declarationInstitution(f),
+    f.position ?? '',
+    `https://register.cacbg.bg/${f.folder}/${f.xmlFile}`,
+  );
+  noteLegacy(f, pid);
+  insMetadata.run(did, f.declarationType ?? null, f.declaredOn ?? null, f.submittedOn ?? null);
+}
 db.exec('COMMIT');
 
 // --- enrich each (person,eik) → interest_links (+ per-authority breakdown) -----------------------
@@ -607,13 +707,14 @@ const insILA = db.prepare(
 const insEvidence = db.prepare(
   'INSERT OR REPLACE INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,entry_number,entry_date,lookup_date,rules_version,live_status) VALUES(?,?,?,?,?,?,?,?,?)',
 );
+const insHistory = db.prepare('INSERT INTO interest_link_history VALUES(?,?,?)');
 // classify one authority (whose name may be a ';'-joined blob) against the official's institutions.
 // exact = deterministic name equality; name_contains/locality = DISCLOSED heuristics (candidate, not proof).
 const OWN_RANK = { exact: 3, name_contains: 2, locality: 1, none: 0 };
 function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
   const parts = String(authorityName)
     .split(';')
-    .map((s) => norm(s))
+    .map((s) => institutionMatchKey(s))
     .filter(Boolean);
   if (parts.some((p) => instNorms.includes(p))) return 'exact';
   // heuristic: a LONG institution name (≥12 chars — guards against short-abbreviation false positives)
@@ -660,7 +761,8 @@ function linkRecordFor(rec) {
   // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
   // it would ask the decision pass a question no decision ever uses.
   if (rec.scope === 'self' && !rec.hasMaterialOwn && !rec.kinds.has('management')) return null;
-  const declYears = [...rec.declYears];
+  // A management observation must not extend an ownership window.
+  const declYears = [...(rec.hasMaterialOwn ? rec.ownYears : rec.declYears)];
   return {
     linkKey: rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`,
     eik: rec.eik,
@@ -804,8 +906,9 @@ for (const rec of agg.values()) {
   // Immaterial self record (listed securities / АД-form, no management role): recorded in
   // declared_interests for census, but it is not a publishable financial interest — form no link.
   if (rec.scope === 'self' && !rec.hasMaterialOwn && !rec.kinds.has('management')) continue;
-  const declYears = [...rec.declYears];
-  const instNorms = [...rec.institutions].map(norm);
+  // A management observation must not extend an ownership window.
+  const declYears = [...(rec.hasMaterialOwn ? rec.ownYears : rec.declYears)];
+  const instNorms = [...rec.institutions].map(institutionMatchKey).filter(Boolean);
   const instNormsLong = instNorms.filter((i) => i.length >= 12);
   const locTokens = [...rec.institutions].map(localityToken).filter(Boolean);
   const years = new Set();
@@ -915,9 +1018,8 @@ for (const rec of agg.values()) {
   const iClass = interestClass(rec, relation);
   // Self link_key stays `pid|eik` (preserves human-curated suppression keys); family is a distinct claim.
   const linkKey = rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`;
-  // E11 divestment: an ownership link whose company is absent from the scope's LATEST ownership filing has
-  // ended → 'withdrawn' (excluded from the published surface, like held/suppressed). Ownership relations
-  // (self owns/owns+manages, family related), compared against material-ownership years for that scope.
+  // A later comparable omission dates the declaration history. It does not erase
+  // the earlier evidence and does not establish an exact sale/termination date.
   const recOwnMax = rec.ownYears.size ? Math.max(...rec.ownYears) : null;
   // Divestment horizon = the person's latest filing year AMONG the declaration type(s) this stake was declared
   // under (rec.templates). A later filing of a different type is ignored: for a holder who declares a company
@@ -975,8 +1077,8 @@ for (const rec of agg.values()) {
     ? 'suppressed'
     : verdict.kind === 'refuted'
       ? 'withdrawn' // §5.4 — own stakes only; evidence.mjs refuses to refute a family stake
-      : terminatedEffective
-        ? 'withdrawn'
+      : rec.inventoryConflict && surfaces
+        ? 'held'
         : !surfaces
           ? 'internal'
           : verdict.publishable
@@ -1035,6 +1137,13 @@ for (const rec of agg.values()) {
     verdict.rulesVersion,
     liveStatus,
   );
+  if (divested || (usable && cached.roleEndedOn)) {
+    insHistory.run(
+      linkKey,
+      divested ? String(horizon) : null,
+      usable ? (cached.roleEndedOn ?? null) : null,
+    );
+  }
   for (const [auth_id, a] of perAuth)
     insILA.run(linkKey, auth_id, a.name, a.count, a.value || null, a.own);
 }
@@ -1056,6 +1165,19 @@ const builtKeys = new Set(
     .all()
     .map((r) => r.link_key),
 );
+// A previous run may already use the ADR-0040 grain. Carry those ids through a later
+// conservative institution spelling fix as well (e.g. "ОБЛАСТ ОБЛАСТ ТЪРГОВИЩЕ").
+// Require the exact company/scope claim to have been rebuilt; a matching name alone is insufficient.
+for (const prior of snapshot) {
+  if (builtKeys.has(prior.link_key)) continue;
+  const parts = prior.link_key.split('|');
+  const old = parts.slice(0, 2).join('|');
+  const pid = personId(parts[0].replace(/^person:/, ''), parts[1]);
+  if (pid === old || !builtKeys.has(`${pid}|${parts.slice(2).join('|')}`)) continue;
+  const now = legacyToCurrent.get(old) ?? new Set();
+  now.add(pid);
+  legacyToCurrent.set(old, now);
+}
 const carryKey = (key) => {
   const parts = key.split('|');
   const rest = parts.slice(2).join('|');
@@ -1072,26 +1194,7 @@ const carryKey = (key) => {
   fs.renameSync(snapTmp, snapPath);
 }
 
-// Old official URLs (ADR-0040): a legacy id that became exactly ONE published official 301s there. One that
-// split into several ids named two people and redirects nowhere; one that is itself a live page stays one.
-const publishedPids = new Set(
-  db
-    .prepare("SELECT DISTINCT person_id FROM interest_links WHERE status = 'published'")
-    .all()
-    .map((r) => r.person_id),
-);
-const insRedirect = db.prepare('INSERT INTO person_redirects(old_id, new_id) VALUES (?, ?)');
-let personRedirects = 0;
-db.exec('BEGIN');
-for (const [old, now] of legacyToCurrent) {
-  if (now.size !== 1 || publishedPids.has(old)) continue;
-  const [pid] = now;
-  if (pid === old || !publishedPids.has(pid)) continue;
-  insRedirect.run(old, pid);
-  personRedirects++;
-}
-db.exec('COMMIT');
-console.log(`  person redirects: ${personRedirects} old official id(s) → the id they became`);
+// No legacy URL redirects: this installation has not been released publicly.
 
 // B3 unused-suppression gate: every entry in the version-controlled list MUST have matched exactly one built
 // link. A fingerprint that matched NOTHING (a changed institution in the key, a reformatted ЕИК, or a wrong

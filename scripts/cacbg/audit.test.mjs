@@ -27,7 +27,15 @@ const dirs = [];
 
 // Build a fixture DB (bidders + declarations + declared_interests + interest_links), run audit.mjs against
 // it as a subprocess, and return { threw, out } — threw=true iff the audit exited non-zero (a hard finding).
-function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snapshot = null }) {
+function buildAndAudit({
+  bidders,
+  decls = [],
+  dis = [],
+  links,
+  seals = [],
+  snapshot = null,
+  history = [],
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
   const DB = path.join(dir, 'fixture.sqlite');
@@ -54,6 +62,10 @@ function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snaps
     ${dis.map((d) => `INSERT INTO declared_interests(declaration_id, entity_raw) VALUES (${d});`).join('\n')}
     ${links.map((l) => `INSERT INTO interest_links VALUES (${l});`).join('\n')}
     ${seals.map((e) => `INSERT INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,lookup_date,rules_version,live_status) VALUES (${e});`).join('\n')}
+    ALTER TABLE interest_links ADD COLUMN first_declared_year TEXT DEFAULT '2021';
+    ALTER TABLE interest_links ADD COLUMN last_declared_year TEXT DEFAULT '2021';
+    CREATE TABLE interest_link_history(link_key TEXT, later_declaration_year TEXT, registry_role_ended_on TEXT);
+    ${history.map((h) => `INSERT INTO interest_link_history VALUES (${h});`).join('\n')}
   `);
   db.close();
 
@@ -82,6 +94,28 @@ after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })))
 // Two real winners fold to the same name key but carry distinct valid ЕИК → the "colliding name" case.
 const COLLIDING_BIDDERS = [`'b1','„ОБЩ" ЕООД','100000001',1`, `'b2','ОБЩ ЕООД','200000002',1`];
 const KEY = K('„ОБЩ" ЕООД'); // == K('ОБЩ ЕООД') — the shared key both winners map to
+
+test('history requires dated provenance and never overrides a withholding evidence verdict', () => {
+  for (const [kind, live, history, axis] of [
+    ['confirmed', 'terminated', [`'p1|100000001','2022',NULL`], null],
+    ['confirmed', 'terminated', [], 'H_missing_history'],
+    ['confirmed', 'terminated', [`'p1|100000001','2020',NULL`], 'H_later_declaration'],
+    ['confirmed', 'live', [`'p1|100000001',NULL,'2022-01-01'`], 'H_registry_period'],
+    ['unknown', 'terminated', [`'p1|100000001','2022',NULL`], 'C_withholding_evidence'],
+    ['refuted', 'terminated', [`'p1|100000001','2022',NULL`], 'C_withholding_evidence'],
+  ]) {
+    const { threw, out } = buildAndAudit({
+      bidders: [`'b1','„ОБЩ" ЕООД','100000001',1`],
+      links: [
+        `'il1','p1|100000001','p1','100000001','${KEY}','exact_name_key','${kind}','b1','owns',0,1000,'published'`,
+      ],
+      seals: [`'p1|100000001','${kind}',NULL,NULL,'2026-08-05','${RULES_VERSION}','${live}'`],
+      history,
+    });
+    assert.equal(threw, Boolean(axis), out);
+    if (axis) assert.ok(out.includes(axis), out);
+  }
+});
 
 test('A_eik behind a colliding name, backed by a real ЕИК+name double-lock, PASSES the gate', () => {
   const { threw, out } = buildAndAudit({

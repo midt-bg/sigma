@@ -265,7 +265,7 @@ test('same-named officials at different institutions do NOT merge into one perso
   assert.equal(aLink.last_declared_year, '2023');
 });
 
-test('ADR-0040: the declaration’s own institution keys the official; the old id redirects, the prior claim carries', () => {
+test('the own institution keys the official and the audit claim carries without URL redirects', () => {
   const db = open();
   const ids = db
     .prepare('SELECT id FROM persons WHERE name = ?')
@@ -289,11 +289,7 @@ test('ADR-0040: the declaration’s own institution keys the official; the old i
   );
 
   const redirects = db.prepare('SELECT old_id, new_id FROM person_redirects').all();
-  assert.ok(
-    redirects.some((r) => r.old_id === LEGACY_PID && r.new_id === CURRENT_PID),
-    'the old official URL 301s to the current one',
-  );
-  assert.ok(!redirects.some((r) => r.old_id === r.new_id));
+  assert.deepEqual(redirects, [], 'this unreleased installation needs no legacy URL aliases');
 
   const snap = JSON.parse(fs.readFileSync(path.join(STAGING, 'published-snapshot.json'), 'utf8'));
   const keys = snap.map((p) => p.link_key);

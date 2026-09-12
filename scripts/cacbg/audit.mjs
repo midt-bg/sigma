@@ -66,6 +66,65 @@ const findings = [];
 const flag = (link, axis, detail) =>
   findings.push({ axis, link_key: link.link_key, eik: link.eik, detail });
 
+// History is provenance, never an escape from the publishing evidence gate.
+// Check it independently of the loader's status calculation.
+const historyRows = db
+  .prepare(
+    `SELECT il.link_key, il.eik, il.first_declared_year,
+  il.last_declared_year, e.evidence_kind, e.entry_number, e.entry_date, e.live_status,
+  h.later_declaration_year, h.registry_role_ended_on
+  FROM interest_links il JOIN interest_link_evidence e USING(link_key)
+  LEFT JOIN interest_link_history h USING(link_key) WHERE il.status='published'`,
+  )
+  .all();
+const validDay = (v) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
+  Number.isFinite(Date.parse(v)) &&
+  new Date(v).toISOString().slice(0, 10) === v;
+for (const l of historyRows) {
+  if (
+    l.later_declaration_year != null &&
+    (!/^\d{4}$/.test(l.later_declaration_year) ||
+      !/^\d{4}$/.test(l.last_declared_year ?? '') ||
+      l.later_declaration_year <= l.last_declared_year)
+  )
+    flag(l, 'H_later_declaration', 'A later omission must follow the last positive ownership year');
+  if (
+    ['terminated', 'terminated_manager_still'].includes(l.live_status) &&
+    !l.later_declaration_year
+  )
+    flag(
+      l,
+      'H_missing_history',
+      'A published link with an inferred termination needs dated provenance',
+    );
+  if (
+    l.registry_role_ended_on != null &&
+    (l.evidence_kind !== 'document' ||
+      !l.entry_number ||
+      !validDay(l.entry_date) ||
+      !validDay(l.registry_role_ended_on) ||
+      l.entry_date >= l.registry_role_ended_on ||
+      !/^\d{4}$/.test(l.first_declared_year ?? '') ||
+      l.entry_date > `${l.first_declared_year}-12-31` ||
+      l.registry_role_ended_on <= `${l.first_declared_year}-01-01`)
+  )
+    flag(
+      l,
+      'H_registry_period',
+      'Historical registry evidence needs a dated entry overlapping the first declared year',
+    );
+}
+const conflictsFile = path.join(STAGING, 'inventory-conflicts.jsonl');
+if (fs.existsSync(conflictsFile)) {
+  const publicKeys = new Map(published.map((l) => [l.link_key, l]));
+  for (const line of fs.readFileSync(conflictsFile, 'utf8').split('\n').filter(Boolean)) {
+    const c = JSON.parse(line);
+    const l = publicKeys.get(`${c.personId}|${c.eik}${c.scope === 'family' ? '|family' : ''}`);
+    if (l) flag(l, 'H_inventory_conflict', 'Contradictory comparable inventories must remain held');
+  }
+}
+
 for (const l of published) {
   const rec = byKey.get(l.entity_key);
 

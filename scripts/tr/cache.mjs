@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 /** Columns added to `verdicts` after it first shipped. See openCache. */
 const VERDICT_ADDED_COLUMNS = [
+  ['role_ended_on', 'TEXT'],
   ['recon_terminated', 'INTEGER'],
   ['recon_label', 'TEXT'],
 ];
@@ -356,15 +357,16 @@ export function upsertVerdict(db, v) {
   db.prepare(
     `INSERT INTO verdicts (link_key, eik, rules_version, inputs_hash, kind, publishable,
         registry_role, matched_fact, entry_number, entry_date, short_name, latin_in_name,
-        recon_terminated, recon_label, decided_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        recon_terminated, recon_label, decided_at, role_ended_on)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(link_key) DO UPDATE SET
         eik=excluded.eik, rules_version=excluded.rules_version, inputs_hash=excluded.inputs_hash,
         kind=excluded.kind, publishable=excluded.publishable, registry_role=excluded.registry_role,
         matched_fact=excluded.matched_fact, entry_number=excluded.entry_number,
         entry_date=excluded.entry_date, short_name=excluded.short_name,
         latin_in_name=excluded.latin_in_name, recon_terminated=excluded.recon_terminated,
-        recon_label=excluded.recon_label, decided_at=excluded.decided_at`,
+        recon_label=excluded.recon_label, decided_at=excluded.decided_at,
+        role_ended_on=excluded.role_ended_on`,
   ).run(
     String(v.linkKey),
     eik,
@@ -381,6 +383,7 @@ export function upsertVerdict(db, v) {
     v.reconTerminated == null ? null : v.reconTerminated ? 1 : 0,
     v.reconLabel ?? null,
     v.decidedAt,
+    v.roleEndedOn ?? null,
   );
 }
 
@@ -399,6 +402,7 @@ export function readVerdict(db, linkKey) {
     matchedFact: r.matched_fact,
     entryNumber: r.entry_number,
     entryDate: r.entry_date,
+    roleEndedOn: r.role_ended_on ?? null,
     shortName: r.short_name === 1,
     latinInName: r.latin_in_name === 1,
     reconTerminated: r.recon_terminated == null ? null : r.recon_terminated === 1,
