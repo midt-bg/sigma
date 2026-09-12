@@ -35,6 +35,7 @@ function buildAndAudit({
   seals = [],
   snapshot = null,
   history = [],
+  extraSql = '',
 }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
@@ -67,6 +68,7 @@ function buildAndAudit({
     CREATE TABLE interest_link_history(link_key TEXT, later_declaration_year TEXT, registry_role_ended_on TEXT);
     ${history.map((h) => `INSERT INTO interest_link_history VALUES (${h});`).join('\n')}
   `);
+  if (extraSql) db.exec(extraSql);
   db.close();
 
   let threw = false;
@@ -521,4 +523,21 @@ test('the four axes above are a BOUND: a clean, valid, sealed link passes them a
   assert.equal(threw, false, `a clean link must pass: ${out}`);
   for (const axis of ['A_key_missing', 'A_eik_mismatch', 'B_bidder_eik', 'B_eik_invalid'])
     assert.equal(new RegExp(axis).test(out), false, `${axis} must not fire on a clean link`);
+});
+
+test('a public source profile cannot conceal competing registry identities behind a name key', () => {
+  const { threw, out } = buildAndAudit({
+    bidders: ["'b1','РЕАЛЕН ЕООД','100000001',1"],
+    decls: ["'d1','p1'", "'d2','p1'"],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      "'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'",
+    ],
+    extraSql:
+      "CREATE TABLE declaration_identity_evidence(declaration_id,registry_indent); INSERT INTO declaration_identity_evidence VALUES('d1','a'),('d2','b');",
+  });
+  assert.equal(threw, true);
+  assert.match(out, /I_ambiguous_identity/);
 });

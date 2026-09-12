@@ -66,6 +66,26 @@ const findings = [];
 const flag = (link, axis, detail) =>
   findings.push({ axis, link_key: link.link_key, eik: link.eik, detail });
 
+// A contradictory source identity cannot silently fall back to a name-based public profile.
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='declaration_identity_evidence'").get()) {
+  const ambiguous = new Set(
+    db
+      .prepare(
+        `SELECT d.person_id FROM declaration_identity_evidence e
+    JOIN declarations d ON d.id=e.declaration_id GROUP BY d.person_id HAVING COUNT(DISTINCT e.registry_indent)>1`,
+      )
+      .all()
+      .map((r) => r.person_id),
+  );
+  for (const link of published)
+    if (ambiguous.has(link.person_id))
+      flag(
+        link,
+        'I_ambiguous_identity',
+        'Competing public registry identities require source-level resolution before publication',
+      );
+}
+
 // History is provenance, never an escape from the publishing evidence gate.
 // Check it independently of the loader's status calculation.
 const observationsPresent = !!db

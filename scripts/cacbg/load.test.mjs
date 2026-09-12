@@ -1936,3 +1936,24 @@ test('same-year annual corrections need consistent ownership snapshots; unknown 
     fs.writeFileSync(filingsFile, filings);
   }
 });
+
+test('a registry-backed rebuild refuses staging that skipped identity evidence before touching the published set', () => {
+  const db = new DatabaseSync(DB);
+  const before = db
+    .prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'")
+    .get().n;
+  db.exec('CREATE TABLE registry_roles(dummy)');
+  try {
+    assert.throws(
+      () => runLoad(),
+      (err) => /Registry identity evidence is required/.test(String(err.stderr)),
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'").get().n,
+      before,
+    );
+  } finally {
+    db.exec('DROP TABLE registry_roles');
+    db.close();
+  }
+});

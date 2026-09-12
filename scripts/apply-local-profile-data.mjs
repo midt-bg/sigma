@@ -30,6 +30,8 @@ if (
 if (source === target) throw new Error('Source and target must differ');
 if (
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 6 ||
+  JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).identityRules !==
+    'registry-identity-1' ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))
 )
   throw new Error('A current extraction and the prior-publication snapshot are required');

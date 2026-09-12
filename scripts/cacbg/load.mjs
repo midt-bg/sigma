@@ -138,6 +138,17 @@ if (EMIT_CANDIDATES_ONLY) {
   }
 }
 const db = new DatabaseSync(WORK_DB);
+// A registry-backed rebuild must not silently revert to extraction by names alone.
+if (
+  db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_roles'").get() &&
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).identityRules !== 'registry-identity-1'
+) {
+  db.close();
+  throw new Error(
+    'Registry identity evidence is required: extract with CACBG_REGISTRY_DB set to the local registry snapshot',
+  );
+}
+
 db.exec('PRAGMA foreign_keys=ON');
 // Suppressions live in a VERSION-CONTROLLED, HMAC-fingerprinted list (ADR-0031), NOT a DB table — so a
 // takedown survives a fresh-CI-runner rebuild and never ships the „who was taken down" signal to prod.
