@@ -8,6 +8,7 @@ const q = vi.hoisted(() => ({
   getRegistryPerson: vi.fn(),
   getRegistryOfficials: vi.fn(),
   getPersonActivity: vi.fn(),
+  getPersonTimeline: vi.fn(),
   registryPersonIdFromSlug: vi.fn((slug: string) => (/^[0-9a-f]{64}$/.test(slug) ? slug : null)),
   getDb: vi.fn((env: { DB: unknown }) => env.DB),
 }));
@@ -18,6 +19,7 @@ import { emptyActivity } from '../lib/person-profile.test-support';
 beforeEach(() => {
   q.getRegistryOfficials.mockResolvedValue([]);
   q.getPersonActivity.mockResolvedValue(emptyActivity);
+  q.getPersonTimeline.mockResolvedValue({ contracts: [], observations: [], reads: [] });
 });
 
 const DB = {};

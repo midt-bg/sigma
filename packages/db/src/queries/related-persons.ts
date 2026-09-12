@@ -399,6 +399,7 @@ async function loadLinkContracts(
 export async function getOfficialConflicts(
   db: D1Database,
   personId: string,
+  options: { contracts?: boolean } = {},
 ): Promise<OfficialConflicts | null> {
   try {
     // Filtered BEFORE the emptiness check, so a person whose every link is withheld 404s rather than
@@ -418,7 +419,7 @@ export async function getOfficialConflicts(
         d.companyEiks.includes(link.eik),
       );
     });
-    const contracts = await loadLinkContracts(db, links);
+    const contracts = options.contracts === false ? {} : await loadLinkContracts(db, links);
     return { official: links[0]!.official, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'official')) return null; // un-migrated env → 404, not a 500

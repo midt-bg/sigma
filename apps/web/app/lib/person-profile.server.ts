@@ -1,5 +1,6 @@
 import {
   getOfficialConflicts,
+  getPersonTimeline,
   getPersonDeclarations,
   getPersonActivity,
   getRegistryOfficials,
@@ -17,12 +18,12 @@ export async function loadPersonProfile(
     : indent
       ? await getRegistryOfficials(db, indent)
       : [];
-  const cases = (await Promise.all(officialIds.map((id) => getOfficialConflicts(db, id)))).filter(
-    (x) => x != null,
-  );
+  const cases = (
+    await Promise.all(officialIds.map((id) => getOfficialConflicts(db, id, { contracts: false })))
+  ).filter((x) => x != null);
   if (!person && !cases.length) return null;
   const links = cases.flatMap((c) => c.links);
-  const contracts = Object.assign({}, ...cases.map((c) => c.contracts));
+
   const declarations = [
     ...new Map(
       (await Promise.all(officialIds.map((id) => getPersonDeclarations(db, id))))
@@ -53,7 +54,7 @@ export async function loadPersonProfile(
     person,
     name: person?.name ?? cases[0]!.official,
     links,
-    contracts,
+    timeline: await getPersonTimeline(db, indent ?? null, officialIds),
     declarations,
     activity,
     totals: {

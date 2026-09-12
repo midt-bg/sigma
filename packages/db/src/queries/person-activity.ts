@@ -52,8 +52,10 @@ export async function getRegistryOfficials(db: D1Database, indent: string): Prom
   try {
     const r = await db
       .prepare(
-        `SELECT pl.person_id FROM person_registry_links pl WHERE pl.registry_indent=? AND EXISTS
-      (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND ${SURFACED_OWNERSHIP}) ORDER BY pl.person_id`,
+        `SELECT pl.person_id FROM person_registry_links pl WHERE pl.registry_indent=? AND EXISTS (
+        SELECT 1 FROM person_registry_links sibling JOIN interest_links il ON il.person_id=sibling.person_id
+        WHERE sibling.registry_indent=pl.registry_indent AND ${SURFACED_OWNERSHIP}
+      ) ORDER BY pl.person_id`,
       )
       .bind(indent)
       .all<{ person_id: string }>();
@@ -64,18 +66,7 @@ export async function getRegistryOfficials(db: D1Database, indent: string): Prom
   }
 }
 
-/** One contract once, with independent role/declaration flags. Totals never depend on pagination. */
-export async function getPersonActivity(
-  db: D1Database,
-  indent: string | null,
-  personIds: string[],
-  search: URLSearchParams,
-  basis: 'role' | 'declaration' | 'self' | 'family' | 'all' = 'role',
-): Promise<PersonActivity> {
-  const ids = [...new Set(personIds)];
-  const requestedBasis = search.get('basis');
-  if (ids.length && ['role', 'declaration', 'self', 'family', 'all'].includes(requestedBasis ?? ''))
-    basis = requestedBasis as typeof basis;
+export function personActivityScope(indent: string | null, ids: string[]) {
   const params: (string | number)[] = [indent ?? '', ...ids];
   const placeholders = ids.map((_, i) => `?${i + 2}`).join(',') || "''";
   const gate = `${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY} AND il.person_id IN (${placeholders})`;
@@ -99,6 +90,22 @@ export async function getPersonActivity(
     FROM contracts c JOIN bidders b ON b.id=c.bidder_id JOIN tenders t ON t.id=c.tender_id
     JOIN authorities a ON a.id=t.authority_id JOIN scoped s ON s.eik=b.eik_normalized
   )`;
+  return { cte, params };
+}
+
+/** One contract once, with independent role/declaration flags. Totals never depend on pagination. */
+export async function getPersonActivity(
+  db: D1Database,
+  indent: string | null,
+  personIds: string[],
+  search: URLSearchParams,
+  basis: 'role' | 'declaration' | 'self' | 'family' | 'all' = 'role',
+): Promise<PersonActivity> {
+  const ids = [...new Set(personIds)];
+  const requestedBasis = search.get('basis');
+  if (ids.length && ['role', 'declaration', 'self', 'family', 'all'].includes(requestedBasis ?? ''))
+    basis = requestedBasis as typeof basis;
+  const { cte, params } = personActivityScope(indent, ids);
   const filters = {
     company: /^\d{9}(?:\d{4})?$/.test(search.get('company') ?? '') ? search.get('company')! : '',
     authority: (search.get('authority') ?? '').slice(0, 100),

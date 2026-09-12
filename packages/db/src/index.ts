@@ -4,3 +4,10 @@ export * from './queries';
 // env.DB binding, so a guard bypass on the assistant run_sql path can never reach a D1 write.
 export { readonlyD1, getDb } from './readonly-d1';
 export { isReadOnlySql, assertReadOnly } from './readonly-sql';
+
+export { getRelatedPersonRows, getRelatedPersonHeadline } from './queries/related-people-list';
+export {
+  getPersonTimeline,
+  type InterestObservation,
+  type TimelineContracts,
+} from './queries/person-timeline';

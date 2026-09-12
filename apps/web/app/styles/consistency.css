@@ -235,3 +235,342 @@ td .chip {
 .person-institutions li + li {
   margin-top: var(--s-1);
 }
+
+/* A person's evidence reads vertically, on one common time axis. */
+.person-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  padding: 8px 0 20px;
+}
+.person-overview > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.person-overview strong {
+  font-size: clamp(25px, 3vw, 40px);
+  font-weight: 500;
+  line-height: 1.15;
+}
+.person-overview span {
+  font-size: 14px;
+  color: var(--muted);
+}
+.person-time-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  font-size: 12px;
+  margin: 20px 0;
+}
+.person-time-legend > span {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+}
+.time-symbol {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+}
+.time-symbol.observed {
+  background: transparent;
+  border: 1.5px solid #b71916;
+}
+.time-symbol.role {
+  width: 24px;
+  height: 3px;
+}
+.time-symbol.eligible {
+  border-radius: 50%;
+  background: #b71916;
+}
+.time-symbol.context {
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid #888;
+}
+.person-time-scroll {
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+.person-time {
+  min-width: calc(240px + var(--timeline-years) * 42px);
+}
+.person-time-row {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 33px;
+}
+.person-time-label {
+  padding: 7px 22px 7px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.person-time-label small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.person-time-track {
+  position: relative;
+  min-height: 33px;
+  background: repeating-linear-gradient(
+    to right,
+    transparent,
+    transparent calc(100% / var(--timeline-years) - 1px),
+    #d9d5ce calc(100% / var(--timeline-years) - 1px),
+    #d9d5ce calc(100% / var(--timeline-years))
+  );
+}
+.person-time-year {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  top: 8px;
+  color: var(--muted);
+}
+.time-axis {
+  border-bottom: 1px solid currentColor;
+  margin-bottom: 12px;
+}
+.time-axis .person-time-track {
+  background: none;
+}
+.time-institution .person-time-label {
+  font-size: 13px;
+}
+.time-institution {
+  padding-block: 6px;
+}
+.person-time-company {
+  border-top: 1px solid #d9d5ce;
+  padding: 14px 0;
+  margin-top: 14px;
+}
+.time-company-heading .person-time-label {
+  font-size: 14px;
+  padding-bottom: 12px;
+}
+.time-company-heading .person-time-track {
+  background: none;
+}
+.time-observation {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid #b71916;
+  top: 11px;
+  transform: translateX(-50%);
+  background: #b71916;
+}
+.time-observation.time-family {
+  background: transparent;
+}
+.time-institution .time-observation {
+  background: transparent;
+}
+.time-role {
+  position: absolute;
+  height: 5px;
+  top: 15px;
+  min-width: 2px;
+  background: currentColor;
+}
+.time-role::before,
+.time-role::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  height: 11px;
+  width: 1px;
+  background: currentColor;
+}
+.time-role::after {
+  right: 0;
+}
+.time-role.time-open::after {
+  width: 5px;
+  height: 5px;
+  top: 0;
+  transform: rotate(45deg);
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  background: var(--paper, #faf8f2);
+}
+.time-contract-bin {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  top: 4px;
+}
+.time-contract {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding-inline: 3px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  text-decoration: none;
+}
+.time-contract.eligible {
+  color: white;
+  background: #b71916;
+}
+.time-contract.context {
+  color: #666;
+  border: 1px solid #999;
+  background: var(--paper, #faf8f2);
+}
+.time-history-note {
+  display: block;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--paper, #faf8f2);
+}
+.person-time-note {
+  max-width: 85ch;
+  line-height: 1.6;
+  margin-top: 16px;
+}
+.person-company {
+  padding: 24px 0;
+  border-bottom: 1px solid #d9d5ce;
+  scroll-margin-top: 80px;
+}
+.person-company:first-child {
+  padding-top: 0;
+}
+.person-company-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.person-company-heading h3 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.25;
+}
+.person-company-basis {
+  font-size: 14px;
+  margin-block: 12px;
+}
+.person-company-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px 30px;
+  margin-block: 16px;
+  font-size: 14px;
+}
+.person-company-links .source-cta {
+  font-size: 14px;
+}
+.person-company-sources,
+.person-source-archive {
+  margin-top: 20px;
+}
+.person-company-sources summary,
+.person-source-archive summary {
+  cursor: pointer;
+  font-size: 14px;
+  padding: 8px 0;
+}
+.person-company-sources[open] summary,
+.person-source-archive[open] summary {
+  margin-bottom: 16px;
+}
+.person-history {
+  padding: 14px 18px;
+  margin-block: 16px;
+  border-left: 2px solid #b71916;
+  font-size: 14px;
+}
+.person-history ul {
+  padding-left: 18px;
+  margin-block: 10px;
+}
+.person-history li + li {
+  margin-top: 8px;
+}
+.person-history p {
+  margin-bottom: 0;
+}
+@media (max-width: 600px) {
+  .person-overview {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .person-overview > div {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .person-overview strong {
+    min-width: 90px;
+  }
+  .person-time-row {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+  .person-time {
+    min-width: calc(210px + var(--timeline-years) * 42px);
+  }
+  .person-time-label {
+    padding-right: 16px;
+  }
+  .person-company-heading h3 {
+    font-size: 23px;
+  }
+}
+
+.time-observation.time-management {
+  border-color: currentColor;
+  background: transparent;
+  border-radius: 50%;
+}
+
+.person-time-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--paper, #fdfaf5);
+}
+.person-time-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 12px;
+}
+.person-time-controls button {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #b8b3aa;
+  cursor: pointer;
+}
+.person-time-controls button:focus-visible {
+  outline: 2px solid #b71916;
+  outline-offset: 2px;
+}
+.person-time-scroll:focus-visible {
+  outline: 1px solid #b71916;
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .person-time-row {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+}

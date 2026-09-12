@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // @sigma/db is mocked so the loaders run without a real D1: the query functions are the trust boundary the
 // loaders sit on top of, and here we drive their return values to exercise every branch.
 const q = vi.hoisted(() => ({
-  getConflictLeaderboard: vi.fn(),
+  getRelatedPersonRows: vi.fn(),
+  getRelatedPersonHeadline: vi.fn(),
+  getPersonTimeline: vi.fn(),
   getOfficialConflicts: vi.fn(),
   getRegistryIdentity: vi.fn(),
   getRegistryPerson: vi.fn(),
@@ -36,6 +38,13 @@ import { loader as contractsLoader } from './conflict.contracts';
 import { emptyActivity } from '../lib/person-profile.test-support';
 beforeEach(() => {
   q.getRegistryIdentity.mockResolvedValue(null);
+  q.getPersonTimeline.mockResolvedValue({ contracts: [], observations: [], reads: [] });
+  q.getRelatedPersonHeadline.mockResolvedValue({
+    officialCount: 0,
+    linkCount: 0,
+    totalEur: 0,
+    contemporaneousEur: 0,
+  });
   q.getPersonDeclarations.mockResolvedValue([]);
   q.getPersonActivity.mockResolvedValue(emptyActivity);
 });
@@ -76,13 +85,15 @@ afterEach(() => {
 describe('leaderboard loader — narrowed to one institution (?authority=)', () => {
   it('fetches only that body’s links and names it for the page', async () => {
     q.getAuthorityName.mockResolvedValue('ОБЩИНА ТЕСТ');
-    q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Иван Петров', officialSlug: 'p1', personIdentity: 'p1', declaredOffices: [] },
+    ]);
     const res = (await leaderboardLoader({
       request: req('?authority=000123456'),
       context,
     } as never)) as { data: { authority: unknown } };
     expect(q.getAuthorityName).toHaveBeenCalledWith(DB, 'auth:000123456');
-    expect(q.getConflictLeaderboard).toHaveBeenCalledWith(DB, 1001, 'auth:000123456');
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, 'auth:000123456');
     expect(res.data.authority).toEqual({ slug: '000123456', name: 'ОБЩИНА ТЕСТ' });
   });
 
@@ -92,56 +103,62 @@ describe('leaderboard loader — narrowed to one institution (?authority=)', () 
       leaderboardLoader({ request: req('?authority=000123456'), context } as never),
       404,
     );
-    expect(q.getConflictLeaderboard).not.toHaveBeenCalled();
+    expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
   });
 
   it('ignores a malformed value and serves the whole list', async () => {
-    q.getConflictLeaderboard.mockResolvedValue([]);
+    q.getRelatedPersonRows.mockResolvedValue([]);
     const res = (await leaderboardLoader({ request: req('?authority=abc'), context } as never)) as {
       data: { authority: unknown };
     };
     expect(q.getAuthorityName).not.toHaveBeenCalled();
-    expect(q.getConflictLeaderboard).toHaveBeenCalledWith(DB, 1001);
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, undefined);
     expect(res.data.authority).toBeNull();
   });
 });
 
 describe('leaderboard loader (/conflicts)', () => {
   it('caches for an hour when there are links (self or family, ADR-0032)', async () => {
-    q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Иван Петров', officialSlug: 'p1', personIdentity: 'p1', declaredOffices: [] },
+    ]);
     const res = (await leaderboardLoader({ request: req(), context } as never)) as {
-      data: { links: unknown[] };
+      data: { pageRows: unknown[] };
       init: { headers: Record<string, string> };
     };
-    expect(res.data.links).toHaveLength(1);
+    expect(res.data.pageRows).toHaveLength(1);
     expect(res.init.headers['Cache-Control']).toMatch(/s-maxage=3600/);
   });
 
   it('does NOT cache an empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
-    q.getConflictLeaderboard.mockResolvedValue([]);
+    q.getRelatedPersonRows.mockResolvedValue([]);
     const res = (await leaderboardLoader({ request: req(), context } as never)) as {
       init: { headers: Record<string, string> };
     };
     expect(res.init.headers['Cache-Control']).toBe('no-store');
   });
 
-  it('slices to the ceiling and warns when the eligible set exceeds it (partial-aggregate guard)', async () => {
-    // The loader fetches ceiling+1 to DETECT truncation; on overflow it slices back to the ceiling and warns an
-    // operator, because per-person aggregates go partial past the cut (niki #312 MEDIUM 2). 1001 sentinels.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    q.getConflictLeaderboard.mockResolvedValue(
-      Array.from({ length: 1001 }, (_, i) => ({
-        linkKey: `p|${i}`,
+  it('paginates the complete filtered person set on the server without a ceiling', async () => {
+    q.getRelatedPersonRows.mockResolvedValue(
+      Array.from({ length: 1205 }, (_, i) => ({
+        official: `Лице ${i}`,
         officialSlug: `s${i}`,
-        eik: `${i}`,
+        personIdentity: `p${i}`,
+        declaredOffices: [],
       })),
     );
-    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
-      data: { links: unknown[] };
-    };
-    expect(res.data.links).toHaveLength(1000); // sliced to the ceiling, never renders the +1 sentinel
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceed the 1000 ceiling'));
-    warn.mockRestore();
+    const res = await leaderboardLoader({ request: req('?page=13'), context } as never);
+    expect(res.data.total).toBe(1205);
+    expect(res.data.pageRows).toHaveLength(5);
+    expect(res.data.pageRows[0]!.personIdentity).toBe('p1200');
+    expect(q.getRelatedPersonHeadline.mock.calls.at(-1)![1]).toHaveLength(1205);
+    const filtered = await leaderboardLoader({
+      request: req('?q=Лице%201204&page=13'),
+      context,
+    } as never);
+    expect(filtered.data.total).toBe(1);
+    expect(filtered.data.page).toBe(1);
+    expect(filtered.data.pageRows[0]!.personIdentity).toBe('p1204');
   });
 });
 
@@ -173,7 +190,7 @@ describe('official loader (/conflicts/official/:id)', () => {
     q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
     const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { name: string };
     expect(res.name).toBe('Иван Петров');
-    expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1');
+    expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1', { contracts: false });
   });
 
   it('renders a bridged registry identity at the requested official address without redirecting', async () => {

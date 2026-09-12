@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getPersonActivity } from './person-activity';
+import { getPersonActivity, getRegistryOfficials } from './person-activity';
+import { getPersonTimeline } from './person-timeline';
 let db: DatabaseSync;
 afterEach(() => db?.close());
 
@@ -139,4 +140,40 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
   expect(roles.companies).toHaveLength(1); // still discoverable, even when this basis returns no rows
   const self = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=self'));
   expect(self.total).toBe(0);
+});
+
+it('the shared timeline covers all contracts without the 500-card limit and separates historical observations', async () => {
+  const d1 = fixture();
+  db.exec(`CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+    INSERT INTO interest_link_observations VALUES('l','d1','shares','annual','2020'),('l','d2','participation','prior','2025');`);
+  const put = db.prepare(
+    "INSERT INTO contracts VALUES(?,'Допълнителен','eik:111111111','t','2022-08-01',10)",
+  );
+  for (let i = 0; i < 605; i++) put.run(`extra-${i}`);
+  const result = await getPersonTimeline(d1, 'person', ['official']);
+  expect(result.contracts.reduce((n, r) => n + r.contracts, 0)).toBe(609);
+  expect(result.contracts.find((r) => r.year === '2022')).toMatchObject({
+    contracts: 606,
+    role: 606,
+    declared: 0,
+    eligible: 606,
+  });
+  expect(result.contracts.find((r) => r.year === null)).toMatchObject({
+    contracts: 1,
+    eligible: 0,
+  });
+  expect(result.observations).toHaveLength(2);
+  expect(result.observations.find((o) => o.timing === 'prior')!.reportedYear).toBe('2025');
+});
+
+it('includes every proven source identity only when the canonical person has a public interest', async () => {
+  const d1 = fixture();
+  db.exec(
+    "CREATE TABLE person_registry_links(person_id,registry_indent); INSERT INTO person_registry_links VALUES('official','canonical'),('alias-without-own-link','canonical'),('unrelated','other')",
+  );
+  expect(await getRegistryOfficials(d1, 'canonical')).toEqual([
+    'alias-without-own-link',
+    'official',
+  ]);
+  expect(await getRegistryOfficials(d1, 'other')).toEqual([]);
 });

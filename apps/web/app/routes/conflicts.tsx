@@ -1,6 +1,12 @@
 import { Link, useSearchParams, data } from 'react-router';
 import { count, money, plural } from '@sigma/shared';
-import { authorityIdFromSlug, getAuthorityName, getConflictLeaderboard, getDb } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  getAuthorityName,
+  getRelatedPersonRows,
+  getRelatedPersonHeadline,
+  getDb,
+} from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -14,10 +20,9 @@ import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import {
-  conflictHeadline,
   conflictListFilters,
   filterConflictRows,
-  groupByPerson,
+  groupDeclaredInstitutions,
   institutionOptions,
   officialHref,
   officialRole,
@@ -48,19 +53,8 @@ export function headers({ loaderHeaders }: Route.HeadersArgs) {
   return { 'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(3600) };
 }
 
-// All eligible published ownership links — self and family (ADR-0032). ~337 on the full 2015–2026 corpus
-// after #279 (was ~98 pre-#279). Small enough to load whole and paginate in the client, so the summary totals
-// the full set rather than one page. NB: hard ceiling 1000 — reserve ~3× today — switch to keyset LIMIT/OFFSET
-// (see companies.tsx), or move grouping server-side, before the eligible set nears it.
-const LEADERBOARD_MAX = 1000;
-// Persons per page. The list is one row per PERSON (#287, groupByPerson), so pagination counts collapsed
-// rows, not raw links — a person with N winners is one row, not N. The per-link corpus is ~337 (fewer
-// persons), so a page is generous; the ceiling above still guards the loader's raw-link fetch.
+// Group and filter on the server. Only one page of canonical people reaches the browser.
 const PER_PAGE = 100;
-
-// Warn once the eligible set reaches this fraction of the ceiling — headroom to move grouping into SQL before
-// truncation actually corrupts a per-person aggregate (niki #312 MEDIUM 2, „alert at 800").
-const LEADERBOARD_WARN_AT = LEADERBOARD_MAX * 0.8;
 
 // `?authority=<ЕИК>` narrows the list to the officials whose declared-stake winners that body paid — the
 // institution profile links here. A malformed value is ignored rather than failing the page; an ЕИК that
@@ -79,35 +73,44 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     authority = { slug, name };
     authorityId = id;
   }
-  // Fetch ONE past the ceiling so truncation is DETECTABLE rather than silently capped. The leaderboard is
-  // ordered by NEXUS strength, NOT by person, so a person's links are scattered across the ordering — a cut at
-  // the ceiling can drop links for MANY persons at once, yielding partial per-person sums/companyCount and a
-  // wrong `soleCompany`. That also means we CANNOT fix it by dropping a single trailing partial group (there
-  // is no contiguous group to drop); the durable fix is grouping in SQL / server-side (tracked, LOW 3). Until
-  // then the guard is loud observability: warn as the set nears the ceiling so an operator moves the grouping
-  // BEFORE aggregates degrade, and slice deterministically so the render never depends on the +1 sentinel.
-  const raw = await withDbRetry(() =>
-    authorityId
-      ? getConflictLeaderboard(db, LEADERBOARD_MAX + 1, authorityId)
-      : getConflictLeaderboard(db, LEADERBOARD_MAX + 1),
+  const sp = new URL(request.url).searchParams;
+  const filters = conflictListFilters(sp);
+  const everyone = (await withDbRetry(() => getRelatedPersonRows(db, authorityId))).map(
+    ({ declaredOffices, ...row }) => ({
+      ...row,
+      declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
+    }),
   );
-  const truncated = raw.length > LEADERBOARD_MAX;
-  const links = truncated ? raw.slice(0, LEADERBOARD_MAX) : raw;
-  if (truncated) {
-    console.warn(
-      `conflicts leaderboard: eligible links exceed the ${LEADERBOARD_MAX} ceiling — per-person aggregates are now PARTIAL for boundary persons (sums/companyCount/soleCompany). Move grouping into SQL (MEDIUM 2 / LOW 3).`,
-    );
-  } else if (links.length >= LEADERBOARD_WARN_AT) {
-    console.warn(
-      `conflicts leaderboard: ${links.length}/${LEADERBOARD_MAX} eligible links — nearing the ceiling at which per-person aggregates degrade. Plan the SQL-side grouping before it is hit.`,
-    );
-  }
-  // Never pin an empty render: just after a (re)ship the read can briefly return 0 rows while the write
-  // propagates across D1; caching that for an hour + stale-while-revalidate is what made a refresh appear to
-  // "lose" the data. Only cache once there is data to cache.
+  const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
+  const headline = await withDbRetry(() =>
+    getRelatedPersonHeadline(
+      db,
+      persons.map((p) => p.personIdentity!),
+      authorityId,
+    ),
+  );
+  const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
+  const asked = Number(sp.get('page') || 1);
+  const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
+  const facets = {
+    self: everyone.filter((r) => r.stakeKind !== 'family').length,
+    family: everyone.filter((r) => r.stakeKind !== 'self').length,
+    own: everyone.filter((r) => r.ownInstitution).length,
+    window: everyone.filter((r) => r.hasContemporaneous).length,
+    institutions: institutionOptions(everyone, filters.institutions),
+  };
   return data(
-    { links, authority },
-    { headers: { 'Cache-Control': links.length ? publicCache(3600) : 'no-store' } },
+    {
+      authority,
+      headline,
+      facets,
+      page,
+      pageCount,
+      total: persons.length,
+      pageRows: persons.slice((page - 1) * PER_PAGE, page * PER_PAGE),
+      available: everyone.length,
+    },
+    { headers: { 'Cache-Control': everyone.length ? publicCache(3600) : 'no-store' } },
   );
 }
 
@@ -124,13 +127,16 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       cell: (r) => (
         <>
           <Link to={officialHref(r.officialSlug)}>{r.official}</Link>
-          {(r.declaredInstitutions?.length ?? 0) > 1 ? (
+          {(r.declaredInstitutions?.length ?? 0) > 0 ? (
             <div className="person-institutions">
               <span className="small muted">Институции в декларациите</span>
               <ul>
                 {r.declaredInstitutions!.map((i) => (
                   <li key={i.institution}>
                     {i.institution}
+                    {i.positions.length > 0 && (
+                      <span className="muted"> · {i.positions.join('; ')}</span>
+                    )}
                     {i.years.length > 0 && <span className="muted"> · {i.years.join(', ')}</span>}
                   </li>
                 ))}
@@ -210,18 +216,9 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
 }
 
 export default function Conflicts({ loaderData }: Route.ComponentProps) {
-  const { links, authority } = loaderData;
+  const { authority, headline, facets, page, pageCount, total, pageRows, available } = loaderData;
   const [sp] = useSearchParams();
   const filters = conflictListFilters(sp);
-  // Collapse per-relationship links into one row per PERSON, then paginate over ROWS (#287): a person with
-  // three winners is one row, not three, so the page count and rank offset both count persons.
-  const everyone = groupByPerson(links);
-  const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
-  // The summary describes what the filters leave, not the whole set.
-  const shown = new Set(persons.map((p) => p.personIdentity ?? p.officialSlug));
-  const headline = conflictHeadline(
-    links.filter((l) => shown.has(l.registryPersonId ?? l.officialSlug)),
-  );
   const groups: FilterGroup[] = [
     {
       key: 'stake',
@@ -233,12 +230,12 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         {
           value: 'self',
           label: 'собствен',
-          count: everyone.filter((r) => r.stakeKind !== 'family').length,
+          count: facets.self,
         },
         {
           value: 'family',
           label: 'на свързано лице',
-          count: everyone.filter((r) => r.stakeKind !== 'self').length,
+          count: facets.family,
         },
       ],
     },
@@ -251,12 +248,12 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         {
           value: 'own',
           label: 'от собствената институция',
-          count: everyone.filter((r) => r.ownInstitution).length,
+          count: facets.own,
         },
         {
           value: 'window',
           label: 'съвпадение по години',
-          count: everyone.filter((r) => r.hasContemporaneous).length,
+          count: facets.window,
         },
       ],
     },
@@ -265,13 +262,10 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
       label: 'Институция на лицето',
       type: 'checkbox',
       selected: filters.institutions,
-      options: institutionOptions(everyone, filters.institutions),
+      options: facets.institutions,
     },
   ];
   const clearHref = authority ? `/conflicts?authority=${authority.slug}` : '/conflicts';
-  const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
-  const page = Math.min(Math.max(1, Math.floor(Number(sp.get('page')) || 1)), pageCount);
-  const pageRows = persons.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const columns = personColumns(leaderboardRankOffset(page, PER_PAGE));
   const nav: PageNav = {
     page,
@@ -319,7 +313,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           </p>
         )}
 
-        {links.length === 0 ? (
+        {available === 0 ? (
           <p className="muted">
             {authority
               ? 'Няма публикувани връзки към изпълнители на тази институция.'
@@ -377,11 +371,11 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     count={
                       <>
                         Показани са <strong>{count(pageRows.length)}</strong> от{' '}
-                        <strong>{count(persons.length)}</strong> лица
+                        <strong>{count(total)}</strong> лица
                       </>
                     }
                   />
-                  {persons.length === 0 ? (
+                  {total === 0 ? (
                     <p className="muted">
                       Няма лица за избраните филтри. <Link to={clearHref}>Изчисти филтрите</Link>
                     </p>

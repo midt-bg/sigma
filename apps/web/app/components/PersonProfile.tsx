@@ -1,24 +1,24 @@
-import { Link, useLocation } from 'react-router';
+import { Link } from 'react-router';
 import { count, money } from '@sigma/shared';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { Breadcrumbs } from './Breadcrumbs';
 import { PageHeader } from './PageHeader';
 import { FactsList } from './FactsList';
-import { Section, Callout } from './ui';
+import { Section } from './ui';
 import { TieGraph } from './TieGraph';
 import { DataTable } from './DataTable';
 import { PersonRolesTables, RegistrySource } from './RegistryRoles';
 import { Declarations } from './Declarations';
-import { DeclaredInstitutions } from './DeclaredInstitutions';
-import { ConflictDetail } from './ConflictDetail';
+import { PersonTimeline } from './PersonTimeline';
+import { PersonCompanies } from './PersonCompanies';
+import { timelineCompanies } from '../lib/person-timeline';
 import { PersonActivity } from './PersonActivity';
-import { officialRole, declaredStakeNoun, groupDeclaredInstitutions } from '../lib/conflicts';
+import { declaredStakeNoun } from '../lib/conflicts';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 
 export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) {
   const official = p.links.length > 0;
-  const multipleInstitutions = groupDeclaredInstitutions(p.declarations).length > 1;
-  const location = useLocation();
+  const companies = timelineCompanies(p);
   return (
     <>
       <Breadcrumbs
@@ -33,7 +33,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           title={p.name}
           kicker={
             official
-              ? officialRole(p.links[0]!) || 'Длъжностно лице'
+              ? 'Длъжностно лице · декларирани интереси'
               : p.person
                 ? 'Лице · Търговски регистър'
                 : 'Длъжностно лице'
@@ -45,71 +45,60 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           }
         />
         <nav className="profile-nav" aria-label="В профила">
-          {official && (
-            <>
-              <a href="#declared-overview">Декларирани интереси</a>
-              {multipleInstitutions && <a href="#institutions">Институции и длъжности</a>}
-              <a href="#declarations">Декларации</a>
-            </>
-          )}
+          {official && <a href="#declared-overview">Декларирани интереси</a>}
+          <a href="#timeline">Времева линия</a>
+          <a href="#holdings">Дружества и източници</a>
+          {official && <a href="#declarations">Всички декларации</a>}
+          <a href="#contracts">Договори</a>
           {p.person && (
             <>
               <a href="#network">Граф</a>
               <a href="#roles">Роли</a>
             </>
           )}
-          <a href="#contracts">Договори</a>
-          <a href="#contract-authorities">Възложители</a>
         </nav>
         {official && (
-          <>
-            <Section
-              id="declared-overview"
-              title="Декларирани интереси"
-              hint={`Лицето е декларирало ${declaredStakeNoun(p.links)}. Институцията и длъжността са според съответната декларация.`}
-            >
-              <Callout titleAs="h3" title="Източник и обхват">
-                <p>
-                  Показваме деклариран дял — собствен или на свързано лице; името на близкия не се
-                  показва и видът на връзката не се твърди. Всяка връзка има източници.{' '}
-                  <Link to="/conflicts/methodology#contest">Методология и поправки →</Link>
-                </p>
-              </Callout>
-              <FactsList
-                label="Показатели в декларирания период"
-                rows={[
-                  { term: 'Договори в декларирания период', value: count(p.totals.declaredCount) },
-                  {
-                    term: 'Стойност в декларирания период',
-                    value: money(p.totals.declaredEur),
-                    sub: 'Стойност на договорите на дружествата, а не личен доход.',
-                  },
-                ]}
-              />
-            </Section>
-            <DeclaredInstitutions declarations={p.declarations} />
-            <Section
-              id="declarations"
-              title="Декларации"
-              hint="Всички налични декларации за лицето в заредения набор. Отчетната година, датата на документа и подаването са различни факти."
-            >
-              <Declarations declarations={p.declarations} />
-            </Section>
-            <Section
-              id="holdings"
-              title="Декларирани връзки и периоди"
-              hint="Източници и договори за всяко дружество."
-            >
-              <ConflictDetail
-                links={p.links}
-                contracts={p.contracts}
-                perspective="official"
-                contractListHref={location.pathname}
-              />
-            </Section>
-            <PersonActivity activity={p.activity} hasDeclarations />
-          </>
+          <Section
+            id="declared-overview"
+            title="Декларирани интереси"
+            hint={`Лицето е декларирало ${declaredStakeNoun(p.links)}. Институциите и длъжностите са според съответните декларации.`}
+          >
+            <div className="person-overview">
+              <div>
+                <strong>{count(new Set(p.links.map((l) => l.eik)).size)}</strong>
+                <span>свързани дружества</span>
+              </div>
+              <div>
+                <strong>{count(p.totals.declaredCount)}</strong>
+                <span>договора в декларираните периоди</span>
+              </div>
+              <div>
+                <strong>{money(p.totals.declaredEur)}</strong>
+                <span>стойност на тези договори</span>
+              </div>
+            </div>
+            <p className="small muted">
+              Сумите са към дружествата, а не личен доход. Деклариран дял на свързано лице се
+              показва без името на близкия.{' '}
+              <Link to="/conflicts/methodology">Методология и поправки →</Link>
+            </p>
+          </Section>
         )}
+        <PersonTimeline profile={p} companies={companies} />
+        <PersonCompanies companies={companies} />
+        {official && (
+          <Section
+            id="declarations"
+            title="Всички декларации"
+            hint="Наличните документи за лицето, включително декларации без дял в показаните дружества. Отчетната година, датата на документа и подаването са различни факти."
+          >
+            <details className="person-source-archive">
+              <summary>Разгледай всички {count(p.declarations.length)} декларации</summary>
+              <Declarations declarations={p.declarations} />
+            </details>
+          </Section>
+        )}
+        <PersonActivity activity={p.activity} hasDeclarations={official} />
         {p.person && (
           <Section
             id="registry-overview"
@@ -172,7 +161,6 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             <Link to="/conflicts/methodology">Методология →</Link>
           </p>
         )}
-        {!official && <PersonActivity activity={p.activity} hasDeclarations={false} />}
       </main>
     </>
   );

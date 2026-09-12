@@ -451,7 +451,7 @@ export function conflictHeadline(links: ConflictLink[]): {
     contemporaneousEur += v.contemporaneous ?? 0;
   }
   return {
-    linkCount: links.length,
+    linkCount: new Set(links.map((l) => `${l.registryPersonId ?? l.officialSlug}|${l.eik}`)).size,
     officialCount: officials.size,
     totalEur,
     contemporaneousEur,
