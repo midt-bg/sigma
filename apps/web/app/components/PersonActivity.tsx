@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { Form, Link, useLocation } from 'react-router';
+import { revealProfileTarget } from '../lib/profile-navigation';
 import type { PersonActivity as Activity, PersonContractRow } from '@sigma/db';
 import { contractSlug } from '@sigma/db';
 import { count, money, date } from '@sigma/shared';
@@ -17,7 +19,13 @@ const columns: Column<PersonContractRow>[] = [
     header: 'Изпълнител',
     cell: (r) => <Link to={`/companies/${r.eik}`}>{r.company}</Link>,
   },
-  { key: 'authority', header: 'Възложител', cell: (r) => r.authority },
+  {
+    key: 'authority',
+    header: 'Възложител',
+    cell: (r) => (
+      <Link to={`/authorities/${r.authorityId.replace(/^auth:/, '')}`}>{r.authority}</Link>
+    ),
+  },
   { key: 'date', header: 'Сключен на', cell: (r) => date(r.signedAt) },
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
   {
@@ -45,6 +53,9 @@ export function PersonActivity({
   hasDeclarations: boolean;
 }) {
   const location = useLocation();
+  useEffect(() => {
+    if (location.hash === '#contracts') revealProfileTarget('contracts');
+  }, [location.key, location.hash]);
   const pageHref = (page: number) => {
     const q = new URLSearchParams(location.search);
     q.set('page', String(page));
@@ -52,115 +63,6 @@ export function PersonActivity({
   };
   return (
     <>
-      <Section
-        id="contracts"
-        title="Договори по свързаните дружества"
-        hint={
-          hasDeclarations
-            ? 'Един общ списък за всички дружества. Договорът е включен, ако е подписан през лична роля в ТР или в декларирания период на собствен дял или дял на свързано лице. Декларациите дават съпоставка по години, а не точни дати на притежание. Основанието е посочено на всеки ред; договорът се брои веднъж.'
-            : 'Само договори, подписани през вписана лична роля в съответното дружество. Един договор се брои веднъж, дори при няколко едновременни роли.'
-        }
-      >
-        <Form method="get" action={`${location.pathname}#contracts`} className="profile-filters">
-          <label>
-            Дружество
-            <select
-              name="company"
-              defaultValue={a.filters.company}
-              key={`company-${a.filters.company}`}
-            >
-              <option value="">Всички</option>
-              {a.companies.map((c) => (
-                <option key={c.eik} value={c.eik}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Възложител
-            <select
-              name="authority"
-              defaultValue={a.filters.authority}
-              key={`authority-${a.filters.authority}`}
-            >
-              <option value="">Всички</option>
-              {a.authorities.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Година
-            <input
-              type="number"
-              min="1900"
-              max="2200"
-              name="year"
-              defaultValue={a.filters.year}
-              key={`year-${a.filters.year}`}
-              placeholder="Всички"
-            />
-          </label>
-          {hasDeclarations && (
-            <label>
-              Основание
-              <select name="basis" defaultValue={a.filters.basis} key={`basis-${a.filters.basis}`}>
-                <option value="all">Всички основания</option>
-                <option value="role">Лична роля в ТР</option>
-                <option value="declaration">Декларирани дялове — всички</option>
-                <option value="self">Деклариран собствен дял</option>
-                <option value="family">Дял на свързано лице</option>
-              </select>
-            </label>
-          )}
-          <button type="submit">Приложи</button>
-          <Link to={`${location.pathname}#contracts`}>Изчисти</Link>
-        </Form>
-        <div className="profile-summary">
-          <span>
-            <strong>{count(a.total)}</strong> {a.total === 1 ? 'договор' : 'договора'}
-          </span>
-          <span>
-            <strong>{money(a.valueEur)}</strong> обща стойност
-          </span>
-          {hasDeclarations && <span>{count(a.declaredCount)} в декларирания период</span>}
-        </div>
-        {a.contracts.length ? (
-          <DataTable
-            columns={columns}
-            rows={a.contracts}
-            getKey={(r) => r.id}
-            caption="Договори на свързаните дружества"
-          />
-        ) : (
-          <p className="muted">
-            Няма договори за избраното основание и условия.
-            {hasDeclarations &&
-              a.filters.basis === 'role' &&
-              ' Деклариран дял на свързано лице не означава лична роля в Търговския регистър.'}
-          </p>
-        )}
-        {a.total > a.pageSize && (
-          <nav className="profile-pagination" aria-label="Страници с договори">
-            {a.page > 1 && <Link to={pageHref(a.page - 1)}>← Предишна</Link>}
-            <span>
-              Страница {a.page} от {Math.ceil(a.total / a.pageSize)}
-            </span>
-            {a.page * a.pageSize < a.total && <Link to={pageHref(a.page + 1)}>Следваща →</Link>}
-          </nav>
-        )}
-        <p className="small muted profile-period-note">
-          Стойностите са на договорите на дружествата, а не лични доходи или извършени плащания.
-          Личната роля следва датите на вписване и заличаване. При отворена роля съпоставката е до
-          последната успешна справка в регистъра. Декларираният период е между първата и последната
-          налична декларация за съответния дял; той не доказва лична регистърна роля. Договорите без
-          дата и тези извън приложимите периоди са изключени. Основанията могат да се припокриват,
-          затова сборът им не се използва като общ брой.
-        </p>
-      </Section>
       {a.total > 0 && (
         <div className="two-col">
           <Section
@@ -212,6 +114,127 @@ export function PersonActivity({
           </Section>
         </div>
       )}
+      <Section
+        id="contracts"
+        title="Договори по свързаните дружества"
+        hint="Всички налични договори на свързаните дружества. Филтрирай по деклариран период или вписана лична роля. Всеки договор се брои веднъж; времевото основание е означено в реда."
+      >
+        <Form method="get" action={`${location.pathname}#contracts`} className="profile-filters">
+          <label>
+            Дружество
+            <select
+              name="company"
+              defaultValue={a.filters.company}
+              key={`company-${a.filters.company}`}
+            >
+              <option value="">Всички</option>
+              {a.companies.map((c) => (
+                <option key={c.eik} value={c.eik}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Възложител
+            <select
+              name="authority"
+              defaultValue={a.filters.authority}
+              key={`authority-${a.filters.authority}`}
+            >
+              <option value="">Всички</option>
+              {a.authorities.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Година
+            <select name="year" defaultValue={a.filters.year} key={`year-${a.filters.year}`}>
+              <option value="">Всички</option>
+              {a.yearOptions.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+          {
+            <label>
+              Период
+              <select name="basis" defaultValue={a.filters.basis} key={`basis-${a.filters.basis}`}>
+                <option value="all">Всички договори</option>
+                <option value="matched">С времево съвпадение</option>
+                <option value="context">Без установено съвпадение</option>
+                <option value="role">Лична роля в ТР</option>
+                <option value="declaration" disabled={!hasDeclarations}>
+                  Само в декларирания период
+                </option>
+                <option value="self" disabled={!hasDeclarations}>
+                  Деклариран собствен дял
+                </option>
+                <option value="family" disabled={!hasDeclarations}>
+                  Дял на свързано лице
+                </option>
+              </select>
+            </label>
+          }
+          <button type="submit">Приложи</button>
+          <Link className="filter-reset" to={`${location.pathname}#contracts`}>
+            Изчисти
+          </Link>
+        </Form>
+        <div className="profile-summary">
+          <span>
+            <strong>{count(a.total)}</strong> {a.total === 1 ? 'договор' : 'договора'}
+          </span>
+          <span>
+            <strong>{money(a.valueEur)}</strong> обща стойност
+          </span>
+          {hasDeclarations && (
+            <span>
+              {count(a.declaredCount)} в декларирания период · {money(a.declaredEur)}
+            </span>
+          )}
+          <span>
+            {count(a.roleCount)} през вписана роля · {money(a.roleEur)}
+          </span>
+        </div>
+        {a.contracts.length ? (
+          <DataTable
+            columns={columns}
+            rows={a.contracts}
+            getKey={(r) => r.id}
+            caption="Договори на свързаните дружества"
+          />
+        ) : (
+          <p className="muted">
+            Няма договори за избраното основание и условия.
+            {hasDeclarations &&
+              a.filters.basis === 'role' &&
+              ' Деклариран дял на свързано лице не означава лична роля в Търговския регистър.'}
+          </p>
+        )}
+        {a.total > a.pageSize && (
+          <nav className="profile-pagination" aria-label="Страници с договори">
+            {a.page > 1 && <Link to={pageHref(a.page - 1)}>← Предишна</Link>}
+            <span>
+              Страница {a.page} от {Math.ceil(a.total / a.pageSize)}
+            </span>
+            {a.page * a.pageSize < a.total && <Link to={pageHref(a.page + 1)}>Следваща →</Link>}
+          </nav>
+        )}
+        <p className="small muted profile-period-note">
+          Стойностите са на договорите на дружествата, а не лични доходи или извършени плащания.
+          Личната роля следва датите на вписване и заличаване. При отворена роля съпоставката е до
+          последната успешна справка в регистъра. Декларираният период е между първата и последната
+          налична декларация за съответния дял; той не доказва лична регистърна роля. При началния
+          избор са включени и договорите без дата или без установено времево съвпадение. Основанията
+          могат да се припокриват, затова сборът им не се използва като общ брой.
+        </p>
+      </Section>
     </>
   );
 }

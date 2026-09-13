@@ -13,6 +13,7 @@ export const emptyActivity: PersonActivity = {
   companies: [],
   authorities: [],
   years: [],
+  yearOptions: [],
   byAuthority: [],
-  filters: { company: '', authority: '', year: '', basis: 'role' },
+  filters: { company: '', authority: '', year: '', basis: 'all' },
 };

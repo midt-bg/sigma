@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { OwnershipKind } from '@sigma/api-contract';
 import { pct } from '@sigma/shared';
 
@@ -7,8 +7,103 @@ import { pct } from '@sigma/shared';
 
 // `tone` weights a chip by signal strength: 'strong' for the strongest conflict signal (own-institution),
 // 'window' for the declared-stake overlap. Omit for a neutral chip (the default everywhere else).
-export function Chip({ children, tone }: { children: ReactNode; tone?: 'strong' | 'window' }) {
-  return <span className={`chip${tone ? ` chip-${tone}` : ''}`}>{children}</span>;
+const CHIP_HELP: Record<string, string> = {
+  'дял на свързано лице':
+    'Деклараторът е посочил участие на друго свързано с него лице. Това не е твърдение за негов собствен дял или лична роля в дружеството.',
+  'свързано лице':
+    'Участието е декларирано за друго лице, свързано с декларатора. Не означава собствен дял на човека, чието име е показано.',
+  'собствен и свързан дял':
+    'Налични са сведения както за собствен дял на декларатора, така и за дял на друго свързано лице. Подробностите са в конкретните декларации.',
+  'съвпадение по години':
+    'Има договор, подписан между първата и последната положителна декларационна година за участието. Това не доказва непрекъсната собственост или нарушение.',
+  'в декларирания период':
+    'Годината на подписване попада в декларирания диапазон. Декларациите дават съпоставка по години, не точни дати на собственост.',
+  'от собствената институция':
+    'Възложителят съвпада с институция, посочена в декларациите на лицето. Това само по себе си не доказва длъжност към датата на договора или нарушение.',
+  'исторически данни':
+    'Има доказано предходно участие или данни за приключила роля. Посочената декларационна година сама по себе си не установява началото и края на участието.',
+  'предходно участие':
+    'Документът съобщава за участие преди релевантния момент. Годината на документа не е автоматично година на самото участие.',
+  'предходно управление':
+    'Декларирано е предходно управление. Точният му период се установява отделно от регистърните данни.',
+  'прехвърлен дял':
+    'Документът съдържа сведение за прехвърляне. Датата на подаване не е непременно датата на прехвърлянето.',
+  'лична роля в ТР':
+    'Договорът е подписан през доказан вписан период на самото лице. Отворените роли се проверяват до последната успешна справка.',
+  'деклариран собствен дял':
+    'Делът е деклариран като собствен на лицето. Времето се отчита по наличните декларации.',
+  'собствен дял': 'Участието е посочено като собствено в тази декларация.',
+  'без ЕИК':
+    'Няма потвърден публичен ЕИК. Наименованието не е достатъчно за доказване на самоличност или правна форма.',
+  обединение:
+    'Група изпълнители, посочени заедно в източника. Самият списък не доказва отделно юридическо лице.',
+  'непотвърден тотал':
+    'Стойността не е потвърдена като обща стойност на договора. Виж източника и обяснението към анекса.',
+  'коригиран тотал': 'Общата стойност е коригирана въз основа на проследимите договорни документи.',
+};
+
+/** Native top-layer popover: works with touch/keyboard, closes with Escape or outside click. */
+export function Explanation({
+  text,
+  label = 'Какво означава',
+}: {
+  text: ReactNode;
+  label?: string;
+}) {
+  const id = useId();
+  return (
+    <span className="inline-help">
+      <button
+        type="button"
+        className="help-trigger"
+        popoverTarget={id}
+        aria-label={label}
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect(),
+            panel = document.getElementById(id);
+          if (panel) {
+            panel.style.left = `${Math.max(12, Math.min(box.left, window.innerWidth - 332))}px`;
+            panel.style.top = `${Math.max(12, Math.min(box.bottom + 8, window.innerHeight - 180))}px`;
+          }
+        }}
+      >
+        ?
+      </button>
+      <span
+        id={id}
+        popover="auto"
+        className="help-popover"
+        onToggle={(event) => {
+          if (event.newState !== 'open') return;
+          const panel = event.currentTarget;
+          const box = panel.getBoundingClientRect();
+          panel.style.top = `${Math.max(12, Math.min(box.top, window.innerHeight - box.height - 12))}px`;
+        }}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+export function Chip({
+  children,
+  tone,
+  explain = true,
+}: {
+  children: ReactNode;
+  tone?: 'strong' | 'window';
+  explain?: boolean;
+}) {
+  const help = typeof children === 'string' ? CHIP_HELP[children.toLowerCase()] : undefined;
+  const chip = <span className={`chip${tone ? ` chip-${tone}` : ''}`}>{children}</span>;
+  return help && explain ? (
+    <span className="explained-chip">
+      {chip}
+      <Explanation text={help} label={`Какво означава „${children}“`} />
+    </span>
+  ) : (
+    chip
+  );
 }
 
 const REGISTRY_URL = 'https://portal.registryagency.bg/CR/bg/Reports/ActiveConditionTabResult';

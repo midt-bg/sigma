@@ -85,13 +85,31 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
     const d = loaderData as {
       official: string;
       links: ConflictLink[];
-      contracts?: unknown;
+      contracts?: Record<string, ConflictContract[]>;
       declarations?: PersonDeclaration[];
     };
     loaderData = {
       ...d,
       name: d.official,
       person: null,
+      timeline: {
+        contracts: Object.entries(d.contracts ?? {}).flatMap(([eik, rows]) =>
+          rows.map((c) => ({
+            eik,
+            company: d.links.find((l) => l.eik === eik)?.company ?? eik,
+            year: c.signedAt?.slice(0, 4) ?? null,
+            contracts: 1,
+            eligible: c.temporal === 'contemporaneous' ? 1 : 0,
+            role: 0,
+            declared: c.temporal === 'contemporaneous' ? 1 : 0,
+            valueEur: c.amountEur,
+          })),
+        ),
+        observations: [],
+        reads: [],
+        buyers: [],
+        institutionProfiles: [],
+      },
       declarations: d.declarations ?? [],
       tieLayout: null,
       activity: emptyActivity,
@@ -164,14 +182,14 @@ describe('/conflicts/official/:id — render', () => {
         declaration('Народно събрание', 'Народен представител', '2025'),
       ],
     });
-    const institutions = container.querySelector('#institutions')!.closest('section')!;
+    const institutions = container.querySelector('#timeline')!.closest('section')!;
     expect(institutions.textContent).toContain('Община Русе');
     expect(institutions.textContent).toContain('Съветник');
     expect(institutions.textContent).toContain('2019');
     expect(institutions.textContent).toContain('Народно събрание');
     expect(institutions.textContent).toContain('Народен представител');
     expect(institutions.textContent).toContain('2025');
-    expect(institutions.textContent).toContain('не точни мандати');
+    expect(institutions.textContent).toContain('не установява точен мандат');
     expect(
       institutions.compareDocumentPosition(container.querySelector('#declarations')!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -192,13 +210,12 @@ describe('/conflicts/official/:id — render', () => {
     });
     expect(text()).toContain('Кмет Тестов'); // page header names the official
     expect(text()).toContain('ЕВРОСТРОЙ 21 ЕООД'); // the winner heads the block
-    expect(text()).toContain('деклариран дял на свързано лице'); // family label
+    expect(text().toLowerCase()).toContain('декларирало дял на свързано лице'); // family label
     // each detail block heads by the company with a link to its spending profile + its ЕИК
-    const block = detailBlock();
+    const block = container.querySelector('.person-time-company')!;
     const profile = block.querySelector('a[href="/companies/333"]');
     expect(profile).not.toBeNull();
-    expect(block.textContent).toContain('ЕИК'); // ЕИК sub-label present in the block
-    expect(block.textContent).toContain('333');
+    expect(container.querySelector('[id=holdings]')).toBeNull();
     // the official is the page's subject (PageHeader) and is NOT repeated as a link inside a block
     expect(block.textContent).not.toContain('Кмет Тестов');
   });
@@ -222,12 +239,12 @@ describe('/conflicts/official/:id — render', () => {
       },
     });
     const t = text();
-    expect(t).toContain('Времева ос');
+    expect(t).toContain('Участия и договори');
     expect(t).toContain('Договори по свързаните дружества');
     expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain(
-      '/x?company=333&basis=declaration#contracts',
+      '/x?company=333&basis=matched&year=2021#contracts',
     );
-    expect(detailBlock().querySelector('a[href*="/contracts/"]')).toBeNull();
+    expect(container.querySelector('.person-time-company a[href*="/contracts/"]')).toBeNull();
     expect(t).not.toContain('Дял при възложителите');
     expect(container.querySelector('.cc-toggle')).toBeNull();
   });
@@ -245,8 +262,9 @@ describe('/conflicts/official/:id — render', () => {
     expect(container.querySelector('#declared-overview')?.textContent).not.toContain(
       'собствен дял',
     );
-    expect(detailBlock().textContent).not.toContain('собствен дял');
-    expect(text()).toContain('деклариран дял на свързано лице');
+    const overview = container.querySelector('#declared-overview')!.closest('section')!;
+    expect(overview.textContent).not.toContain('собствен дял');
+    expect(overview.textContent).toContain('декларирало дял на свързано лице');
   });
 
   it('an own-stake page still says so — the wording is family-AWARE, not family-blind', async () => {
@@ -267,9 +285,9 @@ describe('/conflicts/official/:id — render', () => {
       contracts: {},
     });
     const t = text();
-    expect(t).toContain('Източник и обхват'); // the callout heading is preserved
-    expect(t).toContain('деклариран дял — собствен или на свързано лице'); // corrected ADR-0032 copy
-    expect(t).toContain('името на близкия не се показва'); // relative never named
+    expect(t).toContain('Декларирани интереси');
+    expect(t).toContain('декларирало собствен дял');
+    expect(t).toContain('без името на близкия');
   });
 
   it('meta() names the person in the title and marks the page noindex', () => {
@@ -307,7 +325,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   const official = 'Кмет Тестов';
 
   it('renders the registry fact the link rests on, so the block explains itself', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'document', registryRole: 'owner' })],
       contracts: {},
@@ -324,7 +344,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   it('omits the entry number rather than printing an empty „· №" when there is none', async () => {
     // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so the label
     // must be absent entirely — not „· №" with nothing after it, which reads as missing data.
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [
         link({
@@ -342,7 +364,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   });
 
   it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'confirmed', registryRole: null })],
       contracts: {},
@@ -357,7 +381,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     // can only be confirmed/registryRole:null. „вписано като съдружник/собственик" here would assert that the
     // named official is recorded as an owner of this company — a false, named, libel-shaped claim on the one
     // block whose whole design keeps the stakeholder anonymous (ADR-0030/0032).
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [
         link({
@@ -377,7 +403,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   });
 
   it('links out to the register so a reader can check the same act we read', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', eik: '201122335' })],
       contracts: {},

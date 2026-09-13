@@ -88,7 +88,7 @@ const partidaColumn: Column<PersonRole> = {
   ),
 };
 
-/** Standing roles in a table; ended ones folded under it, with the day each ended. */
+/** Standing roles in a table; ended ones visible under it, with the day each ended. */
 function StandingAndEnded<Row extends { removedOn: string | null }>({
   rows,
   columns,
@@ -113,15 +113,15 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
         <p className="muted">Няма вписани роли, които да са в сила.</p>
       )}
       {ended.length > 0 && (
-        <details className="registry-ended">
-          <summary>Прекратени роли ({count(ended.length)})</summary>
+        <div className="registry-ended">
+          <h3>Прекратени роли ({count(ended.length)})</h3>
           <DataTable
             columns={endedColumns}
             rows={ended}
             getKey={getKey}
             caption={`${caption} — прекратени`}
           />
-        </details>
+        </div>
       )}
     </>
   );

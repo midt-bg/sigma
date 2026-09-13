@@ -44,7 +44,12 @@ function fixture() {
   return d1FromSqlite(db);
 }
 it('deduplicates roles and declaration overlap, preserving gaps and unknown dates', async () => {
-  const a = await getPersonActivity(fixture(), 'person', ['official'], new URLSearchParams('basis=role'));
+  const a = await getPersonActivity(
+    fixture(),
+    'person',
+    ['official'],
+    new URLSearchParams('basis=role'),
+  );
   expect(a.total).toBe(2);
   expect(a.valueEur).toBe(400);
   expect(a.roleCount).toBe(2);
@@ -104,7 +109,9 @@ it('filters and paginates without changing the full aggregates', async () => {
 it('never includes held interests or assigns a family company registry role to the declarant', async () => {
   const d1 = fixture();
   db.exec("UPDATE interest_links SET status='held'");
-  expect((await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'))).total).toBe(0);
+  expect(
+    (await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'))).total,
+  ).toBe(0);
   db.exec("UPDATE interest_links SET status='published', interest_class='family_ownership'");
   const a = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'));
   expect(a.total).toBe(0);
@@ -135,7 +142,12 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
     declarationBasis: 1,
   });
   db.exec("UPDATE interest_links SET interest_class='family_ownership'");
-  const family = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=matched'));
+  const family = await getPersonActivity(
+    d1,
+    null,
+    ['official'],
+    new URLSearchParams('basis=matched'),
+  );
   expect(family.total).toBe(2);
   expect(family.contracts.every((r) => !r.duringRole && r.declarationBasis === 2)).toBe(true);
   const roles = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'));
@@ -182,21 +194,35 @@ it('includes every proven source identity only when the canonical person has a p
   expect(await getRegistryOfficials(d1, 'other')).toEqual([]);
 });
 
- it('defaults to all contracts, preserving unknown dates and separating contextual amounts', async () => {
+it('defaults to all contracts, preserving unknown dates and separating contextual amounts', async () => {
   const d1 = fixture();
   const all = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
   expect(all.total).toBe(4);
   expect(all.valueEur).toBe(600);
   expect(all.declaredCount).toBe(2);
   expect(all.roleCount).toBe(2);
-  expect(all.contracts.find(c => c.id === 'd')).toMatchObject({duringRole:false, duringDeclaration:false, signedAt:null});
-  expect(all.yearOptions).toEqual(['2022','2021','2020']);
-  const context = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=context'));
-  expect(context.contracts.map(c => c.id).sort()).toEqual(['c','d']);
+  expect(all.contracts.find((c) => c.id === 'd')).toMatchObject({
+    duringRole: false,
+    duringDeclaration: false,
+    signedAt: null,
+  });
+  expect(all.yearOptions).toEqual(['2022', '2021', '2020']);
+  const context = await getPersonActivity(
+    d1,
+    null,
+    ['official'],
+    new URLSearchParams('basis=context'),
+  );
+  expect(context.contracts.map((c) => c.id).sort()).toEqual(['c', 'd']);
   expect(context.valueEur).toBe(300);
-  const filtered = await getPersonActivity(d1, null, ['official'], new URLSearchParams('company=111111111&year=2022&basis=context'));
+  const filtered = await getPersonActivity(
+    d1,
+    null,
+    ['official'],
+    new URLSearchParams('company=111111111&year=2022&basis=context'),
+  );
   expect(filtered.total).toBe(1);
-  expect(filtered.years).toEqual([{year:'2022', contracts:1,valueEur:300}]);
-  expect(filtered.byAuthority[0]).toMatchObject({contracts:1,valueEur:300});
+  expect(filtered.years).toEqual([{ year: '2022', contracts: 1, valueEur: 300 }]);
+  expect(filtered.byAuthority[0]).toMatchObject({ contracts: 1, valueEur: 300 });
   expect(filtered.yearOptions).toEqual(all.yearOptions);
 });

@@ -36,17 +36,7 @@ export async function loadPersonProfile(
       (b.submittedOn ?? b.declaredOn ?? '').localeCompare(a.submittedOn ?? a.declaredOn ?? '') ||
       a.id.localeCompare(b.id),
   );
-  const activity = await getPersonActivity(
-    db,
-    indent ?? null,
-    officialIds,
-    search,
-    officialIds.length ? 'all' : 'role',
-  );
-  const allActivity =
-    search.size || officialIds.length
-      ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams())
-      : activity;
+  const activity = await getPersonActivity(db, indent ?? null, officialIds, search, 'all');
   const declaredActivity = officialIds.length
     ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams(), 'declaration')
     : null;
@@ -58,9 +48,9 @@ export async function loadPersonProfile(
     declarations,
     activity,
     totals: {
-      companies: allActivity.companyCount,
-      contracts: allActivity.total,
-      valueEur: allActivity.valueEur,
+      companies: activity.companyCount,
+      contracts: activity.total,
+      valueEur: activity.valueEur,
       declaredCount: declaredActivity?.total ?? 0,
       declaredEur: declaredActivity?.valueEur ?? null,
     },

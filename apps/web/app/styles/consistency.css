@@ -442,96 +442,6 @@ td .chip {
   line-height: 1.6;
   margin-top: 16px;
 }
-.person-company {
-  padding: 24px 0;
-  border-bottom: 1px solid #d9d5ce;
-  scroll-margin-top: 80px;
-}
-.person-company:first-child {
-  padding-top: 0;
-}
-.person-company-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-}
-.person-company-heading h3 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.25;
-}
-.person-company-basis {
-  font-size: 14px;
-  margin-block: 12px;
-}
-.person-company-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 14px 30px;
-  margin-block: 16px;
-  font-size: 14px;
-}
-.person-company-links .source-cta {
-  font-size: 14px;
-}
-.person-company-sources,
-.person-source-archive {
-  margin-top: 20px;
-}
-.person-company-sources summary,
-.person-source-archive summary {
-  cursor: pointer;
-  font-size: 14px;
-  padding: 8px 0;
-}
-.person-company-sources[open] summary,
-.person-source-archive[open] summary {
-  margin-bottom: 16px;
-}
-.person-history {
-  padding: 14px 18px;
-  margin-block: 16px;
-  border-left: 2px solid #b71916;
-  font-size: 14px;
-}
-.person-history ul {
-  padding-left: 18px;
-  margin-block: 10px;
-}
-.person-history li + li {
-  margin-top: 8px;
-}
-.person-history p {
-  margin-bottom: 0;
-}
-@media (max-width: 600px) {
-  .person-overview {
-    grid-template-columns: 1fr;
-    gap: 18px;
-  }
-  .person-overview > div {
-    flex-direction: row;
-    align-items: baseline;
-    gap: 12px;
-  }
-  .person-overview strong {
-    min-width: 90px;
-  }
-  .person-time-row {
-    grid-template-columns: 190px minmax(0, 1fr);
-  }
-  .person-time {
-    min-width: calc(210px + var(--timeline-years) * 42px);
-  }
-  .person-time-label {
-    padding-right: 16px;
-  }
-  .person-company-heading h3 {
-    font-size: 23px;
-  }
-}
 
 .time-observation.time-management {
   border-color: currentColor;
@@ -573,4 +483,158 @@ td .chip {
   .person-time-row {
     grid-template-columns: 150px minmax(0, 1fr);
   }
+}
+
+/* Shared inline explanations and in-page destinations. */
+.entity-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.entity-list li + li {
+  margin-top: 10px;
+}
+.explained-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+.explained-chip .chip {
+  white-space: normal;
+}
+.inline-help {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+.help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #aaa59c;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: 12px/1 sans-serif;
+  cursor: pointer;
+}
+.help-trigger:hover,
+.help-trigger:focus-visible {
+  color: var(--ink);
+  border-color: currentColor;
+}
+.help-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: 50vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #aaa59c;
+  background: var(--paper, #faf8f2);
+  color: var(--ink, #171511);
+  font: 14px/1.55 var(--font-sans, sans-serif);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  box-shadow: 0 5px 18px #0002;
+  z-index: 20;
+}
+.help-popover small {
+  display: block;
+}
+.profile-filters {
+  align-items: end;
+}
+.profile-filters .filter-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  align-self: end;
+  padding: 8px 0;
+}
+.registry-ended h3 {
+  font-size: 18px;
+  margin: 24px 0 16px;
+}
+.declarations tr[id],
+#contracts {
+  scroll-margin-top: 100px;
+}
+.profile-target {
+  animation: profile-indication 2.2s ease-out;
+}
+@keyframes profile-indication {
+  0%,
+  55% {
+    background-color: #f6ddc6;
+    outline: 2px solid #b71916;
+    outline-offset: 2px;
+  }
+  100% {
+    background-color: transparent;
+    outline-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-target {
+    animation: none;
+    outline: 2px solid #b71916;
+    background: #f6ddc6;
+  }
+}
+.time-observation {
+  width: 12px;
+  height: 12px;
+}
+.time-observation::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+.time-contract-bin {
+  align-items: center;
+}
+.time-contract-bin .help-trigger {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+.person-time {
+  min-width: calc(240px + var(--timeline-years) * 60px);
+}
+.history-source {
+  display: inline-block;
+  margin: 0 10px 3px 0;
+}
+@media (max-width: 600px) {
+  .person-time {
+    min-width: calc(170px + var(--timeline-years) * 60px);
+  }
+  .person-time-row {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+  .profile-summary {
+    gap: 8px 18px;
+  }
+}
+
+.time-contract-bin {
+  max-width: 60px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.time-contract-bin .inline-help {
+  flex-basis: 100%;
+  justify-content: center;
+}
+.time-contracts .person-time-track {
+  min-height: 55px;
 }

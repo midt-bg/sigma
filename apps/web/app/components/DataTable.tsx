@@ -21,12 +21,14 @@ export function DataTable<Row>({
   variant = 'cards',
   caption,
   getKey,
+  getRowId,
 }: {
   columns: Column<Row>[];
   rows: Row[];
   variant?: 'cards' | 'prose';
   caption?: string;
   getKey: (row: Row, index: number) => string | number;
+  getRowId?: (row: Row) => string;
 }) {
   const labelOf = (c: Column<Row>) => (typeof c.header === 'string' ? c.header : undefined);
   return (
@@ -52,7 +54,7 @@ export function DataTable<Row>({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={getKey(row, i)}>
+            <tr key={getKey(row, i)} id={getRowId?.(row)} tabIndex={getRowId ? -1 : undefined}>
               {columns.map((c) => {
                 const cls = [
                   c.align,

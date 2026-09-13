@@ -32,7 +32,9 @@ it('returns every source and its own role/dates, including a filing with no comp
       declaredOn: '2021-01-01',
       submittedOn: '2021-02-01',
       companyEiks: ['111111111'],
-      interests: [{company:'Компания', eik:'111111111',kind:'shares',timing:'annual',scope:'self'}],
+      interests: [
+        { company: 'Компания', eik: '111111111', kind: 'shares', timing: 'annual', scope: 'self' },
+      ],
     });
   } finally {
     db.close();
@@ -68,9 +70,16 @@ it('uses resolved EIKs for all sources and never borrows a same-named company or
       c: ['111'],
       d: [],
     });
-    expect(docs.find(d=>d.id==='a')!.interests).toEqual([{company:'Име',eik:'111',kind:'shares',timing:'annual',scope:'self'}]);
-    expect(docs.find(d=>d.id==='b')!.interests).toEqual([{company:'Име',eik:'222',kind:'participation',timing:'prior',scope:'self'}]);
-    expect(docs.find(d=>d.id==='d')!.interests![0]).toMatchObject({eik:null,scope:'unknown'});
+    expect(docs.find((d) => d.id === 'a')!.interests).toEqual([
+      { company: 'Име', eik: '111', kind: 'shares', timing: 'annual', scope: 'self' },
+    ]);
+    expect(docs.find((d) => d.id === 'b')!.interests).toEqual([
+      { company: 'Име', eik: '222', kind: 'participation', timing: 'prior', scope: 'self' },
+    ]);
+    expect(docs.find((d) => d.id === 'd')!.interests![0]).toMatchObject({
+      eik: null,
+      scope: 'unknown',
+    });
   } finally {
     db.close();
   }

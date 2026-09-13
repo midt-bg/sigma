@@ -8,6 +8,7 @@ import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { emptyActivity } from '../lib/person-profile.test-support';
 import { timelineCompanies } from '../lib/person-timeline';
 import { PersonProfile } from './PersonProfile';
+import { PersonTimeline } from './PersonTimeline';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 it('shows one company for multiple source identities, sequential sections and historical facts without invented role bars', () => {
@@ -59,6 +60,8 @@ it('shows one company for multiple source identities, sequential sections and hi
     ],
     timeline: {
       reads: [],
+      buyers: [],
+      institutionProfiles: [],
       observations: [
         {
           eik: link.eik,
@@ -102,7 +105,8 @@ it('shows one company for multiple source identities, sequential sections and hi
   const Stub = createRoutesStub([{ path: '/', Component: () => <PersonProfile profile={p} /> }]);
   try {
     act(() => root.render(<Stub />));
-    expect(el.querySelectorAll('.person-company')).toHaveLength(1);
+    expect(el.querySelectorAll('.person-time-company')).toHaveLength(1);
+    expect(el.querySelectorAll('details')).toHaveLength(0);
     expect(el.querySelectorAll('[role="tab"], [role="tablist"]')).toHaveLength(0);
     expect(el.querySelectorAll('.time-role')).toHaveLength(0);
     expect(el.querySelectorAll('.time-management')).toHaveLength(1);
@@ -114,11 +118,46 @@ it('shows one company for multiple source identities, sequential sections and hi
     expect(el.querySelector('.time-contract.context')?.textContent).toBe('2');
     const ids = [...el.querySelectorAll('.section > h2[id]')].map((s) => s.id);
     expect(ids.indexOf('declared-overview')).toBeLessThan(ids.indexOf('timeline'));
-    expect(ids.indexOf('holdings')).toBeLessThan(ids.indexOf('contracts'));
-    expect(el.textContent).toContain('Декларирано предходно участие');
-    expect(el.querySelector('.person-company-sources a')?.getAttribute('href')).toBe(
-      link.sourceUrl,
+    expect(ids.indexOf('declarations')).toBeLessThan(ids.indexOf('contracts'));
+    expect(ids.at(-1)).toBe('contracts');
+    expect(el.textContent).toContain('Предходно участие');
+    expect(el.querySelector('#declaration-d a')?.getAttribute('href')).toBe(link.sourceUrl);
+    const roles = (['manager', 'partner'] as const).flatMap((role) => [
+      {
+        company: { name: link.company, eik: link.eik, href: `/companies/${link.eik}` },
+        role,
+        share: null,
+        addedOn: '2013-01-17',
+        removedOn: '2013-08-14',
+        entryNumber: 'old',
+      },
+      {
+        company: { name: link.company, eik: link.eik, href: `/companies/${link.eik}` },
+        role,
+        share: null,
+        addedOn: '2022-11-16',
+        removedOn: '2024-05-27',
+        entryNumber: 'new',
+      },
+    ]);
+    const Roles = createRoutesStub([
+      {
+        path: '/',
+        Component: () => <PersonTimeline profile={p} companies={[{ ...companies[0]!, roles }]} />,
+      },
+    ]);
+    act(() => root.render(<Roles />));
+    const roleRows = [...el.querySelectorAll('.person-time-company .person-time-row')].filter((r) =>
+      r.querySelector('.time-role'),
     );
+    expect(roleRows).toHaveLength(2);
+    for (const row of roleRows) {
+      const segments = row.querySelectorAll<HTMLElement>('.time-role');
+      expect(segments).toHaveLength(2);
+      expect(
+        parseFloat(segments[0]!.style.left) + parseFloat(segments[0]!.style.width),
+      ).toBeLessThan(parseFloat(segments[1]!.style.left));
+    }
   } finally {
     act(() => root.unmount());
     el.remove();

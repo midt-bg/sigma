@@ -208,10 +208,10 @@ function ConflictDetailBlock({
       />
 
       {l.declarations && (
-        <details className="source-documents" id={`sources-${domId}`}>
-          <summary>Декларации за тази връзка ({l.declarations.length})</summary>
+        <div className="source-documents" id={`sources-${domId}`}>
+          <h3>Декларации за тази връзка ({l.declarations.length})</h3>
           <Declarations declarations={l.declarations} compact />
-        </details>
+        </div>
       )}
       {contracts.length < l.contractCount && (
         <p className="small muted">
@@ -463,8 +463,8 @@ export function ContractList({ contracts }: { contracts: ConflictContract[] }) {
         <p className="small muted m-0">Няма договори, сключени в декларирания период.</p>
       )}
       {outside.length > 0 && (
-        <details className="contract-outside">
-          <summary className="small muted">Извън периода ({count(outside.length)})</summary>
+        <div className="contract-outside">
+          <h4>Извън периода ({count(outside.length)})</h4>
           <DataTable
             columns={[
               ...contractColumns,
@@ -479,7 +479,7 @@ export function ContractList({ contracts }: { contracts: ConflictContract[] }) {
             getKey={(c, i) => c.contractSlug || `out-${i}`}
             caption="Договори извън декларирания период"
           />
-        </details>
+        </div>
       )}
     </>
   );

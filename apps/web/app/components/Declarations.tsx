@@ -1,3 +1,6 @@
+import { Link } from 'react-router';
+import { declarationRowId } from '../lib/profile-navigation';
+import { Chip } from './ui';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import { date } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
@@ -23,6 +26,25 @@ export function declarationTypeLabel(d: Pick<PersonDeclaration, 'type' | 'templa
         ? 'част II · интереси'
         : 'декларация';
   return kind ? `${kind} · ${template}` : template;
+}
+export function declaredInterestLabel(
+  i: NonNullable<PersonDeclaration['interests']>[number],
+): string {
+  const kind =
+    i.kind === 'management'
+      ? 'управление'
+      : i.kind === 'sole_trader'
+        ? 'едноличен търговец'
+        : i.kind === 'securities'
+          ? 'ценни книжа'
+          : i.kind === 'shares'
+            ? 'дялово участие'
+            : 'участие';
+  if (i.timing === 'prior') return `предходно ${kind}`;
+  if (i.timing === 'disposed') return 'прехвърлен дял';
+  if (i.scope === 'family') return 'дял на свързано лице';
+  if (i.kind === 'shares' && i.scope === 'self') return 'собствен дял';
+  return `${kind}${i.timing === 'unknown' ? ' · неустановен период' : ''}`;
 }
 const columns: Column<PersonDeclaration>[] = [
   {
@@ -71,6 +93,25 @@ const columns: Column<PersonDeclaration>[] = [
       </>
     ),
   },
+  {
+    key: 'companies',
+    header: 'Дружества и декларирани роли',
+    cell: (d) =>
+      d.interests?.length ? (
+        <ul className="entity-list">
+          {d.interests.map((i, n) => (
+            <li key={`${i.eik ?? i.company}-${i.kind}-${i.timing}-${n}`}>
+              {i.eik ? <Link to={`/companies/${i.eik}`}>{i.company}</Link> : i.company}
+              <div className="small">
+                <Chip>{declaredInterestLabel(i)}</Chip>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="muted">Няма извлечени участия в този документ</span>
+      ),
+  },
 ];
 export function Declarations({
   declarations,
@@ -87,6 +128,7 @@ export function Declarations({
         columns={columns}
         rows={declarations}
         getKey={(d) => d.id}
+        getRowId={compact ? undefined : (d) => declarationRowId(d.id)}
         caption="Налични декларации и източници"
       />
     </div>
