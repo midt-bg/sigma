@@ -1,4 +1,8 @@
+import type { PersonRole } from '@sigma/api-contract';
+
 export const declarationRowId = (id: string) => `declaration-${encodeURIComponent(id)}`;
+export const roleRowId = (role: PersonRole) =>
+  `role-${encodeURIComponent([role.company.eik, role.role, role.addedOn, role.removedOn ?? '', role.entryNumber].join('|'))}`;
 
 const highlights = new WeakMap<HTMLElement, number>();
 

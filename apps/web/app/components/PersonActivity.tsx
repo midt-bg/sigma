@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Form, Link, useLocation } from 'react-router';
+import { useEffect, useRef, type ChangeEvent } from 'react';
+import { Form, Link, useLocation, useNavigation, useRevalidator, useSubmit } from 'react-router';
 import { revealProfileTarget } from '../lib/profile-navigation';
 import type { PersonActivity as Activity, PersonContractRow } from '@sigma/db';
 import { contractSlug } from '@sigma/db';
@@ -53,9 +53,39 @@ export function PersonActivity({
   hasDeclarations: boolean;
 }) {
   const location = useLocation();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const { revalidate, state } = useRevalidator();
+  const refreshRequested = useRef(false);
+  const stale = !Array.isArray(a.yearOptions);
+  const filterValue = (name: keyof Activity['filters']) =>
+    navigation.formData?.get(name)?.toString() ?? a.filters[name];
+  const applyFilters = (event: ChangeEvent<HTMLSelectElement>) => {
+    void submit(event.currentTarget.form, { action: location.pathname, preventScrollReset: true });
+  };
   useEffect(() => {
-    if (location.hash === '#contracts') revealProfileTarget('contracts');
-  }, [location.key, location.hash]);
+    if (!stale) refreshRequested.current = false;
+    else if (!refreshRequested.current) {
+      // HMR can keep an older loader payload after the client gains a new field.
+      refreshRequested.current = true;
+      void revalidate();
+    }
+  }, [stale, revalidate]);
+  useEffect(() => {
+    if (!stale && location.hash === '#contract-filters') revealProfileTarget('contract-filters');
+  }, [location.key, location.hash, stale]);
+  if (stale) {
+    return (
+      <Section id="contracts" title="Договори по свързаните дружества">
+        <p role="status">
+          {state === 'loading'
+            ? 'Обновяване на договорите…'
+            : 'Данните за договорите се нуждаят от обновяване.'}{' '}
+          <a href={`${location.pathname}${location.search}#contract-filters`}>Презареди</a>
+        </p>
+      </Section>
+    );
+  }
   const pageHref = (page: number) => {
     const q = new URLSearchParams(location.search);
     q.set('page', String(page));
@@ -119,13 +149,21 @@ export function PersonActivity({
         title="Договори по свързаните дружества"
         hint="Всички налични договори на свързаните дружества. Филтрирай по деклариран период или вписана лична роля. Всеки договор се брои веднъж; времевото основание е означено в реда."
       >
-        <Form method="get" action={`${location.pathname}#contracts`} className="profile-filters">
+        <Form
+          method="get"
+          action={location.pathname}
+          preventScrollReset
+          className="profile-filters"
+          id="contract-filters"
+          aria-label="Филтри за договорите"
+          tabIndex={-1}
+        >
           <label>
             Дружество
             <select
               name="company"
-              defaultValue={a.filters.company}
-              key={`company-${a.filters.company}`}
+              value={filterValue('company')}
+              onChange={applyFilters}
             >
               <option value="">Всички</option>
               {a.companies.map((c) => (
@@ -139,8 +177,8 @@ export function PersonActivity({
             Възложител
             <select
               name="authority"
-              defaultValue={a.filters.authority}
-              key={`authority-${a.filters.authority}`}
+              value={filterValue('authority')}
+              onChange={applyFilters}
             >
               <option value="">Всички</option>
               {a.authorities.map((c) => (
@@ -152,7 +190,7 @@ export function PersonActivity({
           </label>
           <label>
             Година
-            <select name="year" defaultValue={a.filters.year} key={`year-${a.filters.year}`}>
+            <select name="year" value={filterValue('year')} onChange={applyFilters}>
               <option value="">Всички</option>
               {a.yearOptions.map((year) => (
                 <option key={year} value={year}>
@@ -164,7 +202,7 @@ export function PersonActivity({
           {
             <label>
               Период
-              <select name="basis" defaultValue={a.filters.basis} key={`basis-${a.filters.basis}`}>
+              <select name="basis" value={filterValue('basis')} onChange={applyFilters}>
                 <option value="all">Всички договори</option>
                 <option value="matched">С времево съвпадение</option>
                 <option value="context">Без установено съвпадение</option>
@@ -181,10 +219,14 @@ export function PersonActivity({
               </select>
             </label>
           }
-          <button type="submit">Приложи</button>
-          <Link className="filter-reset" to={`${location.pathname}#contracts`}>
-            Изчисти
-          </Link>
+          <div className="profile-filter-actions">
+            <noscript>
+              <button type="submit">Приложи</button>
+            </noscript>
+            <Link className="filter-reset" to={location.pathname} preventScrollReset>
+              Изчисти
+            </Link>
+          </div>
         </Form>
         <div className="profile-summary">
           <span>

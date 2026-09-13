@@ -4,11 +4,27 @@ import { count, date, money } from '@sigma/shared';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { timelineYears, positiveObservation, type TimelineCompany } from '../lib/person-timeline';
-import { declarationRowId, revealProfileTarget } from '../lib/profile-navigation';
+import { declarationRowId, roleRowId, revealProfileTarget } from '../lib/profile-navigation';
 import { declarationTypeLabel } from './Declarations';
 import { groupDeclaredInstitutions, institutionKey } from '../lib/conflicts';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { Section, Explanation, Chip } from './ui';
+
+function InstitutionSymbol() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M3 9h18L12 3 3 9Zm2 11h14M3 23h18M6 11v7m6-7v7m6-7v7" />
+    </svg>
+  );
+}
 
 export function PersonTimeline({
   profile: p,
@@ -92,7 +108,7 @@ export function PersonTimeline({
     const q = new URLSearchParams({ company: eik, basis });
     if (year) q.set('year', year);
     if (authority) q.set('authority', authority);
-    return `${location.pathname}?${q}#contracts`;
+    return `${location.pathname}?${q}#contract-filters`;
   };
   const institutionProfiles = p.timeline.institutionProfiles ?? [];
   const ownIds = new Set(institutionProfiles.map((i) => i.authorityId).filter(Boolean));
@@ -123,6 +139,11 @@ export function PersonTimeline({
         <span>
           <i className="time-symbol context" /> без установено съвпадение
         </span>
+        {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
+          <span>
+            <InstitutionSymbol /> възложител от институциите в декларациите
+          </span>
+        )}
       </div>
       {p.timeline.observations.some((o) => o.disputed) && (
         <p className="small muted">
@@ -265,7 +286,19 @@ export function PersonTimeline({
                         return valid ? (
                           <a
                             key={i}
-                            href="#roles"
+                            href={`#${roleRowId(r)}`}
+                            onClick={(event) => {
+                              if (
+                                event.button !== 0 ||
+                                event.metaKey ||
+                                event.ctrlKey ||
+                                event.shiftKey ||
+                                event.altKey
+                              )
+                                return;
+                              event.preventDefault();
+                              revealProfileTarget(roleRowId(r));
+                            }}
                             className={`time-role ${!r.removedOn ? 'time-open' : ''}`}
                             style={{
                               left: `${x(r.addedOn)}%`,
@@ -347,8 +380,8 @@ export function PersonTimeline({
                     c.contracts
                       .filter((r) => r.year)
                       .map((r) => {
-                        const buyers = (p.timeline.buyers ?? []).filter(
-                          (b) => b.eik === c.eik && b.year === r.year,
+                        const ownBuyers = (p.timeline.buyers ?? []).filter(
+                          (b) => b.eik === c.eik && b.year === r.year && ownIds.has(b.id),
                         );
                         return (
                           <span
@@ -374,21 +407,21 @@ export function PersonTimeline({
                                 {count(r.contracts - r.eligible)}
                               </Link>
                             )}
-                            {buyers.length > 0 && (
+                            {ownBuyers.length > 0 && (
                               <Explanation
-                                label={`Възложители през ${r.year} за ${c.name}`}
+                                label={`${r.year}: възложител от институциите в декларациите · ${c.name}`}
+                                trigger={<InstitutionSymbol />}
+                                triggerClassName="time-institution-trigger"
                                 text={
                                   <>
-                                    <strong>
-                                      {r.year} · {money(r.valueEur)}
-                                    </strong>
-                                    <ul className="entity-list">
-                                      {buyers.map((b) => (
+                                    <strong>{r.year} · Институции от декларациите</strong>
+                                    <ul className="entity-list time-buyers-list">
+                                      {ownBuyers.map((b) => (
                                         <li key={b.id}>
                                           <Link
                                             to={contractHref(c.eik, r.year, 'all', b.id)}
-                                            onClick={(e) =>
-                                              e.currentTarget
+                                            onClick={(event) =>
+                                              event.currentTarget
                                                 .closest<HTMLElement>('[popover]')
                                                 ?.hidePopover()
                                             }
@@ -398,14 +431,13 @@ export function PersonTimeline({
                                           · {count(b.contracts)}{' '}
                                           {b.contracts === 1 ? 'договор' : 'договора'} ·{' '}
                                           {money(b.valueEur)}
-                                          {ownIds.has(b.id) && (
-                                            <small>
-                                              Институция, посочена в декларациите на лицето
-                                            </small>
-                                          )}
                                         </li>
                                       ))}
                                     </ul>
+                                    <small>
+                                      Съвпадението е по институция. Периодът на длъжността се
+                                      установява отделно.
+                                    </small>
                                   </>
                                 }
                               />

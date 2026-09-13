@@ -242,7 +242,7 @@ describe('/conflicts/official/:id — render', () => {
     expect(t).toContain('Участия и договори');
     expect(t).toContain('Договори по свързаните дружества');
     expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain(
-      '/x?company=333&basis=matched&year=2021#contracts',
+      '/x?company=333&basis=matched&year=2021#contract-filters',
     );
     expect(container.querySelector('.person-time-company a[href*="/contracts/"]')).toBeNull();
     expect(t).not.toContain('Дял при възложителите');

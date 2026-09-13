@@ -2,13 +2,15 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createRoutesStub } from 'react-router';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { ConflictLink } from '@sigma/api-contract';
 import type { LoadedPersonProfile } from '../lib/person-profile.server';
 import { emptyActivity } from '../lib/person-profile.test-support';
 import { timelineCompanies } from '../lib/person-timeline';
 import { PersonProfile } from './PersonProfile';
 import { PersonTimeline } from './PersonTimeline';
+import { PersonRolesTables } from './RegistryRoles';
+import { roleRowId } from '../lib/profile-navigation';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 it('shows one company for multiple source identities, sequential sections and historical facts without invented role bars', () => {
@@ -60,7 +62,17 @@ it('shows one company for multiple source identities, sequential sections and hi
     ],
     timeline: {
       reads: [],
-      buyers: [],
+      buyers: [
+        {
+          eik: link.eik,
+          year: '2024',
+          id: 'auth:1',
+          name: 'Възложител А',
+          contracts: 2,
+          eligible: 0,
+          valueEur: 100,
+        },
+      ],
       institutionProfiles: [],
       observations: [
         {
@@ -116,6 +128,8 @@ it('shows one company for multiple source identities, sequential sections and hi
     expect(el.querySelectorAll('.time-institution .time-observation')).toHaveLength(1);
     expect(el.querySelectorAll('.time-contract.eligible')).toHaveLength(0);
     expect(el.querySelector('.time-contract.context')?.textContent).toBe('2');
+    expect(el.querySelector('.time-contract-bin .help-trigger')).toBeNull();
+    expect(el.querySelector('.time-contract-bin .time-institution-trigger')).toBeNull();
     const ids = [...el.querySelectorAll('.section > h2[id]')].map((s) => s.id);
     expect(ids.indexOf('declared-overview')).toBeLessThan(ids.indexOf('timeline'));
     expect(ids.indexOf('declarations')).toBeLessThan(ids.indexOf('contracts'));
@@ -179,6 +193,27 @@ it('shows one company for multiple source identities, sequential sections and hi
       el.querySelector('#declaration-d .declaration-discrepancy a[href="#declaration-other"]'),
     ).not.toBeNull();
     expect(el.querySelector('#declaration-other .entity-list')).toBeNull(); // omission never creates an interest
+    p.timeline.institutionProfiles = [{ institution: 'Община А', authorityId: 'auth:1' }];
+    p.timeline.buyers.push(
+      { ...p.timeline.buyers[0]!, id: 'auth:other', name: 'Несвързан възложител', valueEur: 9999 },
+      { ...p.timeline.buyers[0]!, year: '2020', name: 'Същата институция през друга година' },
+      { ...p.timeline.buyers[0]!, eik: '999999999', name: 'Същата институция за друга фирма' },
+    );
+    act(() => root.render(<Stub key="own-institution" />));
+    expect(el.querySelectorAll('.time-institution-trigger')).toHaveLength(1);
+    expect(el.querySelector('.time-institution-trigger')?.textContent).toBe('');
+    expect(el.querySelector('.time-institution-trigger')?.getAttribute('aria-label')).toContain(
+      '2024',
+    );
+    const buyerLink = el.querySelector('.time-buyers-list a')!;
+    expect(buyerLink.getAttribute('href')).toContain(
+      'year=2024&authority=auth%3A1#contract-filters',
+    );
+    expect(el.querySelector('.time-buyers-list')?.textContent).toContain('Възложител А');
+    expect(el.querySelector('.time-buyers-list')?.textContent).not.toMatch(
+      /Несвързан|друга година|друга фирма/,
+    );
+    expect(el.querySelector('.time-buyers-list')?.textContent).not.toContain('9999');
     const roles = (['manager', 'partner'] as const).flatMap((role) => [
       {
         company: { name: link.company, eik: link.eik, href: `/companies/${link.eik}` },
@@ -200,7 +235,12 @@ it('shows one company for multiple source identities, sequential sections and hi
     const Roles = createRoutesStub([
       {
         path: '/',
-        Component: () => <PersonTimeline profile={p} companies={[{ ...companies[0]!, roles }]} />,
+        Component: () => (
+          <>
+            <PersonTimeline profile={p} companies={[{ ...companies[0]!, roles }]} />
+            <PersonRolesTables roles={roles} />
+          </>
+        ),
       },
     ]);
     act(() => root.render(<Roles />));
@@ -214,6 +254,20 @@ it('shows one company for multiple source identities, sequential sections and hi
       expect(
         parseFloat(segments[0]!.style.left) + parseFloat(segments[0]!.style.width),
       ).toBeLessThan(parseFloat(segments[1]!.style.left));
+    }
+    for (const role of roles) {
+      const id = roleRowId(role);
+      const target = document.getElementById(id)!;
+      expect(target.tagName).toBe('TR');
+      expect(target.closest('.registry-ended')).not.toBeNull();
+      target.scrollIntoView = vi.fn();
+      const bar = [...el.querySelectorAll<HTMLAnchorElement>('.time-role')].find(
+        (a) => a.getAttribute('href') === `#${id}`,
+      )!;
+      act(() => bar.click());
+      expect(document.activeElement).toBe(target);
+      expect(target.scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
+      expect(target.classList.contains('profile-target')).toBe(true);
     }
   } finally {
     act(() => root.unmount());

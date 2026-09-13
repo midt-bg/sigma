@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   Callout,
   Chip,
+  Explanation,
   ExternalEikLink,
   Flag,
   OwnershipChip,
@@ -46,11 +47,27 @@ describe('Chip', () => {
     for (const label of ['без ЕИК', 'Лична роля в ТР']) {
       const el = render(<Chip>{label}</Chip>);
       const button = el.querySelector('button')!;
+      expect(button.textContent).toBe(label);
+      expect(button.classList.contains('chip')).toBe(true);
+      expect(el.querySelector('.help-trigger')).toBeNull();
       expect(button.getAttribute('aria-label')).toContain(label);
       const target = document.getElementById(button.getAttribute('popovertarget')!);
       expect(target?.getAttribute('popover')).toBe('auto');
       expect(target?.textContent?.length).toBeGreaterThan(20);
     }
+  });
+
+  it('keeps question buttons in standalone explanations and static chips inside links', () => {
+    expect(render(<Explanation text="Легенда" />).querySelector('.help-trigger')?.textContent).toBe(
+      '?',
+    );
+    const el = render(
+      <a href="/company">
+        <Chip explain={false}>без ЕИК</Chip>
+      </a>,
+    );
+    expect(el.querySelector('button')).toBeNull();
+    expect(el.querySelector('.chip')?.textContent).toBe('без ЕИК');
   });
 
   it('emits a bare chip class with no tone and a toned modifier with one', () => {

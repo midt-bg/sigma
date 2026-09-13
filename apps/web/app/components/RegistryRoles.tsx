@@ -3,6 +3,7 @@ import type { CompanyRole, PersonRole } from '@sigma/api-contract';
 import { count, date } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
+import { roleRowId } from '../lib/profile-navigation';
 import { registryUrl } from './ui';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
@@ -93,11 +94,13 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
   rows,
   columns,
   getKey,
+  getRowId,
   caption,
 }: {
   rows: Row[];
   columns: Column<Row>[];
   getKey: (r: Row, i: number) => string;
+  getRowId?: (r: Row) => string;
   caption: string;
 }) {
   const standing = rows.filter((r) => !r.removedOn);
@@ -108,7 +111,13 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
   return (
     <>
       {standing.length > 0 ? (
-        <DataTable columns={columns} rows={standing} getKey={getKey} caption={caption} />
+        <DataTable
+          columns={columns}
+          rows={standing}
+          getKey={getKey}
+          getRowId={getRowId}
+          caption={caption}
+        />
       ) : (
         <p className="muted">Няма вписани роли, които да са в сила.</p>
       )}
@@ -119,6 +128,7 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
             columns={endedColumns}
             rows={ended}
             getKey={getKey}
+            getRowId={getRowId}
             caption={`${caption} — прекратени`}
           />
         </div>
@@ -158,6 +168,7 @@ export function PersonRolesTables({ roles }: { roles: PersonRole[] }) {
         partidaColumn,
       ]}
       getKey={(r) => `${r.company.eik}-${r.role}-${r.entryNumber}`}
+      getRowId={roleRowId}
       caption="Роли в дружества"
     />
   );

@@ -116,7 +116,9 @@ td .chip {
 }
 .profile-filters input,
 .profile-filters select {
-  padding: 8px;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  height: 34px;
   border: 1px solid var(--rule);
   background: var(--paper);
   max-width: 260px;
@@ -494,19 +496,21 @@ td .chip {
 .entity-list li + li {
   margin-top: 10px;
 }
-.explained-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.chip-trigger {
+  cursor: pointer;
+  text-align: left;
+  white-space: normal;
   max-width: 100%;
 }
-.explained-chip .chip {
-  white-space: normal;
+.chip-trigger:hover,
+.chip-trigger:focus-visible {
+  border-color: currentColor;
 }
 .inline-help {
   display: inline-flex;
   align-items: center;
   vertical-align: middle;
+  max-width: 100%;
 }
 .help-trigger {
   display: inline-flex;
@@ -528,6 +532,7 @@ td .chip {
   border-color: currentColor;
 }
 .help-popover {
+  box-sizing: border-box;
   position: fixed;
   inset: auto;
   margin: 0;
@@ -549,23 +554,41 @@ td .chip {
 .help-popover small {
   display: block;
 }
-.profile-filters {
-  align-items: end;
-}
-.profile-filters .filter-reset {
+.profile-filter-actions {
   display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.profile-filter-actions button,
+.profile-filters .filter-reset {
+  box-sizing: border-box;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  align-self: end;
-  padding: 8px 0;
+  height: 34px;
+  padding: 5px 14px;
+  font: inherit;
+  line-height: 1.4;
+}
+.profile-filters .filter-reset {
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-mid);
+  text-decoration: none;
+}
+.profile-filters .filter-reset:hover {
+  color: var(--ink);
+  border-color: currentColor;
+  background: var(--paper-warm);
 }
 .registry-ended h3 {
   font-size: 18px;
   margin: 24px 0 16px;
 }
 .declarations tr[id],
-#contracts {
+[id^='role-'],
+#contracts,
+#contract-filters {
   scroll-margin-top: 100px;
 }
 .profile-target {
@@ -602,13 +625,8 @@ td .chip {
 .time-contract-bin {
   align-items: center;
 }
-.time-contract-bin .help-trigger {
-  width: 18px;
-  height: 18px;
-  font-size: 11px;
-}
 .person-time {
-  min-width: calc(240px + var(--timeline-years) * 60px);
+  min-width: calc(240px + var(--timeline-years) * 76px);
 }
 .history-source {
   display: inline-block;
@@ -616,7 +634,7 @@ td .chip {
 }
 @media (max-width: 600px) {
   .person-time {
-    min-width: calc(170px + var(--timeline-years) * 60px);
+    min-width: calc(170px + var(--timeline-years) * 76px);
   }
   .person-time-row {
     grid-template-columns: 150px minmax(0, 1fr);
@@ -627,16 +645,39 @@ td .chip {
 }
 
 .time-contract-bin {
-  max-width: 60px;
+  width: 74px;
   flex-wrap: wrap;
   justify-content: center;
 }
-.time-contract-bin .inline-help {
-  flex-basis: 100%;
+.time-contract-bin > .inline-help {
   justify-content: center;
 }
+.time-institution-trigger {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.time-institution-trigger:hover,
+.time-institution-trigger:focus-visible {
+  border-color: var(--rule);
+  background: var(--warm);
+}
+.time-buyers-list {
+  margin-top: 10px;
+}
 .time-contracts .person-time-track {
-  min-height: 55px;
+  min-height: 36px;
+}
+.time-contracts .person-time-track:has(.time-contract + .time-contract + .inline-help) {
+  min-height: 64px;
 }
 
 .time-observation.time-disputed {

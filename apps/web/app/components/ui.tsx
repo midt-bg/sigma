@@ -48,16 +48,20 @@ const CHIP_HELP: Record<string, string> = {
 export function Explanation({
   text,
   label = 'Какво означава',
+  trigger = '?',
+  triggerClassName = 'help-trigger',
 }: {
   text: ReactNode;
   label?: string;
+  trigger?: ReactNode;
+  triggerClassName?: string;
 }) {
   const id = useId();
   return (
     <span className="inline-help">
       <button
         type="button"
-        className="help-trigger"
+        className={triggerClassName}
         popoverTarget={id}
         aria-label={label}
         onClick={(event) => {
@@ -69,7 +73,7 @@ export function Explanation({
           }
         }}
       >
-        ?
+        {trigger}
       </button>
       <span
         id={id}
@@ -97,14 +101,16 @@ export function Chip({
   explain?: boolean;
 }) {
   const help = typeof children === 'string' ? CHIP_HELP[children.toLowerCase()] : undefined;
-  const chip = <span className={`chip${tone ? ` chip-${tone}` : ''}`}>{children}</span>;
+  const className = `chip${tone ? ` chip-${tone}` : ''}`;
   return help && explain ? (
-    <span className="explained-chip">
-      {chip}
-      <Explanation text={help} label={`Какво означава „${children}“`} />
-    </span>
+    <Explanation
+      text={help}
+      label={`Какво означава „${children}“`}
+      trigger={children}
+      triggerClassName={`${className} chip-trigger`}
+    />
   ) : (
-    chip
+    <span className={className}>{children}</span>
   );
 }
 

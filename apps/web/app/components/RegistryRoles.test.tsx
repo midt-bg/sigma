@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Trade Register's roles as tables: standing roles in the table, ended ones folded under it with the day
+// The Trade Register's roles as tables: standing roles in the table, ended ones visible under it with the day
 // each ended, a person or a winner linked to their page, and the register named as the source.
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -7,6 +7,7 @@ import { createRoutesStub } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CompanyRole, PersonRole } from '@sigma/api-contract';
 import { CompanyRolesTables, PersonRolesTables, RegistrySource } from './RegistryRoles';
+import { roleRowId } from '../lib/profile-navigation';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,7 +51,7 @@ const cells = (table: Element, label: string) =>
     .map((td) => td.textContent);
 
 describe('CompanyRolesTables', () => {
-  it('shows the standing roles, and folds the ended ones under them with the day each ended', () => {
+  it('shows the standing roles, and keeps the ended ones visible under them with the day each ended', () => {
     const c = render(
       <CompanyRolesTables
         roles={[
@@ -67,7 +68,7 @@ describe('CompanyRolesTables', () => {
     expect(cells(standing!, 'Роля')).toEqual(['управител']);
     expect(cells(standing!, 'От')).toEqual(['12.03.2019']);
     expect(cells(standing!, 'До')).toEqual([]);
-    expect(c.querySelector('details summary')!.textContent).toBe('Прекратени роли (1)');
+    expect(c.querySelector('.registry-ended h3')!.textContent).toBe('Прекратени роли (1)');
     expect(cells(ended!, 'До')).toEqual(['12.03.2019']);
     const headers = [...ended!.querySelectorAll('thead th')].map((th) => th.textContent);
     expect(headers.indexOf('От')).toBe(headers.indexOf('До') - 1);
@@ -105,7 +106,7 @@ describe('CompanyRolesTables', () => {
     );
     const names = cells(c.querySelector('table')!, 'Лице');
     expect(names).toEqual(['ЧУЖДА ФИРМА ГМБХ · ГЕРМАНИЯ', 'ХОЛДИНГ АД · ЕИК 444444444']);
-    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['500 EUR', '']);
+    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['500 EUR', '—']);
   });
 
   it('says so when no role is standing', () => {
@@ -125,6 +126,7 @@ describe('PersonRolesTables', () => {
       entryNumber: 'e1',
     };
     const c = render(<PersonRolesTables roles={[r]} />);
+    expect(c.querySelector('tbody tr')?.id).toBe(roleRowId(r));
     expect(c.querySelector('a[href="/companies/111111111"]')!.textContent).toBe('АЛФА ООД');
     const partida = [...c.querySelectorAll('a')].find((a) =>
       a.textContent?.includes('ЕИК 111111111'),
