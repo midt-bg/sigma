@@ -29,6 +29,7 @@ export interface PersonActivity {
   companies: { eik: string; name: string }[];
   authorities: { id: string; name: string }[];
   yearOptions: string[];
+  filterCounts: Record<'company' | 'authority' | 'year' | 'basis', Record<string, number>>;
   years: { year: string; contracts: number; valueEur: number | null }[];
   byAuthority: { id: string; name: string; contracts: number; valueEur: number | null }[];
   filters: { company: string; authority: string; year: string; basis: string };
@@ -116,14 +117,14 @@ export async function getPersonActivity(
     ].includes(requestedBasis ?? '')
   )
     basis = requestedBasis as typeof basis;
-  const { cte, params } = personActivityScope(indent, ids);
+  const scope = personActivityScope(indent, ids);
   const filters = {
     company: /^\d{9}(?:\d{4})?$/.test(search.get('company') ?? '') ? search.get('company')! : '',
     authority: (search.get('authority') ?? '').slice(0, 100),
     year: /^\d{4}$/.test(search.get('year') ?? '') ? search.get('year')! : '',
     basis,
   };
-  const eligibility = {
+  const basisConditions = {
     role: 'during_role=1',
     declaration: 'during_declaration=1',
     self: '(declaration_basis & 1)<>0',
@@ -131,58 +132,66 @@ export async function getPersonActivity(
     all: '1=1',
     matched: '(during_role=1 OR during_declaration=1)',
     context: '(during_role=0 AND during_declaration=0)',
-  }[basis];
-  const optionEligibility = '1=1';
-  const conditions: string[] = [eligibility];
-  if (filters.company) {
-    params.push(filters.company);
-    conditions.push(`eik=?${params.length}`);
-  }
-  if (filters.authority) {
-    params.push(filters.authority);
-    conditions.push(`authority_id=?${params.length}`);
-  }
-  if (filters.year) {
-    params.push(filters.year);
-    conditions.push(`strftime('%Y',signed_at)=?${params.length}`);
-  }
-  const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-  const query = <T>(sql: string, values = params) =>
+  };
+  const params = [...scope.params, filters.company, filters.authority, filters.year];
+  // Bind all selected values once, including when a facet excludes its own selection.
+  const cte = `${scope.cte}, selected AS (SELECT ?${scope.params.length + 1} company,
+    ?${scope.params.length + 2} authority, ?${scope.params.length + 3} year)`;
+  const conditions = {
+    company: filters.company ? 'eik=(SELECT company FROM selected)' : '1=1',
+    authority: filters.authority ? 'authority_id=(SELECT authority FROM selected)' : '1=1',
+    year: filters.year ? "strftime('%Y',signed_at)=(SELECT year FROM selected)" : '1=1',
+    basis: basisConditions[basis],
+  };
+  const matching = (except?: keyof typeof conditions) =>
+    Object.entries(conditions)
+      .filter(([key]) => key !== except)
+      .map(([, condition]) => condition)
+      .join(' AND ');
+  const where = ` WHERE ${matching()}`;
+  const query = <T>(sql: string) =>
     db
       .prepare(`${cte} ${sql}`)
-      .bind(...values)
+      .bind(...params)
       .all<T>();
-  const [totals, companies, authorities, years, byAuthority, yearOptions] = await Promise.all([
-    query<{
-      n: number;
-      cn: number;
-      eur: number | null;
-      rn: number;
-      re: number | null;
-      dn: number;
-      de: number | null;
-    }>(
-      `SELECT COUNT(*) n, COUNT(DISTINCT eik) cn, SUM(amount_eur) eur, COALESCE(SUM(during_role),0) rn, SUM(CASE WHEN during_role THEN amount_eur END) re, COALESCE(SUM(during_declaration),0) dn, SUM(CASE WHEN during_declaration THEN amount_eur END) de FROM activity${where}`,
-    ),
-    query<{ eik: string; name: string }>(
-      `SELECT DISTINCT eik, company AS name FROM activity WHERE ${optionEligibility} ORDER BY company`,
-      [indent ?? '', ...ids],
-    ),
-    query<{ id: string; name: string }>(
-      `SELECT DISTINCT authority_id AS id, authority AS name FROM activity WHERE ${optionEligibility} ORDER BY authority`,
-      [indent ?? '', ...ids],
-    ),
-    query<{ year: string; contracts: number; valueEur: number | null }>(
-      `SELECT COALESCE(strftime('%Y',signed_at),'Без дата') year, COUNT(*) contracts, SUM(amount_eur) valueEur FROM activity${where} GROUP BY 1 ORDER BY 1`,
-    ),
-    query<{ id: string; name: string; contracts: number; valueEur: number | null }>(
-      `SELECT authority_id id, authority name, COUNT(*) contracts, SUM(amount_eur) valueEur FROM activity${where} GROUP BY authority_id ORDER BY valueEur DESC`,
-    ),
-    query<{ year: string }>(
-      `SELECT DISTINCT strftime('%Y',signed_at) year FROM activity WHERE strftime('%Y',signed_at) IS NOT NULL ORDER BY year DESC`,
-      [indent ?? '', ...ids],
-    ),
-  ]);
+  const [totals, companies, authorities, years, byAuthority, yearOptions, basisCounts] =
+    await Promise.all([
+      query<{
+        n: number;
+        cn: number;
+        eur: number | null;
+        rn: number;
+        re: number | null;
+        dn: number;
+        de: number | null;
+      }>(
+        `SELECT COUNT(*) n, COUNT(DISTINCT eik) cn, SUM(amount_eur) eur, COALESCE(SUM(during_role),0) rn, SUM(CASE WHEN during_role THEN amount_eur END) re, COALESCE(SUM(during_declaration),0) dn, SUM(CASE WHEN during_declaration THEN amount_eur END) de FROM activity${where}`,
+      ),
+      query<{ eik: string; name: string; contracts: number }>(
+        `SELECT eik, MIN(company) AS name, COUNT(CASE WHEN ${matching('company')} THEN 1 END) contracts
+        FROM activity GROUP BY eik ORDER BY name`,
+      ),
+      query<{ id: string; name: string; contracts: number }>(
+        `SELECT authority_id AS id, authority AS name, COUNT(CASE WHEN ${matching('authority')} THEN 1 END) contracts
+        FROM activity GROUP BY authority_id, authority ORDER BY authority`,
+      ),
+      query<{ year: string; contracts: number; valueEur: number | null }>(
+        `SELECT COALESCE(strftime('%Y',signed_at),'Без дата') year, COUNT(*) contracts, SUM(amount_eur) valueEur FROM activity${where} GROUP BY 1 ORDER BY 1`,
+      ),
+      query<{ id: string; name: string; contracts: number; valueEur: number | null }>(
+        `SELECT authority_id id, authority name, COUNT(*) contracts, SUM(amount_eur) valueEur FROM activity${where} GROUP BY authority_id ORDER BY valueEur DESC`,
+      ),
+      query<{ year: string | null; contracts: number }>(
+        `SELECT strftime('%Y',signed_at) year, COUNT(CASE WHEN ${matching('year')} THEN 1 END) contracts
+        FROM activity GROUP BY year ORDER BY year DESC`,
+      ),
+      query<Record<keyof typeof basisConditions, number>>(
+        `SELECT ${Object.entries(basisConditions)
+          .map(([key, condition]) => `COUNT(CASE WHEN ${condition} THEN 1 END) AS "${key}"`)
+          .join(',')}
+        FROM activity WHERE ${matching('basis')}`,
+      ),
+    ]);
   const t = totals.results[0]!;
   const pageSize = 50;
   const asked = Number(search.get('page') || 1);
@@ -228,11 +237,30 @@ export async function getPersonActivity(
     roleEur: t.re,
     declaredCount: t.dn,
     declaredEur: t.de,
-    companies: companies.results,
-    authorities: authorities.results,
-    yearOptions: yearOptions.results.map((r) => r.year),
+    companies: companies.results.map(({ eik, name }) => ({ eik, name })),
+    authorities: authorities.results.map(({ id, name }) => ({ id, name })),
+    yearOptions: yearOptions.results.flatMap((r) => (r.year ? [r.year] : [])),
+    filterCounts: {
+      company: optionCounts(
+        companies.results.map((r) => ({ value: r.eik, contracts: r.contracts })),
+      ),
+      authority: optionCounts(
+        authorities.results.map((r) => ({ value: r.id, contracts: r.contracts })),
+      ),
+      year: optionCounts(
+        yearOptions.results.map((r) => ({ value: r.year, contracts: r.contracts })),
+      ),
+      basis: basisCounts.results[0]!,
+    },
     years: years.results,
     byAuthority: byAuthority.results,
     filters,
+  };
+}
+
+function optionCounts(rows: { value: string | null; contracts: number }[]): Record<string, number> {
+  return {
+    '': rows.reduce((total, row) => total + row.contracts, 0),
+    ...Object.fromEntries(rows.filter((r) => r.value !== null).map((r) => [r.value, r.contracts])),
   };
 }

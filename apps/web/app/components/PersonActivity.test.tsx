@@ -9,49 +9,51 @@ import { emptyActivity } from '../lib/person-profile.test-support';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 afterEach(() => vi.restoreAllMocks());
 
-it.each([true, false])(
-  'refreshes an older loader payload once (server updated: %s)',
-  async (updated) => {
-    // An open page can retain the loader payload from before the year selector was introduced.
-    const { yearOptions: _, ...previous } = emptyActivity;
-    const current = { ...emptyActivity, yearOptions: ['2025', '2023'] };
-    const loader = vi.fn(() => (updated ? current : previous));
-    const router = createMemoryRouter(
-      [
-        {
-          id: 'profile',
-          path: '/',
-          loader,
-          Component: () => <PersonActivity activity={useLoaderData()} hasDeclarations />,
-          ErrorBoundary: () => <p>PROFILE_CRASH</p>,
-        },
-      ],
-      { hydrationData: { loaderData: { profile: previous } } },
-    );
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    try {
-      await act(async () => root.render(<RouterProvider router={router} />));
-      expect(container.textContent).not.toContain('PROFILE_CRASH');
+it.each([
+  ['yearOptions', true],
+  ['yearOptions', false],
+  ['filterCounts', true],
+  ['filterCounts', false],
+] as const)('refreshes a payload missing %s once (server updated: %s)', async (field, updated) => {
+  // An open page can retain the loader payload from before a field was introduced.
+  const { [field]: _, ...previous } = emptyActivity;
+  const current = { ...emptyActivity, yearOptions: ['2025', '2023'] };
+  const loader = vi.fn(() => (updated ? current : previous));
+  const router = createMemoryRouter(
+    [
+      {
+        id: 'profile',
+        path: '/',
+        loader,
+        Component: () => <PersonActivity activity={useLoaderData()} hasDeclarations />,
+        ErrorBoundary: () => <p>PROFILE_CRASH</p>,
+      },
+    ],
+    { hydrationData: { loaderData: { profile: previous } } },
+  );
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<RouterProvider router={router} />));
+    expect(container.textContent).not.toContain('PROFILE_CRASH');
+    expect(loader).toHaveBeenCalledTimes(1);
+    if (updated) {
+      expect(
+        [...container.querySelectorAll('select[name="year"] option')].map((o) => o.textContent),
+      ).toEqual(['Всички (0)', '2025 (0)', '2023 (0)']);
+    } else {
+      expect(container.querySelector('form')).toBeNull();
+      expect(container.querySelector('a')?.textContent).toBe('Презареди');
+      await act(async () => {});
       expect(loader).toHaveBeenCalledTimes(1);
-      if (updated) {
-        expect(
-          [...container.querySelectorAll('select[name="year"] option')].map((o) => o.textContent),
-        ).toEqual(['Всички', '2025', '2023']);
-      } else {
-        expect(container.querySelector('form')).toBeNull();
-        expect(container.querySelector('a')?.textContent).toBe('Презареди');
-        await act(async () => {});
-        expect(loader).toHaveBeenCalledTimes(1);
-      }
-    } finally {
-      act(() => root.unmount());
-      container.remove();
-      router.dispose();
     }
-  },
-);
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    router.dispose();
+  }
+});
 
 it('reveals filters from the timeline, but applies manual changes and resets without revealing again', async () => {
   const router = createMemoryRouter(
@@ -64,6 +66,13 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
             ...emptyActivity,
             companies: [{ eik: '123456789', name: 'Фирма' }],
             yearOptions: ['2024'],
+            filterCounts: {
+              ...emptyActivity.filterCounts,
+              company: {
+                '': q.get('basis') === 'matched' ? 1 : 3,
+                '123456789': q.get('basis') === 'matched' ? 1 : 3,
+              },
+            },
             filters: {
               ...emptyActivity.filters,
               company: q.get('company') ?? '',
@@ -91,6 +100,7 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
     expect(form.classList.contains('profile-target')).toBe(true);
     expect(container.querySelector('#contracts.profile-target')).toBeNull();
     expect(select('year').value).toBe('2024');
+    expect(select('company').selectedOptions[0]!.textContent).toBe('Фирма (3)');
     form.classList.remove('profile-target');
     select('basis').focus();
     await act(async () => {
@@ -103,6 +113,7 @@ it('reveals filters from the timeline, but applies manual changes and resets wit
     expect(router.state.location.hash).toBe('');
     expect(router.state.preventScrollReset).toBe(true);
     expect(document.activeElement).toBe(select('basis'));
+    expect(select('company').selectedOptions[0]!.textContent).toBe('Фирма (1)');
     expect(form.classList.contains('profile-target')).toBe(false);
     expect(form.scrollIntoView).toHaveBeenCalledTimes(1);
     await act(async () => container.querySelector<HTMLAnchorElement>('.filter-reset')!.click());

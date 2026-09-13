@@ -14,6 +14,12 @@ export const emptyActivity: PersonActivity = {
   authorities: [],
   years: [],
   yearOptions: [],
+  filterCounts: {
+    company: { '': 0 },
+    authority: { '': 0 },
+    year: { '': 0 },
+    basis: { all: 0, matched: 0, context: 0, role: 0, declaration: 0, self: 0, family: 0 },
+  },
   byAuthority: [],
   filters: { company: '', authority: '', year: '', basis: 'all' },
 };

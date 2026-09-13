@@ -57,12 +57,16 @@ export function PersonActivity({
   const navigation = useNavigation();
   const { revalidate, state } = useRevalidator();
   const refreshRequested = useRef(false);
-  const stale = !Array.isArray(a.yearOptions);
+  const stale = !Array.isArray(a.yearOptions) || !a.filterCounts;
   const filterValue = (name: keyof Activity['filters']) =>
     navigation.formData?.get(name)?.toString() ?? a.filters[name];
   const applyFilters = (event: ChangeEvent<HTMLSelectElement>) => {
     void submit(event.currentTarget.form, { action: location.pathname, preventScrollReset: true });
   };
+  const optionCount = (name: keyof Activity['filterCounts'], value: string) =>
+    navigation.state !== 'idle' && navigation.formData
+      ? ' (…)'
+      : ` (${count(a.filterCounts[name][value] ?? 0)})`;
   useEffect(() => {
     if (!stale) refreshRequested.current = false;
     else if (!refreshRequested.current) {
@@ -160,30 +164,24 @@ export function PersonActivity({
         >
           <label>
             Дружество
-            <select
-              name="company"
-              value={filterValue('company')}
-              onChange={applyFilters}
-            >
-              <option value="">Всички</option>
+            <select name="company" value={filterValue('company')} onChange={applyFilters}>
+              <option value="">Всички{optionCount('company', '')}</option>
               {a.companies.map((c) => (
                 <option key={c.eik} value={c.eik}>
                   {c.name}
+                  {optionCount('company', c.eik)}
                 </option>
               ))}
             </select>
           </label>
           <label>
             Възложител
-            <select
-              name="authority"
-              value={filterValue('authority')}
-              onChange={applyFilters}
-            >
-              <option value="">Всички</option>
+            <select name="authority" value={filterValue('authority')} onChange={applyFilters}>
+              <option value="">Всички{optionCount('authority', '')}</option>
               {a.authorities.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                  {optionCount('authority', c.id)}
                 </option>
               ))}
             </select>
@@ -191,10 +189,11 @@ export function PersonActivity({
           <label>
             Година
             <select name="year" value={filterValue('year')} onChange={applyFilters}>
-              <option value="">Всички</option>
+              <option value="">Всички{optionCount('year', '')}</option>
               {a.yearOptions.map((year) => (
                 <option key={year} value={year}>
                   {year}
+                  {optionCount('year', year)}
                 </option>
               ))}
             </select>
@@ -203,18 +202,22 @@ export function PersonActivity({
             <label>
               Период
               <select name="basis" value={filterValue('basis')} onChange={applyFilters}>
-                <option value="all">Всички договори</option>
-                <option value="matched">С времево съвпадение</option>
-                <option value="context">Без установено съвпадение</option>
-                <option value="role">Лична роля в ТР</option>
+                <option value="all">Всички договори{optionCount('basis', 'all')}</option>
+                <option value="matched">
+                  С времево съвпадение{optionCount('basis', 'matched')}
+                </option>
+                <option value="context">
+                  Без установено съвпадение{optionCount('basis', 'context')}
+                </option>
+                <option value="role">Лична роля в ТР{optionCount('basis', 'role')}</option>
                 <option value="declaration" disabled={!hasDeclarations}>
-                  Само в декларирания период
+                  Само в декларирания период{optionCount('basis', 'declaration')}
                 </option>
                 <option value="self" disabled={!hasDeclarations}>
-                  Деклариран собствен дял
+                  Деклариран собствен дял{optionCount('basis', 'self')}
                 </option>
                 <option value="family" disabled={!hasDeclarations}>
-                  Дял на свързано лице
+                  Дял на свързано лице{optionCount('basis', 'family')}
                 </option>
               </select>
             </label>

@@ -105,9 +105,75 @@ it('filters and paginates without changing the full aggregates', async () => {
   expect(first.total).toBe(62);
   expect(next.total).toBe(62);
   expect(next.valueEur).toBe(first.valueEur);
+  expect(next.filterCounts).toEqual(first.filterCounts);
+  expect(first.filterCounts.company['111111111']).toBe(62);
   expect(first.contracts).toHaveLength(50);
   expect(next.contracts).toHaveLength(12);
   expect(new Set([...first.contracts, ...next.contracts].map((r) => r.id)).size).toBe(62);
+});
+
+it('counts each filter option against the other selections, including zero results, overlaps and undated contracts', async () => {
+  const d1 = fixture();
+  db.exec(`
+    INSERT INTO authorities VALUES('auth:2','Втора община');
+    INSERT INTO tenders VALUES('t2','Друг предмет','auth:2');
+    INSERT INTO bidders VALUES('eik:222222222','Втора фирма','222222222'),('alias','Друго име на първата фирма','111111111');
+    UPDATE contracts SET bidder_id='alias' WHERE id='c';
+    INSERT INTO registry_roles VALUES('person','person','222222222','manager','2020-01-01','2021-01-01');
+    INSERT INTO interest_links VALUES('official','222222222','family','published','family_ownership','2022','2023');
+    INSERT INTO interest_link_evidence VALUES('family','document');
+    INSERT INTO contracts VALUES
+      ('e','Втора фирма — роля','eik:222222222','t','2020-06-01',500),
+      ('f','Втора фирма — дял на свързано лице','eik:222222222','t2','2022-01-01',600),
+      ('g','Втора фирма — следваща година','eik:222222222','t','2023-01-01',700),
+      ('h','Втора фирма — без дата','eik:222222222','t2',NULL,800);
+  `);
+  const all = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(all.total).toBe(8);
+  expect(all.companies).toHaveLength(2); // one option per EIK, even across source names
+  expect(all.filterCounts).toEqual({
+    company: { '': 8, '111111111': 4, '222222222': 4 },
+    authority: { '': 8, 'auth:1': 6, 'auth:2': 2 },
+    year: { '': 8, '2020': 2, '2021': 1, '2022': 2, '2023': 1 }, // "all" includes unknown dates
+    basis: { all: 8, matched: 6, context: 2, role: 3, declaration: 4, self: 2, family: 2 },
+  });
+  const filtered = await getPersonActivity(
+    d1,
+    'person',
+    ['official'],
+    new URLSearchParams('company=111111111&authority=auth:1&year=2022&basis=all'),
+  );
+  expect(filtered.total).toBe(1);
+  expect(filtered.filterCounts).toEqual({
+    company: { '': 1, '111111111': 1, '222222222': 0 },
+    authority: { '': 1, 'auth:1': 1, 'auth:2': 0 },
+    year: { '': 4, '2020': 1, '2021': 1, '2022': 1, '2023': 0 },
+    basis: { all: 1, matched: 1, context: 0, role: 1, declaration: 0, self: 0, family: 0 },
+  });
+  const family = await getPersonActivity(
+    d1,
+    'person',
+    ['official'],
+    new URLSearchParams('company=222222222&authority=auth:2&year=2022&basis=family'),
+  );
+  expect(family.total).toBe(1);
+  expect(family.filterCounts).toEqual({
+    company: { '': 1, '111111111': 0, '222222222': 1 },
+    authority: { '': 1, 'auth:1': 0, 'auth:2': 1 },
+    year: { '': 1, '2020': 0, '2021': 0, '2022': 1, '2023': 0 },
+    basis: { all: 1, matched: 1, context: 0, role: 0, declaration: 1, self: 0, family: 1 },
+  });
+  const none = await getPersonActivity(
+    d1,
+    'person',
+    ['official'],
+    new URLSearchParams('company=222222222&authority=auth:2&year=2022&basis=self'),
+  );
+  expect(none.total).toBe(0);
+  expect(none.filterCounts.company).toEqual({ '': 0, '111111111': 0, '222222222': 0 });
+  expect(none.filterCounts.basis.family).toBe(1); // alternatives remain discoverable
+  expect(none.companies).toEqual(all.companies);
+  expect(none.yearOptions).toEqual(all.yearOptions);
 });
 it('never includes held interests or assigns a family company registry role to the declarant', async () => {
   const d1 = fixture();
