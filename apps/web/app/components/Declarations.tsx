@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { declarationRowId } from '../lib/profile-navigation';
+import { declarationRowId, revealProfileTarget } from '../lib/profile-navigation';
 import { Chip } from './ui';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import { date } from '@sigma/shared';
@@ -96,21 +96,48 @@ const columns: Column<PersonDeclaration>[] = [
   {
     key: 'companies',
     header: 'Дружества и декларирани роли',
-    cell: (d) =>
-      d.interests?.length ? (
-        <ul className="entity-list">
-          {d.interests.map((i, n) => (
-            <li key={`${i.eik ?? i.company}-${i.kind}-${i.timing}-${n}`}>
-              {i.eik ? <Link to={`/companies/${i.eik}`}>{i.company}</Link> : i.company}
-              <div className="small">
-                <Chip>{declaredInterestLabel(i)}</Chip>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <span className="muted">Няма извлечени участия в този документ</span>
-      ),
+    cell: (d) => (
+      <>
+        {d.interests?.length ? (
+          <ul className="entity-list">
+            {d.interests.map((i, n) => (
+              <li key={`${i.eik ?? i.company}-${i.kind}-${i.timing}-${n}`}>
+                {i.eik ? <Link to={`/companies/${i.eik}`}>{i.company}</Link> : i.company}
+                <div className="small">
+                  <Chip>{declaredInterestLabel(i)}</Chip>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="muted">Няма извлечени участия в този документ</span>
+        )}
+        {d.discrepancies?.map((c) => (
+          <p className="small declaration-discrepancy" key={`${c.eik}-${c.scope}`}>
+            <strong>Разминаване за {c.year} г.</strong>{' '}
+            <Link to={`/companies/${c.eik}`}>{c.company}</Link>:{' '}
+            {c.scope === 'family' ? 'дял на свързано лице' : 'собствен дял'}{' '}
+            {c.listed
+              ? 'е посочен тук, но липсва в друга годишна декларация.'
+              : 'не е посочен тук, но присъства в друга годишна декларация.'}{' '}
+            {c.otherDeclarationIds.map((id, i) => (
+              <span key={id}>
+                {i > 0 && ' · '}
+                <a
+                  href={`#${declarationRowId(id)}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    revealProfileTarget(declarationRowId(id));
+                  }}
+                >
+                  Сравни документа{i ? ` ${i + 1}` : ''}
+                </a>
+              </span>
+            ))}
+          </p>
+        ))}
+      </>
+    ),
   },
 ];
 export function Declarations({

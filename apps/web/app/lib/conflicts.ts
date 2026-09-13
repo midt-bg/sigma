@@ -154,7 +154,7 @@ const TEMPORAL_LABEL: Record<ConflictContract['temporal'], string> = {
   contemporaneous: 'в декларирания период',
   before: 'преди декларирания период',
   after: 'след декларирания период',
-  unknown: 'без дата',
+  unknown: 'без установено времево съвпадение',
 };
 
 /** Bulgarian tag for a contract's position relative to the DECLARED (disclosure) window — not an ownership
@@ -197,11 +197,12 @@ export function contractTemporal(
   signedAt: string | null,
   firstDeclaredYear: string | null,
   lastDeclaredYear: string | null,
+  disputedYears: string[] = [],
 ): ConflictContract['temporal'] {
   const y = parseYear(signedAt);
   const lo = parseYear(firstDeclaredYear);
   const hi = parseYear(lastDeclaredYear);
-  if (y == null || lo == null || hi == null) return 'unknown';
+  if (y == null || lo == null || hi == null || disputedYears.includes(String(y))) return 'unknown';
   if (y < lo) return 'before';
   if (y > hi) return 'after';
   return 'contemporaneous';
@@ -215,11 +216,12 @@ export function markContracts(
   facts: ConflictContractFacts[],
   firstDeclaredYear: string | null,
   lastDeclaredYear: string | null,
+  disputedYears: string[] = [],
 ): ConflictContract[] {
   return facts
     .map((f) => ({
       ...f,
-      temporal: contractTemporal(f.signedAt, firstDeclaredYear, lastDeclaredYear),
+      temporal: contractTemporal(f.signedAt, firstDeclaredYear, lastDeclaredYear, disputedYears),
     }))
     .sort(
       (a, b) =>

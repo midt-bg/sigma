@@ -122,6 +122,63 @@ it('shows one company for multiple source identities, sequential sections and hi
     expect(ids.at(-1)).toBe('contracts');
     expect(el.textContent).toContain('Предходно участие');
     expect(el.querySelector('#declaration-d a')?.getAttribute('href')).toBe(link.sourceUrl);
+    p.declarations[0]!.interests = [
+      { company: link.company, eik: link.eik, kind: 'shares', timing: 'annual', scope: 'self' },
+    ];
+    p.declarations[0]!.discrepancies = [
+      {
+        company: link.company,
+        eik: link.eik,
+        year: '2023',
+        scope: 'self',
+        listed: true,
+        otherDeclarationIds: ['other'],
+      },
+    ];
+    p.declarations.push({
+      ...p.declarations[0]!,
+      id: 'other',
+      companyEiks: [],
+      interests: [],
+      discrepancies: [
+        {
+          company: link.company,
+          eik: link.eik,
+          year: '2023',
+          scope: 'self',
+          listed: false,
+          otherDeclarationIds: ['d'],
+        },
+      ],
+    });
+    p.timeline.observations.push(
+      {
+        eik: link.eik,
+        declarationId: 'd',
+        kind: 'shares',
+        timing: 'annual',
+        reportedYear: '2023',
+        scope: 'self',
+        disputed: 1,
+      },
+      {
+        eik: link.eik,
+        declarationId: 'other',
+        kind: 'shares',
+        timing: 'not_listed',
+        reportedYear: '2023',
+        scope: 'self',
+        disputed: 1,
+      },
+    );
+    act(() => root.render(<Stub key="disputed" />));
+    expect(el.querySelectorAll('.time-disputed')).toHaveLength(1);
+    expect(el.textContent).toContain('Разминаване в декларациите');
+    expect(el.querySelector('#declaration-other')?.textContent).toContain('не е посочен тук');
+    expect(
+      el.querySelector('#declaration-d .declaration-discrepancy a[href="#declaration-other"]'),
+    ).not.toBeNull();
+    expect(el.querySelector('#declaration-other .entity-list')).toBeNull(); // omission never creates an interest
     const roles = (['manager', 'partner'] as const).flatMap((role) => [
       {
         company: { name: link.company, eik: link.eik, href: `/companies/${link.eik}` },

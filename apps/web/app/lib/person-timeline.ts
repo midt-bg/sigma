@@ -53,7 +53,7 @@ export function timelineCompanies(p: LoadedPersonProfile): TimelineCompany[] {
   );
 }
 export const positiveObservation = (o: Pick<InterestObservation, 'timing'>) =>
-  !['prior', 'disposed', 'unknown'].includes(o.timing);
+  ['annual', 'current'].includes(o.timing);
 export function timelineYears(p: LoadedPersonProfile, companies: TimelineCompany[]) {
   const years = [
     ...p.declarations.map((d) => d.year),

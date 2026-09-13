@@ -638,3 +638,36 @@ td .chip {
 .time-contracts .person-time-track {
   min-height: 55px;
 }
+
+.time-observation.time-disputed {
+  border: 2px dashed #b71916;
+  background: var(--paper);
+}
+.declarations .declaration-discrepancy {
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: normal;
+  border-inline-start: 2px solid #b71916;
+  padding-inline-start: 0.6rem;
+}
+
+/* Source notes describe the company, not a year on the scrollable axis. */
+.person-time-scroll {
+  container-type: inline-size;
+}
+.person-time-row:has(.time-history-note) {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+}
+@media (max-width: 600px) {
+  .person-time-row:has(.time-history-note) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.declaration-discrepancy a {
+  text-decoration: underline;
+}

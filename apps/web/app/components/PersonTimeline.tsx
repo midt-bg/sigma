@@ -56,8 +56,8 @@ export function PersonTimeline({
       href={`#${declarationRowId(d.id)}`}
       className={className}
       style={style}
-      aria-label={`${d.year ?? ''} · ${declarationTypeLabel(d)} · ${date(d.declaredOn)}; виж декларацията в таблицата`}
-      title={`${declarationTypeLabel(d)} · ${date(d.declaredOn)}`}
+      aria-label={`${d.year ?? ''} · ${declarationTypeLabel(d)} · ${date(d.declaredOn)}${className?.includes('time-disputed') ? '; разминаване между годишни декларации' : ''}; виж декларацията в таблицата`}
+      title={`${declarationTypeLabel(d)} · ${date(d.declaredOn)}${className?.includes('time-disputed') ? ' · разминаване между годишни декларации' : ''}`}
       onClick={(e) => {
         e.preventDefault();
         revealProfileTarget(declarationRowId(d.id));
@@ -66,16 +66,21 @@ export function PersonTimeline({
       {label}
     </a>
   );
-  const documents = (docs: PersonDeclaration[], extra = '') => {
+  const documents = (docs: PersonDeclaration[], extra = '', disputedIds: string[] = []) => {
     const byYear = new Map<string, number>();
     const dated = docs.filter((d) => d.year && years.includes(+d.year));
     const marks = dated.map((d) => {
       const offset = byYear.get(d.year!) ?? 0;
       byYear.set(d.year!, offset + 1);
-      return declarationLink(d, null, `time-observation ${extra}`, {
-        ...yearStyle(+d.year!),
-        top: 10 + offset * 22,
-      });
+      return declarationLink(
+        d,
+        null,
+        `time-observation ${extra} ${disputedIds.includes(d.id) ? 'time-disputed' : ''}`,
+        {
+          ...yearStyle(+d.year!),
+          top: 10 + offset * 22,
+        },
+      );
     });
     return (
       <div style={{ minHeight: Math.max(34, ...[...byYear.values()].map((n) => n * 22 + 12)) }}>
@@ -119,6 +124,12 @@ export function PersonTimeline({
           <i className="time-symbol context" /> без установено съвпадение
         </span>
       </div>
+      {p.timeline.observations.some((o) => o.disputed) && (
+        <p className="small muted">
+          Квадратче с прекъснат контур: разминаване между декларации за същата година. Подробностите
+          и двата източника са посочени при дружеството.
+        </p>
+      )}
       {scrollable && (
         <div className="person-time-controls">
           <span>
@@ -191,7 +202,10 @@ export function PersonTimeline({
           })}
           {companies.map((c) => {
             const roleKinds = [...new Set(c.roles.map((r) => r.role))];
-            const history = c.observations.filter((o) => !positiveObservation(o));
+            const history = c.observations.filter((o) =>
+              ['prior', 'disposed', 'unknown'].includes(o.timing),
+            );
+            const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
             return (
               <div className="person-time-company" key={c.eik} id={`company-${c.eik}`}>
                 {row(
@@ -228,6 +242,7 @@ export function PersonTimeline({
                             : scope === 'management'
                               ? 'time-management'
                               : '',
+                          observations.filter((o) => o.disputed).map((o) => o.declarationId),
                         ),
                       )
                     : null;
@@ -278,6 +293,31 @@ export function PersonTimeline({
                         ? ' — декларираният дял е на друго свързано лице.'
                         : ' за декларатора в наличните регистърни данни.'}
                     </span>,
+                  )}
+                {disputed.length > 0 &&
+                  row(
+                    `${c.eik}-disputed`,
+                    'Разминаване в декларациите',
+                    <div className="time-history-note">
+                      За{' '}
+                      {[...new Set(disputed.map((o) => o.reportedYear))]
+                        .filter(Boolean)
+                        .sort()
+                        .join(', ')}{' '}
+                      г. дялът е посочен в един документ и липсва в друг. Връзката остава видима;
+                      времевото съвпадение за тези години изисква отделно основание.{' '}
+                      {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
+                        const d = p.declarations.find((d) => d.id === id);
+                        return d ? (
+                          <span className="history-source" key={id}>
+                            {declarationLink(
+                              d,
+                              `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
+                            )}{' '}
+                          </span>
+                        ) : null;
+                      })}
+                    </div>,
                   )}
                 {history.length > 0 &&
                   row(

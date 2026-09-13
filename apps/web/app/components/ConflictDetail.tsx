@@ -70,7 +70,12 @@ export function ConflictDetail({
           // and Cyrillic. The ЕИК is the natural per-block identity on an official page; the index
           // disambiguates a company page, where every block shares one ЕИК.
           domId={`link-${i + 1}-${l.eik}`}
-          contracts={markContracts(contracts[l.eik] ?? [], l.firstDeclaredYear, l.lastDeclaredYear)}
+          contracts={markContracts(
+            contracts[l.eik] ?? [],
+            l.firstDeclaredYear,
+            l.lastDeclaredYear,
+            l.disputedYears,
+          )}
           perspective={perspective}
           contractListHref={contractListHref}
         />
@@ -124,6 +129,9 @@ function ConflictDetailBlock({
         {(l.firstDeclaredYear || l.lastDeclaredYear) && (
           <span className="small muted">
             деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.
+            {!!l.disputedYears?.length && (
+              <> · разминаване в декларациите за {l.disputedYears.join(', ')} г.</>
+            )}
           </span>
         )}
       </div>
@@ -350,7 +358,7 @@ export function Timeline({
   // Narrow both edges inline: TS loses the narrowing if it's hidden behind an intermediate boolean.
   const ws = tl.windowStartPct;
   const we = tl.windowEndPct;
-  const hasBand = ws != null && we != null;
+  const hasBand = ws != null && we != null && !l.disputedYears?.length;
   const bandLeft = ws != null && we != null ? Math.min(ws, we) : 0;
   const bandWidth = ws != null && we != null ? Math.abs(we - ws) : 0;
   const maxStack = tl.marks.reduce((m, k) => Math.max(m, k.stackIndex), 0);

@@ -36,6 +36,7 @@ function buildAndAudit({
   snapshot = null,
   history = [],
   extraSql = '',
+  inventory = [],
 }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
@@ -45,6 +46,11 @@ function buildAndAudit({
   // The pre-wipe export load.mjs writes before it drops the CACBG tables. Absent === a first run.
   if (snapshot)
     fs.writeFileSync(path.join(staging, 'published-snapshot.json'), JSON.stringify(snapshot));
+  if (inventory.length)
+    fs.writeFileSync(
+      path.join(staging, 'inventory-conflicts.jsonl'),
+      inventory.map((r) => JSON.stringify(r)).join('\n'),
+    );
   const db = new DatabaseSync(DB);
   db.exec(`
     CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT);
@@ -540,4 +546,34 @@ test('a public source profile cannot conceal competing registry identities behin
   });
   assert.equal(threw, true);
   assert.match(out, /I_ambiguous_identity/);
+});
+
+test('inventory differences retain proven links only with both dated comparison sources', () => {
+  for (const variant of ['complete', 'missing', 'wrong_year']) {
+    const { threw, out } = buildAndAudit({
+      bidders: ["'b1','РЕАЛЕН ЕООД','100000001',1"],
+      decls: ["'positive','p1'", "'empty','p1'"],
+      links: [
+        `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+      ],
+      seals: [
+        "'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'",
+      ],
+      inventory: [
+        {
+          personId: 'p1',
+          eik: '100000001',
+          scope: 'self',
+          year: '2021',
+          positiveDocuments: ['positive'],
+          otherDocuments: ['empty'],
+        },
+      ],
+      extraSql: `CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+        INSERT INTO interest_link_observations VALUES('p1|100000001','positive','shares','annual','2021');
+        ${variant === 'missing' ? '' : `INSERT INTO interest_link_observations VALUES('p1|100000001','empty','shares','not_listed','${variant === 'wrong_year' ? '2022' : '2021'}');`}`,
+    });
+    assert.equal(threw, variant !== 'complete', out);
+    if (threw) assert.match(out, /H_inventory_provenance/);
+  }
 });

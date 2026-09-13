@@ -58,7 +58,9 @@ export async function getPersonDeclarations(
     FROM interest_links il JOIN bidders b ON b.id=il.bidder_id
     JOIN interest_link_observations o ON o.link_key=il.link_key
     WHERE il.person_id=? AND ${companyPredicate} AND o.kind='shares'
-      AND o.timing IN ('annual','not_listed') AND ${declarationYearDisputed('il', 'o.reported_year')}`,
+      AND o.timing IN ('annual','not_listed')
+      AND ${metadata ? "EXISTS (SELECT 1 FROM declaration_metadata annual WHERE annual.declaration_id=o.declaration_id AND lower(annual.declaration_type) IN ('annualy','annual','yearly'))" : "o.timing='not_listed'"}
+      AND ${declarationYearDisputed('il', 'o.reported_year')}`,
     )
     .bind(personId)
     .all<{

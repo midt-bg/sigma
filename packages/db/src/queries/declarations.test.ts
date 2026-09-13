@@ -93,6 +93,8 @@ it('explains both conflicting documents without inventing a stake in the empty f
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      INSERT INTO declaration_metadata VALUES('positive','Annualy',NULL,NULL),('empty','Annualy',NULL,NULL),('entry','Entry',NULL,NULL);
       CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
       CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
       CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
@@ -101,11 +103,15 @@ it('explains both conflicting documents without inventing a stake in the empty f
       CREATE TABLE bidders(id,name);
       INSERT INTO bidders VALUES('b','Компания');
       INSERT INTO declarations VALUES('positive','p','2023','assets','','И','П','https://example.test/positive'),('empty','p','2023','assets','','И','П','https://example.test/empty');
+      INSERT INTO declarations SELECT 'entry',person_id,declared_year,template,category,institution,position,'https://example.test/entry' FROM declarations WHERE id='positive';
+      INSERT INTO declared_interests VALUES('entry','company','Компания','shares','annual');
+      INSERT INTO interest_link_observations VALUES('l','entry','shares','annual','2023');
       INSERT INTO declared_interests VALUES('positive','company','Компания','shares','annual');
       INSERT INTO interest_links VALUES('p','company','111','published','family_ownership','l','exact_name_key','b');
       INSERT INTO interest_link_evidence VALUES('l','confirmed');
       INSERT INTO interest_link_observations VALUES('l','positive','shares','annual','2023'),('l','empty','shares','not_listed','2023');`);
     const docs = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    expect(docs.find((d) => d.id === 'entry')!.discrepancies).toEqual([]); // entry snapshots are not annual corrections
     expect(docs.find((d) => d.id === 'empty')).toMatchObject({
       companyEiks: [],
       interests: [],

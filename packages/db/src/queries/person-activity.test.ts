@@ -33,6 +33,7 @@ function fixture() {
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
     CREATE TABLE declarations(person_id,institution);
+    CREATE TABLE declaration_metadata(declaration_id,declaration_type);
     INSERT INTO authority_totals VALUES('auth:1');
     INSERT INTO declarations VALUES('official','Община');
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);

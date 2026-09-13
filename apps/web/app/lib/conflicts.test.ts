@@ -385,7 +385,7 @@ describe('contract list helpers', () => {
     expect(temporalLabel('contemporaneous')).toBe('в декларирания период');
     expect(temporalLabel('before')).toBe('преди декларирания период');
     expect(temporalLabel('after')).toBe('след декларирания период');
-    expect(temporalLabel('unknown')).toBe('без дата');
+    expect(temporalLabel('unknown')).toBe('без установено времево съвпадение');
   });
   it('contractYear takes the signing year, or „—" when undated', () => {
     expect(contractYear(contract({ signedAt: '2021-05-01' }))).toBe('2021');
@@ -1231,4 +1231,9 @@ describe('/conflicts list filters', () => {
       'ОБЩИНА ВАРНА',
     ]);
   });
+});
+
+it('a disputed declaration year is context without denying the historical link', () => {
+  expect(contractTemporal('2023-05-01', '2020', '2024', ['2023'])).toBe('unknown');
+  expect(contractTemporal('2022-05-01', '2020', '2024', ['2023'])).toBe('contemporaneous');
 });
