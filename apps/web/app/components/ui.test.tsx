@@ -42,6 +42,17 @@ function render(node: React.ReactNode) {
 }
 
 describe('Chip', () => {
+  it('explains labels containing acronyms regardless of their displayed case', () => {
+    for (const label of ['без ЕИК', 'Лична роля в ТР']) {
+      const el = render(<Chip>{label}</Chip>);
+      const button = el.querySelector('button')!;
+      expect(button.getAttribute('aria-label')).toContain(label);
+      const target = document.getElementById(button.getAttribute('popovertarget')!);
+      expect(target?.getAttribute('popover')).toBe('auto');
+      expect(target?.textContent?.length).toBeGreaterThan(20);
+    }
+  });
+
   it('emits a bare chip class with no tone and a toned modifier with one', () => {
     expect(render(<Chip>плайн</Chip>).querySelector('span')!.className).toBe('chip');
     expect(render(<Chip tone="strong">силен</Chip>).querySelector('span')!.className).toBe(

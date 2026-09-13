@@ -146,7 +146,9 @@ export default function Companies({ loaderData }: Route.ComponentProps) {
       secondary: true,
       cell: (c) => (
         <>
-          <Chip>{c.isConsortium ? 'Обединение (ДЗЗД)' : 'дружество'}</Chip>
+          <Chip>
+            {c.isConsortium ? 'съвместни изпълнители' : c.hasEik ? 'дружество' : 'участник'}
+          </Chip>
           {!c.isConsortium && !c.hasEik && (
             <>
               {' '}

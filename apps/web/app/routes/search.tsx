@@ -91,10 +91,11 @@ function renderTitle(hit: SearchHit, re: RegExp | null) {
   return highlight(hit.title, re);
 }
 
+// Search results are whole-card links; explanations remain on the destination profile.
 function exceptionBadge(hit: SearchHit): ReactNode {
   if (hit.kind !== 'company') return null;
-  if (hit.isConsortium) return <Chip>Обединение (ДЗЗД)</Chip>;
-  if (hit.hasEik === false) return <Chip>без ЕИК</Chip>;
+  if (hit.isConsortium) return <Chip explain={false}>съвместни изпълнители</Chip>;
+  if (hit.hasEik === false) return <Chip explain={false}>без ЕИК</Chip>;
   return null;
 }
 
