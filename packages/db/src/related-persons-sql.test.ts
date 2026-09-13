@@ -17,6 +17,7 @@ import {
   OFFICIAL_SQL,
   SURFACED_OWNERSHIP,
 } from './queries/related-persons';
+import { declarationYearDisputed } from './queries/declaration-source';
 import { SEARCH_HITS_SQL } from './queries/search';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
@@ -148,12 +149,29 @@ describe('свързани-лица SQL (real SQLite)', () => {
       readScript(dbPath, migration2);
       readScript(dbPath, migration9);
       readScript(dbPath, resolve(root, 'packages/db/migrations/0014_person_profile.sql'));
+      readScript(dbPath, resolve(root, 'packages/db/migrations/0015_person_observations.sql'));
       sqlite(dbPath, FIXTURE);
       return fn(dbPath);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  it('keeps a declared link but excludes disputed years consistently from counts, money and drilldown', () => {
+    withDb((dbPath) => {
+      sqlite(
+        dbPath,
+        `INSERT INTO interest_link_observations VALUES('person:ivan|111','decl:i','shares','not_listed','2023');`,
+      );
+      const ivan = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      const contracts = rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:ivan|111'));
+      expect(contracts.find((r) => r.contract_number === 'Д-2')!.temporal).toBe('unknown');
+      expect(Number(ivan.contemporaneous_contract_count)).toBe(1);
+      expect(Number(ivan.contemporaneous_value_eur)).toBe(10000000);
+      expect(JSON.parse(String(ivan.disputed_years))).toEqual(['2023']);
+      expect(contracts).toHaveLength(4);
+    });
+  });
 
   it('proven historical links surface with their sources and unchanged contract window', () => {
     withDb((dbPath) => {
@@ -814,4 +832,11 @@ describe('the evidence-seal gate is identical in all four places it is written',
     expect(kinds.length).toBeGreaterThan(0);
     for (const k of kinds) expect(k).toBe('document,confirmed');
   });
+});
+
+it('both search projections use the runtime disputed-year predicate', () => {
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const predicate = normalize(declarationYearDisputed('il', "strftime('%Y',cc.signed_at)"));
+  for (const file of ['scripts/precompute.sql', 'scripts/refresh-slice.sql'])
+    expect(normalize(readFileSync(resolve(root, file), 'utf8'))).toContain(predicate);
 });

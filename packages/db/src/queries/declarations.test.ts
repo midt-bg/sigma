@@ -8,14 +8,16 @@ it('returns every source and its own role/dates, including a filing with no comp
     db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
    CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
    CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
-   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing);
-   CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method);
+   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+   CREATE TABLE person_registry_links(person_id,registry_indent);
+   CREATE TABLE bidders(id,name);
+   CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
    CREATE TABLE interest_link_evidence(link_key,evidence_kind);
    INSERT INTO declarations VALUES('a','p','2020','assets','','Община А','Кмет','https://example.test/a'),('b','p','2022','assets','','Община Б','Съветник','https://example.test/b');
    INSERT INTO declaration_metadata VALUES('a','Annual','2021-01-01','2021-02-01'),('b','Vacate',NULL,NULL);
    INSERT INTO declared_interests VALUES('a','company','Компания','shares','annual');
-   INSERT INTO interest_link_observations VALUES('l','a','shares','annual');
-   INSERT INTO interest_links VALUES('p','company','111111111','published','private_ownership','l','exact_name_key');
+   INSERT INTO interest_link_observations(link_key,declaration_id,kind,timing) VALUES('l','a','shares','annual');
+   INSERT INTO interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method) VALUES('p','company','111111111','published','private_ownership','l','exact_name_key');
    INSERT INTO interest_link_evidence VALUES('l','document');`);
     const docs = await getPersonDeclarations(d1FromSqlite(db), 'p');
     expect(docs).toHaveLength(2);
@@ -46,9 +48,11 @@ it('uses resolved EIKs for all sources and never borrows a same-named company or
   try {
     db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
       CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
-   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing);
+   CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+   CREATE TABLE person_registry_links(person_id,registry_indent);
+   CREATE TABLE bidders(id,name);
       CREATE TABLE declaration_companies(declaration_id,eik,match_method);
-      CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method);
+      CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
       CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       INSERT INTO declarations VALUES
         ('a','p','2020','assets','','И','П','https://example.test/a'),
@@ -56,9 +60,9 @@ it('uses resolved EIKs for all sources and never borrows a same-named company or
         ('c','p','2022','assets','','И','П','https://example.test/c'),
         ('d','p','2023','assets','','И','П','https://example.test/d');
       INSERT INTO declared_interests VALUES('a','same name','Име','shares','annual'),('b','same name','Име','participation','prior'),('c','prose with EIK','Име с ЕИК','shares','current'),('d','unsealed','Непотвърдено','shares','current');
-      INSERT INTO interest_link_observations VALUES('l1','a','shares','annual'),('l2','b','participation','prior'),('l1','c','shares','current'),('l3','d','shares','current');
+      INSERT INTO interest_link_observations(link_key,declaration_id,kind,timing) VALUES('l1','a','shares','annual'),('l2','b','participation','prior'),('l1','c','shares','current'),('l3','d','shares','current');
       INSERT INTO declaration_companies VALUES('a','111','declared_eik'),('b','222','declared_eik'),('c','111','extracted_name'),('d','333','exact_name_key');
-      INSERT INTO interest_links VALUES
+      INSERT INTO interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method) VALUES
         ('p','same name','111','published','private_ownership','l1','declared_eik'),
         ('p','same name','222','published','private_ownership','l2','declared_eik'),
         ('p','unsealed','333','published','private_ownership','l3','exact_name_key');
@@ -79,6 +83,39 @@ it('uses resolved EIKs for all sources and never borrows a same-named company or
     expect(docs.find((d) => d.id === 'd')!.interests![0]).toMatchObject({
       eik: null,
       scope: 'unknown',
+    });
+  } finally {
+    db.close();
+  }
+});
+
+it('explains both conflicting documents without inventing a stake in the empty filing', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE declarations(id,person_id,declared_year,template,category,institution,position,source_url);
+      CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE bidders(id,name);
+      INSERT INTO bidders VALUES('b','Компания');
+      INSERT INTO declarations VALUES('positive','p','2023','assets','','И','П','https://example.test/positive'),('empty','p','2023','assets','','И','П','https://example.test/empty');
+      INSERT INTO declared_interests VALUES('positive','company','Компания','shares','annual');
+      INSERT INTO interest_links VALUES('p','company','111','published','family_ownership','l','exact_name_key','b');
+      INSERT INTO interest_link_evidence VALUES('l','confirmed');
+      INSERT INTO interest_link_observations VALUES('l','positive','shares','annual','2023'),('l','empty','shares','not_listed','2023');`);
+    const docs = await getPersonDeclarations(d1FromSqlite(db), 'p');
+    expect(docs.find((d) => d.id === 'empty')).toMatchObject({
+      companyEiks: [],
+      interests: [],
+      discrepancies: [
+        { eik: '111', listed: false, scope: 'family', otherDeclarationIds: ['positive'] },
+      ],
+    });
+    expect(docs.find((d) => d.id === 'positive')).toMatchObject({
+      companyEiks: ['111'],
+      discrepancies: [{ listed: true, otherDeclarationIds: ['empty'] }],
     });
   } finally {
     db.close();

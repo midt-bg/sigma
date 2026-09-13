@@ -159,7 +159,29 @@ if (fs.existsSync(conflictsFile)) {
   for (const line of fs.readFileSync(conflictsFile, 'utf8').split('\n').filter(Boolean)) {
     const c = JSON.parse(line);
     const l = publicKeys.get(`${c.personId}|${c.eik}${c.scope === 'family' ? '|family' : ''}`);
-    if (l) flag(l, 'H_inventory_conflict', 'Contradictory comparable inventories must remain held');
+    if (!l) continue;
+    const observations = observationsPresent
+      ? db
+          .prepare(
+            'SELECT declaration_id, timing, reported_year FROM interest_link_observations WHERE link_key=?',
+          )
+          .all(l.link_key)
+      : [];
+    for (const [documents, timing] of [
+      [c.positiveDocuments, 'annual'],
+      [c.otherDocuments, 'not_listed'],
+    ])
+      for (const id of documents)
+        if (
+          !observations.some(
+            (o) => o.declaration_id === id && o.timing === timing && o.reported_year === c.year,
+          )
+        )
+          flag(
+            l,
+            'H_inventory_provenance',
+            'Differing inventories need both dated source observations',
+          );
   }
 }
 

@@ -2633,8 +2633,18 @@ SELECT 'official', il.person_id, p.name, NULL,
        WHERE bb.eik_normalized = il.eik
          AND il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
          AND cc.signed_at IS NOT NULL
-         AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
-             BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
+         AND strftime('%Y',cc.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year
+         AND NOT EXISTS (
+  SELECT 1 FROM interest_link_observations missing
+  JOIN interest_links source_link ON source_link.link_key=missing.link_key
+  WHERE missing.timing='not_listed' AND missing.reported_year=strftime('%Y',cc.signed_at)
+    AND source_link.eik=il.eik AND source_link.interest_class=il.interest_class
+    AND source_link.status='published'
+    AND (source_link.person_id=il.person_id OR EXISTS (
+      SELECT 1 FROM person_registry_links source_person JOIN person_registry_links target_person
+        ON target_person.registry_indent=source_person.registry_indent
+      WHERE source_person.person_id=source_link.person_id AND target_person.person_id=il.person_id))
+)))
 FROM interest_links il JOIN persons p ON p.id = il.person_id
 -- Self OR family stake (ADR-0032). Two guards mirror the /conflicts read layer (related-persons.ts):
 --  (N9) index only a link whose winner has LIVE contracts, so a stale-zero-contract link never becomes a dead

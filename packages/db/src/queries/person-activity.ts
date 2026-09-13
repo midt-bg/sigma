@@ -1,3 +1,4 @@
+import { declarationWindow } from './declaration-source';
 import { publicRole } from './registry';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -85,10 +86,10 @@ export function personActivityScope(indent: string | null, ids: string[]) {
           SELECT 1 FROM registry_deeds rd WHERE rd.eik=r.eik AND rd.outcome='ok'
             AND date(c.signed_at)<=date(rd.fetched_at))))) AS during_role,
       EXISTS (SELECT 1 FROM interest_links il WHERE ${gate} AND il.eik=b.eik_normalized
-        AND c.signed_at IS NOT NULL AND strftime('%Y', c.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year) AS during_declaration,
+        AND c.signed_at IS NOT NULL AND ${declarationWindow('il', 'c.signed_at')}) AS during_declaration,
       (SELECT COALESCE(SUM(DISTINCT CASE WHEN il.interest_class='private_ownership' THEN 1 ELSE 2 END),0)
         FROM interest_links il WHERE ${gate} AND il.eik=b.eik_normalized AND c.signed_at IS NOT NULL
-        AND strftime('%Y', c.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year) AS declaration_basis
+        AND ${declarationWindow('il', 'c.signed_at')}) AS declaration_basis
     FROM contracts c JOIN bidders b ON b.id=c.bidder_id JOIN tenders t ON t.id=c.tender_id
     JOIN authorities a ON a.id=t.authority_id JOIN scoped s ON s.eik=b.eik_normalized
   )`;

@@ -634,7 +634,15 @@ for (const rec of agg.values()) {
   for (const [key, positive] of rec.annualDocuments) {
     const missing = [...annualInventoryDocuments.get(key)].filter((did) => !positive.has(did));
     if (!missing.length) continue;
-    rec.inventoryConflict = true;
+    const year = key.split('|').at(-1);
+    (rec.disputedYears ??= new Set()).add(Number(year));
+    for (const did of missing)
+      rec.observations.set(`${did}|shares|not_listed`, {
+        declarationId: did,
+        kind: 'shares',
+        timing: 'not_listed',
+        reportedYear: year,
+      });
     inventoryConflicts.push({
       personId: rec.pid,
       eik: rec.eik,
@@ -651,7 +659,7 @@ fs.writeFileSync(
 );
 if (inventoryConflicts.length)
   console.log(
-    `  ${inventoryConflicts.length} contradictory annual ownership snapshots — affected links held for source review`,
+    `  ${inventoryConflicts.length} differing annual ownership snapshots — provenance retained; disputed years excluded from declaration timing`,
   );
 // related persons (internal/PII)
 let rpN = 0;
@@ -1046,7 +1054,7 @@ for (const rec of agg.values()) {
     : noEvidence();
   const tier = verdict.kind;
   const contemporaneous = [...years].some(
-    (cy) => temporalStatus(declYears, cy) === 'contemporaneous',
+    (cy) => !rec.disputedYears?.has(cy) && temporalStatus(declYears, cy) === 'contemporaneous',
   )
     ? 1
     : 0;
@@ -1128,13 +1136,11 @@ for (const rec of agg.values()) {
     ? 'suppressed'
     : verdict.kind === 'refuted'
       ? 'withdrawn' // §5.4 — own stakes only; evidence.mjs refuses to refute a family stake
-      : rec.inventoryConflict && surfaces
-        ? 'held'
-        : !surfaces
-          ? 'internal'
-          : verdict.publishable
-            ? 'published'
-            : 'held';
+      : !surfaces
+        ? 'internal'
+        : verdict.publishable
+          ? 'published'
+          : 'held';
   const yrs = [...years];
   insLink.run(
     `il:${linkKey}`,

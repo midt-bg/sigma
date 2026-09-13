@@ -820,6 +820,8 @@ export type ConflictRelation = 'owns' | 'manages' | 'owns+manages' | 'related';
 
 /** One office-holder↔company ownership link with its contract facts and a provenance URL. */
 export interface ConflictLink {
+  /** Comparable annual documents disagree; these years do not establish declaration timing. */
+  disputedYears?: string[];
   declarations?: PersonDeclaration[];
   linkKey: string;
   officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
@@ -921,6 +923,15 @@ export interface CompanyConflicts {
 
 /** A source document, with dates kept distinct from the reporting year. */
 export interface PersonDeclaration {
+  /** Comparison notes, separate from interests actually declared in this document. */
+  discrepancies?: {
+    eik: string;
+    company: string;
+    year: string;
+    scope: 'self' | 'family';
+    listed: boolean;
+    otherDeclarationIds: string[];
+  }[];
   id: string;
   year: string | null;
   template: string;

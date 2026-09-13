@@ -23,6 +23,8 @@ const migrations = [
   // The officials batch now joins the Trade Register evidence seal (#279, ADR-0033) — without 0006 the
   // real refresh-slice.sql this test executes cannot parse.
   '0009_interest_link_evidence.sql',
+  '0014_person_profile.sql',
+  '0015_person_observations.sql',
 ].map((f) => resolve(root, 'packages/db/migrations', f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 

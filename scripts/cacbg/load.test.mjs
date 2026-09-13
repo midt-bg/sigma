@@ -1881,7 +1881,7 @@ test('a later management declaration cannot extend the published ownership perio
   }
 });
 
-test('same-year annual corrections need consistent ownership snapshots; unknown inventories cannot refute them', () => {
+test('same-year inventory differences retain proven links and preserve both sources without asserting timing', () => {
   runLoad();
   const db = open();
   const link = db
@@ -1922,7 +1922,17 @@ test('same-year annual corrections need consistent ownership snapshots; unknown 
           'SELECT status,contract_count,contract_value_eur FROM interest_links WHERE link_key=?',
         )
         .get(link.link_key);
-      assert.equal(actual.status, variant === 'contradictory' ? 'held' : 'published', variant);
+      assert.equal(actual.status, 'published', variant);
+      const omissions = after
+        .prepare(
+          "SELECT declaration_id,reported_year FROM interest_link_observations WHERE link_key=? AND timing='not_listed'",
+        )
+        .all(link.link_key);
+      assert.equal(omissions.length, variant === 'contradictory' ? 1 : 0);
+      if (omissions.length) {
+        assert.equal(omissions[0].declaration_id, `decl:${extra.folder}:${extra.xmlFile}`);
+        assert.equal(omissions[0].reported_year, String(extra.year));
+      }
       assert.equal(
         actual.contract_count,
         link.contract_count,

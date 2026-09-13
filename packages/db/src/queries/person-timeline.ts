@@ -1,3 +1,4 @@
+import { declarationYearDisputed } from './declaration-source';
 import { cleanName } from '@sigma/shared';
 import { personActivityScope } from './person-activity';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
@@ -9,6 +10,7 @@ export interface InterestObservation {
   timing: string;
   reportedYear: string | null;
   scope: 'self' | 'family';
+  disputed?: number;
 }
 export interface TimelineContracts {
   eik: string;
@@ -40,7 +42,7 @@ export async function getPersonTimeline(
       .all<TimelineContracts>(),
     db
       .prepare(
-        `SELECT DISTINCT il.eik,o.declaration_id declarationId,o.kind,o.timing,o.reported_year reportedYear,
+        `SELECT DISTINCT il.eik,o.declaration_id declarationId,o.kind,o.timing,o.reported_year reportedYear, ${declarationYearDisputed('il', 'o.reported_year')} disputed,
       CASE WHEN il.interest_class='family_ownership' THEN 'family' ELSE 'self' END scope
       FROM interest_links il JOIN interest_link_observations o ON o.link_key=il.link_key
       WHERE il.person_id IN (SELECT value FROM json_each(?)) AND ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}

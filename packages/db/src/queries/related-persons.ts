@@ -1,4 +1,8 @@
-import { declarationMatchesLink } from './declaration-source';
+import {
+  declarationMatchesLink,
+  declarationWindow,
+  declarationYearDisputed,
+} from './declaration-source';
 import { getPersonDeclarations } from './declarations';
 import type {
   ConflictLink,
@@ -71,6 +75,7 @@ function conflictSchemaAbsent(e: unknown, op: string): boolean {
 // surfaced blue-chip noise first.
 
 interface LinkRow {
+  disputed_years?: string;
   link_key: string;
   person_id: string;
   official: string;
@@ -123,18 +128,8 @@ const CONTRACT_JOIN = `FROM contracts cc
     JOIN tenders tt ON tt.id = cc.tender_id
     JOIN authorities aa ON aa.id = tt.authority_id
     JOIN bidders bb ON bb.id = cc.bidder_id`;
-// Contemporaneous = signing year within [first_declared_year, last_declared_year] — the same min/max span
-// classify.temporalStatus uses for the stored `contemporaneous` flag, so count>0 ⇔ contemporaneous. NULL
-// bounds (no declared year) ⇒ never in-window, matching the flag. `il` is the outer LINK_SELECT row.
-// SCOPE, stated honestly (todorkolev #226 — N7): this is the SPAN from first to last filing, so a gap year
-// inside it (the official skipped a filing) still counts as in-window. The card + methodology call this „в
-// декларирания период" — the declared PERIOD, first→last — not a per-year claim, so the span is not silently
-// presented as continuous coverage. Narrowing it to the exact set of filed years needs the per-year filing
-// set (a data-model change) and is tracked separately; today the honest framing is the span.
-const IN_WINDOW = `il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
-      AND cc.signed_at IS NOT NULL
-      AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
-          BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)`;
+// A disputed annual snapshot retains the link but does not establish contract timing.
+const IN_WINDOW = declarationWindow('il', 'cc.signed_at');
 
 // Shared projection: published material-ownership links (self + family) + names + a representative
 // declaration URL (provenance, never fabricated). Callers append a scope predicate + ORDER BY.
@@ -174,7 +169,9 @@ export const NOT_REDUNDANT_FAMILY = `NOT (il.interest_class = 'family_ownership'
       SELECT 1 FROM interest_links s
       WHERE s.person_id = il.person_id AND s.eik = il.eik
         AND s.status = 'published' AND s.interest_class = 'private_ownership'))`;
-export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
+export const LINK_SELECT = `SELECT
+    (SELECT json_group_array(DISTINCT years.reported_year) FROM interest_link_observations years
+      WHERE years.timing='not_listed' AND years.reported_year IS NOT NULL AND ${declarationYearDisputed('il', 'years.reported_year')}) AS disputed_years, il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,
     il.first_declared_year, il.last_declared_year, il.match_method,
     il.contract_count, il.contract_value_eur, il.first_contract_year, il.last_contract_year,
@@ -224,7 +221,7 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
          AND (alias_link.person_id=il.person_id OR (pl.registry_indent IS NOT NULL AND alias_person.registry_indent=pl.registry_indent))
          AND ${SURFACED_OWNERSHIP.replaceAll('il.', 'alias_link.')}
          AND ${NOT_REDUNDANT_FAMILY.replaceAll('il.', 'alias_link.')}
-         AND strftime('%Y',cc.signed_at) BETWEEN alias_link.first_declared_year AND alias_link.last_declared_year
+         AND ${declarationWindow('alias_link', 'cc.signed_at')}
      )) AS person_company_value_eur
   FROM interest_links il
   LEFT JOIN interest_link_evidence ev ON ev.link_key = il.link_key
@@ -274,7 +271,8 @@ function toLink(r: LinkRow): ConflictLink {
     company: r.company,
     eik: r.eik,
     relation: r.relation as ConflictRelation,
-    contemporaneous: r.contemporaneous === 1,
+    contemporaneous: r.contemporaneous_contract_count > 0,
+    disputedYears: JSON.parse(r.disputed_years ?? '[]'),
     ownInstitution: r.own_institution === 'exact',
     firstDeclaredYear: r.first_declared_year,
     lastDeclaredYear: r.last_declared_year,
@@ -592,7 +590,8 @@ export const LINK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS author
     COALESCE(NULLIF(cc.contract_subject, ''), tt.title) AS subject,
     NULLIF(tt.procedure_type, 'неизвестна') AS procedure_type,
     CASE
-      WHEN cc.signed_at IS NULL OR il.first_declared_year IS NULL OR il.last_declared_year IS NULL THEN 'unknown'
+      WHEN strftime('%Y',cc.signed_at) IS NULL OR il.first_declared_year IS NULL OR il.last_declared_year IS NULL THEN 'unknown'
+      WHEN ${declarationYearDisputed('il', "strftime('%Y',cc.signed_at)")} THEN 'unknown'
       WHEN CAST(strftime('%Y', cc.signed_at) AS INTEGER) < CAST(il.first_declared_year AS INTEGER) THEN 'before'
       WHEN CAST(strftime('%Y', cc.signed_at) AS INTEGER) > CAST(il.last_declared_year AS INTEGER) THEN 'after'
       ELSE 'contemporaneous'

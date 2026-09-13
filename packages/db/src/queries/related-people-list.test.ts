@@ -8,6 +8,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,own_institution,first_declared_year,last_declared_year);
       CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
       CREATE TABLE interest_link_history(link_key,later_declaration_year,registry_role_ended_on);
       CREATE TABLE person_registry_links(person_id,registry_indent);
       CREATE TABLE declarations(person_id,institution,position,declared_year);

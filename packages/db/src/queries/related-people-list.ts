@@ -1,3 +1,4 @@
+import { declarationWindow } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
 
@@ -20,7 +21,7 @@ const CTE = `WITH links AS MATERIALIZED (
   WHERE b.eik_normalized IN (SELECT eik FROM links)
 ), person_contracts AS (
   SELECT l.identity,c.id,c.eik,c.amount_eur,
-    MAX(c.signed_at IS NOT NULL AND strftime('%Y',c.signed_at) BETWEEN l.first_declared_year AND l.last_declared_year) in_window
+    MAX(${declarationWindow('l', 'c.signed_at')}) in_window
   FROM links l JOIN company_contracts c ON c.eik=l.eik GROUP BY l.identity,c.id
 ), totals AS (
   SELECT identity,COUNT(*) contract_count,COUNT(DISTINCT eik) company_count,SUM(amount_eur) total_eur,
@@ -112,8 +113,7 @@ export async function getRelatedPersonHeadline(
       `${CTE}, selected AS (
     SELECT l.* FROM links l JOIN json_each(?2) j ON j.value=l.identity
   ), contracts_selected AS (
-    SELECT c.id,c.amount_eur,MAX(c.signed_at IS NOT NULL AND strftime('%Y',c.signed_at)
-      BETWEEN l.first_declared_year AND l.last_declared_year) in_window
+    SELECT c.id,c.amount_eur,MAX(${declarationWindow('l', 'c.signed_at')}) in_window
     FROM selected l JOIN company_contracts c ON c.eik=l.eik GROUP BY c.id
   ) SELECT (SELECT COUNT(DISTINCT identity) FROM selected) officialCount,
     (SELECT COUNT(*) FROM (SELECT DISTINCT identity,eik FROM selected)) linkCount,

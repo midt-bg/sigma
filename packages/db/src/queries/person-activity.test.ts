@@ -26,6 +26,8 @@ function fixture() {
     INSERT INTO registry_deeds VALUES('111111111','ok','2026-08-30T12:00:00Z');
     CREATE TABLE interest_links(person_id,eik,link_key,status,interest_class,first_declared_year,last_declared_year);
     CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+    CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+    CREATE TABLE person_registry_links(person_id,registry_indent);
     CREATE TABLE bidders(id,name,eik_normalized);
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
@@ -160,7 +162,7 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
 
 it('the shared timeline covers all contracts without the 500-card limit and separates historical observations', async () => {
   const d1 = fixture();
-  db.exec(`CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+  db.exec(`
     INSERT INTO interest_link_observations VALUES('l','d1','shares','annual','2020'),('l','d2','participation','prior','2025');`);
   const put = db.prepare(
     "INSERT INTO contracts VALUES(?,'Допълнителен','eik:111111111','t','2022-08-01',10)",
@@ -185,7 +187,7 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
 it('includes every proven source identity only when the canonical person has a public interest', async () => {
   const d1 = fixture();
   db.exec(
-    "CREATE TABLE person_registry_links(person_id,registry_indent); INSERT INTO person_registry_links VALUES('official','canonical'),('alias-without-own-link','canonical'),('unrelated','other')",
+    "INSERT INTO person_registry_links VALUES('official','canonical'),('alias-without-own-link','canonical'),('unrelated','other')",
   );
   expect(await getRegistryOfficials(d1, 'canonical')).toEqual([
     'alias-without-own-link',
@@ -225,4 +227,38 @@ it('defaults to all contracts, preserving unknown dates and separating contextua
   expect(filtered.years).toEqual([{ year: '2022', contracts: 1, valueEur: 300 }]);
   expect(filtered.byAuthority[0]).toMatchObject({ contracts: 1, valueEur: 300 });
   expect(filtered.yearOptions).toEqual(all.yearOptions);
+});
+
+it('disputed inventories retain all company contracts, exclude disputed years, and keep independent registry timing', async () => {
+  const d1 = fixture();
+  db.exec(`INSERT INTO interest_link_observations VALUES('l','positive','shares','annual','2020'),('l','other','shares','not_listed','2020');
+    INSERT INTO person_registry_links VALUES('official','person'),('alias','person');
+    INSERT INTO interest_links VALUES('alias','111111111','alias-l','published','private_ownership','2020','2021');
+    INSERT INTO interest_link_evidence VALUES('alias-l','document');`);
+  const all = await getPersonActivity(d1, 'person', ['official', 'alias'], new URLSearchParams());
+  expect(all.total).toBe(4);
+  expect(all.contracts.find((r) => r.id === 'a')).toMatchObject({
+    duringRole: true,
+    duringDeclaration: false,
+    declarationBasis: 0,
+  });
+  expect(all.contracts.find((r) => r.id === 'b')).toMatchObject({
+    duringRole: false,
+    duringDeclaration: true,
+  });
+  const declared = await getPersonActivity(
+    d1,
+    null,
+    ['alias'],
+    new URLSearchParams('basis=declaration'),
+  );
+  expect(declared.contracts.map((r) => r.id)).toEqual(['b']); // aliases cannot bypass the disputed year
+  db.exec("UPDATE interest_links SET interest_class='family_ownership' WHERE link_key='alias-l'");
+  expect(
+    (await getPersonActivity(d1, null, ['alias'], new URLSearchParams('basis=family'))).total,
+  ).toBe(2); // a different holder is independent
+  db.exec("UPDATE interest_links SET status='held'");
+  expect(
+    (await getPersonActivity(d1, null, ['official', 'alias'], new URLSearchParams())).total,
+  ).toBe(0);
 });
