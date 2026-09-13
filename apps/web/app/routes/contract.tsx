@@ -481,13 +481,6 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                   ),
                 sub: c.euProgramme ?? undefined,
               },
-            ]}
-          />
-        </Section>
-
-        <Section id="dates" title="Дати и срокове">
-          <FactsList
-            rows={[
               {
                 term: 'Подписан на',
                 value: c.signedAt ? (
