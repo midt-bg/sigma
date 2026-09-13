@@ -249,12 +249,23 @@ WITH RECURSIVE
   )
 SELECT m.consortium_id, c.bidder_id FROM member m JOIN comp c ON c.key = m.key;
 
--- Pairs are stored once, a < b. The weight is what the обединения they share won together.
+-- Pairs are stored once, a < b. The weight keeps all source contracts. Count a fully resolved
+-- member set once regardless of input order; incomplete groups keep their source identity.
 INSERT INTO company_links (a_bidder_id, b_bidder_id, kind, directed, weight_eur, occurrences)
+WITH compositions AS (
+  SELECT b.id,
+    CASE WHEN (SELECT COUNT(*) FROM consortium_members m WHERE m.consortium_id=b.id)
+                   = length(b.name)-length(replace(b.name,';',''))+1
+      THEN (SELECT json_group_array(bidder_id) FROM (
+        SELECT bidder_id FROM consortium_members m WHERE m.consortium_id=b.id ORDER BY bidder_id))
+      ELSE b.id END AS composition
+  FROM bidders b WHERE b.kind='consortium'
+)
 SELECT x.bidder_id, y.bidder_id, 'consortium', 0,
-       COALESCE(SUM(ct.won_eur), 0), COUNT(DISTINCT x.consortium_id)
+       COALESCE(SUM(ct.won_eur), 0), COUNT(DISTINCT g.composition)
 FROM consortium_members x
 JOIN consortium_members y ON y.consortium_id = x.consortium_id AND y.bidder_id > x.bidder_id
+JOIN compositions g ON g.id=x.consortium_id
 LEFT JOIN company_totals ct ON ct.bidder_id = x.consortium_id
 GROUP BY x.bidder_id, y.bidder_id;
 

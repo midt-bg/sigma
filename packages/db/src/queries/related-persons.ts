@@ -430,6 +430,15 @@ export async function getOfficialConflicts(
 export const COMPANY_SQL = `${LINK_SELECT} AND il.eik = ?
   ORDER BY ${NEXUS_ORDER} LIMIT ${DETAIL_LINKS_LIMIT}`;
 
+/** All evidenced declarants for a company's compact profile section, without contract/document payloads. */
+export async function getCompanyDeclarants(db: D1Database, eik: string): Promise<ConflictLink[]> {
+  const rows = await db
+    .prepare(`${LINK_SELECT} AND il.eik=? ORDER BY ${NEXUS_ORDER}`)
+    .bind(eik)
+    .all<LinkRow>();
+  return sealed(rows.results).map(toLink);
+}
+
 /** Office-holders with a declared ownership stake in one winner (by ЕИК), with each link's contracts loaded
  *  eagerly. Null when there are none. */
 export async function getCompanyConflicts(

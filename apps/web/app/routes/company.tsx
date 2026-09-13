@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
+  date,
   isNaturalPersonProfileName,
   money,
   moneyBare,
@@ -11,6 +12,9 @@ import {
 import {
   bidderIdFromSlug,
   getCompany,
+  getCompanyDeclarants,
+  getParticipantContracts,
+  contractSlug,
   getCompanyPeople,
   getCompanyTies,
   getSpendingTrend,
@@ -33,6 +37,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { groupByPerson, officialHref } from '../lib/conflicts';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -84,17 +89,33 @@ export async function loader({ params, context }: Route.LoaderArgs) {
       getCompanyPeople(db, id),
     ]);
     if (!company) throw new Response('Not Found', { status: 404 });
-    return { company, coverage, trend, ties, people, tieLayout: layoutTies(ties) };
+    const [declarants, jointContracts] = await Promise.all([
+      company.eik && ties.center?.conflictsHref
+        ? getCompanyDeclarants(db, company.eik)
+        : Promise.resolve([]),
+      company.contracts === 0 ? getParticipantContracts(db, id) : Promise.resolve([]),
+    ]);
+    return {
+      company,
+      coverage,
+      trend,
+      ties,
+      people,
+      declarants,
+      jointContracts,
+      tieLayout: layoutTies(ties),
+    };
   });
 }
 
 export default function Company({ loaderData }: Route.ComponentProps) {
   const c = loaderData.company;
-  const { trend, ties, people, tieLayout } = loaderData;
+  const { trend, ties, people, tieLayout, declarants, jointContracts } = loaderData;
   const range = coverageRange(loaderData.coverage.coverageEndYear);
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
   const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
+  const officials = groupByPerson(declarants ?? []);
   return (
     <>
       <Breadcrumbs
@@ -108,7 +129,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         <PageHeader
           kicker={
             <>
-              {c.isConsortium ? 'Обединение' : 'Компания'}
+              {c.isConsortium ? 'Група изпълнители' : noEikCompany ? 'Участник' : 'Компания'}
               {noEikCompany && (
                 <>
                   {' '}
@@ -121,12 +142,16 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <OwnershipChip kind={c.ownershipKind} />
                 </>
               )}
-              {ties.center?.conflictsHref && (
+              {officials.length > 0 && (
                 <>
                   {' · '}
-                  <Link to={ties.center.conflictsHref}>
-                    <Chip tone="window">деклариран дял на длъжностно лице</Chip>
-                  </Link>
+                  <a href="#declared-people">
+                    <Chip tone="window" explain={false}>
+                      {declarants.every((l) => l.relation === 'related')
+                        ? 'дял на свързано лице'
+                        : 'деклариран дял на длъжностно лице'}
+                    </Chip>
+                  </a>
                 </>
               )}
               {c.sector && (
@@ -135,15 +160,14 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <Chip>{c.sector.short}</Chip>
                 </>
               )}
-              {c.hasEik && c.eik && (
-                <>
-                  {' · '}ЕИК&nbsp;{c.eik}
-                </>
-              )}
             </>
           }
           title={c.displayName}
-          lede={`Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`}
+          lede={
+            noEikCompany
+              ? 'Участник, посочен по име в данните за обществени поръчки. Без публикуван идентификатор не установяваме правна форма или самоличност по сходство на името.'
+              : `Колко публични средства е ${wonVerb} ${subjectPhrase} по обществени поръчки за периода ${range} г.`
+          }
         >
           {c.hasEik && c.eik && <RegistryCta eik={c.eik} />}
         </PageHeader>
@@ -151,25 +175,35 @@ export default function Company({ loaderData }: Route.ComponentProps) {
         <FactsList
           label="Ключови показатели"
           rows={[
-            { term: 'Общо спечелено', value: money(c.wonEur) },
-            { term: 'Брой договори', value: count(c.contracts) },
-            { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
-            { term: 'Възложители', value: count(c.authorities) },
+            c.hasEik && c.eik && { term: 'ЕИК', value: c.eik },
+            c.contracts > 0 && { term: 'Общо спечелено', value: money(c.wonEur) },
+            !!jointContracts?.length && {
+              term: 'Съвместно изпълнение',
+              value: `${count(jointContracts.length)} договора`,
+              sub: 'Индивидуалният дял от стойността не е установен.',
+            },
+            c.contracts > 0 && { term: 'Брой договори', value: count(c.contracts) },
+            c.contracts > 0 && { term: 'Период', value: periodRange(c.periodFirst, c.periodLast) },
+            c.contracts > 0 && { term: 'Възложители', value: count(c.authorities) },
             c.sector && {
               term: 'Основен сектор',
               value: `${c.sector.label} (CPV ${c.sector.code})`,
               sub: c.sectorSharePct != null ? `${pct(c.sectorSharePct)} от стойността` : undefined,
             },
-            { term: 'Дял с финансиране от ЕС', value: pct(c.euSharePct) },
+            c.contracts > 0 && { term: 'Дял с финансиране от ЕС', value: pct(c.euSharePct) },
             c.avgBids != null && {
               term: 'Средно оферти на търг',
               value: c.avgBids.toString().replace('.', ','),
             },
             {
               term: 'Вид субект',
-              value: c.isConsortium ? 'обединение' : 'дружество',
+              value: c.isConsortium
+                ? 'група изпълнители'
+                : noEikCompany
+                  ? 'участник без потвърден идентификатор'
+                  : 'дружество',
               sub: c.isConsortium
-                ? '(ДЗЗД / консорциум)'
+                ? 'съвместно посочени изпълнители в източника'
                 : noEikCompany
                   ? 'без ЕИК в източника'
                   : undefined,
@@ -182,6 +216,89 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             },
           ]}
         />
+
+        {officials.length > 0 && (
+          <Section id="declared-people" title="Длъжностни лица с декларирана връзка">
+            <DataTable
+              columns={[
+                {
+                  key: 'person',
+                  header: 'Длъжностно лице',
+                  isTitle: true,
+                  cell: (r) => <Link to={officialHref(r.officialSlug)}>{r.official}</Link>,
+                },
+                {
+                  key: 'office',
+                  header: 'Институция и длъжност',
+                  cell: (r) => (
+                    <ul className="entity-list">
+                      {r.declaredInstitutions?.map((i) => (
+                        <li key={i.institution}>
+                          {i.institution}
+                          {i.positions.length > 0 && (
+                            <div className="small muted">{i.positions.join('; ')}</div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ),
+                },
+                {
+                  key: 'basis',
+                  header: 'Декларирано участие',
+                  cell: (r) => (
+                    <Chip>
+                      {r.stakeKind === 'family'
+                        ? 'дял на свързано лице'
+                        : r.stakeKind === 'mixed'
+                          ? 'собствен и свързан дял'
+                          : 'деклариран собствен дял'}
+                    </Chip>
+                  ),
+                },
+              ]}
+              rows={officials}
+              getKey={(r) => r.personIdentity ?? r.officialSlug}
+            />
+          </Section>
+        )}
+        {!!jointContracts?.length && (
+          <Section
+            id="joint-contracts"
+            title="Съвместно изпълнение"
+            hint="Източникът посочва този участник заедно с други изпълнители. Стойностите са за целите договори; индивидуален дял от тях не е установен."
+          >
+            <DataTable
+              rows={jointContracts}
+              getKey={(r) => r.id}
+              columns={[
+                {
+                  key: 'contract',
+                  header: 'Договор',
+                  isTitle: true,
+                  cell: (r) => <Link to={`/contracts/${contractSlug(r.id)}`}>{r.subject}</Link>,
+                },
+                { key: 'group', header: 'Посочени изпълнители', cell: (r) => r.groupName },
+                {
+                  key: 'authority',
+                  header: 'Възложител',
+                  cell: (r) => (
+                    <Link to={`/authorities/${r.authorityId.replace(/^auth:/, '')}`}>
+                      {r.authority}
+                    </Link>
+                  ),
+                },
+                { key: 'date', header: 'Сключен на', cell: (r) => date(r.signedAt) },
+                {
+                  key: 'value',
+                  header: 'Стойност на договора',
+                  align: 'money',
+                  cell: (r) => money(r.valueEur),
+                },
+              ]}
+            />
+          </Section>
+        )}
 
         {/* Consortium membership. Shown only when the source row gave us something to break out
             (a `;`-list or the rare free-text dump). Plain companies and one-name "ИНТЕРБОЛГАРСТРОЙ
@@ -224,124 +341,128 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           </Section>
         )}
 
-        <Section
-          id="trend"
-          title="Тренд"
-          hint={`Спечеленото от ${c.displayName} във времето. Договорите без валидна дата не влизат в графиката.`}
-        >
-          <TrendBlock
-            points={trend.points}
-            years={trend.years}
-            granularity={trend.granularity}
-            caption="Спечелено по години"
-            split
-          />
-        </Section>
+        {c.contracts > 0 && (
+          <>
+            <Section
+              id="trend"
+              title="Тренд"
+              hint={`Спечеленото от ${c.displayName} във времето. Договорите без валидна дата не влизат в графиката.`}
+            >
+              <TrendBlock
+                points={trend.points}
+                years={trend.years}
+                granularity={trend.granularity}
+                caption="Спечелено по години"
+                split
+              />
+            </Section>
 
-        <div className="two-col">
-          <Section
-            id="how-win"
-            title="Как печели"
-            hint="Видът процедури, по които компанията е печелила договорите."
-          >
-            <StackedBar slices={c.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
-          </Section>
+            <div className="two-col">
+              <Section
+                id="how-win"
+                title="Как печели"
+                hint="Видът процедури, по които компанията е печелила договорите."
+              >
+                <StackedBar slices={c.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
+              </Section>
 
-          <Section
-            id="bids"
-            title="Брой оферти на спечелените търгове"
-            hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
-          >
-            <table>
-              <caption className="sr-only">Брой оферти на спечелените търгове</caption>
-              <thead className="sr-only">
-                <tr>
-                  <th scope="col">Брой оферти</th>
-                  <th scope="col">Брой търгове</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>1 оферта</td>
-                  <td className="money">{count(c.bids.one)} търга</td>
-                </tr>
-                <tr>
-                  <td>2 оферти</td>
-                  <td className="money">{count(c.bids.two)} търга</td>
-                </tr>
-                <tr>
-                  <td>3 оферти</td>
-                  <td className="money">{count(c.bids.three)} търга</td>
-                </tr>
-                <tr>
-                  <td>4 и повече оферти</td>
-                  <td className="money">{count(c.bids.fourPlus)} търга</td>
-                </tr>
-                {c.bids.unknown > 0 && (
-                  <tr>
-                    <td className="muted">няма данни</td>
-                    <td className="money muted">{count(c.bids.unknown)} търга</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Section>
-        </div>
+              <Section
+                id="bids"
+                title="Брой оферти на спечелените търгове"
+                hint="Колко оферти е имало на спечелените от компанията търгове (там, където данните го показват)."
+              >
+                <table>
+                  <caption className="sr-only">Брой оферти на спечелените търгове</caption>
+                  <thead className="sr-only">
+                    <tr>
+                      <th scope="col">Брой оферти</th>
+                      <th scope="col">Брой търгове</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>1 оферта</td>
+                      <td className="money">{count(c.bids.one)} търга</td>
+                    </tr>
+                    <tr>
+                      <td>2 оферти</td>
+                      <td className="money">{count(c.bids.two)} търга</td>
+                    </tr>
+                    <tr>
+                      <td>3 оферти</td>
+                      <td className="money">{count(c.bids.three)} търга</td>
+                    </tr>
+                    <tr>
+                      <td>4 и повече оферти</td>
+                      <td className="money">{count(c.bids.fourPlus)} търга</td>
+                    </tr>
+                    {c.bids.unknown > 0 && (
+                      <tr>
+                        <td className="muted">няма данни</td>
+                        <td className="money muted">{count(c.bids.unknown)} търга</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </Section>
+            </div>
 
-        <Section
-          id="from"
-          title="Откъде печели"
-          hint={`Институции, подредени по сумата, платена на ${c.displayName.replace(/\.$/, '')}.`}
-        >
-          <div className="table-wrap tbl-cards">
-            <table>
-              <caption className="sr-only">
-                Институции платци, подредени по сумата, платена на компанията
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">#</th>
-                  <th scope="col">Институция</th>
-                  <th scope="col" className="num">
-                    Платено на компанията (€)
-                  </th>
-                  <th scope="col" className="num">
-                    Договори
-                  </th>
-                  <th scope="col">Дял от спечеленото</th>
-                </tr>
-              </thead>
-              <tbody>
-                {c.topAuthorities.map((a, i) => (
-                  <tr key={a.slug}>
-                    <td className="rank cell-rank" data-label="#">
-                      {i + 1}
-                    </td>
-                    <td className="cell-title" data-label="Институция">
-                      <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
-                    </td>
-                    <td className="money" data-label="Платено (€)">
-                      {moneyBare(a.paidEur)}
-                    </td>
-                    <td className="money" data-label="Договори">
-                      {count(a.contracts)}
-                    </td>
-                    <td data-label="Дял">
-                      <ShareBar ratio={a.sharePct} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {c.moreAuthorities > 0 && (
-            <p className="small muted mt-s3">
-              <Link to={`/contracts?bidder=${c.slug}`}>
-                … още {count(c.moreAuthorities)} институции — виж всички договори →
-              </Link>
-            </p>
-          )}
-        </Section>
+            <Section
+              id="from"
+              title="Откъде печели"
+              hint={`Институции, подредени по сумата, платена на ${c.displayName.replace(/\.$/, '')}.`}
+            >
+              <div className="table-wrap tbl-cards">
+                <table>
+                  <caption className="sr-only">
+                    Институции платци, подредени по сумата, платена на компанията
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">#</th>
+                      <th scope="col">Институция</th>
+                      <th scope="col" className="num">
+                        Платено на компанията (€)
+                      </th>
+                      <th scope="col" className="num">
+                        Договори
+                      </th>
+                      <th scope="col">Дял от спечеленото</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {c.topAuthorities.map((a, i) => (
+                      <tr key={a.slug}>
+                        <td className="rank cell-rank" data-label="#">
+                          {i + 1}
+                        </td>
+                        <td className="cell-title" data-label="Институция">
+                          <Link to={`/authorities/${a.slug}`}>{a.name}</Link>
+                        </td>
+                        <td className="money" data-label="Платено (€)">
+                          {moneyBare(a.paidEur)}
+                        </td>
+                        <td className="money" data-label="Договори">
+                          {count(a.contracts)}
+                        </td>
+                        <td data-label="Дял">
+                          <ShareBar ratio={a.sharePct} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {c.moreAuthorities > 0 && (
+                <p className="small muted mt-s3">
+                  <Link to={`/contracts?bidder=${c.slug}`}>
+                    … още {count(c.moreAuthorities)} институции — виж всички договори →
+                  </Link>
+                </p>
+              )}
+            </Section>
+          </>
+        )}
 
         {people.asOf && (
           <Section
@@ -359,7 +480,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           title="Връзки с дружества и лица"
           hint={
             <span>
-              С кои дружества и лица {subjectPhrase} е свързана: съвместно участие в обединение,
+              С кои дружества и лица {subjectPhrase} има връзки: съвместно изпълнение на договор,
               възлагане на подизпълнител, деклариран интерес на едно и също длъжностно лице, или
               роля по Търговския регистър — управители, съдружници, членове на органите — и другите
               дружества, в които те имат роля. Показани са и институциите, от които идват парите.{' '}
@@ -395,57 +516,59 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           )}
         </Section>
 
-        <Section
-          id="latest"
-          title="Договори"
-          hint={
-            <span>
-              {Math.min(Math.max(c.recentContracts.length, c.topContracts.length), 7)} от{' '}
-              {count(c.contracts)} {plural(c.contracts, 'договор', 'договора')} — превключи между
-              най-новите и най-големите по стойност.
-            </span>
-          }
-        >
-          <div className="tabset" role="radiogroup" aria-label="Подреждане на договорите">
-            <input
-              type="radio"
-              name="company-contracts"
-              id="company-recent"
-              className="tab-input"
-              defaultChecked
-            />
-            <input type="radio" name="company-contracts" id="company-top" className="tab-input" />
-            <div className="tab-labels">
-              <label id="tab-company-recent" htmlFor="company-recent">
-                Най-нови
-              </label>
-              <label id="tab-company-top" htmlFor="company-top">
-                Най-големи по стойност
-              </label>
+        {c.contracts > 0 && (
+          <Section
+            id="latest"
+            title="Договори"
+            hint={
+              <span>
+                {Math.min(Math.max(c.recentContracts.length, c.topContracts.length), 7)} от{' '}
+                {count(c.contracts)} {plural(c.contracts, 'договор', 'договора')} — превключи между
+                най-новите и най-големите по стойност.
+              </span>
+            }
+          >
+            <div className="tabset" role="radiogroup" aria-label="Подреждане на договорите">
+              <input
+                type="radio"
+                name="company-contracts"
+                id="company-recent"
+                className="tab-input"
+                defaultChecked
+              />
+              <input type="radio" name="company-contracts" id="company-top" className="tab-input" />
+              <div className="tab-labels">
+                <label id="tab-company-recent" htmlFor="company-recent">
+                  Най-нови
+                </label>
+                <label id="tab-company-top" htmlFor="company-top">
+                  Най-големи по стойност
+                </label>
+              </div>
+              <div
+                className="tab-panel"
+                data-tab="recent"
+                role="group"
+                aria-labelledby="tab-company-recent"
+              >
+                <ContractMiniTable items={c.recentContracts} counterparty="authority" />
+              </div>
+              <div
+                className="tab-panel"
+                data-tab="top"
+                role="group"
+                aria-labelledby="tab-company-top"
+              >
+                <ContractMiniTable items={c.topContracts} counterparty="authority" />
+              </div>
             </div>
-            <div
-              className="tab-panel"
-              data-tab="recent"
-              role="group"
-              aria-labelledby="tab-company-recent"
-            >
-              <ContractMiniTable items={c.recentContracts} counterparty="authority" />
-            </div>
-            <div
-              className="tab-panel"
-              data-tab="top"
-              role="group"
-              aria-labelledby="tab-company-top"
-            >
-              <ContractMiniTable items={c.topContracts} counterparty="authority" />
-            </div>
-          </div>
-          <p className="small muted mt-8">
-            <Link to={`/contracts?bidder=${c.slug}`}>
-              Виж всички / филтрирай / свали като CSV →
-            </Link>
-          </p>
-        </Section>
+            <p className="small muted mt-8">
+              <Link to={`/contracts?bidder=${c.slug}`}>
+                Виж всички / филтрирай / свали като CSV →
+              </Link>
+            </p>
+          </Section>
+        )}
       </main>
     </>
   );

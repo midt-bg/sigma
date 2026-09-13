@@ -24,7 +24,7 @@ import { roleSentence } from '../lib/registry-roles';
 // as it names them, each linking to their page (ADR-0039).
 
 const TIE_LABEL: Record<CompanyTieKind, string> = {
-  consortium: 'общо обединение',
+  consortium: 'съвместно изпълнение',
   subcontract: 'подизпълнител',
   declared_stake: 'общо свързано лице',
   role: 'роля по Търговския регистър',
@@ -42,12 +42,14 @@ export function tieDescription(e: CompanyTieEdge): string {
       ? `${TIE_LABEL.declared_stake} — ${count(e.occurrences)} лица`
       : TIE_LABEL.declared_stake;
   }
+  if (e.kind === 'consortium')
+    return `${TIE_LABEL.consortium} — ${count(e.occurrences)} ${e.occurrences === 1 ? 'състав' : 'състава'} изпълнители, ${money(e.weightEur)} обща стойност на договорите`;
   const n = e.occurrences > 1 ? ` — ${count(e.occurrences)} пъти` : '';
   return `${TIE_LABEL[e.kind]}${n}, ${money(e.weightEur)}`;
 }
 
 const KIND_WORD: Record<TieLayoutNode['kind'], string> = {
-  company: 'дружество',
+  company: 'участник',
   authority: 'институция',
   person: 'лице',
 };

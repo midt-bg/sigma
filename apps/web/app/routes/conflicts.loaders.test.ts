@@ -151,7 +151,7 @@ describe('leaderboard loader (/conflicts)', () => {
     expect(res.data.total).toBe(1205);
     expect(res.data.pageRows).toHaveLength(5);
     expect(res.data.pageRows[0]!.personIdentity).toBe('p1200');
-    expect(q.getRelatedPersonHeadline.mock.calls.at(-1)![1]).toHaveLength(1205);
+    expect(q.getRelatedPersonHeadline).not.toHaveBeenCalled();
     const filtered = await leaderboardLoader({
       request: req('?q=Лице%201204&page=13'),
       context,

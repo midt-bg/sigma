@@ -95,10 +95,21 @@ interface CompanyTotalsFull {
 }
 
 export async function getCompany(db: D1Database, bidderId: string): Promise<CompanyDetail | null> {
-  const row = await db
+  let row = await db
     .prepare(`SELECT * FROM company_totals WHERE bidder_id = ?`)
     .bind(bidderId)
     .first<CompanyTotalsFull>();
+  // Some named participants only occur in jointly awarded contracts. They still need a valid
+  // destination from the graph; no joint amount is attributed to them individually.
+  if (!row)
+    row = await db
+      .prepare(
+        `SELECT id bidder_id,name,kind,ownership_kind,eik_normalized eik,eik_valid,settlement,
+    0 won_eur,0 contracts,0 authorities,NULL primary_sector,0 eu_eur,NULL first_date,NULL last_date
+    FROM bidders WHERE id=?`,
+      )
+      .bind(bidderId)
+      .first<CompanyTotalsFull>();
   if (!row) return null;
 
   const [bidderMeta, extra, topAuth, procRows, bidsRow, suspectRow, top, recent] =
@@ -214,6 +225,29 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     participants,
     membershipNote,
   };
+}
+
+/** Source contracts of groups naming this participant; the amount belongs to the whole group. */
+export async function getParticipantContracts(db: D1Database, bidderId: string) {
+  const result = await db
+    .prepare(
+      `SELECT DISTINCT c.id,COALESCE(c.contract_subject,t.title) subject,c.signed_at signedAt,
+    c.amount_eur valueEur,a.name authority,a.id authorityId,b.name groupName
+    FROM consortium_members m JOIN contracts c ON c.bidder_id=m.consortium_id
+    JOIN bidders b ON b.id=c.bidder_id JOIN tenders t ON t.id=c.tender_id JOIN authorities a ON a.id=t.authority_id
+    WHERE m.bidder_id=? ORDER BY c.signed_at DESC,c.id`,
+    )
+    .bind(bidderId)
+    .all<{
+      id: string;
+      subject: string;
+      signedAt: string | null;
+      valueEur: number | null;
+      authority: string;
+      authorityId: string;
+      groupName: string;
+    }>();
+  return result.results;
 }
 
 // ── Authority ─────────────────────────────────────────────────────────────────────────────────

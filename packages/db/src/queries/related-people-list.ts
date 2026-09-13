@@ -40,6 +40,10 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
     .prepare(
       `${CTE}
     SELECT p.*,r.name,r.person_id,t.*,
+      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family)) FROM (
+        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.interest_class='private_ownership') self,MAX(l.interest_class='family_ownership') family
+        FROM links l JOIN bidders b ON b.eik_normalized=l.eik WHERE l.identity=p.identity GROUP BY l.eik ORDER BY b.name
+      ) co) companies,
       (SELECT b.name FROM bidders b WHERE b.eik_normalized=r.eik ORDER BY b.id LIMIT 1) company,r.eik,
       (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
         FROM declarations d WHERE d.person_id IN (SELECT person_id FROM links WHERE identity=p.identity)) offices
@@ -63,6 +67,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       self_stake: number;
       family_stake: number;
       offices: string;
+      companies: string;
     }>();
   return result.results.map((r) => ({
     official: r.name,
@@ -71,6 +76,12 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
     institution: null,
     position: null,
     companyCount: r.company_count,
+    companies: JSON.parse(r.companies) as {
+      company: string;
+      eik: string;
+      self: number;
+      family: number;
+    }[],
     soleCompany: r.company_count === 1 ? { company: r.company, eik: r.eik } : null,
     contractCount: r.contract_count,
     contractValueEur: r.total_eur,

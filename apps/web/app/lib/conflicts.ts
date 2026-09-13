@@ -478,6 +478,7 @@ export interface ConflictPersonRow {
   position: string | null;
   /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
   companyCount: number;
+  companies?: { company: string; eik: string; self: number; family: number }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
   /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,
@@ -628,6 +629,12 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         position: strongest.position,
         companyCount,
         soleCompany,
+        companies: [...new Set(groupLinks.map((l) => l.eik))].map((eik) => ({
+          eik,
+          company: groupLinks.find((l) => l.eik === eik)!.company,
+          self: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'owns')),
+          family: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'related')),
+        })),
         contractCount,
         contractValueEur,
         contemporaneousValueEur,

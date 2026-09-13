@@ -10,6 +10,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
 import type { ConflictLink } from '@sigma/api-contract';
+import {
+  groupByPerson,
+  conflictListFilters,
+  filterConflictRows,
+  sortConflictRows,
+  institutionOptions,
+} from '../lib/conflicts';
 import Conflicts, { meta, headers } from './conflicts';
 
 // React needs this flag to run act() cleanly under the jsdom test environment.
@@ -102,7 +109,32 @@ async function renderConflicts(
   url = '/conflicts',
 ) {
   const Stub = createRoutesStub([
-    { path: '/conflicts', Component: Conflicts, loader: () => ({ links, authority }) },
+    {
+      path: '/conflicts',
+      Component: Conflicts,
+      loader: ({ request }) => {
+        const sp = new URL(request.url).searchParams;
+        const filters = conflictListFilters(sp);
+        const all = groupByPerson(links);
+        const rows = sortConflictRows(filterConflictRows(all, filters), filters.sort);
+        const page = Number(sp.get('page') || 1);
+        return {
+          authority,
+          page,
+          pageCount: Math.max(1, Math.ceil(rows.length / 100)),
+          total: rows.length,
+          available: all.length,
+          pageRows: rows.slice((page - 1) * 100, page * 100),
+          facets: {
+            self: all.filter((r) => r.stakeKind !== 'family').length,
+            family: all.filter((r) => r.stakeKind !== 'self').length,
+            own: all.filter((r) => r.ownInstitution).length,
+            window: all.filter((r) => r.hasContemporaneous).length,
+            institutions: institutionOptions(all, filters.institutions),
+          },
+        };
+      },
+    },
     { path: '/authorities/:eik', Component: () => null },
     { path: '/conflicts/official/:slug', Component: () => null },
     { path: '/conflicts/company/:eik', Component: () => null },
@@ -135,9 +167,11 @@ describe('/conflicts route — render', () => {
     ]);
     expect(bodyRows()).toHaveLength(1);
     expect(bodyRows()[0].textContent).toContain('Институции в декларациите');
-    expect(bodyRows()[0].textContent).toContain('Община Русе · 2019');
-    expect(bodyRows()[0].textContent).toContain('Народно събрание · 2025');
-    expect(text()).toContain('2 връзки'); // the summary retains both source profiles after grouping
+    expect(bodyRows()[0].textContent).toContain('Община Русе');
+    expect(bodyRows()[0].textContent).toContain('2019');
+    expect(bodyRows()[0].textContent).toContain('Народно събрание');
+    expect(bodyRows()[0].textContent).toContain('2025');
+    expect(bodyRows()[0].querySelectorAll('td[data-label="Дружества"] a')).toHaveLength(1);
   });
   it('meta() marks the page noindex and titles it', () => {
     const tags = meta({ matches: [] } as never);
@@ -190,13 +224,13 @@ describe('/conflicts route — render', () => {
     expect(container.querySelector('table')).toBeNull();
   });
 
-  it('renders the summary totals and the magnitude bar for a populated leaderboard', async () => {
+  it('omits the removed summary and magnitude panel', async () => {
     await renderConflicts([link(), familyLink]);
-    expect(text()).toContain('Длъжностни лица с деклариран дял');
-    expect(text()).toContain('Връзки към изпълнители');
+    expect(container.querySelector('.conflict-headline')).toBeNull();
+    expect(text()).not.toContain('Връзки към изпълнители');
     // contemporaneous magnitude bar renders only when both totals are > 0
-    expect(container.querySelector('.conflict-headline-mag')).not.toBeNull();
-    expect(container.querySelector('.share-bar, [class*="share"]')).not.toBeNull();
+    expect(container.querySelector('.conflict-headline-mag')).toBeNull();
+    expect(container.querySelector('.share-bar, [class*="share"]')).toBeNull();
   });
 
   it('renders a native table with a non-empty caption and every header scoped to its column', async () => {
@@ -276,7 +310,7 @@ describe('/conflicts route — render', () => {
     expect(funds.textContent).toContain('88');
   });
 
-  it('Дружества: 3 distinct winners → the count; a single winner → its name', async () => {
+  it('Дружества: every distinct winner is named and linked', async () => {
     await renderConflicts([
       link({
         officialSlug: 'multi',
@@ -302,8 +336,8 @@ describe('/conflicts route — render', () => {
     ]);
     const multiRow = bodyRows().find((r) => r.textContent?.includes('Много Тестов'))!;
     const cell = multiRow.querySelector('td[data-label="Дружества"]')!;
-    expect(cell.textContent).toContain('3'); // count, not a company name
-    expect(cell.textContent).not.toContain('АД');
+    expect(cell.querySelectorAll('a')).toHaveLength(3);
+    expect(cell.textContent).toContain('АД');
 
     // Single-winner person → the winner's NAME in the Дружества cell.
     await renderConflicts([link()]);
@@ -311,7 +345,7 @@ describe('/conflicts route — render', () => {
     expect(soleCell.textContent).toContain('ТРЕЙС ГРУП ХОЛД АД');
   });
 
-  it('признаци live in a SECONDARY column and a flag sourced from a SECOND link still renders', async () => {
+  it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {
     // A person whose FIRST link has no own-institution but a SECOND link does — the OR across links must
     // surface the chip. Both signals rendered as restrained chips (no inline colour/style).
     const primary = link({
@@ -335,7 +369,7 @@ describe('/conflicts route — render', () => {
     await renderConflicts([primary, second]);
     const row = bodyRows().find((r) => r.textContent?.includes('Флаг Тестов'))!;
     const signals = row.querySelector('td[data-label="Признаци"]')!;
-    expect(signals.classList.contains('col-secondary')).toBe(true);
+    expect(signals.classList.contains('col-secondary')).toBe(false);
     expect(signals.textContent).toContain('от собствената институция'); // from the SECOND link
     expect(signals.textContent).toContain('съвпадение по години');
     // Restrained chips, no new colour: chip class present, no inline style attribute.
@@ -345,7 +379,7 @@ describe('/conflicts route — render', () => {
     // The corresponding header is a secondary column too (drops on tablet).
     const headers = [...container.querySelectorAll('thead th')];
     const signalsHead = headers.find((th) => th.textContent === 'Признаци')!;
-    expect(signalsHead.classList.contains('col-secondary')).toBe(true);
+    expect(signalsHead.classList.contains('col-secondary')).toBe(false);
   });
 
   it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
@@ -370,7 +404,10 @@ describe('/conflicts route — render', () => {
     expect(link.getAttribute('href')).toContain('/conflicts/official/');
     // …and the identity-free „свързано лице" qualifier, so a family-ONLY row is not read as an own stake
     // (niki #312 MEDIUM 1). It states the kind, never who the relative is or the relationship type.
-    expect(titleCell.textContent).toContain('свързано лице');
+    expect(titleCell.textContent).not.toContain('свързано лице');
+    expect(row.querySelector('td[data-label="Дружества"]')!.textContent).toContain(
+      'дял на свързано лице',
+    );
   });
 
   it('a self-stake row carries no „свързано лице" qualifier — the wording is family-AWARE, not blanket', async () => {

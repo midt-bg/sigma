@@ -24,7 +24,7 @@ const EDGE_LABEL_H = 14;
 
 /** What each kind of tie is called on its edge — short, the table and the tooltip carry the full sentence. */
 export const TIE_EDGE_LABEL: Record<CompanyTieKind, string> = {
-  consortium: 'обединение',
+  consortium: 'съвместно изпълнение',
   subcontract: 'подизпълнител',
   declared_stake: 'общо свързано лице',
   role: 'роля',

@@ -924,6 +924,7 @@ describe('groupByPerson', () => {
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
         'companyCount',
+        'companies',
         'contemporaneousValueEur',
         'contractCount',
         'contractValueEur',

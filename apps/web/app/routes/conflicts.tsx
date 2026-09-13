@@ -1,17 +1,10 @@
 import { Link, useSearchParams, data } from 'react-router';
-import { count, money, plural } from '@sigma/shared';
-import {
-  authorityIdFromSlug,
-  getAuthorityName,
-  getRelatedPersonRows,
-  getRelatedPersonHeadline,
-  getDb,
-} from '@sigma/db';
+import { count } from '@sigma/shared';
+import { authorityIdFromSlug, getAuthorityName, getRelatedPersonRows, getDb } from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { FactsList } from '../components/FactsList';
-import { Section, Callout, ShareBar, Chip } from '../components/ui';
+import { Section, Callout, Chip } from '../components/ui';
 import { DataTable, type Column } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
 import { FilterRail, type FilterGroup } from '../components/FilterRail';
@@ -82,13 +75,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     }),
   );
   const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
-  const headline = await withDbRetry(() =>
-    getRelatedPersonHeadline(
-      db,
-      persons.map((p) => p.personIdentity!),
-      authorityId,
-    ),
-  );
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
@@ -102,7 +88,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return data(
     {
       authority,
-      headline,
       facets,
       page,
       pageCount,
@@ -150,25 +135,37 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               </>
             )
           )}
-          {/* Identity-free qualifier: a family-ONLY row must not read as the official's own stake (ADR-0032).
-              The relative is never named and the relationship type never asserted — only that a свързано лице
-              declared the stake. 'mixed' rows keep the own-stake framing (they DO have one); 'self' → nothing. */}
-          {r.stakeKind === 'family' && (
-            <>
-              <br />
-              <Chip>свързано лице</Chip>
-            </>
-          )}
         </>
       ),
     },
     {
       key: 'companies',
       header: 'Дружества',
-      // The winner's name when the person is linked to exactly one; otherwise the distinct-ЕИК count. No
-      // link — the person page (title column) is the way in; the winner names live there.
-      cell: (r) =>
-        r.companyCount === 1 && r.soleCompany ? r.soleCompany.company : count(r.companyCount),
+      cell: (r) => (
+        <ul className="entity-list">
+          {(
+            r.companies ??
+            (r.soleCompany
+              ? [
+                  {
+                    ...r.soleCompany,
+                    self: r.stakeKind === 'family' ? 0 : 1,
+                    family: r.stakeKind === 'self' ? 0 : 1,
+                  },
+                ]
+              : [])
+          ).map((c) => (
+            <li key={c.eik}>
+              <Link to={`/companies/${c.eik}`}>{c.company}</Link>
+              {c.family > 0 && (
+                <div>
+                  <Chip>{c.self ? 'собствен и свързан дял' : 'дял на свързано лице'}</Chip>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      ),
     },
     { key: 'contracts', header: 'Договори', align: 'money', cell: (r) => count(r.contractCount) },
     {
@@ -196,7 +193,6 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
     {
       key: 'signals',
       header: 'Признаци',
-      secondary: true,
       // Restrained monochrome chips (no new colour): the two nexus signals, OR-ed across the person's links.
       cell: (r) => (
         <>
@@ -216,7 +212,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
 }
 
 export default function Conflicts({ loaderData }: Route.ComponentProps) {
-  const { authority, headline, facets, page, pageCount, total, pageRows, available } = loaderData;
+  const { authority, facets, page, pageCount, total, pageRows, available } = loaderData;
   const [sp] = useSearchParams();
   const filters = conflictListFilters(sp);
   const groups: FilterGroup[] = [
@@ -321,36 +317,6 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           </p>
         ) : (
           <>
-            <FactsList
-              label="Обобщение"
-              rows={[
-                {
-                  term: 'Длъжностни лица с деклариран дял',
-                  value: count(headline.officialCount),
-                },
-                {
-                  term: 'Връзки към изпълнители',
-                  value: `${count(headline.linkCount)} ${plural(headline.linkCount, 'връзка', 'връзки')}`,
-                },
-                {
-                  term: 'Публични средства към техните дружества',
-                  value: money(headline.totalEur),
-                  sub: `сбор от всички договори на свързаните изпълнители; в т.ч. ${money(headline.contemporaneousEur)} по договори, сключени в декларирания период`,
-                },
-              ]}
-            />
-
-            {headline.totalEur > 0 && headline.contemporaneousEur > 0 && (
-              <div className="case-mag conflict-headline-mag">
-                <span className="case-mag-label">В декларирания период</span>
-                <ShareBar ratio={headline.contemporaneousEur / headline.totalEur} warn />
-                <span className="case-mag-figures">
-                  <strong>{money(headline.contemporaneousEur)}</strong> от{' '}
-                  {money(headline.totalEur)}
-                </span>
-              </div>
-            )}
-
             <Section
               id="list"
               title="Деклариран дял в компании изпълнители"

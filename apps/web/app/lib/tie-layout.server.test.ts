@@ -69,7 +69,7 @@ describe('layoutTies', () => {
   it('writes the kind of tie on every edge, on the edge', () => {
     const l = layoutTies(net())!;
     const e = l.edges[0]!;
-    expect(e.label.text).toBe('обединение');
+    expect(e.label.text).toBe('съвместно изпълнение');
     const [a, b] = [e.points[0]!, e.points[e.points.length - 1]!];
     expect(e.label.x).toBeGreaterThanOrEqual(Math.min(a.x, b.x));
     expect(e.label.x).toBeLessThanOrEqual(Math.max(a.x, b.x));
