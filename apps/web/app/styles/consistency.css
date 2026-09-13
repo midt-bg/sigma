@@ -482,6 +482,9 @@ td .chip {
   outline-offset: 3px;
 }
 @media (max-width: 600px) {
+  .person-time-label {
+    position: static;
+  }
   .person-time-row {
     grid-template-columns: 150px minmax(0, 1fr);
   }
