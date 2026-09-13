@@ -1,5 +1,4 @@
 import { Link } from 'react-router';
-import { personName } from '../lib/person-name';
 import {
   count,
   date,
@@ -38,7 +37,7 @@ import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { groupByPerson, officialHref } from '../lib/conflicts';
+import { CompanyDeclarants } from '../components/CompanyDeclarants';
 
 function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
   if (kind === 'consortium' || !legalForm) return false;
@@ -116,7 +115,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
   const noEikCompany = !c.isConsortium && !c.hasEik;
   const subjectPhrase = c.isConsortium ? 'това обединение' : 'тази компания';
   const wonVerb = c.isConsortium ? 'спечелило' : 'спечелила';
-  const officials = groupByPerson(declarants ?? []);
+  const hasDeclarants = (declarants?.length ?? 0) > 0;
   return (
     <>
       <Breadcrumbs
@@ -143,7 +142,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   · <OwnershipChip kind={c.ownershipKind} />
                 </>
               )}
-              {officials.length > 0 && (
+              {hasDeclarants && (
                 <>
                   {' · '}
                   <a href="#declared-people">
@@ -218,51 +217,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
           ]}
         />
 
-        {officials.length > 0 && (
-          <Section id="declared-people" title="Длъжностни лица с декларирана връзка">
-            <DataTable
-              columns={[
-                {
-                  key: 'person',
-                  header: 'Длъжностно лице',
-                  isTitle: true,
-                  cell: (r) => <Link to={officialHref(r.officialSlug)}>{personName(r.official)}</Link>,
-                },
-                {
-                  key: 'office',
-                  header: 'Институция и длъжност',
-                  cell: (r) => (
-                    <ul className="entity-list">
-                      {r.declaredInstitutions?.map((i) => (
-                        <li key={i.institution}>
-                          {i.institution}
-                          {i.positions.length > 0 && (
-                            <div className="small muted">{i.positions.join('; ')}</div>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ),
-                },
-                {
-                  key: 'basis',
-                  header: 'Декларирано участие',
-                  cell: (r) => (
-                    <Chip>
-                      {r.stakeKind === 'family'
-                        ? 'дял на свързано лице'
-                        : r.stakeKind === 'mixed'
-                          ? 'собствен и свързан дял'
-                          : 'деклариран собствен дял'}
-                    </Chip>
-                  ),
-                },
-              ]}
-              rows={officials}
-              getKey={(r) => r.personIdentity ?? r.officialSlug}
-            />
-          </Section>
-        )}
+        <CompanyDeclarants links={declarants ?? []} />
         {!!jointContracts?.length && (
           <Section
             id="joint-contracts"
