@@ -7,6 +7,7 @@ export interface PersonContractRow {
   company: string;
   eik: string;
   authority: string;
+  authorityId: string;
   signedAt: string | null;
   valueEur: number | null;
   duringRole: boolean;
@@ -26,6 +27,7 @@ export interface PersonActivity {
   declaredEur: number | null;
   companies: { eik: string; name: string }[];
   authorities: { id: string; name: string }[];
+  yearOptions: string[];
   years: { year: string; contracts: number; valueEur: number | null }[];
   byAuthority: { id: string; name: string; contracts: number; valueEur: number | null }[];
   filters: { company: string; authority: string; year: string; basis: string };
@@ -99,11 +101,19 @@ export async function getPersonActivity(
   indent: string | null,
   personIds: string[],
   search: URLSearchParams,
-  basis: 'role' | 'declaration' | 'self' | 'family' | 'all' = 'role',
+  basis: 'role' | 'declaration' | 'self' | 'family' | 'all' | 'matched' | 'context' = 'all',
 ): Promise<PersonActivity> {
   const ids = [...new Set(personIds)];
   const requestedBasis = search.get('basis');
-  if (ids.length && ['role', 'declaration', 'self', 'family', 'all'].includes(requestedBasis ?? ''))
+  if (
+    [
+      'role',
+      'all',
+      'matched',
+      'context',
+      ...(ids.length ? ['declaration', 'self', 'family'] : []),
+    ].includes(requestedBasis ?? '')
+  )
     basis = requestedBasis as typeof basis;
   const { cte, params } = personActivityScope(indent, ids);
   const filters = {
@@ -117,11 +127,11 @@ export async function getPersonActivity(
     declaration: 'during_declaration=1',
     self: '(declaration_basis & 1)<>0',
     family: '(declaration_basis & 2)<>0',
-    all: '(during_role=1 OR during_declaration=1)',
+    all: '1=1',
+    matched: '(during_role=1 OR during_declaration=1)',
+    context: '(during_role=0 AND during_declaration=0)',
   }[basis];
-  const optionEligibility = ids.length
-    ? '(during_role=1 OR during_declaration=1)'
-    : 'during_role=1';
+  const optionEligibility = '1=1';
   const conditions: string[] = [eligibility];
   if (filters.company) {
     params.push(filters.company);
@@ -141,7 +151,7 @@ export async function getPersonActivity(
       .prepare(`${cte} ${sql}`)
       .bind(...values)
       .all<T>();
-  const [totals, companies, authorities, years, byAuthority] = await Promise.all([
+  const [totals, companies, authorities, years, byAuthority, yearOptions] = await Promise.all([
     query<{
       n: number;
       cn: number;
@@ -167,6 +177,10 @@ export async function getPersonActivity(
     query<{ id: string; name: string; contracts: number; valueEur: number | null }>(
       `SELECT authority_id id, authority name, COUNT(*) contracts, SUM(amount_eur) valueEur FROM activity${where} GROUP BY authority_id ORDER BY valueEur DESC`,
     ),
+    query<{ year: string }>(
+      `SELECT DISTINCT strftime('%Y',signed_at) year FROM activity WHERE strftime('%Y',signed_at) IS NOT NULL ORDER BY year DESC`,
+      [indent ?? '', ...ids],
+    ),
   ]);
   const t = totals.results[0]!;
   const pageSize = 50;
@@ -181,6 +195,7 @@ export async function getPersonActivity(
     company: string;
     eik: string;
     authority: string;
+    authority_id: string;
     signed_at: string | null;
     amount_eur: number | null;
     during_role: number;
@@ -196,6 +211,7 @@ export async function getPersonActivity(
       company: r.company,
       eik: r.eik,
       authority: r.authority,
+      authorityId: r.authority_id,
       signedAt: r.signed_at,
       valueEur: r.amount_eur,
       duringRole: !!r.during_role,
@@ -213,6 +229,7 @@ export async function getPersonActivity(
     declaredEur: t.de,
     companies: companies.results,
     authorities: authorities.results,
+    yearOptions: yearOptions.results.map((r) => r.year),
     years: years.results,
     byAuthority: byAuthority.results,
     filters,

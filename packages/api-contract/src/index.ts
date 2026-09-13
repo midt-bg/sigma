@@ -931,4 +931,6 @@ export interface PersonDeclaration {
   position: string | null;
   url: string;
   companyEiks: string[];
+  /** Business interests in this document only; unresolved entities have no profile link. */
+  interests?: { company: string; eik: string | null; kind: string; timing: string; scope: 'self' | 'family' | 'unknown' }[];
 }

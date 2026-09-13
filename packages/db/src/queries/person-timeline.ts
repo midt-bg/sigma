@@ -1,3 +1,4 @@
+import { cleanName } from '@sigma/shared';
 import { personActivityScope } from './person-activity';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -27,7 +28,7 @@ export async function getPersonTimeline(
 ) {
   const ids = [...new Set(personIds)];
   const { cte, params } = personActivityScope(indent, ids);
-  const [contracts, observations, reads] = await Promise.all([
+  const [contracts, observations, reads, buyers, offices, authorities] = await Promise.all([
     db
       .prepare(
         `${cte} SELECT eik,company,strftime('%Y',signed_at) year,COUNT(*) contracts,
@@ -54,6 +55,51 @@ export async function getPersonTimeline(
       )
       .bind(indent ?? '')
       .all<{ eik: string; asOf: string }>(),
+    db
+      .prepare(
+        `${cte} SELECT eik,strftime('%Y',signed_at) year,authority_id id,authority name,
+      COUNT(*) contracts,SUM(during_role OR during_declaration) eligible,SUM(amount_eur) valueEur
+      FROM activity GROUP BY eik,year,authority_id ORDER BY eik,year,valueEur DESC`,
+      )
+      .bind(...params)
+      .all<{
+        eik: string;
+        year: string | null;
+        id: string;
+        name: string;
+        contracts: number;
+        eligible: number;
+        valueEur: number | null;
+      }>(),
+    db
+      .prepare(
+        `SELECT DISTINCT institution FROM declarations WHERE person_id IN (SELECT value FROM json_each(?)) AND institution IS NOT NULL`,
+      )
+      .bind(JSON.stringify(ids))
+      .all<{ institution: string }>(),
+    db
+      .prepare(
+        'SELECT a.id,a.name FROM authorities a JOIN authority_totals t ON t.authority_id=a.id',
+      )
+      .all<{ id: string; name: string }>(),
   ]);
-  return { contracts: contracts.results, observations: observations.results, reads: reads.results };
+  // Exact organisation names only. A locality (e.g. „Несебър“) cannot identify a municipality.
+  const key = (name: string) =>
+    cleanName(name)
+      .normalize('NFC')
+      .toUpperCase()
+      .replace(/[„“”"«»]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const institutionProfiles = offices.results.map(({ institution }) => {
+    const matches = authorities.results.filter((a) => key(a.name) === key(institution));
+    return { institution, authorityId: matches.length === 1 ? matches[0]!.id : null };
+  });
+  return {
+    contracts: contracts.results,
+    observations: observations.results,
+    reads: reads.results,
+    buyers: buyers.results,
+    institutionProfiles,
+  };
 }

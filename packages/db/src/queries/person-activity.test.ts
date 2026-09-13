@@ -14,7 +14,7 @@ it('historical declaration years do not acquire later contracts, even with a lat
     d1,
     null,
     ['official'],
-    new URLSearchParams('basis=all'),
+    new URLSearchParams('basis=matched'),
   );
   expect(activity.contracts.map((r) => r.id).sort()).toEqual(['a', 'b']);
   expect(activity.contracts.every((r) => r.duringDeclaration && !r.duringRole)).toBe(true);
@@ -29,6 +29,10 @@ function fixture() {
     CREATE TABLE bidders(id,name,eik_normalized);
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
+    CREATE TABLE authority_totals(authority_id);
+    CREATE TABLE declarations(person_id,institution);
+    INSERT INTO authority_totals VALUES('auth:1');
+    INSERT INTO declarations VALUES('official','Община');
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);
     INSERT INTO authorities VALUES('auth:1','Община');
     INSERT INTO bidders VALUES('eik:111111111','Компания','111111111');
@@ -40,7 +44,7 @@ function fixture() {
   return d1FromSqlite(db);
 }
 it('deduplicates roles and declaration overlap, preserving gaps and unknown dates', async () => {
-  const a = await getPersonActivity(fixture(), 'person', ['official'], new URLSearchParams());
+  const a = await getPersonActivity(fixture(), 'person', ['official'], new URLSearchParams('basis=role'));
   expect(a.total).toBe(2);
   expect(a.valueEur).toBe(400);
   expect(a.roleCount).toBe(2);
@@ -65,11 +69,11 @@ it('an open role supports contracts only through the last successful registry ob
   db.exec(
     "INSERT INTO contracts VALUES('later','След справката','eik:111111111','t','2026-08-31',500),('observed','На датата на справката','eik:111111111','t','2026-08-30',600)",
   );
-  const activity = await getPersonActivity(d1, 'person', [], new URLSearchParams());
+  const activity = await getPersonActivity(d1, 'person', [], new URLSearchParams('basis=role'));
   expect(activity.contracts.some((r) => r.id === 'later')).toBe(false);
   expect(activity.contracts.some((r) => r.id === 'observed')).toBe(true);
   db.exec("UPDATE registry_deeds SET outcome='absent'");
-  const absent = await getPersonActivity(d1, 'person', [], new URLSearchParams());
+  const absent = await getPersonActivity(d1, 'person', [], new URLSearchParams('basis=role'));
   expect(absent.contracts.map((r) => r.id)).toEqual(['a']); // closed historical role remains known
 });
 it('filters and paginates without changing the full aggregates', async () => {
@@ -82,13 +86,13 @@ it('filters and paginates without changing the full aggregates', async () => {
     d1,
     'person',
     ['official'],
-    new URLSearchParams('period=role'),
+    new URLSearchParams('basis=role'),
   );
   const next = await getPersonActivity(
     d1,
     'person',
     ['official'],
-    new URLSearchParams('period=role&page=2'),
+    new URLSearchParams('basis=role&page=2'),
   );
   expect(first.total).toBe(62);
   expect(next.total).toBe(62);
@@ -100,9 +104,9 @@ it('filters and paginates without changing the full aggregates', async () => {
 it('never includes held interests or assigns a family company registry role to the declarant', async () => {
   const d1 = fixture();
   db.exec("UPDATE interest_links SET status='held'");
-  expect((await getPersonActivity(d1, null, ['official'], new URLSearchParams())).total).toBe(0);
+  expect((await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'))).total).toBe(0);
   db.exec("UPDATE interest_links SET status='published', interest_class='family_ownership'");
-  const a = await getPersonActivity(d1, null, ['official'], new URLSearchParams());
+  const a = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'));
   expect(a.total).toBe(0);
   expect(a.roleCount).toBe(0);
   const declared = await getPersonActivity(
@@ -121,7 +125,7 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
     d1,
     'person',
     ['official'],
-    new URLSearchParams('basis=all'),
+    new URLSearchParams('basis=matched'),
   );
   expect(union.contracts.map((r) => r.id).sort()).toEqual(['a', 'b', 'c']);
   expect(union.total).toBe(3);
@@ -131,7 +135,7 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
     declarationBasis: 1,
   });
   db.exec("UPDATE interest_links SET interest_class='family_ownership'");
-  const family = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=all'));
+  const family = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=matched'));
   expect(family.total).toBe(2);
   expect(family.contracts.every((r) => !r.duringRole && r.declarationBasis === 2)).toBe(true);
   const roles = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=role'));
@@ -176,4 +180,23 @@ it('includes every proven source identity only when the canonical person has a p
     'official',
   ]);
   expect(await getRegistryOfficials(d1, 'other')).toEqual([]);
+});
+
+ it('defaults to all contracts, preserving unknown dates and separating contextual amounts', async () => {
+  const d1 = fixture();
+  const all = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(all.total).toBe(4);
+  expect(all.valueEur).toBe(600);
+  expect(all.declaredCount).toBe(2);
+  expect(all.roleCount).toBe(2);
+  expect(all.contracts.find(c => c.id === 'd')).toMatchObject({duringRole:false, duringDeclaration:false, signedAt:null});
+  expect(all.yearOptions).toEqual(['2022','2021','2020']);
+  const context = await getPersonActivity(d1, null, ['official'], new URLSearchParams('basis=context'));
+  expect(context.contracts.map(c => c.id).sort()).toEqual(['c','d']);
+  expect(context.valueEur).toBe(300);
+  const filtered = await getPersonActivity(d1, null, ['official'], new URLSearchParams('company=111111111&year=2022&basis=context'));
+  expect(filtered.total).toBe(1);
+  expect(filtered.years).toEqual([{year:'2022', contracts:1,valueEur:300}]);
+  expect(filtered.byAuthority[0]).toMatchObject({contracts:1,valueEur:300});
+  expect(filtered.yearOptions).toEqual(all.yearOptions);
 });
