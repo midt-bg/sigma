@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useId } from 'react';
 import { Link } from 'react-router';
+import { personName } from '../lib/person-name';
 import { count, money, moneyBare, pct, plural } from '@sigma/shared';
 import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
 import { Chip, ExternalEikLink, RegistryCta, Section, ShareBar } from './ui';
@@ -112,7 +113,7 @@ function ConflictDetailBlock({
         <ExternalEikLink eik={l.eik} />
       </>
     ) : (
-      <Link to={officialHref(l.officialSlug)}>{l.official}</Link>
+      <Link to={officialHref(l.officialSlug)}>{personName(l.official)}</Link>
     );
   const subLabel = perspective === 'official' ? `ЕИК\u00a0${l.eik}` : officialRole(l);
 

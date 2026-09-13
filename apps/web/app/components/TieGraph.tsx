@@ -3,6 +3,7 @@ import type { CompanyTieEdge, CompanyTieKind } from '@sigma/api-contract';
 import { count, money } from '@sigma/shared';
 import type { TieLayout, TieLayoutEdge, TieLayoutNode } from '../lib/tie-layout';
 import { roleSentence } from '../lib/registry-roles';
+import { personName } from '../lib/person-name';
 
 // The tie graph, drawn as a flowchart: boxes with the name inside and what the tie is written on each edge,
 // in a layered layout computed on the server (lib/tie-layout.server.ts). Static SVG, no chart code in the
@@ -37,7 +38,7 @@ export function tieDescription(e: CompanyTieEdge): string {
   if (e.kind === 'money') return `${TIE_LABEL.money} ${money(e.weightEur)}`;
   if (e.kind === 'declared_stake') {
     if (e.people?.length)
-      return `Общ деклариран интерес: ${e.people.map((p) => p.name).join(', ')}`;
+      return `Общ деклариран интерес: ${e.people.map((p) => personName(p.name)).join(', ')}`;
     return e.occurrences > 1
       ? `${TIE_LABEL.declared_stake} — ${count(e.occurrences)} лица`
       : TIE_LABEL.declared_stake;
@@ -56,10 +57,10 @@ const KIND_WORD: Record<TieLayoutNode['kind'], string> = {
 
 // A person wins nothing, so a person's box is never labelled with a sum.
 const nodeTitle = (n: TieLayoutNode) =>
-  n.kind === 'person' ? n.name : `${n.name}: ${money(n.valueEur)}`;
+  n.kind === 'person' ? personName(n.name) : `${n.name}: ${money(n.valueEur)}`;
 const nodeAria = (n: TieLayoutNode) =>
   n.kind === 'person'
-    ? `${n.name} — ${KIND_WORD.person}`
+    ? `${personName(n.name)} — ${KIND_WORD.person}`
     : `${n.name} — ${KIND_WORD[n.kind]}, ${money(n.valueEur)}`;
 
 const pathD = (e: TieLayoutEdge) =>
@@ -81,7 +82,7 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
         <svg
           viewBox={`0 0 ${width} ${height}`}
           role="group"
-          aria-label={`Връзки на ${layout.centerName}`}
+          aria-label={`Връзки на ${nodes.some((n) => n.center && n.kind === 'person') ? personName(layout.centerName) : layout.centerName}`}
           className="tie-svg"
           // Never drawn larger than laid out (a small graph must not balloon), and on a narrow screen kept
           // legible and scrolled rather than shrunk.
@@ -129,7 +130,9 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
                 textAnchor="middle"
                 aria-hidden="true"
               >
-                {e.label.text}
+                {e.kind === 'declared_stake' && e.people?.length === 1
+                  ? personName(e.label.text)
+                  : e.label.text}
               </text>
             </g>
           ))}
@@ -145,7 +148,7 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
                 rx={n.kind === 'person' ? n.height / 2 : n.kind === 'authority' ? 10 : 3}
               />
               <text className="tie-node-label" x={n.x} y={n.y + 4} textAnchor="middle">
-                {n.label}
+                {n.kind === 'person' ? personName(n.label) : n.label}
               </text>
             </Link>
           ))}
@@ -166,7 +169,7 @@ export function TieGraph({ layout }: { layout: TieLayout | null }) {
                   {e.people!.map((p, i) => (
                     <span key={p.id}>
                       {i > 0 && '; '}
-                      <Link to={p.href}>{p.name}</Link>
+                      <Link to={p.href}>{personName(p.name)}</Link>
                     </span>
                   ))}
                 </li>

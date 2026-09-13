@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { personName } from '../lib/person-name';
 import {
   count,
   date,
@@ -225,7 +226,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
                   key: 'person',
                   header: 'Длъжностно лице',
                   isTitle: true,
-                  cell: (r) => <Link to={officialHref(r.officialSlug)}>{r.official}</Link>,
+                  cell: (r) => <Link to={officialHref(r.officialSlug)}>{personName(r.official)}</Link>,
                 },
                 {
                   key: 'office',

@@ -11,6 +11,7 @@ import { FilterRail, type FilterGroup } from '../components/FilterRail';
 import { ListControls } from '../components/ListControls';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
+import { personName } from '../lib/person-name';
 import { seoMeta } from '../lib/meta';
 import {
   conflictListFilters,
@@ -111,7 +112,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
       isTitle: true,
       cell: (r) => (
         <>
-          <Link to={officialHref(r.officialSlug)}>{r.official}</Link>
+          <Link to={officialHref(r.officialSlug)}>{personName(r.official)}</Link>
           {(r.declaredInstitutions?.length ?? 0) > 0 ? (
             <div className="person-institutions">
               <span className="small muted">Институции в декларациите</span>

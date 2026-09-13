@@ -292,7 +292,7 @@ describe('/conflicts/official/:id — render', () => {
 
   it('meta() names the person in the title and marks the page noindex', () => {
     const tags = officialMeta({
-      data: { name: 'Иван Петров', links: [], contracts: {} },
+      data: { name: 'ИВАН ПЕТРОВ', links: [], contracts: {} },
       matches: [],
       params: { id: 'aXZhbg' },
     } as never);

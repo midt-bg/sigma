@@ -260,7 +260,7 @@ describe('a person in the tie table', () => {
       ],
     });
     expect(rows[0]).toMatchObject({
-      from: 'АННА ПЕТРОВА',
+      from: 'Анна Петрова',
       fromHref: '/persons/ab',
       to: 'АЛФА СТРОЙ АД',
       relation: 'бивш управител',

@@ -184,8 +184,13 @@ describe('TieGraph', () => {
       edges: [...base.edges, roleTie()],
     });
     const link = c.querySelector('a.tie-node-link[href="/persons/ab"]')!;
-    expect(link.getAttribute('aria-label')).toBe('АННА ПЕТРОВА — лице');
-    expect(link.querySelector('title')!.textContent).toBe('АННА ПЕТРОВА');
+    expect(link.getAttribute('aria-label')).toBe('Анна Петрова — лице');
+    expect(link.querySelector('title')!.textContent).toBe('Анна Петрова');
+    expect(link.querySelector('.tie-node-label')!.textContent).toBe('Анна Петрова');
+    expect(c.querySelector('a[href="/companies/1"] .tie-node-label')!.textContent).toBe(
+      'АЛФА СТРОЙ АД',
+    );
+    expect(person.label).toBe('АННА ПЕТРОВА');
     expect(link.querySelector('rect')!.classList.contains('tie-node-person')).toBe(true);
     expect(c.querySelector('.tie-edge.tie-role')).not.toBeNull();
     const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);

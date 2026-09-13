@@ -5,13 +5,14 @@ import { loadPersonProfile } from '../lib/person-profile.server';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { personName } from '../lib/person-name';
 
 export function meta({ data, matches, params }: Route.MetaArgs) {
   return [
     ...seoMeta({
       matches,
       path: `/conflicts/official/${params.id}`,
-      title: `${data?.name ?? 'Длъжностно лице'} — СИГМА`,
+      title: `${data?.name ? personName(data.name) : 'Длъжностно лице'} — СИГМА`,
       description: 'Декларирани интереси, източници и обществени поръчки на свързаните дружества.',
     }),
     { name: 'robots', content: 'noindex' },

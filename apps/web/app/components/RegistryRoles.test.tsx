@@ -72,7 +72,9 @@ describe('CompanyRolesTables', () => {
     expect(cells(ended!, 'До')).toEqual(['12.03.2019']);
     const headers = [...ended!.querySelectorAll('thead th')].map((th) => th.textContent);
     expect(headers.indexOf('От')).toBe(headers.indexOf('До') - 1);
-    expect(c.querySelector('a[href="/persons/ab"]')!.textContent).toBe('АННА ПЕТРОВА');
+    expect(c.querySelector('a[href="/persons/ab"]')!.textContent).toBe('Анна Петрова');
+    expect(cells(ended!, 'Лице')).toEqual(['Борис Иванов']);
+    expect(role().holder.name).toBe('АННА ПЕТРОВА');
     expect(cells(standing!, 'Вписване №')).toEqual(['20190312101010']);
   });
 

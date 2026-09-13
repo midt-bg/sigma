@@ -6,12 +6,13 @@ import { loadPersonProfile } from '../lib/person-profile.server';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
+import { personName } from '../lib/person-name';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const tags = seoMeta({
     matches,
     path: `/persons/${params.id}`,
-    title: `${data?.name ?? 'Лице'} — СИГМА`,
+    title: `${data?.name ? personName(data.name) : 'Лице'} — СИГМА`,
     description: 'Роли, декларации и обществени поръчки на свързаните дружества.',
   });
   if (data?.links.length) tags.push({ name: 'robots', content: 'noindex' });

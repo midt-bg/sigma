@@ -8,6 +8,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Callout, Chip, OwnershipChip } from '../components/ui';
 import { publicCache } from '../lib/cache';
+import { personName } from '../lib/person-name';
 
 export function meta({ data }: Route.MetaArgs) {
   const q = data?.results.query ?? '';
@@ -88,7 +89,7 @@ function highlight(text: string | null, re: RegExp | null): ReactNode {
 }
 
 function renderTitle(hit: SearchHit, re: RegExp | null) {
-  return highlight(hit.title, re);
+  return highlight(hit.kind === 'official' ? personName(hit.title) : hit.title, re);
 }
 
 // Search results are whole-card links; explanations remain on the destination profile.

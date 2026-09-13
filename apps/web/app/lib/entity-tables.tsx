@@ -9,6 +9,7 @@ import type {
 import { tieDescription } from '../components/TieGraph';
 import { type Column } from '../components/DataTable';
 import { nodeHref } from './tie-layout';
+import { personName } from './person-name';
 
 export { nodeHref };
 
@@ -82,8 +83,8 @@ export function tieRows(data: CompanyTieNetwork): TieRow[] {
     const b = byId.get(e.to);
     if (!a || !b) continue;
     rows.push({
-      from: a.label,
-      to: b.label,
+      from: a.kind === 'person' ? personName(a.label) : a.label,
+      to: b.kind === 'person' ? personName(b.label) : b.label,
       fromHref: nodeHref(a),
       toHref: nodeHref(b),
       kind: e.kind,

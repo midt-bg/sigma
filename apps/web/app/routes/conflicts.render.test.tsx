@@ -150,6 +150,17 @@ const text = () => container.textContent ?? '';
 const bodyRows = () => [...container.querySelectorAll('tbody tr')];
 
 describe('/conflicts route — render', () => {
+  it('formats the person name only, preserving source data, profile links and company casing', async () => {
+    const source = link({ official: 'ФИДАНКА ДИМИТРОВА ЦИРОВА' });
+    await renderConflicts([source]);
+    expect(container.querySelector('tbody a[href="/conflicts/official/aXZhbg"]')?.textContent).toBe(
+      'Фиданка Димитрова Цирова',
+    );
+    expect(container.querySelector('tbody a[href="/companies/111"]')?.textContent).toBe(
+      'ТРЕЙС ГРУП ХОЛД АД',
+    );
+    expect(source.official).toBe('ФИДАНКА ДИМИТРОВА ЦИРОВА');
+  });
   it('shows one proven person with their different declared institutions and years', async () => {
     await renderConflicts([
       link({

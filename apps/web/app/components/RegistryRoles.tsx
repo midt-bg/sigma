@@ -5,6 +5,7 @@ import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
 import { registryUrl } from './ui';
+import { personName } from '../lib/person-name';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
 // at companies. Facts as registered, each with the day of the entry that added it and, once it ended, the day
@@ -47,7 +48,8 @@ const entry: Column<{ entryNumber: string }> = {
 };
 
 function Holder({ holder }: { holder: CompanyRole['holder'] }) {
-  const name = holder.href ? <Link to={holder.href}>{holder.name}</Link> : holder.name;
+  const label = holder.kind === 'person' ? personName(holder.name) : holder.name;
+  const name = holder.href ? <Link to={holder.href}>{label}</Link> : label;
   // A company that is not a winner here has no page: its ЕИК and, abroad, its country say who it is.
   const about = [
     holder.kind === 'entity' && !holder.href && holder.eik ? `ЕИК ${holder.eik}` : null,

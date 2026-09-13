@@ -14,22 +14,24 @@ import { timelineCompanies } from '../lib/person-timeline';
 import { PersonActivity } from './PersonActivity';
 import { declaredStakeNoun } from '../lib/conflicts';
 import { tieColumns, tieRows } from '../lib/entity-tables';
+import { personName } from '../lib/person-name';
 
 export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) {
   const official = p.links.length > 0;
   const companies = timelineCompanies(p);
+  const name = personName(p.name);
   return (
     <>
       <Breadcrumbs
         items={[
           { label: 'Начало', to: '/' },
           ...(official ? [{ label: 'Свързани лица', to: '/conflicts' }] : []),
-          { label: p.name },
+          { label: name },
         ]}
       />
       <main id="main">
         <PageHeader
-          title={p.name}
+          title={name}
           kicker={
             official
               ? 'Длъжностно лице · декларирани интереси'
