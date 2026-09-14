@@ -713,7 +713,10 @@ test('runShip uploads staging before atomic promotion and paces every request', 
 });
 
 test('atomic promotion preserves the live tables on a short staging table or a foreign-key failure', () => {
-  for (const failure of ['short', 'foreign-key']) {
+  for (const [failure, keyed] of ['short', 'foreign-key'].flatMap((f) => [
+    [f, false],
+    [f, true],
+  ])) {
     const db = new DatabaseSync(':memory:');
     try {
       db.exec(`PRAGMA foreign_keys=ON;
@@ -731,6 +734,12 @@ test('atomic promotion preserves the live tables on a short staging table or a f
             readTable(table) {
               return {
                 rowCount: 1,
+                ...(keyed
+                  ? {
+                      columns: table === 'persons' ? ['id'] : ['id', 'person_id'],
+                      primaryKey: ['id'],
+                    }
+                  : {}),
                 statements: [
                   table === 'persons'
                     ? 'INSERT INTO "persons" VALUES(2);'
@@ -751,6 +760,99 @@ test('atomic promotion preserves the live tables on a short staging table or a f
     } finally {
       db.close();
     }
+  }
+});
+
+test('keyed promotion updates only differences and preserves foreign keys while moving children', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`PRAGMA foreign_keys=ON;
+      CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE declarations(id INTEGER PRIMARY KEY,person_id REFERENCES persons(id));
+      CREATE TABLE memberships(person_id REFERENCES persons(id),declaration_id REFERENCES declarations(id),PRIMARY KEY(person_id,declaration_id));
+      CREATE TABLE writes(table_name TEXT, id INTEGER);
+      CREATE TRIGGER person_updated AFTER UPDATE ON persons BEGIN INSERT INTO writes VALUES('persons',new.id); END;
+      CREATE TRIGGER declaration_updated AFTER UPDATE ON declarations BEGIN INSERT INTO writes VALUES('declarations',new.id); END;
+      INSERT INTO persons VALUES(1,'unchanged'),(2,'old name'),(3,'obsolete');
+      INSERT INTO declarations VALUES(1,1),(2,2),(3,3),(4,3);
+      INSERT INTO memberships VALUES(1,1),(3,3),(3,4);`);
+    const rows = {
+      persons: [
+        { id: 1, name: 'unchanged' },
+        { id: 2, name: 'new name' },
+        { id: 4, name: null },
+      ],
+      declarations: [
+        { id: 1, person_id: 1 },
+        { id: 2, person_id: 4 },
+        { id: 3, person_id: 4 },
+      ],
+      memberships: [
+        { person_id: 1, declaration_id: 1 },
+        { person_id: 4, declaration_id: 3 },
+      ],
+    };
+    const ship = () =>
+      runShip({
+        tables: Object.keys(rows),
+        wipeTables: ['memberships', 'declarations', 'persons'],
+        paceMs: 0,
+        sleep() {},
+        maxStatements: 5,
+        readCounts: (expected) =>
+          Object.fromEntries(
+            Object.keys(expected).map((t) => [
+              t,
+              db.prepare(`SELECT count(*) n FROM "${t}"`).get().n,
+            ]),
+          ),
+        readTable(table) {
+          const info = db.prepare(`PRAGMA table_info("${table}")`).all();
+          const columns = info.map((c) => c.name);
+          return {
+            rowCount: rows[table].length,
+            columns,
+            primaryKey: info
+              .filter((c) => c.pk)
+              .sort((a, b) => a.pk - b.pk)
+              .map((c) => c.name),
+            statements: insertStatements(table, columns, rows[table]),
+          };
+        },
+        apply(_label, sql) {
+          db.exec(sql);
+        },
+      });
+    ship();
+    for (const [table, expected] of Object.entries(rows)) {
+      assert.deepEqual(
+        db
+          .prepare(`SELECT * FROM "${table}" ORDER BY 1,2`)
+          .all()
+          .map((r) => ({ ...r })),
+        expected,
+      );
+    }
+    const writes = db
+      .prepare('SELECT * FROM writes ORDER BY table_name,id')
+      .all()
+      .map((r) => ({ ...r }));
+    assert.deepEqual(writes, [
+      { table_name: 'declarations', id: 2 },
+      { table_name: 'declarations', id: 3 },
+      { table_name: 'persons', id: 2 },
+    ]);
+    ship();
+    assert.deepEqual(
+      db
+        .prepare('SELECT * FROM writes ORDER BY table_name,id')
+        .all()
+        .map((r) => ({ ...r })),
+      writes,
+    );
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    db.close();
   }
 });
 
