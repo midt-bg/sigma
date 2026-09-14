@@ -79,6 +79,17 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
     .all(CONTINUITY_RULE);
   if (continuity.length) {
     try {
+      const inconsistent = db
+        .prepare(
+          `SELECT count(*) n FROM person_identity_evidence e
+        LEFT JOIN person_sources l ON l.id=e.left_source LEFT JOIN person_sources r ON r.id=e.right_source
+        LEFT JOIN person_entities p ON p.id=l.entity_id
+        WHERE e.rule_version=? AND e.decision='accepted'
+          AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.registry_indent IS NULL)`,
+        )
+        .get(CONTINUITY_RULE).n;
+      if (inconsistent)
+        throw new Error('accepted continuity does not belong to one registry-anchored author');
       const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
       const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
       if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))
