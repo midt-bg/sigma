@@ -91,6 +91,7 @@ async function run() {
   // filings.jsonl — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
   // The loader builds each person's latest-filing horizon from this to catch a divest-to-ZERO (B1, #226).
   const filingsOut = fs.createWriteStream(path.join(STAGING, 'filings.jsonl'));
+  const groupsOut = fs.createWriteStream(path.join(STAGING, 'source-groups.jsonl'));
   const requestsOut = fs.createWriteStream(path.join(STAGING, 'registry-requests.jsonl'));
   const quarantineOut = fs.createWriteStream(path.join(STAGING, 'source-quarantine.jsonl'));
   const stats = {
@@ -108,7 +109,7 @@ async function run() {
 
   // Deduplicate only identical source bytes; ControlHash is not a unique document ID.
   // Attribution is checked before deduplication, so a bad first listing cannot mask a valid copy.
-  const seenHash = new Set();
+  const seenHash = new Map();
   const folderRe = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
   const folders = fs.existsSync(RAW)
     ? fs
@@ -126,7 +127,14 @@ async function run() {
     // xmlFile → context (first listing wins; a person with multiple positions shares one filing)
     const ctx = new Map();
     const listedNames = new Map();
-    for (const r of parseList(fs.readFileSync(listPath, 'utf8'))) {
+    const listXml = fs.readFileSync(listPath, 'utf8');
+    const listHash = documentFingerprint(listXml);
+    const groups = new Map();
+    const publications = new Map();
+    for (const r of parseList(listXml)) {
+      if (!groups.has(r.personLocator))
+        groups.set(r.personLocator, { name: r.person, files: new Set() });
+      groups.get(r.personLocator).files.add(r.xmlFile);
       if (!ctx.has(r.xmlFile)) ctx.set(r.xmlFile, r);
       const names = listedNames.get(r.xmlFile) ?? [];
       names.push(r.person);
@@ -160,11 +168,16 @@ async function run() {
         stats.registryAliases = (stats.registryAliases ?? 0) + 1;
       const fingerprint = documentFingerprint(xml);
       {
+        const member = seenHash.get(fingerprint) ?? {
+          sourceId: `cacbg:${folder}:${file}`,
+          sourceHash: fingerprint,
+        };
+        publications.set(file, member);
         if (seenHash.has(fingerprint)) {
           stats.dupSkipped++;
           continue;
         } // republished declaration
-        seenHash.add(fingerprint);
+        seenHash.set(fingerprint, member);
       }
       stats.decls++;
       stats[d.templateType] = (stats[d.templateType] ?? 0) + 1;
@@ -250,6 +263,22 @@ async function run() {
       }
       n++;
     }
+    for (const [personLocator, group] of groups) {
+      if ([...group.files].some((file) => !publications.has(file))) continue;
+      const members = [
+        ...new Map(
+          [...group.files].map((file) => {
+            const member = publications.get(file);
+            return [member.sourceId, { ...member, xmlFile: file }];
+          }),
+        ).values(),
+      ].sort((a, b) => a.sourceId.localeCompare(b.sourceId));
+      if (members.length < 2) continue;
+      groupsOut.write(
+        JSON.stringify({ folder, listHash, personLocator, name: group.name, members }) + '\n',
+      );
+      stats.sourceGroups = (stats.sourceGroups ?? 0) + 1;
+    }
     console.log(`  ${folder}: ${n} declarations parsed`);
   }
   holdingsOut.end();
@@ -257,8 +286,9 @@ async function run() {
   filingsOut.end();
   quarantineOut.end();
   requestsOut.end();
+  groupsOut.end();
   await Promise.all(
-    [holdingsOut, relatedOut, filingsOut, quarantineOut, requestsOut].map((stream) =>
+    [holdingsOut, relatedOut, filingsOut, quarantineOut, requestsOut, groupsOut].map((stream) =>
       finished(stream),
     ),
   );
@@ -266,7 +296,10 @@ async function run() {
     path.join(STAGING, 'manifest.json'),
     JSON.stringify(
       {
-        schemaVersion: 6,
+        schemaVersion: 7,
+        sourceGroupsHash: documentFingerprint(
+          fs.readFileSync(path.join(STAGING, 'source-groups.jsonl')),
+        ),
         corpusComplete: !process.argv.includes('--allow-partial-corpus'),
         identityRules: identify ? 'registry-identity-2' : null,
         extractedAt: new Date().toISOString(),

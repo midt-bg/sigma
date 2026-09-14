@@ -58,11 +58,20 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
   if (!fs.existsSync(manifest))
     fs.writeFileSync(
       manifest,
-      JSON.stringify({ schemaVersion: 6, identityRules: 'registry-identity-2' }),
+      JSON.stringify({ schemaVersion: 7, identityRules: 'registry-identity-2' }),
     );
   const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-  if (m.schemaVersion === 6)
-    fs.writeFileSync(manifest, JSON.stringify({ ...m, identityRules: 'registry-identity-2' }));
+  const groupsFile = path.join(staging, 'source-groups.jsonl');
+  if (!fs.existsSync(groupsFile)) fs.writeFileSync(groupsFile, '');
+  if (m.schemaVersion === 7)
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({
+        ...m,
+        identityRules: 'registry-identity-2',
+        sourceGroupsHash: createHash('sha256').update(fs.readFileSync(groupsFile)).digest('hex'),
+      }),
+    );
   execFileSync(
     'node',
     [

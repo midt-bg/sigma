@@ -48,7 +48,7 @@ if (
   throw new Error('Target must be the local web emulator SQLite file');
 if (source === target) throw new Error('Source and target must differ');
 if (
-  JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 6 ||
+  JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 7 ||
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).identityRules !==
     'registry-identity-2' ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))

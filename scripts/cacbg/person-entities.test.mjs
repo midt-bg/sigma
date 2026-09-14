@@ -152,7 +152,7 @@ test('exact observation hash and holder locator are revalidated before assignmen
     db.close();
   }
 });
-test('a reviewed external identity connects only its scoped sources and an explicit difference blocks the component', () => {
+test('automatic evidence connects only its scoped sources and an explicit difference blocks the component', () => {
   const sources = ['one', 'two', 'professional'].map((id) => ({
     id,
     namespace: 'source',
@@ -164,6 +164,7 @@ test('a reviewed external identity connects only its scoped sources and an expli
     left_hash: l,
     right_hash: r,
     decision: 'accepted',
+    origin: 'automatic',
     relation,
   });
   const same = [edge('one', 'professional'), edge('two', 'professional')];
@@ -174,4 +175,132 @@ test('a reviewed external identity connects only its scoped sources and an expli
     2,
   );
   assert.equal(identityComponents(sources, [{ ...same[0], left_hash: 'old' }, same[1]]).length, 2);
+});
+
+test('listing groups attach empty filings, reject namesakes and manual evidence, and revoke changed membership', () => {
+  const { db, filing, name } = fixture();
+  try {
+    const a = filing('1.xml');
+    const b = { ...filing('2.xml'), sourceHash: 'd'.repeat(64), identityEvidence: [] };
+    const c = { ...filing('3.xml'), sourceHash: 'c'.repeat(64), identityEvidence: [] };
+    const group = (members, listHash = 'f'.repeat(64)) => ({
+      folder: '2025',
+      listHash,
+      personLocator: 1,
+      name,
+      members: members.map((f) => ({
+        sourceId: declarationSourceId(f),
+        sourceHash: f.sourceHash,
+        xmlFile: f.xmlFile,
+      })),
+    });
+    const run = (groups) =>
+      rebuildPersonEntities(db, db, [a, b, c], legacy, new Map(), '2026-01-01', groups);
+    const first = run([group([a, b])]);
+    const id = first.assignments.get(declarationSourceId(a));
+    assert.equal(first.assignments.get(declarationSourceId(b)), id);
+    assert.equal(first.assignments.get(declarationSourceId(c)), legacy(c));
+    const clean = fixture();
+    try {
+      assert.deepEqual(
+        [
+          ...rebuildPersonEntities(clean.db, clean.db, [a, b, c], legacy, new Map(), '2026-01-01', [
+            group([a, b]),
+          ]).assignments,
+        ],
+        [...first.assignments],
+      );
+    } finally {
+      clean.db.close();
+    }
+    db.prepare(
+      `INSERT INTO person_identity_evidence VALUES('manual',?,?,?,?, 'same','accepted','reviewed','manual','{}','2026-01-01')`,
+    ).run(declarationSourceId(a), declarationSourceId(c), a.sourceHash, c.sourceHash);
+    const repeat = run([group([a, b])]);
+    assert.deepEqual([...repeat.assignments], [...first.assignments]);
+    assert.equal(
+      db.prepare("SELECT decision FROM person_identity_evidence WHERE id='manual'").get().decision,
+      'revoked',
+    );
+    const changed = run([group([a, c], 'a'.repeat(64))]);
+    assert.equal(changed.assignments.get(declarationSourceId(a)), id);
+    assert.equal(changed.assignments.get(declarationSourceId(b)), legacy(b));
+    assert.equal(changed.assignments.get(declarationSourceId(c)), id);
+    assert.throws(
+      () =>
+        run([
+          {
+            ...group([a, b]),
+            members: [
+              { sourceId: declarationSourceId(a), sourceHash: '0'.repeat(64) },
+              group([a, b]).members[1],
+            ],
+          },
+        ]),
+      /no longer matches/,
+    );
+    const noRegistry = run([group([b, c])]);
+    assert.notEqual(noRegistry.assignments.get(declarationSourceId(b)), id);
+    assert.equal(
+      noRegistry.assignments.get(declarationSourceId(b)),
+      noRegistry.assignments.get(declarationSourceId(c)),
+    );
+    assert.equal(
+      db
+        .prepare('SELECT registry_indent FROM person_entities WHERE id=?')
+        .get(noRegistry.assignments.get(declarationSourceId(b))).registry_indent,
+      null,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('conflicting identities in one listing group are quarantined, including ambiguous candidates', () => {
+  const { db, filing, add, a, b, name, alias } = fixture();
+  try {
+    const one = filing('1.xml');
+    add(b, name, '20240101120000');
+    const ambiguous = filing('2.xml');
+    const group = {
+      folder: '2025',
+      listHash: 'f'.repeat(64),
+      personLocator: 1,
+      name,
+      members: [one, ambiguous].map((f) => ({
+        sourceId: declarationSourceId(f),
+        sourceHash: f.sourceHash,
+      })),
+    };
+    const result = rebuildPersonEntities(db, db, [one, ambiguous], legacy, new Map(), undefined, [
+      group,
+    ]);
+    assert.equal(result.stats.rejectedSourceGroups, 1);
+    assert.equal(result.assignments.get(declarationSourceId(ambiguous)), legacy(ambiguous));
+    // The pure component check also blocks a chain between independently accepted identities.
+    const sources = [
+      { id: 'd1', namespace: 'cacbg', source_hash: '1' },
+      { id: 'd2', namespace: 'cacbg', source_hash: '2' },
+      { id: 'tr1', namespace: 'tr', source_hash: a, source_key: a },
+      { id: 'tr2', namespace: 'tr', source_hash: b, source_key: b },
+    ];
+    const edge = (l, r) => ({
+      left_source: l.id,
+      right_source: r.id,
+      left_hash: l.source_hash,
+      right_hash: r.source_hash,
+      relation: 'same',
+      decision: 'accepted',
+      origin: 'automatic',
+    });
+    const components = identityComponents(sources, [
+      edge(sources[0], sources[2]),
+      edge(sources[1], sources[3]),
+      edge(sources[0], sources[1]),
+    ]);
+    assert.equal(components.length, 4);
+    assert.ok(components.every((c) => c.conflict));
+  } finally {
+    db.close();
+  }
 });

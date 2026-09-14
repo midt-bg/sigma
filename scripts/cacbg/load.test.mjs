@@ -1985,7 +1985,7 @@ test('a registry-backed rebuild refuses staging that skipped identity evidence b
     .get().n;
   const manifestFile = path.join(STAGING, 'manifest.json');
   const saved = fs.readFileSync(manifestFile, 'utf8');
-  fs.writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 6 }));
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(saved), identityRules: null }));
   try {
     assert.throws(
       () => runLoad(),
@@ -1997,6 +1997,24 @@ test('a registry-backed rebuild refuses staging that skipped identity evidence b
     );
   } finally {
     fs.writeFileSync(manifestFile, saved);
+    db.close();
+  }
+});
+
+test('a changed listing-group artifact is refused before touching published data', () => {
+  const file = path.join(STAGING, 'source-groups.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const db = new DatabaseSync(DB);
+  const before = db.prepare('SELECT count(*) n FROM interest_links').get().n;
+  try {
+    fs.writeFileSync(file, saved + '{}\n');
+    assert.throws(
+      () => runLoad(),
+      (err) => /Stale declaration staging/.test(String(err.stderr)),
+    );
+    assert.equal(db.prepare('SELECT count(*) n FROM interest_links').get().n, before);
+  } finally {
+    fs.writeFileSync(file, saved);
     db.close();
   }
 });

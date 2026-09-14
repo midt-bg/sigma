@@ -65,7 +65,77 @@ test('extraction keeps checksum collisions, deduplicates identical XML and isola
     assert.deepEqual(read('source-quarantine.jsonl'), [
       { folder: '2025', xmlFile: 'ff.xml', reason: 'declarant_mismatch' },
     ]);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 6);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 7);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('listing topology survives identical republications, but never names, filenames or invalid members', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigma-listing-groups-'));
+  const raw = path.join(dir, 'raw'),
+    staging = path.join(dir, 'staging');
+  fs.mkdirSync(raw);
+  fs.writeFileSync(path.join(raw, '.corpus-complete.json'), '{}');
+  const name = 'Иван Петров Тестов';
+  const xml = (n, v) =>
+    `<PublicPerson><Personal><Name>${n}</Name></Personal><DeclarationData><Year>2025</Year><ControlHash>${v}</ControlHash></DeclarationData></PublicPerson>`;
+  const a = xml(name, 'a'),
+    b = xml(name, 'b'),
+    c = xml(name, 'c');
+  const create = (folder, groups, docs) => {
+    const d = path.join(raw, folder);
+    fs.mkdirSync(d);
+    fs.writeFileSync(
+      path.join(d, 'list.xml'),
+      `<root><MainCategory><Category><Institution>${groups.map((files) => `<Person><Name>${name}</Name><Position>${files.map((f) => `<Declaration><xmlFile>${f}</xmlFile></Declaration>`).join('')}</Position></Person>`).join('')}</Institution></Category></MainCategory></root>`,
+    );
+    for (const [f, content] of Object.entries(docs)) fs.writeFileSync(path.join(d, f), content);
+  };
+  create('2025', [['aa.xml', 'bb.xml'], ['alone.xml']], {
+    'aa.xml': a,
+    'bb.xml': b,
+    'alone.xml': xml(name, 'separate'),
+  });
+  create(
+    '2025y',
+    [
+      ['copy.xml', 'cc.xml'],
+      ['dd.xml', 'wrong.xml'],
+    ],
+    {
+      'copy.xml': b,
+      'cc.xml': c,
+      'dd.xml': xml(name, 'd'),
+      'wrong.xml': xml('Георги Петров Другов', 'wrong'),
+    },
+  );
+  create('2026', [['aa.xml', 'ee.xml']], {
+    'aa.xml': xml(name, 'different bytes'),
+    'ee.xml': xml(name, 'e'),
+  });
+  try {
+    execFileSync(process.execPath, ['scripts/cacbg/extract.mjs'], {
+      env: { ...process.env, CACBG_RAW: raw, CACBG_STAGING: staging },
+      stdio: 'pipe',
+    });
+    const groups = fs
+      .readFileSync(path.join(staging, 'source-groups.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    assert.equal(groups.length, 3);
+    assert.deepEqual(
+      groups[0].members.map((m) => m.sourceId),
+      ['cacbg:2025:aa.xml', 'cacbg:2025:bb.xml'],
+    );
+    assert.deepEqual(
+      groups[1].members.map((m) => m.sourceId),
+      ['cacbg:2025:bb.xml', 'cacbg:2025y:cc.xml'],
+    );
+    assert.equal(groups[1].members[0].xmlFile, 'copy.xml');
+    assert.ok(groups[2].members.every((m) => m.sourceId.startsWith('cacbg:2026:')));
+    assert.ok(groups.every((g) => /^[a-f0-9]{64}$/.test(g.listHash) && g.personLocator === 1));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

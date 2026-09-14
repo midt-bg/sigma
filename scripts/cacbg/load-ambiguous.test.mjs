@@ -33,7 +33,7 @@ function buildAndLoad(bidderRows) {
   const DB = path.join(dir, 'fixture.sqlite');
   const STAGING = path.join(dir, 'staging');
   fs.mkdirSync(STAGING, { recursive: true });
-  fs.writeFileSync(path.join(STAGING, 'manifest.json'), JSON.stringify({ schemaVersion: 6 }));
+  fs.writeFileSync(path.join(STAGING, 'manifest.json'), JSON.stringify({ schemaVersion: 7 }));
 
   const db = new DatabaseSync(DB);
   db.exec(`

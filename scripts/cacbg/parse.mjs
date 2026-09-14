@@ -132,18 +132,20 @@ const year4 = (s) => String(s ?? '').match(/\b(20\d{2})\b/)?.[1] ?? null;
 /**
  * Parse a year's list.xml into flat person→declaration rows.
  * list.xml carries NO year (year lives inside each declaration) — do not infer it here.
- * @returns {{category:string, institution:string, person:string, position:string, xmlFile:string}[]}
+ * @returns {{category:string, institution:string, person:string, position:string, xmlFile:string, personLocator:number}[]}
  */
 export function parseList(xml) {
   assertNoDoctype(xml);
   const root = parser.parse(xml)?.root;
   const out = [];
+  let personLocator = 0;
   for (const main of asArray(root?.MainCategory)) {
     for (const cat of asArray(main?.Category)) {
       const category = flat(cat?.['@_Name']);
       for (const inst of asArray(cat?.Institution)) {
         const institution = flat(inst?.['@_Name']);
         for (const person of asArray(inst?.Person)) {
+          personLocator++;
           const name = flat(person?.Name);
           for (const pos of asArray(person?.Position)) {
             const position = flat(pos?.Name);
@@ -156,7 +158,7 @@ export function parseList(xml) {
               // count. Require the filename shape and a phantom is never announced in the first place.
               const xmlFile = flat(decl?.xmlFile);
               if (isXmlFile(xmlFile))
-                out.push({ category, institution, person: name, position, xmlFile });
+                out.push({ category, institution, person: name, position, xmlFile, personLocator });
             }
           }
         }

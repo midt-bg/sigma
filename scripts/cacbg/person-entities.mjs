@@ -24,6 +24,7 @@ export function identityComponents(sources, evidence) {
   };
   const current = evidence.filter(
     (e) =>
+      e.origin === 'automatic' &&
       e.decision === 'accepted' &&
       byId.get(e.left_source)?.source_hash === e.left_hash &&
       byId.get(e.right_source)?.source_hash === e.right_hash,
@@ -60,6 +61,7 @@ export function rebuildPersonEntities(
   legacyId,
   priorDocuments = new Map(),
   now = new Date().toISOString(),
+  sourceGroups = [],
 ) {
   db.exec(
     fs.readFileSync(
@@ -86,7 +88,16 @@ export function rebuildPersonEntities(
       .map((s) => [s.id, s.entity_id]),
   );
   const assignments = new Map();
-  const stats = { documents: filings.length, resolved: 0, unresolved: 0, conflicts: 0, revoked: 0 };
+  const bySource = new Map(filings.map((f) => [declarationSourceId(f), f]));
+  const stats = {
+    sourceGroups: 0,
+    rejectedSourceGroups: 0,
+    documents: filings.length,
+    resolved: 0,
+    unresolved: 0,
+    conflicts: 0,
+    revoked: 0,
+  };
   db.exec('BEGIN');
   try {
     db.exec("UPDATE person_sources SET active=0 WHERE namespace IN ('cacbg','tr')");
@@ -98,10 +109,8 @@ export function rebuildPersonEntities(
     const reason = db.prepare('UPDATE person_sources SET resolution_reason=? WHERE id=?');
     const putEvidence =
       db.prepare(`INSERT INTO person_identity_evidence VALUES(?,?,?,?,?,?,?,'automatic',?,?,?)
-      ON CONFLICT(id) DO UPDATE SET decision=excluded.decision,observed_at=excluded.observed_at`);
-    db.exec(
-      "UPDATE person_identity_evidence SET decision='revoked' WHERE origin='automatic' AND decision<>'revoked'",
-    );
+      ON CONFLICT(id) DO UPDATE SET origin='automatic',decision=excluded.decision,observed_at=excluded.observed_at`);
+    db.exec("UPDATE person_identity_evidence SET decision='revoked' WHERE decision<>'revoked'");
     for (const r of observations)
       putSource.run(
         registrySourceId(r.subject_id),
@@ -180,13 +189,76 @@ export function rebuildPersonEntities(
         );
       }
     }
-    // Reviewed evidence is usable only for the source versions it actually reviewed.
+    // Groups come from one exact Person node in one version of the official listing.
+    // Repeat publications refer to the retained byte-identical document, not its filename.
+    for (const group of sourceGroups) {
+      if (
+        !/^20\d{2}[A-Za-z0-9_]{0,8}$/.test(group.folder) ||
+        !/^[a-f0-9]{64}$/.test(group.listHash) ||
+        !Number.isSafeInteger(group.personLocator) ||
+        group.personLocator < 1 ||
+        typeof group.name !== 'string' ||
+        !group.name.trim() ||
+        !Array.isArray(group.members) ||
+        group.members.length < 2 ||
+        new Set(group.members.map((m) => m.sourceId)).size !== group.members.length
+      )
+        throw new Error('Invalid declaration source group');
+      const members = group.members.map((m) => {
+        const f = bySource.get(m.sourceId);
+        if (!f || f.sourceHash !== m.sourceHash)
+          throw new Error(`Source group no longer matches its document: ${m.sourceId}`);
+        return f;
+      });
+      if (
+        members.some((f) => {
+          const proofs = f.identityEvidence ?? [];
+          const ids = new Set(proofs.map((p) => p.registryIndent));
+          const names = [f.person, ...proofs.flatMap((p) => p.listedNames)];
+          return (
+            ids.size > 1 ||
+            !names.some((name) => declarantNameKey(name) === declarantNameKey(group.name))
+          );
+        })
+      ) {
+        stats.rejectedSourceGroups++;
+        continue;
+      }
+      const [left, ...rest] = [...group.members].sort((a, b) =>
+        a.sourceId.localeCompare(b.sourceId),
+      );
+      for (const right of rest) {
+        const facts = JSON.stringify({
+          folder: group.folder,
+          listHash: group.listHash,
+          personLocator: group.personLocator,
+          name: group.name,
+          members: [left, right],
+        });
+        putEvidence.run(
+          hash(`source-groups-1|${facts}`),
+          left.sourceId,
+          right.sourceId,
+          left.sourceHash,
+          right.sourceHash,
+          'same',
+          'accepted',
+          'source-groups-1',
+          facts,
+          now,
+        );
+      }
+      stats.sourceGroups++;
+    }
+    // Only automatic evidence participates. Source versions are checked again before assignment.
     db.exec(`UPDATE person_identity_evidence SET decision='revoked' WHERE decision<>'revoked' AND (
       NOT EXISTS(SELECT 1 FROM person_sources s WHERE s.id=left_source AND s.active=1 AND s.source_hash=left_hash)
       OR NOT EXISTS(SELECT 1 FROM person_sources s WHERE s.id=right_source AND s.active=1 AND s.source_hash=right_hash))`);
     const sources = db.prepare('SELECT * FROM person_sources WHERE active=1 ORDER BY id').all();
     const evidence = db
-      .prepare("SELECT * FROM person_identity_evidence WHERE decision='accepted'")
+      .prepare(
+        "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND origin='automatic'",
+      )
       .all();
     const components = identityComponents(sources, evidence);
     // Registry-anchored components retain their entity first when an old component splits.

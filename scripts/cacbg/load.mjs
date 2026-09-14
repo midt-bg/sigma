@@ -1,3 +1,4 @@
+import { documentFingerprint } from './source-identity.mjs';
 import { rebuildPersonEntities, declarationSourceId } from './person-entities.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
 import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
@@ -114,9 +115,13 @@ const readJsonl = (f) =>
 const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
 // Check compatibility before opening or rebuilding the database.
 const stagingManifest = path.join(STAGING, 'manifest.json');
+const sourceGroupsFile = path.join(STAGING, 'source-groups.jsonl');
 if (
   !fs.existsSync(stagingManifest) ||
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 6
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 7 ||
+  !fs.existsSync(sourceGroupsFile) ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).sourceGroupsHash !==
+    documentFingerprint(fs.readFileSync(sourceGroupsFile))
 )
   throw new Error('Stale declaration staging: run extract.mjs before load.mjs');
 for (const rec of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
@@ -380,7 +385,15 @@ const sourcePersonOf = (rec) =>
     ),
   )}`;
 const filings = readJsonl(path.join(STAGING, 'filings.jsonl'));
-const identity = rebuildPersonEntities(db, db, filings, sourcePersonOf, priorDocumentPersons);
+const identity = rebuildPersonEntities(
+  db,
+  db,
+  filings,
+  sourcePersonOf,
+  priorDocumentPersons,
+  undefined,
+  readJsonl(sourceGroupsFile),
+);
 console.log(`Person identity: ${JSON.stringify(identity.stats)}`);
 const personOf = (rec) => identity.assignments.get(declarationSourceId(rec)) ?? sourcePersonOf(rec);
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
