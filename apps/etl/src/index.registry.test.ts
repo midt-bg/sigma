@@ -1,13 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('cloudflare:workers', () => ({
-  WorkflowEntrypoint: class {
-    env: unknown;
-    constructor(_ctx: unknown, env: unknown) {
-      this.env = env;
-    }
-  },
-  DurableObject: class {},
-}));
 vi.mock('cloudflare:workflows', () => ({ NonRetryableError: class extends Error {} }));
 vi.mock('../../../scripts/refresh-slice.sql', () => ({ default: '' }));
 vi.mock('../../../scripts/work-staging-schema.sql', () => ({ default: '' }));

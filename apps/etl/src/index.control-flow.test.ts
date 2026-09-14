@@ -7,17 +7,6 @@ import type { PendingWindow, RefreshLease } from '@sigma/ingest';
 // short-circuit → derive loop → integrity gate → finally-drop — by mocking the platform base class,
 // the Workflow error type, the build-time `.sql` imports, the ingest helpers, the eop bucket walk, and
 // the served integrity gate, so each orchestration branch is asserted without any real D1 or network.
-vi.mock('cloudflare:workers', () => ({
-  DurableObject: class {},
-  WorkflowEntrypoint: class {
-    env: unknown;
-    ctx: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
 vi.mock('cloudflare:workflows', () => ({
   NonRetryableError: class NonRetryableError extends Error {},
 }));
