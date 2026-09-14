@@ -162,7 +162,7 @@ export function runShip({
   const guards = reads
     .map(
       ({ table, rowCount }) =>
-        `SELECT CASE WHEN (SELECT COUNT(*) FROM ${sqlIdent(`rp_next_${table}`)}) != ${rowCount} THEN RAISE(ABORT, 'incomplete staging') END;`,
+        `SELECT RAISE(ABORT, 'incomplete staging') WHERE (SELECT COUNT(*) FROM ${sqlIdent(`rp_next_${table}`)}) != ${rowCount};`,
     )
     .join('\n');
   const insert = reads

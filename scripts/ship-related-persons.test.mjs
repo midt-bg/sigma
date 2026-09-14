@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import {
   assertD1TargetAuthorized,
   SHIP_TARGETS,
@@ -709,6 +710,48 @@ test('runShip uploads staging before atomic promotion and paces every request', 
   assert.equal(names.at(-2), 'publish');
   assert.ok(!names.includes('0_wipe'));
   assert.equal(h.naps.length, h.calls.length - 1);
+});
+
+test('atomic promotion preserves the live tables on a short staging table or a foreign-key failure', () => {
+  for (const failure of ['short', 'foreign-key']) {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`PRAGMA foreign_keys=ON;
+        CREATE TABLE persons(id PRIMARY KEY);
+        CREATE TABLE declarations(id PRIMARY KEY,person_id REFERENCES persons(id));
+        INSERT INTO persons VALUES(1); INSERT INTO declarations VALUES(1,1);`);
+      assert.throws(
+        () =>
+          runShip({
+            tables: ['persons', 'declarations'],
+            wipeTables: ['declarations', 'persons'],
+            paceMs: 0,
+            sleep() {},
+            readCounts: (x) => x,
+            readTable(table) {
+              return {
+                rowCount: 1,
+                statements: [
+                  table === 'persons'
+                    ? 'INSERT INTO "persons" VALUES(2);'
+                    : `INSERT INTO "declarations" VALUES(2,${failure === 'foreign-key' ? 999 : 2});`,
+                ],
+              };
+            },
+            apply(label, sql) {
+              if (label === 'publish' && failure === 'short')
+                db.exec('DELETE FROM rp_next_declarations');
+              db.exec(sql);
+            },
+          }),
+        failure === 'short' ? /incomplete staging/ : /FOREIGN KEY/,
+      );
+      assert.equal(db.prepare('SELECT id FROM persons').get().id, 1);
+      assert.equal(db.prepare('SELECT person_id FROM declarations').get().person_id, 1);
+    } finally {
+      db.close();
+    }
+  }
 });
 
 test('runShip verifies what landed — a short table fails the run', () => {
