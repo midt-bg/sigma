@@ -37,7 +37,7 @@
       "class_name": "DeclarationContainer",
       "image": "../../containers/declarations/Dockerfile",
       "image_build_context": "../..",
-      "instance_type": "standard-3",
+      "instance_type": { "vcpu": 2, "memory_mib": 10240, "disk_mb": 20000 },
       "max_instances": 1,
     },
   ],
