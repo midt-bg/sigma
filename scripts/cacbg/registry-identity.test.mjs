@@ -127,6 +127,11 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'c'.repeat(64),
       '2026-01-01',
     );
+    db.prepare('INSERT INTO registry_identity_snapshots VALUES(?,?,?)').run(
+      '123456789',
+      'c'.repeat(64),
+      '2026-01-01',
+    );
     for (const entity of ['А Дейта Про ООД', 'А Дейта Про ООД, ЕИК 123456789']) {
       const r = registryIdentityResolver(db)(
         { ...doc, interests: [{ ...doc.interests[0], entity }] },
@@ -136,6 +141,13 @@ test('historic forms resolve only through observed name/form pairs on the same E
       assert.equal(r.companies[0].method, 'registry_name_history');
       assert.equal(r.companies[0].registryCompany.formEntry, historic.formEntry);
     }
+    db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('d'.repeat(64));
+    assert.equal(
+      registryIdentityResolver(db)(doc, [name]).evidence.length,
+      0,
+      'history from a superseded snapshot is not current evidence',
+    );
+    db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('c'.repeat(64));
     db.exec("UPDATE registry_deeds SET name='А ДЕЙТА ПРО', legal_form='OOD' WHERE eik='987654321'");
     assert.equal(
       registryIdentityResolver(db)(doc, [name]).evidence.length,

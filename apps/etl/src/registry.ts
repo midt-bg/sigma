@@ -91,7 +91,7 @@ export async function queueNewWinners(db: D1Database, now: string, limit: number
        WHERE (NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
          OR (EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok')
            AND (NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)
-             OR NOT EXISTS (SELECT 1 FROM registry_company_history h WHERE h.eik=requested.eik))))
+             OR NOT EXISTS (SELECT 1 FROM registry_company_history h JOIN registry_identity_snapshots s USING(eik) WHERE h.eik=requested.eik AND h.source_hash=s.source_hash))))
          AND NOT EXISTS (SELECT 1 FROM registry_queue q WHERE q.eik=requested.eik)
        ORDER BY eik LIMIT ?2`,
     )

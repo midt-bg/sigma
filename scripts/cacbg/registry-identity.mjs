@@ -68,7 +68,11 @@ export function registryCompanyResolver(registry) {
     names.get(key).add(r.subject_id.toLowerCase());
   }
   if (registry.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_company_history'").get()) {
-    for (const r of registry.prepare('SELECT * FROM registry_company_history').all())
+    for (const r of registry
+      .prepare(
+        'SELECT h.* FROM registry_company_history h JOIN registry_identity_snapshots s USING(eik) WHERE h.source_hash=s.source_hash',
+      )
+      .all())
       history.set(
         r.eik,
         JSON.parse(r.names_json).map((n) => ({ ...n, sourceHash: r.source_hash })),

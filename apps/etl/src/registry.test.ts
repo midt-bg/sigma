@@ -383,6 +383,9 @@ it('backfills and replaces company name history in the same transaction as regis
       ?.source_hash,
   );
   expect(sqlite.prepare('SELECT eik FROM registry_queue WHERE eik=?').get(eik)).toBeUndefined();
+  sqlite.prepare('UPDATE registry_company_history SET source_hash=? WHERE eik=?').run('old', eik);
+  expect(await queueNewWinners(db, at, 10)).toBe(1);
+  expect(sqlite.prepare('SELECT eik FROM registry_queue WHERE eik=?').get(eik)).toBeTruthy();
   await storeDeed(db, eik, { status: 'ok', deed: partida(eik, []) }, at);
   expect(
     sqlite.prepare('SELECT names_json FROM registry_company_history WHERE eik=?').get(eik)

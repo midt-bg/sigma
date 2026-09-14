@@ -60,7 +60,7 @@ try {
       !process.argv.includes('--refresh') &&
       db
         .prepare(
-          'SELECT 1 FROM registry_identity_snapshots s JOIN registry_company_history h USING(eik) WHERE eik=?',
+          'SELECT 1 FROM registry_identity_snapshots s JOIN registry_company_history h USING(eik) WHERE eik=? AND s.source_hash=h.source_hash',
         )
         .get(eik)
     ) {
