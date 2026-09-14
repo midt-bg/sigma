@@ -24,6 +24,12 @@ function fixture() {
   const registryDb = path.join(dir, 'work.sqlite');
   const db = new DatabaseSync(registryDb);
   db.exec(REGISTRY_SCHEMA);
+  db.exec(
+    fs.readFileSync(
+      path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+      'utf8',
+    ),
+  );
   db.exec(`
     INSERT INTO registry_deeds (eik, name, legal_form, status, seat_settlement, seat_entry_on,
                                 owners_entry_on, outcome, fetched_at) VALUES

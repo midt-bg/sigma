@@ -34,7 +34,13 @@ const isoDay = (v) => (v ? String(v).slice(0, 10) : null);
 export function registryFacts(deed, roles) {
   const read = new Set(ROLE_FIELDS);
   const holders = roles
-    .filter((r) => read.has(r.field_ident) && r.subject_kind !== 'entity' && r.removed_on == null)
+    .filter(
+      (r) =>
+        read.has(r.field_ident) &&
+        r.subject_kind !== 'entity' &&
+        r.removed_on == null &&
+        !r.uncertain_after,
+    )
     .map((r) => ({
       field: String(r.field_ident),
       name: String(r.subject_name ?? ''),

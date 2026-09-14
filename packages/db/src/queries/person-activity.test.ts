@@ -40,10 +40,11 @@ function fixture() {
     INSERT INTO authorities VALUES('auth:1','Община');
     INSERT INTO bidders VALUES('eik:111111111','Компания','111111111');
     INSERT INTO tenders VALUES('t','Предмет','auth:1');
-    INSERT INTO registry_roles VALUES('person','person','111111111','manager','2020-01-01','2021-01-01'),('person','person','111111111','partner','2020-01-01','2021-01-01'),('person','person','111111111','manager','2022-01-01',NULL);
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','111111111','manager','2020-01-01','2021-01-01'),('person','person','111111111','partner','2020-01-01','2021-01-01'),('person','person','111111111','manager','2022-01-01',NULL);
     INSERT INTO interest_links VALUES('official','111111111','l','published','private_ownership','2020','2021');
     INSERT INTO interest_link_evidence VALUES('l','document');
     INSERT INTO contracts VALUES('a','Първи','eik:111111111','t','2020-06-01',100),('b','Прекъсване','eik:111111111','t','2021-01-01',200),('c','Повторна роля','eik:111111111','t','2022-06-01',300),('d','Без дата','eik:111111111','t',NULL,NULL);`);
+  db.exec('ALTER TABLE registry_roles ADD COLUMN uncertain_after');
   return d1FromSqlite(db);
 }
 it('deduplicates roles and declaration overlap, preserving gaps and unknown dates', async () => {
@@ -119,7 +120,7 @@ it('counts each filter option against the other selections, including zero resul
     INSERT INTO tenders VALUES('t2','Друг предмет','auth:2');
     INSERT INTO bidders VALUES('eik:222222222','Втора фирма','222222222'),('alias','Друго име на първата фирма','111111111');
     UPDATE contracts SET bidder_id='alias' WHERE id='c';
-    INSERT INTO registry_roles VALUES('person','person','222222222','manager','2020-01-01','2021-01-01');
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','222222222','manager','2020-01-01','2021-01-01');
     INSERT INTO interest_links VALUES('official','222222222','family','published','family_ownership','2022','2023');
     INSERT INTO interest_link_evidence VALUES('family','document');
     INSERT INTO contracts VALUES
@@ -328,4 +329,14 @@ it('disputed inventories retain all company contracts, exclude disputed years, a
   expect(
     (await getPersonActivity(d1, null, ['official', 'alias'], new URLSearchParams())).total,
   ).toBe(0);
+});
+
+it('an ambiguous later holder ends the reliable period without claiming a legal removal', async () => {
+  const d1 = fixture();
+  db.exec("UPDATE registry_roles SET uncertain_after='2022-06-01' WHERE removed_on IS NULL");
+  const a = await getPersonActivity(d1, 'person', [], new URLSearchParams('basis=role'));
+  expect(a.contracts.map((c) => c.id)).toEqual(['a']);
+  expect(
+    db.prepare('SELECT removed_on FROM registry_roles WHERE uncertain_after IS NOT NULL').get(),
+  ).toEqual({ removed_on: null });
 });

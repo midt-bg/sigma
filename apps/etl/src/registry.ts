@@ -82,12 +82,17 @@ export async function queueNewWinners(db: D1Database, now: string, limit: number
   await db
     .prepare(
       `INSERT OR IGNORE INTO registry_queue (eik, reason, queued_at)
-       SELECT DISTINCT b.eik_normalized, 'new', ?1 FROM bidders b
-       WHERE b.eik_valid = 1 AND length(b.eik_normalized) = 9
-         AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id = b.id)
-         AND NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik = b.eik_normalized)
-         AND NOT EXISTS (SELECT 1 FROM registry_queue q WHERE q.eik = b.eik_normalized)
-       ORDER BY b.eik_normalized LIMIT ?2`,
+       SELECT eik, 'new', ?1 FROM (
+         SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
+         WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
+           AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
+         UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
+       ) requested
+       WHERE (NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
+         OR (EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok')
+           AND NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)))
+         AND NOT EXISTS (SELECT 1 FROM registry_queue q WHERE q.eik=requested.eik)
+       ORDER BY eik LIMIT ?2`,
     )
     .bind(now, limit)
     .run();
@@ -143,12 +148,10 @@ export async function nextQueued(
 }
 
 const ROLE_INSERT = `INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id,
-  subject_name, share, country, entry_number, added_on, removed_on) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+  subject_name, share, country, entry_number, added_on, removed_on, uncertain_after) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
   ON CONFLICT(eik, sub_uic, field_ident, subject_id, entry_number) DO UPDATE SET role = excluded.role,
   subject_kind = excluded.subject_kind, subject_name = excluded.subject_name, share = excluded.share,
-  country = excluded.country, added_on = excluded.added_on, removed_on = excluded.removed_on`;
-const PERSON_UPSERT = `INSERT INTO registry_persons (indent, name, indent_type) VALUES (?1, ?2, ?3)
-  ON CONFLICT(indent) DO UPDATE SET name = excluded.name, indent_type = excluded.indent_type`;
+  country = excluded.country, added_on = excluded.added_on, removed_on = excluded.removed_on, uncertain_after = excluded.uncertain_after`;
 const DEED_UPSERT = `INSERT INTO registry_deeds (eik, name, legal_form, status, seat_settlement, seat_entry_on,
   owners_entry_on, outcome, fetched_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(eik) DO UPDATE SET
   name = excluded.name, legal_form = excluded.legal_form, status = excluded.status,
@@ -199,9 +202,48 @@ export async function storeDeed(
   let persons: RegistryPerson[] = [];
   const statements: D1PreparedStatement[] = [
     db.prepare('DELETE FROM registry_roles WHERE eik = ?').bind(eik),
+    db.prepare('DELETE FROM registry_identity_observations WHERE eik = ?').bind(eik),
+    db.prepare('DELETE FROM registry_identity_snapshots WHERE eik = ?').bind(eik),
   ];
   if (lookup.status === 'ok') {
-    ({ roles, persons } = rolesFromDeed(eik, lookup.deed));
+    const parsed = rolesFromDeed(eik, lookup.deed);
+    ({ roles, persons } = parsed);
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(lookup.deed.deed)),
+    );
+    const sourceHash = [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    statements.push(
+      db
+        .prepare('INSERT INTO registry_identity_snapshots VALUES(?,?,?)')
+        .bind(eik, sourceHash, fetchedAt),
+    );
+    for (const o of parsed.observations)
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO registry_identity_observations
+      (eik,sub_uic,field_ident,entry_number,entry_on,holder_index,registry_indent,indent_type,name,name_key,subject_kind,source_hash,fetched_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          )
+          .bind(
+            o.eik,
+            o.subUic,
+            o.fieldIdent,
+            o.entryNumber,
+            o.entryOn,
+            o.holderIndex,
+            o.indent,
+            o.indentType,
+            o.name,
+            o.nameKey,
+            o.kind,
+            sourceHash,
+            fetchedAt,
+          ),
+      );
     const d = lookup.deed.deed;
     const f = deedFacts(lookup.deed);
     statements.push(
@@ -220,7 +262,16 @@ export async function storeDeed(
         ),
     );
     for (const p of persons)
-      statements.push(db.prepare(PERSON_UPSERT).bind(p.indent, p.name, p.indentType));
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO registry_persons(indent,name,indent_type)
+      SELECT registry_indent,name,indent_type FROM registry_identity_observations
+      WHERE registry_indent=? AND subject_kind='person' ORDER BY entry_on DESC,name,eik LIMIT 1
+      ON CONFLICT(indent) DO UPDATE SET name=excluded.name,indent_type=excluded.indent_type`,
+          )
+          .bind(p.indent),
+      );
     for (const r of roles)
       statements.push(
         db
@@ -238,6 +289,7 @@ export async function storeDeed(
             r.entryNumber,
             r.addedOn,
             r.removedOn,
+            r.uncertainAfter ?? null,
           ),
       );
   } else {

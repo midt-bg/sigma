@@ -275,14 +275,14 @@ export function PersonTimeline({
                     c.roles
                       .filter((r) => r.role === kind)
                       .map((r, i) => {
-                        const end = r.removedOn ?? c.asOf?.slice(0, 10);
+                        const end = r.removedOn ?? r.uncertainAfter ?? c.asOf?.slice(0, 10);
                         const valid =
                           r.addedOn &&
                           end &&
                           Number.isFinite(Date.parse(r.addedOn)) &&
                           Number.isFinite(Date.parse(end)) &&
                           r.addedOn <= end;
-                        const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : `вписана към ${date(c.asOf)}`}`;
+                        const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}`;
                         return valid ? (
                           <a
                             key={i}
@@ -299,7 +299,7 @@ export function PersonTimeline({
                               event.preventDefault();
                               revealProfileTarget(roleRowId(r));
                             }}
-                            className={`time-role ${!r.removedOn ? 'time-open' : ''}`}
+                            className={`time-role ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
                             style={{
                               left: `${x(r.addedOn)}%`,
                               width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,

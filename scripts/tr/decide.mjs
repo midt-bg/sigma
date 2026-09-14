@@ -129,7 +129,7 @@ export function readRegistry(src, eik) {
   if (deed.outcome === 'absent') return { outsideTr: true, fetchedAt: deed.fetched_at };
   const roles = src
     .prepare(
-      `SELECT field_ident, subject_kind, subject_name, entry_number, added_on, removed_on
+      `SELECT field_ident, subject_kind, subject_name, entry_number, added_on, removed_on, uncertain_after
          FROM registry_roles WHERE eik = ? AND field_ident IN (${ROLE_FIELDS.map(() => '?').join(', ')})`,
     )
     .all(deed.eik, ...ROLE_FIELDS);

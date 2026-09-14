@@ -314,3 +314,37 @@ it('queued winners do not starve new winners; XML Retry-After pauses all reads',
   expect(await nextQueued(db, 10, '2026-09-13T00:09:59Z')).toEqual([]);
   expect(await nextQueued(db, 10, '2026-09-13T00:10:00Z')).toHaveLength(2);
 });
+
+it('queues declared companies without contracts and stores per-entry identity evidence atomically', async () => {
+  const { db, sqlite } = served();
+  sqlite.exec(
+    "INSERT INTO registry_requested_companies VALUES('555555555','doc','ДЕКЛАРИРАНО ООД')",
+  );
+  await queueNewWinners(db, '2026-09-01', 10);
+  expect(sqlite.prepare("SELECT eik FROM registry_queue WHERE eik='555555555'").get()).toBeTruthy();
+  const old = managers([H1, 'ИВАНА ПЕТРОВА ПЪРВА']);
+  const next = {
+    ...managers([H1, 'ИВАНА ПЕТРОВА ВТОРА']),
+    entryNumber: '20210101100000',
+    entryDate: '2021-01-01T10:00:00',
+  };
+  await storeDeed(
+    db,
+    '555555555',
+    { status: 'ok', deed: partida('555555555', [old, next]) },
+    '2026-09-01',
+  );
+  expect(
+    sqlite.prepare('SELECT name FROM registry_identity_observations ORDER BY entry_on').all(),
+  ).toEqual([{ name: 'ИВАНА ПЕТРОВА ПЪРВА' }, { name: 'ИВАНА ПЕТРОВА ВТОРА' }]);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM registry_roles').get()).toEqual({ n: 1 });
+  await storeDeed(
+    db,
+    '555555555',
+    { status: 'ok', deed: partida('555555555', [next]) },
+    '2026-09-02',
+  );
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM registry_identity_observations').get()).toEqual({
+    n: 1,
+  });
+});

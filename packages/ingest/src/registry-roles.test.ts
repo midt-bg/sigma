@@ -476,3 +476,39 @@ describe('deedFacts', () => {
     });
   });
 });
+
+describe('identity observations', () => {
+  it('keeps both exact names under one Indent without multiplying the timeline role', () => {
+    const r = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2010-01-01', { value: managers(['a', 'ИВАНА ПЕТРОВА ПЪРВА', '1']) }),
+        on('2015-01-01', { value: managers(['a', 'ИВАНА ПЕТРОВА ВТОРА', '2']) }),
+      ),
+    );
+    expect(r.roles).toHaveLength(1);
+    expect(r.observations.map((o) => [o.name, o.entryNumber, o.kind])).toEqual([
+      ['ИВАНА ПЕТРОВА ПЪРВА', '20100101090000', 'person'],
+      ['ИВАНА ПЕТРОВА ВТОРА', '20150101090000', 'person'],
+    ]);
+  });
+  it('does not assign a collective name to one person or claim legal termination', () => {
+    const r = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2010-01-01', { value: managers(['a', 'ИВАН ПЕТРОВ ПЪРВИ', '1']) }),
+        on('2015-01-01', {
+          value: managers([
+            'a',
+            'ИВАН ПЕТРОВ ПЪРВИ, ПЕТЪР ИВАНОВ ВТОРИ и МАРИЯ ИВАНОВА ТРЕТА',
+            '2',
+          ]),
+        }),
+      ),
+    );
+    expect(r.roles).toHaveLength(1);
+    expect(r.roles[0]).toMatchObject({ removedOn: null, uncertainAfter: '2015-01-01' });
+    expect(r.persons[0]?.name).toBe('ИВАН ПЕТРОВ ПЪРВИ');
+    expect(r.observations[1]?.kind).toBe('collective');
+  });
+});

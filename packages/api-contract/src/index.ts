@@ -561,6 +561,8 @@ export interface CompanyRole {
   share: string | null;
   addedOn: string;
   removedOn: string | null;
+  /** Evidence becomes ambiguous here; not a registered termination. */
+  uncertainAfter?: string | null;
   entryNumber: string;
 }
 
@@ -579,6 +581,8 @@ export interface PersonRole {
   share: string | null;
   addedOn: string;
   removedOn: string | null;
+  /** Evidence becomes ambiguous here; not a registered termination. */
+  uncertainAfter?: string | null;
   entryNumber: string;
 }
 
