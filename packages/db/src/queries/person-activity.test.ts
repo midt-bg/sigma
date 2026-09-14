@@ -80,7 +80,7 @@ it('excludes recipients without a procurement profile from contracts, facets and
   db.exec(`
     INSERT INTO bidders VALUES('eik:222222222','Без профил','222222222'),('eik:333333333','Без поръчки','333333333');
     INSERT INTO company_totals VALUES('eik:333333333',0);
-    INSERT INTO registry_roles VALUES('person','person','222222222','manager','2000-01-01',NULL),('person','person','333333333','manager','2000-01-01',NULL);
+    INSERT INTO registry_roles(subject_id,subject_kind,eik,role,added_on,removed_on) VALUES('person','person','222222222','manager','2000-01-01',NULL),('person','person','333333333','manager','2000-01-01',NULL);
     INSERT INTO contracts VALUES('missing','Без профил','eik:222222222','t','2020-01-01',999),('zero','Без поръчки','eik:333333333','t','2020-01-01',999);
   `);
   const activity = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());

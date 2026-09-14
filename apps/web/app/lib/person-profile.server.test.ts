@@ -4,7 +4,7 @@ import { emptyActivity } from './person-profile.test-support';
 
 const q = vi.hoisted(() => ({
   getRegistryPerson: vi.fn(),
-  getRegistryOfficials: vi.fn(),
+  getPersonScope: vi.fn(),
   getOfficialConflicts: vi.fn(),
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
@@ -14,6 +14,7 @@ vi.mock('@sigma/db', () => q);
 import { loadPersonProfile } from './person-profile.server';
 
 it('limits company mentions to eligible profiles while retaining every source and institutional fact', async () => {
+  q.getPersonScope.mockResolvedValue({ indent: null, officialIds: ['p'] });
   const eligible = '111111111',
     outside = '222222222';
   const declarations: PersonDeclaration[] = [
