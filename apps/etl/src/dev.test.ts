@@ -18,7 +18,7 @@ it('keeps manual declaration runs in dev and waits for the actual container outc
   const step = { do: async (_name: string, fn: () => unknown) => fn(), sleep: vi.fn() };
   const run = (overrides = {}) =>
     new DevDeclarationsWorkflow({} as never, { ...env, ...overrides } as never).run(
-      {} as never,
+      { instanceId: 'workflow-1' } as never,
       step as never,
     );
   await expect(run({ SIGMA_D1_NAME: 'sigma-stage' })).rejects.toThrow('isolated dev');
@@ -26,6 +26,8 @@ it('keeps manual declaration runs in dev and waits for the actual container outc
   expect(startRun).not.toHaveBeenCalled();
   await expect(run()).resolves.toMatchObject({ runId: 'run-1', state: 'complete' });
   expect(getRun).toHaveBeenCalledTimes(2);
+  expect(startRun).toHaveBeenCalledWith('workflow-1');
+  expect(step.sleep).toHaveBeenCalledWith('wait-0', '5 minutes');
   getRun.mockResolvedValue({ runId: 'run-1', state: 'failed', reason: 'deadline' });
   await expect(run()).rejects.toThrow('failed: deadline');
   getRun.mockResolvedValue({ runId: 'another-run', state: 'complete' });

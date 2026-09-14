@@ -12,7 +12,8 @@ import { pathToFileURL } from 'node:url';
 import { finished } from 'node:stream/promises';
 import { parseList, parseDeclaration } from './parse.mjs';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
-import { corpusStore, CORPUS_STAMP, digest } from './corpus.mjs';
+import { corpusStore, corpusFiles, CORPUS_STAMP, digest } from './corpus.mjs';
+import { progress } from './progress.mjs';
 import { safeFolder, safeXmlFile } from './guard.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -80,6 +81,8 @@ async function assertCorpusComplete(store) {
 export async function run({ store = corpusStore(RAW) } = {}) {
   assertScratchIgnored();
   const stamp = await assertCorpusComplete(store);
+  progress('extract');
+  let processed = 0;
   fs.mkdirSync(STAGING, { recursive: true });
   let identify;
   if (process.env.CACBG_REGISTRY_DB) {
@@ -175,7 +178,11 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         )
           throw Error(`Corpus inventory does not match list: ${folder}`);
       }
-      for (const { file, sha256 } of files) {
+      for await (const { file, sha256, bytes } of corpusFiles(
+        store,
+        folder,
+        files.filter(({ file }) => file !== 'list.xml' && file.endsWith('.xml')),
+      )) {
         if (safeXmlFile(file) !== file) throw Error('Invalid corpus filename');
         if (file === 'list.xml' || !file.endsWith('.xml')) continue;
         // A single malformed/truncated XML must not abort the whole corpus crawl — skip it and keep going,
@@ -183,9 +190,9 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         // one bad file mid-run wastes hours.)
         let d;
         // Storage failures are fatal; only malformed source XML may be quarantined below.
-        const bytes = await store.get(`${folder}/${file}`);
         if (!bytes || (store.remote && digest(bytes) !== sha256))
           throw Error(`Corpus file missing or changed: ${folder}/${file}`);
+        progress('extract', ++processed);
         const xml = bytes.toString('utf8');
         try {
           d = parseDeclaration(xml);

@@ -14,7 +14,8 @@ import { corpusStore, CORPUS_STAMP, digest } from './corpus.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { getPinned, CACBG_HOST } from './tls.mjs';
+import { getPinned, CACBG_HOST, MAX_CONCURRENCY } from './tls.mjs';
+import { progress } from './progress.mjs';
 import { parseList } from './parse.mjs';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import {
@@ -33,7 +34,7 @@ const RAW = process.env.CACBG_RAW || path.join(SCRATCH, 'raw');
 // connections — from a script whose whole design (backoff, circuit breaker, inter-request sleep) exists to
 // avoid exactly that. 8 is what the workflow runs and what the corpus measurement was taken at; ADR-0012's
 // original „≤6" predates it. Raising this is a deliberate edit with a server on the other end, not a flag.
-export const MAX_CONCURRENCY = 8;
+export { MAX_CONCURRENCY };
 
 // Parse + VALIDATE crawl options. An unvalidated Number() lets `--concurrency abc/0` become NaN/0 →
 // `Array.from({length})` spawns zero workers → the crawl fetches nothing and exits 0 (a silent no-op),
@@ -60,7 +61,7 @@ export function parseCrawlOptions(argv) {
   };
   const limitRaw = get('limit', '');
   const deadlineRaw = get('deadline-minutes', '');
-  const concurrency = posInt(get('concurrency', '6'), 'concurrency');
+  const concurrency = posInt(get('concurrency', String(MAX_CONCURRENCY)), 'concurrency');
   if (concurrency > MAX_CONCURRENCY)
     throw new Error(
       `--concurrency must be at most ${MAX_CONCURRENCY} — the register is a state server, not a load target; ` +
@@ -77,6 +78,7 @@ export function parseCrawlOptions(argv) {
     // (a set whose list.xml never loaded, or an announced declaration we failed to fetch for a non-404
     // reason) exits non-zero; the operator passes --allow-incomplete to proceed knowingly (#226, Todor #2).
     allowIncomplete: argv.includes('--allow-incomplete'),
+    yieldOnDeadline: argv.includes('--yield-on-deadline'),
   };
 }
 
@@ -121,21 +123,31 @@ export function nextBreaker(consecutive, outcome) {
   return outcome === 'ok' || outcome === 'missing' ? 0 : consecutive + 1;
 }
 
-async function politeGet(url, { tries = 5 } = {}) {
+export async function politeGet(
+  url,
+  { tries = 5, get = getPinned, pause = sleep, now = Date.now } = {},
+) {
   let wait = 500;
   for (let attempt = 1; ; attempt++) {
     let res;
     try {
-      res = await getPinned(url);
+      res = await get(url);
     } catch (err) {
       if (attempt >= tries) throw err;
-      await sleep(wait);
+      await pause(wait);
       wait *= 2;
       continue;
     }
     if (res.status === 403 || res.status === 429 || res.status >= 500) {
       if (attempt >= tries) return res;
-      await sleep(wait);
+      const header = res.headers?.['retry-after'];
+      const retryAfter =
+        header == null
+          ? 0
+          : /^\d+$/.test(String(header))
+            ? Number(header) * 1000
+            : Math.max(0, Date.parse(String(header)) - now());
+      await pause(Math.max(wait, Number.isFinite(retryAfter) ? retryAfter : 0));
       wait *= 2;
       continue;
     }
@@ -205,6 +217,7 @@ export async function run({
     folders: override,
     allowIncomplete,
     deadlineMinutes,
+    yieldOnDeadline,
   } = parseCrawlOptions(argv);
 
   // WHY A SELF-IMPOSED DEADLINE. The full corpus is ~37 sets / ~281 000 declarations and does not fit in the
@@ -249,6 +262,8 @@ export async function run({
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   const inventory = [];
+  let completed = 0;
+  progress('fetch');
   for (const folder of folders) {
     // Checked BEFORE mkdir/list.xml so an out-of-budget set leaves no trace at all — an empty directory
     // and a cached list.xml would read, to the next run, like a set that had genuinely been visited.
@@ -353,6 +368,7 @@ export async function run({
         if (cachedFiles.has(xmlFile)) {
           obtainedFiles.set(xmlFile, cachedFiles.get(xmlFile));
           fstat.cached++;
+          progress('fetch', ++completed);
           return;
         }
         let res;
@@ -368,6 +384,7 @@ export async function run({
         if (res.status === 404) {
           fstat.missing++;
           sourceGaps.add(xmlFile);
+          progress('fetch', ++completed);
           consecutive = nextBreaker(consecutive, 'missing');
           return;
         } // listed-but-unpublished (source gap)
@@ -384,6 +401,7 @@ export async function run({
         await store.put(`${folder}/${xmlFile}`, res.body);
         obtainedFiles.set(xmlFile, digest(res.body));
         fstat.fetched++;
+        progress('fetch', ++completed);
         if (fstat.fetched % 500 === 0)
           console.log(`  ${folder}: ${fstat.fetched} fetched, ${fstat.cached} cached`);
         await sleep(15);
@@ -418,6 +436,7 @@ export async function run({
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
+  progress('fetch', completed, undefined, true);
   console.log('\n=== crawl summary ===');
   console.log(JSON.stringify({ folders: stats.folders, ...completeness, deadlineHit }, null, 2));
   console.log(`raw cache → ${rawDir}`);
@@ -437,7 +456,7 @@ export async function run({
         `by construction: ${completeness.reachedSets} of ${folders.length} set(s) reached. The raw cache is ` +
         `intact and consistent; re-run to resume from it (declarations already on disk are skipped).`,
     );
-    return 1;
+    return yieldOnDeadline && store.remote ? 75 : 1;
   }
 
   // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
@@ -492,6 +511,7 @@ export async function run({
         JSON.stringify(
           {
             schemaVersion: 2,
+            runId: process.env.SIGMA_RUN_ID ?? null,
             inventory,
             folders: folders.length,
             ...completeness,

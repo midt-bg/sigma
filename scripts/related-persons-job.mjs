@@ -3,8 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { corpusStore, CORPUS_STAMP } from './cacbg/corpus.mjs';
+import { corpusStore, CORPUS_STAMP, digest } from './cacbg/corpus.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
+import { progress } from './cacbg/progress.mjs';
 import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
 const flag = (n) => process.argv.includes(`--${n}`);
 const value = (n) => {
@@ -24,11 +25,31 @@ const env = {
   CACBG_STAGING: staging,
   TR_CACHE_DB: join(work, 'verdicts.sqlite'),
 };
-const run = (script, args = []) =>
-  execFileSync(process.execPath, ['--import', './scripts/cacbg/register-ts.mjs', script, ...args], {
-    env,
-    stdio: 'inherit',
-  });
+let stage = 'fetch';
+const setStage = (next) => {
+  stage = next;
+  progress(stage, 0, undefined, true);
+};
+const run = (script, args = []) => {
+  try {
+    return execFileSync(
+      process.execPath,
+      ['--import', './scripts/cacbg/register-ts.mjs', script, ...args],
+      { env, stdio: 'inherit' },
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        event: 'declarations_error',
+        stage,
+        script,
+        exitCode: error.status ?? null,
+        signal: error.signal ?? null,
+      }),
+    );
+    process.exit(error.status === 75 ? 75 : 1);
+  }
+};
 const wrangler = (args, output = false) =>
   execFileSync('wrangler', args, {
     cwd: resolve('apps/web'),
@@ -51,6 +72,42 @@ if (remote) {
   });
   run('scripts/wrangler-render.mjs', ['apps/web/wrangler.jsonc']);
   copyFileSync('apps/web/wrangler.deploy.jsonc', 'apps/web/wrangler.jsonc');
+}
+const r2 = flag('r2');
+if (r2 && (!remote || env.CACBG_CORPUS_URL !== 'http://declarations.r2' || !env.SIGMA_RUN_ID))
+  throw Error('R2 requires a logical run ID and the private Container corpus binding');
+const corpus = corpusStore(raw);
+let sourceStamp;
+if (r2) {
+  const accepted = await corpus.get('accepted.json');
+  const receipt = accepted ? JSON.parse(accepted) : null;
+  if (receipt?.runId === env.SIGMA_RUN_ID && receipt.audit === true && receipt.published === true) {
+    console.log(JSON.stringify({ event: 'declarations_job_complete', ...receipt }));
+    process.exit(0); // Publication completed before the previous container's status was recorded.
+  }
+  const stamp = await corpus.get(CORPUS_STAMP);
+  const parsed = stamp ? JSON.parse(stamp) : null;
+  if (
+    parsed?.runId === env.SIGMA_RUN_ID &&
+    parsed.schemaVersion === 2 &&
+    parsed.incomplete === false
+  )
+    sourceStamp = stamp;
+}
+if (!sourceStamp && !flag('skip-fetch')) {
+  setStage('fetch');
+  run(
+    'scripts/cacbg/fetch.mjs',
+    r2 ? ['--deadline-minutes', '60', '--yield-on-deadline'] : ['--deadline-minutes', '180'],
+  );
+}
+if (r2) {
+  sourceStamp ??= await corpus.get(CORPUS_STAMP);
+  if (!sourceStamp || JSON.parse(sourceStamp).runId !== env.SIGMA_RUN_ID)
+    throw Error('No complete corpus for this logical run');
+}
+setStage('snapshot');
+if (remote) {
   for (const name of [
     '0003_related_persons_foundation',
     '0009_interest_link_evidence',
@@ -166,10 +223,7 @@ if (remote) {
   localSource.prepare('VACUUM INTO ?').run(db);
   localSource.close();
 }
-const r2 = flag('r2');
-if (r2 && (!remote || env.CACBG_CORPUS_URL !== 'http://declarations.r2'))
-  throw Error('R2 requires the private Container corpus binding');
-if (!flag('skip-fetch')) run('scripts/cacbg/fetch.mjs', ['--deadline-minutes', '180']);
+setStage('extract');
 run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
 if (env.CACBG_COMPANY_CATALOG)
   run('scripts/cacbg/request-companies.mjs', [
@@ -180,17 +234,23 @@ if (env.CACBG_COMPANY_CATALOG)
     '--staging',
     staging,
   ]);
+setStage('candidates');
 run('scripts/cacbg/load.mjs', ['--emit-candidates']);
+setStage('decide');
 run('scripts/tr/decide.mjs', [
   '--links-file',
   join(staging, 'candidate-links.jsonl'),
   '--registry-db',
   db,
 ]);
+setStage('load');
 run('scripts/cacbg/load.mjs');
+setStage('audit');
 run('scripts/cacbg/audit.mjs');
 if (remote) {
+  setStage('publish');
   run('scripts/ship-related-persons.mjs', ['--work-db', db, '--remote', '--yes']);
+  setStage('reindex');
   const sql = execFileSync(
     process.execPath,
     [
@@ -205,12 +265,29 @@ if (remote) {
   writeFileSync(file, sql);
   wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
   if (r2) {
-    const corpus = corpusStore(raw);
     const stamp = await corpus.get(CORPUS_STAMP);
-    if (!stamp) throw Error('Published corpus stamp disappeared');
-    await corpus.put('accepted.json', stamp);
+    if (!stamp || digest(stamp) !== digest(sourceStamp))
+      throw Error('Published corpus stamp changed');
+    await corpus.put(
+      'accepted.json',
+      Buffer.from(
+        JSON.stringify({
+          runId: env.SIGMA_RUN_ID,
+          completedAt: new Date().toISOString(),
+          corpusHash: digest(sourceStamp),
+          corpus: JSON.parse(sourceStamp),
+          audit: true,
+          published: true,
+        }),
+      ),
+    );
   }
 } else run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
 console.log(
-  JSON.stringify({ event: 'declarations_job_complete', runId: env.SIGMA_RUN_ID ?? null, remote }),
+  JSON.stringify({
+    event: 'declarations_job_complete',
+    runId: env.SIGMA_RUN_ID ?? null,
+    audit: true,
+    published: remote,
+  }),
 );

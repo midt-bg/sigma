@@ -8,6 +8,19 @@ import { safeFolder, safeXmlFile } from './guard.mjs';
 export const CORPUS_STAMP = '.corpus-complete.json';
 export const digest = (body) => createHash('sha256').update(body).digest('hex');
 
+// Bounded batches hide R2 latency while preserving the parser's deterministic file order.
+export async function* corpusFiles(store, folder, files, width = 16) {
+  if (!Number.isInteger(width) || width < 1 || width > 32)
+    throw Error('Invalid corpus read concurrency');
+  for (let i = 0; i < files.length; i += width) {
+    const batch = files.slice(i, i + width);
+    const bodies = await Promise.all(
+      batch.map(({ file }) => store.get(`${folder}/${safeXmlFile(file)}`)),
+    );
+    for (let j = 0; j < batch.length; j++) yield { ...batch[j], bytes: bodies[j] };
+  }
+}
+
 function safeKey(key) {
   if ([CORPUS_STAMP, 'accepted.json'].includes(key)) return key;
   const parts = key.split('/');

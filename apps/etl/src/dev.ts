@@ -11,7 +11,7 @@ interface DevEnv extends DeclarationEnv {
 }
 
 export class DevDeclarationsWorkflow extends WorkflowEntrypoint<DevEnv> {
-  override async run(_event: WorkflowEvent<unknown>, step: WorkflowStep) {
+  override async run(event: WorkflowEvent<unknown>, step: WorkflowStep) {
     if (
       this.env.CLOUDFLARE_ACCOUNT_ID !== '1a40aa4d0d78bed8ecf036dd22fbfa9f' ||
       this.env.SIGMA_D1_ID !== '713b98fa-6ab5-45f3-81c4-119f4c0907d6' ||
@@ -22,20 +22,29 @@ export class DevDeclarationsWorkflow extends WorkflowEntrypoint<DevEnv> {
       throw new Error('Declaration verification requires the isolated dev resources');
 
     const start = await step.do('start-declarations', async () => {
-      const { runId, state } = await this.env.DECLARATIONS.getByName('declarations').startRun();
+      const { runId, state } = await this.env.DECLARATIONS.getByName('declarations').startRun(
+        event.instanceId,
+      );
       return { runId, state };
     });
-    for (let poll = 0; poll < 365; poll++) {
-      await step.sleep(`wait-${poll}`, '1 minute');
+    for (let poll = 0; ; poll++) {
+      await step.sleep(`wait-${poll}`, '5 minutes');
       const run = await step.do(`status-${poll}`, async () => {
         const current = await this.env.DECLARATIONS.getByName('declarations').getRun();
         return current
           ? {
               runId: current.runId,
               state: current.state,
+              audit: current.audit ?? false,
+              published: current.published ?? false,
               reason: current.reason ?? null,
               startedAt: current.startedAt ?? null,
               finishedAt: current.finishedAt ?? null,
+              attempt: current.attempt,
+              stage: current.stage,
+              completed: current.completed,
+              lastProgressAt: current.lastProgressAt,
+              retryAt: current.retryAt ?? null,
             }
           : null;
       });
@@ -44,7 +53,6 @@ export class DevDeclarationsWorkflow extends WorkflowEntrypoint<DevEnv> {
       if (run.state !== 'running')
         throw new Error(`Declaration run ${run.state}: ${run.reason ?? ''}`);
     }
-    throw new Error('Declaration verification exceeded the container deadline');
   }
 }
 export default {};

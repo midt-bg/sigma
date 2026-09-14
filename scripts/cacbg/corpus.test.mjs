@@ -3,8 +3,99 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { corpusStore, CORPUS_STAMP, digest } from './corpus.mjs';
+import { corpusStore, corpusFiles, CORPUS_STAMP, digest } from './corpus.mjs';
 import { run as crawl } from './fetch.mjs';
+
+test('two time slices resume the same durable XML set and only the complete pass seals it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-crawl-resume-'));
+  const objects = new Map(),
+    requests = [];
+  const store = {
+    remote: true,
+    get: async (key) => objects.get(key) ?? null,
+    put: async (key, body) => {
+      objects.set(key, body);
+    },
+    remove: async (key) => {
+      objects.delete(key);
+    },
+    files: async (folder) =>
+      new Map(
+        [...objects]
+          .filter(([key]) => key.startsWith(folder + '/') && key.endsWith('.xml'))
+          .map(([key, body]) => [key.split('/')[1], digest(body)]),
+      ),
+  };
+  const list =
+    '<root><MainCategory><Category Name="Annual"><Institution Name="Test"><Person><Name>Test Person</Name><Position><Name>Director</Name>' +
+    ['a', 'b', 'c'].map((n) => `<Declaration><xmlFile>${n}.xml</xmlFile></Declaration>`).join('') +
+    '</Position></Person></Institution></Category></MainCategory></root>';
+  let clock = 0;
+  const httpGet = async (url) => {
+    const file = url.split('/').at(-1);
+    if (file !== 'list.xml') {
+      requests.push(file);
+      clock += 60001;
+    }
+    return { status: 200, body: Buffer.from(file === 'list.xml' ? list : '<xml/>') };
+  };
+  const pass = () =>
+    crawl({
+      store,
+      rawDir: dir,
+      guard: () => {},
+      discover: async () => ['2025'],
+      httpGet,
+      now: () => clock,
+      argv: ['--concurrency', '1', '--deadline-minutes', '1', '--yield-on-deadline'],
+    });
+  try {
+    assert.equal(await pass(), 75);
+    assert(!objects.has(CORPUS_STAMP));
+    clock = 0;
+    assert.equal(await pass(), 75);
+    assert(!objects.has(CORPUS_STAMP));
+    clock = 0;
+    assert.equal(await pass(), 0);
+    assert.deepEqual(requests, ['a.xml', 'b.xml', 'c.xml']);
+    assert.equal(JSON.parse(objects.get(CORPUS_STAMP)).incomplete, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('R2 prefetch overlaps bounded reads, preserves file order and propagates read failures', async () => {
+  let active = 0,
+    peak = 0;
+  const files = Array.from({ length: 11 }, (_, n) => ({ file: `${n}.xml` }));
+  const store = {
+    get: async (key) => {
+      peak = Math.max(peak, ++active);
+      await new Promise((resolve) => setTimeout(resolve, key.endsWith('/0.xml') ? 15 : 1));
+      active--;
+      return Buffer.from(key);
+    },
+  };
+  const result = [];
+  for await (const entry of corpusFiles(store, '2025', files, 4)) result.push(entry.file);
+  assert.equal(peak, 4);
+  assert.deepEqual(
+    result,
+    files.map((f) => f.file),
+  );
+  await assert.rejects(async () => {
+    for await (const entry of corpusFiles(
+      {
+        get: async () => {
+          throw Error('R2 unavailable');
+        },
+      },
+      '2025',
+      files,
+    ))
+      void entry;
+  }, /R2 unavailable/);
+});
 
 test('R2 crawl resumes per object, extracts the same records without a disk corpus, and rejects changed inputs', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sigma-r2-corpus-'));
