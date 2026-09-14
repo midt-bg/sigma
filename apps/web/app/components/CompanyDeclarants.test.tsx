@@ -4,20 +4,14 @@ import { MemoryRouter } from 'react-router';
 import { expect, it } from 'vitest';
 import type { ConflictLink } from '@sigma/api-contract';
 import { CompanyDeclarants } from './CompanyDeclarants';
-import { companyDeclarantGroups } from '../lib/company-declarants';
-import { groupByPerson } from '../lib/conflicts';
-
-const pazardzhik =
-  '0KDQo9Cc0JXQnSDQodCi0JXQpNCQ0J3QntCSINCh0KLQldCk0JDQndCe0JJ80J_QkNCX0JDQoNCU0JbQmNCa';
-const belovo = '0KDQo9Cc0JXQnSDQodCi0JXQpNCQ0J3QntCSINCh0KLQldCk0JDQndCe0JJ80JHQldCb0J7QktCe';
 const link = (officialSlug: string, institution: string, year: string): ConflictLink => ({
-  linkKey: `${officialSlug}|112032875|family`,
+  linkKey: `${officialSlug}|123456789|family`,
   officialSlug,
-  official: 'РУМЕН СТЕФАНОВ СТЕФАНОВ',
+  official: 'ИВАН ПЕТРОВ ТЕСТОВ',
   institution,
   position: 'Главен архитект',
-  company: 'СИГМА-СТРОЙ ООД',
-  eik: '112032875',
+  company: 'ТЕСТ ООД',
+  eik: '123456789',
   relation: 'related',
   contemporaneous: true,
   ownInstitution: false,
@@ -50,10 +44,12 @@ function render(links: ConflictLink[]) {
   return container;
 }
 
-it('shows the reviewed person once, preserving every office, year and source profile', () => {
-  const links = [link(pazardzhik, 'Пазарджик', '2023'), link(belovo, 'Белово', '2024')];
+it('groups a shared registry identity, preserving offices, roles, years and the profile link', () => {
+  const links = [link('source-a', 'Община А', '2023'), link('source-b', 'Община Б', '2024')].map(
+    (l) => ({ ...l, registryPersonId: 'a'.repeat(64) }),
+  );
   links[1]!.declaredOffices!.push({
-    institution: 'Белово',
+    institution: 'Община Б',
     position: 'Главен експерт',
     year: '2025',
   });
@@ -61,12 +57,12 @@ it('shows the reviewed person once, preserving every office, year and source pro
   const container = render(links);
   expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
   expect(container.querySelector('[data-label="Длъжностно лице"]')?.textContent).toBe(
-    'Румен Стефанов Стефанов',
+    'Иван Петров Тестов',
   );
   const offices = container.querySelector('[data-label="Институция и длъжност"]')!;
   for (const value of [
-    'Пазарджик',
-    'Белово',
+    'Община А',
+    'Община Б',
     'Главен архитект',
     'Главен експерт',
     '2023',
@@ -75,32 +71,39 @@ it('shows the reviewed person once, preserving every office, year and source pro
   ]) {
     expect(offices.textContent).toContain(value);
   }
-  expect([...offices.querySelectorAll('a')].map((a) => a.getAttribute('href')).sort()).toEqual(
-    [pazardzhik, belovo].map((s) => `/conflicts/official/${s}`).sort(),
+  expect(container.querySelector('[data-label="Длъжностно лице"] a')?.getAttribute('href')).toBe(
+    '/conflicts/official/source-a',
   );
   expect(container.querySelectorAll('.chip')).toHaveLength(1);
   expect(JSON.stringify(links)).toBe(original);
-  // The presentation correction does not change profile identity or financial aggregation.
-  expect(groupByPerson(links)).toHaveLength(2);
 });
 
-it('does not merge a namesake with an unreviewed source profile, even in the same company', () => {
-  const links = [link(pazardzhik, 'Пазарджик', '2023'), link('namesake', 'Друга община', '2024')];
+it('keeps same-name source profiles separate without a proven registry identity', () => {
+  const links = [link('source-a', 'Община А', '2023'), link('source-b', 'Община Б', '2024')];
   expect(render(links).querySelectorAll('tbody tr')).toHaveLength(2);
 });
 
 it('keeps contradictory registry identities separate', () => {
   const links = [
-    { ...link(pazardzhik, 'Пазарджик', '2023'), registryPersonId: 'person-a' },
-    { ...link(belovo, 'Белово', '2024'), registryPersonId: 'person-b' },
+    { ...link('source-a', 'Община А', '2023'), registryPersonId: 'a'.repeat(64) },
+    { ...link('source-b', 'Община Б', '2024'), registryPersonId: 'b'.repeat(64) },
   ];
-  expect(companyDeclarantGroups(links)).toHaveLength(2);
+  expect(render(links).querySelectorAll('tbody tr')).toHaveLength(2);
+});
+
+it('does not transfer a registry identity to another same-name source profile', () => {
+  expect(
+    render([
+      { ...link('source-a', 'Община А', '2023'), registryPersonId: 'a'.repeat(64) },
+      link('source-b', 'Община Б', '2024'),
+    ]).querySelectorAll('tbody tr'),
+  ).toHaveLength(2);
 });
 
 it('preserves both kinds of declared participation in the combined row', () => {
   const container = render([
-    link(pazardzhik, 'Пазарджик', '2023'),
-    { ...link(belovo, 'Белово', '2024'), relation: 'owns' },
+    { ...link('source-a', 'Община А', '2023'), registryPersonId: 'a'.repeat(64) },
+    { ...link('source-b', 'Община Б', '2024'), registryPersonId: 'a'.repeat(64), relation: 'owns' },
   ]);
   expect(container.querySelector('[data-label="Декларирано участие"] .chip')?.textContent).toBe(
     'собствен и свързан дял',
