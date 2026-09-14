@@ -86,7 +86,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
           <Section
             id="declarations"
             title="Всички декларации"
-            hint="Наличните документи за лицето, включително декларации без дял в показаните дружества. Отчетната година, датата на документа и подаването са различни факти."
+            hint="Всички налични декларации за лицето. Показани са участията в дружества и организации с обществени поръчки и профил в Сигма. Отчетната година, датата на документа и подаването са различни факти."
           >
             <Declarations declarations={p.declarations} />
           </Section>
@@ -119,7 +119,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             <Section
               id="roles"
               title="Роли"
-              hint="Текущи и прекратени роли с датите на вписване и заличаване."
+              hint="Текущи и прекратени роли в дружества и организации с обществени поръчки и профил в Сигма, с датите на вписване и заличаване."
             >
               <PersonRolesTables roles={p.person.roles} />
               <RegistrySource asOf={p.person.asOf} />

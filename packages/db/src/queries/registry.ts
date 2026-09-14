@@ -216,13 +216,13 @@ const PERSON_ROLES_SQL = `
          d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
-  LEFT JOIN bidders b ON b.id = 'eik:' || r.eik
-  LEFT JOIN company_totals ct ON ct.bidder_id = b.id
+  JOIN bidders b ON b.id = 'eik:' || r.eik
+  JOIN company_totals ct ON ct.bidder_id = b.id AND ct.contracts > 0
   WHERE r.subject_id = ?1 AND r.subject_kind = 'person' AND ${publicRole('r')}`;
 
 /**
- * A person the register identifies, with every public role they hold or held at a company in the corpus — or
- * null: for an identifier the register never gave, and for a person it records only as an actual owner.
+ * A person the register identifies, with public roles at procurement recipients with Sigma profiles — or
+ * null when the identifier is unknown or has no eligible public role.
  */
 export async function getRegistryPerson(
   db: D1Database,

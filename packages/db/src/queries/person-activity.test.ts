@@ -29,6 +29,8 @@ function fixture() {
     CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
     CREATE TABLE person_registry_links(person_id,registry_indent);
     CREATE TABLE bidders(id,name,eik_normalized);
+    CREATE TABLE company_totals(bidder_id,contracts);
+    INSERT INTO company_totals VALUES('eik:111111111',4);
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
@@ -71,6 +73,29 @@ it('deduplicates roles and declaration overlap, preserving gaps and unknown date
   });
   expect(a.contracts.find((r) => r.id === 'd')).toBeUndefined();
   expect(declared.contracts.find((r) => r.id === 'd')).toBeUndefined();
+});
+it('excludes recipients without a procurement profile from contracts, facets and the timeline', async () => {
+  const d1 = fixture();
+  db.exec(`
+    INSERT INTO bidders VALUES('eik:222222222','Без профил','222222222'),('eik:333333333','Без поръчки','333333333');
+    INSERT INTO company_totals VALUES('eik:333333333',0);
+    INSERT INTO registry_roles VALUES('person','person','222222222','manager','2000-01-01',NULL),('person','person','333333333','manager','2000-01-01',NULL);
+    INSERT INTO contracts VALUES('missing','Без профил','eik:222222222','t','2020-01-01',999),('zero','Без поръчки','eik:333333333','t','2020-01-01',999);
+  `);
+  const activity = await getPersonActivity(d1, 'person', ['official'], new URLSearchParams());
+  expect(activity.total).toBe(4);
+  expect(activity.companies).toEqual([{ eik: '111111111', name: 'Компания' }]);
+  expect(activity.contracts.some((c) => c.signedAt === null && c.valueEur === null)).toBe(true);
+  const timeline = await getPersonTimeline(d1, 'person', ['official']);
+  expect(new Set(timeline.contracts.map((c) => c.eik))).toEqual(new Set(['111111111']));
+  const empty = await getPersonActivity(
+    d1,
+    'person',
+    ['official'],
+    new URLSearchParams('year=1900'),
+  );
+  expect(empty.total).toBe(0);
+  expect(empty.companies).toEqual(activity.companies);
 });
 it('an open role supports contracts only through the last successful registry observation', async () => {
   const d1 = fixture();
@@ -118,6 +143,7 @@ it('counts each filter option against the other selections, including zero resul
     INSERT INTO authorities VALUES('auth:2','Втора община');
     INSERT INTO tenders VALUES('t2','Друг предмет','auth:2');
     INSERT INTO bidders VALUES('eik:222222222','Втора фирма','222222222'),('alias','Друго име на първата фирма','111111111');
+    INSERT INTO company_totals VALUES('eik:222222222',4);
     UPDATE contracts SET bidder_id='alias' WHERE id='c';
     INSERT INTO registry_roles VALUES('person','person','222222222','manager','2020-01-01','2021-01-01');
     INSERT INTO interest_links VALUES('official','222222222','family','published','family_ownership','2022','2023');
