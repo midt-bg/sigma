@@ -71,6 +71,20 @@ const flag = (link, axis, detail) =>
 
 // Published canonical profiles must agree with durable source membership, not a second name resolver.
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
+  const invalidEvidence = db
+    .prepare(
+      `SELECT count(*) n FROM person_identity_evidence e
+    LEFT JOIN person_sources l ON l.id=e.left_source
+    LEFT JOIN person_sources r ON r.id=e.right_source
+    WHERE e.decision='accepted' AND (e.origin<>'automatic' OR l.id IS NULL OR r.id IS NULL
+      OR l.active<>1 OR r.active<>1 OR l.source_hash<>e.left_hash OR r.source_hash<>e.right_hash)`,
+    )
+    .get().n;
+  if (invalidEvidence)
+    findings.push({
+      axis: 'I_automatic_evidence',
+      detail: `${invalidEvidence} accepted identity edges lack automatic, current source evidence`,
+    });
   const invalid = new Set(
     db
       .prepare(
