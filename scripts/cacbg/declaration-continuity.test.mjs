@@ -31,3 +31,23 @@ test('acts are scoped to the original office, type and report year; candidate ge
   const changedType = declarationContinuity([doc, { ...copy, declarationType: 'Entry' }]);
   assert.equal(JSON.parse(changedType[0].facts).basis, 'employment_years');
 });
+
+test('municipal administration wording preserves employment continuity without folding the council', () => {
+  const doc = {
+    folder: '2025',
+    xmlFile: 'a.xml',
+    sourceHash: 'a'.repeat(64),
+    person: 'Иван Петров Примеров',
+    work: 'Община Тест',
+    declaredPosition: 'Главен архитект',
+    year: 2023,
+  };
+  const next = { ...doc, xmlFile: 'b.xml', work: 'Oбщинска администрация град Тест', year: 2024 };
+  const council = { ...next, xmlFile: 'c.xml', work: 'Общински съвет Тест' };
+  const edges = declarationContinuity([doc, next, council]);
+  assert.equal(edges.length, 1);
+  assert.deepEqual(
+    JSON.parse(edges[0].facts).documents.map((d) => d.id),
+    ['cacbg:2025:a.xml', 'cacbg:2025:b.xml'],
+  );
+});

@@ -6,7 +6,7 @@ import {
   registryCompanyResolver,
   IDENTITY_RULES_VERSION,
 } from './registry-identity.mjs';
-import { declarationContinuity } from './declaration-continuity.mjs';
+import { declarationContinuity, COMPANY_AUTHOR_BASIS } from './declaration-continuity.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export const declarationSourceId = (rec) => `cacbg:${rec.folder}:${rec.xmlFile}`;
@@ -276,16 +276,22 @@ export function rebuildPersonEntities(
       )
       .all(IDENTITY_RULES_VERSION)
       .map((e) => ({ ...e, decision: 'accepted' }));
+    const companySources = new Set(
+      proposed
+        .filter((e) => JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS)
+        .flatMap((e) => [e.left_source, e.right_source]),
+    );
     const blocked = new Set(),
-      anchored = new Set();
+      supported = new Set(),
+      companyAuthors = new Set();
     for (const c of identityComponents(sources, [...evidence, ...ambiguous, ...proposed])) {
       if (c.conflict) for (const s of c.members) blocked.add(s.id);
-      else if (c.members.some((s) => s.namespace === 'tr'))
-        for (const s of c.members) anchored.add(s.id);
+      else if (c.members.some((s) => s.namespace === 'tr' || companySources.has(s.id)))
+        for (const s of c.members) supported.add(s.id);
     }
     for (const e of proposed) {
       const conflict = blocked.has(e.left_source) || blocked.has(e.right_source);
-      if (!conflict && !anchored.has(e.left_source)) continue;
+      if (!conflict && !supported.has(e.left_source)) continue;
       e.decision = conflict ? 'candidate' : 'accepted';
       putEvidence.run(
         e.id,
@@ -300,7 +306,13 @@ export function rebuildPersonEntities(
         now,
       );
       stats[conflict ? 'continuityCandidates' : 'continuityAccepted']++;
-      if (!conflict) evidence.push(e);
+      if (!conflict) {
+        evidence.push(e);
+        if (JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS) {
+          companyAuthors.add(e.left_source);
+          companyAuthors.add(e.right_source);
+        }
+      }
     }
     const components = identityComponents(sources, evidence);
     // Registry-anchored components retain their entity first when an old component splits.
@@ -318,9 +330,10 @@ export function rebuildPersonEntities(
     db.exec('UPDATE person_sources SET entity_id=NULL');
     for (const c of components) {
       const anchor = c.members.find((s) => s.namespace === 'tr');
-      // A listing group proves these documents belong together, not a new global person.
-      // Keep unanchored groups in their source archives; an eventual TR anchor resolves the whole chain.
-      const resolved = Boolean(anchor);
+      // Repeated full name + verified company establishes an author without inventing a TR identity.
+      // A listing or employment chain alone still stays in its source archive.
+      const resolved =
+        !c.conflict && (Boolean(anchor) || c.members.some((s) => companyAuthors.has(s.id)));
       let entity = null;
       if (resolved) {
         entity = [

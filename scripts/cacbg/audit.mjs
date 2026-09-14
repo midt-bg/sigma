@@ -9,7 +9,11 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import { declarationContinuity, CONTINUITY_RULE } from './declaration-continuity.mjs';
+import {
+  declarationContinuity,
+  CONTINUITY_RULE,
+  COMPANY_AUTHOR_BASIS,
+} from './declaration-continuity.mjs';
 import { registryCompanyResolver } from './registry-identity.mjs';
 import { documentFingerprint } from './source-identity.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
@@ -85,11 +89,24 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
         LEFT JOIN person_sources l ON l.id=e.left_source LEFT JOIN person_sources r ON r.id=e.right_source
         LEFT JOIN person_entities p ON p.id=l.entity_id
         WHERE e.rule_version=? AND e.decision='accepted'
-          AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.registry_indent IS NULL)`,
+          AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.id IS NULL)`,
         )
         .get(CONTINUITY_RULE).n;
-      if (inconsistent)
-        throw new Error('accepted continuity does not belong to one registry-anchored author');
+      if (inconsistent) throw new Error('accepted continuity does not belong to one author');
+      const unsupported = db
+        .prepare(
+          `SELECT count(*) n FROM person_entities p
+        WHERE p.registry_indent IS NULL
+          AND EXISTS (SELECT 1 FROM person_sources s WHERE s.entity_id=p.id AND s.active=1)
+          AND NOT EXISTS (SELECT 1 FROM person_identity_evidence e
+            JOIN person_sources l ON l.id=e.left_source
+            JOIN person_sources r ON r.id=e.right_source
+            WHERE e.rule_version=? AND e.decision='accepted' AND json_extract(e.facts,'$.basis')=?
+              AND l.entity_id=p.id AND r.entity_id=p.id)`,
+        )
+        .get(CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
+      if (unsupported)
+        throw new Error('author without a registry identity lacks verified company evidence');
       const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
       const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
       if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))

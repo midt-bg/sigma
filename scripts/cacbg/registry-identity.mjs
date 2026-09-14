@@ -31,6 +31,12 @@ export function registryCompanyResolver(registry) {
   const byKey = new Map();
   const bidderByEik = new Map();
   const seats = new Map();
+  const names = new Map();
+  for (const r of registryIdentityRows(registry)) {
+    const key = JSON.stringify([r.eik, declarantNameKey(r.subject_name)]);
+    if (!names.has(key)) names.set(key, new Set());
+    names.get(key).add(r.subject_id.toLowerCase());
+  }
   for (const r of registry
     .prepare("SELECT eik,name,legal_form,seat_settlement FROM registry_deeds WHERE outcome='ok'")
     .all()) {
@@ -55,7 +61,7 @@ export function registryCompanyResolver(registry) {
     companies.set(r.eik, company);
     byKey.set(key, companies);
   }
-  return (interest) => {
+  return (interest, authorName) => {
     const resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
     if (!resolved || resolved.ambiguous) return { reason: 'company_not_resolved' };
     const company = bidderByEik.get(resolved.eik);
@@ -66,7 +72,13 @@ export function registryCompanyResolver(registry) {
       nameDistinctiveness(companyNameKey(company.name)) !== 'distinctive'
     )
       return { reason: 'company_evidence_insufficient' };
-    return { ...resolved, reason: 'personal_name_not_observed' };
+    return {
+      ...resolved,
+      reason: 'personal_name_not_observed',
+      authorNameConflict:
+        (names.get(JSON.stringify([resolved.eik, declarantNameKey(authorName ?? '')]))?.size ?? 0) >
+        1,
+    };
   };
 }
 

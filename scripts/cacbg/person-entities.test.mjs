@@ -61,6 +61,120 @@ function fixture() {
   return { db, a, b, name, alias, add, filing };
 }
 const legacy = (f) => 'person:legacy|' + f.person;
+
+test('full name and a verified company establish an author across years without a personal TR identity', () => {
+  const { db, filing, name } = fixture();
+  try {
+    const companies = registryIdentityResolver(db)(
+      {
+        declarant: name,
+        interests: [
+          {
+            entity: 'Тест информация ООД',
+            seat: 'София',
+            kind: 'shares',
+            holderRelation: 'related',
+          },
+        ],
+      },
+      [name],
+    ).companies;
+    const a = { ...filing('a.xml'), identityEvidence: [], companyEvidence: companies, year: 2018 };
+    const b = {
+      ...a,
+      xmlFile: 'b.xml',
+      year: 2025,
+      work: 'Друга институция',
+      declaredPosition: 'Друга длъжност',
+    };
+    const empty = { ...b, xmlFile: 'empty.xml', companyEvidence: [], year: 2026 };
+    const part = { ...empty, xmlFile: 'part.xml', work: '', declaredPosition: '', year: null };
+    const other = { ...b, xmlFile: 'other.xml', person: 'Ивана Димитрова Тестова' };
+    const group = {
+      folder: '2025',
+      listHash: 'a'.repeat(64),
+      personLocator: 1,
+      name,
+      members: [b, part].map((f) => ({
+        sourceId: declarationSourceId(f),
+        sourceHash: f.sourceHash,
+      })),
+    };
+    const r = rebuildPersonEntities(
+      db,
+      db,
+      [a, b, empty, other, part],
+      legacy,
+      new Map(),
+      undefined,
+      [group],
+    );
+    const id = r.assignments.get(declarationSourceId(a));
+    assert.match(id, /^person:identity:/);
+    assert.equal(r.stats.resolved, 4);
+    assert.equal(r.assignments.get(declarationSourceId(empty)), id);
+    assert.equal(r.assignments.get(declarationSourceId(part)), id);
+    assert.equal(r.assignments.get(declarationSourceId(other)), legacy(other));
+    assert.equal(
+      db.prepare('SELECT registry_indent FROM person_entities WHERE id=?').get(id).registry_indent,
+      null,
+    );
+    db.prepare('INSERT INTO persons VALUES(?,?)').run(id, name);
+    assert.equal(buildPersonRegistryLinks(db).linked, 0);
+    assert.equal(db.prepare('SELECT count(*) n FROM registry_roles').get().n, 0);
+    const noYear = { ...a, xmlFile: '0.xml', year: null };
+    const repeat = rebuildPersonEntities(db, db, [empty, b, a, noYear], legacy);
+    assert.equal(repeat.assignments.get(declarationSourceId(noYear)), id);
+    const withdrawn = rebuildPersonEntities(
+      db,
+      db,
+      [a, { ...b, companyEvidence: [], sourceHash: 'd'.repeat(64) }, empty],
+      legacy,
+    );
+    assert.equal(withdrawn.stats.resolved, 0);
+    assert.ok(
+      db
+        .prepare('SELECT 1 FROM person_source_aliases WHERE alias_id=? AND source_id=?')
+        .get(id, declarationSourceId(b)),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('two namesakes with different registry identifiers in the common company block the company bridge', () => {
+  const { db, filing, name, add, b } = fixture();
+  try {
+    const companies = registryIdentityResolver(db)(
+      {
+        declarant: name,
+        interests: [
+          {
+            entity: 'Тест информация ООД',
+            seat: 'София',
+            kind: 'shares',
+            holderRelation: 'related',
+          },
+        ],
+      },
+      [name],
+    ).companies;
+    const a = { ...filing('a.xml'), identityEvidence: [], companyEvidence: companies, year: 2023 };
+    const second = { ...a, xmlFile: 'b.xml', year: 2024 };
+    assert.equal(rebuildPersonEntities(db, db, [a, second], legacy).stats.resolved, 2);
+    add(b, name, '20240101120000');
+    const r = rebuildPersonEntities(db, db, [a, second], legacy);
+    assert.equal(r.stats.resolved, 0);
+    assert.equal(
+      db.prepare("SELECT count(*) n FROM person_identity_evidence WHERE decision='accepted'").get()
+        .n,
+      0,
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test('employment continuity attaches empty declarations, preserves aliases and revokes corrected sources', () => {
   const { db, filing } = fixture();
   try {
@@ -102,7 +216,7 @@ test('employment continuity attaches empty declarations, preserves aliases and r
   }
 });
 
-test('shared verified company plus employment context bridges institutions without inventing personal ownership', () => {
+test('shared verified company bridges offices and roles without inventing personal ownership', () => {
   const { db, filing, name } = fixture();
   try {
     const companies = registryIdentityResolver(db)(
@@ -140,7 +254,7 @@ test('shared verified company plus employment context bridges institutions witho
     assert.equal(companies[0].holderRelation, 'related');
     assert.equal(db.prepare('SELECT count(*) n FROM registry_roles').get().n, 0);
     const companyOnly = { ...unrelated, work: 'Община В' };
-    assert.equal(rebuildPersonEntities(db, db, [anchor, companyOnly], legacy).stats.resolved, 1);
+    assert.equal(rebuildPersonEntities(db, db, [anchor, companyOnly], legacy).stats.resolved, 2);
     const tampered = { ...moved, companyEvidence: [{ ...companies[0], eik: '987654321' }] };
     assert.throws(
       () => rebuildPersonEntities(db, db, [anchor, tampered], legacy),
@@ -185,6 +299,32 @@ test('new continuity cannot collapse different proven identities or adopt an amb
     );
     assert.equal(r.assignments.get(declarationSourceId(empty)), legacy(empty));
     assert.ok(r.stats.continuityCandidates > 0);
+    const companyEvidence = registryIdentityResolver(db)(
+      {
+        declarant: name,
+        interests: [
+          {
+            entity: 'Тест информация ООД',
+            seat: 'София',
+            kind: 'shares',
+            holderRelation: 'related',
+          },
+        ],
+      },
+      [name],
+    ).companies;
+    const companyConflict = rebuildPersonEntities(
+      db,
+      db,
+      [anchor, other, empty].map((f) => ({ ...f, companyEvidence })),
+      legacy,
+    );
+    assert.equal(companyConflict.stats.resolved, 2);
+    assert.equal(
+      companyConflict.assignments.get(declarationSourceId(empty)),
+      legacy(empty),
+      'rejected company evidence must not create a standalone author',
+    );
     add(b, name, '20220101120000');
     const ambiguous = { ...empty, identityEvidence: filing('empty.xml').identityEvidence };
     const again = rebuildPersonEntities(db, db, [other, ambiguous], legacy);

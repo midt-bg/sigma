@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
 import { institutionMatchKey } from './institutions.mjs';
 
-export const CONTINUITY_RULE = 'declaration-continuity-1';
+export const CONTINUITY_RULE = 'declaration-continuity-2';
+export const COMPANY_AUTHOR_BASIS = 'company_author';
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const key = (...values) => JSON.stringify(values);
 const text = (value) => institutionMatchKey(value ?? '');
@@ -19,10 +20,14 @@ export function declarationContinuity(filings, resolveCompany) {
   };
   for (const f of filings) {
     const name = declarantNameKey(f.person);
-    const year = Number(f.year);
-    if (name.split(' ').length < 3 || !Number.isInteger(year) || year < 1990 || year > 2100)
-      continue;
-    const work = text(f.work),
+    if (name.split(' ').length < 3) continue;
+    const parsedYear = Number(f.year);
+    const year =
+      Number.isInteger(parsedYear) && parsedYear >= 1990 && parsedYear <= 2100 ? parsedYear : null;
+    const work = text(f.work).replace(
+        /^ОБЩИНСКА АДМИНИСТРАЦИЯ\s+(?:(?:НА\s+)?ОБЩИНА\s+)?(?:(?:ГРАД|ГР\.)\s+)?(?=\S)/u,
+        'ОБЩИНА ',
+      ),
       role = text(f.declaredPosition);
     const doc = {
       id: `cacbg:${f.folder}:${f.xmlFile}`,
@@ -39,31 +44,38 @@ export function declarationContinuity(filings, resolveCompany) {
     const date = String(f.appointmentDate ?? '')
       .trim()
       .replace(/[./\s]+$/g, '');
-    if (['Entry', 'Vacate'].includes(f.declarationType) && /\d/.test(act) && /\d/.test(date))
+    if (
+      year &&
+      ['Entry', 'Vacate'].includes(f.declarationType) &&
+      /\d/.test(act) &&
+      /\d/.test(date)
+    )
       add('appointment_act', [name, work, role, year, f.declarationType, act, date], doc);
-    add('employment_years', [name, work, role], doc);
+    if (year) add('employment_years', [name, work, role], doc);
     for (const p of [...(f.companyEvidence ?? [])].sort((a, b) => key(a).localeCompare(key(b)))) {
       if (
         !['self', 'related'].includes(p.holderRelation) ||
         !['shares', 'participation', 'sole_trader', 'management'].includes(p.kind)
       )
         continue;
-      const current = resolveCompany(p);
+      const current = resolveCompany(p, f.person);
       if (!current.eik || current.eik !== p.eik || current.method !== p.method)
         throw new Error(`Company continuity proof no longer matches its source: ${doc.id}`);
+      if (current.authorNameConflict) continue;
       const companyDoc = { ...doc, company: p };
-      add('company_and_work', [name, p.eik, work], companyDoc);
-      add('company_and_role', [name, p.eik, role], companyDoc);
+      // A repeated full author name and verified company identify an author across offices.
+      // Neither a missing report year nor a related person's stake creates a personal TR role.
+      add(COMPANY_AUTHOR_BASIS, [name, p.eik], companyDoc);
     }
   }
   const edges = new Map();
   // A sorted chain has the same connected components as all pairs, with linear edge count.
-  // The one-year limit deliberately leaves gaps unbridged without stronger source evidence.
+  // Employment alone cannot bridge gaps. A verified shared company supplies stronger evidence.
   for (const [, { basis, values, docs }] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
     const sorted = [...docs.values()].sort((a, b) => a.year - b.year || a.id.localeCompare(b.id));
     for (let i = 1; i < sorted.length; i++) {
       const pair = [sorted[i - 1], sorted[i]];
-      if (pair[1].year - pair[0].year > 1) continue;
+      if (basis !== COMPANY_AUTHOR_BASIS && pair[1].year - pair[0].year > 1) continue;
       pair.sort((a, b) => a.id.localeCompare(b.id));
       const id = key(...pair.map((d) => d.id));
       if (edges.has(id)) continue;
