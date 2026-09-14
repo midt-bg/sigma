@@ -193,9 +193,6 @@ td .chip {
   .site-footer {
     padding-right: 72px;
   }
-  .a11y-tools__button {
-    max-width: 40px;
-  }
 }
 .case-mag {
   display: flex;
@@ -433,11 +430,18 @@ td .chip {
   border: 1px solid #999;
   background: var(--paper, #faf8f2);
 }
-.time-history-note {
-  display: block;
-  padding: 6px 10px;
+.person-time-notes {
+  max-width: 85ch;
+  margin-top: 16px;
   font-size: 12px;
-  background: var(--paper, #faf8f2);
+  line-height: 1.6;
+}
+.person-time-notes p {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+}
+.person-time-notes:empty {
+  display: none;
 }
 .person-time-note {
   max-width: 85ch;
@@ -695,21 +699,6 @@ td .chip {
   letter-spacing: normal;
   border-inline-start: 2px solid #b71916;
   padding-inline-start: 0.6rem;
-}
-
-/* Source notes describe the company, not a year on the scrollable axis. */
-.person-time-scroll {
-  container-type: inline-size;
-}
-.person-time-row:has(.time-history-note) {
-  position: sticky;
-  left: 0;
-  width: 100cqw;
-}
-@media (max-width: 600px) {
-  .person-time-row:has(.time-history-note) {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .declaration-discrepancy a {
