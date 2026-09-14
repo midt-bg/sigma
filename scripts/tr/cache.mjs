@@ -264,6 +264,7 @@ const HASHED_INPUTS = [
   'declarantName',
   'registryIndent',
   'declaredSeats',
+  'declaredSeatYears',
   'declaredEik',
   'firstDeclaredYear',
   'historicalDeclaredYear',
@@ -297,7 +298,12 @@ export function verdictInputsHash(input) {
     const v = input[k];
     // Sorted, because `declaredSeats` arrives from a Set spread: iteration order is an accident of
     // insertion and must not make an unchanged input look changed.
-    return [k, Array.isArray(v) ? [...v].map(String).sort() : (v ?? null)];
+    return [
+      k,
+      Array.isArray(v)
+        ? v.map((x) => (Array.isArray(x) ? JSON.stringify(x) : String(x))).sort()
+        : (v ?? null),
+    ];
   });
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }

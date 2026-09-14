@@ -159,23 +159,29 @@ function findHistoricalPerson(
  * R10: seats move. A company that relocated INTO the declared settlement afterwards would confirm falsely,
  * so the registered seat must predate the period.
  *
- * A null `firstDeclaredYear` FAILS the guard rather than skipping it. `load.mjs` passes null whenever no
- * history row carried a parseable year, and an unknown year is not a satisfied temporal test — it is the
- * absence of one. Reading it as „covers the period" made the weakest rung the only one with no temporal
- * check, on exactly the links where we know least, and rung 4 already refuses to run without a year on the
- * same ground. The undated-SEAT leg is different and stays: a seat with no entry date is checkable — a
- * known year is still on the other side.
+ * A seat with an unknown declaration year fails the temporal guard. The loader keeps each settlement
+ * paired with that source's year; firstDeclaredYear is the fallback for older callers only. A registry
+ * seat with no entry date can still match when the declaration supplies a known year.
  *
  * @returns {{settlement:string, entryDate:string|null}|null}
  */
-function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear) {
+function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear, declaredSeatYears) {
   const seat = registrySeat(registry);
   // Empty NEVER matches — otherwise every link with no seat data on either side rubber-stamps itself.
   if (seat.settlement === '') return null;
-  if (firstDeclaredYear == null) return null;
-  if (seat.entryDate != null && seat.entryDate > `${firstDeclaredYear}-12-31`) return null;
-  const declared = declaredSeats.map(normalizeSettlement).filter((s) => s !== '');
-  return declared.includes(seat.settlement) ? seat : null;
+  // Each seat belongs to its own declaration year. Adding an older document must neither
+  // invalidate a later proof nor let a later year corroborate a seat found only in an older one.
+  const observations = declaredSeatYears ?? declaredSeats.map((s) => [s, firstDeclaredYear]);
+  return observations.some(
+    ([value, year]) =>
+      Number.isInteger(year) &&
+      year >= 1900 &&
+      year <= 2100 &&
+      (seat.entryDate == null || seat.entryDate <= `${year}-12-31`) &&
+      normalizeSettlement(value) === seat.settlement,
+  )
+    ? seat
+    : null;
 }
 
 /**
@@ -190,6 +196,7 @@ function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear) {
  *                                              4.9% of company-name keys carry more than one distinct
  *                                              declared seat, so a company-only key would let one
  *                                              person's seat confirm another person's link
+ * @param {Array<[string, number]>} [input.declaredSeatYears] each settlement paired with its source year
  * @param {boolean}     [input.declaredEik]     the declarant wrote the ЕИК in the declaration
  * @param {number|null} [input.firstDeclaredYear]
  * @param {'self'|'family'} [input.scope]
@@ -208,6 +215,7 @@ export function evidenceVerdict(input) {
     declarantName,
     registryIndent,
     declaredSeats = [],
+    declaredSeatYears,
     declaredEik = false,
     firstDeclaredYear = null,
     historicalDeclaredYear = null,
@@ -259,7 +267,7 @@ export function evidenceVerdict(input) {
   // seat match" would eventually disagree about which links may be published.
   const evidenceYear = firstDeclaredYear ?? historicalDeclaredYear;
   const historicalOnly = firstDeclaredYear == null && historicalDeclaredYear != null;
-  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear);
+  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear, declaredSeatYears);
 
   // ── rung 2 ──────────────────────────────────────────────────────────────────
   // Only a full three-token name may assert. A Latin homoglyph makes the name a non-match rather than

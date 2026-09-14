@@ -613,6 +613,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         observations: new Map(),
         templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
         seats: new Set(),
+        seatYears: new Map(),
         institutions: new Set(),
         annualDocuments: new Map(),
         method: res.method,
@@ -646,6 +647,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     }
   }
   if (h.seat) rec.seats.add(h.seat);
+  if (h.seat && Number.isFinite(y)) rec.seatYears.set(JSON.stringify([h.seat, y]), [h.seat, y]);
   const declaredInstitution = declarationInstitution(h);
   if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
@@ -835,6 +837,7 @@ function linkRecordFor(rec) {
     declarantName: rec.person,
     registryIndent: provenIdentities.get(rec.pid) ?? null,
     declaredSeats: [...rec.seats],
+    declaredSeatYears: [...rec.seatYears.values()],
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
     historicalDeclaredYear:

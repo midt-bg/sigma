@@ -242,6 +242,30 @@ test('verdictInputsHash REFUSES an input it does not know', () => {
   );
 });
 
+test('dated seat evidence is order independent, but swapping its years invalidates a cached verdict', () => {
+  const hash = (pairs) => verdictInputsHash({ ...INPUT, declaredSeatYears: pairs });
+  assert.equal(
+    hash([
+      ['София', 2018],
+      ['Видин', 2021],
+    ]),
+    hash([
+      ['Видин', 2021],
+      ['София', 2018],
+    ]),
+  );
+  assert.notEqual(
+    hash([
+      ['София', 2018],
+      ['Видин', 2021],
+    ]),
+    hash([
+      ['София', 2021],
+      ['Видин', 2018],
+    ]),
+  );
+});
+
 test('a verdict round-trips, booleans and all', () =>
   withCache((db) => {
     upsertVerdict(db, VERDICT());
@@ -347,10 +371,19 @@ test('canonical link hashes may contain digits without admitting personal data o
       `person:identity:${digest}|201122336`,
       `person:identity:${digest}|201122335|8011129876`,
       'person:ИВАН 8011129876|МВР|201122335',
-    ]) assert.throws(() => upsertVerdict(db, VERDICT({ linkKey })), /REFUSE TO STORE/);
-    assert.throws(() => upsertVerdict(db, VERDICT({
-      linkKey: `person:identity:${digest}|201122335`, matchedFact: '8011129876',
-    })), /ЕГН/);
+    ])
+      assert.throws(() => upsertVerdict(db, VERDICT({ linkKey })), /REFUSE TO STORE/);
+    assert.throws(
+      () =>
+        upsertVerdict(
+          db,
+          VERDICT({
+            linkKey: `person:identity:${digest}|201122335`,
+            matchedFact: '8011129876',
+          }),
+        ),
+      /ЕГН/,
+    );
   }));
 
 test('upsertVerdict enforces the closed vocabulary where the verdict is written', () =>

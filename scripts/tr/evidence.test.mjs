@@ -290,6 +290,47 @@ test('rung 3 — a seat registered AFTER the declared period does not confirm', 
   assert.notEqual(v.kind, 'confirmed');
 });
 
+test('seat corroboration keeps each source year paired with its own settlement after author merging', () => {
+  const moved = somebodyElse(seatIn('гр. Пловдив', '2021-06-01'));
+  const input = {
+    ...base,
+    registry: moved,
+    firstDeclaredYear: 2018,
+    declaredSeats: ['Видин', 'Пловдив'],
+  };
+  assert.equal(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Видин', 2018],
+        ['Пловдив', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Пловдив', 2018],
+        ['Видин', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Пловдив', null],
+        ['Видин', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(evidenceVerdict({ ...input, declaredSeatYears: [] }).kind, 'confirmed');
+});
+
 test('rung 3 — an UNKNOWN first declared year cannot confirm on a seat', () => {
   // R10 again, from the other side. A null year means the temporal check has NOTHING to compare
   // against — not that the seat covers the period. An unknown guard is a failed guard.
