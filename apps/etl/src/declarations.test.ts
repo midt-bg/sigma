@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 vi.mock('cloudflare:workers', () => ({
+  exports: { DeclarationCorpus: () => ({}) },
   DurableObject: class {
     constructor(
       public ctx: unknown,
@@ -8,7 +9,7 @@ vi.mock('cloudflare:workers', () => ({
   },
 }));
 import { DeclarationContainer } from './declarations';
-it('deduplicates live starts, records completion, restores checkpoints and detects interruption', async () => {
+it('deduplicates live starts, records completion, configures private corpus access and detects interruption', async () => {
   const records = new Map();
   let status: unknown;
   const container = {
@@ -20,6 +21,7 @@ it('deduplicates live starts, records completion, restores checkpoints and detec
       container.running = false;
     }),
     setInactivityTimeout: vi.fn(),
+    interceptOutboundHttp: vi.fn(),
     getTcpPort: () => ({ fetch: async () => Response.json(status) }),
   };
   const ctx = {
@@ -51,8 +53,9 @@ it('deduplicates live starts, records completion, restores checkpoints and detec
   expect(await job.getRun()).toEqual(first);
   expect(await job.startRun()).toEqual(first);
   expect(container.start).toHaveBeenCalledOnce();
+  expect(container.interceptOutboundHttp).toHaveBeenCalledWith('declarations.r2', {});
   expect(container.start.mock.calls[0]).toMatchObject([
-    { env: { DECLARATIONS_RESTORE: '{"folders":[]}', SUPPRESSION_SALT: 'test' } },
+    { env: { CACBG_CORPUS_URL: 'http://declarations.r2', SUPPRESSION_SALT: 'test' } },
   ]);
   status = { ...first, state: 'complete' };
   await job.alarm();

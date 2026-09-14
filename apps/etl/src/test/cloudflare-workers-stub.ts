@@ -29,3 +29,6 @@ export class DurableObject<Env = unknown> {
     protected env: Env,
   ) {}
 }
+
+export { WorkflowEntrypoint as WorkerEntrypoint };
+export const exports = {};

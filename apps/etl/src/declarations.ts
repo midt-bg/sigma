@@ -1,4 +1,4 @@
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, exports as workerExports } from 'cloudflare:workers';
 
 export interface DeclarationEnv {
   DECLARATIONS_CORPUS?: R2Bucket;
@@ -45,8 +45,11 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       for (const key of ['SUPPRESSION_SALT', 'SUPPRESSION_KEY_VERSION'] as const)
         if (this.env[key]) env[key] = this.env[key];
       if (!this.env.DECLARATIONS_CORPUS) throw new Error('Missing corpus binding');
-      const checkpoint = await this.env.DECLARATIONS_CORPUS.get('declarations/working.json');
-      env.DECLARATIONS_RESTORE = checkpoint ? await checkpoint.text() : 'null';
+      env.CACBG_CORPUS_URL = 'http://declarations.r2';
+      await container.interceptOutboundHttp(
+        'declarations.r2',
+        workerExports.DeclarationCorpus({ props: {} }),
+      );
       const run = { runId: crypto.randomUUID(), state: 'running', startedAt: Date.now() };
       env.SIGMA_RUN_ID = run.runId;
       await this.ctx.storage.put('run', run);
@@ -68,7 +71,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       }
       if (!container.running) {
         await this.ctx.storage.put('run', { ...run, state: 'interrupted' });
-        return; // the next cron restores the last acknowledged R2 checkpoint
+        return; // the next run reuses the acknowledged individual R2 objects
       }
       try {
         const res = await container

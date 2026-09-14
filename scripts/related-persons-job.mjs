@@ -1,17 +1,10 @@
 // Shared Node pipeline for the Container and the existing Actions job. Local mode never calls Wrangler.
 import { execFileSync } from 'node:child_process';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { fileDigest } from './cacbg/build-proof.mjs';
+import { corpusStore, CORPUS_STAMP } from './cacbg/corpus.mjs';
+import { importSql } from './cacbg/import-sql.mjs';
 import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
 const flag = (n) => process.argv.includes(`--${n}`);
 const value = (n) => {
@@ -148,7 +141,9 @@ if (remote) {
     sql,
   ]);
   rmSync(db, { force: true });
-  execFileSync('sqlite3', [db], { input: readFileSync(sql) });
+  console.log('Importing the D1 snapshot into the working SQLite database …');
+  importSql(db, sql);
+  console.log('Working SQLite database imported; checking table counts …');
   const local = new DatabaseSync(db, { readOnly: true });
   for (const t of tables) {
     const answer = parseWranglerJson(
@@ -172,73 +167,9 @@ if (remote) {
   localSource.close();
 }
 const r2 = flag('r2');
-const bucket = env.DECLARATIONS_BUCKET;
-let restored = null;
-const object = (operation, key, file) =>
-  wrangler(['r2', 'object', operation, `${bucket}/${key}`, '--file', file, '--remote']);
-if (r2) {
-  if (!remote || !bucket) throw Error('R2 requires an explicitly authorized remote target');
-  restored = JSON.parse(env.DECLARATIONS_RESTORE ?? 'null');
-  if (restored !== null) {
-    if (!Array.isArray(restored.folders)) throw Error('Invalid corpus checkpoint');
-    mkdirSync(raw, { recursive: true });
-    for (const entry of restored.folders) {
-      if (
-        !/^[a-zA-Z0-9_-]+$/.test(entry.folder) ||
-        !/^[a-f0-9]{64}$/.test(entry.sha256) ||
-        entry.key !== `declarations/raw/${entry.sha256}.tgz`
-      )
-        throw Error('Invalid corpus archive');
-      const archive = join(work, 'restore.tgz');
-      object('get', entry.key, archive);
-      if ((await fileDigest(archive)) !== entry.sha256) throw Error('Corpus checksum mismatch');
-      const listing = execFileSync('tar', ['-tzf', archive], {
-        encoding: 'utf8',
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      if (
-        listing
-          .split('\n')
-          .filter(Boolean)
-          .some((p) => !p.startsWith(entry.folder + '/') || p.split('/').includes('..'))
-      )
-        throw Error('Unsafe corpus archive path');
-      execFileSync('tar', ['-xzf', archive, '--no-same-owner', '--no-same-permissions', '-C', raw]);
-      rmSync(archive, { force: true });
-    }
-  }
-}
-// ponytail: each folder archive must fit Wrangler's object upload limit; split with standard tools if a folder grows beyond it.
-async function checkpoint() {
-  const folders = [];
-  for (const entry of readdirSync(raw, { withFileTypes: true }).filter((e) => e.isDirectory())) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(entry.name)) throw Error('Invalid corpus folder');
-    const archive = join(work, 'corpus.tgz');
-    execFileSync('tar', ['-czf', archive, '-C', raw, entry.name]);
-    const sha256 = await fileDigest(archive);
-    const key = `declarations/raw/${sha256}.tgz`;
-    if (!restored?.folders.some((f) => f.sha256 === sha256)) object('put', key, archive);
-    folders.push({ folder: entry.name, sha256, key });
-    rmSync(archive, { force: true });
-  }
-  const manifest = join(work, 'working.json');
-  writeFileSync(
-    manifest,
-    JSON.stringify({
-      runId: env.SIGMA_RUN_ID ?? null,
-      complete: existsSync(join(raw, '.corpus-complete.json')),
-      folders,
-    }),
-  );
-  object('put', 'declarations/working.json', manifest); // only after every archive was acknowledged
-}
-if (!flag('skip-fetch')) {
-  try {
-    run('scripts/cacbg/fetch.mjs', ['--deadline-minutes', '180']);
-  } finally {
-    if (r2 && existsSync(raw)) await checkpoint();
-  }
-}
+if (r2 && (!remote || env.CACBG_CORPUS_URL !== 'http://declarations.r2'))
+  throw Error('R2 requires the private Container corpus binding');
+if (!flag('skip-fetch')) run('scripts/cacbg/fetch.mjs', ['--deadline-minutes', '180']);
 run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
 if (env.CACBG_COMPANY_CATALOG)
   run('scripts/cacbg/request-companies.mjs', [
@@ -249,7 +180,6 @@ if (env.CACBG_COMPANY_CATALOG)
     '--staging',
     staging,
   ]);
-if (r2) rmSync(raw, { recursive: true, force: true }); // bounded peak disk before bootstrap DB copies
 run('scripts/cacbg/load.mjs', ['--emit-candidates']);
 run('scripts/tr/decide.mjs', [
   '--links-file',
@@ -274,7 +204,12 @@ if (remote) {
   const file = join(work, 'reindex.sql');
   writeFileSync(file, sql);
   wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
-  if (r2) object('put', 'declarations/accepted.json', join(work, 'working.json'));
+  if (r2) {
+    const corpus = corpusStore(raw);
+    const stamp = await corpus.get(CORPUS_STAMP);
+    if (!stamp) throw Error('Published corpus stamp disappeared');
+    await corpus.put('accepted.json', stamp);
+  }
 } else run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
 console.log(
   JSON.stringify({ event: 'declarations_job_complete', runId: env.SIGMA_RUN_ID ?? null, remote }),

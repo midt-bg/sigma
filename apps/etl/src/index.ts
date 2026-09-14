@@ -1,3 +1,4 @@
+export { DeclarationCorpus } from './declaration-corpus';
 import type { DeclarationEnv, DeclarationContainer } from './declarations';
 export { DeclarationContainer } from './declarations';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
