@@ -1935,6 +1935,49 @@ test('same-year inventory differences retain proven links and preserve both sour
   }
 });
 
+test('retains attributed source declarations even without a proven company connection', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2024',
+        xmlFile: 'source-only.xml',
+        sourceHash: 'd'.repeat(64),
+        year: '2023',
+        template: 'assets',
+        declarationType: 'Annualy',
+        person: 'Източник Иванов Тестов',
+        institution: 'Отделна институция',
+      }) + '\n',
+    );
+    runLoad();
+    const db = open();
+    const row = db
+      .prepare(
+        `SELECT d.person_id,p.name FROM declarations d
+      JOIN persons p ON p.id=d.person_id WHERE d.id='decl:2024:source-only.xml'`,
+      )
+      .get();
+    assert.equal(row?.name, 'Източник Иванов Тестов');
+    assert.equal(
+      db.prepare('SELECT COUNT(*) n FROM interest_links WHERE person_id=?').get(row.person_id).n,
+      0,
+    );
+    assert.ok(
+      db
+        .prepare(
+          "SELECT 1 FROM declaration_metadata WHERE declaration_id='decl:2024:source-only.xml'",
+        )
+        .get(),
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, saved);
+  }
+});
+
 test('a registry-backed rebuild refuses staging that skipped identity evidence before touching the published set', () => {
   const db = new DatabaseSync(DB);
   const before = db

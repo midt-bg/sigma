@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
 import { getPersonDeclarations } from './declarations';
+import { getPersonSourceArchive } from './person-identity';
 it('returns every source and its own role/dates, including a filing with no company interest', async () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -38,6 +39,14 @@ it('returns every source and its own role/dates, including a filing with no comp
         { company: 'Компания', eik: '111111111', kind: 'shares', timing: 'annual', scope: 'self' },
       ],
     });
+    db.exec(
+      "CREATE TABLE persons(id,name); INSERT INTO persons VALUES('p','Иван Тестов'); DELETE FROM interest_link_evidence;",
+    );
+    const archive = await getPersonSourceArchive(d1FromSqlite(db), 'p');
+    expect(archive?.name).toBe('Иван Тестов');
+    expect(archive?.declarations.map((d) => d.id)).toEqual(['b', 'a']);
+    expect(archive?.declarations.every((d) => d.companyEiks.length === 0)).toBe(true);
+    expect(await getPersonSourceArchive(d1FromSqlite(db), 'missing')).toBeNull();
   } finally {
     db.close();
   }

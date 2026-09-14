@@ -262,6 +262,7 @@ export function readDeed(db, eik) {
  */
 const HASHED_INPUTS = [
   'declarantName',
+  'registryIndent',
   'declaredSeats',
   'declaredEik',
   'firstDeclaredYear',
@@ -343,7 +344,10 @@ export function upsertVerdict(db, v) {
   // Canonical keys contain a SHA-256, which can contain ten consecutive digits.
   // Exempt only the complete generated shape, with this verdict's validated EIK.
   const canonicalKey = String(v.linkKey).startsWith('person:identity:');
-  if (canonicalKey && !new RegExp(`^person:identity:[a-f0-9]{64}\\|${eik}(?:\\|family)?$`).test(v.linkKey))
+  if (
+    canonicalKey &&
+    !new RegExp(`^person:identity:[a-f0-9]{64}\\|${eik}(?:\\|family)?$`).test(v.linkKey)
+  )
     throw new Error('REFUSE TO STORE: malformed canonical person link key');
   for (const [f, val] of Object.entries(v))
     if (!EGN_EXEMPT.has(f) && !(f === 'linkKey' && canonicalKey)) assertNoEgnShape(val, f);

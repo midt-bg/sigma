@@ -1,7 +1,7 @@
 import { companySlug } from './identity';
 import { publicRole, registryRead } from './registry';
 import { getRegistryIdentity, getRegistryOfficials } from './person-activity';
-import { SURFACED_OWNERSHIP } from './related-persons';
+import { getPersonDeclarations } from './declarations';
 
 /** One scope for all sections of either person URL, including identities with no public TR role. */
 export async function getPersonScope(
@@ -27,7 +27,7 @@ export async function getPersonDestinations(db: D1Database, id: string) {
       (SELECT group_concat(DISTINCT institution) FROM declarations d WHERE d.person_id=p.id) institutions
       FROM person_source_aliases a JOIN person_sources s ON s.id=a.source_id AND s.active=1 AND s.namespace='cacbg'
       JOIN persons p ON p.id=coalesce(s.entity_id,s.legacy_person_id)
-      WHERE a.alias_id=? AND EXISTS(SELECT 1 FROM interest_links il WHERE il.person_id=p.id AND ${SURFACED_OWNERSHIP})
+      WHERE a.alias_id=? AND EXISTS(SELECT 1 FROM declarations d WHERE d.person_id=p.id)
       ORDER BY p.name,p.id`,
       )
       .bind(id)
@@ -37,6 +37,17 @@ export async function getPersonDestinations(db: D1Database, id: string) {
     if (/no such table:?\s*person_(source_aliases|sources)/i.test(String(e))) return [];
     throw e;
   }
+}
+
+/** An attributed source archive can remain readable without a published company connection. */
+export async function getPersonSourceArchive(db: D1Database, id: string) {
+  const person = await db
+    .prepare('SELECT name FROM persons WHERE id=?')
+    .bind(id)
+    .first<{ name: string }>();
+  if (!person) return null;
+  const declarations = await getPersonDeclarations(db, id);
+  return declarations.length ? { name: person.name, declarations } : null;
 }
 
 /** Old date-of-birth URLs resolve to source companies, never a combined personal profile. */

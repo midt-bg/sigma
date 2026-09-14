@@ -695,14 +695,14 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
     r.timing ?? 'current',
   );
 }
-// Include every available filing for a known declarant, including a filing with no company rows.
-// That keeps the document history complete without creating a public profile for every raw name.
-const knownPerson = db.prepare('SELECT 1 FROM persons WHERE id=?');
+// Retain every attributed filing, including unresolved source records with no company rows.
+// Public lists still require published interests; assigning other filings to a canonical identity
+// must not silently delete this source record's remaining documents.
 const insMetadata = db.prepare('INSERT OR REPLACE INTO declaration_metadata VALUES(?,?,?,?)');
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   const pid = personOf(f);
   if (!f.folder || !f.xmlFile) continue;
-  if (!knownPerson.get(pid)) continue;
+  insPerson.run(pid, f.person);
   const did = `decl:${f.folder}:${f.xmlFile}`;
   insDecl.run(
     did,
@@ -800,6 +800,12 @@ fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\
  * Carries the DECLARANT's name: a public official, published by the source register and by our own
  * surface. Never a relative (ADR-0032 does not name them) and never anyone from a deed.
  */
+const provenIdentities = new Map(
+  db
+    .prepare('SELECT id,registry_indent FROM person_entities WHERE registry_indent IS NOT NULL')
+    .all()
+    .map((r) => [r.id, r.registry_indent]),
+);
 function linkRecordFor(rec) {
   // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
   // it would ask the decision pass a question no decision ever uses.
@@ -810,6 +816,7 @@ function linkRecordFor(rec) {
     linkKey: rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`,
     eik: rec.eik,
     declarantName: rec.person,
+    registryIndent: provenIdentities.get(rec.pid) ?? null,
     declaredSeats: [...rec.seats],
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
