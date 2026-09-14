@@ -73,8 +73,8 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
       <main id="main">
         <PageHeader
           kicker="Длъжностни лица"
-          title="Избери профил"
-          lede="Този стар адрес включва записи, за които не е установена една обща самоличност."
+          title="Профили и декларации"
+          lede="Документите от стария адрес са показани според установените връзки. Отделните групи не означават непременно различни хора."
         />
         <ul>
           {loaderData.destinations.map((p) => (
@@ -82,6 +82,12 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
               <Link to={`/conflicts/official/${personSlug(p.id)}?view=profile`}>
                 {personName(p.name)}
               </Link>
+              <p>
+                {p.kind === 'person'
+                  ? 'Обединен профил'
+                  : 'Декларации с непотвърдена принадлежност'}{' '}
+                · {p.declaration_count} {p.declaration_count === 1 ? 'декларация' : 'декларации'}
+              </p>
               {p.institutions && <p>{p.institutions}</p>}
             </li>
           ))}

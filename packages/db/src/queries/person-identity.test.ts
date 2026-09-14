@@ -16,7 +16,15 @@ it('keeps unresolved source archives alongside a proven profile when an old URL 
       INSERT INTO person_source_aliases VALUES('old','a'),('old','b'),('old','c');`);
     const destinations = await getPersonDestinations(d1FromSqlite(db), 'old');
     expect(destinations.map((p) => p.id).sort()).toEqual(['canonical', 'source']);
-    expect(destinations.find((p) => p.id === 'source')?.institutions).toBe('Втора институция');
+    expect(destinations.find((p) => p.id === 'source')).toMatchObject({
+      kind: 'source',
+      declaration_count: 1,
+      institutions: 'Втора институция',
+    });
+    expect(destinations.find((p) => p.id === 'canonical')).toMatchObject({
+      kind: 'person',
+      declaration_count: 1,
+    });
   } finally {
     db.close();
   }

@@ -24,6 +24,8 @@ export async function getPersonDestinations(db: D1Database, id: string) {
     const rows = await db
       .prepare(
         `SELECT DISTINCT p.id,p.name,
+      CASE WHEN s.entity_id IS NULL THEN 'source' ELSE 'person' END kind,
+      (SELECT count(*) FROM declarations d WHERE d.person_id=p.id) declaration_count,
       (SELECT group_concat(DISTINCT institution) FROM declarations d WHERE d.person_id=p.id) institutions
       FROM person_source_aliases a JOIN person_sources s ON s.id=a.source_id AND s.active=1 AND s.namespace='cacbg'
       JOIN persons p ON p.id=coalesce(s.entity_id,s.legacy_person_id)
@@ -31,7 +33,13 @@ export async function getPersonDestinations(db: D1Database, id: string) {
       ORDER BY p.name,p.id`,
       )
       .bind(id)
-      .all<{ id: string; name: string; institutions: string | null }>();
+      .all<{
+        id: string;
+        name: string;
+        institutions: string | null;
+        kind: 'person' | 'source';
+        declaration_count: number;
+      }>();
     return rows.results;
   } catch (e) {
     if (/no such table:?\s*person_(source_aliases|sources)/i.test(String(e))) return [];
