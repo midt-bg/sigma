@@ -354,6 +354,10 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
+    const reportFailure = (file, details) =>
+      console.error(
+        JSON.stringify({ event: 'declarations_source_error', folder, file, ...details }),
+      );
     const withheld = await pool(
       rows,
       concurrency,
@@ -361,7 +365,8 @@ export async function run({
         let xmlFile;
         try {
           xmlFile = safeXmlFile(row.xmlFile);
-        } catch {
+        } catch (error) {
+          reportFailure(row.xmlFile, { error: error.message });
           fstat.errors++;
           return;
         }
@@ -374,7 +379,8 @@ export async function run({
         let res;
         try {
           res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
-        } catch {
+        } catch (error) {
+          reportFailure(xmlFile, { error: error.message, code: error.code });
           fstat.errors++;
           consecutive = nextBreaker(consecutive, 'fail');
           if (consecutive > BREAKER_TRIP)
@@ -389,6 +395,11 @@ export async function run({
           return;
         } // listed-but-unpublished (source gap)
         if (res.status !== 200) {
+          reportFailure(xmlFile, {
+            status: res.status,
+            location: res.headers?.location,
+            retryAfter: res.headers?.['retry-after'],
+          });
           // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
           // just network throws — so the crawl stops instead of hammering the register indefinitely.
           fstat.errors++;

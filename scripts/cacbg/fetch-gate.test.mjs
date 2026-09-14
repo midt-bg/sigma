@@ -71,6 +71,42 @@ test('a non-404 miss (500 after retries) is a real shortfall → exit 1', async 
   assert.equal(await runGate(routes), 1);
 });
 
+test('failed requests retain file, HTTP status and network error for diagnosis', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const code = await run({
+    rawDir: dir,
+    guard: () => {},
+    argv: ['--folders', FOLDER, '--concurrency', '1'],
+    httpGet: async (url) => {
+      if (url.endsWith('/list.xml'))
+        return { status: 200, body: Buffer.from(listXml(['a1.xml', 'a2.xml'])) };
+      if (url.endsWith('/a1.xml')) return { status: 503, headers: { 'retry-after': '10' } };
+      throw Object.assign(new Error('socket closed'), { code: 'ECONNRESET' });
+    },
+  });
+  assert.equal(code, 1);
+  const events = log.mock.calls
+    .map((c) => c.arguments[0])
+    .filter((s) => s.startsWith('{'))
+    .map((s) => JSON.parse(s));
+  assert.deepEqual(events, [
+    {
+      event: 'declarations_source_error',
+      folder: FOLDER,
+      file: 'a1.xml',
+      status: 503,
+      retryAfter: '10',
+    },
+    {
+      event: 'declarations_source_error',
+      folder: FOLDER,
+      file: 'a2.xml',
+      error: 'socket closed',
+      code: 'ECONNRESET',
+    },
+  ]);
+});
+
 test('a wholesale-skipped set (list.xml non-200) → exit 1', async () => {
   assert.equal(await runGate({ [`${BASE}/${FOLDER}/list.xml`]: { status: 503, body: '' } }), 1);
 });
