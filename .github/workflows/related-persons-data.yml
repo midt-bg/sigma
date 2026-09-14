@@ -1,39 +1,13 @@
 name: Related-persons data foundation (build + ship)
 
-# Deliberate, manual (re)build of the свързани-лица data foundation and ship into a served D1.
-#
-# This is the heavy backfill/rebuild path — NOT the steady-state refresh. Per spec §7, ongoing
-# incremental refresh (pull only the current-year delta) runs inside the Cloudflare `sigma-etl` Worker
-# on a cron, the same operational model as the EOP ingest — deploy.yml ships that Worker. This workflow
-# exists to (re)seed D1 after a schema change, a methodology change, or a first backfill, from a chosen
-# environment, on demand only. It never runs on push (data writes are deliberate — see ci-vs-cd).
-#
-# Requires the same Cloudflare credentials as deploy.yml, scoped in the GitHub Environment (secret NAMES,
-# never values): CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID + SIGMA_D1_ID, and the SIGMA_D1_NAME var.
-# Fails loudly if they are absent.  # pragma: allowlist secret The full crawl of register.cacbg.bg is slow (a polite crawl of the
-# whole corpus); in steady state the raw XML lives in R2 (ADR-0006) so the crawl is incremental — the
-# `sigma-etl` Worker owns that. Here `full_crawl` runs the corpus crawl, which RESUMES from the cached raw
-# XML (fetch.mjs skips files already on disk) — it fills gaps, not a from-scratch rebuild unless the cache is cleared.
+# Existing weekly schedule remains active until an explicitly approved Container cutover.
+# This workflow and the Container share scripts/related-persons-job.mjs. A stamped cache can be
+# rebuilt without crawling here; the Container discovers changes before each build.
+# Credentials remain scoped to the selected GitHub Environment.
 
 on:
-  # SCHEDULED, and deliberately on the EXISTING workflow rather than a second one. #279 §9 asks for the
-  # publishing decisions to run on a cadence; duplicating the job would create a second ship path with
-  # its own copy of the credential guards, the D1-target guard and the ship floor — and the copy is the
-  # one nobody exercises.
-  #
-  # WEEKLY, because the declarations are what change here. The Търговски регистър is not asked from this
-  # job at all (ADR-0041): the daily ETL keeps each winner's partida in the registry layer of the same D1,
-  # and this job reads that layer the way it reads the winners. The cadence that once had to be arithmetic
-  # about a rate-limited register is now only a question of how often the declarations are decided.
-  #
-  # A scheduled run takes the same path as a manual one, with two differences:
-  #   • it targets STAGING (the environment default below). Production stays manual, so the
-  #     assertD1TargetAuthorized guard keeps a prod write a deliberate act.
-  #   • `full_crawl` is empty and therefore false, so it normally never crawls the CACBG corpus — it
-  #     re-runs the decisions over the cached corpus, which is exactly what #279 §9 means by a pure,
-  #     zero-network decision.
-  # If the corpus cache has been evicted, extract yields nothing, the ship floor refuses, and the run
-  # fails loudly rather than wiping the surface.
+  # Keep the existing weekly writer until the separately approved Container cutover.
+  # Scheduled runs rebuild the stamped cache; a requested or healing crawl refreshes it.
   schedule:
     # 03:00 UTC on Mondays.
     - cron: '0 3 * * 1'
@@ -186,8 +160,7 @@ jobs:
             echo "no completeness stamp — the crawl will run to verify and stamp the corpus"
           fi
 
-      # Crawl only on demand. The polite full crawl of register.cacbg.bg is long; steady-state refresh
-      # (incremental, R2-cached) is the sigma-etl Worker's job (spec §7), not this workflow.
+      # Crawl only on demand. The polite full crawl of register.cacbg.bg is long; Container refresh is enabled separately after acceptance.
       #
       # --deadline-minutes is 60 under the job's 300-minute cap, and the margin is the point. The corpus
       # (~37 sets / ~281 000 declarations) does not fit in one job: run 31889519937 crawled 36 sets in the
@@ -240,164 +213,8 @@ jobs:
           lookup-only: true
           fail-on-cache-miss: true
 
-      # No --allow-partial-corpus, deliberately. By this point every path guarantees a stamped corpus: an
-      # unstamped restore triggered the healing crawl above, which either finished (stamped) or deadline-
-      # stopped (run already red before reaching here). So this gate firing means something UNFORESEEN —
-      # a bug, not a known transition — and fail-closed is the right answer for it. The cache stays fine
-      # to RESUME from either way; the stamp only governs publishing.
-      - name: Extract declarations → staging (dedup by ControlHash)
-        run: node scripts/cacbg/extract.mjs
-
-      # Provision the EOP winners the resolver matches against. load.mjs reads bidders + contracts/tenders/
-      # authorities from a local work DB (data/work/backfill.sqlite); CI has none. Export EXACTLY those four
-      # tables from the target D1 into a fresh work DB. This is READ-ONLY on the D1 and cannot mutate it;
-      # the only writer to the D1 in this pipeline is the ship step, whose table list is свързани-лица only
-      # (bidders/contracts/tenders/authorities are never written) — so the live EOP corpus is never touched.
-      # Parity gate: exported row counts must equal the source counts, else the export was partial → fail
-      # BEFORE the resolver runs, rather than resolve/ship against an incomplete winner set.
-      - name: Hydrate EOP winners into the work DB (read-only export from D1)
+      # Shared pipeline: hydrate EOP + registry before extraction, then load, bridge, audit and atomic ship.
+      - name: Build and publish the verified related-persons snapshot
         run: |
-          set -euo pipefail
-          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
-          work="$GITHUB_WORKSPACE/data/work"
-          mkdir -p "$work"
-          rm -f "$work/eop.sql" "$work/backfill.sqlite"
-          # interest_links + interest_link_evidence come along too, and NOT for the resolver's benefit —
-          # load.mjs drops and rebuilds them. They are the input to the monotonicity gate: load.mjs
-          # exports the currently-published set BEFORE the wipe, and audit.mjs fails the run on a link
-          # that was published last time, under an unchanged rules_version, and is not published now.
-          # Without them the work DB starts with no interest_links at all, the pre-wipe export reads
-          # „no such table", the snapshot is [] on every run, and the gate protects nothing.
-          # They are absent on a first run (0003/0006 not yet applied), which is why they are exported
-          # separately and tolerated as missing rather than folded into the parity loop below.
-          pnpm --filter @sigma/web exec wrangler d1 export "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote -y \
-            --table bidders --table contracts --table tenders --table authorities \
-            --output "$work/eop.sql"
-          sqlite3 "$work/backfill.sqlite" < "$work/eop.sql"
-          if pnpm --filter @sigma/web exec wrangler d1 export "$SIGMA_D1_NAME" \
-               --config wrangler.deploy.jsonc --remote -y \
-               --table interest_links --table interest_link_evidence \
-               --output "$work/prior-links.sql"; then
-            sqlite3 "$work/backfill.sqlite" < "$work/prior-links.sql"
-            echo "  prior surface: $(sqlite3 "$work/backfill.sqlite" \
-              "SELECT COUNT(*) FROM interest_links WHERE status='published';") published link(s)"
-          else
-            echo "::notice::No prior interest_links on this D1 (first run) — the monotonicity gate has no baseline yet."
-          fi
-          for t in bidders contracts tenders authorities; do
-            local_n=$(sqlite3 "$work/backfill.sqlite" "SELECT COUNT(*) FROM $t;")
-            remote_json=$(pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-              --config wrangler.deploy.jsonc --remote --json \
-              --command "SELECT COUNT(*) AS n FROM $t;")
-            remote_n=$(printf '%s' "$remote_json" | python3 -c "import json,re,sys; m=re.search(r'\[.*\]', sys.stdin.read(), re.S); print(json.loads(m.group(0))[0]['results'][0]['n'])")
-            echo "  $t: local=$local_n remote=$remote_n"
-            if [ "$local_n" != "$remote_n" ]; then
-              echo "::error::EOP export incomplete for $t (local=$local_n remote=$remote_n) — refusing to resolve/ship."
-              exit 1
-            fi
-          done
-
-      # ── Trade Register evidence ──────────────────────────────────────────────────────────────────
-      # The register is not asked from here (ADR-0041). The daily ETL keeps each winner's partida in the
-      # registry layer of this same D1 — who holds which role, from which entry, until when; the legal form;
-      # the settlement of the seat — and this job reads it the way it reads the winners above: exported
-      # read-only into the work DB. Nothing registry-side is carried between runs: every link is decided
-      # again, against the registry as it stands.
-      - name: Hydrate the registry layer into the work DB (read-only export from D1)
-        run: |
-          set -euo pipefail
-          work="$GITHUB_WORKSPACE/data/work"
-          pnpm --filter @sigma/web exec wrangler d1 export "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote -y \
-            --table registry_deeds --table registry_roles \
-            --output "$work/registry.sql"
-          sqlite3 "$work/backfill.sqlite" < "$work/registry.sql"
-          echo "  registry layer: $(sqlite3 "$work/backfill.sqlite" \
-            "SELECT COUNT(*) FROM registry_deeds;") partida(s), $(sqlite3 "$work/backfill.sqlite" \
-            "SELECT COUNT(*) FROM registry_roles;") role(s)"
-
-      - name: Emit the candidate links
-        run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs --emit-candidates
-
-      # Every link decided against its company's registry facts (scripts/tr/decide.mjs). A company the
-      # registry layer has not read yet gets no verdict; the loader's floor then decides whether what
-      # remains may publish.
-      - name: Decide every link against the registry layer
-        run: >-
-          node --import ./scripts/cacbg/register-ts.mjs scripts/tr/decide.mjs
-          --links-file scratch/cacbg/staging/candidate-links.jsonl
-          --registry-db data/work/backfill.sqlite
-
-      - name: Resolve → build domain in a work sqlite (libel gate must pass)
-        run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/load.mjs
-
-      - name: Audit published links (fails the run on any libel-invariant violation)
-        run: node --import ./scripts/cacbg/register-ts.mjs scripts/cacbg/audit.mjs
-
-      - name: Apply the свързани-лица schema to the target D1
-        # The base schema is created out-of-band via `d1 execute --file` (import.mjs), so wrangler's
-        # migration tracking is empty and `d1 migrations apply` would re-run 0000 and collide. Apply 0002
-        # directly the same way; it is idempotent (CREATE … IF NOT EXISTS). Render first for the real
-        # database_id + name (committed config holds placeholders) — same as the deploy path.
-        run: |
-          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
-          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0003_related_persons_foundation.sql
-          # 0006 attaches the Trade Register evidence seal (#279, ADR-0033). Both migrations are
-          # applied by name here because wrangler's migration ledger is empty on this D1 (the base
-          # schema was created out-of-band), so `d1 migrations apply` would collide on 0000.
-          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0009_interest_link_evidence.sql
-          # 0007 retrofits the publishing-gate CHECK constraints and control_hash NOT NULL onto an
-          # ALREADY-PROVISIONED D1 (#279 §2). 0003 declares them now, but `CREATE TABLE IF NOT EXISTS`
-          # never revisits an existing table and the ship step wipes ROWS, not definitions — so without
-          # this a live database keeps the unconstrained shape no matter how often the data reloads.
-          # Rebuild-based and therefore idempotent: re-applying copies an already-constrained table.
-          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0010_publishing_gate_constraints.sql
-          # 0012 — old official ids → the id each became (ADR-0040). CREATE … IF NOT EXISTS, idempotent.
-          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file ../../packages/db/migrations/0012_person_redirects.sql
-
-      - name: Ship свързани-лица tables → D1
-        # ship-related-persons.mjs shells out to `wrangler d1 execute` with cwd=apps/web. Two things it
-        # needs that a bare `node …` invocation lacks: (1) wrangler on PATH (the other steps get it via
-        # `pnpm … exec`), and (2) an auto-loaded config carrying the real database_id + target name — the
-        # committed apps/web/wrangler.jsonc holds a zero-UUID placeholder + base name 'sigma'. Render the
-        # real values and overwrite the auto-loaded config, then add the workspace bin to PATH. ship writes
-        # ONLY свързани-лица tables (its TABLES list), so the EOP corpus is untouched.
-        run: |
-          set -euo pipefail
-          node scripts/wrangler-render.mjs apps/web/wrangler.jsonc
-          cp apps/web/wrangler.deploy.jsonc apps/web/wrangler.jsonc
-          export PATH="$GITHUB_WORKSPACE/apps/web/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
-          # --min-links is passed EXPLICITLY, not left at its default of 50. Under #279 the surface is
-          # measured at ~329 links, so 50 no longer protects anything: a partially-restored Trade
-          # Register cache yields roughly 80 published links, which clears a floor of 50, ships a
-          # decimated surface and wipes the rest. The loader's coverage gate is the first defence and
-          # this is the second (ADR-0033 decision 7). Lower it deliberately, in a PR, if a genuinely
-          # smaller surface is ever expected.
-          node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --remote --yes \
-            --min-links 250
-
-      - name: Reindex search projection → officials searchable (same batch the cron runs)
-        # ship writes ONLY the свързани-лица domain tables (interest_links, persons, …), NOT search_index.
-        # search_index.official is derived from interest_links by refresh-slice's `entity-search-index`
-        # batch, which in steady state only the sigma-etl cron runs (0 */6). Without this step a dispatch
-        # seeds the data but leaves officials UNSEARCHABLE until the next cron — the workflow would not
-        # actually "ship into a served D1" as titled. Emit that batch from the SAME parser the Worker uses
-        # (scripts/emit-refresh-group.mjs → packages/ingest refreshSliceStatementGroups; no SQL duplicated)
-        # and run it against the target D1. Idempotent: each kind is DELETE+reINSERT, so re-runs converge.
-        run: |
-          set -euo pipefail
-          mkdir -p data/work
-          node --import ./scripts/cacbg/register-ts.mjs scripts/emit-refresh-group.mjs entity-search-index \
-            > "$GITHUB_WORKSPACE/data/work/reindex.sql"
-          pnpm --filter @sigma/web exec wrangler d1 execute "$SIGMA_D1_NAME" \
-            --config wrangler.deploy.jsonc --remote --yes \
-            --file "$GITHUB_WORKSPACE/data/work/reindex.sql"
+          export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          node --import ./scripts/cacbg/register-ts.mjs scripts/related-persons-job.mjs --remote --yes --skip-fetch

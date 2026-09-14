@@ -148,7 +148,7 @@ const argOf = (argv, name) => {
 export function run({
   argv = process.argv,
   guard = assertTrScratchIgnored,
-  dbFile = TR_DB,
+  dbFile = process.env.TR_CACHE_DB || TR_DB,
   log = console.log,
 } = {}) {
   guard();

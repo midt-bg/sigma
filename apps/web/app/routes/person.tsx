@@ -15,12 +15,12 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
     title: `${data?.name ? personName(data.name) : 'Лице'} — СИГМА`,
     description: 'Роли, декларации и обществени поръчки на свързаните дружества.',
   });
-  if (data?.links.length) tags.push({ name: 'robots', content: 'noindex' });
+  tags.push({ name: 'robots', content: 'noindex' });
   return tags;
 }
 export function headers({ loaderHeaders }: Route.HeadersArgs) {
   const headers = new Headers({ 'Cache-Control': publicCache(3600) });
-  if (loaderHeaders.has('X-Robots-Tag')) headers.set('X-Robots-Tag', 'noindex');
+  headers.set('X-Robots-Tag', 'noindex');
   return headers;
 }
 export async function loader({ params, context, request }: Route.LoaderArgs) {
@@ -33,7 +33,7 @@ export async function loader({ params, context, request }: Route.LoaderArgs) {
     }),
   );
   if (!profile) throw new Response('Not Found', { status: 404 });
-  return profile.links.length ? data(profile, { headers: { 'X-Robots-Tag': 'noindex' } }) : profile;
+  return data(profile, { headers: { 'X-Robots-Tag': 'noindex' } });
 }
 export default function Person({ loaderData }: Route.ComponentProps) {
   return <PersonProfile profile={loaderData} />;

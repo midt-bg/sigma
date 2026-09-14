@@ -235,6 +235,7 @@ export interface ContractListItem {
 }
 
 export interface ContractParty {
+  legalForm?: string | null;
   slug: string;
   name: string;
   displayName: string;

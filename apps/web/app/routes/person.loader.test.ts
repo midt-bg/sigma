@@ -102,7 +102,7 @@ describe('person loader', () => {
         omitted: 0,
       },
     });
-    const res = (await call(HASH)) as {
+    const res = ((await call(HASH)) as { data: unknown }).data as {
       person: { name: string };
       tieLayout: { nodes: { href: string }[] };
     };

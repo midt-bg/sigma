@@ -12,8 +12,17 @@
 // Run: node --test scripts/ship-e2e.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +71,9 @@ CREATE TABLE bidders(id TEXT PRIMARY KEY);
 CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${MIG}
 .read ${MIG_EVIDENCE}
+.read ${resolve(ROOT, 'packages/db/migrations/0012_person_redirects.sql')}
+.read ${resolve(ROOT, 'packages/db/migrations/0014_person_profile.sql')}
+.read ${resolve(ROOT, 'packages/db/migrations/0015_person_observations.sql')}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');`;
 
@@ -175,7 +187,7 @@ function runShip(
     env = {},
     links = LINKS_SMALL,
     forceChunks = true,
-    minLinks = 1,
+    audited = true,
     remote = false,
     yes = false,
     emit = null,
@@ -183,6 +195,13 @@ function runShip(
 ) {
   const work = join(dir, 'work.sqlite');
   sqlite(work, SCHEMA + corpus(links));
+  writeFileSync(
+    `${work}.audited.json`,
+    JSON.stringify({
+      complete: audited,
+      sha256: createHash('sha256').update(readFileSync(work)).digest('hex'),
+    }),
+  );
   const fake = fakeWrangler(dir);
   const res = spawnSync(
     process.execPath,
@@ -192,7 +211,6 @@ function runShip(
       ...(remote ? ['--remote'] : ['--local']),
       ...(yes ? ['--yes'] : []),
       ...(emit ? [`--emit=${emit}`] : []),
-      `--min-links=${minLinks}`,
       // The pacing delay is always zeroed to keep the suite quick — it is covered by the runShip unit
       // tests. Whether the REQUEST SIZE is overridden matters: the defaults-constraining test leaves
       // it alone on purpose.
@@ -234,7 +252,8 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
   }
 
   const applies = calls.filter((c) => c.file);
-  assert.match(applies[0].file, /^0_wipe\./, 'the wipe must be the first request');
+  assert.equal(applies[0].file, 'prepare_persons.sql');
+  assert.equal(applies.at(-1).file, 'cleanup_publish.sql');
 
   // Chunking: a table past the batch budget must arrive as several CONTIGUOUSLY numbered requests.
   const nums = applies
@@ -248,22 +267,14 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
   assert.equal(nums.length, EXPECTED_CHUNKS);
   assert.deepEqual(
     nums,
-    Array.from({ length: nums.length }, (_, i) => i + 1),
+    Array.from({ length: nums.length }, (_, i) => i),
   );
 
-  // The read-back must be the LAST thing the run does, and must count each table from that table. It is
-  // no longer ONE query: against a local target the counts are split into chunks, because workerd caps a
-  // compound SELECT at 5 terms and the ship writes six tables. So the tail of the call list is one or
-  // more count queries, and it is their UNION that has to cover every table.
-  const readback = [];
-  for (let i = calls.length - 1; i >= 0; i--) {
-    const ci = calls[i].argv.indexOf('--command');
-    if (ci === -1) break;
-    const q = calls[i].argv[ci + 1];
-    if (!/COUNT\(\*\) AS n FROM/.test(q)) break;
-    readback.unshift(q);
-  }
-  assert.ok(readback.length > 0, 'the read-back must come after the inserts');
+  // Both staged and promoted tables must be read back before cleanup.
+  const readback = calls
+    .filter((c) => c.argv.includes('--command'))
+    .map((c) => c.argv[c.argv.indexOf('--command') + 1]);
+  assert.ok(readback.length > 0, 'the upload must be verified');
   const sql = readback.join('\n');
   for (const table of TABLES)
     assert.match(
@@ -291,10 +302,16 @@ test('a request that never landed fails the run', (t) => {
   // as the orphaned seals land, before the read-back ever runs. That is a stronger guard, but it would
   // leave the read-back gate itself unexercised, which is what this test is for. A seal chunk has no
   // dependents, so its loss is invisible until the counts are compared.
-  const { res } = runShip(dir, { env: { SHIP_FAKE_SKIP: 'interest_link_evidence.2.sql' } });
+  const { res, fake } = runShip(dir, { env: { SHIP_FAKE_SKIP: 'interest_link_evidence.2.sql' } });
   assert.notEqual(res.status, 0, 'a short target must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
   assert.match(res.stderr, /interest_link_evidence: shipped \d+, target has \d+/);
+  assert.equal(fake.count('persons'), 1);
+  assert.equal(
+    Number(sqlite(fake.target, "SELECT COUNT(*) FROM persons WHERE id='stale';")),
+    1,
+    'failed upload preserves the accepted surface',
+  );
 });
 
 test('a read-back that answers with a non-number fails closed', (t) => {
@@ -302,7 +319,7 @@ test('a read-back that answers with a non-number fails closed', (t) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   // `Number(null)` is 0, which would read as "the table is empty" and quietly pass.
-  const { res } = runShip(dir, { env: { SHIP_FAKE_NULLN: 'interest_link_authorities' } });
+  const { res } = runShip(dir, { env: { SHIP_FAKE_NULLN: 'rp_next_interest_link_authorities' } });
   assert.notEqual(res.status, 0, 'an unanswered count must fail the run');
   assert.match(res.stderr, /ship verification FAILED/);
 });
@@ -337,11 +354,11 @@ const noWrites = (fake) => {
   }
 };
 
-test('an under-floor corpus refuses to wipe, before any request', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-floor-'));
+test('an unaudited corpus refuses before any request', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-proof-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const { res, fake } = runShip(dir, { minLinks: LINKS_SMALL + 1 });
+  const { res, fake } = runShip(dir, { audited: false });
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /refusing to ship/i);
   assert.ok(noWrites(fake), 'the refusal must come before the wipe');
@@ -379,21 +396,27 @@ test('a read-back that cannot answer at all fails the run', (t) => {
   assert.match(res.stderr, /no answer/);
 });
 
-test('--emit writes a guarded wipe plus one file per table, and touches no database', (t) => {
+test('--emit writes ordered staging and atomic promotion SQL without touching a database', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-emit-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-
   const out = join(dir, 'emitted');
   const { res, fake } = runShip(dir, { emit: out });
   assert.equal(res.status, 0, `emit failed:\n${res.stderr}`);
   assert.ok(noWrites(fake), '--emit must not touch a database');
-
-  const wipe = readFileSync(join(out, '0_wipe.sql'), 'utf8');
-  assert.match(wipe, /DESTRUCTIVE, UNGUARDED/, 'the emitted wipe must carry its warning header');
-  for (const table of TABLES) assert.match(wipe, new RegExp(`DELETE FROM "${table}"`));
-  for (const table of TABLES) {
-    const body = readFileSync(join(out, `${table}.sql`), 'utf8');
-    if (table === 'interest_link_authorities') assert.equal(body, '', 'empty table, empty file');
-    else assert.match(body, new RegExp(`INSERT INTO "${table}"`));
-  }
+  const files = readdirSync(out).sort();
+  const sql = files.map((f) => readFileSync(join(out, f), 'utf8')).join('\n');
+  assert.match(files[0], /prepare_persons/);
+  assert.match(sql, /CREATE TRIGGER/);
+  assert.match(sql, /INSERT OR REPLACE INTO rp_publish/);
+  for (const table of TABLES) assert.match(sql, new RegExp(`DELETE FROM "${table}"`));
+  // The artifact is also executable in its documented filename order.
+  sqlite(fake.target, 'PRAGMA foreign_keys=ON;\n' + sql);
+  for (const table of TABLES)
+    assert.equal(
+      fake.count(table),
+      table === 'interest_links' || table === 'interest_link_evidence'
+        ? LINKS_SMALL
+        : (EXPECTED_ROWS[table] ?? 0),
+      table,
+    );
 });

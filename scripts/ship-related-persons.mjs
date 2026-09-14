@@ -12,7 +12,9 @@
 //
 //   node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --emit out/rp   # SQL only
 //   node scripts/ship-related-persons.mjs --work-db … --remote --yes                          # apply to D1
+import { assertAuditedBuild } from './cacbg/build-proof.mjs';
 import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -104,50 +106,69 @@ const sleepSync = (ms) => {
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-/**
- * The whole destructive live path: wipe, then paced request-sized inserts per table, then the read-back
- * check. Both guarantees live HERE, behind injected I/O (`apply`, `sleep`, `readCounts`), because both are
- * one refactor away from silently vanishing — „one request per table" is exactly the shape this drifts back
- * to, and a `if (!emit) assert…` line at a call site is exactly the kind of line that gets dropped.
- * Testing the pure helpers alone did NOT catch either: reverting the call site and deleting the
- * verification each left the whole suite green. Keep the orchestration itself covered.
- * @returns {Record<string, number|string>} rows shipped per table
+/** Upload off to the side. One SQLite trigger makes promotion one atomic statement,
+ * including constraints and FK validation; an interrupted upload never touches served rows.
+ * ponytail: full-snapshot promotion must fit D1's statement duration; partition only if measured necessary.
  */
-export function runShip({
-  tables,
-  readTable,
-  wipeSql,
-  apply,
-  sleep,
-  readCounts,
-  maxStatements,
-  paceMs,
-}) {
-  // ONE counter for the whole run, not one per table. Pacing per table left every table boundary
-  // unpaced — including wipe → first insert, which is the single most destructive transition here.
+export function runShip({ tables, readTable, apply, sleep, readCounts, maxStatements, paceMs }) {
   let requests = 0;
-  const applyPaced = (label, sql) => {
-    if (requests++) sleep(paceMs); // between requests only — never before the first
+  const send = (label, sql) => {
+    if (requests++) sleep(paceMs);
     apply(label, sql);
   };
-
-  applyPaced('0_wipe', wipeSql);
-
   const summary = {};
-  for (const table of tables) {
+  const reads = tables.map((table) => {
     const read = readTable(table);
-    if (!read) {
-      setOwn(summary, table, 'absent (skipped)');
-      continue;
-    }
+    if (!read) throw new Error(`incomplete build: missing ${table}`);
     setOwn(summary, table, read.rowCount);
-    const chunks = chunkStatements(read.statements, maxStatements);
-    chunks.forEach((chunk, i) =>
-      applyPaced(chunks.length > 1 ? `${table}.${i + 1}` : table, chunk.join('')),
+    return { table, ...read };
+  });
+  for (const { table, statements } of reads) {
+    const staged = `rp_next_${table}`;
+    send(
+      `prepare_${table}`,
+      `DROP TABLE IF EXISTS ${sqlIdent(staged)}; CREATE TABLE ${sqlIdent(staged)} AS SELECT * FROM ${sqlIdent(table)} WHERE 0;`,
+    );
+    chunkStatements(statements, maxStatements).forEach((chunk, i) =>
+      send(
+        `${table}.${i}`,
+        chunk
+          .map((sql) => sql.replace(/^INSERT INTO "[^"]+"/, `INSERT INTO ${sqlIdent(staged)}`))
+          .join(''),
+      ),
     );
   }
-
+  const stagedCounts = Object.fromEntries(reads.map((r) => [`rp_next_${r.table}`, r.rowCount]));
+  assertShippedCounts(stagedCounts, readCounts(stagedCounts));
+  const guards = reads
+    .map(
+      ({ table, rowCount }) =>
+        `SELECT CASE WHEN (SELECT COUNT(*) FROM ${sqlIdent(`rp_next_${table}`)}) != ${rowCount} THEN RAISE(ABORT, 'incomplete staging') END;`,
+    )
+    .join('\n');
+  const insert = reads
+    .map(
+      ({ table }) =>
+        `INSERT INTO ${sqlIdent(table)} SELECT * FROM ${sqlIdent(`rp_next_${table}`)};`,
+    )
+    .join('\n');
+  send(
+    'prepare_publish',
+    `CREATE TABLE IF NOT EXISTS rp_publish (id INTEGER PRIMARY KEY, published_at TEXT);
+DROP TRIGGER IF EXISTS rp_publish_apply;
+CREATE TRIGGER rp_publish_apply AFTER INSERT ON rp_publish BEGIN
+${guards}
+${wipeSql()}${insert}
+END;`,
+  );
+  // Trigger bodies execute within the INSERT's transaction, including all their DELETE/INSERT work.
+  send('publish', "INSERT OR REPLACE INTO rp_publish(id,published_at) VALUES (1,datetime('now'));");
   assertShippedCounts(summary, readCounts(summary));
+  send(
+    'cleanup_publish',
+    'DROP TRIGGER IF EXISTS rp_publish_apply;\n' +
+      reads.map(({ table }) => `DROP TABLE IF EXISTS ${sqlIdent(`rp_next_${table}`)};`).join('\n'),
+  );
   return summary;
 }
 
@@ -177,38 +198,6 @@ export function sqlLiteral(v) {
   if (typeof v === 'bigint') return String(v);
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   return `'${String(v).replaceAll('\x00', '').replaceAll("'", "''")}'`;
-}
-
-/**
- * Refuse to ship when the published (surfaced) link count is below a floor. Empty/partial staging — a
- * cold cache on a `full_crawl=false` run, or a broken extract — yields 0 published links; `audit.mjs`
- * then passes trivially (0 links = 0 violations), and the per-table `DELETE FROM` below would WIPE the
- * live public surface with zero re-inserts. This floor is the last gate before that. Override deliberately
- * with `--min-links=<N>` when a genuinely smaller set is expected. Pure — unit-tested.
- */
-export function assertShipFloor(publishedCount, minLinks) {
-  if (publishedCount < minLinks) {
-    throw new Error(
-      `refusing to ship: ${publishedCount} published links < floor ${minLinks}. Empty/partial staging ` +
-        `would wipe the live surface. If this smaller set is intentional, re-run with --min-links=${publishedCount}.`,
-    );
-  }
-}
-
-/**
- * Parse the --min-links floor. Footgun guarded: `arg()` returns boolean `true` for a VALUELESS `--min-links`
- * flag, and `Number(true) === 1` — which silently collapses the anti-wipe floor from 50 to 1 while passing a
- * naive integer check. Reject the bare `true` explicitly, then require a positive integer. Pure — unit-tested.
- */
-export function parseMinLinks(raw) {
-  if (raw === true)
-    throw new Error(
-      '--min-links requires a value, e.g. --min-links=25 — a bare flag would collapse the anti-wipe floor to 1.',
-    );
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1)
-    throw new Error(`--min-links must be a positive integer, got ${JSON.stringify(raw)}.`);
-  return n;
 }
 
 /** Shared shape check for the pacing flags: a bare `--flag` must not silently mean 1 (or 0). */
@@ -476,11 +465,8 @@ function resolveD1Id(d1Name) {
  * Compare what we meant to ship against what the target actually holds. Pure — unit-tested; the live read
  * is injected as `readCounts`.
  *
- * The ship is a wipe followed by SEVERAL independent requests (no cross-request transaction), so a failure
- * part-way leaves the target holding some tables and not others — and today nothing notices: the run exits 0
- * and the surface renders as a smaller corpus. That asymmetry is glaring next to the READ path, where the
- * EOP hydrate already refuses to proceed on a local↔remote row-count mismatch. Close it on the destructive
- * side too: any drift fails the run, loudly and with the numbers.
+ * Uploads are checked before the atomic promotion; the served tables are checked again afterwards.
+ * A missing or non-numeric answer must fail the run, including when zero rows were expected.
  */
 export function assertShippedCounts(expected, actual) {
   const drift = Object.entries(expected)
@@ -502,7 +488,7 @@ export function assertShippedCounts(expected, actual) {
               `  ${table}: shipped ${e}, target has ${a === undefined ? 'no answer' : a}`,
           )
           .join('\n') +
-        '\nThe wipe already ran, so the surface is now partial. Re-run the ship.',
+        '\nVerification failed. Staging uploads do not replace the accepted surface; promotion is atomic.',
     );
 }
 
@@ -538,12 +524,14 @@ export function insertStatements(table, cols, rows) {
   return statements;
 }
 
-function main() {
+async function main() {
   const workDb = arg('work-db', 'data/work/backfill.sqlite');
   const emit = arg('emit', '');
   const remote = Boolean(arg('remote', false));
   const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
-  const minLinks = parseMinLinks(arg('min-links', 50));
+  if (arg('min-links', undefined) !== undefined)
+    throw new Error('--min-links has been removed; ship requires a completed, audited build');
+  await assertAuditedBuild(String(workDb));
   const maxStatements = parsePositiveInt(
     arg('max-statements-per-request', MAX_STATEMENTS_PER_REQUEST),
     'max-statements-per-request',
@@ -552,20 +540,9 @@ function main() {
   if (remote && !arg('yes', false))
     throw new Error('--remote requires --yes (guards against an accidental prod write)');
 
-  const sqliteJson = (sql) => {
-    const out = execFileSync('sqlite3', ['-json', String(workDb), sql], {
-      encoding: 'utf8',
-      maxBuffer: 256 * 1024 * 1024,
-    }).trim();
-    return out ? JSON.parse(out) : [];
-  };
-  // Floor gate BEFORE any destructive write (assertShipFloor) — runs for --emit too: the emitted 0_wipe.sql is
-  // a hand-appliable destructive script, so it must clear the same anti-wipe floor as a live apply, not sneak
-  // an under-floor wipe past the guard by going through --emit (todorkolev #226). Counts surfaced links only:
-  // status='published' is the public surface (load.mjs assigns non-surfaced classes 'internal').
-  const published =
-    sqliteJson(`SELECT COUNT(*) AS n FROM interest_links WHERE status = 'published'`)[0]?.n ?? 0;
-  assertShipFloor(Number(published), minLinks);
+  const sourceDb = new DatabaseSync(String(workDb), { readOnly: true });
+  sourceDb.exec('BEGIN');
+  const sqliteJson = (sql) => sourceDb.prepare(sql).all();
   // Positive AUTHORIZATION check on a real remote wipe: the declared env + (name, id) must name an allowlisted
   // target (T48). Skipped for --emit (writes SQL files, touches no DB) — but the emitted wipe is stamped with a
   // loud header below so a later manual apply is never mistaken for a guarded one.
@@ -578,14 +555,7 @@ function main() {
       resolvedId: remote ? resolveD1Id(d1Name) : '',
     });
 
-  // D1 enforces foreign keys, so a re-seed cannot DELETE a parent while children still reference it. Wipe
-  // every table first, children-before-parents (WIPE_ORDER), as ONE batched request — `d1 execute --file`
-  // is a single request but not cross-statement transactional (ydimitrof #226); harmless here (all DELETEs
-  // in FK-correct order, and the surface is only briefly empty), but not "atomic". Then re-insert
-  // parents-before-children (TABLES), each table its own batched request. Trade-off vs the old per-table
-  // DELETE+INSERT: the surface is briefly empty between the wipe and the interest_links re-insert. That is
-  // acceptable for a deliberate manual re-seed and is the only structure that both works on a populated D1
-  // AND stays FK-correct — a single-transaction full replace exceeds D1's per-batch size ceiling.
+  // Upload staging tables, verify, then promote with one atomic statement.
   const tmp = emit ? null : mkdtempSync(join(tmpdir(), 'sigma-ship-'));
   const applyFile = (name, sql) => {
     const f = join(tmp, `${name}.sql`);
@@ -602,13 +572,6 @@ function main() {
   };
 
   if (emit) mkdirSync(emit, { recursive: true });
-  // Children-first wipe. Emit as 0_wipe.sql so a manual apply runs it before the parent-first inserts. Stamp a
-  // loud header: the emitted file bypassed the live authorization guard (it names no DB), so whoever applies it
-  // by hand owns the target check that assertD1TargetAuthorized would otherwise enforce (todorkolev #226).
-  const EMIT_WIPE_HEADER =
-    '-- ⚠ DESTRUCTIVE, UNGUARDED: this wipe was emitted with --emit and did NOT pass the live D1\n' +
-    '-- target-authorization check (SIGMA_SHIP_ENV allowlist + name↔SIGMA_D1_ID). If you apply it by hand,\n' +
-    '-- YOU are responsible for confirming the target D1 is the intended one before running it.\n';
   // One read of a source table: null when the table is absent from the work DB.
   const readTable = (table) => {
     const cols = sqliteJson(`PRAGMA table_info(${sqlIdent(table)})`).map((r) => r.name);
@@ -619,33 +582,28 @@ function main() {
 
   let summary = {};
   try {
-    if (emit) {
-      // --emit keeps ONE file per table: those are applied by hand, and numbered fragments would only add
-      // ordering rope to a manual run. Nothing is written to a DB, so there is nothing to pace or verify —
-      // the header on 0_wipe.sql puts the target check on whoever applies them.
-      writeFileSync(resolve(emit, '0_wipe.sql'), EMIT_WIPE_HEADER + wipeSql());
-      for (const table of TABLES) {
-        const read = readTable(table);
-        if (!read) {
-          setOwn(summary, table, 'absent (skipped)');
-          continue;
-        }
-        setOwn(summary, table, read.rowCount);
-        writeFileSync(resolve(emit, `${table}.sql`), read.statements.join(''));
-      }
-    } else {
-      summary = runShip({
-        tables: TABLES,
-        readTable,
-        wipeSql: wipeSql(),
-        apply: applyFile,
-        sleep: sleepSync,
-        readCounts: (expected) => readShippedCounts(d1Name, remote, expected),
-        maxStatements,
-        paceMs,
-      });
-    }
+    let sequence = 0;
+    summary = runShip({
+      tables: TABLES,
+      readTable,
+      apply: emit
+        ? (name, sql) =>
+            writeFileSync(
+              resolve(emit, `${String(sequence++).padStart(5, '0')}_${name}.sql`),
+              '-- Apply files in filename order. Target authorization is the responsibility of the caller.\n' +
+                sql,
+            )
+        : applyFile,
+      sleep: emit ? () => {} : sleepSync,
+      // SQL guards validate staging during promotion; live runs also read it before requesting promotion.
+      readCounts: emit
+        ? (expected) => expected
+        : (expected) => readShippedCounts(d1Name, remote, expected),
+      maxStatements,
+      paceMs,
+    });
   } finally {
+    sourceDb.close();
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
 
@@ -661,4 +619,4 @@ function main() {
 // Only run when invoked directly (importing for tests has no side effects). pathToFileURL — not a raw
 // `file://` template — so a repo path with spaces or non-ASCII (which import.meta.url percent-encodes)
 // still matches and the CLI runs.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

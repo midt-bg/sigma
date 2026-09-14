@@ -1,3 +1,4 @@
+import { fileDigest } from './build-proof.mjs';
 // Adversarial accuracy audit of PUBLISHED interest_links. Independent of load.mjs: it rebuilds the
 // name-key → ЕИК map from scratch over the live bidders table and re-proves the libel-critical
 // invariant (one distinctive key → exactly one eik_valid ЕИК == the published one) for every
@@ -17,6 +18,7 @@ const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/stag
 const SNAPSHOT = path.join(STAGING, 'published-snapshot.json');
 const { companyNameKey } = await import('../../packages/shared/src/company-name-key.ts');
 
+fs.rmSync(`${DB}.audited.json`, { force: true });
 const db = new DatabaseSync(DB, { readOnly: true });
 
 // 1. Rebuild key → {valid ЕИК set, sample names} from ALL bidders — the ground truth the guard rests on.
@@ -398,3 +400,17 @@ for (const p of provenance) {
 }
 
 if (findings.length) process.exitCode = 1;
+
+// Bind successful verification to the exact closed file that ship will read.
+if (!findings.length && fs.existsSync(`${DB}.build.json`)) {
+  const proof = JSON.parse(fs.readFileSync(`${DB}.build.json`, 'utf8'));
+  if (proof.complete === true)
+    fs.writeFileSync(
+      `${DB}.audited.json`,
+      JSON.stringify({
+        ...proof,
+        sha256: await fileDigest(DB),
+        auditedAt: new Date().toISOString(),
+      }),
+    );
+}

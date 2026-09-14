@@ -1,3 +1,4 @@
+import { recordBuild } from './build-proof.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
 // persists the свързани-лица domain (persons / declarations / declared_interests / interest_links /
@@ -67,9 +68,6 @@ const REPORT = path.join(STAGING, 'findings.md');
 // separately — §8's monotonicity gate keys on that one, not on this.
 const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-2';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
-// A deliberate, logged override for the coverage gate below. Without it a single permanently
-// unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
-const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
 // verdicts the list is used to decide. Ignoring the refusal's exit code instead would erase the difference
@@ -77,8 +75,8 @@ const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
 //
 // POINT THIS AT A SCRATCH COPY OF THE WORK DB. It is not a read-only pass: reaching the candidate list
 // means rebuilding the corpus tables, so it drops and repopulates persons/declarations/declared_interests
-// and leaves interest_links EMPTY. Empty is the safe end state (the ship floor refuses it, and no link
-// can be published without evidence it never gathered), but it is not the state a subsequent real run
+// and leaves interest_links EMPTY. The bootstrap is never marked as an audited build, and no link
+// can be published without evidence it never gathered, but it is not the state a subsequent real run
 // should inherit. The one thing it must never touch either way is the monotonicity snapshot — see below.
 const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey } =
@@ -138,6 +136,8 @@ if (EMIT_CANDIDATES_ONLY) {
   }
 }
 const db = new DatabaseSync(WORK_DB);
+fs.rmSync(`${WORK_DB}.build.json`, { force: true });
+fs.rmSync(`${WORK_DB}.audited.json`, { force: true });
 // A registry-backed rebuild must not silently revert to extraction by names alone.
 if (
   db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_roles'").get() &&
@@ -790,12 +790,9 @@ function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
 // public body's board is declared by MANY rotating members — the deterministic ex-officio tell (ADR-0019).
 // ── Trade Register evidence: the candidate set, the fail-closed gate, and the deed reader ─────────
 // Identity now rests on a checkable registry fact rather than on the shape of the declared name
-// (#279, ADR-0033). Two consequences the loader has to enforce, both fail-closed:
-//
-//   1. NO cache ⇒ throw. Publishing without evidence is precisely what this change abolishes.
-//   2. PARTIAL cache ⇒ throw. This is the silent one. An 80%-restored cache yields roughly 80
-//      published links, which is ABOVE ship-related-persons.mjs's floor of 50 — so it would sail
-//      through that guard, ship a decimated surface, and wipe the rest of the live links.
+// (#279, ADR-0033). A missing cache is an error; each surfaced link must have its own
+// current verdict and supporting fact. No arbitrary percentage or link-count floor.
+// Complete-build and audit proofs guard publication of the resulting snapshot.
 //
 // The candidate set is every resolved ЕИК across ALL aggregates, not just the ones that end up
 // published: a link held for want of evidence still needs its deed to say so.
@@ -868,28 +865,7 @@ console.log(
     `(fetched ${trCoverage.fetched}, outside ТР ${trCoverage.outsideTr}, missing ${trCoverage.missing})`,
 );
 
-// ── the incremental gate (ADR-0037) ──────────────────────────────────────────────────────────────
-// The old rule refused on a single missing ЕИК. That was right while every lookup was all-or-nothing: a
-// partial cache publishes a decimated surface, clears the ship floor of 50, and wipes the rest of the
-// live links. It is wrong while the evidence legitimately arrives company by company — a new winner is
-// read by the registry layer within days, not all at once (ADR-0041).
-//
-// The protection does not go away, it moves to where it already existed: §8's monotonicity gate, whose
-// entire job is noticing a published claim that disappeared. A link that loses its evidence stops being
-// published and audit.mjs hard-fails on exactly that, with the rules_version escape for a deliberate
-// bump. Two gates for one duty was the redundancy; the weaker one goes.
-//
-// What stays is a floor on how much of the surface may rest on no verdict at all — and it applies to
-// EVERY run, not only a first one. Keying it on „is there a prior published set" left a 95% floor that
-// a single leftover published row switched off entirely: monotonicity would then protect that one row
-// while a decimated surface shipped past the ship floor of 50 beneath it.
-//
-// Always-on is affordable because the currency test below deliberately ignores AGE — a verdict stops
-// being current only when the rules move or the declaration changes. Steady state is therefore ~100%,
-// and the two ways to fall below it are the two where refusing is right: a cold start, and a rules
-// bump whose re-decision has not run (publishing then would mean publishing on a ladder this code no
-// longer speaks). `--allow-partial-tr` remains the stated override for a smaller surface.
-const VERDICT_FLOOR = 0.95;
+// Verdict coverage is telemetry. Each published link still requires its own current evidence.
 // `verdictIsCurrent`, not a hand-rolled copy. There were two copies of this predicate here and both
 // could be deleted with every test still green — on the LAST fail-closed check before publishing a
 // claim about a named person. The duplication is why the cache-side test could not kill the loader-side
@@ -917,22 +893,6 @@ if (linksAwaitingVerdict.length) {
       (eiks.length > 20 ? ` … and ${eiks.length - 20} more` : ''),
   );
 }
-if (verdictRatio < VERDICT_FLOOR && !ALLOW_PARTIAL_TR) {
-  trCache.close();
-  db.close();
-  throw new Error(
-    `REFUSE TO LOAD: only ${verdictsCurrent} of ${candidateLinks.length} link(s) carry a current ` +
-      `registry verdict (${(verdictRatio * 100).toFixed(1)}% < ${VERDICT_FLOOR * 100}%). Publishing ` +
-      `now would rest the surface on evidence most of it does not have. Let the registry layer read the ` +
-      `missing companies — the daily ETL does — or pass --allow-partial-tr to state that a smaller surface is ` +
-      `intended.` +
-      `\nAwaiting a verdict (ЕИК): ${[...new Set(linksAwaitingVerdict.map((l) => l.eik))]
-        .sort()
-        .slice(0, 20)
-        .join(', ')}`,
-  );
-}
-
 // The lookup date sealed on every link: when the evidence was gathered, not when it was interpreted.
 // It is the freshness bound the methodology page has to state, so it comes from the cache rather than
 // from `now` — a re-run over an unchanged cache must not make the evidence look fresher than it is.
@@ -1021,8 +981,7 @@ for (const rec of agg.values()) {
     entryDate: null,
     rulesVersion: RULES_VERSION,
   });
-  // With --allow-partial-tr the operator has accepted an incomplete cache. An uncached ЕИК then yields
-  // no evidence at all, which is „Неизвестна" — held. It must never be read as a reason to publish.
+  // A missing or stale verdict yields no evidence: the link is held, never published.
   // The decision was reached by the decision pass, against the registry facts it rests on (ADR-0041).
   // This pass reads it; it never re-derives one.
   //
@@ -1435,9 +1394,9 @@ console.log(
     : "✓ §2 ал.3 canary: all material family holdings sourced from 'assets' declarations (rail #3, ADR-0032)",
 );
 console.log(`report → ${REPORT}`);
-// Both handles, on every path that leaves this file — the verdict-floor refusal above already closes
-// the pair, and a cache left open on the other two would be the same intent kept only half the time.
+// Close both stores before marking this build complete.
 trCache.close();
 db.close();
+recordBuild(DB, STAGING);
 // No exit code is tied to ambiguity — it is expected, quarantined, and safe. The over-merge libel proof
 // is the labelled company-name-key.test.ts; the loader fails only on an actual exception.

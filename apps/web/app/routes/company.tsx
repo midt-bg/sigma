@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { data, Link } from 'react-router';
 import {
   count,
   date,
@@ -39,18 +39,6 @@ import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { CompanyDeclarants } from '../components/CompanyDeclarants';
 
-function isSingleNaturalPersonProfile(kind: string, legalForm: string | null): boolean {
-  if (kind === 'consortium' || !legalForm) return false;
-  const normalized = legalForm.trim().toUpperCase();
-  return (
-    normalized === 'ЕТ' ||
-    normalized === 'ET' ||
-    normalized.includes('ЕДНОЛИЧЕН ТЪРГОВЕЦ') ||
-    normalized.includes('SOLE TRADER') ||
-    normalized.includes('INDIVIDUAL')
-  );
-}
-
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const name = data?.company.displayName ?? 'Компания';
   const range = coverageRange(data?.coverage.coverageEndYear);
@@ -62,17 +50,17 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
   if (
     data?.company &&
-    (isSingleNaturalPersonProfile(data.company.kind, data.company.legalForm) ||
-      isNaturalPersonProfileName(data.company.displayName) ||
-      (data.company.kind === 'consortium' && Boolean(data.company.membershipNote)))
+    isNaturalPersonProfileName(data.company.displayName, data.company.legalForm)
   ) {
     metaTags.push({ name: 'robots', content: 'noindex' });
   }
   return metaTags;
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  const headers = new Headers(loaderHeaders);
+  headers.set('Cache-Control', publicCache(3600));
+  return headers;
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
@@ -95,16 +83,23 @@ export async function loader({ params, context }: Route.LoaderArgs) {
         : Promise.resolve([]),
       company.contracts === 0 ? getParticipantContracts(db, id) : Promise.resolve([]),
     ]);
-    return {
-      company,
-      coverage,
-      trend,
-      ties,
-      people,
-      declarants,
-      jointContracts,
-      tieLayout: layoutTies(ties),
-    };
+    return data(
+      {
+        company,
+        coverage,
+        trend,
+        ties,
+        people,
+        declarants,
+        jointContracts,
+        tieLayout: layoutTies(ties),
+      },
+      {
+        headers: isNaturalPersonProfileName(company.displayName, company.legalForm)
+          ? { 'X-Robots-Tag': 'noindex' }
+          : {},
+      },
+    );
   });
 }
 

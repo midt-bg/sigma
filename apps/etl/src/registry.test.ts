@@ -18,6 +18,11 @@ import {
   renewRegistryLease,
   setRegistryChangesThrough,
   storeDeed,
+  seedEntryPasses,
+  nextEntryPass,
+  recordEntryPage,
+  deferDeed,
+  deferXml,
 } from './registry';
 
 const migrations = resolve(
@@ -160,7 +165,7 @@ describe('storeDeed', () => {
           }),
         ]),
       },
-      't1',
+      '2026-09-10T00:00:00Z',
     );
     expect(
       sqlite
@@ -201,7 +206,7 @@ describe('storeDeed', () => {
     expect(await nextQueued(db, 10)).toEqual(['222222222']);
   });
 
-  it('replaces a partida’s facts with what the register says now, and keeps nothing for an absent one', async () => {
+  it('replaces a partida’s facts with what the register says now, and preserves accepted facts on a later 404', async () => {
     const { db, sqlite } = served();
     await storeDeed(
       db,
@@ -210,21 +215,102 @@ describe('storeDeed', () => {
         status: 'ok',
         deed: partida('111111111', [managers([H1, 'ИМЕ'], [H2, 'ДРУГ'])]),
       },
-      't1',
+      '2026-09-10T00:00:00Z',
     );
     await storeDeed(
       db,
       '111111111',
       { status: 'ok', deed: partida('111111111', [managers([H2, 'ДРУГ'])]) },
-      't2',
+      '2026-09-10T01:00:00Z',
     );
     expect(sqlite.prepare('SELECT subject_id FROM registry_roles').all()).toEqual([
       { subject_id: H2 },
     ]);
-    await storeDeed(db, '111111111', { status: 'absent' }, 't3');
-    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM registry_roles').get()).toEqual({ n: 0 });
+    await storeDeed(db, '111111111', { status: 'absent' }, '2026-09-10T02:00:00Z');
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM registry_roles').get()).toEqual({ n: 1 });
     expect(sqlite.prepare('SELECT outcome FROM registry_deeds').get()).toEqual({
-      outcome: 'absent',
+      outcome: 'ok',
     });
   });
+});
+
+describe('entry passes and pending signals', () => {
+  it('seeds missed calendar days with all five passes and resumes pages', async () => {
+    const { db, sqlite } = served();
+    await seedEntryPasses(db, '2026-09-13', '2026-09-13T00:00:00Z');
+    expect(
+      sqlite
+        .prepare("SELECT delay FROM registry_entry_passes WHERE day='2026-09-12' ORDER BY delay")
+        .all()
+        .map((r) => r.delay),
+    ).toEqual([1, 3, 7, 14, 33]);
+    await seedEntryPasses(db, '2026-09-16', '2026-09-16T00:00:00Z');
+    expect(
+      sqlite.prepare("SELECT count(*) n FROM registry_entry_passes WHERE day='2026-09-14'").get()
+        ?.n,
+    ).toBe(5);
+    const pass = (await nextEntryPass(db, '2026-09-16', '2026-09-16T00:00:00Z'))!;
+    await recordEntryPage(
+      db,
+      pass,
+      {
+        items: [{ uic: '111111111', entryDate: pass.day + 'T10:00:00', companyName: 'A' }],
+        hasMore: true,
+        total: 26,
+      },
+      '2026-09-16T00:00:00Z',
+    );
+    expect((await nextEntryPass(db, '2026-09-16', '2026-09-16T00:00:00Z'))?.next_page).toBe(2);
+  });
+  it('does not clear a pending event on HTTP 200, a later unrelated entry, or D+33; confirms exact history', async () => {
+    const { db, sqlite } = served();
+    await storeDeed(
+      db,
+      '111111111',
+      { status: 'ok', deed: partida('111111111', [managers([H1, 'A'])]) },
+      '2026-09-01T00:00:00Z',
+    );
+    sqlite.exec(
+      "INSERT INTO registry_entry_signals VALUES('111111111','2026-09-02T10:00:00','2026-09-03',NULL); INSERT INTO registry_queue VALUES('111111111','changed','2026-09-03')",
+    );
+    const later = {
+      ...managers([H2, 'B']),
+      entryDate: '2026-09-04T10:00:00',
+      entryNumber: 'later',
+    };
+    await storeDeed(
+      db,
+      '111111111',
+      { status: 'ok', deed: partida('111111111', [later]) },
+      '2026-11-01T00:00:00Z',
+    );
+    expect(sqlite.prepare('SELECT subject_id FROM registry_roles').get()?.subject_id).toBe(H1);
+    expect(
+      sqlite.prepare('SELECT confirmed_at FROM registry_entry_signals').get()?.confirmed_at,
+    ).toBeNull();
+    expect(await nextQueued(db, 10, '2026-11-01T00:00:00Z')).toEqual([]);
+    await storeDeed(
+      db,
+      '111111111',
+      {
+        status: 'ok',
+        deed: partida('111111111', [{ ...later, entryDate: '2026-09-02T10:00:00' }]),
+      },
+      '2026-11-02T00:00:00Z',
+    );
+    expect(
+      sqlite.prepare('SELECT confirmed_at FROM registry_entry_signals').get()?.confirmed_at,
+    ).toBe('2026-11-02T00:00:00Z');
+    expect(sqlite.prepare('SELECT count(*) n FROM registry_queue').get()?.n).toBe(0);
+  });
+});
+
+it('queued winners do not starve new winners; XML Retry-After pauses all reads', async () => {
+  const { db } = served();
+  await seedEntryPasses(db, '2026-09-13', '2026-09-13T00:00:00Z');
+  expect(await queueNewWinners(db, '2026-09-13T00:00:00Z', 1)).toBe(1);
+  expect(await queueNewWinners(db, '2026-09-13T00:00:00Z', 1)).toBe(1);
+  await deferXml(db, '2026-09-13T00:10:00Z');
+  expect(await nextQueued(db, 10, '2026-09-13T00:09:59Z')).toEqual([]);
+  expect(await nextQueued(db, 10, '2026-09-13T00:10:00Z')).toHaveLength(2);
 });

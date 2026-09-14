@@ -506,11 +506,12 @@ test('a localized git does not turn legitimate outside-repo overrides into refus
   assert.doesNotMatch(out, /could not be verified/);
 });
 
-test('an inherited GIT_DIR cannot reach the DEFAULT-path scratch rail either', () => {
+test('an inherited GIT_DIR cannot reach the scratch rail either', () => {
   // Round 4: assertOverrideDirSafe stripped GIT_* but assertScratchIgnored still inherited them — the
   // default-output rail could consult a decoy repository. Both rails now share gitEnv(). The decoy here
   // ignores NOTHING, so consulting it would refuse the probe; the REAL repo ignores scratch/ and the
   // run proceeds to the corpus gate.
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-rail-input-'));
   const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-decoy2-'));
   spawnSync('git', ['init', '-q', decoy], { encoding: 'utf8' });
   const res = spawnSync(process.execPath, [path.resolve('scripts/cacbg/extract.mjs')], {
@@ -520,6 +521,8 @@ test('an inherited GIT_DIR cannot reach the DEFAULT-path scratch rail either', (
       // The decoy's OWN empty worktree: .gitignore files are read from the work tree, so pointing the
       // work tree at the real checkout would answer "ignored" either way and hide the substitution.
       GIT_WORK_TREE: decoy,
+      CACBG_RAW: path.join(isolated, 'raw'),
+      CACBG_STAGING: path.join(isolated, 'staging'),
     },
     encoding: 'utf8',
   });
@@ -527,6 +530,7 @@ test('an inherited GIT_DIR cannot reach the DEFAULT-path scratch rail either', (
   assert.match(out, /REFUSE TO EXTRACT/, 'the scratch rail must consult the real repository');
   assert.doesNotMatch(out, /not git-ignored/);
   fs.rmSync(decoy, { recursive: true, force: true });
+  fs.rmSync(isolated, { recursive: true, force: true });
 });
 
 test('an ignored SYMLINK into committable territory is judged by its destination', () => {

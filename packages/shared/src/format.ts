@@ -193,9 +193,14 @@ export function parseConsortiumMembers(name: string): ConsortiumMembership | nul
   return { kind: 'list', members: unique };
 }
 
-export function isNaturalPersonProfileName(name: string): boolean {
+/** Indexing policy for an identified natural person / sole trader, not a name-based identity match. */
+export function isNaturalPersonProfileName(name: string, legalForm?: string | null): boolean {
   const normalized = name.trim().toUpperCase();
-  return normalized.startsWith('ЕТ ') || normalized.startsWith('ET ');
+  const form = legalForm?.trim().toUpperCase() ?? '';
+  return (
+    /^(?:ЕТ|ET)(?:\s|$)/u.test(normalized) ||
+    /^(?:ЕТ|ET)$|ЕДНОЛИЧЕН ТЪРГОВЕЦ|SOLE TRADER|INDIVIDUAL|ФИЗИЧЕСКО ЛИЦЕ/u.test(form)
+  );
 }
 
 // The commercial legal forms a Търговски регистър entry carries in its firm name. A body whose name holds

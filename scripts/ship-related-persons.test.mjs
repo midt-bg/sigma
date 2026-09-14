@@ -1,10 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assertShipFloor,
   assertD1TargetAuthorized,
   SHIP_TARGETS,
-  parseMinLinks,
   resolveD1Name,
   insertStatements,
   chunkStatements,
@@ -171,26 +169,6 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   assert.ok(SHIP_TARGETS.production.includes('sigma-blue'));
   assert.ok(SHIP_TARGETS.production.includes('sigma-green'));
   assert.ok(!SHIP_TARGETS.production.includes('sigma')); // there is no slot named `sigma` (#226)
-});
-
-test('assertShipFloor refuses to wipe the live surface below the floor (empty/partial staging)', () => {
-  assert.throws(() => assertShipFloor(0, 50), /refusing to ship: 0 published links/); // the empty-wipe case
-  assert.throws(() => assertShipFloor(49, 50), /< floor 50/);
-  assert.doesNotThrow(() => assertShipFloor(50, 50)); // exactly at the floor is allowed
-  assert.doesNotThrow(() => assertShipFloor(256, 50)); // healthy count
-  assert.doesNotThrow(() => assertShipFloor(3, 3)); // an intentional small set via --min-links=3
-  assert.throws(() => assertShipFloor(2, 3)); // …but one below it still refuses
-});
-
-test('parseMinLinks rejects the valueless-flag footgun and non-positive-integers', () => {
-  // the footgun: a bare `--min-links` → arg() returns `true` → Number(true)=1 collapses the floor 50→1
-  assert.throws(() => parseMinLinks(true), /requires a value/);
-  assert.throws(() => parseMinLinks('abc'), /positive integer/); // non-numeric
-  assert.throws(() => parseMinLinks('0'), /positive integer/); // zero disables the floor
-  assert.throws(() => parseMinLinks('-5'), /positive integer/);
-  assert.throws(() => parseMinLinks('2.5'), /positive integer/); // non-integer
-  assert.equal(parseMinLinks(50), 50); // default (flag absent) passes through
-  assert.equal(parseMinLinks('25'), 25); // --min-links=25
 });
 
 test('resolveD1Name refuses the prod default on a remote ship but keeps it for --local', () => {
@@ -722,33 +700,15 @@ const shipHarness = (over = {}) => {
   return { calls, naps, run: () => runShip(opts) };
 };
 
-test('runShip wipes, then ships every table in request-sized chunks, in order', () => {
+test('runShip uploads staging before atomic promotion and paces every request', () => {
   const h = shipHarness();
-  const summary = h.run();
-
-  assert.deepEqual(
-    h.calls.map(([name]) => name),
-    ['0_wipe', 'persons.1', 'persons.2', 'persons.3', 'declarations'],
-    'wipe first, chunks numbered so a failed request is identifiable, single-chunk table stays bare',
-  );
-  assert.deepEqual(
-    h.calls.map(([, sql]) => sql),
-    ['DELETE FROM persons;', 'A;B;', 'C;D;', 'E;', 'F;'],
-  );
-  assert.deepEqual(summary, { persons: 5, declarations: 1 });
-});
-
-// THE regression this exists to prevent: the counter used to restart per table, so every table
-// boundary — including wipe → first insert, the most destructive transition in the run — was unpaced.
-test('runShip paces every request boundary, including wipe → first insert', () => {
-  const h = shipHarness();
-  h.run();
-  assert.equal(h.calls.length, 5);
-  assert.deepEqual(
-    h.naps,
-    [500, 500, 500, 500],
-    'one gap between each pair of requests: none before the first, none after the last, and none skipped at a table boundary',
-  );
+  assert.deepEqual(h.run(), { persons: 5, declarations: 1 });
+  const names = h.calls.map(([name]) => name);
+  assert.equal(names[0], 'prepare_persons');
+  assert.ok(names.indexOf('prepare_publish') > names.indexOf('declarations.0'));
+  assert.equal(names.at(-2), 'publish');
+  assert.ok(!names.includes('0_wipe'));
+  assert.equal(h.naps.length, h.calls.length - 1);
 });
 
 test('runShip verifies what landed — a short table fails the run', () => {
@@ -790,12 +750,8 @@ test('a swallowing prototype setter cannot drop a table out of the verification'
   }
 });
 
-test('runShip skips a table absent from the work DB without shipping or verifying it', () => {
+test('runShip refuses a missing source table before any request', () => {
   const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
-  const summary = h.run();
-  assert.equal(summary.ghost, 'absent (skipped)');
-  assert.ok(
-    !h.calls.some(([name]) => name.startsWith('ghost')),
-    'an absent table must issue no request',
-  );
+  assert.throws(() => h.run(), /missing ghost/);
+  assert.equal(h.calls.length, 0);
 });

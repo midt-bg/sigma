@@ -29,7 +29,6 @@
 - [`spec/declaration-semantics.md`](spec/declaration-semantics.md) — проверени източници, времеви смисъл, разграничаване на декларатор и притежател и изисквания за точност.
 - [`spec/person-profiles.md`](spec/person-profiles.md) — общи профили, декларации с приоритет, единен списък с договори и правила за представяне.
 - [`implementation-plans/profile-coherence.md`](implementation-plans/profile-coherence.md) — последователни профили, постоянно видими декларации, интерактивна хронология и договорни филтри.
-- [`implementation-plans/person-identity-and-timeline.md`](implementation-plans/person-identity-and-timeline.md) — следващ пакет: идентичност по Indent, пълно броене и обща хронология на институции, участия и договори; предложение, още не е внедрено.
 
 ## Стандарти за ревю
 

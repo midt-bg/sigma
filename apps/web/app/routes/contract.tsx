@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { data, Link } from 'react-router';
 import {
   count,
   isNaturalPersonProfileName,
@@ -94,21 +94,30 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   // sole-trader company profiles (company.tsx) and their exclusion from the sitemap. The contract stays
   // fully public on the site; only search-engine amplification of a named individual + risk label is
   // avoided.
-  if (c && isNaturalPersonProfileName(c.bidder.displayName)) {
+  if (c && isNaturalPersonProfileName(c.bidder.displayName, c.bidder.legalForm)) {
     tags.push({ name: 'robots', content: 'noindex' });
   }
   return tags;
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  const headers = new Headers(loaderHeaders);
+  headers.set('Cache-Control', publicCache(3600));
+  return headers;
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
   const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
-  return { contract };
+  return data(
+    { contract },
+    {
+      headers: isNaturalPersonProfileName(contract.bidder.displayName, contract.bidder.legalForm)
+        ? { 'X-Robots-Tag': 'noindex' }
+        : {},
+    },
+  );
 }
 
 // Coarse cohort bands only (never a fake-precise "топ 4.7%") - @sigma/db cohortBand only claims a

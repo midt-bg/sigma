@@ -70,6 +70,8 @@ function isHtml(response: Response): boolean {
 //                          page already sets <meta robots noindex>; this makes the header cover the JSON twins.
 function isNoindexNamesPath(request: Request): boolean {
   const p = normalizedPathname(request);
+  if (/\.(?:data|json|csv)$/.test(new URL(request.url).pathname)) return true;
+  if (p === '/persons' || p.startsWith('/persons/')) return true;
   if (p === '/search' || p.startsWith('/search/')) return true;
   return (p === '/conflicts' || p.startsWith('/conflicts/')) && p !== '/conflicts/methodology';
 }

@@ -1,152 +1,75 @@
-// The register client: what a partida read can come back as, and what the daily changes feed yields. The
-// contract that matters: a 404 is „no partida", a 429 is waited out as the API asks, and no other failure
-// is ever turned into „absent".
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RegistryError, registryClient, retryAfterMs, type RegistryDeed } from './registry';
-
-const BASE = 'http://registry.test';
-const partida = (uic: string): RegistryDeed => {
-  const body = {
-    uic,
-    name: 'ПРИМЕР ЕООД',
-    status: 'N',
-    guid: 'g',
-    legalForm: 'EOOD',
-    subDeeds: [],
-  };
-  return { deed: body, deedActualState: body };
-};
-const json = (body: unknown, init: ResponseInit = {}) =>
-  new Response(JSON.stringify(body), { status: 200, ...init });
-
+import { afterEach, expect, it, vi } from 'vitest';
+import {
+  parseRegistryXml,
+  registryClient,
+  registryDayBoundary,
+  registryDay,
+  retryAfterMs,
+} from './registry';
+const XML = `<DeedResult><Deed UIC="000000001" CompanyName="ТЕСТ" LegalForm="EOOD"><SubDeed SubUIC="01"><Managers FieldIdent="00070" FieldOperation="Erase" FieldEntryNumber="001" FieldEntryDate="2026-09-01T10:00:00.123"><Manager><Person><Indent>00abc</Indent><Name>Тест</Name></Person></Manager></Managers></SubDeed></Deed><DeedActualState UIC="000000001" /></DeedResult>`;
 afterEach(() => vi.unstubAllGlobals());
-
-function stub(...answers: (Response | Error)[]) {
-  const calls: string[] = [];
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-    calls.push(String(input));
-    const a = answers.shift();
-    if (!a) throw new Error('unexpected request');
-    if (a instanceof Error) throw a;
-    return a;
+it('normalizes XML attributes, history, repeated fields and original identifiers', () => {
+  const d = parseRegistryXml(XML, '000000001');
+  expect(d.deed.subDeeds[0]?.fields[0]).toMatchObject({
+    operation: 'Erase',
+    entryNumber: '001',
+    entryDate: '2026-09-01T10:00:00.123',
+    value: { Manager: { Person: { Indent: '00abc' } } },
   });
-  return calls;
-}
-const sleeps: number[] = [];
-const client = (maxAttempts = 3) =>
-  registryClient({ baseUrl: `${BASE}/`, maxAttempts, sleep: async (ms) => void sleeps.push(ms) });
-
-describe('registryClient.deed', () => {
-  it('reads a partida by its ЕИК', async () => {
-    const calls = stub(json(partida('101010101')));
-    const r = await client().deed('101010101');
-    expect(r).toEqual({ status: 'ok', deed: partida('101010101') });
-    expect(calls).toEqual([`${BASE}/deeds/101010101`]);
-  });
-
-  it('says a partida is absent only on a 404', async () => {
-    stub(new Response('{}', { status: 404 }));
-    expect(await client().deed('101010101')).toEqual({ status: 'absent' });
-  });
-
-  it('waits out a 429 for as long as the API asks, then reads', async () => {
-    sleeps.length = 0;
-    stub(
-      new Response('', { status: 429, headers: { 'retry-after': '2' } }),
-      json(partida('101010101')),
-    );
-    expect((await client().deed('101010101')).status).toBe('ok');
-    expect(sleeps).toEqual([2000]);
-  });
-
-  it('backs off on a 5xx or a network failure, and fails loudly once the attempts are spent', async () => {
-    sleeps.length = 0;
-    stub(new Response('', { status: 503 }), new Error('reset'), new Response('', { status: 500 }));
-    await expect(client().deed('101010101')).rejects.toThrow(RegistryError);
-    expect(sleeps).toEqual([1000, 2000]);
-    stub(new Error('reset'));
-    await expect(client(1).deed('101010101')).rejects.toThrow(/request failed/);
-  });
-
-  it('never reads anything but a nine-digit partida, and refuses an answer for another one', async () => {
-    const calls = stub();
-    await expect(client().deed('12345')).rejects.toThrow(/not a partida/);
-    expect(calls).toEqual([]);
-    stub(json(partida('999999999')));
-    await expect(client().deed('101010101')).rejects.toThrow(/no partida 101010101/);
-  });
-
-  it('refuses a redirect to another host and any other status', async () => {
-    const moved = json(partida('101010101'));
-    Object.defineProperty(moved, 'url', { value: 'http://elsewhere.test/deeds/101010101' });
-    stub(moved);
-    await expect(client().deed('101010101')).rejects.toThrow(/redirected/);
-    stub(new Response('', { status: 400 }));
-    await expect(client().deed('101010101')).rejects.toThrow(/answered 400/);
-  });
+  expect(d.deedActualState.subDeeds).toEqual([]);
+  expect(() => parseRegistryXml(XML, '999999999')).toThrow();
+  expect(() => parseRegistryXml('<html>error</html>', '000000001')).toThrow();
+  expect(() => parseRegistryXml('<!DOCTYPE x>' + XML, '000000001')).toThrow();
 });
-
-describe('registryClient.changedUics', () => {
-  it('walks the day’s pages and names every partida once', async () => {
-    const change = (uic: string) => ({
-      uic,
-      companyName: '',
-      entryNumber: '1',
-      entryDate: '',
-      fieldIdent: '00070',
-      operation: 'Add',
-    });
-    const calls = stub(
-      json({ items: [change('111111111'), change('222222222')], hasMore: true }),
-      json({ items: [change('111111111'), change('33')], hasMore: false }),
-    );
-    expect(await client().changedUics('2026-09-09')).toEqual({
-      uics: ['111111111', '222222222'],
-      complete: true,
-    });
-    expect(calls[0]).toBe(`${BASE}/deeds/changes?date=2026-09-09&by=loaded&limit=1000&offset=0`);
-    expect(calls[1]).toContain('offset=2');
-  });
-
-  it('stops at the page bound and says the day is not complete — a reload of the API, not a day', async () => {
-    const page = () =>
-      json({
-        items: [
-          {
-            uic: '111111111',
-            companyName: '',
-            entryNumber: '1',
-            entryDate: '',
-            fieldIdent: '00070',
-            operation: 'Add',
-          },
-        ],
-        hasMore: true,
-      });
-    // Exactly the bound's worth of answers: a request past it would meet „unexpected request".
-    const calls = stub(...Array.from({ length: 100 }, page));
-    expect(await client().changedUics('2026-09-11')).toEqual({
-      uics: ['111111111'],
-      complete: false,
-    });
-    expect(calls).toHaveLength(100);
-  });
-
-  it('refuses a malformed day and a feed that is not there', async () => {
-    await expect(client().changes('9 септември')).rejects.toThrow(/not a day/);
-    stub(new Response('', { status: 404 }));
-    await expect(client().changes('2026-09-09')).rejects.toThrow(/no changes feed/);
-    stub(json({}));
-    expect(await client().changes('2026-09-09')).toEqual({ items: [], hasMore: false });
-  });
+it('uses the published XML route; only 404 means absent', async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(XML))
+    .mockResolvedValueOnce(new Response('', { status: 404 }))
+    .mockResolvedValueOnce(new Response('', { status: 500 }));
+  vi.stubGlobal('fetch', fetch);
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  expect((await c.deed('000000001')).status).toBe('ok');
+  expect(await c.deed('000000001')).toEqual({ status: 'absent' });
+  await expect(c.deed('000000001')).rejects.toThrow('500');
+  expect(fetch.mock.calls[0]?.[0]).toBe('https://registry.test/deeds/000000001');
 });
-
-describe('retryAfterMs', () => {
-  it('reads seconds or a date, caps the wait, and ignores what it cannot read', () => {
-    expect(retryAfterMs('3')).toBe(3000);
-    expect(retryAfterMs(new Date(10_000).toUTCString(), 4_000)).toBe(6_000);
-    expect(retryAfterMs('9999')).toBe(120_000);
-    expect(retryAfterMs('soon')).toBeNull();
-    expect(retryAfterMs(null)).toBeNull();
-  });
+it('reads portal pages of 25 without treating later Count:0 as an empty day', async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          { uic: '000000001', date: '2026-09-01T10:00:00', companyFullName: 'Тест' },
+        ]),
+        { headers: { Count: '0' } },
+      ),
+    );
+  vi.stubGlobal('fetch', fetch);
+  const page = await registryClient({ baseUrl: 'https://registry.test' }).changes('2026-09-01', 2);
+  expect(page).toMatchObject({ hasMore: false, total: null, items: [{ uic: '000000001' }] });
+  const url = new URL(fetch.mock.calls[0]?.[0]);
+  expect(url.searchParams.get('pageSize')).toBe('25');
+  expect(url.searchParams.has('by')).toBe(false);
+  expect(url.searchParams.get('dateFrom')).toBe('2026-09-01T00:00:00+03:00');
+});
+it('refuses malformed list responses and preserves Retry-After for durable retry', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}'))
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '600' } })),
+  );
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  await expect(c.changes('2026-09-01')).rejects.toThrow('invalid portal');
+  await expect(c.changes('2026-09-01')).rejects.toMatchObject({ status: 429, retryMs: 600000 });
+  expect(retryAfterMs('600')).toBe(600000);
+});
+it('uses Bulgarian calendar days including both DST transitions', () => {
+  expect(registryDay(new Date('2026-09-01T22:00:00Z'))).toBe('2026-09-02');
+  expect(registryDayBoundary('2026-03-29')).toBe('2026-03-29T00:00:00+02:00');
+  expect(registryDayBoundary('2026-03-29', true)).toBe('2026-03-29T23:59:59.999+03:00');
+  expect(registryDayBoundary('2026-10-25')).toBe('2026-10-25T00:00:00+03:00');
+  expect(registryDayBoundary('2026-10-25', true)).toBe('2026-10-25T23:59:59.999+02:00');
 });

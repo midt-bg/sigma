@@ -1160,11 +1160,14 @@ test('a verdict from an OLDER rules version is held, never published', () => {
   cache.exec(`UPDATE verdicts SET rules_version = 'tr-rules-0'`);
   cache.close();
 
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
-    'not one claim may ride a ladder version this code no longer speaks — and the run says so loudly',
+  runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw });
+  const checked = open();
+  assert.equal(
+    checked.prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'").get().n,
+    0,
+    'old evidence never publishes, regardless of corpus coverage',
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
 });
 
@@ -1180,7 +1183,7 @@ test('a MOSTLY complete cache still publishes — an incremental crawl has to be
   runLoad(); // restore the full built state for any later reader
 });
 
-test('a substantially incomplete cache refuses EVEN WITH a prior published surface', () => {
+test('missing registry verdicts do not impose a numerical build floor', () => {
   // The floor used to switch off entirely the moment anything had ever been published — so one
   // leftover row from a partial ship, or from the direct UPDATE the suppression runbook sanctions,
   // disabled it. Monotonicity would then dutifully protect that single row while a decimated surface
@@ -1194,41 +1197,18 @@ test('a substantially incomplete cache refuses EVEN WITH a prior published surfa
     .get().n;
   db.close();
   assert.ok(prior > 0, 'there must be a prior surface for this to prove anything');
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+  assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  const checked = open();
+  assert.equal(
+    checked
+      .prepare(
+        "SELECT count(*) n FROM interest_links WHERE status='published' AND eik IN ('444444447','777777773','666666665')",
+      )
+      .get().n,
+    0,
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
-});
-
-test('--allow-partial-tr is the deliberate, stated override', () => {
-  // Without an override a single permanently unreachable ЕИК would deadlock the pipeline forever.
-  const partialDb = path.join(dir, 'partial-ok.sqlite');
-  const partialRaw = path.join(dir, 'partial-ok-deeds');
-  buildTrCache(partialDb, partialRaw, {}, { omit: ['121212129'] });
-  assert.doesNotThrow(() =>
-    execFileSync(
-      'node',
-      [
-        '--import',
-        path.join(HERE, 'register-ts.mjs'),
-        path.join(HERE, 'load.mjs'),
-        '--allow-partial-tr',
-      ],
-      {
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          CACBG_DB: DB,
-          CACBG_STAGING: STAGING,
-          TR_CACHE_DB: partialDb,
-          TR_RAW_DIR: partialRaw,
-        },
-        stdio: 'pipe',
-      },
-    ),
-  );
-  runLoad(); // restore the full-cache state for any later reader
 });
 
 test('the candidate ЕИК list is written for the crawler, covering held links too', () => {

@@ -251,6 +251,7 @@ async function run() {
     JSON.stringify(
       {
         schemaVersion: 6,
+        corpusComplete: !process.argv.includes('--allow-partial-corpus'),
         identityRules: identify ? 'registry-identity-1' : null,
         extractedAt: new Date().toISOString(),
         raw: RAW,

@@ -22,6 +22,10 @@ EOP_OPEN_DATA_BASE_URL = "https://storage.eop.bg"
 # The Trade Register API the register layer reads (ADR-0041). Empty: the layer does not run. Local dev points it
 # at a local instance through .dev.vars.
 REGISTRY_API_BASE_URL = ""
+REGISTRY_PORTAL_URL = "https://portal.registryagency.bg/CR/api/Applications/Entries"
+# Enable only during the separately approved writer cutover.
+DECLARATIONS_ENABLED = "false"
+DECLARATIONS_BUCKET = "sigma-declarations-local"
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -58,3 +62,23 @@ invocation_logs = true
 enabled = false
 persist = true
 head_sampling_rate = 1
+
+# Local configuration only. Provisioning / enabling this binding is a separate release step.
+[[containers]]
+class_name = "DeclarationContainer"
+image = "../../containers/declarations/Dockerfile"
+image_build_context = "../.."
+instance_type = "standard-2"
+max_instances = 1
+
+[[durable_objects.bindings]]
+name = "DECLARATIONS"
+class_name = "DeclarationContainer"
+
+[[migrations]]
+tag = "v1-declarations"
+new_sqlite_classes = ["DeclarationContainer"]
+
+[[r2_buckets]]
+binding = "DECLARATIONS_CORPUS"
+bucket_name = "sigma-declarations-local"

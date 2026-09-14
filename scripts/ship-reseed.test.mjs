@@ -29,6 +29,9 @@ CREATE TABLE bidders(id TEXT PRIMARY KEY);
 CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${MIG}
 .read ${MIG_EVIDENCE}
+.read ${resolve(HERE, '../packages/db/migrations/0012_person_redirects.sql')}
+.read ${resolve(HERE, '../packages/db/migrations/0014_person_profile.sql')}
+.read ${resolve(HERE, '../packages/db/migrations/0015_person_observations.sql')}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');
 INSERT INTO persons(id,name) VALUES('p1','П Тест');
