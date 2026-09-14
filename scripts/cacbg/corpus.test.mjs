@@ -142,7 +142,8 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
   const source = async (url) => {
     const file = url.split('/').at(-1);
     requested.push(file);
-    const status = file === 'gap.xml' ? 404 : file === 'b.xml' && fail ? 503 : 200;
+    const status =
+      file === 'gap.xml' && !url.includes('/2025y/') ? 404 : file === 'b.xml' && fail ? 503 : 200;
     return { status, body: Buffer.from(file === 'list.xml' ? list : xml(file)) };
   };
   const fetchCorpus = (store) =>
@@ -161,6 +162,13 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
     fail = false;
     requested.length = 0;
     assert.equal(await fetchCorpus(remote), 0);
+    assert(objects.has('2025y/gap.xml'));
+    assert(!objects.has('2025/gap.xml'), 'fallback bytes retain their actual source path');
+    assert.equal(
+      JSON.parse(objects.get('2025/.index.json')).files.find((f) => f.file === 'gap.xml')
+        .sourceFolder,
+      '2025y',
+    );
     assert(!requested.includes('a.xml'), 'a committed XML must not be fetched again');
     assert(!existsSync(join(dir, 'raw')), 'R2 mode must not create a local raw corpus');
     assert([...objects.keys()].every((k) => !/\.(tgz|gz|tar)$/.test(k)));
@@ -177,6 +185,12 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
       'registry-requests',
     ];
     const expected = files.map((f) => readFileSync(join(dir, 'staging', f + '.jsonl'), 'utf8'));
+    const filing = expected[2]
+      .trim()
+      .split('\n')
+      .map(JSON.parse)
+      .find((f) => f.xmlFile === 'gap.xml');
+    assert.equal(filing.sourceFolder, '2025y', 'the real source path survives extraction');
     rmSync(join(dir, 'raw'), { recursive: true });
     await extract({ store: remote });
     assert.deepEqual(

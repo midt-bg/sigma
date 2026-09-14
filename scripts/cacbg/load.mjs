@@ -532,7 +532,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     h.category ?? '',
     declarationInstitution(h),
     h.position ?? '',
-    `https://register.cacbg.bg/${h.folder}/${h.xmlFile}`,
+    `https://register.cacbg.bg/${h.sourceFolder ?? h.folder}/${h.xmlFile}`,
   );
   const key = companyNameKey(h.entity);
   insDI.run(
@@ -702,7 +702,7 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
       '',
       declarationInstitution(r),
       '',
-      `https://register.cacbg.bg/${r.folder}/${r.xmlFile}`,
+      `https://register.cacbg.bg/${r.sourceFolder ?? r.folder}/${r.xmlFile}`,
     );
   }
   insRP.run(
@@ -734,7 +734,7 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
     f.category ?? '',
     declarationInstitution(f),
     f.position ?? '',
-    `https://register.cacbg.bg/${f.folder}/${f.xmlFile}`,
+    `https://register.cacbg.bg/${f.sourceFolder ?? f.folder}/${f.xmlFile}`,
   );
   noteLegacy(f, pid);
   insMetadata.run(did, f.declarationType ?? null, f.declaredOn ?? null, f.submittedOn ?? null);

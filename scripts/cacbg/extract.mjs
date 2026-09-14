@@ -135,13 +135,13 @@ export async function run({ store = corpusStore(RAW) } = {}) {
   try {
     for (const folder of folders) {
       let index;
+      const indexBytes = await store.get(`${folder}/.index.json`);
       if (store.remote) {
         const entry = stamp.inventory.find((e) => e.folder === folder);
-        const bytes = await store.get(`${folder}/.index.json`);
-        if (!bytes || digest(bytes) !== entry.sha256)
+        if (!indexBytes || digest(indexBytes) !== entry.sha256)
           throw Error(`Corpus inventory changed: ${folder}`);
-        index = JSON.parse(bytes.toString('utf8'));
       }
+      if (indexBytes) index = JSON.parse(indexBytes.toString('utf8'));
       const list = await store.get(`${folder}/list.xml`);
       if (!list) {
         if (store.remote) throw Error(`Missing corpus list: ${folder}`);
@@ -178,7 +178,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         )
           throw Error(`Corpus inventory does not match list: ${folder}`);
       }
-      for await (const { file, sha256, bytes } of corpusFiles(
+      for await (const { file, sha256, bytes, sourceFolder } of corpusFiles(
         store,
         folder,
         files.filter(({ file }) => file !== 'list.xml' && file.endsWith('.xml')),
@@ -238,6 +238,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         filingsOut.write(
           JSON.stringify({
             folder,
+            sourceFolder,
             xmlFile: file,
             year: d.year,
             template: d.templateType, // the divest horizon is compared PER declaration type (B1/#226)
@@ -276,6 +277,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           holdingsOut.write(
             JSON.stringify({
               folder,
+              sourceFolder,
               xmlFile: file,
               year: d.year,
               template: d.templateType,
@@ -300,6 +302,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           relatedOut.write(
             JSON.stringify({
               folder,
+              sourceFolder,
               xmlFile: file,
               year: d.year,
               person,

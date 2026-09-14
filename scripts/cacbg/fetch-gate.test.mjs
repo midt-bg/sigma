@@ -79,10 +79,16 @@ test('404 and 403 history survives failed crawls without certifying missing data
   const records = fs
     .readdirSync(path.join(eventRoot, firstCrawl))
     .map((file) => JSON.parse(fs.readFileSync(path.join(eventRoot, firstCrawl, file), 'utf8')));
-  assert.deepEqual(records.map((r) => r.status).sort(), [403, 404]);
+  assert.deepEqual(
+    records
+      .filter((r) => r.folder === FOLDER)
+      .map((r) => r.status)
+      .sort(),
+    [403, 404],
+  );
   for (const record of records) {
     assert.equal(record.crawlId, firstCrawl);
-    assert.equal(record.url, `${BASE}/${FOLDER}/${record.file}`);
+    assert.equal(record.url, `${BASE}/${record.folder}/${record.file}`);
     assert(Number.isFinite(Date.parse(record.checkedAt)));
     assert(Object.hasOwn(record, 'runId') && Object.hasOwn(record, 'attempt'));
   }
@@ -90,7 +96,7 @@ test('404 and 403 history survives failed crawls without certifying missing data
   assert(!fs.existsSync(path.join(dir, '.corpus-complete.json')));
   assert.equal(await runGate({ ...list2, ...ok('a2.xml') }), 0);
   assert.equal(fs.readdirSync(eventRoot).length, 2, 'a later crawl preserves earlier history');
-  assert.equal(fs.readdirSync(path.join(eventRoot, firstCrawl)).length, 2);
+  assert.equal(fs.readdirSync(path.join(eventRoot, firstCrawl)).length, records.length);
 });
 
 test('failed requests retain file, HTTP status and network error for diagnosis', async (t) => {

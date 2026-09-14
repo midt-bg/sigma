@@ -15,7 +15,11 @@ export async function* corpusFiles(store, folder, files, width = 16) {
   for (let i = 0; i < files.length; i += width) {
     const batch = files.slice(i, i + width);
     const bodies = await Promise.all(
-      batch.map(({ file }) => store.get(`${folder}/${safeXmlFile(file)}`)),
+      batch.map(({ file, sourceFolder = folder }) => {
+        if (safeFolder(sourceFolder).slice(0, 4) !== folder.slice(0, 4))
+          throw Error('Corpus source folder escaped publication year');
+        return store.get(`${sourceFolder}/${safeXmlFile(file)}`);
+      }),
     );
     for (let j = 0; j < batch.length; j++) yield { ...batch[j], bytes: bodies[j] };
   }

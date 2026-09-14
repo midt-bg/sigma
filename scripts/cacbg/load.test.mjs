@@ -732,6 +732,43 @@ before(() => {
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+test('resolved sibling paths become source URLs without changing declaration IDs', () => {
+  const originals = ['holdings', 'related', 'filings'].map((name) => {
+    const file = path.join(STAGING, name + '.jsonl');
+    return [file, fs.readFileSync(file, 'utf8')];
+  });
+  try {
+    for (const [file, text] of originals)
+      fs.writeFileSync(
+        file,
+        text
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => {
+            const row = JSON.parse(line);
+            return JSON.stringify({ ...row, sourceFolder: row.folder.slice(0, 4) + 'y' });
+          })
+          .join('\n') + '\n',
+      );
+    runLoad();
+    const db = open();
+    const rows = db.prepare('SELECT id, folder_year, xml_file, source_url FROM declarations').all();
+    db.close();
+    assert(rows.length > 0);
+    for (const row of rows) {
+      assert.equal(row.id, `decl:${row.folder_year}:${row.xml_file}`);
+      assert.equal(
+        row.source_url,
+        `https://register.cacbg.bg/${row.folder_year.slice(0, 4)}y/${row.xml_file}`,
+      );
+    }
+  } finally {
+    for (const [file, text] of originals) fs.writeFileSync(file, text);
+    runLoad();
+  }
+});
+
 test('resolves publish/held/quarantine tiers deterministically', () => {
   runLoad();
   const db = open();

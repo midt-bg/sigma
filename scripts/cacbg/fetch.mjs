@@ -156,6 +156,44 @@ export async function politeGet(
   }
 }
 
+// The register republishes lists across sibling folders without copying every XML with them.
+// Only the same filename within the same publication year is a fallback, never another year.
+export function declarationFolders(folder, knownFolders) {
+  const year = safeFolder(folder).slice(0, 4);
+  return [...new Set([folder, `${year}y`, year, `${year}f1`, `${year}h`, ...knownFolders])].filter(
+    (f) => safeFolder(f).slice(0, 4) === year,
+  );
+}
+
+export async function findDeclaration(folder, file, folders, get, record) {
+  let failure;
+  for (const sourceFolder of declarationFolders(folder, folders)) {
+    let res;
+    try {
+      res = await get(sourceFolder, file);
+    } catch (error) {
+      await record(sourceFolder, { indexFolder: folder, error: error.message, code: error.code });
+      throw Object.assign(error, { sourceFolder });
+    }
+    if (res.status === 200) {
+      if (sourceFolder !== folder)
+        await record(sourceFolder, { status: 200, indexFolder: folder, cached: !!res.cached });
+      return { ...res, sourceFolder };
+    }
+    await record(sourceFolder, {
+      status: res.status,
+      indexFolder: folder,
+      location: res.headers?.location,
+      retryAfter: res.headers?.['retry-after'],
+      server: res.headers?.server,
+    });
+    if (res.status !== 403 && res.status !== 404) return { ...res, sourceFolder };
+    // A 404 on a later path must not erase an unresolved 403 on an earlier one.
+    if (!failure || res.status !== 404) failure = { ...res, sourceFolder };
+  }
+  return failure;
+}
+
 // Discover EVERY declaration-set folder from the register's own root index, rather than guessing that
 // folder == year. The register splits a year across suffixed folders (2021_nc/_nonc/f1 compliance sets,
 // 2019e local elections, 2018h, *y end-of-year republications) — a year-only guess silently drops them.
@@ -284,6 +322,11 @@ export async function run({
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
   const inventory = [];
+  const cachedFolders = new Map();
+  const filesFor = (folder) => {
+    if (!cachedFolders.has(folder)) cachedFolders.set(folder, store.files(folder));
+    return cachedFolders.get(folder);
+  };
   let completed = 0;
   progress('fetch');
   for (const folder of folders) {
@@ -294,7 +337,7 @@ export async function run({
       console.log(`  deadline reached — stopping before ${folder} (not attempted)`);
       break;
     }
-    const cachedFiles = await store.files(folder);
+    const cachedFiles = await filesFor(folder);
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
       await recordSourceResult(folder, 'list.xml', { status: listRes.status });
@@ -377,10 +420,14 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
-    const reportFailure = async (file, details) => {
-      await recordSourceResult(folder, file, details);
+    const reportFailure = (file, details, sourceFolder = folder) => {
       console.error(
-        JSON.stringify({ event: 'declarations_source_error', folder, file, ...details }),
+        JSON.stringify({
+          event: 'declarations_source_error',
+          folder: sourceFolder,
+          file,
+          ...details,
+        }),
       );
     };
     const withheld = await pool(
@@ -391,21 +438,37 @@ export async function run({
         try {
           xmlFile = safeXmlFile(row.xmlFile);
         } catch (error) {
-          await reportFailure(row.xmlFile, { error: error.message });
+          await recordSourceResult(folder, row.xmlFile, { error: error.message });
+          reportFailure(row.xmlFile, { error: error.message });
           fstat.errors++;
           return;
         }
         if (cachedFiles.has(xmlFile)) {
-          obtainedFiles.set(xmlFile, cachedFiles.get(xmlFile));
+          obtainedFiles.set(xmlFile, { sha256: cachedFiles.get(xmlFile) });
           fstat.cached++;
           progress('fetch', ++completed);
           return;
         }
         let res;
         try {
-          res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
+          res = await findDeclaration(
+            folder,
+            xmlFile,
+            folders,
+            async (sourceFolder, file) => {
+              const files = await filesFor(sourceFolder);
+              if (files.has(file)) {
+                const body = await store.get(`${sourceFolder}/${file}`);
+                if (!body || (store.remote && digest(body) !== files.get(file)))
+                  throw Error(`Cached declaration missing or changed: ${sourceFolder}/${file}`);
+                return { status: 200, body, cached: true };
+              }
+              return httpGet(`${BASE}/${sourceFolder}/${file}`);
+            },
+            (sourceFolder, details) => recordSourceResult(sourceFolder, xmlFile, details),
+          );
         } catch (error) {
-          await reportFailure(xmlFile, { error: error.message, code: error.code });
+          reportFailure(xmlFile, { error: error.message, code: error.code }, error.sourceFolder);
           fstat.errors++;
           consecutive = nextBreaker(consecutive, 'fail');
           if (consecutive > BREAKER_TRIP)
@@ -413,24 +476,27 @@ export async function run({
           return;
         }
         if (res.status === 404) {
-          await recordSourceResult(folder, xmlFile, { status: 404 });
           fstat.missing++;
           sourceGaps.add(xmlFile);
           progress('fetch', ++completed);
           consecutive = nextBreaker(consecutive, 'missing');
           return;
-        } // listed-but-unpublished (source gap)
+        } // absent from every checked sibling path (source gap)
         if (res.status !== 200) {
-          await reportFailure(xmlFile, {
-            status: res.status,
-            location: res.headers?.location,
-            retryAfter: res.headers?.['retry-after'],
-            server: res.headers?.server,
-            address: res.address,
-            response: res.headers?.['content-type']?.includes('text/html')
-              ? res.body?.toString('utf8').slice(0, 1200)
-              : undefined,
-          });
+          reportFailure(
+            xmlFile,
+            {
+              status: res.status,
+              location: res.headers?.location,
+              retryAfter: res.headers?.['retry-after'],
+              server: res.headers?.server,
+              address: res.address,
+              response: res.headers?.['content-type']?.includes('text/html')
+                ? res.body?.toString('utf8').slice(0, 1200)
+                : undefined,
+            },
+            res.sourceFolder,
+          );
           // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
           // just network throws — so the crawl stops instead of hammering the register indefinitely.
           fstat.errors++;
@@ -440,11 +506,18 @@ export async function run({
           return;
         }
         consecutive = nextBreaker(consecutive, 'ok');
-        await store.put(`${folder}/${xmlFile}`, res.body);
-        obtainedFiles.set(xmlFile, digest(res.body));
-        fstat.fetched++;
+        const sha256 = digest(res.body);
+        if (!res.cached) {
+          await store.put(`${res.sourceFolder}/${xmlFile}`, res.body);
+          (await filesFor(res.sourceFolder)).set(xmlFile, sha256);
+        }
+        obtainedFiles.set(xmlFile, {
+          sha256,
+          ...(res.sourceFolder !== folder ? { sourceFolder: res.sourceFolder } : {}),
+        });
+        fstat[res.cached ? 'cached' : 'fetched']++;
         progress('fetch', ++completed);
-        if (fstat.fetched % 500 === 0)
+        if (!res.cached && fstat.fetched % 500 === 0)
           console.log(`  ${folder}: ${fstat.fetched} fetched, ${fstat.cached} cached`);
         await sleep(15);
       },
@@ -463,7 +536,7 @@ export async function run({
       const index = Buffer.from(
         JSON.stringify({
           listHash: digest(listRes.body),
-          files: [...obtainedFiles].sort().map(([file, sha256]) => ({ file, sha256 })),
+          files: [...obtainedFiles].sort().map(([file, entry]) => ({ file, ...entry })),
           missing: [...sourceGaps].sort(),
         }),
       );
