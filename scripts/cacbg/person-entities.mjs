@@ -276,7 +276,9 @@ export function rebuildPersonEntities(
     db.exec('UPDATE person_sources SET entity_id=NULL');
     for (const c of components) {
       const anchor = c.members.find((s) => s.namespace === 'tr');
-      const resolved = anchor || (!c.conflict && c.members.length > 1);
+      // A listing group proves these documents belong together, not a new global person.
+      // Keep unanchored groups in their source archives; an eventual TR anchor resolves the whole chain.
+      const resolved = Boolean(anchor);
       let entity = null;
       if (resolved) {
         entity = [

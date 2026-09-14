@@ -245,12 +245,23 @@ test('listing groups attach empty filings, reject namesakes and manual evidence,
       noRegistry.assignments.get(declarationSourceId(b)),
       noRegistry.assignments.get(declarationSourceId(c)),
     );
+    assert.equal(noRegistry.assignments.get(declarationSourceId(b)), legacy(b));
     assert.equal(
-      db
-        .prepare('SELECT registry_indent FROM person_entities WHERE id=?')
-        .get(noRegistry.assignments.get(declarationSourceId(b))).registry_indent,
+      db.prepare('SELECT entity_id FROM person_sources WHERE id=?').get(declarationSourceId(b))
+        .entity_id,
       null,
     );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT count(*) n FROM person_identity_evidence WHERE rule_version='source-groups-1' AND decision='accepted'",
+        )
+        .get().n,
+      1,
+      'unanchored source grouping survives without inventing a separate person profile',
+    );
+    const anchoredChain = run([group([a, b]), group([b, c])]);
+    assert.equal(anchoredChain.assignments.get(declarationSourceId(c)), id);
   } finally {
     db.close();
   }

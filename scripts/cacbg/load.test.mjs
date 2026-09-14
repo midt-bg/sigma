@@ -20,10 +20,10 @@ import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
-function runLoad(extraEnv = {}) {
+function runLoad(extraEnv = {}, args = []) {
   execFileSync(
     'node',
-    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
+    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs'), ...args],
     {
       cwd: ROOT,
       env: {
@@ -2016,5 +2016,38 @@ test('a changed listing-group artifact is refused before touching published data
   } finally {
     fs.writeFileSync(file, saved);
     db.close();
+  }
+});
+
+test('a company EIK survives aggregation with name-only declarations in either order', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const holdings = saved.trim().split('\n').map(JSON.parse);
+  const base = holdings.find((h) => h.entity === 'СИЙ ЕООД');
+  assert.ok(base);
+  const explicit = { ...base, entity: 'СИЙ ЕООД, ЕИК 444444447' };
+  try {
+    for (const pair of [
+      [base, explicit],
+      [explicit, base],
+    ]) {
+      fs.writeFileSync(
+        file,
+        [...holdings.filter((h) => h !== base), ...pair].map(JSON.stringify).join('\n') + '\n',
+      );
+      runLoad({}, ['--emit-candidates']);
+      const candidates = fs
+        .readFileSync(path.join(STAGING, 'candidate-links.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      const merged = candidates.filter(
+        (c) => c.eik === '444444447' && c.declarantName === base.person,
+      );
+      assert.equal(merged.length, 1);
+      assert.equal(merged[0].declaredEik, true);
+    }
+  } finally {
+    fs.writeFileSync(file, saved);
   }
 });

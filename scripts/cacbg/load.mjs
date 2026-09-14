@@ -340,7 +340,8 @@ const nameGloballyUnique = (key) => {
   if (!m) return false;
   return new Set([...m.values()].filter((v) => v.eik && v.valid).map((v) => v.eik)).size === 1;
 };
-const METHOD_RANK = { exact_name_key: 3, declared_eik: 2, extracted_name: 1 };
+// An explicit, name-checked EIK remains stronger when another declaration supplies only a name.
+const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1 };
 // Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
 // valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
 // never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
