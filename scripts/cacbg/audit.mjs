@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
+import { eikCompanyNameKey } from './resolve-company.mjs';
 import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -282,7 +283,11 @@ for (const l of nonExact) {
     // Boundary-safe name confirmation (mirrors load.mjs resolveEntity): the winner фирма must appear as a
     // „NAME" ФОРМА candidate. The raw `companyNameKey(t).includes(winnerKey)` leg was removed — it had the
     // same mid-token over-merge risk as the resolver, so the audit gate would rubber-stamp it (ADR-0016).
-    const nameHit = companyCandidates(t).some((c) => companyNameKey(c) === winnerKey);
+    const nameHit = companyCandidates(t).some((c) =>
+      l.match_method === 'declared_eik'
+        ? eikCompanyNameKey(c) === eikCompanyNameKey(winnerKey)
+        : companyNameKey(c) === winnerKey,
+    );
     return (
       (l.match_method === 'declared_eik' && eikHit && nameHit) ||
       (l.match_method === 'extracted_name' && nameHit)

@@ -1,6 +1,10 @@
 import { companyNameKey, isMatchableKey } from '../../packages/shared/src/company-name-key.ts';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 
+/** With an explicit EIK, spacing around an existing hyphen is presentation, not a name-only alias.
+ * Keep every letter, number, hyphen and legal form; never use this key for name-only matching. */
+export const eikCompanyNameKey = (name) => companyNameKey(name).replace(/\s*-\s*/g, '-');
+
 /** Resolve one company-bearing field without choosing between contradictory identities. */
 export function resolveDeclaredCompany(entity, { byKey, bidderByEik }) {
   const validEiks = (key) =>
@@ -21,8 +25,10 @@ export function resolveDeclaredCompany(entity, { byKey, bidderByEik }) {
     if (stated.length !== 1) return { ambiguous: true };
     const bidder = bidderByEik.get(stated[0]);
     const winnerKey = companyNameKey(bidder?.name ?? '');
-    if (!isMatchableKey(winnerKey) || !candidates.includes(winnerKey)) return { ambiguous: true };
-    if (candidates.some((c) => c !== winnerKey)) return { ambiguous: true };
+    const named = candidates.map(eikCompanyNameKey);
+    const registered = eikCompanyNameKey(winnerKey);
+    if (!isMatchableKey(winnerKey) || !named.includes(registered)) return { ambiguous: true };
+    if (named.some((c) => c !== registered)) return { ambiguous: true };
     return { eik: stated[0], method: 'declared_eik' };
   }
   // Even an unmatched second company is a second possible subject of this field.

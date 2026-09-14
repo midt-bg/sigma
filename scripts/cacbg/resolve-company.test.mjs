@@ -56,3 +56,22 @@ test('an unknown prefixed company cannot match a known shorter bidder', () => {
   assert.equal(resolve('ГД „Алфа“ ЕООД'), null);
   assert.deepEqual(resolve('ГД „Алфа“ ЕООД, ЕИК 111111119'), { ambiguous: true });
 });
+
+test('hyphen spacing is tolerated only behind a single corroborated EIK', () => {
+  const company = { eik: '111111119', name: 'ТЕСТ - 42 ООД', valid: true };
+  const indexes = {
+    byKey: new Map([[companyNameKey(company.name), new Map([[company.eik, company]])]]),
+    bidderByEik: new Map([[company.eik, company]]),
+  };
+  assert.deepEqual(resolveDeclaredCompany('ТЕСТ-42 ООД, ЕИК 111111119', indexes), {
+    eik: company.eik,
+    method: 'declared_eik',
+  });
+  assert.equal(resolveDeclaredCompany('ТЕСТ-42 ООД', indexes), null);
+  for (const input of [
+    'ТЕСТ 42 ООД, ЕИК 111111119',
+    'ДРУГ ТЕСТ-42 ООД, ЕИК 111111119',
+    'ТЕСТ-42 ЕООД, ЕИК 111111119',
+  ])
+    assert.deepEqual(resolveDeclaredCompany(input, indexes), { ambiguous: true });
+});
