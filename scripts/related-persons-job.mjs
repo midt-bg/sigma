@@ -142,7 +142,7 @@ if (remote) {
     'export',
     d1,
     '--remote',
-    '--yes',
+    '--skip-confirmation',
     ...tables.flatMap((t) => ['--table', t]),
     '--output',
     sql,
