@@ -172,6 +172,41 @@ describe('getCompanyPeople', () => {
 });
 
 describe('getRegistryPerson', () => {
+  it('shows only procurement recipients with profiles, including organisations with zero recorded value', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO bidders (id,name,kind) VALUES
+        ('eik:955555555','БЕЗ ПРОФИЛ','company'),
+        ('eik:966666666','БЕЗ ПОРЪЧКИ','company'),
+        ('eik:988888888','СДРУЖЕНИЕ','company');
+      INSERT INTO company_totals (bidder_id,name,kind,won_eur,contracts,authorities) VALUES
+        ('eik:966666666','БЕЗ ПОРЪЧКИ','company',0,0,0),
+        ('eik:988888888','СДРУЖЕНИЕ','company',0,1,1);
+      INSERT INTO registry_deeds (eik,name,outcome,fetched_at) VALUES
+        ('955555555','БЕЗ ПРОФИЛ','ok','2026-09-10'),
+        ('966666666','БЕЗ ПОРЪЧКИ','ok','2026-09-10'),
+        ('977777777','САМО В ТР','ok','2026-09-10'),
+        ('988888888','СДРУЖЕНИЕ','ok','2026-09-10');
+      INSERT INTO registry_roles (eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,entry_number,added_on)
+        SELECT eik,'0000','00070','manager','person','${ANNA}','АННА ПЕТРОВА','new','2020-01-01'
+        FROM registry_deeds WHERE eik IN ('955555555','966666666','977777777','988888888');
+    `);
+    const p = (await getRegistryPerson(db, ANNA))!;
+    expect(new Set(p.roles.map((r) => r.company.eik))).toEqual(
+      new Set(['111111111', '222222222', '988888888']),
+    );
+    expect(p.roles.every((r) => r.company.href)).toBe(true);
+    expect(
+      p.network.nodes
+        .filter((n) => n.hop === 1)
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(['eik:111111111', 'eik:222222222', 'eik:988888888']);
+    expect(p).toMatchObject({ companies: 3, wonEur: 6000 });
+    open!.exec("UPDATE company_totals SET contracts=0 WHERE bidder_id='eik:222222222'");
+    expect(await getRegistryPerson(db, VERA)).toBeNull();
+  });
+
   it('gathers a person’s roles across companies, with the companies around them in a graph', async () => {
     const p = (await getRegistryPerson(served(), ANNA))!;
     expect(p).toMatchObject({

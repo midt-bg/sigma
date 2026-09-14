@@ -110,7 +110,7 @@ const columns: Column<PersonDeclaration>[] = [
             ))}
           </ul>
         ) : (
-          <span className="muted">Няма извлечени участия в този документ</span>
+          <span className="muted">Няма участия в показаните дружества</span>
         )}
         {d.discrepancies?.map((c) => (
           <p className="small declaration-discrepancy" key={`${c.eik}-${c.scope}`}>
