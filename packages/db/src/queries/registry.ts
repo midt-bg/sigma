@@ -103,14 +103,16 @@ interface Standing {
   role: RegistryRoleKind;
   addedOn: string;
   removedOn: string | null;
+  uncertainAfter?: string | null;
 }
 
 /** Standing roles first, most senior first; then the ended ones, the latest ended first. */
 function byStanding<T extends Standing>(name: (x: T) => string) {
   return (a: T, b: T): number => {
-    if (!a.removedOn !== !b.removedOn) return a.removedOn ? 1 : -1;
-    if (a.removedOn && b.removedOn && a.removedOn !== b.removedOn)
-      return b.removedOn.localeCompare(a.removedOn);
+    const aEnd = a.removedOn ?? a.uncertainAfter;
+    const bEnd = b.removedOn ?? b.uncertainAfter;
+    if (!aEnd !== !bEnd) return aEnd ? 1 : -1;
+    if (aEnd && bEnd && aEnd !== bEnd) return bEnd.localeCompare(aEnd);
     return (
       roleRank(a.role) - roleRank(b.role) ||
       a.addedOn.localeCompare(b.addedOn) ||
@@ -131,13 +133,14 @@ interface CompanyRoleRow {
   entry_number: string;
   added_on: string;
   removed_on: string | null;
+  uncertain_after: string | null;
 }
 
 const COMPANY_DEED_SQL = `SELECT fetched_at FROM registry_deeds WHERE eik = ?1 AND outcome = 'ok'`;
 
 const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
-         b.id AS entity_bidder, r.share, r.country, r.entry_number, r.added_on, r.removed_on
+         b.id AS entity_bidder, r.share, r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id
@@ -184,6 +187,7 @@ export async function getCompanyPeople(db: D1Database, bidderId: string): Promis
         share: r.share,
         addedOn: r.added_on,
         removedOn: r.removed_on,
+        ...(r.uncertain_after ? { uncertainAfter: r.uncertain_after } : {}),
         entryNumber: r.entry_number,
       }))
       .sort(byStanding((x) => x.holder.name));
@@ -201,6 +205,7 @@ interface PersonRoleRow {
   entry_number: string;
   added_on: string;
   removed_on: string | null;
+  uncertain_after: string | null;
   deed_name: string | null;
   fetched_at: string;
   bidder_id: string | null;
@@ -212,7 +217,7 @@ interface PersonRoleRow {
 const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
 
 const PERSON_ROLES_SQL = `
-  SELECT r.eik, r.role, r.share, r.entry_number, r.added_on, r.removed_on, d.name AS deed_name,
+  SELECT r.eik, r.role, r.share, r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
          d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
@@ -246,6 +251,7 @@ export async function getRegistryPerson(
         share: r.share,
         addedOn: r.added_on,
         removedOn: r.removed_on,
+        ...(r.uncertain_after ? { uncertainAfter: r.uncertain_after } : {}),
         entryNumber: r.entry_number,
       }))
       .sort(byStanding((x) => x.company.name));
@@ -272,7 +278,7 @@ export async function getRegistryPerson(
         current: false,
       };
       c.roles.push(r.role);
-      c.current ||= r.removed_on === null;
+      c.current ||= r.removed_on === null && r.uncertain_after === null;
       at.set(r.bidder_id, c);
     }
     const ranked = [...at.entries()].sort(

@@ -1,3 +1,4 @@
+import { fileDigest } from './build-proof.mjs';
 // Adversarial accuracy audit of PUBLISHED interest_links. Independent of load.mjs: it rebuilds the
 // name-key → ЕИК map from scratch over the live bidders table and re-proves the libel-critical
 // invariant (one distinctive key → exactly one eik_valid ЕИК == the published one) for every
@@ -8,7 +9,15 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import {
+  declarationContinuity,
+  CONTINUITY_RULE,
+  COMPANY_AUTHOR_BASIS,
+} from './declaration-continuity.mjs';
+import { registryCompanyResolver } from './registry-identity.mjs';
+import { documentFingerprint } from './source-identity.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
+import { eikCompanyNameKey } from './resolve-company.mjs';
 import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -17,6 +26,7 @@ const STAGING = process.env.CACBG_STAGING || path.join(ROOT, 'scratch/cacbg/stag
 const SNAPSHOT = path.join(STAGING, 'published-snapshot.json');
 const { companyNameKey } = await import('../../packages/shared/src/company-name-key.ts');
 
+fs.rmSync(`${DB}.audited.json`, { force: true });
 const db = new DatabaseSync(DB, { readOnly: true });
 
 // 1. Rebuild key → {valid ЕИК set, sample names} from ALL bidders — the ground truth the guard rests on.
@@ -66,23 +76,102 @@ const findings = [];
 const flag = (link, axis, detail) =>
   findings.push({ axis, link_key: link.link_key, eik: link.eik, detail });
 
-// A contradictory source identity cannot silently fall back to a name-based public profile.
-if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='declaration_identity_evidence'").get()) {
-  const ambiguous = new Set(
+// Published canonical profiles must agree with durable source membership, not a second name resolver.
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
+  const continuity = db
+    .prepare("SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version=?")
+    .all(CONTINUITY_RULE);
+  if (continuity.length) {
+    try {
+      const inconsistent = db
+        .prepare(
+          `SELECT count(*) n FROM person_identity_evidence e
+        LEFT JOIN person_sources l ON l.id=e.left_source LEFT JOIN person_sources r ON r.id=e.right_source
+        LEFT JOIN person_entities p ON p.id=l.entity_id
+        WHERE e.rule_version=? AND e.decision='accepted'
+          AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.id IS NULL)`,
+        )
+        .get(CONTINUITY_RULE).n;
+      if (inconsistent) throw new Error('accepted continuity does not belong to one author');
+      const unsupported = db
+        .prepare(
+          `SELECT count(*) n FROM person_entities p
+        WHERE p.registry_indent IS NULL
+          AND EXISTS (SELECT 1 FROM person_sources s WHERE s.entity_id=p.id AND s.active=1)
+          AND NOT EXISTS (SELECT 1 FROM person_identity_evidence e
+            JOIN person_sources l ON l.id=e.left_source
+            JOIN person_sources r ON r.id=e.right_source
+            WHERE e.rule_version=? AND e.decision='accepted' AND json_extract(e.facts,'$.basis')=?
+              AND l.entity_id=p.id AND r.entity_id=p.id)`,
+        )
+        .get(CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
+      if (unsupported)
+        throw new Error('author without a registry identity lacks verified company evidence');
+      const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
+      const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
+      if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))
+        throw new Error('declaration continuity input is not the completed extraction');
+      const expected = new Map(
+        declarationContinuity(
+          raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse),
+          registryCompanyResolver(db),
+        ).map((e) => [e.id, e]),
+      );
+      for (const e of continuity) {
+        const candidate = expected.get(e.id);
+        if (
+          !candidate ||
+          ['left_source', 'right_source', 'left_hash', 'right_hash', 'relation', 'facts'].some(
+            (k) => candidate[k] !== e[k],
+          )
+        )
+          throw new Error(
+            'accepted declaration continuity is not reproducible from current sources',
+          );
+      }
+    } catch (error) {
+      findings.push({ axis: 'I_declaration_continuity', detail: error.message });
+    }
+  }
+  const invalidEvidence = db
+    .prepare(
+      `SELECT count(*) n FROM person_identity_evidence e
+    LEFT JOIN person_sources l ON l.id=e.left_source
+    LEFT JOIN person_sources r ON r.id=e.right_source
+    WHERE e.decision='accepted' AND (e.origin<>'automatic' OR l.id IS NULL OR r.id IS NULL
+      OR l.active<>1 OR r.active<>1 OR l.source_hash<>e.left_hash OR r.source_hash<>e.right_hash)`,
+    )
+    .get().n;
+  if (invalidEvidence)
+    findings.push({
+      axis: 'I_automatic_evidence',
+      detail: `${invalidEvidence} accepted identity edges lack automatic, current source evidence`,
+    });
+  const invalid = new Set(
     db
       .prepare(
-        `SELECT d.person_id FROM declaration_identity_evidence e
-    JOIN declarations d ON d.id=e.declaration_id GROUP BY d.person_id HAVING COUNT(DISTINCT e.registry_indent)>1`,
+        `
+    SELECT p.id FROM persons p LEFT JOIN person_entities e ON e.id=p.id
+    WHERE p.id LIKE 'person:identity:%' AND (e.id IS NULL OR NOT EXISTS(
+      SELECT 1 FROM person_sources s WHERE s.entity_id=p.id AND s.namespace='cacbg' AND s.active=1))
+    UNION
+    SELECT pl.person_id FROM person_registry_links pl LEFT JOIN person_entities e ON e.id=pl.person_id
+    WHERE e.registry_indent IS NULL OR e.registry_indent<>pl.registry_indent
+    UNION
+    SELECT d.person_id FROM declarations d JOIN person_sources s
+      ON s.id='cacbg:'||d.folder_year||':'||d.xml_file AND s.active=1
+    WHERE d.person_id<>coalesce(s.entity_id,s.legacy_person_id)
+  `,
       )
       .all()
-      .map((r) => r.person_id),
+      .map((r) => r.id),
   );
   for (const link of published)
-    if (ambiguous.has(link.person_id))
+    if (invalid.has(link.person_id))
       flag(
         link,
-        'I_ambiguous_identity',
-        'Competing public registry identities require source-level resolution before publication',
+        'I_source_identity',
+        'Published profile disagrees with current identity evidence or source membership',
       );
 }
 
@@ -270,7 +359,11 @@ for (const l of nonExact) {
     // Boundary-safe name confirmation (mirrors load.mjs resolveEntity): the winner фирма must appear as a
     // „NAME" ФОРМА candidate. The raw `companyNameKey(t).includes(winnerKey)` leg was removed — it had the
     // same mid-token over-merge risk as the resolver, so the audit gate would rubber-stamp it (ADR-0016).
-    const nameHit = companyCandidates(t).some((c) => companyNameKey(c) === winnerKey);
+    const nameHit = companyCandidates(t).some((c) =>
+      l.match_method === 'declared_eik'
+        ? eikCompanyNameKey(c) === eikCompanyNameKey(winnerKey)
+        : companyNameKey(c) === winnerKey,
+    );
     return (
       (l.match_method === 'declared_eik' && eikHit && nameHit) ||
       (l.match_method === 'extracted_name' && nameHit)
@@ -347,7 +440,11 @@ for (const p of regressions)
   findings.push({
     axis: 'D_monotonicity',
     link_key: p.link_key,
-    eik: p.link_key.split('|')[1] ?? '',
+    eik:
+      p.link_key
+        .split('|')
+        .filter((part) => part !== 'family')
+        .at(-1) ?? '',
     // The link_key is named explicitly: it is the only handle a human has to go and look at which
     // claim disappeared, and the shared axis report prints the ЕИК alone.
     detail: `${p.link_key} published last run under rules_version ${p.rules_version} (unchanged) and is not published now — nothing licensed this removal`,
@@ -398,3 +495,17 @@ for (const p of provenance) {
 }
 
 if (findings.length) process.exitCode = 1;
+
+// Bind successful verification to the exact closed file that ship will read.
+if (!findings.length && fs.existsSync(`${DB}.build.json`)) {
+  const proof = JSON.parse(fs.readFileSync(`${DB}.build.json`, 'utf8'));
+  if (proof.complete === true)
+    fs.writeFileSync(
+      `${DB}.audited.json`,
+      JSON.stringify({
+        ...proof,
+        sha256: await fileDigest(DB),
+        auditedAt: new Date().toISOString(),
+      }),
+    );
+}

@@ -15,15 +15,16 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry, sealFixtureFilings } from './tr-fixture.mjs';
 
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
-function runLoad(extraEnv = {}) {
+function runLoad(extraEnv = {}, args = [], seal = true) {
+  if (seal) sealFixtureFilings(STAGING);
   execFileSync(
     'node',
-    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
+    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs'), ...args],
     {
       cwd: ROOT,
       env: {
@@ -1160,11 +1161,14 @@ test('a verdict from an OLDER rules version is held, never published', () => {
   cache.exec(`UPDATE verdicts SET rules_version = 'tr-rules-0'`);
   cache.close();
 
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
-    'not one claim may ride a ladder version this code no longer speaks — and the run says so loudly',
+  runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw });
+  const checked = open();
+  assert.equal(
+    checked.prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'").get().n,
+    0,
+    'old evidence never publishes, regardless of corpus coverage',
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
 });
 
@@ -1180,7 +1184,7 @@ test('a MOSTLY complete cache still publishes — an incremental crawl has to be
   runLoad(); // restore the full built state for any later reader
 });
 
-test('a substantially incomplete cache refuses EVEN WITH a prior published surface', () => {
+test('missing registry verdicts do not impose a numerical build floor', () => {
   // The floor used to switch off entirely the moment anything had ever been published — so one
   // leftover row from a partial ship, or from the direct UPDATE the suppression runbook sanctions,
   // disabled it. Monotonicity would then dutifully protect that single row while a decimated surface
@@ -1194,41 +1198,18 @@ test('a substantially incomplete cache refuses EVEN WITH a prior published surfa
     .get().n;
   db.close();
   assert.ok(prior > 0, 'there must be a prior surface for this to prove anything');
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+  assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  const checked = open();
+  assert.equal(
+    checked
+      .prepare(
+        "SELECT count(*) n FROM interest_links WHERE status='published' AND eik IN ('444444447','777777773','666666665')",
+      )
+      .get().n,
+    0,
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
-});
-
-test('--allow-partial-tr is the deliberate, stated override', () => {
-  // Without an override a single permanently unreachable ЕИК would deadlock the pipeline forever.
-  const partialDb = path.join(dir, 'partial-ok.sqlite');
-  const partialRaw = path.join(dir, 'partial-ok-deeds');
-  buildTrCache(partialDb, partialRaw, {}, { omit: ['121212129'] });
-  assert.doesNotThrow(() =>
-    execFileSync(
-      'node',
-      [
-        '--import',
-        path.join(HERE, 'register-ts.mjs'),
-        path.join(HERE, 'load.mjs'),
-        '--allow-partial-tr',
-      ],
-      {
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          CACBG_DB: DB,
-          CACBG_STAGING: STAGING,
-          TR_CACHE_DB: partialDb,
-          TR_RAW_DIR: partialRaw,
-        },
-        stdio: 'pipe',
-      },
-    ),
-  );
-  runLoad(); // restore the full-cache state for any later reader
 });
 
 test('the candidate ЕИК list is written for the crawler, covering held links too', () => {
@@ -1709,6 +1690,7 @@ test('a later partial change does not erase a family holding absent from its row
       JSON.stringify({
         folder: '2030',
         xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Change',
@@ -1748,6 +1730,7 @@ test('a comparable later omission preserves a proven family link as history with
       JSON.stringify({
         folder: '2030',
         xmlFile: 'later-empty.xml',
+        sourceHash: 'b'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Annualy',
@@ -1799,6 +1782,7 @@ test('a later document without a visible comparable inventory cannot erase a fam
       JSON.stringify({
         folder: '2030',
         xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Annualy',
@@ -1905,7 +1889,12 @@ test('same-year inventory differences retain proven links and preserve both sour
     for (const variant of ['duplicate', 'contradictory', 'not_comparable']) {
       fs.writeFileSync(holdingsFile, holdings);
       fs.writeFileSync(filingsFile, filings);
-      const extra = { ...base, xmlFile: 'same-year-correction.xml', controlHash: 'correction' };
+      const extra = {
+        ...base,
+        xmlFile: 'same-year-correction.xml',
+        sourceHash: 'c'.repeat(64),
+        controlHash: 'correction',
+      };
       fs.appendFileSync(
         filingsFile,
         JSON.stringify({
@@ -1947,12 +1936,57 @@ test('same-year inventory differences retain proven links and preserve both sour
   }
 });
 
+test('retains attributed source declarations even without a proven company connection', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2024',
+        xmlFile: 'source-only.xml',
+        sourceHash: 'd'.repeat(64),
+        year: '2023',
+        template: 'assets',
+        declarationType: 'Annualy',
+        person: 'Източник Иванов Тестов',
+        institution: 'Отделна институция',
+      }) + '\n',
+    );
+    runLoad();
+    const db = open();
+    const row = db
+      .prepare(
+        `SELECT d.person_id,p.name FROM declarations d
+      JOIN persons p ON p.id=d.person_id WHERE d.id='decl:2024:source-only.xml'`,
+      )
+      .get();
+    assert.equal(row?.name, 'Източник Иванов Тестов');
+    assert.equal(
+      db.prepare('SELECT COUNT(*) n FROM interest_links WHERE person_id=?').get(row.person_id).n,
+      0,
+    );
+    assert.ok(
+      db
+        .prepare(
+          "SELECT 1 FROM declaration_metadata WHERE declaration_id='decl:2024:source-only.xml'",
+        )
+        .get(),
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, saved);
+  }
+});
+
 test('a registry-backed rebuild refuses staging that skipped identity evidence before touching the published set', () => {
   const db = new DatabaseSync(DB);
   const before = db
     .prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'")
     .get().n;
-  db.exec('CREATE TABLE registry_roles(dummy)');
+  const manifestFile = path.join(STAGING, 'manifest.json');
+  const saved = fs.readFileSync(manifestFile, 'utf8');
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(saved), identityRules: null }));
   try {
     assert.throws(
       () => runLoad(),
@@ -1963,7 +1997,72 @@ test('a registry-backed rebuild refuses staging that skipped identity evidence b
       before,
     );
   } finally {
-    db.exec('DROP TABLE registry_roles');
+    fs.writeFileSync(manifestFile, saved);
     db.close();
+  }
+});
+
+test('a changed listing-group artifact is refused before touching published data', () => {
+  const file = path.join(STAGING, 'source-groups.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const db = new DatabaseSync(DB);
+  const before = db.prepare('SELECT count(*) n FROM interest_links').get().n;
+  try {
+    fs.writeFileSync(file, saved + '{}\n');
+    assert.throws(
+      () => runLoad(),
+      (err) => /Stale declaration staging/.test(String(err.stderr)),
+    );
+    assert.equal(db.prepare('SELECT count(*) n FROM interest_links').get().n, before);
+  } finally {
+    fs.writeFileSync(file, saved);
+    db.close();
+  }
+});
+
+test('a company EIK survives aggregation with name-only declarations in either order', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const holdings = saved.trim().split('\n').map(JSON.parse);
+  const base = holdings.find((h) => h.entity === 'СИЙ ЕООД');
+  assert.ok(base);
+  const explicit = { ...base, entity: 'СИЙ ЕООД, ЕИК 444444447' };
+  try {
+    for (const pair of [
+      [base, explicit],
+      [explicit, base],
+    ]) {
+      fs.writeFileSync(
+        file,
+        [...holdings.filter((h) => h !== base), ...pair].map(JSON.stringify).join('\n') + '\n',
+      );
+      runLoad({}, ['--emit-candidates']);
+      const candidates = fs
+        .readFileSync(path.join(STAGING, 'candidate-links.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      const merged = candidates.filter(
+        (c) => c.eik === '444444447' && c.declarantName === base.person,
+      );
+      assert.equal(merged.length, 1);
+      assert.equal(merged[0].declaredEik, true);
+    }
+  } finally {
+    fs.writeFileSync(file, saved);
+  }
+});
+
+test('modified identity input without a fresh extraction hash is rejected before rebuilding', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file);
+  sealFixtureFilings(STAGING);
+  const before = fs.readFileSync(DB);
+  try {
+    fs.appendFileSync(file, '\n');
+    assert.throws(() => runLoad({}, [], false), /Stale declaration staging/);
+    assert.deepEqual(fs.readFileSync(DB), before);
+  } finally {
+    fs.writeFileSync(file, original);
   }
 });

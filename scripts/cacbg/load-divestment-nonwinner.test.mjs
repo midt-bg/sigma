@@ -14,13 +14,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry, sealFixtureFilings } from './tr-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
 function runLoad() {
+  sealFixtureFilings(STAGING);
   execFileSync(
     'node',
     ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
@@ -159,6 +160,7 @@ before(() => {
   // divest horizon is built from this: Диан's 2022 assets declaration (listing only the non-winner) advances
   // his assets horizon to 2022 → the 2019 ДИВ ТЕХ 5 winner stake is withdrawn. Верен has only a 2019 filing.
   const filings = holdings.map((h) => ({
+    sourceHash: 'a'.repeat(64),
     folder: h.folder,
     xmlFile: h.xmlFile,
     year: h.year,

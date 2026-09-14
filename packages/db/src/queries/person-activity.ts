@@ -82,6 +82,7 @@ export function personActivityScope(indent: string | null, ids: string[]) {
       c.signed_at, c.amount_eur,
       EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person'
         AND r.eik=b.eik_normalized AND ${publicRole('r')} AND c.signed_at IS NOT NULL
+        AND (r.uncertain_after IS NULL OR date(c.signed_at)<date(r.uncertain_after))
         AND r.added_on<>'' AND date(c.signed_at)>=date(r.added_on)
         AND (date(c.signed_at)<date(r.removed_on) OR (r.removed_on IS NULL AND EXISTS (
           SELECT 1 FROM registry_deeds rd WHERE rd.eik=r.eik AND rd.outcome='ok'

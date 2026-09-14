@@ -273,7 +273,11 @@ describe('rolesFromDeed', () => {
             Partner: [
               {
                 RecordID: '1',
-                Subject: { Name: 'ХОЛДИНГ АД', Indent: '202020202', IndentType: 'UIC' },
+                Subject: {
+                  Name: 'ИВАН ПЕТРОВ И ПЕТЪР ИВАНОВ ООД',
+                  Indent: '202020202',
+                  IndentType: 'UIC',
+                },
               },
               {
                 RecordID: '2',
@@ -300,13 +304,40 @@ describe('rolesFromDeed', () => {
     );
     expect(roles.map((r) => [r.subjectKind, r.subjectId])).toEqual([
       ['entity', '202020202'],
-      ['person', hash('9')],
+      ['person', `local:101010101:birthdate:${hash('9')}:ЛИЦЕ`],
       ['entity', 'name:ЧУЖДА ФИРМА ГМБХ'],
       ['person', 'local:101010101:ЧУЖДЕНЕЦ'],
       ['person', 'local:101010101:БЕЗ НОМЕР'],
     ]);
-    // Only the hashed one is a person across companies; the rest join nothing.
-    expect(persons.map((p) => p.indent)).toEqual([hash('9')]);
+    // A birth date is not a unique personal number, even when hashed.
+    expect(persons).toEqual([]);
+  });
+
+  it('keeps names and companies separate when the register only supplies a birth date', () => {
+    const deed = (name: string) =>
+      partida(
+        field({
+          fieldIdent: '00070',
+          value: {
+            Manager: {
+              RecordID: '1',
+              Person: { Name: name, Indent: hash('9'), IndentType: 'BirthDate' },
+            },
+          },
+        }),
+      );
+    const a = rolesFromDeed('101010101', deed('Иван Петров'));
+    const b = rolesFromDeed('202020202', deed('Иван Петров'));
+    const c = rolesFromDeed('101010101', deed('Петър Иванов'));
+    expect(new Set([a, b, c].map((r) => r.roles[0]!.subjectId)).size).toBe(3);
+    for (const result of [a, b, c]) {
+      expect(result.persons).toEqual([]);
+      expect(result.observations[0]).toMatchObject({
+        kind: 'other',
+        indent: null,
+        indentType: 'BirthDate',
+      });
+    }
   });
 
   it('reads a single-record field, and passes over fields and records that name no holder', () => {
@@ -474,5 +505,53 @@ describe('deedFacts', () => {
       seatEntryOn: null,
       ownersEntryOn: null,
     });
+  });
+});
+
+describe('identity observations', () => {
+  it('does not turn different simultaneous holders sharing one hash into aliases', () => {
+    const r = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2015-01-01', {
+          value: managers(['a', 'ИВАН ПЕТРОВ ПЪРВИ', '1'], ['a', 'ПЕТЪР ИВАНОВ ВТОРИ', '2']),
+        }),
+      ),
+    );
+    expect(r.roles).toEqual([]);
+    expect(r.observations.map((o) => o.kind)).toEqual(['collective', 'collective']);
+  });
+  it('keeps both exact names under one Indent without multiplying the timeline role', () => {
+    const r = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2010-01-01', { value: managers(['a', 'ИВАНА ПЕТРОВА ПЪРВА', '1']) }),
+        on('2015-01-01', { value: managers(['a', 'ИВАНА ПЕТРОВА ВТОРА', '2']) }),
+      ),
+    );
+    expect(r.roles).toHaveLength(1);
+    expect(r.observations.map((o) => [o.name, o.entryNumber, o.kind])).toEqual([
+      ['ИВАНА ПЕТРОВА ПЪРВА', '20100101090000', 'person'],
+      ['ИВАНА ПЕТРОВА ВТОРА', '20150101090000', 'person'],
+    ]);
+  });
+  it('does not assign a collective name to one person or claim legal termination', () => {
+    const r = rolesFromDeed(
+      '101010101',
+      partida(
+        on('2010-01-01', { value: managers(['a', 'ИВАН ПЕТРОВ ПЪРВИ', '1']) }),
+        on('2015-01-01', {
+          value: managers([
+            'a',
+            'ИВАН ПЕТРОВ ПЪРВИ, ПЕТЪР ИВАНОВ ВТОРИ и МАРИЯ ИВАНОВА ТРЕТА',
+            '2',
+          ]),
+        }),
+      ),
+    );
+    expect(r.roles).toHaveLength(1);
+    expect(r.roles[0]).toMatchObject({ removedOn: null, uncertainAfter: '2015-01-01' });
+    expect(r.persons[0]?.name).toBe('ИВАН ПЕТРОВ ПЪРВИ');
+    expect(r.observations[1]?.kind).toBe('collective');
   });
 });

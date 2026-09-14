@@ -182,6 +182,9 @@ describe('parseConsortiumMembers', () => {
 describe('isNaturalPersonProfileName', () => {
   it('detects sole-trader names that embed a natural person', () => {
     expect(isNaturalPersonProfileName('ЕТ ДРИФТ - НИКОЛАЙ КИРОВ')).toBe(true);
+    expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ET')).toBe(true);
+    expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ФИЗИЧЕСКО ЛИЦЕ')).toBe(true);
+    expect(isNaturalPersonProfileName('ФИРМА', 'EOOD')).toBe(false);
   });
 
   it('does not flag ordinary company names', () => {

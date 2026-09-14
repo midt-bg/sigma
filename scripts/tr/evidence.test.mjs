@@ -46,6 +46,30 @@ const registry = (holders, over = {}) =>
     },
     holders,
   );
+
+test('a proven identity survives a changed surname and never falls back to a different homonym', () => {
+  const registryIndent = 'a'.repeat(64);
+  const facts = registry([
+    holder('00190', 'Мария Петрова Нова', '2015-01-01', { subject_id: registryIndent }),
+    holder('00190', 'Мария Петрова Стара', '2015-01-01', { subject_id: 'b'.repeat(64) }),
+  ]);
+  const input = {
+    registry: facts,
+    declarantName: 'Мария Петрова Стара',
+    registryIndent,
+    companyNameDistinctive: true,
+    firstDeclaredYear: 2020,
+  };
+  assert.equal(evidenceVerdict(input).kind, 'document');
+  assert.equal(reconcileTermination(input).label, 'owner_today');
+  assert.notEqual(evidenceVerdict({ ...input, registryIndent: 'c'.repeat(64) }).kind, 'document');
+  assert.equal(reconcileTermination({ ...input, registryIndent: 'c'.repeat(64) }).label, null);
+  assert.notEqual(
+    evidenceVerdict({ ...input, companyNameDistinctive: false }).kind,
+    'document',
+    'identity alone does not prove the declared company',
+  );
+});
 const seatIn = (settlement, entryOn = '2011-05-02') => ({
   seat_settlement: settlement,
   seat_entry_on: entryOn,
@@ -264,6 +288,47 @@ test('rung 3 — a seat registered AFTER the declared period does not confirm', 
     firstDeclaredYear: 2021,
   });
   assert.notEqual(v.kind, 'confirmed');
+});
+
+test('seat corroboration keeps each source year paired with its own settlement after author merging', () => {
+  const moved = somebodyElse(seatIn('гр. Пловдив', '2021-06-01'));
+  const input = {
+    ...base,
+    registry: moved,
+    firstDeclaredYear: 2018,
+    declaredSeats: ['Видин', 'Пловдив'],
+  };
+  assert.equal(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Видин', 2018],
+        ['Пловдив', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Пловдив', 2018],
+        ['Видин', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(
+    evidenceVerdict({
+      ...input,
+      declaredSeatYears: [
+        ['Пловдив', null],
+        ['Видин', 2021],
+      ],
+    }).kind,
+    'confirmed',
+  );
+  assert.notEqual(evidenceVerdict({ ...input, declaredSeatYears: [] }).kind, 'confirmed');
 });
 
 test('rung 3 — an UNKNOWN first declared year cannot confirm on a seat', () => {

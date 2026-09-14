@@ -53,7 +53,8 @@ import { declarantNameKey } from '../cacbg/source-identity.mjs';
 // r4 also permits an ended, dated role overlapping the first declared year to
 // corroborate company identity. The company gate is unchanged. Absence today
 // does not refute a documented past role; current-role reconciliation stays separate.
-export const RULES_VERSION = 'tr-rules-5';
+// r6 preserves distinguishing company-name prefixes and excludes collective holders from personal-role evidence.
+export const RULES_VERSION = 'tr-rules-6';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
@@ -98,7 +99,11 @@ const REREGISTRATION_END = '2012-12-31';
  * field is the libel bug.
  * @returns {{field:string, entryNumber:string|null, entryDate:string|null}|null}
  */
-function personMatch(registry, name) {
+function personMatch(registry, name, registryIndent) {
+  if (registryIndent != null) {
+    if (!/^[a-f0-9]{64}$/.test(registryIndent)) throw new Error('Invalid proven registry identity');
+    return (holder) => holder.subjectId === registryIndent;
+  }
   const key = declarantNameKey(name);
   const all = [...(registry.holders ?? []), ...(registry.endedHolders ?? [])];
   const ids = new Set(
@@ -111,16 +116,23 @@ function personMatch(registry, name) {
   return (holder) =>
     indent ? holder.subjectId?.toLowerCase() === indent : declarantNameKey(holder.name) === key;
 }
-function findPerson(registry, name, fields) {
-  const holder = liveHolders(registry, fields).find(personMatch(registry, name));
+function findPerson(registry, name, fields, registryIndent) {
+  const holder = liveHolders(registry, fields).find(personMatch(registry, name, registryIndent));
   return holder
     ? { field: holder.field, entryNumber: holder.entryNumber, entryDate: holder.entryDate }
     : null;
 }
 
-function findHistoricalPerson(registry, name, fields, year, historicalOnly = false) {
+function findHistoricalPerson(
+  registry,
+  name,
+  fields,
+  year,
+  historicalOnly = false,
+  registryIndent,
+) {
   if (!Number.isInteger(year) || year < 1900 || year > 2100) return null;
-  const matches = personMatch(registry, name);
+  const matches = personMatch(registry, name, registryIndent);
   const day = (v) =>
     /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
     Number.isFinite(Date.parse(v)) &&
@@ -147,23 +159,29 @@ function findHistoricalPerson(registry, name, fields, year, historicalOnly = fal
  * R10: seats move. A company that relocated INTO the declared settlement afterwards would confirm falsely,
  * so the registered seat must predate the period.
  *
- * A null `firstDeclaredYear` FAILS the guard rather than skipping it. `load.mjs` passes null whenever no
- * history row carried a parseable year, and an unknown year is not a satisfied temporal test — it is the
- * absence of one. Reading it as „covers the period" made the weakest rung the only one with no temporal
- * check, on exactly the links where we know least, and rung 4 already refuses to run without a year on the
- * same ground. The undated-SEAT leg is different and stays: a seat with no entry date is checkable — a
- * known year is still on the other side.
+ * A seat with an unknown declaration year fails the temporal guard. The loader keeps each settlement
+ * paired with that source's year; firstDeclaredYear is the fallback for older callers only. A registry
+ * seat with no entry date can still match when the declaration supplies a known year.
  *
  * @returns {{settlement:string, entryDate:string|null}|null}
  */
-function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear) {
+function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear, declaredSeatYears) {
   const seat = registrySeat(registry);
   // Empty NEVER matches — otherwise every link with no seat data on either side rubber-stamps itself.
   if (seat.settlement === '') return null;
-  if (firstDeclaredYear == null) return null;
-  if (seat.entryDate != null && seat.entryDate > `${firstDeclaredYear}-12-31`) return null;
-  const declared = declaredSeats.map(normalizeSettlement).filter((s) => s !== '');
-  return declared.includes(seat.settlement) ? seat : null;
+  // Each seat belongs to its own declaration year. Adding an older document must neither
+  // invalidate a later proof nor let a later year corroborate a seat found only in an older one.
+  const observations = declaredSeatYears ?? declaredSeats.map((s) => [s, firstDeclaredYear]);
+  return observations.some(
+    ([value, year]) =>
+      Number.isInteger(year) &&
+      year >= 1900 &&
+      year <= 2100 &&
+      (seat.entryDate == null || seat.entryDate <= `${year}-12-31`) &&
+      normalizeSettlement(value) === seat.settlement,
+  )
+    ? seat
+    : null;
 }
 
 /**
@@ -178,6 +196,7 @@ function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear) {
  *                                              4.9% of company-name keys carry more than one distinct
  *                                              declared seat, so a company-only key would let one
  *                                              person's seat confirm another person's link
+ * @param {Array<[string, number]>} [input.declaredSeatYears] each settlement paired with its source year
  * @param {boolean}     [input.declaredEik]     the declarant wrote the ЕИК in the declaration
  * @param {number|null} [input.firstDeclaredYear]
  * @param {'self'|'family'} [input.scope]
@@ -194,7 +213,9 @@ export function evidenceVerdict(input) {
     registry,
     outsideTr = false,
     declarantName,
+    registryIndent,
     declaredSeats = [],
+    declaredSeatYears,
     declaredEik = false,
     firstDeclaredYear = null,
     historicalDeclaredYear = null,
@@ -246,7 +267,7 @@ export function evidenceVerdict(input) {
   // seat match" would eventually disagree about which links may be published.
   const evidenceYear = firstDeclaredYear ?? historicalDeclaredYear;
   const historicalOnly = firstDeclaredYear == null && historicalDeclaredYear != null;
-  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear);
+  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear, declaredSeatYears);
 
   // ── rung 2 ──────────────────────────────────────────────────────────────────
   // Only a full three-token name may assert. A Latin homoglyph makes the name a non-match rather than
@@ -266,8 +287,10 @@ export function evidenceVerdict(input) {
   const companyCorroborated = declaredEik || matchedSeat != null;
   const eligibleForDocument = !telemetry.shortName && !telemetry.latinInName;
   if (eligibleForDocument) {
-    const liveOwner = findPerson(registry, declarantName, OWNERSHIP_FIELDS);
-    const liveManager = liveOwner ? null : findPerson(registry, declarantName, [MANAGER_FIELD]);
+    const liveOwner = findPerson(registry, declarantName, OWNERSHIP_FIELDS, registryIndent);
+    const liveManager = liveOwner
+      ? null
+      : findPerson(registry, declarantName, [MANAGER_FIELD], registryIndent);
     const owner =
       liveOwner ??
       (liveManager
@@ -278,6 +301,7 @@ export function evidenceVerdict(input) {
             OWNERSHIP_FIELDS,
             evidenceYear,
             historicalOnly,
+            registryIndent,
           ));
     const manager = owner
       ? null
@@ -288,6 +312,7 @@ export function evidenceVerdict(input) {
           [MANAGER_FIELD],
           evidenceYear,
           historicalOnly,
+          registryIndent,
         ));
     const hit = owner ?? manager;
     if (hit && !companyCorroborated && !companyNameDistinctive) {
@@ -342,7 +367,7 @@ export function evidenceVerdict(input) {
   // store nor check, so absence of the OFFICIAL from the register is evidence of nothing. An early branch,
   // not a caller convention.
   if (scope === 'self' && firstDeclaredYear != null) {
-    const stillPresent = findPerson(registry, declarantName, ROLE_FIELDS);
+    const stillPresent = findPerson(registry, declarantName, ROLE_FIELDS, registryIndent);
     const latest = latestOwnershipEntryDate(registry);
     const inRereg =
       latest != null && latest >= REREGISTRATION_START && latest <= REREGISTRATION_END;
@@ -367,15 +392,15 @@ export function evidenceVerdict(input) {
  *
  * @returns {{terminated:boolean, label:'owner_today'|'manager_today'|null}}
  */
-export function reconcileTermination({ registry, declarantName, scope = 'self' }) {
+export function reconcileTermination({ registry, declarantName, registryIndent, scope = 'self' }) {
   // Family first, structurally: there is nothing to look for, and looking would be an attempt to
   // identify the relative.
   if (scope !== 'self' || registry == null) return { terminated: true, label: null };
 
-  if (findPerson(registry, declarantName, OWNERSHIP_FIELDS)) {
+  if (findPerson(registry, declarantName, OWNERSHIP_FIELDS, registryIndent)) {
     return { terminated: false, label: 'owner_today' };
   }
-  if (findPerson(registry, declarantName, [MANAGER_FIELD])) {
+  if (findPerson(registry, declarantName, [MANAGER_FIELD], registryIndent)) {
     return { terminated: true, label: 'manager_today' };
   }
   return { terminated: true, label: null };

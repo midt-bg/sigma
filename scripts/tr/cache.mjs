@@ -262,7 +262,9 @@ export function readDeed(db, eik) {
  */
 const HASHED_INPUTS = [
   'declarantName',
+  'registryIndent',
   'declaredSeats',
+  'declaredSeatYears',
   'declaredEik',
   'firstDeclaredYear',
   'historicalDeclaredYear',
@@ -296,7 +298,12 @@ export function verdictInputsHash(input) {
     const v = input[k];
     // Sorted, because `declaredSeats` arrives from a Set spread: iteration order is an accident of
     // insertion and must not make an unchanged input look changed.
-    return [k, Array.isArray(v) ? [...v].map(String).sort() : (v ?? null)];
+    return [
+      k,
+      Array.isArray(v)
+        ? v.map((x) => (Array.isArray(x) ? JSON.stringify(x) : String(x))).sort()
+        : (v ?? null),
+    ];
   });
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
@@ -340,7 +347,16 @@ const REGISTRY_ROLES = new Set(['owner', 'manager']);
  */
 export function upsertVerdict(db, v) {
   const eik = safeEik(v.eik);
-  for (const [f, val] of Object.entries(v)) if (!EGN_EXEMPT.has(f)) assertNoEgnShape(val, f);
+  // Canonical keys contain a SHA-256, which can contain ten consecutive digits.
+  // Exempt only the complete generated shape, with this verdict's validated EIK.
+  const canonicalKey = String(v.linkKey).startsWith('person:identity:');
+  if (
+    canonicalKey &&
+    !new RegExp(`^person:identity:[a-f0-9]{64}\\|${eik}(?:\\|family)?$`).test(v.linkKey)
+  )
+    throw new Error('REFUSE TO STORE: malformed canonical person link key');
+  for (const [f, val] of Object.entries(v))
+    if (!EGN_EXEMPT.has(f) && !(f === 'linkKey' && canonicalKey)) assertNoEgnShape(val, f);
   if (!VERDICT_KINDS.has(String(v.kind)))
     throw new Error(
       `REFUSE TO STORE: verdict kind ${JSON.stringify(v.kind)} is outside the ladder`,

@@ -8,6 +8,7 @@ import type { PendingWindow, RefreshLease } from '@sigma/ingest';
 // the Workflow error type, the build-time `.sql` imports, the ingest helpers, the eop bucket walk, and
 // the served integrity gate, so each orchestration branch is asserted without any real D1 or network.
 vi.mock('cloudflare:workers', () => ({
+  DurableObject: class {},
   WorkflowEntrypoint: class {
     env: unknown;
     ctx: unknown;

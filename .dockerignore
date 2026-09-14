@@ -1,0 +1,12 @@
+.git
+node_modules
+**/node_modules
+scratch
+data
+**/.wrangler
+**/build
+**/dist
+**/.env*
+**/.dev.vars*
+**/*.sqlite*
+**/*.log

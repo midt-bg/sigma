@@ -541,11 +541,15 @@ test('a public source profile cannot conceal competing registry identities behin
     seals: [
       "'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'",
     ],
-    extraSql:
-      "CREATE TABLE declaration_identity_evidence(declaration_id,registry_indent); INSERT INTO declaration_identity_evidence VALUES('d1','a'),('d2','b');",
+    extraSql: `CREATE TABLE persons(id); INSERT INTO persons VALUES('p1');
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      INSERT INTO person_registry_links VALUES('p1','a'),('p1','b');
+      ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
+      ${fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0018_person_entities.sql'), 'utf8')}
+      INSERT INTO person_entities VALUES('p1','a','2026-01-01');`,
   });
   assert.equal(threw, true);
-  assert.match(out, /I_ambiguous_identity/);
+  assert.match(out, /I_source_identity/);
 });
 
 test('inventory differences retain proven links only with both dated comparison sources', () => {
@@ -575,5 +579,30 @@ test('inventory differences retain proven links only with both dated comparison 
     });
     assert.equal(threw, variant !== 'complete', out);
     if (threw) assert.match(out, /H_inventory_provenance/);
+  }
+});
+
+test('identity evidence must be automatic and match active source versions', () => {
+  const schema = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0018_person_entities.sql'),
+    'utf8',
+  );
+  for (const variant of ['current', 'reviewed', 'stale', 'revoked', 'unproven_continuity']) {
+    const { threw, out } = buildAndAudit({
+      bidders: [],
+      links: [],
+      extraSql: `
+      CREATE TABLE persons(id); CREATE TABLE person_registry_links(person_id,registry_indent);
+      ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
+      ${schema}
+      INSERT INTO person_sources(id,namespace,source_key,source_hash,name) VALUES('a','cacbg','a','v1','Лице'),('b','cacbg','b','v2','Лице');
+      INSERT INTO person_identity_evidence VALUES('edge','a','b','${variant === 'stale' ? 'old' : 'v1'}','v2','same','${variant === 'revoked' ? 'revoked' : 'accepted'}','${variant === 'reviewed' || variant === 'revoked' ? 'reviewed' : 'automatic'}','${variant === 'unproven_continuity' ? 'declaration-continuity-2' : 'source-groups-1'}','{}','2026-01-01');`,
+    });
+    assert.equal(threw, ['reviewed', 'stale', 'unproven_continuity'].includes(variant), out);
+    if (threw)
+      assert.match(
+        out,
+        variant === 'unproven_continuity' ? /I_declaration_continuity/ : /I_automatic_evidence/,
+      );
   }
 });

@@ -18,11 +18,14 @@ const since: Column<{ addedOn: string }> = {
   align: 'num',
   cell: (r) => date(r.addedOn),
 };
-const until: Column<{ removedOn: string | null }> = {
+const until: Column<{ removedOn: string | null; uncertainAfter?: string | null }> = {
   key: 'until',
   header: 'До',
   align: 'num',
-  cell: (r) => date(r.removedOn),
+  cell: (r) =>
+    r.uncertainAfter && !r.removedOn
+      ? `Неустановено след ${date(r.uncertainAfter)}`
+      : date(r.removedOn),
 };
 const role: Column<{ role: CompanyRole['role'] }> = {
   key: 'role',
@@ -92,7 +95,9 @@ const partidaColumn: Column<PersonRole> = {
 };
 
 /** Standing roles in a table; ended ones visible under it, with the day each ended. */
-function StandingAndEnded<Row extends { removedOn: string | null }>({
+function StandingAndEnded<
+  Row extends { removedOn: string | null; uncertainAfter?: string | null },
+>({
   rows,
   columns,
   getKey,
@@ -105,8 +110,8 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
   getRowId?: (r: Row) => string;
   caption: string;
 }) {
-  const standing = rows.filter((r) => !r.removedOn);
-  const ended = rows.filter((r) => r.removedOn);
+  const standing = rows.filter((r) => !r.removedOn && !r.uncertainAfter);
+  const ended = rows.filter((r) => r.removedOn || r.uncertainAfter);
   // An ended role also says until when: right after the day it began.
   const at = columns.findIndex((c) => c.key === since.key) + 1;
   const endedColumns = [...columns.slice(0, at), until as Column<Row>, ...columns.slice(at)];
@@ -125,7 +130,10 @@ function StandingAndEnded<Row extends { removedOn: string | null }>({
       )}
       {ended.length > 0 && (
         <div className="registry-ended">
-          <h3>Прекратени роли ({count(ended.length)})</h3>
+          <h3>
+            {ended.some((r) => r.uncertainAfter) ? 'История на ролите' : 'Прекратени роли'} (
+            {count(ended.length)})
+          </h3>
           <DataTable
             columns={endedColumns}
             rows={ended}

@@ -2614,7 +2614,9 @@ FROM authority_totals at;
 -- conflict. Mirrors precompute.
 DELETE FROM search_index WHERE kind = 'official';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'official', il.person_id, p.name, NULL,
+SELECT 'official', il.person_id, p.name,
+  (SELECT group_concat(DISTINCT s.name) FROM person_sources s
+   WHERE s.active=1 AND s.namespace='cacbg' AND (s.entity_id=il.person_id OR (s.entity_id IS NULL AND s.legacy_person_id=il.person_id))),
   -- subtitle: „позиция · институция" from the official's latest filing — both from the same row.
   (SELECT CASE WHEN COALESCE(d.position, '') <> '' AND COALESCE(d.institution, '') <> ''
                THEN d.position || ' · ' || d.institution

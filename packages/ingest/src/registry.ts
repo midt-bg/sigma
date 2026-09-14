@@ -1,25 +1,21 @@
-// The Trade Register's API, as the daily ETL reads it (ADR-0041): one partida by ЕИК, and the day's changes.
-// Plain fetch and no D1, so the same client serves the Worker and a Node script alike.
+// Published AV interfaces only: XML partidas + the portal's daily entry list.
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
-/** One entry of one field of a partida, as the API returns it (XML turned into JSON, every value a string). */
 export interface RegistryField {
   fieldIdent: string;
   element: string;
-  /** Add | Erase | Current — an entry whose operation is Erase strikes the records it names. */
   operation: string;
   entryNumber: string;
   actionDate: string;
   entryDate: string;
   value: unknown;
 }
-
 export interface RegistrySubDeed {
   subUic: string;
   subUicType: string;
   status: string;
   fields: RegistryField[];
 }
-
 export interface RegistryDeedBody {
   uic: string;
   name: string;
@@ -28,151 +24,195 @@ export interface RegistryDeedBody {
   legalForm: string;
   subDeeds: RegistrySubDeed[];
 }
-
-/** A partida: every entry ever made (`deed`), and the latest entry of every field (`deedActualState`). */
 export interface RegistryDeed {
   deed: RegistryDeedBody;
   deedActualState: RegistryDeedBody;
 }
-
 export type DeedLookup = { status: 'ok'; deed: RegistryDeed } | { status: 'absent' };
-
-/** One entry the register made on a day. */
 export interface RegistryChange {
   uic: string;
-  companyName: string;
-  entryNumber: string;
   entryDate: string;
-  fieldIdent: string;
-  operation: string;
+  companyName: string;
 }
-
 export interface RegistryClientOptions {
   baseUrl: string;
-  /** Per-request timeout. */
+  portalUrl?: string;
   timeoutMs?: number;
-  /** Attempts for a 429, a 5xx or a network failure before the request fails. */
   maxAttempts?: number;
-  /** Seam for tests; the Worker and Node wait on real timers. */
   sleep?: (ms: number) => Promise<void>;
 }
-
-export class RegistryError extends Error {}
-
-/** Rows per page of the changes feed — the API's own default. */
-export const REGISTRY_CHANGES_PAGE = 1000;
-// The pages of one day's feed the client follows. The register records a few thousand fields on an ordinary
-// day, so a day that runs past this is a reload of the API — every field stamped with one load day — not a
-// day of the register; the caller re-reads what it holds rather than walk the whole register page by page.
-const MAX_CHANGE_PAGES = 100;
-const MAX_RETRY_WAIT_MS = 120_000;
-const UIC = /^\d{9}$/;
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
-const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
-// A response walked away from unread keeps its stream open for the rest of the invocation; release it.
-function discard(res: Response): void {
-  try {
-    void res.body?.cancel().catch(() => {});
-  } catch {
-    // already consumed or locked — nothing left to release
+export class RegistryError extends Error {
+  status?: number;
+  retryMs?: number;
+  constructor(message: string, status?: number, retryMs?: number) {
+    super(message);
+    this.status = status;
+    this.retryMs = retryMs;
   }
 }
+export const REGISTRY_CHANGES_PAGE = 25;
+const UIC = /^\d{9}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const array = (v: unknown): unknown[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
+function object(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== 'object' || Array.isArray(v))
+    throw new RegistryError('invalid registry object');
+  return v as Record<string, unknown>;
+}
+function string(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  parseTagValue: false,
+  parseAttributeValue: false,
+  textNodeName: '$text',
+  removeNSPrefix: true,
+  trimValues: true,
+});
 
-/** The wait a 429 or 503 asks for: seconds, or an HTTP date; null when it names none. Capped. */
-export function retryAfterMs(header: string | null, now: number = Date.now()): number | null {
-  if (!header) return null;
-  const seconds = Number(header);
-  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - now;
-  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_RETRY_WAIT_MS) : null;
+export function parseRegistryXml(xml: string, uic: string): RegistryDeed {
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml) || XMLValidator.validate(xml) !== true)
+    throw new RegistryError('invalid registry XML');
+  const root = object(object(parser.parse(xml)).DeedResult);
+  const body = (value: unknown): RegistryDeedBody => {
+    const d = object(value);
+    if (d.UIC !== uic) throw new RegistryError(`registry returned no partida ${uic}`);
+    return {
+      uic,
+      name: string(d.CompanyName),
+      status: string(d.DeedStatus),
+      guid: string(d.GUID),
+      legalForm: string(d.LegalForm),
+      subDeeds: array(d.SubDeed).map((v) => {
+        const sub = object(v);
+        return {
+          subUic: string(sub.SubUIC),
+          subUicType: string(sub.SubUICType),
+          status: string(sub.SubDeedStatus),
+          fields: Object.entries(sub).flatMap(([element, values]) =>
+            array(values).flatMap((value) => {
+              if (!value || typeof value !== 'object') return [];
+              const field = object(value);
+              if (!field.FieldIdent) return [];
+              return [
+                {
+                  fieldIdent: string(field.FieldIdent),
+                  element,
+                  operation: string(field.FieldOperation),
+                  entryNumber: string(field.FieldEntryNumber),
+                  actionDate: string(field.FieldActionDate),
+                  entryDate: string(field.FieldEntryDate),
+                  value: field,
+                },
+              ];
+            }),
+          ),
+        };
+      }),
+    };
+  };
+  return { deed: body(root.Deed), deedActualState: body(root.DeedActualState) };
 }
 
+export function registryDay(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Sofia',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+export function registryDayBoundary(day: string, end = false): string {
+  if (!DAY.test(day) || new Date(`${day}T12:00:00Z`).toISOString().slice(0, 10) !== day)
+    throw new RegistryError(`not a day: ${day}`);
+  // Midnight and 23:59 may have different offsets on the DST transition day.
+  const utc = new Date(`${day}T${end ? '21:59:59.999' : '00:00:00'}Z`);
+  const offset = new Intl.DateTimeFormat('en', {
+    timeZone: 'Europe/Sofia',
+    timeZoneName: 'longOffset',
+  })
+    .formatToParts(utc)
+    .find((p) => p.type === 'timeZoneName')!
+    .value.replace('GMT', '');
+  return `${day}T${end ? '23:59:59.999' : '00:00:00'}${offset}`;
+}
+/** No cap below the server's requested delay. Workflows defer long waits durably. */
+export function retryAfterMs(header: string | null, now = Date.now()): number | null {
+  if (!header?.trim()) return null;
+  const seconds = Number(header);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - now;
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
 export function registryClient(opts: RegistryClientOptions) {
   const base = opts.baseUrl.replace(/\/+$/, '');
-  const host = new URL(base).host;
-  const timeoutMs = opts.timeoutMs ?? 20_000;
-  const maxAttempts = opts.maxAttempts ?? 4;
+  const portal = opts.portalUrl ?? 'https://portal.registryagency.bg/CR/api/Applications/Entries';
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-
-  // null = 404: the register has no such record. A 429 or 5xx is waited out (Retry-After when the API names
-  // it, else backoff); anything else fails loudly — a partida we could not read is unknown, never absent.
-  async function get(path: string): Promise<Response | null> {
+  async function get(url: string, accept: string): Promise<Response | null> {
     for (let attempt = 1; ; attempt++) {
       let res: Response;
       try {
-        res = await fetch(`${base}${path}`, {
-          headers: { accept: 'application/json' },
-          signal: AbortSignal.timeout(timeoutMs),
+        res = await fetch(url, {
+          headers: { accept },
+          // Workers supports manual/follow only. Non-2xx below rejects redirects without following them.
+          redirect: 'manual',
+          signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
         });
-      } catch (err) {
-        if (attempt >= maxAttempts)
-          throw new RegistryError(`registry request failed: ${path}: ${message(err)}`);
+      } catch (error) {
+        if (attempt >= (opts.maxAttempts ?? 3))
+          throw new RegistryError(`registry request failed: ${String(error)}`);
         await sleep(1000 * 2 ** (attempt - 1));
         continue;
       }
-      if (res.url && new URL(res.url).host !== host) {
-        discard(res);
-        throw new RegistryError(`registry redirected ${path} away from ${host}`);
-      }
-      if (res.status === 404) {
-        discard(res);
-        return null;
-      }
       if (res.ok) return res;
-      if ((res.status === 429 || res.status >= 500) && attempt < maxAttempts) {
-        const wait = retryAfterMs(res.headers.get('retry-after')) ?? 1000 * 2 ** (attempt - 1);
-        discard(res);
-        await sleep(wait);
-        continue;
-      }
-      discard(res);
-      throw new RegistryError(`registry answered ${res.status} for ${path}`);
+      const wait =
+        retryAfterMs(res.headers.get('retry-after')) ?? (res.status === 429 ? 180_000 : 30_000);
+      await res.body?.cancel();
+      if (res.status === 404) return null;
+      // Let the durable caller postpone instead of holding a Workflow step/lease in a long sleep.
+      throw new RegistryError(`registry answered ${res.status}`, res.status, wait);
     }
   }
-
   async function deed(uic: string): Promise<DeedLookup> {
     if (!UIC.test(uic)) throw new RegistryError(`not a partida ЕИК: ${uic}`);
-    const res = await get(`/deeds/${uic}`);
-    if (!res) return { status: 'absent' };
-    const body = (await res.json()) as Partial<RegistryDeed>;
-    if (!body?.deed || !body.deedActualState || body.deed.uic !== uic)
-      throw new RegistryError(`registry returned no partida ${uic}`);
-    return { status: 'ok', deed: body as RegistryDeed };
+    const res = await get(`${base}/deeds/${uic}`, 'application/xml');
+    return res
+      ? { status: 'ok', deed: parseRegistryXml(await res.text(), uic) }
+      : { status: 'absent' };
   }
-
   async function changes(
-    date: string,
-    offset = 0,
-  ): Promise<{ items: RegistryChange[]; hasMore: boolean }> {
-    if (!DAY.test(date)) throw new RegistryError(`not a day: ${date}`);
-    const res = await get(
-      `/deeds/changes?date=${date}&by=loaded&limit=${REGISTRY_CHANGES_PAGE}&offset=${offset}`,
-    );
-    if (!res) throw new RegistryError(`registry has no changes feed for ${date}`);
-    const body = (await res.json()) as { items?: RegistryChange[]; hasMore?: boolean };
-    return { items: body.items ?? [], hasMore: Boolean(body.hasMore) };
+    day: string,
+    page = 1,
+  ): Promise<{ items: RegistryChange[]; hasMore: boolean; total: number | null }> {
+    if (!Number.isSafeInteger(page) || page < 1) throw new RegistryError('invalid portal page');
+    const url = new URL(portal);
+    url.search = new URLSearchParams({
+      dateFrom: registryDayBoundary(day),
+      dateTo: registryDayBoundary(day, true),
+      page: String(page),
+      pageSize: String(REGISTRY_CHANGES_PAGE),
+    }).toString();
+    const res = await get(url.toString(), 'application/json');
+    if (!res) throw new RegistryError(`portal has no entry list for ${day}`);
+    const raw: unknown = await res.json();
+    if (!Array.isArray(raw) || raw.length > REGISTRY_CHANGES_PAGE)
+      throw new RegistryError('invalid portal entry list');
+    const items = raw.map((value) => {
+      const r = object(value);
+      if (
+        !UIC.test(string(r.uic)) ||
+        typeof r.date !== 'string' ||
+        !r.date.startsWith(`${day}T`) ||
+        !Number.isFinite(Date.parse(r.date))
+      )
+        throw new RegistryError('invalid portal entry');
+      return { uic: r.uic as string, entryDate: r.date, companyName: string(r.companyFullName) };
+    });
+    const count = res.headers.get('Count');
+    const total = page === 1 && count !== null && /^\d+$/.test(count) ? Number(count) : null;
+    return { items, total, hasMore: items.length === REGISTRY_CHANGES_PAGE };
   }
-
-  /**
-   * Every partida the register touched on `date` (the API's load day), once each — and whether that is all of
-   * them: `complete` is false for a day longer than the client follows, which the caller treats as „anything
-   * may have changed".
-   */
-  async function changedUics(date: string): Promise<{ uics: string[]; complete: boolean }> {
-    const uics = new Set<string>();
-    let offset = 0;
-    for (let page = 0; ; page++) {
-      if (page >= MAX_CHANGE_PAGES) return { uics: [...uics].sort(), complete: false };
-      const { items, hasMore } = await changes(date, offset);
-      for (const c of items) if (UIC.test(c.uic)) uics.add(c.uic);
-      if (!hasMore || items.length === 0) break;
-      offset += items.length;
-    }
-    return { uics: [...uics].sort(), complete: true };
-  }
-
-  return { deed, changes, changedUics };
+  return { deed, changes };
 }
-
 export type RegistryClient = ReturnType<typeof registryClient>;

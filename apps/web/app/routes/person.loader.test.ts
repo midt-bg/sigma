@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const HASH = 'a'.repeat(64);
 const q = vi.hoisted(() => ({
   getRegistryPerson: vi.fn(),
-  getRegistryOfficials: vi.fn(),
+  getRegistrySourceCompanies: vi.fn(),
+  getPersonScope: vi.fn(),
   getPersonActivity: vi.fn(),
   getPersonTimeline: vi.fn(),
   registryPersonIdFromSlug: vi.fn((slug: string) => (/^[0-9a-f]{64}$/.test(slug) ? slug : null)),
@@ -17,7 +18,8 @@ vi.mock('@sigma/db', () => q);
 import { loader } from './person';
 import { emptyActivity } from '../lib/person-profile.test-support';
 beforeEach(() => {
-  q.getRegistryOfficials.mockResolvedValue([]);
+  q.getPersonScope.mockResolvedValue({ indent: HASH, officialIds: [] });
+  q.getRegistrySourceCompanies.mockResolvedValue([]);
   q.getPersonActivity.mockResolvedValue(emptyActivity);
   q.getPersonTimeline.mockResolvedValue({ contracts: [], observations: [], reads: [] });
 });
@@ -102,7 +104,7 @@ describe('person loader', () => {
         omitted: 0,
       },
     });
-    const res = (await call(HASH)) as {
+    const res = ((await call(HASH)) as { data: unknown }).data as {
       person: { name: string };
       tieLayout: { nodes: { href: string }[] };
     };

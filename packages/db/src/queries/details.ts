@@ -452,6 +452,7 @@ interface ContractDetailRow {
   // bidder
   bidder_id: string;
   bidder_name: string;
+  bidder_legal_form: string | null;
   bidder_kind: 'company' | 'consortium';
   bidder_eik: string | null;
   bidder_settlement: string | null;
@@ -517,7 +518,7 @@ export async function getContract(
               t.authority_id, a.name AS authority_name, a.type_group AS authority_type_group,
               a.settlement AS authority_settlement,
               c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, b.eik_normalized AS bidder_eik,
-              b.settlement AS bidder_settlement,
+              b.settlement AS bidder_settlement, b.legal_form AS bidder_legal_form,
               (SELECT COUNT(*) FROM contracts c2 WHERE c2.tender_id = c.tender_id) AS tender_awards
        FROM contracts c
        JOIN tenders t ON t.id = c.tender_id
@@ -675,6 +676,7 @@ export async function getContract(
     totalEur: authTotals?.spent_eur ?? 0,
   };
   const bidder: ContractParty = {
+    legalForm: r.bidder_legal_form ?? null,
     slug: companySlug(r.bidder_id),
     name: cleanName(r.bidder_name),
     displayName: entityName(cleanName(r.bidder_name), r.bidder_kind),

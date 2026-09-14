@@ -5,12 +5,8 @@ import { createHash } from 'node:crypto';
 // document is retained for review, even when its supplied checksum is unchanged.
 export const documentFingerprint = (xml) => createHash('sha256').update(xml).digest('hex');
 
-export const declarantNameKey = (value) =>
-  String(value ?? '')
-    .normalize('NFC')
-    .toUpperCase()
-    .match(/\p{L}+/gu)
-    ?.join(' ') ?? '';
+export { personNameKey as declarantNameKey } from '../../packages/shared/src/person-identity.ts';
+import { personNameKey as declarantNameKey } from '../../packages/shared/src/person-identity.ts';
 
 // Punctuation and spacing are presentation differences. Missing/reordered name
 // components, spelling changes and multiple listed people need source review.

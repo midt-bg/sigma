@@ -7,6 +7,8 @@
 // honest way — it runs the real `decideLinks` over fixture registry facts, so a load test still exercises
 // the real evidence ladder rather than hand-written verdict rows that could drift away from what
 // `evidenceVerdict` actually returns.
+import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -18,10 +20,73 @@ import { registryFacts } from '../tr/deed.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 
+// Tests that edit a fixture's declarations model a fresh extraction, with its new content hash.
+export function sealFixtureFilings(staging) {
+  const file = path.join(staging, 'filings.jsonl');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+  const manifest = path.join(staging, 'manifest.json');
+  if (!fs.existsSync(manifest)) return;
+  const value = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  value.filingsHash = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  fs.writeFileSync(manifest, JSON.stringify(value));
+}
+
 /** Run `load.mjs --emit-candidates` against a fixture work DB and return the emitted link records. */
 export function emitLinkRecords({ workDb, staging, trDb }) {
+  const db = new DatabaseSync(workDb);
+  db.exec(fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0013_registry.sql'), 'utf8'));
+  if (
+    !db
+      .prepare('PRAGMA table_info(registry_roles)')
+      .all()
+      .some((c) => c.name === 'uncertain_after')
+  )
+    db.exec(
+      fs.readFileSync(
+        path.join(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+        'utf8',
+      ),
+    );
+  db.close();
+  const f = path.join(staging, 'filings.jsonl');
+  if (fs.existsSync(f))
+    fs.writeFileSync(
+      f,
+      fs
+        .readFileSync(f, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const rec = JSON.parse(line);
+          return JSON.stringify({
+            sourceHash: createHash('sha256').update(line).digest('hex'),
+            ...rec,
+          });
+        })
+        .join('\n') + '\n',
+    );
   const manifest = path.join(staging, 'manifest.json');
-  if (!fs.existsSync(manifest)) fs.writeFileSync(manifest, JSON.stringify({ schemaVersion: 6 }));
+  if (!fs.existsSync(manifest))
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({ schemaVersion: 8, identityRules: 'registry-identity-3' }),
+    );
+  const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  const groupsFile = path.join(staging, 'source-groups.jsonl');
+  if (!fs.existsSync(groupsFile)) fs.writeFileSync(groupsFile, '');
+  if (!fs.existsSync(f)) fs.writeFileSync(f, '');
+  if (m.schemaVersion === 8)
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({
+        ...m,
+        identityRules: 'registry-identity-3',
+        filingsHash: createHash('sha256')
+          .update(fs.readFileSync(path.join(staging, 'filings.jsonl')))
+          .digest('hex'),
+        sourceGroupsHash: createHash('sha256').update(fs.readFileSync(groupsFile)).digest('hex'),
+      }),
+    );
   execFileSync(
     'node',
     [

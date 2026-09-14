@@ -53,6 +53,7 @@ export function PersonActivity({
   hasDeclarations: boolean;
 }) {
   const location = useLocation();
+  const selectedProfile = new URLSearchParams(location.search).get('view') === 'profile';
   const submit = useSubmit();
   const navigation = useNavigation();
   const { revalidate, state } = useRevalidator();
@@ -162,6 +163,7 @@ export function PersonActivity({
           aria-label="Филтри за договорите"
           tabIndex={-1}
         >
+          {selectedProfile && <input type="hidden" name="view" value="profile" />}
           <label>
             Дружество
             <select name="company" value={filterValue('company')} onChange={applyFilters}>
@@ -226,7 +228,11 @@ export function PersonActivity({
             <noscript>
               <button type="submit">Приложи</button>
             </noscript>
-            <Link className="filter-reset" to={location.pathname} preventScrollReset>
+            <Link
+              className="filter-reset"
+              to={`${location.pathname}${selectedProfile ? '?view=profile' : ''}`}
+              preventScrollReset
+            >
               Изчисти
             </Link>
           </div>

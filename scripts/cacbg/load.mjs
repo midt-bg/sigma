@@ -1,3 +1,8 @@
+import { documentFingerprint } from './source-identity.mjs';
+import { rebuildPersonEntities, declarationSourceId } from './person-entities.mjs';
+import { buildPersonRegistryLinks } from './person-registry-links.mjs';
+import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
+import { recordBuild } from './build-proof.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
 // persists the свързани-лица domain (persons / declarations / declared_interests / interest_links /
@@ -65,11 +70,8 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — §8's monotonicity gate keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-2';
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-3';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
-// A deliberate, logged override for the coverage gate below. Without it a single permanently
-// unreachable ЕИК would deadlock the pipeline forever; with it, the operator states that they know.
-const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
 // verdicts the list is used to decide. Ignoring the refusal's exit code instead would erase the difference
@@ -77,8 +79,8 @@ const ALLOW_PARTIAL_TR = process.argv.includes('--allow-partial-tr');
 //
 // POINT THIS AT A SCRATCH COPY OF THE WORK DB. It is not a read-only pass: reaching the candidate list
 // means rebuilding the corpus tables, so it drops and repopulates persons/declarations/declared_interests
-// and leaves interest_links EMPTY. Empty is the safe end state (the ship floor refuses it, and no link
-// can be published without evidence it never gathered), but it is not the state a subsequent real run
+// and leaves interest_links EMPTY. The bootstrap is never marked as an audited build, and no link
+// can be published without evidence it never gathered, but it is not the state a subsequent real run
 // should inherit. The one thing it must never touch either way is the monotonicity snapshot — see below.
 const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey } =
@@ -113,9 +115,16 @@ const readJsonl = (f) =>
 const WORK_DB = EMIT_CANDIDATES_ONLY ? `${DB}.bootstrap` : DB;
 // Check compatibility before opening or rebuilding the database.
 const stagingManifest = path.join(STAGING, 'manifest.json');
+const sourceGroupsFile = path.join(STAGING, 'source-groups.jsonl');
 if (
   !fs.existsSync(stagingManifest) ||
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 6
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 8 ||
+  !fs.existsSync(sourceGroupsFile) ||
+  !fs.existsSync(path.join(STAGING, 'filings.jsonl')) ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).filingsHash !==
+    documentFingerprint(fs.readFileSync(path.join(STAGING, 'filings.jsonl'))) ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).sourceGroupsHash !==
+    documentFingerprint(fs.readFileSync(sourceGroupsFile))
 )
   throw new Error('Stale declaration staging: run extract.mjs before load.mjs');
 for (const rec of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
@@ -138,10 +147,12 @@ if (EMIT_CANDIDATES_ONLY) {
   }
 }
 const db = new DatabaseSync(WORK_DB);
+fs.rmSync(`${WORK_DB}.build.json`, { force: true });
+fs.rmSync(`${WORK_DB}.audited.json`, { force: true });
 // A registry-backed rebuild must not silently revert to extraction by names alone.
 if (
   db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_roles'").get() &&
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).identityRules !== 'registry-identity-1'
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).identityRules !== IDENTITY_RULES_VERSION
 ) {
   db.close();
   throw new Error(
@@ -318,6 +329,12 @@ for (const b of bidders) {
 //   extracted_name  — a „NAME"-ФОРМА pulled from prose normalizes to exactly one winner ЕИК.
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
 const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik });
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
+  db.exec('DELETE FROM registry_requested_companies');
+  const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
+  for (const r of readJsonl(path.join(STAGING, 'registry-requests.jsonl')))
+    putRequest.run(r.eik, r.declarationId, r.declaredName);
+}
 // Is this name key backed by exactly one valid winner ЕИК across the whole bidder set? The distinctiveness
 // tier rests on this being true; declared_eik/extracted_name bypass the resolver's own single-ЕИК guard,
 // so the tier layer must re-assert global name-uniqueness itself.
@@ -326,7 +343,8 @@ const nameGloballyUnique = (key) => {
   if (!m) return false;
   return new Set([...m.values()].filter((v) => v.eik && v.valid).map((v) => v.eik)).size === 1;
 };
-const METHOD_RANK = { exact_name_key: 3, declared_eik: 2, extracted_name: 1 };
+// An explicit, name-checked EIK remains stronger when another declaration supplies only a name.
+const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1 };
 // Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
 // valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
 // never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
@@ -360,26 +378,28 @@ const insDeclarationCompany = db.prepare(
 const insRP = db.prepare(
   'INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind,info,timing) VALUES(?,?,?,?,?,?)',
 );
-// Person grain is (name, institution) — NEVER a bare name (spec §4: „homonym merge is the failure to
-// avoid"). Two „Георги Иванов" at different institutions are different people; keying on the name alone
-// merges them into one /conflicts page carrying both their companies (false attribution). Institution is
-// normalized through the same key so a person's institution-string variants fold together, keeping identity
-// stable across their filing years — which the E11 divestment horizon (keyed on person_id) depends on.
-// register_year/position are deliberately EXCLUDED (ADR-0026): both would split one official across
-// years/promotions, fragmenting identity and blinding the cross-year divestment tracking.
-// Institution is canonicalized (N10) so an official's „МВР" / „Министерство на вътрешните работи" filings
-// fold to ONE identity instead of splitting into two person-pages. An unknown/ambiguous string passes
-// through unchanged (a safe split), never a wrong merge.
-// ADR-0040: the institution is the declaration's own (declarationInstitution) and its spellings fold
-// (identityInstitution) — the listing alone gave the declaration TYPE for a sixth of the filings and split
-// one body across its spellings.
+// An unresolved source view keeps its legacy bucket. Only document-scoped evidence
+// may move a filing into a canonical person; names/institutions never prove identity.
 const personId = (name, institution) =>
   `person:${companyNameKey(name)}|${companyNameKey(identityInstitution(institution))}`;
-const personOf = (rec) =>
-  personId(
-    rec.person,
-    declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
-  );
+const sourcePersonOf = (rec) =>
+  `person:${companyNameKey(rec.person)}|${companyNameKey(
+    identityInstitution(
+      declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
+    ),
+  )}`;
+const filings = readJsonl(path.join(STAGING, 'filings.jsonl'));
+const identity = rebuildPersonEntities(
+  db,
+  db,
+  filings,
+  sourcePersonOf,
+  priorDocumentPersons,
+  undefined,
+  readJsonl(sourceGroupsFile),
+);
+console.log(`Person identity: ${JSON.stringify(identity.stats)}`);
+const personOf = (rec) => identity.assignments.get(declarationSourceId(rec)) ?? sourcePersonOf(rec);
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
 // nothing else. Kept only to carry the monotonicity snapshot across the
 // change of grain; nothing is keyed on it.
@@ -593,6 +613,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         observations: new Map(),
         templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
         seats: new Set(),
+        seatYears: new Map(),
         institutions: new Set(),
         annualDocuments: new Map(),
         method: res.method,
@@ -626,6 +647,7 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
     }
   }
   if (h.seat) rec.seats.add(h.seat);
+  if (h.seat && Number.isFinite(y)) rec.seatYears.set(JSON.stringify([h.seat, y]), [h.seat, y]);
   const declaredInstitution = declarationInstitution(h);
   if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
@@ -692,17 +714,14 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
     r.timing ?? 'current',
   );
 }
-// Include every available filing for a known declarant, including a filing with no company rows.
-// That keeps the document history complete without creating a public profile for every raw name.
-const knownPerson = db.prepare('SELECT 1 FROM persons WHERE id=?');
+// Retain every attributed filing, including unresolved source records with no company rows.
+// Public lists still require published interests; assigning other filings to a canonical identity
+// must not silently delete this source record's remaining documents.
 const insMetadata = db.prepare('INSERT OR REPLACE INTO declaration_metadata VALUES(?,?,?,?)');
-const insIdentity = db.prepare(
-  'INSERT OR IGNORE INTO declaration_identity_evidence VALUES(?,?,?,?,?,?,?)',
-);
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   const pid = personOf(f);
   if (!f.folder || !f.xmlFile) continue;
-  if (!knownPerson.get(pid)) continue;
+  insPerson.run(pid, f.person);
   const did = `decl:${f.folder}:${f.xmlFile}`;
   insDecl.run(
     did,
@@ -719,27 +738,16 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   );
   noteLegacy(f, pid);
   insMetadata.run(did, f.declarationType ?? null, f.declaredOn ?? null, f.submittedOn ?? null);
-  for (const proof of f.identityEvidence ?? []) {
-    if (
-      !/^[a-f0-9]{64}$/.test(proof.registryIndent) ||
-      !/^\d{9,13}$/.test(proof.eik) ||
-      !proof.entryNumber ||
-      proof.documentName !== f.person ||
-      proof.rule !== 'registry-identity-1'
-    )
-      throw new Error(`Invalid source identity evidence: ${did}`);
-    insIdentity.run(
-      did,
-      proof.registryIndent,
-      proof.eik,
-      proof.entryNumber,
-      proof.documentName,
-      JSON.stringify(proof.listedNames),
-      proof.rule,
-    );
-  }
 }
+
+// Prefer the register's latest individual observation; otherwise the latest dated declaration.
+db.exec(`UPDATE persons SET name=COALESCE(
+  (SELECT rp.name FROM person_entities e JOIN registry_persons rp ON rp.indent=e.registry_indent WHERE e.id=persons.id),
+  (SELECT s.name FROM person_sources s JOIN declarations d ON s.source_key=d.folder_year||':'||d.xml_file
+   LEFT JOIN declaration_metadata m ON m.declaration_id=d.id WHERE d.person_id=persons.id AND s.active=1 AND s.namespace='cacbg'
+   ORDER BY COALESCE(m.declared_on,d.declared_year) DESC,d.id DESC LIMIT 1),name)`);
 db.exec('COMMIT');
+buildPersonRegistryLinks(db);
 
 // --- enrich each (person,eik) → interest_links (+ per-authority breakdown) -----------------------
 // THE WRITER of contract_count / contract_value_eur. Its join shape (contracts→tenders→authorities→
@@ -790,12 +798,9 @@ function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
 // public body's board is declared by MANY rotating members — the deterministic ex-officio tell (ADR-0019).
 // ── Trade Register evidence: the candidate set, the fail-closed gate, and the deed reader ─────────
 // Identity now rests on a checkable registry fact rather than on the shape of the declared name
-// (#279, ADR-0033). Two consequences the loader has to enforce, both fail-closed:
-//
-//   1. NO cache ⇒ throw. Publishing without evidence is precisely what this change abolishes.
-//   2. PARTIAL cache ⇒ throw. This is the silent one. An 80%-restored cache yields roughly 80
-//      published links, which is ABOVE ship-related-persons.mjs's floor of 50 — so it would sail
-//      through that guard, ship a decimated surface, and wipe the rest of the live links.
+// (#279, ADR-0033). A missing cache is an error; each surfaced link must have its own
+// current verdict and supporting fact. No arbitrary percentage or link-count floor.
+// Complete-build and audit proofs guard publication of the resulting snapshot.
 //
 // The candidate set is every resolved ЕИК across ALL aggregates, not just the ones that end up
 // published: a link held for want of evidence still needs its deed to say so.
@@ -814,6 +819,12 @@ fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\
  * Carries the DECLARANT's name: a public official, published by the source register and by our own
  * surface. Never a relative (ADR-0032 does not name them) and never anyone from a deed.
  */
+const provenIdentities = new Map(
+  db
+    .prepare('SELECT id,registry_indent FROM person_entities WHERE registry_indent IS NOT NULL')
+    .all()
+    .map((r) => [r.id, r.registry_indent]),
+);
 function linkRecordFor(rec) {
   // The same skip the decision loop applies: an immaterial self record is census, not a link. Emitting
   // it would ask the decision pass a question no decision ever uses.
@@ -824,7 +835,9 @@ function linkRecordFor(rec) {
     linkKey: rec.scope === 'family' ? `${rec.pid}|${rec.eik}|family` : `${rec.pid}|${rec.eik}`,
     eik: rec.eik,
     declarantName: rec.person,
+    registryIndent: provenIdentities.get(rec.pid) ?? null,
     declaredSeats: [...rec.seats],
+    declaredSeatYears: [...rec.seatYears.values()],
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
     historicalDeclaredYear:
@@ -868,28 +881,7 @@ console.log(
     `(fetched ${trCoverage.fetched}, outside ТР ${trCoverage.outsideTr}, missing ${trCoverage.missing})`,
 );
 
-// ── the incremental gate (ADR-0037) ──────────────────────────────────────────────────────────────
-// The old rule refused on a single missing ЕИК. That was right while every lookup was all-or-nothing: a
-// partial cache publishes a decimated surface, clears the ship floor of 50, and wipes the rest of the
-// live links. It is wrong while the evidence legitimately arrives company by company — a new winner is
-// read by the registry layer within days, not all at once (ADR-0041).
-//
-// The protection does not go away, it moves to where it already existed: §8's monotonicity gate, whose
-// entire job is noticing a published claim that disappeared. A link that loses its evidence stops being
-// published and audit.mjs hard-fails on exactly that, with the rules_version escape for a deliberate
-// bump. Two gates for one duty was the redundancy; the weaker one goes.
-//
-// What stays is a floor on how much of the surface may rest on no verdict at all — and it applies to
-// EVERY run, not only a first one. Keying it on „is there a prior published set" left a 95% floor that
-// a single leftover published row switched off entirely: monotonicity would then protect that one row
-// while a decimated surface shipped past the ship floor of 50 beneath it.
-//
-// Always-on is affordable because the currency test below deliberately ignores AGE — a verdict stops
-// being current only when the rules move or the declaration changes. Steady state is therefore ~100%,
-// and the two ways to fall below it are the two where refusing is right: a cold start, and a rules
-// bump whose re-decision has not run (publishing then would mean publishing on a ladder this code no
-// longer speaks). `--allow-partial-tr` remains the stated override for a smaller surface.
-const VERDICT_FLOOR = 0.95;
+// Verdict coverage is telemetry. Each published link still requires its own current evidence.
 // `verdictIsCurrent`, not a hand-rolled copy. There were two copies of this predicate here and both
 // could be deleted with every test still green — on the LAST fail-closed check before publishing a
 // claim about a named person. The duplication is why the cache-side test could not kill the loader-side
@@ -917,22 +909,6 @@ if (linksAwaitingVerdict.length) {
       (eiks.length > 20 ? ` … and ${eiks.length - 20} more` : ''),
   );
 }
-if (verdictRatio < VERDICT_FLOOR && !ALLOW_PARTIAL_TR) {
-  trCache.close();
-  db.close();
-  throw new Error(
-    `REFUSE TO LOAD: only ${verdictsCurrent} of ${candidateLinks.length} link(s) carry a current ` +
-      `registry verdict (${(verdictRatio * 100).toFixed(1)}% < ${VERDICT_FLOOR * 100}%). Publishing ` +
-      `now would rest the surface on evidence most of it does not have. Let the registry layer read the ` +
-      `missing companies — the daily ETL does — or pass --allow-partial-tr to state that a smaller surface is ` +
-      `intended.` +
-      `\nAwaiting a verdict (ЕИК): ${[...new Set(linksAwaitingVerdict.map((l) => l.eik))]
-        .sort()
-        .slice(0, 20)
-        .join(', ')}`,
-  );
-}
-
 // The lookup date sealed on every link: when the evidence was gathered, not when it was interpreted.
 // It is the freshness bound the methodology page has to state, so it comes from the cache rather than
 // from `now` — a re-run over an unchanged cache must not make the evidence look fresher than it is.
@@ -1021,8 +997,7 @@ for (const rec of agg.values()) {
     entryDate: null,
     rulesVersion: RULES_VERSION,
   });
-  // With --allow-partial-tr the operator has accepted an incomplete cache. An uncached ЕИК then yields
-  // no evidence at all, which is „Неизвестна" — held. It must never be read as a reason to publish.
+  // A missing or stale verdict yields no evidence: the link is held, never published.
   // The decision was reached by the decision pass, against the registry facts it rests on (ADR-0041).
   // This pass reads it; it never re-derives one.
   //
@@ -1227,21 +1202,27 @@ const builtKeys = new Set(
 // A previous run may already use the ADR-0040 grain. Carry those ids through a later
 // conservative institution spelling fix as well (e.g. "ОБЛАСТ ОБЛАСТ ТЪРГОВИЩЕ").
 // Require the exact company/scope claim to have been rebuilt; a matching name alone is insufficient.
+const splitClaim = (key) => {
+  const parts = key.split('|');
+  const family = parts.at(-1) === 'family';
+  const suffix = parts.splice(family ? -2 : -1).join('|');
+  return { pid: parts.join('|'), suffix };
+};
 for (const prior of snapshot) {
   if (builtKeys.has(prior.link_key)) continue;
-  const parts = prior.link_key.split('|');
-  const old = parts.slice(0, 2).join('|');
-  const pid = personId(parts[0].replace(/^person:/, ''), parts[1]);
-  if (pid === old || !builtKeys.has(`${pid}|${parts.slice(2).join('|')}`)) continue;
+  const { pid: old, suffix } = splitClaim(prior.link_key);
+  if (!old.includes('|')) continue;
+  const [name, institution] = old.replace(/^person:/, '').split('|');
+  const pid = personId(name, institution);
+  if (pid === old || !builtKeys.has(`${pid}|${suffix}`)) continue;
   const now = legacyToCurrent.get(old) ?? new Set();
   now.add(pid);
   legacyToCurrent.set(old, now);
 }
 const carryKey = (key) => {
-  const parts = key.split('|');
-  const rest = parts.slice(2).join('|');
-  const now = [...(legacyToCurrent.get(`${parts[0]}|${parts[1]}`) ?? [])]
-    .map((pid) => `${pid}|${rest}`)
+  const { pid, suffix } = splitClaim(key);
+  const now = [...(legacyToCurrent.get(pid) ?? [])]
+    .map((id) => `${id}|${suffix}`)
     .filter((k) => builtKeys.has(k));
   return now.length === 1 ? now[0] : key;
 };
@@ -1253,7 +1234,7 @@ const carryKey = (key) => {
   fs.renameSync(snapTmp, snapPath);
 }
 
-// No legacy URL redirects: this installation has not been released publicly.
+// Legacy URL membership is retained in person_source_aliases, including split destinations.
 
 // B3 unused-suppression gate: every entry in the version-controlled list MUST have matched exactly one built
 // link. A fingerprint that matched NOTHING (a changed institution in the key, a reformatted ЕИК, or a wrong
@@ -1435,9 +1416,9 @@ console.log(
     : "✓ §2 ал.3 canary: all material family holdings sourced from 'assets' declarations (rail #3, ADR-0032)",
 );
 console.log(`report → ${REPORT}`);
-// Both handles, on every path that leaves this file — the verdict-floor refusal above already closes
-// the pair, and a cache left open on the other two would be the same intent kept only half the time.
+// Close both stores before marking this build complete.
 trCache.close();
 db.close();
+recordBuild(DB, STAGING);
 // No exit code is tied to ambiguity — it is expected, quarantined, and safe. The over-merge libel proof
 // is the labelled company-name-key.test.ts; the loader fails only on an actual exception.

@@ -1,3 +1,6 @@
+export { DeclarationCorpus } from './declaration-corpus';
+import type { DeclarationEnv, DeclarationContainer } from './declarations';
+export { DeclarationContainer } from './declarations';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
@@ -11,6 +14,8 @@ import {
   refreshDerivedContractCount,
   refreshSliceStatementGroups,
   registryClient,
+  registryDay,
+  RegistryError,
   releaseRefreshLease,
   renewRefreshLease,
   runRefreshSliceStatementGroup,
@@ -23,23 +28,28 @@ import { runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
   nextQueued,
-  queueAllRead,
-  queueChanged,
   queueNewWinners,
-  registryChangesThrough,
   releaseRegistryLease,
   renewRegistryLease,
-  setRegistryChangesThrough,
+  seedEntryPasses,
+  nextEntryPass,
+  recordEntryPage,
+  deferPortal,
+  deferDeed,
+  deferXml,
   storeDeed,
 } from './registry';
 
-export interface Env {
+export interface Env extends DeclarationEnv {
+  DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
+  DECLARATIONS_ENABLED?: string;
   DB: D1Database;
   REFRESH: Workflow;
   EOP_OPEN_DATA_BASE_URL?: string;
   /** The register layer (ADR-0041): its Workflow, and the API it reads. Unset → the layer does not run. */
   REGISTRY?: Workflow;
   REGISTRY_API_BASE_URL?: string;
+  REGISTRY_PORTAL_URL?: string;
 }
 
 interface RefreshParams {
@@ -460,6 +470,8 @@ interface RegistryParams {
   today?: string;
   /** Partidas read per run; the default fills a winners' scope of ~13k in under two days. */
   maxDeeds?: number;
+  maxPages?: number;
+  portalPaceMs?: number;
   /** Pause between two reads, under the API's per-client limit; 0 in tests. */
   paceMs?: number;
 }
@@ -478,15 +490,13 @@ interface RegistryResult {
 const REGISTRY_BATCH = 25;
 // Four runs a day at this bound fill the winners' scope in about two days, then only follow the changes.
 const REGISTRY_MAX_DEEDS = 2_500;
-// Days of the changes feed followed one by one; a wider gap re-reads every partida instead.
-const REGISTRY_CHANGE_DAYS = 7;
+// A bounded amount of persistent portal pagination per run; unfinished passes resume next time.
+const REGISTRY_MAX_PAGES = 600;
 // ~55 reads a minute, under the API's 60 per client.
 const REGISTRY_PACE_MS = 1_100;
 
-// The register layer (ADR-0041): who manages, represents, owns and controls the procurement winners, read from
-// the Trade Register's API into D1. Each run follows the changes feed to yesterday — by the API's load day, a
-// closed day that never changes — and re-reads the partidas it names, then reads the winners it has never
-// read. On its own lease beside the refresh: the two write different tables, and neither waits on the other.
+// Published XML partidas and portal entry-day passes have their own lease beside procurement.
+// Pending entry signals survive until confirmed by exact timestamps in the XML history.
 export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
   override async run(
     event: WorkflowEvent<RegistryParams>,
@@ -525,54 +535,73 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           throw new NonRetryableError(`registry lease lost before ${name}`);
         return fn();
       });
-    const client = registryClient({ baseUrl });
+    const client = registryClient({ baseUrl, portalUrl: this.env.REGISTRY_PORTAL_URL });
     const pace = params.paceMs ?? REGISTRY_PACE_MS;
     const maxDeeds = params.maxDeeds ?? REGISTRY_MAX_DEEDS;
     try {
-      const yesterday = addDays(params.today ?? startedAt.slice(0, 10), -1);
-      const through = await step.do('changes-through', async () =>
-        registryChangesThrough(this.env.DB),
-      );
-      const from = through ? addDays(through, 1) : yesterday;
-      if (from < addDays(yesterday, -(REGISTRY_CHANGE_DAYS - 1))) {
-        const requeued = await fenced('requeue-all', async () => {
-          const n = await queueAllRead(this.env.DB, new Date().toISOString());
-          await setRegistryChangesThrough(this.env.DB, yesterday);
-          return n;
-        });
-        console.warn(
-          JSON.stringify({
-            level: 'warn',
-            event: 'registry_changes_gap',
-            from,
-            yesterday,
-            requeued,
-          }),
+      const today = params.today ?? registryDay(new Date(startedAt));
+      await fenced('seed-entry-passes', () => seedEntryPasses(this.env.DB, today, startedAt));
+      for (let page = 0; page < (params.maxPages ?? REGISTRY_MAX_PAGES); page++) {
+        const pass = await step.do(`entry-pass:${page}`, () =>
+          nextEntryPass(this.env.DB, today, new Date().toISOString()),
         );
-      } else {
-        for (let day = from; day <= yesterday; day = addDays(day, 1)) {
-          const followed = await fenced(`changes:${day}`, async () => {
-            const feed = await client.changedUics(day);
-            const now = new Date().toISOString();
-            // A day longer than the feed is followed for is a reload of the API, not a day of the register:
-            // every partida already read is read again, rather than a guess at which of them changed.
-            const queued = feed.complete
-              ? await queueChanged(this.env.DB, feed.uics, now)
-              : await queueAllRead(this.env.DB, now);
-            await setRegistryChangesThrough(this.env.DB, day);
-            return { queued, overflow: !feed.complete };
+        if (!pass) break;
+        try {
+          if (page > 0 && (params.portalPaceMs ?? 6_000) > 0)
+            await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 6_000);
+          // Catch inside the durable step: Workflow retries must not bypass Retry-After,
+          // and custom Error properties do not survive durable serialization.
+          const read = await step.do(`portal-read:${page}`, async () => {
+            try {
+              return {
+                response: await client.changes(pass.day, pass.next_page),
+                error: null,
+                retryMs: 0,
+              };
+            } catch (error) {
+              return {
+                response: null,
+                error: String(error),
+                retryMs:
+                  error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000,
+              };
+            }
           });
-          if (followed.overflow)
+          if (!read.response) {
+            await fenced(`portal-retry-after:${page}`, () =>
+              deferPortal(this.env.DB, new Date(Date.now() + read.retryMs).toISOString()),
+            );
             console.warn(
               JSON.stringify({
-                level: 'warn',
-                event: 'registry_changes_overflow',
-                day,
-                requeued: followed.queued,
+                event: 'registry_portal_deferred',
+                day: pass.day,
+                page: pass.next_page,
+                error: read.error,
               }),
             );
-          result.changed += followed.queued;
-          result.changeDays++;
+            break;
+          }
+          const response = read.response;
+          result.changed += await fenced(`portal-save:${page}`, () =>
+            recordEntryPage(this.env.DB, pass, response, new Date().toISOString()),
+          );
+          if (!response.hasMore) result.changeDays++;
+        } catch (error) {
+          if (error instanceof NonRetryableError) throw error;
+          const wait =
+            error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000;
+          await fenced(`portal-defer:${page}`, () =>
+            deferPortal(this.env.DB, new Date(Date.now() + wait).toISOString()),
+          );
+          console.warn(
+            JSON.stringify({
+              event: 'registry_portal_deferred',
+              day: pass.day,
+              page: pass.next_page,
+              error: String(error),
+            }),
+          );
+          break;
         }
       }
       result.queuedNew = await fenced('queue-new-winners', async () =>
@@ -588,9 +617,35 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           let roles = 0;
           for (const [i, eik] of eiks.entries()) {
             if (i > 0 && pace > 0) await new Promise((r) => setTimeout(r, pace));
-            const lookup = await client.deed(eik);
-            if (lookup.status === 'absent') absent++;
-            roles += (await storeDeed(this.env.DB, eik, lookup, new Date().toISOString())).roles;
+            try {
+              const lookup = await client.deed(eik);
+              if (!(await renewRegistryLease(this.env.DB, holder)))
+                throw new NonRetryableError('registry lease lost after XML read');
+              if (lookup.status === 'absent') absent++;
+              roles += (await storeDeed(this.env.DB, eik, lookup, new Date().toISOString())).roles;
+            } catch (error) {
+              if (error instanceof NonRetryableError) throw error;
+              if (!(await renewRegistryLease(this.env.DB, holder)))
+                throw new NonRetryableError('registry lease lost after failed read');
+              const wait =
+                error instanceof RegistryError
+                  ? Math.max(error.retryMs ?? 0, 6 * 3600000)
+                  : 6 * 3600000;
+              await deferDeed(this.env.DB, eik, new Date(Date.now() + wait).toISOString());
+              if (
+                error instanceof RegistryError &&
+                (error.status === 429 || error.status === 503)
+              ) {
+                await deferXml(
+                  this.env.DB,
+                  new Date(Date.now() + (error.retryMs ?? 180_000)).toISOString(),
+                );
+                break;
+              }
+              console.warn(
+                JSON.stringify({ event: 'registry_deed_deferred', eik, error: String(error) }),
+              );
+            }
           }
           return { read: eiks.length, absent, roles };
         });
@@ -613,13 +668,20 @@ export default {
   // Cron entrypoint: kick one durable refresh run, and the register layer beside it where it is configured.
   // No public route or HTTP trigger is configured.
   async scheduled(_controller, env): Promise<void> {
-    const instance = await env.REFRESH.create();
-    console.log(JSON.stringify({ level: 'info', event: 'etl_scheduled_refresh', id: instance.id }));
-    if (env.REGISTRY && env.REGISTRY_API_BASE_URL) {
-      const registry = await env.REGISTRY.create();
-      console.log(
-        JSON.stringify({ level: 'info', event: 'etl_scheduled_registry', id: registry.id }),
-      );
-    }
+    const jobs: [string, () => Promise<unknown>][] = [['refresh', () => env.REFRESH.create()]];
+    if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
+      jobs.push(['registry', () => env.REGISTRY!.create()]);
+    if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
+      jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
+    const results = await Promise.allSettled(
+      jobs.map(async ([job, start]) => {
+        const result = await start();
+        console.log(JSON.stringify({ event: 'etl_scheduled', job, result }));
+      }),
+    );
+    const failures = results.flatMap((r, i) =>
+      r.status === 'rejected' ? [new Error(`${jobs[i]![0]}: ${String(r.reason)}`)] : [],
+    );
+    if (failures.length) throw new AggregateError(failures, 'ETL scheduled starts failed');
   },
 } satisfies ExportedHandler<Env>;
