@@ -149,7 +149,7 @@ export function PersonTimeline({
       {p.timeline.observations.some((o) => o.disputed) && (
         <p className="small muted">
           Квадратче с прекъснат контур: разминаване между декларации за същата година. Подробностите
-          и източниците са в бележките под времевата линия.
+          и източниците са под името на съответното дружество.
         </p>
       )}
       {scrollable && (
@@ -224,14 +224,70 @@ export function PersonTimeline({
           })}
           {companies.map((c) => {
             const roleKinds = [...new Set(c.roles.map((r) => r.role))];
+            const noRole = !c.roles.length && c.links.length > 0;
+            const history = c.observations.filter((o) =>
+              ['prior', 'disposed', 'unknown'].includes(o.timing),
+            );
+            const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
+            const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
+
             return (
               <div className="person-time-company" key={c.eik} id={`company-${c.eik}`}>
-                {row(
-                  `${c.eik}-heading`,
-                  <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>,
-                  null,
-                  'time-company-heading',
-                )}
+                <div className="time-company-heading">
+                  <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>
+                  <div className="person-time-notes">
+                    {noRole && (
+                      <p>
+                        Лична роля в ТР не е установена
+                        {c.links.every((l) => l.relation === 'related')
+                          ? ' — декларираният дял е на друго свързано лице.'
+                          : ' за декларатора в наличните регистърни данни.'}
+                      </p>
+                    )}
+                    {disputed.length > 0 && (
+                      <p>
+                        <strong>Разминаване в декларациите.</strong> За{' '}
+                        {[...new Set(disputed.map((o) => o.reportedYear))]
+                          .filter(Boolean)
+                          .sort()
+                          .join(', ')}{' '}
+                        г. дялът е посочен в един документ и липсва в друг. Връзката остава видима;
+                        времевото съвпадение за тези години изисква отделно основание.{' '}
+                        {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
+                          const d = p.declarations.find((d) => d.id === id);
+                          return d ? (
+                            <span className="history-source" key={id}>
+                              {declarationLink(
+                                d,
+                                `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
+                              )}{' '}
+                            </span>
+                          ) : null;
+                        })}
+                      </p>
+                    )}
+                    {history.length > 0 && (
+                      <p>
+                        <strong>Исторически данни.</strong> Предходно участие / прехвърляне ·
+                        периодът се установява отделно.{' '}
+                        {[...new Set(history.map((o) => o.declarationId))].map((id) => {
+                          const d = p.declarations.find((d) => d.id === id);
+                          return d ? (
+                            <span className="history-source" key={id}>
+                              {declarationLink(
+                                d,
+                                `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
+                              )}{' '}
+                            </span>
+                          ) : null;
+                        })}
+                      </p>
+                    )}
+                    {undated > 0 && (
+                      <p>Договори без дата: {count(undated)} — не могат да се поставят на оста.</p>
+                    )}
+                  </div>
+                </div>
                 {(['self', 'family', 'management'] as const).map((scope) => {
                   const observations = c.observations.filter(
                     (o) =>
@@ -391,72 +447,6 @@ export function PersonTimeline({
           })}
         </div>
       </div>
-      <ul className="entity-list person-time-notes" aria-label="Бележки за участията">
-        {companies.map((c) => {
-          const noRole = !c.roles.length && c.links.length > 0;
-          const history = c.observations.filter((o) =>
-            ['prior', 'disposed', 'unknown'].includes(o.timing),
-          );
-          const disputed = c.observations.filter((o) => o.disputed || o.timing === 'not_listed');
-          const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
-          if (!noRole && !history.length && !disputed.length && !undated) return null;
-          return (
-            <li key={c.eik}>
-              <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>
-              {noRole && (
-                <p>
-                  Лична роля в ТР не е установена
-                  {c.links.every((l) => l.relation === 'related')
-                    ? ' — декларираният дял е на друго свързано лице.'
-                    : ' за декларатора в наличните регистърни данни.'}
-                </p>
-              )}
-              {disputed.length > 0 && (
-                <p>
-                  <strong>Разминаване в декларациите.</strong> За{' '}
-                  {[...new Set(disputed.map((o) => o.reportedYear))]
-                    .filter(Boolean)
-                    .sort()
-                    .join(', ')}{' '}
-                  г. дялът е посочен в един документ и липсва в друг. Връзката остава видима;
-                  времевото съвпадение за тези години изисква отделно основание.{' '}
-                  {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
-                    const d = p.declarations.find((d) => d.id === id);
-                    return d ? (
-                      <span className="history-source" key={id}>
-                        {declarationLink(
-                          d,
-                          `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
-                        )}{' '}
-                      </span>
-                    ) : null;
-                  })}
-                </p>
-              )}
-              {history.length > 0 && (
-                <p>
-                  <strong>Исторически данни.</strong> Предходно участие / прехвърляне · периодът се
-                  установява отделно.{' '}
-                  {[...new Set(history.map((o) => o.declarationId))].map((id) => {
-                    const d = p.declarations.find((d) => d.id === id);
-                    return d ? (
-                      <span className="history-source" key={id}>
-                        {declarationLink(
-                          d,
-                          `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
-                        )}{' '}
-                      </span>
-                    ) : null;
-                  })}
-                </p>
-              )}
-              {undated > 0 && (
-                <p>Договори без дата: {count(undated)} — не могат да се поставят на оста.</p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
       <p className="small muted person-time-note">
         Числата са брой договори за годината. Съвпадението е по вписана роля или по деклариран
         период; то не означава личен доход или установено нарушение. Всички договори са достъпни в
