@@ -155,7 +155,8 @@ export function registryClient(opts: RegistryClientOptions) {
       try {
         res = await fetch(url, {
           headers: { accept },
-          redirect: 'error',
+          // Workers supports manual/follow only. Non-2xx below rejects redirects without following them.
+          redirect: 'manual',
           signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
         });
       } catch (error) {

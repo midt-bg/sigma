@@ -53,6 +53,18 @@ it('reads portal pages of 25 without treating later Count:0 as an empty day', as
   expect(url.searchParams.has('by')).toBe(false);
   expect(url.searchParams.get('dateFrom')).toBe('2026-09-01T00:00:00+03:00');
 });
+it('rejects redirects for both registry sources with a Workers-supported fetch mode', async () => {
+  const fetch = vi.fn(
+    async () => new Response(null, { status: 302, headers: { Location: 'https://other.test' } }),
+  );
+  vi.stubGlobal('fetch', fetch);
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  await expect(c.deed('000000001')).rejects.toMatchObject({ status: 302 });
+  await expect(c.changes('2026-09-01')).rejects.toMatchObject({ status: 302 });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  for (const call of fetch.mock.calls)
+    expect(call).toEqual([expect.any(String), expect.objectContaining({ redirect: 'manual' })]);
+});
 it('refuses malformed list responses and preserves Retry-After for durable retry', async () => {
   vi.stubGlobal(
     'fetch',
