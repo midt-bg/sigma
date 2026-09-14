@@ -14,12 +14,14 @@ const TABLES = [
   'registry_roles',
   'registry_identity_observations',
   'registry_identity_snapshots',
+  'registry_company_history',
   ...PROFILE_TABLES,
 ];
 const WIPE_ORDER = [
   'registry_roles',
   'registry_identity_observations',
   'registry_identity_snapshots',
+  'registry_company_history',
   'registry_persons',
   'registry_deeds',
   ...PROFILE_WIPE_ORDER,
@@ -50,7 +52,7 @@ if (source === target) throw new Error('Source and target must differ');
 if (
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 8 ||
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).identityRules !==
-    'registry-identity-2' ||
+    'registry-identity-3' ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))
 )
   throw new Error('A current extraction and the prior-publication snapshot are required');
@@ -120,6 +122,12 @@ try {
   for (const t of WIPE_ORDER)
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t))
       db.exec(`DELETE FROM ${t}`);
+  db.exec(
+    fs.readFileSync(
+      path.join(root, 'packages/db/migrations/0020_registry_company_history.sql'),
+      'utf8',
+    ),
+  );
   for (const t of TABLES) {
     const columns = src
       .prepare(`PRAGMA table_info(${t})`)

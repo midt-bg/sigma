@@ -69,7 +69,7 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
   if (!fs.existsSync(manifest))
     fs.writeFileSync(
       manifest,
-      JSON.stringify({ schemaVersion: 8, identityRules: 'registry-identity-2' }),
+      JSON.stringify({ schemaVersion: 8, identityRules: 'registry-identity-3' }),
     );
   const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
   const groupsFile = path.join(staging, 'source-groups.jsonl');
@@ -80,7 +80,7 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
       manifest,
       JSON.stringify({
         ...m,
-        identityRules: 'registry-identity-2',
+        identityRules: 'registry-identity-3',
         filingsHash: createHash('sha256')
           .update(fs.readFileSync(path.join(staging, 'filings.jsonl')))
           .digest('hex'),

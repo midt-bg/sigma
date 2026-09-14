@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { registryIdentityResolver } from './registry-identity.mjs';
+import { registryIdentityResolver, mixedScriptCompanyKey } from './registry-identity.mjs';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
@@ -95,6 +95,107 @@ test('a date-of-birth observation cannot establish a global identity even with a
   try {
     add('123456789', 'a'.repeat(64), name, 'BirthDate');
     assert.deepEqual(registryIdentityResolver(db)(doc, [name]).evidence, []);
+  } finally {
+    db.close();
+  }
+});
+
+test('historic forms resolve only through observed name/form pairs on the same EIK', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    db.exec(
+      readFileSync(
+        new URL('../../packages/db/migrations/0020_registry_company_history.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    db.exec("UPDATE registry_deeds SET legal_form='EOOD' WHERE eik='123456789'");
+    add('123456789', 'a'.repeat(64), name);
+    assert.equal(registryIdentityResolver(db)(doc, [name]).evidence.length, 0);
+    const historic = {
+      name: 'А Дейта Про',
+      legalForm: 'ООД',
+      from: '2010-01-01T12:00:00',
+      until: '2020-01-01T12:00:00',
+      subUic: '1',
+      nameEntry: '20100101120000',
+      formEntry: '20100101120000',
+    };
+    db.prepare('INSERT INTO registry_company_history VALUES(?,?,?,?)').run(
+      '123456789',
+      JSON.stringify([historic]),
+      'c'.repeat(64),
+      '2026-01-01',
+    );
+    for (const entity of ['А Дейта Про ООД', 'А Дейта Про ООД, ЕИК 123456789']) {
+      const r = registryIdentityResolver(db)(
+        { ...doc, interests: [{ ...doc.interests[0], entity }] },
+        [name],
+      );
+      assert.equal(r.evidence[0].registryIndent, 'a'.repeat(64));
+      assert.equal(r.companies[0].method, 'registry_name_history');
+      assert.equal(r.companies[0].registryCompany.formEntry, historic.formEntry);
+    }
+    db.exec("UPDATE registry_deeds SET name='А ДЕЙТА ПРО', legal_form='OOD' WHERE eik='987654321'");
+    assert.equal(
+      registryIdentityResolver(db)(doc, [name]).evidence.length,
+      0,
+      'another EIK carrying this full name is ambiguous',
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('mixed-script company names need unique company and personal registry corroboration', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    db.exec("UPDATE registry_deeds SET name='АЛФА Be АИК' WHERE eik='123456789'");
+    const d = { ...doc, interests: [{ ...doc.interests[0], entity: 'АЛФА ВЕ АИК ООД', seat: '' }] };
+    assert.equal(
+      registryIdentityResolver(db)(d, [name]).companies.length,
+      0,
+      'visual similarity alone is insufficient',
+    );
+    add('123456789', 'a'.repeat(64), name);
+    let r = registryIdentityResolver(db)(d, [name]);
+    assert.equal(r.evidence[0].registryIndent, 'a'.repeat(64));
+    assert.equal(r.companies[0].method, 'registry_mixed_script');
+    assert.equal(
+      registryIdentityResolver(db)(
+        { ...d, interests: [{ ...d.interests[0], holderRelation: 'related' }] },
+        [name],
+      ).companies.length,
+      0,
+    );
+    db.exec("UPDATE registry_deeds SET name='АЛФА BЕ АИК' WHERE eik='987654321'");
+    assert.equal(
+      registryIdentityResolver(db)(d, [name]).companies.length,
+      0,
+      'normalization collision must not choose an EIK',
+    );
+    db.exec("DELETE FROM registry_deeds WHERE eik='987654321'");
+    add('123456789', 'b'.repeat(64), name);
+    assert.equal(
+      registryIdentityResolver(db)(d, [name]).companies.length,
+      0,
+      'two namesakes under the same EIK',
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('visual comparison retains phonetic spellings, punctuation, forms and purely Latin names', () => {
+  assert.equal(mixedScriptCompanyKey('АЛФА Be АИК ООД'), 'АЛФА ВЕ АИК ООД');
+  for (const name of ['ALFA BE OOD', 'АЛФА VE АИК ООД', 'АЛФА ВЕ-АИК ЕООД'])
+    assert.equal(mixedScriptCompanyKey(name), name);
+  const { db, add, name, doc } = fixture();
+  try {
+    db.exec("UPDATE registry_deeds SET name='АЛФА Be АИК' WHERE eik='123456789'");
+    add('123456789', 'local:not-a-person', name);
+    const d = { ...doc, interests: [{ ...doc.interests[0], entity: 'АЛФА ВЕ АИК ООД' }] };
+    assert.equal(registryIdentityResolver(db)(d, [name]).companies.length, 0);
   } finally {
     db.close();
   }

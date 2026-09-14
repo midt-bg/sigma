@@ -59,7 +59,13 @@ export function declarationContinuity(filings, resolveCompany) {
       )
         continue;
       const current = resolveCompany(p, f.person);
-      if (!current.eik || current.eik !== p.eik || current.method !== p.method)
+      if (
+        !current.eik ||
+        current.eik !== p.eik ||
+        current.method !== p.method ||
+        JSON.stringify(current.registryCompany ?? null) !==
+          JSON.stringify(p.registryCompany ?? null)
+      )
         throw new Error(`Company continuity proof no longer matches its source: ${doc.id}`);
       if (current.authorNameConflict) continue;
       const companyDoc = { ...doc, company: p };

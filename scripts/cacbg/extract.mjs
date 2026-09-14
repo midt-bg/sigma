@@ -306,7 +306,7 @@ async function run() {
           fs.readFileSync(path.join(STAGING, 'source-groups.jsonl')),
         ),
         corpusComplete: !process.argv.includes('--allow-partial-corpus'),
-        identityRules: identify ? 'registry-identity-2' : null,
+        identityRules: identify ? 'registry-identity-3' : null,
         extractedAt: new Date().toISOString(),
         raw: RAW,
         filings: stats.filings,
