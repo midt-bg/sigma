@@ -16,4 +16,4 @@ export function collectivePersonName(value: string): boolean {
   );
 }
 export const personalRegistryIndent = (id: string, type: string | null): boolean =>
-  /^[a-f0-9]{64}$/i.test(id) && ['EGN', 'LNCH', 'BIRTHDATE'].includes((type ?? '').toUpperCase());
+  /^[a-f0-9]{64}$/i.test(id) && ['EGN', 'LNCH'].includes((type ?? '').toUpperCase());

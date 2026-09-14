@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { emitLinkRecords } from './tr-fixture.mjs';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,7 @@ function buildAndLoad(bidderRows) {
   const trDb = path.join(dir, 'tr-cache.sqlite');
   new DatabaseSync(trDb).close();
 
+  emitLinkRecords({ workDb: DB, staging: STAGING, trDb });
   let threw = false;
   try {
     execFileSync(

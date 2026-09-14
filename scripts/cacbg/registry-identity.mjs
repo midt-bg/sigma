@@ -4,9 +4,27 @@ import { companyNameKey } from '../../packages/shared/src/company-name-key.ts';
 import { nameDistinctiveness } from './classify.mjs';
 import { normalizeSettlement } from '../tr/deed.mjs';
 
-export const IDENTITY_RULES_VERSION = 'registry-identity-1';
+export const IDENTITY_RULES_VERSION = 'registry-identity-2';
 const HASH = /^[a-f0-9]{64}$/i;
 const SELF_KINDS = new Set(['shares', 'participation', 'sole_trader', 'management']);
+
+/** Identity comes only from original per-entry observations, never compacted role labels. */
+export function registryIdentityRows(registry) {
+  if (
+    !registry
+      .prepare("SELECT 1 FROM sqlite_master WHERE name='registry_identity_observations'")
+      .get()
+  )
+    return [];
+  return registry
+    .prepare(
+      `SELECT eik,registry_indent subject_id,name subject_name,entry_number,
+      sub_uic,field_ident,holder_index,source_hash FROM registry_identity_observations
+      WHERE subject_kind='person' AND registry_indent IS NOT NULL AND upper(indent_type) IN ('EGN','LNCH')
+      ORDER BY eik,entry_on,entry_number,sub_uic,field_ident,holder_index`,
+    )
+    .all();
+}
 
 /** Public registry identities, read once. Names select evidence; they never become identity keys. */
 export function registryIdentityResolver(registry) {
@@ -38,19 +56,13 @@ export function registryIdentityResolver(registry) {
     byKey.set(key, companies);
   }
   const namesByCompany = new Map();
-  for (const r of registry
-    .prepare(
-      `SELECT DISTINCT eik,subject_id,subject_name,entry_number FROM registry_roles
-    WHERE subject_kind='person' AND role IN ('partner','sole_owner','trader','manager')
-      AND entry_number IS NOT NULL AND entry_number<>'' ORDER BY eik,subject_id,entry_number`,
-    )
-    .all()) {
+  for (const r of registryIdentityRows(registry)) {
     if (!HASH.test(r.subject_id)) continue;
     const name = declarantNameKey(r.subject_name);
     if (name.split(' ').length < 3) continue;
     const company = namesByCompany.get(r.eik) ?? new Map();
     const subjects = company.get(name) ?? new Map();
-    subjects.set(r.subject_id.toLowerCase(), r.entry_number);
+    subjects.set(r.subject_id.toLowerCase(), r);
     company.set(name, subjects);
     namesByCompany.set(r.eik, company);
   }
@@ -60,10 +72,13 @@ export function registryIdentityResolver(registry) {
     const listed = [...new Set(listedNames.map(declarantNameKey).filter(Boolean))];
     const proofs = new Map();
     let aliasesProven = false;
+    let reason = 'no_declared_personal_participation';
     for (const interest of declaration.interests ?? []) {
       if (interest.holderRelation !== 'self' || !SELF_KINDS.has(interest.kind)) continue;
       const resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
+      reason = 'company_not_resolved';
       if (!resolved || resolved.ambiguous) continue;
+      reason = 'company_evidence_insufficient';
       const company = bidderByEik.get(resolved.eik);
       const seat = normalizeSettlement(interest.seat);
       if (
@@ -72,14 +87,42 @@ export function registryIdentityResolver(registry) {
         nameDistinctiveness(companyNameKey(company.name)) !== 'distinctive'
       )
         continue;
+      reason = 'personal_name_not_observed';
       const names = namesByCompany.get(resolved.eik);
       const candidates = names?.get(name);
       if (!candidates?.size) continue;
-      for (const [indent, entryNumber] of candidates) {
+      for (const [indent, observation] of candidates) {
         proofs.set(`${indent}|${resolved.eik}`, {
           registryIndent: indent,
           eik: resolved.eik,
-          entryNumber,
+          entryNumber: observation.entry_number,
+          observation: observation.source_hash
+            ? {
+                subUic: observation.sub_uic,
+                fieldIdent: observation.field_ident,
+                holderIndex: observation.holder_index,
+                sourceHash: observation.source_hash,
+              }
+            : null,
+          registryName: observation.subject_name,
+          aliasObservations: listed
+            .filter((alias) => alias !== name)
+            .flatMap((alias) => {
+              const o = names.get(alias)?.get(indent);
+              return o
+                ? [
+                    {
+                      name: o.subject_name,
+                      eik: o.eik,
+                      entryNumber: o.entry_number,
+                      subUic: o.sub_uic,
+                      fieldIdent: o.field_ident,
+                      holderIndex: o.holder_index,
+                      sourceHash: o.source_hash,
+                    },
+                  ]
+                : [];
+            }),
           documentName: declaration.declarant,
           listedNames: [...listedNames].sort(),
           rule: IDENTITY_RULES_VERSION,
@@ -105,6 +148,11 @@ export function registryIdentityResolver(registry) {
       ['declarant_mismatch', 'ambiguous_listing'].includes(attribution);
     return {
       attribution: acceptedAlias ? 'registry_alias' : attribution,
+      reason: evidence.length
+        ? unique.size === 1
+          ? 'verified_registry'
+          : 'ambiguous_registry_identity'
+        : reason,
       evidence: attribution === 'matched' || acceptedAlias ? evidence : [],
     };
   };

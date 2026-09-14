@@ -1,3 +1,6 @@
+import { rebuildPersonEntities, declarationSourceId } from './person-entities.mjs';
+import { buildPersonRegistryLinks } from './person-registry-links.mjs';
+import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
 import { recordBuild } from './build-proof.mjs';
 // Phase 1 — productionized loader/resolver. Reads the extracted staging (holdings.jsonl / related.jsonl),
 // resolves each declared interest to a winning bidder's ЕИК via the ONE production normalizer, and
@@ -66,7 +69,7 @@ const REPORT = path.join(STAGING, 'findings.md');
 // Bumped for #279: classify-2 (КДА added to the joint-stock bar) + tr-1 (identity now rests on a
 // Trade Register fact, not on name distinctiveness). RULES_VERSION versions the EVIDENCE rules
 // separately — §8's monotonicity gate keys on that one, not on this.
-const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-2';
+const MATCHER_VERSION = 'cnk-1+classify-2+tr-1+resolve-3';
 const TR_CACHE_DB = process.env.TR_CACHE_DB || TR_DB;
 // Bootstrap mode: write the decision pass's input list and stop, successfully. The list is derived from
 // the resolved corpus, so only this script can produce it, but the full run refuses without the very
@@ -141,7 +144,7 @@ fs.rmSync(`${WORK_DB}.audited.json`, { force: true });
 // A registry-backed rebuild must not silently revert to extraction by names alone.
 if (
   db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_roles'").get() &&
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).identityRules !== 'registry-identity-1'
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).identityRules !== IDENTITY_RULES_VERSION
 ) {
   db.close();
   throw new Error(
@@ -318,6 +321,12 @@ for (const b of bidders) {
 //   extracted_name  — a „NAME"-ФОРМА pulled from prose normalizes to exactly one winner ЕИК.
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
 const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik });
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
+  db.exec('DELETE FROM registry_requested_companies');
+  const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
+  for (const r of readJsonl(path.join(STAGING, 'registry-requests.jsonl')))
+    putRequest.run(r.eik, r.declarationId, r.declaredName);
+}
 // Is this name key backed by exactly one valid winner ЕИК across the whole bidder set? The distinctiveness
 // tier rests on this being true; declared_eik/extracted_name bypass the resolver's own single-ЕИК guard,
 // so the tier layer must re-assert global name-uniqueness itself.
@@ -360,26 +369,20 @@ const insDeclarationCompany = db.prepare(
 const insRP = db.prepare(
   'INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind,info,timing) VALUES(?,?,?,?,?,?)',
 );
-// Person grain is (name, institution) — NEVER a bare name (spec §4: „homonym merge is the failure to
-// avoid"). Two „Георги Иванов" at different institutions are different people; keying on the name alone
-// merges them into one /conflicts page carrying both their companies (false attribution). Institution is
-// normalized through the same key so a person's institution-string variants fold together, keeping identity
-// stable across their filing years — which the E11 divestment horizon (keyed on person_id) depends on.
-// register_year/position are deliberately EXCLUDED (ADR-0026): both would split one official across
-// years/promotions, fragmenting identity and blinding the cross-year divestment tracking.
-// Institution is canonicalized (N10) so an official's „МВР" / „Министерство на вътрешните работи" filings
-// fold to ONE identity instead of splitting into two person-pages. An unknown/ambiguous string passes
-// through unchanged (a safe split), never a wrong merge.
-// ADR-0040: the institution is the declaration's own (declarationInstitution) and its spellings fold
-// (identityInstitution) — the listing alone gave the declaration TYPE for a sixth of the filings and split
-// one body across its spellings.
+// An unresolved source view keeps its legacy bucket. Only document-scoped evidence
+// may move a filing into a canonical person; names/institutions never prove identity.
 const personId = (name, institution) =>
   `person:${companyNameKey(name)}|${companyNameKey(identityInstitution(institution))}`;
-const personOf = (rec) =>
-  personId(
-    rec.person,
-    declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
-  );
+const sourcePersonOf = (rec) =>
+  `person:${companyNameKey(rec.person)}|${companyNameKey(
+    identityInstitution(
+      declarationInstitution(rec) || `НЕУСТАНОВЕНА ИНСТИТУЦИЯ ${rec.folder}:${rec.xmlFile}`,
+    ),
+  )}`;
+const filings = readJsonl(path.join(STAGING, 'filings.jsonl'));
+const identity = rebuildPersonEntities(db, db, filings, sourcePersonOf, priorDocumentPersons);
+console.log(`Person identity: ${JSON.stringify(identity.stats)}`);
+const personOf = (rec) => identity.assignments.get(declarationSourceId(rec)) ?? sourcePersonOf(rec);
 // The id the same record carried before ADR-0040 — the listing's institution, abbreviations folded and
 // nothing else. Kept only to carry the monotonicity snapshot across the
 // change of grain; nothing is keyed on it.
@@ -696,9 +699,6 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
 // That keeps the document history complete without creating a public profile for every raw name.
 const knownPerson = db.prepare('SELECT 1 FROM persons WHERE id=?');
 const insMetadata = db.prepare('INSERT OR REPLACE INTO declaration_metadata VALUES(?,?,?,?)');
-const insIdentity = db.prepare(
-  'INSERT OR IGNORE INTO declaration_identity_evidence VALUES(?,?,?,?,?,?,?)',
-);
 for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   const pid = personOf(f);
   if (!f.folder || !f.xmlFile) continue;
@@ -719,27 +719,16 @@ for (const f of readJsonl(path.join(STAGING, 'filings.jsonl'))) {
   );
   noteLegacy(f, pid);
   insMetadata.run(did, f.declarationType ?? null, f.declaredOn ?? null, f.submittedOn ?? null);
-  for (const proof of f.identityEvidence ?? []) {
-    if (
-      !/^[a-f0-9]{64}$/.test(proof.registryIndent) ||
-      !/^\d{9,13}$/.test(proof.eik) ||
-      !proof.entryNumber ||
-      proof.documentName !== f.person ||
-      proof.rule !== 'registry-identity-1'
-    )
-      throw new Error(`Invalid source identity evidence: ${did}`);
-    insIdentity.run(
-      did,
-      proof.registryIndent,
-      proof.eik,
-      proof.entryNumber,
-      proof.documentName,
-      JSON.stringify(proof.listedNames),
-      proof.rule,
-    );
-  }
 }
+
+// Prefer the register's latest individual observation; otherwise the latest dated declaration.
+db.exec(`UPDATE persons SET name=COALESCE(
+  (SELECT rp.name FROM person_entities e JOIN registry_persons rp ON rp.indent=e.registry_indent WHERE e.id=persons.id),
+  (SELECT s.name FROM person_sources s JOIN declarations d ON s.source_key=d.folder_year||':'||d.xml_file
+   LEFT JOIN declaration_metadata m ON m.declaration_id=d.id WHERE d.person_id=persons.id AND s.active=1 AND s.namespace='cacbg'
+   ORDER BY COALESCE(m.declared_on,d.declared_year) DESC,d.id DESC LIMIT 1),name)`);
 db.exec('COMMIT');
+buildPersonRegistryLinks(db);
 
 // --- enrich each (person,eik) → interest_links (+ per-authority breakdown) -----------------------
 // THE WRITER of contract_count / contract_value_eur. Its join shape (contracts→tenders→authorities→
@@ -1186,21 +1175,27 @@ const builtKeys = new Set(
 // A previous run may already use the ADR-0040 grain. Carry those ids through a later
 // conservative institution spelling fix as well (e.g. "ОБЛАСТ ОБЛАСТ ТЪРГОВИЩЕ").
 // Require the exact company/scope claim to have been rebuilt; a matching name alone is insufficient.
+const splitClaim = (key) => {
+  const parts = key.split('|');
+  const family = parts.at(-1) === 'family';
+  const suffix = parts.splice(family ? -2 : -1).join('|');
+  return { pid: parts.join('|'), suffix };
+};
 for (const prior of snapshot) {
   if (builtKeys.has(prior.link_key)) continue;
-  const parts = prior.link_key.split('|');
-  const old = parts.slice(0, 2).join('|');
-  const pid = personId(parts[0].replace(/^person:/, ''), parts[1]);
-  if (pid === old || !builtKeys.has(`${pid}|${parts.slice(2).join('|')}`)) continue;
+  const { pid: old, suffix } = splitClaim(prior.link_key);
+  if (!old.includes('|')) continue;
+  const [name, institution] = old.replace(/^person:/, '').split('|');
+  const pid = personId(name, institution);
+  if (pid === old || !builtKeys.has(`${pid}|${suffix}`)) continue;
   const now = legacyToCurrent.get(old) ?? new Set();
   now.add(pid);
   legacyToCurrent.set(old, now);
 }
 const carryKey = (key) => {
-  const parts = key.split('|');
-  const rest = parts.slice(2).join('|');
-  const now = [...(legacyToCurrent.get(`${parts[0]}|${parts[1]}`) ?? [])]
-    .map((pid) => `${pid}|${rest}`)
+  const { pid, suffix } = splitClaim(key);
+  const now = [...(legacyToCurrent.get(pid) ?? [])]
+    .map((id) => `${id}|${suffix}`)
     .filter((k) => builtKeys.has(k));
   return now.length === 1 ? now[0] : key;
 };
@@ -1212,7 +1207,7 @@ const carryKey = (key) => {
   fs.renameSync(snapTmp, snapPath);
 }
 
-// No legacy URL redirects: this installation has not been released publicly.
+// Legacy URL membership is retained in person_source_aliases, including split destinations.
 
 // B3 unused-suppression gate: every entry in the version-controlled list MUST have matched exactly one built
 // link. A fingerprint that matched NOTHING (a changed institution in the key, a reformatted ЕИК, or a wrong

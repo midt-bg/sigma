@@ -106,6 +106,7 @@ export function PersonTimeline({
   };
   const contractHref = (eik: string, year: string | null, basis = 'all', authority?: string) => {
     const q = new URLSearchParams({ company: eik, basis });
+    if (new URLSearchParams(location.search).get('view') === 'profile') q.set('view', 'profile');
     if (year) q.set('year', year);
     if (authority) q.set('authority', authority);
     return `${location.pathname}?${q}#contract-filters`;

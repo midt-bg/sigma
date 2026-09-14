@@ -12,6 +12,7 @@ export function recordBuild(db, staging) {
     JSON.stringify({
       complete: manifest.corpusComplete === true,
       extractedAt: manifest.extractedAt,
+      identityRules: manifest.identityRules,
     }),
   );
 }

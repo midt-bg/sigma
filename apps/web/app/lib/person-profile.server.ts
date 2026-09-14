@@ -3,7 +3,7 @@ import {
   getPersonTimeline,
   getPersonDeclarations,
   getPersonActivity,
-  getRegistryOfficials,
+  getPersonScope,
   getRegistryPerson,
 } from '@sigma/db';
 import { layoutTies } from './tie-layout.server';
@@ -12,12 +12,10 @@ export async function loadPersonProfile(
   db: D1Database,
   { indent, officialId, search }: { indent?: string; officialId?: string; search: URLSearchParams },
 ) {
+  const scope = await getPersonScope(db, { indent, officialId });
+  indent = scope.indent ?? undefined;
   const person = indent ? await getRegistryPerson(db, indent) : null;
-  const officialIds = officialId
-    ? [officialId]
-    : indent
-      ? await getRegistryOfficials(db, indent)
-      : [];
+  const { officialIds } = scope;
   const cases = (
     await Promise.all(officialIds.map((id) => getOfficialConflicts(db, id, { contracts: false })))
   ).filter((x) => x != null);

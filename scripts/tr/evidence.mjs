@@ -53,7 +53,8 @@ import { declarantNameKey } from '../cacbg/source-identity.mjs';
 // r4 also permits an ended, dated role overlapping the first declared year to
 // corroborate company identity. The company gate is unchanged. Absence today
 // does not refute a documented past role; current-role reconciliation stays separate.
-export const RULES_VERSION = 'tr-rules-5';
+// r6 preserves distinguishing company-name prefixes and excludes collective holders from personal-role evidence.
+export const RULES_VERSION = 'tr-rules-6';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;

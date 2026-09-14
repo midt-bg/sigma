@@ -217,7 +217,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           slug: href.split('/').pop()!,
           href,
           title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
-          ident: r.ident || null,
+          ident: g.kind === 'official' ? null : r.ident || null,
           ...(isCompany
             ? {
                 isConsortium,

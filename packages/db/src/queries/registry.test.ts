@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RegistryRoleKind } from '@sigma/api-contract';
 import { d1FromSqlite } from '@sigma/test-support';
 import { getAuthoritySupplierTies, getCompanyTies } from './company-ties';
+import { getRegistrySourceCompanies } from './person-identity';
 import { registryPersonIdFromSlug, registryPersonSlug } from './identity';
 import {
   PUBLIC_ROLES,
@@ -303,5 +304,27 @@ describe('identities', () => {
     expect(partidaEik('eik:111111111')).toBe('111111111');
     expect(partidaEik('eik:1111111110001')).toBeNull();
     expect(partidaEik('name:ФИРМА')).toBeNull();
+  });
+});
+
+describe('non-unique date-of-birth sources', () => {
+  it('migrates old combined identities into source roles and keeps private roles out of old URLs', async () => {
+    const db = served();
+    open!.exec(
+      `UPDATE registry_persons SET indent_type='BirthDate' WHERE indent IN ('${ANNA}','${OWNER}')`,
+    );
+    open!.exec(readFileSync(resolve(migrationsDir, '0019_registry_scoped_birthdates.sql'), 'utf8'));
+    expect(await getRegistryPerson(db, ANNA)).toBeNull();
+    const sources = await getRegistrySourceCompanies(db, ANNA);
+    expect(sources.map((r) => r.eik)).toEqual(['111111111', '222222222']);
+    expect(sources.every((r) => r.href?.startsWith('/companies/'))).toBe(true);
+    expect(await getRegistrySourceCompanies(db, OWNER)).toEqual([]);
+    expect(
+      (await getCompanyPeople(db, 'eik:111111111')).roles.filter(
+        (r) => r.holder.name === 'АННА ПЕТРОВА',
+      ),
+    ).toHaveLength(2);
+    open!.exec(readFileSync(resolve(migrationsDir, '0019_registry_scoped_birthdates.sql'), 'utf8'));
+    expect(await getRegistrySourceCompanies(db, ANNA)).toEqual(sources);
   });
 });

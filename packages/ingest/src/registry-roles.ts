@@ -9,7 +9,8 @@
 // A record carries its holder as `Person` or `Subject` — the same shape either way: Indent, IndentType, Name,
 // the country, the legal form. What Indent holds depends on IndentType:
 //
-//   EGN, LNCH, BirthDate   the register's salted hash of the personal number — a natural person
+//   EGN, LNCH             a hashed personal identifier — joinable across companies
+//   BirthDate             a date of birth — not a globally unique person identifier
 //   UIC                    the entity's ЕИК
 //   Undefined, or empty    a raw string (a foreign number, a date, nothing) — identifies no one
 //
@@ -124,7 +125,6 @@ const str = (v: unknown): string | null =>
 const day = (s: string) => s.slice(0, 10);
 
 // A natural person is identified by the register's salted hash of the personal number; 64 hex characters.
-const PERSON_INDENT = new Set(['EGN', 'LNCH', 'BIRTHDATE']);
 const HASH = /^[0-9a-f]{64}$/i;
 const EIK = /^\d{9}(\d{4})?$/;
 
@@ -158,8 +158,16 @@ function subjectOf(eik: string, holder: Obj): Subject | null {
   const indent = str(holder.Indent);
   const indentType = str(holder.IndentType);
   const type = indentType?.toUpperCase() ?? '';
-  if (indent && PERSON_INDENT.has(type) && HASH.test(indent))
+  if (indent && personalRegistryIndent(indent, indentType))
     return { kind: 'person', id: indent.toLowerCase(), name, indentType };
+  // Birth dates are not globally unique person identifiers. Keep the role scoped to its source.
+  if (indent && type === 'BIRTHDATE' && HASH.test(indent))
+    return {
+      kind: 'person',
+      id: `local:${eik}:birthdate:${indent.toLowerCase()}:${name}`,
+      name,
+      indentType,
+    };
   if (indent && type === 'UIC' && EIK.test(indent))
     return { kind: 'entity', id: indent, name, indentType };
   const company =
@@ -249,13 +257,23 @@ export function identityObservations(
             entryOn: f.entryDate,
             holderIndex: holderIndex++,
             indent: personal ? rawId.toLowerCase() : null,
-            indentType: personal ? indentType : null,
+            indentType,
             name,
             nameKey: personNameKey(name),
-            kind: collectivePersonName(name) ? 'collective' : personal ? 'person' : 'other',
+            kind: personal ? (collectivePersonName(name) ? 'collective' : 'person') : 'other',
           });
         }
     }
+  const holderNames = new Map<string, Set<string>>();
+  const keyOf = (o: RegistryIdentityObservation) =>
+    `${o.subUic}|${o.fieldIdent}|${o.entryNumber}|${o.indent}`;
+  for (const o of out)
+    if (o.indent) {
+      const key = keyOf(o);
+      if (!holderNames.has(key)) holderNames.set(key, new Set());
+      holderNames.get(key)!.add(o.nameKey);
+    }
+  for (const o of out) if (o.indent && holderNames.get(keyOf(o))!.size > 1) o.kind = 'collective';
   return out;
 }
 
@@ -292,7 +310,11 @@ export function rolesFromDeed(
         const ambiguous =
           collectiveIds.get(`${sub.subUic}|${fieldIdent}|${f.entryNumber}`) ?? new Set<string>();
         for (const [id, item] of now)
-          if (collectivePersonName(item.subject.name) || ambiguous.has(id)) now.delete(id);
+          if (
+            item.subject.kind === 'person' &&
+            (collectivePersonName(item.subject.name) || ambiguous.has(id))
+          )
+            now.delete(id);
         for (const [id, r] of standing)
           if (!now.has(id)) {
             if (ambiguous.has(id)) r.uncertainAfter = on;

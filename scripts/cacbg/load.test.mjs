@@ -1689,6 +1689,7 @@ test('a later partial change does not erase a family holding absent from its row
       JSON.stringify({
         folder: '2030',
         xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Change',
@@ -1728,6 +1729,7 @@ test('a comparable later omission preserves a proven family link as history with
       JSON.stringify({
         folder: '2030',
         xmlFile: 'later-empty.xml',
+        sourceHash: 'b'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Annualy',
@@ -1779,6 +1781,7 @@ test('a later document without a visible comparable inventory cannot erase a fam
       JSON.stringify({
         folder: '2030',
         xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
         year: '2030',
         template: 'assets',
         declarationType: 'Annualy',
@@ -1885,7 +1888,12 @@ test('same-year inventory differences retain proven links and preserve both sour
     for (const variant of ['duplicate', 'contradictory', 'not_comparable']) {
       fs.writeFileSync(holdingsFile, holdings);
       fs.writeFileSync(filingsFile, filings);
-      const extra = { ...base, xmlFile: 'same-year-correction.xml', controlHash: 'correction' };
+      const extra = {
+        ...base,
+        xmlFile: 'same-year-correction.xml',
+        sourceHash: 'c'.repeat(64),
+        controlHash: 'correction',
+      };
       fs.appendFileSync(
         filingsFile,
         JSON.stringify({
@@ -1932,7 +1940,9 @@ test('a registry-backed rebuild refuses staging that skipped identity evidence b
   const before = db
     .prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'")
     .get().n;
-  db.exec('CREATE TABLE registry_roles(dummy)');
+  const manifestFile = path.join(STAGING, 'manifest.json');
+  const saved = fs.readFileSync(manifestFile, 'utf8');
+  fs.writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 6 }));
   try {
     assert.throws(
       () => runLoad(),
@@ -1943,7 +1953,7 @@ test('a registry-backed rebuild refuses staging that skipped identity evidence b
       before,
     );
   } finally {
-    db.exec('DROP TABLE registry_roles');
+    fs.writeFileSync(manifestFile, saved);
     db.close();
   }
 });

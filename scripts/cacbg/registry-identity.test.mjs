@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { registryIdentityResolver } from './registry-identity.mjs';
 
 function fixture() {
@@ -8,10 +9,34 @@ function fixture() {
   db.exec(`CREATE TABLE registry_deeds(eik,name,legal_form,seat_settlement,outcome);
     CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
     INSERT INTO registry_deeds VALUES('123456789','А ДЕЙТА ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
-  const add = (eik, id, name) =>
+  db.exec(
+    readFileSync(
+      new URL(
+        '../../packages/db/migrations/0017_registry_identity_observations.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
+  let entry = 0;
+  const add = (eik, id, name, type = 'EGN') =>
     db
-      .prepare("INSERT INTO registry_roles VALUES(?,?,?,'20190101120000','person','partner')")
-      .run(eik, id, name);
+      .prepare('INSERT INTO registry_identity_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(
+        eik,
+        '1',
+        '00190',
+        String(++entry),
+        '2019-01-01',
+        0,
+        id,
+        type,
+        name,
+        name,
+        'person',
+        'f'.repeat(64),
+        '2026-01-01',
+      );
   const name = 'Ивана Петрова Тестова';
   const alias = 'Ивана Петрова Тестова-Примерова';
   const doc = {
@@ -62,5 +87,15 @@ test('same names with different Indent, aliases in another company and local ids
     } finally {
       db.close();
     }
+  }
+});
+
+test('a date-of-birth observation cannot establish a global identity even with an exact name', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    add('123456789', 'a'.repeat(64), name, 'BirthDate');
+    assert.deepEqual(registryIdentityResolver(db)(doc, [name]).evidence, []);
+  } finally {
+    db.close();
   }
 });

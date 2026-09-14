@@ -12,7 +12,7 @@ import {
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileDigest } from './cacbg/build-proof.mjs';
-import { assertD1TargetAuthorized, parseWranglerJson } from './ship-related-persons.mjs';
+import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
 const flag = (n) => process.argv.includes(`--${n}`);
 const value = (n) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -65,6 +65,7 @@ if (remote) {
     '0012_person_redirects',
     '0014_person_profile',
     '0015_person_observations',
+    '0018_person_entities',
   ])
     wrangler([
       'd1',
@@ -75,16 +76,54 @@ if (remote) {
       '--file',
       resolve(`packages/db/migrations/${name}.sql`),
     ]);
+  // Observation tables are idempotent; add the role boundary once, independently of job retries.
+  const registrySchema = join(work, 'registry-identity-schema.sql');
+  writeFileSync(
+    registrySchema,
+    readFileSync('packages/db/migrations/0017_registry_identity_observations.sql', 'utf8').replace(
+      'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT;',
+      '',
+    ),
+  );
+  wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', registrySchema]);
+  const columns = parseWranglerJson(
+    wrangler(
+      ['d1', 'execute', d1, '--remote', '--json', '--command', 'PRAGMA table_info(registry_roles)'],
+      true,
+    ),
+  );
+  if (!columns.flatMap((r) => r.results ?? []).some((c) => c.name === 'uncertain_after'))
+    wrangler([
+      'd1',
+      'execute',
+      d1,
+      '--remote',
+      '--yes',
+      '--command',
+      'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT',
+    ]);
+  wrangler([
+    'd1',
+    'execute',
+    d1,
+    '--remote',
+    '--yes',
+    '--file',
+    resolve('packages/db/migrations/0019_registry_scoped_birthdates.sql'),
+  ]);
   const tables = [
-    'bidders',
-    'contracts',
-    'tenders',
-    'authorities',
-    'registry_deeds',
-    'registry_roles',
-    'registry_persons',
-    'interest_links',
-    'interest_link_evidence',
+    ...new Set([
+      'bidders',
+      'contracts',
+      'tenders',
+      'authorities',
+      'registry_deeds',
+      'registry_roles',
+      'registry_persons',
+      'registry_identity_observations',
+      'registry_identity_snapshots',
+      ...TABLES,
+    ]),
   ];
   const sql = join(work, 'source.sql');
   rmSync(sql, { force: true });
@@ -191,6 +230,15 @@ if (!flag('skip-fetch')) {
   }
 }
 run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
+if (env.CACBG_COMPANY_CATALOG)
+  run('scripts/cacbg/request-companies.mjs', [
+    '--catalog',
+    env.CACBG_COMPANY_CATALOG,
+    '--db',
+    db,
+    '--staging',
+    staging,
+  ]);
 if (r2) rmSync(raw, { recursive: true, force: true }); // bounded peak disk before bootstrap DB copies
 run('scripts/cacbg/load.mjs', ['--emit-candidates']);
 run('scripts/tr/decide.mjs', [
@@ -200,7 +248,6 @@ run('scripts/tr/decide.mjs', [
   db,
 ]);
 run('scripts/cacbg/load.mjs');
-run('scripts/cacbg/person-registry-links.mjs', ['--db', db, '--registry-db', db]);
 run('scripts/cacbg/audit.mjs');
 if (remote) {
   run('scripts/ship-related-persons.mjs', ['--work-db', db, '--remote', '--yes']);

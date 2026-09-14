@@ -15,6 +15,7 @@ import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mj
 import { sentinelPath } from './fetch.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { declaredEiks } from './extract-companies.mjs';
 
 // Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
 // production behaviour is unchanged when they are unset.
@@ -90,6 +91,7 @@ async function run() {
   // filings.jsonl — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
   // The loader builds each person's latest-filing horizon from this to catch a divest-to-ZERO (B1, #226).
   const filingsOut = fs.createWriteStream(path.join(STAGING, 'filings.jsonl'));
+  const requestsOut = fs.createWriteStream(path.join(STAGING, 'registry-requests.jsonl'));
   const quarantineOut = fs.createWriteStream(path.join(STAGING, 'source-quarantine.jsonl'));
   const stats = {
     decls: 0,
@@ -185,6 +187,8 @@ async function run() {
           work: d.work ?? '',
           position: c.position || d.position || '',
           controlHash: d.controlHash,
+          sourceHash: fingerprint,
+          identityReason: identity?.reason ?? 'registry_not_read',
           declarationType: d.declarationType,
           assetInventoryComparable: d.assetInventoryComparable ?? false,
           declaredOn: d.declaredOn ?? null,
@@ -194,6 +198,15 @@ async function run() {
       );
       stats.filings++;
       for (const it of d.interests) {
+        for (const eik of declaredEiks(it.entity))
+          if (eik.length === 9)
+            requestsOut.write(
+              JSON.stringify({
+                eik,
+                declarationId: `decl:${folder}:${file}`,
+                declaredName: it.entity,
+              }) + '\n',
+            );
         holdingsOut.write(
           JSON.stringify({
             folder,
@@ -243,8 +256,11 @@ async function run() {
   relatedOut.end();
   filingsOut.end();
   quarantineOut.end();
+  requestsOut.end();
   await Promise.all(
-    [holdingsOut, relatedOut, filingsOut, quarantineOut].map((stream) => finished(stream)),
+    [holdingsOut, relatedOut, filingsOut, quarantineOut, requestsOut].map((stream) =>
+      finished(stream),
+    ),
   );
   fs.writeFileSync(
     path.join(STAGING, 'manifest.json'),
@@ -252,7 +268,7 @@ async function run() {
       {
         schemaVersion: 6,
         corpusComplete: !process.argv.includes('--allow-partial-corpus'),
-        identityRules: identify ? 'registry-identity-1' : null,
+        identityRules: identify ? 'registry-identity-2' : null,
         extractedAt: new Date().toISOString(),
         raw: RAW,
         filings: stats.filings,

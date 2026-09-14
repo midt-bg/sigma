@@ -68,23 +68,33 @@ const findings = [];
 const flag = (link, axis, detail) =>
   findings.push({ axis, link_key: link.link_key, eik: link.eik, detail });
 
-// A contradictory source identity cannot silently fall back to a name-based public profile.
-if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='declaration_identity_evidence'").get()) {
-  const ambiguous = new Set(
+// Published canonical profiles must agree with durable source membership, not a second name resolver.
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
+  const invalid = new Set(
     db
       .prepare(
-        `SELECT d.person_id FROM declaration_identity_evidence e
-    JOIN declarations d ON d.id=e.declaration_id GROUP BY d.person_id HAVING COUNT(DISTINCT e.registry_indent)>1`,
+        `
+    SELECT p.id FROM persons p LEFT JOIN person_entities e ON e.id=p.id
+    WHERE p.id LIKE 'person:identity:%' AND (e.id IS NULL OR NOT EXISTS(
+      SELECT 1 FROM person_sources s WHERE s.entity_id=p.id AND s.namespace='cacbg' AND s.active=1))
+    UNION
+    SELECT pl.person_id FROM person_registry_links pl LEFT JOIN person_entities e ON e.id=pl.person_id
+    WHERE e.registry_indent IS NULL OR e.registry_indent<>pl.registry_indent
+    UNION
+    SELECT d.person_id FROM declarations d JOIN person_sources s
+      ON s.id='cacbg:'||d.folder_year||':'||d.xml_file AND s.active=1
+    WHERE d.person_id<>coalesce(s.entity_id,s.legacy_person_id)
+  `,
       )
       .all()
-      .map((r) => r.person_id),
+      .map((r) => r.id),
   );
   for (const link of published)
-    if (ambiguous.has(link.person_id))
+    if (invalid.has(link.person_id))
       flag(
         link,
-        'I_ambiguous_identity',
-        'Competing public registry identities require source-level resolution before publication',
+        'I_source_identity',
+        'Published profile disagrees with current identity evidence or source membership',
       );
 }
 
@@ -349,7 +359,11 @@ for (const p of regressions)
   findings.push({
     axis: 'D_monotonicity',
     link_key: p.link_key,
-    eik: p.link_key.split('|')[1] ?? '',
+    eik:
+      p.link_key
+        .split('|')
+        .filter((part) => part !== 'family')
+        .at(-1) ?? '',
     // The link_key is named explicitly: it is the only handle a human has to go and look at which
     // claim disappeared, and the shared axis report prints the ЕИК alone.
     detail: `${p.link_key} published last run under rules_version ${p.rules_version} (unchanged) and is not published now — nothing licensed this removal`,

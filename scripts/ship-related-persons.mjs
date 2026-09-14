@@ -27,6 +27,11 @@ import { pathToFileURL } from 'node:url';
 // SQLITE_CONSTRAINT_FOREIGNKEY (a re-seed then dies at persons).
 export const TABLES = [
   'persons',
+  'person_entities',
+  'person_sources',
+  'person_identity_evidence',
+  'person_source_aliases',
+  'registry_requested_companies',
   'declarations',
   'declared_interests',
   'interest_links',
@@ -46,6 +51,11 @@ export const TABLES = [
 // re-shipped) also REFERENCES declarations, so it is wiped before declarations; otherwise a populated D1
 // carrying internal rows would block DELETE FROM declarations.
 export const WIPE_ORDER = [
+  'registry_requested_companies',
+  'person_source_aliases',
+  'person_identity_evidence',
+  'person_sources',
+  'person_entities',
   'interest_link_observations',
   'declaration_identity_evidence',
   'interest_link_history',
@@ -62,8 +72,8 @@ export const WIPE_ORDER = [
   'declarations',
   'persons',
 ];
-export function wipeSql() {
-  return WIPE_ORDER.map((t) => `DELETE FROM ${sqlIdent(t)};`).join('\n') + '\n';
+export function wipeSql(tables = WIPE_ORDER) {
+  return tables.map((t) => `DELETE FROM ${sqlIdent(t)};`).join('\n') + '\n';
 }
 const MAX_BATCH_BYTES = 90_000;
 export const MAX_BATCH_ROWS = 400;
@@ -110,7 +120,16 @@ const sleepSync = (ms) => {
  * including constraints and FK validation; an interrupted upload never touches served rows.
  * ponytail: full-snapshot promotion must fit D1's statement duration; partition only if measured necessary.
  */
-export function runShip({ tables, readTable, apply, sleep, readCounts, maxStatements, paceMs }) {
+export function runShip({
+  tables,
+  wipeTables = WIPE_ORDER,
+  readTable,
+  apply,
+  sleep,
+  readCounts,
+  maxStatements,
+  paceMs,
+}) {
   let requests = 0;
   const send = (label, sql) => {
     if (requests++) sleep(paceMs);
@@ -158,7 +177,7 @@ export function runShip({ tables, readTable, apply, sleep, readCounts, maxStatem
 DROP TRIGGER IF EXISTS rp_publish_apply;
 CREATE TRIGGER rp_publish_apply AFTER INSERT ON rp_publish BEGIN
 ${guards}
-${wipeSql()}${insert}
+${wipeSql(wipeTables)}${insert}
 END;`,
   );
   // Trigger bodies execute within the INSERT's transaction, including all their DELETE/INSERT work.

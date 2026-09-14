@@ -159,6 +159,7 @@ before(() => {
   // divest horizon is built from this: Диан's 2022 assets declaration (listing only the non-winner) advances
   // his assets horizon to 2022 → the 2019 ДИВ ТЕХ 5 winner stake is withdrawn. Верен has only a 2019 filing.
   const filings = holdings.map((h) => ({
+    sourceHash: 'a'.repeat(64),
     folder: h.folder,
     xmlFile: h.xmlFile,
     year: h.year,

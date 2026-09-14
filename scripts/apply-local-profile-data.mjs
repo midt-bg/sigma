@@ -4,7 +4,26 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { TABLES, WIPE_ORDER } from './ship-related-persons.mjs';
+import {
+  TABLES as PROFILE_TABLES,
+  WIPE_ORDER as PROFILE_WIPE_ORDER,
+} from './ship-related-persons.mjs';
+const TABLES = [
+  'registry_deeds',
+  'registry_persons',
+  'registry_roles',
+  'registry_identity_observations',
+  'registry_identity_snapshots',
+  ...PROFILE_TABLES,
+];
+const WIPE_ORDER = [
+  'registry_roles',
+  'registry_identity_observations',
+  'registry_identity_snapshots',
+  'registry_persons',
+  'registry_deeds',
+  ...PROFILE_WIPE_ORDER,
+];
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n) => {
   const i = process.argv.indexOf(n);
@@ -31,7 +50,7 @@ if (source === target) throw new Error('Source and target must differ');
 if (
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 6 ||
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).identityRules !==
-    'registry-identity-1' ||
+    'registry-identity-2' ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))
 )
   throw new Error('A current extraction and the prior-publication snapshot are required');
@@ -77,6 +96,27 @@ try {
   db.exec(
     fs.readFileSync(path.join(root, 'packages/db/migrations/0015_person_observations.sql'), 'utf8'),
   );
+  db.exec(
+    fs.readFileSync(path.join(root, 'packages/db/migrations/0018_person_entities.sql'), 'utf8'),
+  );
+  db.exec(
+    fs.readFileSync(path.join(root, 'packages/db/migrations/0016_registry_entry_sync.sql'), 'utf8'),
+  );
+  let registrySchema = fs.readFileSync(
+    path.join(root, 'packages/db/migrations/0017_registry_identity_observations.sql'),
+    'utf8',
+  );
+  if (
+    db
+      .prepare('PRAGMA table_info(registry_roles)')
+      .all()
+      .some((c) => c.name === 'uncertain_after')
+  )
+    registrySchema = registrySchema.replace(
+      'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT;',
+      '',
+    );
+  db.exec(registrySchema);
   for (const t of WIPE_ORDER)
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t))
       db.exec(`DELETE FROM ${t}`);
