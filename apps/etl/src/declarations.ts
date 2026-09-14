@@ -11,15 +11,21 @@ export interface DeclarationEnv {
   SUPPRESSION_SALT?: string;
   SUPPRESSION_KEY_VERSION?: string;
 }
+interface DeclarationRun {
+  runId: string;
+  state: string;
+  startedAt?: number;
+  finishedAt?: string;
+  reason?: string;
+}
 /** One native Container + its Durable Object. No HTTP endpoint or additional Workflow. */
 export class DeclarationContainer extends DurableObject<DeclarationEnv> {
+  getRun() {
+    return this.ctx.storage.get<DeclarationRun>('run');
+  }
   async startRun(): Promise<{ runId: string; state: string }> {
     return this.ctx.blockConcurrencyWhile(async () => {
-      const current = await this.ctx.storage.get<{
-        runId: string;
-        state: string;
-        startedAt?: number;
-      }>('run');
+      const current = await this.getRun();
       const container = this.ctx.container;
       if (!container) throw new Error('Declaration container is not configured');
       if (container.running) return current ?? { runId: 'unknown', state: 'running' };
@@ -53,9 +59,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
   override async alarm(): Promise<void> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const container = this.ctx.container!;
-      const run = await this.ctx.storage.get<{ runId: string; state: string; startedAt?: number }>(
-        'run',
-      );
+      const run = await this.getRun();
       if (!run || run.state !== 'running') return;
       if (run.startedAt && Date.now() - run.startedAt > 6 * 3600000) {
         await container.destroy();

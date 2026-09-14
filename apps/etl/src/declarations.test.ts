@@ -48,6 +48,7 @@ it('deduplicates live starts, records completion, restores checkpoints and detec
   env.DECLARATIONS_CORPUS = { get: async () => ({ text: async () => '{"folders":[]}' }) } as never;
   const job = new DeclarationContainer(ctx as never, env);
   const first = await job.startRun();
+  expect(await job.getRun()).toEqual(first);
   expect(await job.startRun()).toEqual(first);
   expect(container.start).toHaveBeenCalledOnce();
   expect(container.start.mock.calls[0]).toMatchObject([
@@ -56,6 +57,7 @@ it('deduplicates live starts, records completion, restores checkpoints and detec
   status = { ...first, state: 'complete' };
   await job.alarm();
   expect(records.get('run').state).toBe('complete');
+  expect((await job.getRun())?.state).toBe('complete');
   expect(container.running).toBe(false);
   const second = await job.startRun();
   expect(second.runId).not.toBe(first.runId);
