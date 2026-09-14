@@ -304,6 +304,7 @@
    anchors to the same container. `!important` beats the async widget stylesheet
    regardless of load order. */
 html .a11y-tools__button {
+  box-sizing: border-box;
   background-color: var(--accent);
   border-color: var(--accent);
 }

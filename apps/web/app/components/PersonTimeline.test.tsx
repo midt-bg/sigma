@@ -134,7 +134,15 @@ it('shows one company for multiple source identities, sequential sections and hi
     expect(ids.indexOf('declared-overview')).toBeLessThan(ids.indexOf('timeline'));
     expect(ids.indexOf('declarations')).toBeLessThan(ids.indexOf('contracts'));
     expect(ids.at(-1)).toBe('contracts');
-    expect(el.textContent).toContain('Предходно участие');
+    const notes = el.querySelector('.person-time-notes')!;
+    expect(notes.closest('.person-time-scroll')).toBeNull();
+    expect(notes.textContent).toContain(link.company);
+    expect(notes.textContent).toContain('Лична роля в ТР не е установена');
+    expect(notes.textContent).toContain('Предходно участие');
+    expect(notes.querySelector('a[href="#declaration-d"]')).not.toBeNull();
+    expect(el.querySelector('.person-time-scroll')?.textContent).not.toMatch(
+      /Не е установена|Предходно участие/,
+    );
     expect(el.querySelector('#declaration-d a')?.getAttribute('href')).toBe(link.sourceUrl);
     p.declarations[0]!.interests = [
       { company: link.company, eik: link.eik, kind: 'shares', timing: 'annual', scope: 'self' },
@@ -187,7 +195,11 @@ it('shows one company for multiple source identities, sequential sections and hi
     );
     act(() => root.render(<Stub key="disputed" />));
     expect(el.querySelectorAll('.time-disputed')).toHaveLength(1);
-    expect(el.textContent).toContain('Разминаване в декларациите');
+    const discrepancyNotes = el.querySelector('.person-time-notes')!;
+    expect(discrepancyNotes.textContent).toContain('Разминаване в декларациите');
+    for (const id of ['d', 'other']) {
+      expect(discrepancyNotes.querySelector(`a[href="#declaration-${id}"]`)).not.toBeNull();
+    }
     expect(el.querySelector('#declaration-other')?.textContent).toContain('не е посочен тук');
     expect(
       el.querySelector('#declaration-d .declaration-discrepancy a[href="#declaration-other"]'),
