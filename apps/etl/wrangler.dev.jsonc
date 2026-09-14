@@ -37,7 +37,7 @@
       "class_name": "DeclarationContainer",
       "image": "../../containers/declarations/Dockerfile",
       "image_build_context": "../..",
-      "instance_type": "standard-2",
+      "instance_type": "standard-3",
       "max_instances": 1,
     },
   ],
