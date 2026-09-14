@@ -348,3 +348,45 @@ it('queues declared companies without contracts and stores per-entry identity ev
     n: 1,
   });
 });
+
+it('backfills and replaces company name history in the same transaction as registry facts', async () => {
+  const { db, sqlite } = served();
+  const eik = '111111111',
+    at = '2026-09-14T00:00:00Z';
+  await storeDeed(db, eik, { status: 'ok', deed: partida(eik, []) }, at);
+  expect(
+    sqlite.prepare('SELECT names_json FROM registry_company_history WHERE eik=?').get(eik)
+      ?.names_json,
+  ).toBe('[]');
+  expect(await queueNewWinners(db, at, 10)).toBe(1);
+  sqlite.prepare('DELETE FROM registry_company_history WHERE eik=?').run(eik);
+  expect(await queueNewWinners(db, at, 10)).toBe(1);
+  expect(sqlite.prepare('SELECT eik FROM registry_queue WHERE eik=?').get(eik)).toBeTruthy();
+  const fields = [
+    { ...managers(), fieldIdent: '00020', element: 'Company', value: { $text: 'ИСТОРИЧЕСКО ИМЕ' } },
+    {
+      ...managers(),
+      fieldIdent: '00030',
+      element: 'LegalForm',
+      value: { Text: 'Дружество с ограничена отговорност' },
+    },
+  ];
+  await storeDeed(db, eik, { status: 'ok', deed: partida(eik, fields) }, at);
+  const h = sqlite.prepare('SELECT * FROM registry_company_history WHERE eik=?').get(eik)!;
+  expect(JSON.parse(h.names_json as string)[0]).toMatchObject({
+    name: 'ИСТОРИЧЕСКО ИМЕ',
+    legalForm: 'ООД',
+    nameEntry: '20200101100000',
+  });
+  expect(h.source_hash).toBe(
+    sqlite.prepare('SELECT source_hash FROM registry_identity_snapshots WHERE eik=?').get(eik)
+      ?.source_hash,
+  );
+  expect(sqlite.prepare('SELECT eik FROM registry_queue WHERE eik=?').get(eik)).toBeUndefined();
+  await storeDeed(db, eik, { status: 'ok', deed: partida(eik, []) }, at);
+  expect(
+    sqlite.prepare('SELECT names_json FROM registry_company_history WHERE eik=?').get(eik)
+      ?.names_json,
+  ).toBe('[]');
+  sqlite.close();
+});

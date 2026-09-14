@@ -111,6 +111,15 @@ if (remote) {
     '--file',
     resolve('packages/db/migrations/0019_registry_scoped_birthdates.sql'),
   ]);
+  wrangler([
+    'd1',
+    'execute',
+    d1,
+    '--remote',
+    '--yes',
+    '--file',
+    resolve('packages/db/migrations/0020_registry_company_history.sql'),
+  ]);
   const tables = [
     ...new Set([
       'bidders',
@@ -122,6 +131,7 @@ if (remote) {
       'registry_persons',
       'registry_identity_observations',
       'registry_identity_snapshots',
+      'registry_company_history',
       ...TABLES,
     ]),
   ];

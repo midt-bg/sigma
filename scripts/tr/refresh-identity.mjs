@@ -41,6 +41,12 @@ db.exec(
     'utf8',
   ),
 );
+db.exec(
+  fs.readFileSync(
+    new URL('../../packages/db/migrations/0020_registry_company_history.sql', import.meta.url),
+    'utf8',
+  ),
+);
 const d1 = d1FromSqlite(db);
 const client = registryClient({ baseUrl: 'https://api-sigma-cr.registryagency.bg' });
 const eiks = [...new Set(fs.readFileSync(arg('--eiks'), 'utf8').split(/\s+/).filter(Boolean))];
@@ -52,7 +58,11 @@ try {
     if (!/^\d{9}$/.test(eik)) throw new Error('Invalid partida EIK');
     if (
       !process.argv.includes('--refresh') &&
-      db.prepare('SELECT 1 FROM registry_identity_snapshots WHERE eik=?').get(eik)
+      db
+        .prepare(
+          'SELECT 1 FROM registry_identity_snapshots s JOIN registry_company_history h USING(eik) WHERE eik=?',
+        )
+        .get(eik)
     ) {
       skipped++;
       continue;

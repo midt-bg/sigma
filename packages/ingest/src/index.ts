@@ -5,3 +5,4 @@ export * from './staging';
 export * from './refresh';
 export * from './registry';
 export * from './registry-roles';
+export * from './registry-company-names';

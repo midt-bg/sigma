@@ -1,7 +1,7 @@
 // The registry layer's D1 side (ADR-0041): which partidas still need reading, the run's lease, and writing one
 // partida's facts. The register itself is read through @sigma/ingest's client; nothing here touches the net.
 import type { DeedLookup, RegistryPerson, RegistryRole } from '@sigma/ingest';
-import { deedFacts, rolesFromDeed } from '@sigma/ingest';
+import { companyNamesFromDeed, deedFacts, rolesFromDeed } from '@sigma/ingest';
 
 export const REGISTRY_LEASE_TTL_MS = 30 * 60 * 1000;
 
@@ -90,7 +90,8 @@ export async function queueNewWinners(db: D1Database, now: string, limit: number
        ) requested
        WHERE (NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
          OR (EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok')
-           AND NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)))
+           AND (NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)
+             OR NOT EXISTS (SELECT 1 FROM registry_company_history h WHERE h.eik=requested.eik))))
          AND NOT EXISTS (SELECT 1 FROM registry_queue q WHERE q.eik=requested.eik)
        ORDER BY eik LIMIT ?2`,
     )
@@ -204,6 +205,7 @@ export async function storeDeed(
     db.prepare('DELETE FROM registry_roles WHERE eik = ?').bind(eik),
     db.prepare('DELETE FROM registry_identity_observations WHERE eik = ?').bind(eik),
     db.prepare('DELETE FROM registry_identity_snapshots WHERE eik = ?').bind(eik),
+    db.prepare('DELETE FROM registry_company_history WHERE eik = ?').bind(eik),
   ];
   if (lookup.status === 'ok') {
     const parsed = rolesFromDeed(eik, lookup.deed);
@@ -219,6 +221,9 @@ export async function storeDeed(
       db
         .prepare('INSERT INTO registry_identity_snapshots VALUES(?,?,?)')
         .bind(eik, sourceHash, fetchedAt),
+      db
+        .prepare('INSERT INTO registry_company_history VALUES(?,?,?,?)')
+        .bind(eik, JSON.stringify(companyNamesFromDeed(lookup.deed)), sourceHash, fetchedAt),
     );
     for (const o of parsed.observations)
       statements.push(
