@@ -399,6 +399,11 @@ export async function run({
             status: res.status,
             location: res.headers?.location,
             retryAfter: res.headers?.['retry-after'],
+            server: res.headers?.server,
+            address: res.address,
+            response: res.headers?.['content-type']?.includes('text/html')
+              ? res.body?.toString('utf8').slice(0, 1200)
+              : undefined,
           });
           // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
           // just network throws — so the crawl stops instead of hammering the register indefinitely.

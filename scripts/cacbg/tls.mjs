@@ -59,7 +59,12 @@ export function getPinned(url, { headers = {}, timeoutMs = 30000 } = {}) {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            address: res.socket?.remoteAddress,
+          }),
         );
         res.on('error', reject);
       },
