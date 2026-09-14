@@ -9,6 +9,9 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { declarationContinuity, CONTINUITY_RULE } from './declaration-continuity.mjs';
+import { registryCompanyResolver } from './registry-identity.mjs';
+import { documentFingerprint } from './source-identity.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import { eikCompanyNameKey } from './resolve-company.mjs';
 import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
@@ -71,6 +74,37 @@ const flag = (link, axis, detail) =>
 
 // Published canonical profiles must agree with durable source membership, not a second name resolver.
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
+  const continuity = db
+    .prepare("SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version=?")
+    .all(CONTINUITY_RULE);
+  if (continuity.length) {
+    try {
+      const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
+      const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
+      if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))
+        throw new Error('declaration continuity input is not the completed extraction');
+      const expected = new Map(
+        declarationContinuity(
+          raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse),
+          registryCompanyResolver(db),
+        ).map((e) => [e.id, e]),
+      );
+      for (const e of continuity) {
+        const candidate = expected.get(e.id);
+        if (
+          !candidate ||
+          ['left_source', 'right_source', 'left_hash', 'right_hash', 'relation', 'facts'].some(
+            (k) => candidate[k] !== e[k],
+          )
+        )
+          throw new Error(
+            'accepted declaration continuity is not reproducible from current sources',
+          );
+      }
+    } catch (error) {
+      findings.push({ axis: 'I_declaration_continuity', detail: error.message });
+    }
+  }
   const invalidEvidence = db
     .prepare(
       `SELECT count(*) n FROM person_identity_evidence e

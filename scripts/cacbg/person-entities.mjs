@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
-import { registryIdentityRows, IDENTITY_RULES_VERSION } from './registry-identity.mjs';
+import {
+  registryIdentityRows,
+  registryCompanyResolver,
+  IDENTITY_RULES_VERSION,
+} from './registry-identity.mjs';
+import { declarationContinuity } from './declaration-continuity.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export const declarationSourceId = (rec) => `cacbg:${rec.folder}:${rec.xmlFile}`;
@@ -53,7 +58,7 @@ export function identityComponents(sources, evidence) {
 }
 
 /** Revalidate exact per-entry proofs before any aggregate adopts a canonical person.
- * No propagation across the old name/institution bucket, company or family member. */
+ * Continuity can attach documents to an anchor, never infer ownership from a family member. */
 export function rebuildPersonEntities(
   db,
   registry,
@@ -97,6 +102,8 @@ export function rebuildPersonEntities(
     unresolved: 0,
     conflicts: 0,
     revoked: 0,
+    continuityAccepted: 0,
+    continuityCandidates: 0,
   };
   db.exec('BEGIN');
   try {
@@ -260,6 +267,41 @@ export function rebuildPersonEntities(
         "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND origin='automatic'",
       )
       .all();
+    const proposed = declarationContinuity(filings, registryCompanyResolver(registry));
+    // Test the complete proposed graph, including every ambiguous registry candidate.
+    // Reject all new edges in a conflicting component, preserving already proven anchors.
+    const ambiguous = db
+      .prepare(
+        "SELECT * FROM person_identity_evidence WHERE decision='candidate' AND rule_version=?",
+      )
+      .all(IDENTITY_RULES_VERSION)
+      .map((e) => ({ ...e, decision: 'accepted' }));
+    const blocked = new Set(),
+      anchored = new Set();
+    for (const c of identityComponents(sources, [...evidence, ...ambiguous, ...proposed])) {
+      if (c.conflict) for (const s of c.members) blocked.add(s.id);
+      else if (c.members.some((s) => s.namespace === 'tr'))
+        for (const s of c.members) anchored.add(s.id);
+    }
+    for (const e of proposed) {
+      const conflict = blocked.has(e.left_source) || blocked.has(e.right_source);
+      if (!conflict && !anchored.has(e.left_source)) continue;
+      e.decision = conflict ? 'candidate' : 'accepted';
+      putEvidence.run(
+        e.id,
+        e.left_source,
+        e.right_source,
+        e.left_hash,
+        e.right_hash,
+        e.relation,
+        e.decision,
+        e.rule_version,
+        e.facts,
+        now,
+      );
+      stats[conflict ? 'continuityCandidates' : 'continuityAccepted']++;
+      if (!conflict) evidence.push(e);
+    }
     const components = identityComponents(sources, evidence);
     // Registry-anchored components retain their entity first when an old component splits.
     components.sort(
