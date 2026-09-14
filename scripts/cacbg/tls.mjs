@@ -32,6 +32,9 @@ export const MAX_CONCURRENCY = 8;
 const agent = new https.Agent({
   keepAlive: true,
   maxSockets: MAX_CONCURRENCY,
+  // Resumed TLS sessions can omit the peer X509 certificate required by our per-socket pin.
+  // Keep-alive still reuses verified sockets; a new socket performs a full handshake.
+  maxCachedSessions: 0,
   rejectUnauthorized: false,
 });
 
