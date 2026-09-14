@@ -10,7 +10,7 @@
 //   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6  # concurrency is capped at MAX_CONCURRENCY
 //   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
-import { corpusStore, CORPUS_STAMP, digest } from './corpus.mjs';
+import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -625,7 +625,7 @@ export async function run({
       Buffer.from(
         JSON.stringify(
           {
-            schemaVersion: 2,
+            schemaVersion: CORPUS_VERSION,
             runId: process.env.SIGMA_RUN_ID ?? null,
             inventory,
             folders: folders.length,

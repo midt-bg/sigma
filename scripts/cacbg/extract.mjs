@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { finished } from 'node:stream/promises';
 import { parseList, parseDeclaration } from './parse.mjs';
 import { assertScratchIgnored, assertOverrideDirSafe, SCRATCH } from './guard.mjs';
-import { corpusStore, corpusFiles, CORPUS_STAMP, digest } from './corpus.mjs';
+import { corpusStore, corpusFiles, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
 import { progress } from './progress.mjs';
 import { safeFolder, safeXmlFile } from './guard.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
@@ -63,7 +63,9 @@ async function assertCorpusComplete(store) {
     const parsed = JSON.parse(stamp.toString('utf8'));
     if (
       store.remote &&
-      (parsed.schemaVersion !== 2 || !parsed.inventory?.length || parsed.incomplete !== false)
+      (parsed.schemaVersion !== CORPUS_VERSION ||
+        !parsed.inventory?.length ||
+        parsed.incomplete !== false)
     )
       throw Error('Invalid R2 corpus stamp');
     return parsed;

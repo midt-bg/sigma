@@ -6,6 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { safeFolder, safeXmlFile } from './guard.mjs';
 
 export const CORPUS_STAMP = '.corpus-complete.json';
+// v3 resolves sibling-folder declarations before certifying source gaps. Older stamps need a recrawl.
+export const CORPUS_VERSION = 3;
 export const digest = (body) => createHash('sha256').update(body).digest('hex');
 
 // Bounded batches hide R2 latency while preserving the parser's deterministic file order.

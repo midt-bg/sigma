@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { corpusStore, CORPUS_STAMP, digest } from './cacbg/corpus.mjs';
+import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './cacbg/corpus.mjs';
 import { importSql } from './cacbg/import-sql.mjs';
 import { progress } from './cacbg/progress.mjs';
 import { assertD1TargetAuthorized, parseWranglerJson, TABLES } from './ship-related-persons.mjs';
@@ -89,7 +89,7 @@ if (r2) {
   const parsed = stamp ? JSON.parse(stamp) : null;
   if (
     parsed?.runId === env.SIGMA_RUN_ID &&
-    parsed.schemaVersion === 2 &&
+    parsed.schemaVersion === CORPUS_VERSION &&
     parsed.incomplete === false
   )
     sourceStamp = stamp;

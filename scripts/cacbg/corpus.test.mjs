@@ -198,6 +198,13 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
       expected,
     );
     assert(!existsSync(join(dir, 'raw')));
+    const currentStamp = objects.get(CORPUS_STAMP);
+    objects.set(
+      CORPUS_STAMP,
+      Buffer.from(JSON.stringify({ ...JSON.parse(currentStamp), schemaVersion: 2 })),
+    );
+    await assert.rejects(() => extract({ store: remote }), /Invalid R2 corpus stamp/);
+    objects.set(CORPUS_STAMP, currentStamp);
     objects.set('2025/a.xml', Buffer.from(xml('changed')));
     await assert.rejects(() => extract({ store: remote }), /file missing or changed/);
     assert(!existsSync(join(dir, 'staging', 'manifest.json')));
