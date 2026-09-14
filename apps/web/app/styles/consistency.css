@@ -294,6 +294,7 @@ td .chip {
 .person-time-scroll {
   overflow-x: auto;
   padding-bottom: 12px;
+  container-type: inline-size;
 }
 .person-time {
   min-width: calc(240px + var(--timeline-years) * 42px);
@@ -352,12 +353,11 @@ td .chip {
   padding: 14px 0;
   margin-top: 14px;
 }
-.time-company-heading .person-time-label {
+.time-company-heading {
+  max-width: min(85ch, 100cqw);
   font-size: 14px;
-  padding-bottom: 12px;
-}
-.time-company-heading .person-time-track {
-  background: none;
+  padding: 7px 0 12px;
+  overflow-wrap: anywhere;
 }
 .time-observation {
   position: absolute;
@@ -431,8 +431,7 @@ td .chip {
   background: var(--paper, #faf8f2);
 }
 .person-time-notes {
-  max-width: 85ch;
-  margin-top: 16px;
+  margin-top: 4px;
   font-size: 12px;
   line-height: 1.6;
 }

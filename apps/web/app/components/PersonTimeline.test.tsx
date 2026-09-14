@@ -135,14 +135,17 @@ it('shows one company for multiple source identities, sequential sections and hi
     expect(ids.indexOf('declarations')).toBeLessThan(ids.indexOf('contracts'));
     expect(ids.at(-1)).toBe('contracts');
     const notes = el.querySelector('.person-time-notes')!;
-    expect(notes.closest('.person-time-scroll')).toBeNull();
-    expect(notes.textContent).toContain(link.company);
+    const companyHeading = notes.closest('.time-company-heading')!;
+    expect(companyHeading.closest('.person-time-company')).not.toBeNull();
+    expect(companyHeading.querySelector('strong')?.textContent).toBe(link.company);
+    expect(notes.closest('.person-time-row')).toBeNull();
+    expect(el.querySelectorAll('.time-company-heading')).toHaveLength(1);
     expect(notes.textContent).toContain('Лична роля в ТР не е установена');
     expect(notes.textContent).toContain('Предходно участие');
     expect(notes.querySelector('a[href="#declaration-d"]')).not.toBeNull();
-    expect(el.querySelector('.person-time-scroll')?.textContent).not.toMatch(
-      /Не е установена|Предходно участие/,
-    );
+    expect(
+      [...el.querySelectorAll('.person-time-row')].map((r) => r.textContent).join(' '),
+    ).not.toMatch(/Не е установена|Предходно участие/);
     expect(el.querySelector('#declaration-d a')?.getAttribute('href')).toBe(link.sourceUrl);
     p.declarations[0]!.interests = [
       { company: link.company, eik: link.eik, kind: 'shares', timing: 'annual', scope: 'self' },
