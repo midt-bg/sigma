@@ -56,3 +56,14 @@ test('declared_eik name-confirm is boundary-safe: an embedded winner name does N
   // Documents the removed bug: the old `companyNameKey(text).includes(winnerKey)` leg WOULD have confirmed it.
   assert.equal(companyNameKey(entity).includes(companyNameKey('СТРОЙ 1')), true);
 });
+
+test('inner quotes retain distinguishing prefixes and quoted names in prose still resolve', () => {
+  assert.deepEqual(companyCandidates('ГД "Река" ЕООД'), ['ГД "Река" ЕООД']);
+  assert.deepEqual(companyCandidates('АБ 12 „Река“ ООД, София'), ['АБ 12 „Река“ ООД']);
+  assert.deepEqual(companyCandidates('2 дружествени дяла на „ЕН-ФРЕШ" ООД, прехвърлени'), [
+    '„ЕН-ФРЕШ" ООД',
+  ]);
+  assert.deepEqual(companyCandidates('дял в „МЕГАСТРОЙ 15" ООД, ЕИК 100000008'), [
+    '„МЕГАСТРОЙ 15" ООД',
+  ]);
+});

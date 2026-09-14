@@ -114,3 +114,15 @@ test('punctuation cannot split one institution, but substantive organisation nam
     identityInstitution('Министерство на икономиката, инвестициите и индустрията'),
   );
 });
+
+test('nested council and settlement prefixes normalize once without erasing territorial distinctions', () => {
+  for (const [input, expected] of [
+    ['Общински съвет гр.Монтана', 'МОНТАНА'],
+    ['Общински съвет гр. Сливен', 'СЛИВЕН'],
+    ['Общински съвет Община Павликени', 'ПАВЛИКЕНИ'],
+    ['Областна администрация Смолян', 'ОБЛАСТ СМОЛЯН'],
+  ]) {
+    assert.equal(identityInstitution(input), expected);
+    assert.equal(identityInstitution(identityInstitution(input)), expected);
+  }
+});

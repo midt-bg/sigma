@@ -51,3 +51,8 @@ test('a name collision needs a single stated EIK with the same full name', () =>
   assert.equal(resolve('неразпознаваемо поле'), null);
   assert.equal(resolve(''), null);
 });
+
+test('an unknown prefixed company cannot match a known shorter bidder', () => {
+  assert.equal(resolve('ГД „Алфа“ ЕООД'), null);
+  assert.deepEqual(resolve('ГД „Алфа“ ЕООД, ЕИК 111111119'), { ambiguous: true });
+});
