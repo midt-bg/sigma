@@ -45,7 +45,7 @@ export async function loader({ params, context, request }: Route.LoaderArgs) {
 export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
   if ('destinations' in loaderData)
     return (
-      <>
+      <main id="main">
         <PageHeader
           kicker="Длъжностни лица"
           title="Избери профил"
@@ -61,7 +61,7 @@ export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
             </li>
           ))}
         </ul>
-      </>
+      </main>
     );
   return <PersonProfile profile={loaderData} />;
 }

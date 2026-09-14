@@ -46,11 +46,11 @@ export async function loader({ params, context, request }: Route.LoaderArgs) {
 export default function Person({ loaderData }: Route.ComponentProps) {
   if ('sources' in loaderData)
     return (
-      <>
+      <main id="main">
         <PageHeader
           kicker="Търговски регистър"
           title="Източникови записи"
-          lede="Този стар адрес събира записи с еднаква дата на раждане. Тя не е достатъчна, за да установим, че става дума за един човек. Ролите са достъпни при съответното дружество."
+          lede="Наличните сведения не са достатъчни за обединяване в общ профил. Ролите са достъпни при съответното дружество."
         />
         <DataTable
           rows={loaderData.sources}
@@ -71,7 +71,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
             { key: 'eik', header: 'ЕИК', cell: (r) => r.eik },
           ]}
         />
-      </>
+      </main>
     );
   return <PersonProfile profile={loaderData} />;
 }
