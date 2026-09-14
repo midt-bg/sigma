@@ -23,6 +23,7 @@ export async function* corpusFiles(store, folder, files, width = 16) {
 
 function safeKey(key) {
   if ([CORPUS_STAMP, 'accepted.json'].includes(key)) return key;
+  if (/^fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json$/.test(key)) return key;
   const parts = key.split('/');
   if (parts.length !== 2) throw Error('Invalid corpus key');
   safeFolder(parts[0]);

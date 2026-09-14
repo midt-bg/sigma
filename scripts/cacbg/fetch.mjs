@@ -11,6 +11,7 @@
 //   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
 import { corpusStore, CORPUS_STAMP, digest } from './corpus.mjs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -220,6 +221,27 @@ export async function run({
     yieldOnDeadline,
   } = parseCrawlOptions(argv);
 
+  // Persist each source gap/failure immediately, even if this crawl never seals its folder index.
+  // A separate namespace keeps diagnostic history out of the XML inventory and completeness proof.
+  const crawlId = randomUUID();
+  let eventSequence = 0;
+  const recordSourceResult = async (folder, file, details) => {
+    const record = {
+      crawlId,
+      runId: process.env.SIGMA_RUN_ID ?? null,
+      attempt: process.env.SIGMA_ATTEMPT ?? null,
+      checkedAt: new Date().toISOString(),
+      url: `${BASE}/${folder}/${file}`,
+      folder,
+      file,
+      ...details,
+    };
+    await store.put(
+      `fetch-events/${crawlId}/${++eventSequence}.json`,
+      Buffer.from(JSON.stringify(record)),
+    );
+  };
+
   // WHY A SELF-IMPOSED DEADLINE. The full corpus is ~37 sets / ~281 000 declarations and does not fit in the
   // related-persons-data job's 300-minute cap. When the cap fired mid-crawl (run 31889519937) the runner
   // killed the STEP but not this process, which kept writing while the `always()` cache-save step ran `tar`
@@ -275,6 +297,7 @@ export async function run({
     const cachedFiles = await store.files(folder);
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
+      await recordSourceResult(folder, 'list.xml', { status: listRes.status });
       console.log(`  ${folder}/list.xml → ${listRes.status}, SKIP (announced set not crawled)`);
       stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
@@ -354,10 +377,12 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
-    const reportFailure = (file, details) =>
+    const reportFailure = async (file, details) => {
+      await recordSourceResult(folder, file, details);
       console.error(
         JSON.stringify({ event: 'declarations_source_error', folder, file, ...details }),
       );
+    };
     const withheld = await pool(
       rows,
       concurrency,
@@ -366,7 +391,7 @@ export async function run({
         try {
           xmlFile = safeXmlFile(row.xmlFile);
         } catch (error) {
-          reportFailure(row.xmlFile, { error: error.message });
+          await reportFailure(row.xmlFile, { error: error.message });
           fstat.errors++;
           return;
         }
@@ -380,7 +405,7 @@ export async function run({
         try {
           res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
         } catch (error) {
-          reportFailure(xmlFile, { error: error.message, code: error.code });
+          await reportFailure(xmlFile, { error: error.message, code: error.code });
           fstat.errors++;
           consecutive = nextBreaker(consecutive, 'fail');
           if (consecutive > BREAKER_TRIP)
@@ -388,6 +413,7 @@ export async function run({
           return;
         }
         if (res.status === 404) {
+          await recordSourceResult(folder, xmlFile, { status: 404 });
           fstat.missing++;
           sourceGaps.add(xmlFile);
           progress('fetch', ++completed);
@@ -395,7 +421,7 @@ export async function run({
           return;
         } // listed-but-unpublished (source gap)
         if (res.status !== 200) {
-          reportFailure(xmlFile, {
+          await reportFailure(xmlFile, {
             status: res.status,
             location: res.headers?.location,
             retryAfter: res.headers?.['retry-after'],

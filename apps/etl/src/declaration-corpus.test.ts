@@ -60,6 +60,23 @@ it('streams checksummed objects through the private R2 binding and confines ever
   expect((await call('2025/a.xml', { method: 'PUT', body: 'bad' })).status).toBe(400);
   expect((await call('?prefix=other/')).status).toBe(400);
   expect((await call('secret')).status).toBe(400);
+  const eventKey = 'fetch-events/00000000-0000-4000-8000-000000000000/1.json';
+  expect(
+    (
+      await call(eventKey, {
+        method: 'PUT',
+        body: '{"status":403}',
+        headers: { 'x-corpus-sha256': 'a'.repeat(64) },
+      })
+    ).status,
+  ).toBe(204);
+  expect(put).toHaveBeenLastCalledWith(
+    'declarations/corpus-v2/' + eventKey,
+    expect.anything(),
+    expect.objectContaining({ sha256: 'a'.repeat(64) }),
+  );
+  expect((await call(eventKey, { method: 'DELETE' })).status).toBe(405);
+  expect((await call('fetch-events/invalid/1.json')).status).toBe(400);
   expect(remove).not.toHaveBeenCalled();
   expect((await call('.corpus-complete.json', { method: 'DELETE' })).status).toBe(204);
   expect(remove).toHaveBeenCalledWith('declarations/corpus-v2/.corpus-complete.json');

@@ -4,7 +4,7 @@ import type { DeclarationEnv } from './declarations';
 const prefix = 'declarations/corpus-v2/';
 const folder = /^20\d{2}[A-Za-z0-9_]{0,8}\/$/;
 const keyPattern =
-  /^(?:\.corpus-complete\.json|accepted\.json|20\d{2}[A-Za-z0-9_]{0,8}\/(?:[A-Za-z0-9._-]+\.xml|\.index\.json))$/;
+  /^(?:\.corpus-complete\.json|accepted\.json|fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json|20\d{2}[A-Za-z0-9_]{0,8}\/(?:[A-Za-z0-9._-]+\.xml|\.index\.json))$/;
 
 // A loopback entrypoint used only by the Container's private outbound handler.
 export class DeclarationCorpus extends WorkerEntrypoint<DeclarationEnv> {
