@@ -454,7 +454,8 @@ td .chip {
   border-radius: 50%;
 }
 
-.person-time-label {
+.person-time-label,
+.time-company-heading {
   position: sticky;
   left: 0;
   z-index: 2;
@@ -485,7 +486,8 @@ td .chip {
   outline-offset: 3px;
 }
 @media (max-width: 600px) {
-  .person-time-label {
+  .person-time-label,
+  .time-company-heading {
     position: static;
   }
   .person-time-row {
