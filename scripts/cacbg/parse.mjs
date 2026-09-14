@@ -241,6 +241,8 @@ function parseAssets(pp) {
     declaredOn: declarationDate(dd.DeclarationDate),
     submittedOn: declarationDate(dd.EntryDate),
     declarationType: dd.DeclarationType != null ? String(dd.DeclarationType).trim() : null,
+    appointmentNumber: flat(dd.ActNumber) || null,
+    appointmentDate: flat(dd.ActData) || null,
     controlHash: dd.ControlHash != null ? String(dd.ControlHash).trim() : null,
     egnPresent,
     familyHoldingCount,

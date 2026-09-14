@@ -15,12 +15,13 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry, sealFixtureFilings } from './tr-fixture.mjs';
 
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
-function runLoad(extraEnv = {}, args = []) {
+function runLoad(extraEnv = {}, args = [], seal = true) {
+  if (seal) sealFixtureFilings(STAGING);
   execFileSync(
     'node',
     ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs'), ...args],
@@ -2049,5 +2050,19 @@ test('a company EIK survives aggregation with name-only declarations in either o
     }
   } finally {
     fs.writeFileSync(file, saved);
+  }
+});
+
+test('modified identity input without a fresh extraction hash is rejected before rebuilding', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file);
+  sealFixtureFilings(STAGING);
+  const before = fs.readFileSync(DB);
+  try {
+    fs.appendFileSync(file, '\n');
+    assert.throws(() => runLoad({}, [], false), /Stale declaration staging/);
+    assert.deepEqual(fs.readFileSync(DB), before);
+  } finally {
+    fs.writeFileSync(file, original);
   }
 });

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 test('extraction keeps checksum collisions, deduplicates identical XML and isolates listing conflicts', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sigma-source-identity-'));
@@ -15,8 +16,8 @@ test('extraction keeps checksum collisions, deduplicates identical XML and isola
   const xml = (
     name,
     hash,
-  ) => `<PublicPerson><Personal><Name>${name}</Name><Work>Тест институция</Work></Personal>
-    <DeclarationData><Year>2025</Year><ControlHash>${hash}</ControlHash><DeclarationType>Annualy</DeclarationType></DeclarationData>
+  ) => `<PublicPerson><Personal><Name>${name}</Name><Work>Тест институция</Work><Position>Главен архитект</Position></Personal>
+    <DeclarationData><Year>2025</Year><ControlHash>${hash}</ControlHash><DeclarationType>Vacate</DeclarationType><ActNumber>201</ActNumber><ActData>21.12.</ActData></DeclarationData>
     <Tables><Table Num="10" Declared="False" Description="Дялове в дружества с ограничена отговорност">
     <Row><Cell Num="4" Description="Наименование на дружеството"/><Cell Num="7" Description="Име собствено бащино фамилно"/></Row></Table></Tables></PublicPerson>`;
   const a = 'Иван Петров Тестов';
@@ -62,10 +63,22 @@ test('extraction keeps checksum collisions, deduplicates identical XML and isola
     ]);
     assert.equal(filings.find((f) => f.xmlFile === 'gg.xml').person, a);
     assert.ok(filings.every((f) => f.assetInventoryComparable === true));
+    assert.ok(
+      filings.every((f) => f.position === 'Директор' && f.declaredPosition === 'Главен архитект'),
+    );
+    assert.ok(
+      filings.every((f) => f.appointmentNumber === '201' && f.appointmentDate === '21.12.'),
+    );
     assert.deepEqual(read('source-quarantine.jsonl'), [
       { folder: '2025', xmlFile: 'ff.xml', reason: 'declarant_mismatch' },
     ]);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 7);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).schemaVersion, 8);
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'))).filingsHash,
+      createHash('sha256')
+        .update(fs.readFileSync(path.join(staging, 'filings.jsonl')))
+        .digest('hex'),
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

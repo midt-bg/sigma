@@ -26,8 +26,8 @@ export function registryIdentityRows(registry) {
     .all();
 }
 
-/** Public registry identities, read once. Names select evidence; they never become identity keys. */
-export function registryIdentityResolver(registry) {
+/** Resolve declared companies against registry data, including declarations of related-person stakes. */
+export function registryCompanyResolver(registry) {
   const byKey = new Map();
   const bidderByEik = new Map();
   const seats = new Map();
@@ -55,6 +55,24 @@ export function registryIdentityResolver(registry) {
     companies.set(r.eik, company);
     byKey.set(key, companies);
   }
+  return (interest) => {
+    const resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
+    if (!resolved || resolved.ambiguous) return { reason: 'company_not_resolved' };
+    const company = bidderByEik.get(resolved.eik);
+    const seat = normalizeSettlement(interest.seat);
+    if (
+      resolved.method !== 'declared_eik' &&
+      !(seat && seat === seats.get(resolved.eik)) &&
+      nameDistinctiveness(companyNameKey(company.name)) !== 'distinctive'
+    )
+      return { reason: 'company_evidence_insufficient' };
+    return { ...resolved, reason: 'personal_name_not_observed' };
+  };
+}
+
+/** Public registry identities, read once. Names select evidence; they never become identity keys. */
+export function registryIdentityResolver(registry) {
+  const resolveCompany = registryCompanyResolver(registry);
   const namesByCompany = new Map();
   for (const r of registryIdentityRows(registry)) {
     if (!HASH.test(r.subject_id)) continue;
@@ -73,21 +91,23 @@ export function registryIdentityResolver(registry) {
     const proofs = new Map();
     let aliasesProven = false;
     let reason = 'no_declared_personal_participation';
+    const companies = [];
     for (const interest of declaration.interests ?? []) {
-      if (interest.holderRelation !== 'self' || !SELF_KINDS.has(interest.kind)) continue;
-      const resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
-      reason = 'company_not_resolved';
-      if (!resolved || resolved.ambiguous) continue;
-      reason = 'company_evidence_insufficient';
-      const company = bidderByEik.get(resolved.eik);
-      const seat = normalizeSettlement(interest.seat);
-      if (
-        resolved.method !== 'declared_eik' &&
-        !(seat && seat === seats.get(resolved.eik)) &&
-        nameDistinctiveness(companyNameKey(company.name)) !== 'distinctive'
-      )
+      if (!['self', 'related'].includes(interest.holderRelation) || !SELF_KINDS.has(interest.kind))
         continue;
-      reason = 'personal_name_not_observed';
+      const resolved = resolveCompany(interest);
+      if (resolved.eik)
+        companies.push({
+          entity: interest.entity,
+          seat: interest.seat ?? '',
+          kind: interest.kind,
+          holderRelation: interest.holderRelation,
+          eik: resolved.eik,
+          method: resolved.method,
+        });
+      if (interest.holderRelation !== 'self') continue;
+      reason = resolved.reason;
+      if (!resolved.eik) continue;
       const names = namesByCompany.get(resolved.eik);
       const candidates = names?.get(name);
       if (!candidates?.size) continue;
@@ -148,6 +168,7 @@ export function registryIdentityResolver(registry) {
       ['declarant_mismatch', 'ambiguous_listing'].includes(attribution);
     return {
       attribution: acceptedAlias ? 'registry_alias' : attribution,
+      companies: attribution === 'matched' || acceptedAlias ? companies : [],
       reason: evidence.length
         ? unique.size === 1
           ? 'verified_registry'

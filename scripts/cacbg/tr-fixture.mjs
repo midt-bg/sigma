@@ -20,6 +20,17 @@ import { registryFacts } from '../tr/deed.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 
+// Tests that edit a fixture's declarations model a fresh extraction, with its new content hash.
+export function sealFixtureFilings(staging) {
+  const file = path.join(staging, 'filings.jsonl');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+  const manifest = path.join(staging, 'manifest.json');
+  if (!fs.existsSync(manifest)) return;
+  const value = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+  value.filingsHash = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  fs.writeFileSync(manifest, JSON.stringify(value));
+}
+
 /** Run `load.mjs --emit-candidates` against a fixture work DB and return the emitted link records. */
 export function emitLinkRecords({ workDb, staging, trDb }) {
   const db = new DatabaseSync(workDb);
@@ -58,17 +69,21 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
   if (!fs.existsSync(manifest))
     fs.writeFileSync(
       manifest,
-      JSON.stringify({ schemaVersion: 7, identityRules: 'registry-identity-2' }),
+      JSON.stringify({ schemaVersion: 8, identityRules: 'registry-identity-2' }),
     );
   const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
   const groupsFile = path.join(staging, 'source-groups.jsonl');
   if (!fs.existsSync(groupsFile)) fs.writeFileSync(groupsFile, '');
-  if (m.schemaVersion === 7)
+  if (!fs.existsSync(f)) fs.writeFileSync(f, '');
+  if (m.schemaVersion === 8)
     fs.writeFileSync(
       manifest,
       JSON.stringify({
         ...m,
         identityRules: 'registry-identity-2',
+        filingsHash: createHash('sha256')
+          .update(fs.readFileSync(path.join(staging, 'filings.jsonl')))
+          .digest('hex'),
         sourceGroupsHash: createHash('sha256').update(fs.readFileSync(groupsFile)).digest('hex'),
       }),
     );

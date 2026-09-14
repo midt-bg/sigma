@@ -14,13 +14,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { seedVerdicts, fixtureRegistry } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry, sealFixtureFilings } from './tr-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
 function runLoad() {
+  sealFixtureFilings(STAGING);
   execFileSync(
     'node',
     ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],

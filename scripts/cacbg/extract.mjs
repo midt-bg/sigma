@@ -199,6 +199,10 @@ async function run() {
           // type (ADR-0040). Carried on every record so load.mjs keys all three the same way.
           work: d.work ?? '',
           position: c.position || d.position || '',
+          declaredPosition: d.position ?? '',
+          appointmentNumber: d.appointmentNumber ?? null,
+          appointmentDate: d.appointmentDate ?? null,
+          companyEvidence: identity?.companies ?? [],
           controlHash: d.controlHash,
           sourceHash: fingerprint,
           identityReason: identity?.reason ?? 'registry_not_read',
@@ -296,7 +300,8 @@ async function run() {
     path.join(STAGING, 'manifest.json'),
     JSON.stringify(
       {
-        schemaVersion: 7,
+        schemaVersion: 8,
+        filingsHash: documentFingerprint(fs.readFileSync(path.join(STAGING, 'filings.jsonl'))),
         sourceGroupsHash: documentFingerprint(
           fs.readFileSync(path.join(STAGING, 'source-groups.jsonl')),
         ),

@@ -118,8 +118,11 @@ const stagingManifest = path.join(STAGING, 'manifest.json');
 const sourceGroupsFile = path.join(STAGING, 'source-groups.jsonl');
 if (
   !fs.existsSync(stagingManifest) ||
-  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 7 ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).schemaVersion !== 8 ||
   !fs.existsSync(sourceGroupsFile) ||
+  !fs.existsSync(path.join(STAGING, 'filings.jsonl')) ||
+  JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).filingsHash !==
+    documentFingerprint(fs.readFileSync(path.join(STAGING, 'filings.jsonl'))) ||
   JSON.parse(fs.readFileSync(stagingManifest, 'utf8')).sourceGroupsHash !==
     documentFingerprint(fs.readFileSync(sourceGroupsFile))
 )
