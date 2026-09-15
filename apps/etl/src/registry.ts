@@ -324,13 +324,8 @@ export async function seedEntryPasses(db: D1Database, today: string, now: string
     .bind(dayPlus(today, -34))
     .run();
   const state = await db
-    .prepare('SELECT seeded_through, initial_refresh_queued FROM registry_entry_state WHERE id=1')
-    .first<{ seeded_through: string; initial_refresh_queued: number }>();
-  if (!state!.initial_refresh_queued) {
-    // One initial reconciliation: a new day cursor cannot certify the pre-existing snapshot.
-    await queueAllRead(db, now);
-    await db.prepare('UPDATE registry_entry_state SET initial_refresh_queued=1 WHERE id=1').run();
-  }
+    .prepare('SELECT seeded_through FROM registry_entry_state WHERE id=1')
+    .first<{ seeded_through: string }>();
   for (let day = dayPlus(state!.seeded_through, 1); day < today; day = dayPlus(day, 1)) {
     await db.batch([
       ...ENTRY_DELAYS.map((delay) =>
@@ -361,7 +356,7 @@ export async function nextEntryPass(
     .prepare(
       `SELECT p.* FROM registry_entry_passes p, registry_entry_state s
     WHERE s.id=1 AND (s.portal_retry_at IS NULL OR s.portal_retry_at <= ?2)
-    AND p.completed_at IS NULL AND p.due_on <= ?1 ORDER BY p.due_on, p.day, p.delay LIMIT 1`,
+    AND p.completed_at IS NULL AND p.due_on <= ?1 ORDER BY p.due_on DESC, p.day DESC, p.delay LIMIT 1`,
     )
     .bind(today, now)
     .first<EntryPass>();

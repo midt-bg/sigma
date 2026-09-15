@@ -492,8 +492,8 @@ const REGISTRY_BATCH = 25;
 const REGISTRY_MAX_DEEDS = 2_500;
 // A bounded amount of persistent portal pagination per run; unfinished passes resume next time.
 const REGISTRY_MAX_PAGES = 600;
-// ~55 reads a minute, under the API's 60 per client.
-const REGISTRY_PACE_MS = 1_100;
+// The published XML API has no configured quota; actual Retry-After responses still apply.
+const REGISTRY_PACE_MS = 0;
 
 // Published XML partidas and portal entry-day passes have their own lease beside procurement.
 // Pending entry signals survive until confirmed by exact timestamps in the XML history.

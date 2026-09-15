@@ -237,7 +237,14 @@ describe('storeDeed', () => {
 describe('entry passes and pending signals', () => {
   it('seeds missed calendar days with all five passes and resumes pages', async () => {
     const { db, sqlite } = served();
+    await storeDeed(
+      db,
+      '111111111',
+      { status: 'ok', deed: partida('111111111', []) },
+      '2026-09-12',
+    );
     await seedEntryPasses(db, '2026-09-13', '2026-09-13T00:00:00Z');
+    expect(sqlite.prepare('SELECT count(*) n FROM registry_queue').get()?.n).toBe(0);
     expect(
       sqlite
         .prepare("SELECT delay FROM registry_entry_passes WHERE day='2026-09-12' ORDER BY delay")
@@ -250,6 +257,14 @@ describe('entry passes and pending signals', () => {
         ?.n,
     ).toBe(5);
     const pass = (await nextEntryPass(db, '2026-09-16', '2026-09-16T00:00:00Z'))!;
+    expect(pass.day).toBe('2026-09-15');
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) n FROM registry_entry_passes WHERE day < '2026-09-15' AND completed_at IS NULL",
+        )
+        .get()?.n,
+    ).toBeGreaterThan(0);
     await recordEntryPage(
       db,
       pass,
