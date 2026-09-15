@@ -64,7 +64,7 @@ export async function getRegistrySourceCompanies(db: D1Database, indent: string)
     const rows = await db
       .prepare(
         `SELECT DISTINCT r.eik, r.subject_name name,
-      coalesce(b.name,d.name,r.eik) company, b.id bidder_id
+      coalesce(b.name,d.name,r.eik) company, b.id bidder_id, d.fetched_at AS fetchedAt
       FROM registry_roles r JOIN registry_deeds d ON d.eik=r.eik
       LEFT JOIN bidders b ON b.id='eik:'||r.eik
       WHERE r.subject_kind='person' AND r.subject_id LIKE 'local:%:birthdate:'||?||':%'
@@ -76,6 +76,7 @@ export async function getRegistrySourceCompanies(db: D1Database, indent: string)
         name: string;
         company: string;
         bidder_id: string | null;
+        fetchedAt: string;
       }>();
     return rows.results.map(({ bidder_id, ...r }) => ({
       ...r,

@@ -122,7 +122,7 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
               hint="Текущи и прекратени роли в дружества и организации с обществени поръчки и профил в Сигма, с датите на вписване и заличаване."
             >
               <PersonRolesTables roles={p.person.roles} />
-              <RegistrySource asOf={p.person.asOf} />
+              <RegistrySource />
             </Section>
           </>
         )}

@@ -13,6 +13,7 @@ it('distinguishes company, role and period when targeting a registry row', () =>
     addedOn: '2020-01-01',
     removedOn: null,
     entryNumber: '1',
+    fetchedAt: '2026-09-09T03:00:00Z',
     share: null,
   };
   const ids = [

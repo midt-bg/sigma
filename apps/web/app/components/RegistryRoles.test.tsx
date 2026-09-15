@@ -126,6 +126,7 @@ describe('PersonRolesTables', () => {
       addedOn: '2019-03-12',
       removedOn: null,
       entryNumber: 'e1',
+      fetchedAt: '2026-09-09T03:00:00Z',
     };
     const c = render(<PersonRolesTables roles={[r]} />);
     expect(c.querySelector('tbody tr')?.id).toBe(roleRowId(r));
@@ -135,13 +136,24 @@ describe('PersonRolesTables', () => {
     )!;
     expect(partida.getAttribute('href')).toContain('111111111');
     expect(partida.getAttribute('target')).toBe('_blank');
+    expect(c.textContent).toContain('Извлечено на 09.09.2026');
   });
 });
 
 describe('RegistrySource', () => {
+  it('does not invent a shared retrieval date for a person’s multiple partidas', () => {
+    const c = render(<RegistrySource />);
+    expect(c.textContent).not.toContain('Данните са извлечени на');
+    expect(c.querySelector('a[href="/conflicts/methodology#registry-publication"]')).not.toBeNull();
+  });
+
   it('names the register and the day it was read, and says the page is not a certificate', () => {
-    const c = render(<RegistrySource asOf="2026-09-10" />);
-    expect(c.textContent).toContain('Агенцията по вписванията, към 10.09.2026');
-    expect(c.textContent).toContain('не е удостоверение');
+    const c = render(<RegistrySource asOf="2026-09-10" eik="111111111" />);
+    expect(c.textContent).toContain('Официален източник: Агенция по вписванията');
+    expect(c.textContent).toContain('Данните са извлечени на 10.09.2026');
+    expect(c.textContent).toContain('структурира и съпоставя');
+    expect(c.textContent).toContain('не е удостоверителен документ');
+    expect(c.querySelector('a[href*="111111111"]')).not.toBeNull();
+    expect(c.querySelector('a[href="/conflicts/methodology#contest"]')).not.toBeNull();
   });
 });

@@ -584,6 +584,8 @@ export interface PersonRole {
   /** Evidence becomes ambiguous here; not a registered termination. */
   uncertainAfter?: string | null;
   entryNumber: string;
+  /** When this company’s registry deed was retrieved, independently of entry dates. */
+  fetchedAt: string;
 }
 
 /** A natural person the Trade Register records in a role at a company in the corpus. */

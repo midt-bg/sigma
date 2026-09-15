@@ -9,6 +9,9 @@ import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { personName } from '../lib/person-name';
+import { date } from '@sigma/shared';
+import { RegistrySource } from '../components/RegistryRoles';
+import { registryUrl } from '../components/ui';
 
 export function meta({ data, params, matches }: Route.MetaArgs) {
   const tags = seoMeta({
@@ -68,9 +71,20 @@ export default function Person({ loaderData }: Route.ComponentProps) {
               header: 'Дружество',
               cell: (r) => (r.href ? <Link to={r.href}>{r.company}</Link> : r.company),
             },
-            { key: 'eik', header: 'ЕИК', cell: (r) => r.eik },
+            {
+              key: 'eik',
+              header: 'Партида',
+              cell: (r) => (
+                <a href={registryUrl(r.eik)} target="_blank" rel="noopener noreferrer">
+                  ЕИК {r.eik}
+                  <span className="sr-only"> (в нов раздел)</span>
+                </a>
+              ),
+            },
+            { key: 'fetchedAt', header: 'Извлечено на', cell: (r) => date(r.fetchedAt) },
           ]}
         />
+        <RegistrySource />
       </main>
     );
   return <PersonProfile profile={loaderData} />;

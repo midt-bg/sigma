@@ -253,6 +253,7 @@ export async function getRegistryPerson(
         removedOn: r.removed_on,
         ...(r.uncertain_after ? { uncertainAfter: r.uncertain_after } : {}),
         entryNumber: r.entry_number,
+        fetchedAt: r.fetched_at,
       }))
       .sort(byStanding((x) => x.company.name));
 

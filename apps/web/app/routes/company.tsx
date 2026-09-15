@@ -422,7 +422,7 @@ export default function Company({ loaderData }: Route.ComponentProps) {
             hint="Управители, представители, съдружници и членове на органите, както са вписани в Търговския регистър, с датата на всяко вписване."
           >
             <CompanyRolesTables roles={people.roles} />
-            <RegistrySource asOf={people.asOf} />
+            <RegistrySource asOf={people.asOf} eik={c.eik} />
           </Section>
         )}
 

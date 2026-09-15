@@ -221,6 +221,12 @@ describe('getRegistryPerson', () => {
       ['БЕТА АД', 'board_of_directors'],
       ['АЛФА ООД', 'partner'],
     ]);
+    // A newer read of ALFA must not be presented as the retrieval date of BETA.
+    expect(p.roles.map((r) => [r.company.eik, r.fetchedAt])).toEqual([
+      ['111111111', '2026-09-10T03:00:00Z'],
+      ['222222222', '2026-09-09T03:00:00Z'],
+      ['111111111', '2026-09-10T03:00:00Z'],
+    ]);
     expect(p.roles[0]!.company).toEqual({
       name: 'АЛФА ООД',
       eik: '111111111',
@@ -352,6 +358,10 @@ describe('non-unique date-of-birth sources', () => {
     expect(await getRegistryPerson(db, ANNA)).toBeNull();
     const sources = await getRegistrySourceCompanies(db, ANNA);
     expect(sources.map((r) => r.eik)).toEqual(['111111111', '222222222']);
+    expect(sources.map((r) => r.fetchedAt)).toEqual([
+      '2026-09-10T03:00:00Z',
+      '2026-09-09T03:00:00Z',
+    ]);
     expect(sources.every((r) => r.href?.startsWith('/companies/'))).toBe(true);
     expect(await getRegistrySourceCompanies(db, OWNER)).toEqual([]);
     expect(

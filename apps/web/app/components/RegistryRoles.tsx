@@ -85,12 +85,16 @@ const companyColumn: Column<PersonRole> = {
 const partidaColumn: Column<PersonRole> = {
   key: 'partida',
   header: 'Партида',
-  secondary: true,
   cell: (r) => (
-    <a href={registryUrl(r.company.eik)} target="_blank" rel="noopener noreferrer">
-      ЕИК {r.company.eik}
-      <span className="sr-only"> (в нов раздел)</span>
-    </a>
+    <>
+      <a href={registryUrl(r.company.eik)} target="_blank" rel="noopener noreferrer">
+        ЕИК {r.company.eik}
+        <span className="sr-only"> (в нов раздел)</span>
+      </a>
+      <div className="small muted">
+        Извлечено на {r.fetchedAt ? date(r.fetchedAt) : 'неизвестна дата'}
+      </div>
+    </>
   ),
 };
 
@@ -184,12 +188,24 @@ export function PersonRolesTables({ roles }: { roles: PersonRole[] }) {
   );
 }
 
-/** The official source, named, with the day it was read — and what the reader is not holding. */
-export function RegistrySource({ asOf }: { asOf: string | null }) {
+/** Shared attribution for registry data; person profiles date each partida separately. */
+export function RegistrySource({ asOf, eik }: { asOf?: string | null; eik?: string | null }) {
   return (
     <p className="small muted mt-s3">
-      Източник: Търговски регистър и регистър на ЮЛНЦ, воден от Агенцията по вписванията
-      {asOf ? `, към ${date(asOf)}` : ''}. Справката е информационна и не е удостоверение.
+      Официален източник: Агенция по вписванията — ТРРЮЛНЦ.
+      {asOf ? ` Данните са извлечени на ${date(asOf)}.` : ''} СИГМА ги структурира и съпоставя с
+      други публични данни. Справката има информационен характер и не е удостоверителен документ.{' '}
+      {eik && (
+        <>
+          <a href={registryUrl(eik)} target="_blank" rel="noopener noreferrer">
+            Оригинална партида<span className="sr-only"> (в нов раздел)</span>
+          </a>
+          {' · '}
+        </>
+      )}
+      <Link to="/conflicts/methodology#registry-publication">Методология</Link>
+      {' · '}
+      <Link to="/conflicts/methodology#contest">Сигнал за неточност</Link>
     </p>
   );
 }

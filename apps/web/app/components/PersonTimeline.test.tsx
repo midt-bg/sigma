@@ -237,6 +237,7 @@ it('shows one company for multiple source identities, sequential sections and hi
         addedOn: '2013-01-17',
         removedOn: '2013-08-14',
         entryNumber: 'old',
+        fetchedAt: '2026-09-09T03:00:00Z',
       },
       {
         company: { name: link.company, eik: link.eik, href: `/companies/${link.eik}` },
@@ -245,6 +246,7 @@ it('shows one company for multiple source identities, sequential sections and hi
         addedOn: '2022-11-16',
         removedOn: '2024-05-27',
         entryNumber: 'new',
+        fetchedAt: '2026-09-09T03:00:00Z',
       },
     ]);
     const Roles = createRoutesStub([
