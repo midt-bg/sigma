@@ -256,18 +256,13 @@ export function SmartSearch({
               Всички резултати за „{query.trim()}" →
             </li>
           )}
-
-          {!hasResults && !loading && (
-            <li className="smart-search-empty" role="presentation">
-              Няма съвпадения. Пробвай с име, ЕИК или УНП.
-            </li>
-          )}
-          {!hasResults && loading && (
-            <li className="smart-search-empty" role="presentation" aria-live="polite">
-              Търсене…
-            </li>
-          )}
         </ul>
+
+        {!hasResults && (
+          <div className="smart-search-empty" role="status" aria-live="polite">
+            {loading ? 'Търсене…' : 'Няма съвпадения. Пробвай с име, ЕИК или УНП.'}
+          </div>
+        )}
       </div>
     </div>
   );
