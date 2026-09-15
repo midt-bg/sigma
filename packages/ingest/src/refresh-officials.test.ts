@@ -1,18 +1,18 @@
 /// <reference types="node" />
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { refreshSliceStatementGroups } from './refresh';
 
 // The served search_index 'official' rows are populated by the ETL Worker, which parses scripts/refresh-slice.sql
 // with refreshSliceStatementGroups() and runs each group via db.batch(). refresh-slice.test.ts exercises the SQL
-// via `sqlite3 .read` (whole-file) and never seeds interest_links — so the officials batch, AND this real
+// via a whole-file import and never seeds interest_links — so the officials batch, AND this real
 // parse-then-execute path, were untested. This test closes that gap: it proves (1) the parser keeps the officials
 // INSERT a single well-formed statement (a stray split or a mis-stripped comment would break the live ETL, which
-// no other test would catch), and (2) executing the entity-search-index group populates officials from
+// no other test would catch), and (2) executing the official-search-index group populates officials from
 // interest_links. This is the exact production path behind the minister's name-search feature.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -25,21 +25,28 @@ const migrations = [
   '0009_interest_link_evidence.sql',
   '0014_person_profile.sql',
   '0015_person_observations.sql',
+  '0018_person_entities.sql',
 ].map((f) => resolve(root, 'packages/db/migrations', f));
 const refreshSlicePath = resolve(root, 'scripts/refresh-slice.sql');
 
 function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', ['-bail', dbPath], {
-    input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
-    stdio: 'pipe',
-  });
+  exec(dbPath, readFileSync(path, 'utf8'));
 }
 function exec(dbPath: string, sql: string): void {
-  execFileSync('sqlite3', ['-bail', dbPath], { input: sql, encoding: 'utf8' });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`PRAGMA foreign_keys=ON;\n${sql}`);
+  } finally {
+    db.close();
+  }
 }
 function rows(dbPath: string, sql: string): Record<string, string | number | null>[] {
-  const out = execFileSync('sqlite3', ['-json', dbPath], { input: sql, encoding: 'utf8' }).trim();
-  return out ? JSON.parse(out) : [];
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return db.prepare(sql).all() as Record<string, string | number | null>[];
+  } finally {
+    db.close();
+  }
 }
 
 // One published self-ownership official + a family link on the SAME winner (ADR-0032: the redundant-family
@@ -86,10 +93,16 @@ describe('ETL refresh-slice officials batch (the live parse-then-execute path)',
     try {
       for (const m of migrations) readScript(dbPath, m);
       exec(dbPath, FIXTURE);
+      exec(
+        dbPath,
+        `CREATE TABLE refresh_touched_bidders (bidder_id TEXT PRIMARY KEY);
+         INSERT INTO refresh_touched_bidders (bidder_id) VALUES
+           ('eik:111'), ('eik:222'), ('eik:333'), ('eik:444');`,
+      );
 
       const groups = refreshSliceStatementGroups(readFileSync(refreshSlicePath, 'utf8'));
-      const searchGroup = groups.find((g) => g.name === 'entity-search-index');
-      expect(searchGroup, 'entity-search-index batch exists in refresh-slice.sql').toBeDefined();
+      const searchGroup = groups.find((g) => g.name === 'official-search-index');
+      expect(searchGroup, 'official-search-index batch exists in refresh-slice.sql').toBeDefined();
 
       // The officials INSERT survived comment-stripping/splitting as ONE statement — not split at the
       // multi-line WHERE/subquery, and its GROUP BY tail intact.

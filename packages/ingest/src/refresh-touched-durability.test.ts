@@ -12,10 +12,10 @@
 // the real refresh-slice.sql groups on SQLite — an aborted run 1, then a run 2 whose window stages NOTHING
 // — and asserts run 2 still recomputes run 1's rollups. The behavioural test is the one that fails on the
 // old shape; the static one says exactly which line drifted.
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -213,17 +213,23 @@ describe('touched sets — SQL shape', () => {
 
 // ── behavioural: real SQL on SQLite ─────────────────────────────────────────────────────────────────
 function readScript(dbPath: string, path: string): void {
-  execFileSync('sqlite3', ['-bail', dbPath], {
-    input: `PRAGMA foreign_keys=ON;\n.read ${path}\n`,
-    stdio: 'pipe',
-  });
+  exec(dbPath, readFileSync(path, 'utf8'));
 }
 function exec(dbPath: string, sql: string): void {
-  execFileSync('sqlite3', ['-bail', dbPath], { input: sql, encoding: 'utf8', stdio: 'pipe' });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`PRAGMA foreign_keys=ON;\n${sql}`);
+  } finally {
+    db.close();
+  }
 }
 function rows<T = Record<string, string | number | null>>(dbPath: string, sql: string): T[] {
-  const out = execFileSync('sqlite3', ['-json', dbPath], { input: sql, encoding: 'utf8' }).trim();
-  return out ? (JSON.parse(out) as T[]) : [];
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return db.prepare(sql).all() as T[];
+  } finally {
+    db.close();
+  }
 }
 // One D1 batch = one transaction, exactly as runRefreshSliceStatementGroup / the SQLite D1 facade do.
 function runGroups(dbPath: string, names: string[]): void {

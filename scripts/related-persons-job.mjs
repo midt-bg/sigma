@@ -251,19 +251,55 @@ if (remote) {
   setStage('publish');
   run('scripts/ship-related-persons.mjs', ['--work-db', db, '--remote', '--yes']);
   setStage('reindex');
-  const sql = execFileSync(
-    process.execPath,
-    [
-      '--import',
-      './scripts/cacbg/register-ts.mjs',
-      'scripts/emit-refresh-group.mjs',
-      'entity-search-index',
-    ],
-    { env, encoding: 'utf8' },
-  );
-  const file = join(work, 'reindex.sql');
-  writeFileSync(file, sql);
-  wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
+  const emitRefreshGroup = (group, extraEnv = {}) =>
+    execFileSync(
+      process.execPath,
+      ['--import', './scripts/cacbg/register-ts.mjs', 'scripts/emit-refresh-group.mjs', group],
+      { env: { ...env, SIGMA_OFFICIAL_PERSON_IDS_JSON: '', ...extraEnv }, encoding: 'utf8' },
+    );
+  const applyReindex = (name, sql) => {
+    const file = join(work, `${name}.sql`);
+    writeFileSync(file, sql);
+    wrangler(['d1', 'execute', d1, '--remote', '--yes', '--file', file]);
+  };
+
+  applyReindex('reindex-entities', emitRefreshGroup('entity-search-index'));
+
+  // The full official search query exceeded D1's per-query CPU limit once the contract corpus reached
+  // ~200k rows. Rebuild it in small person chunks; each emitted file is one atomic delete+insert for its
+  // chunk, and old rows remain available until their replacement succeeds.
+  const reindexDb = new DatabaseSync(db, { readOnly: true });
+  const officialIds = reindexDb
+    .prepare(
+      `SELECT DISTINCT person_id FROM interest_links
+       WHERE status='published' AND interest_class IN ('private_ownership','family_ownership')
+       ORDER BY person_id`,
+    )
+    .all()
+    .map((row) => row.person_id);
+  reindexDb.close();
+  const chunkSize = 25;
+  for (let offset = 0; offset < officialIds.length; offset += chunkSize) {
+    const ids = officialIds.slice(offset, offset + chunkSize);
+    applyReindex(
+      `reindex-officials-${String(offset / chunkSize + 1).padStart(3, '0')}`,
+      emitRefreshGroup('official-search-index', {
+        SIGMA_OFFICIAL_PERSON_IDS_JSON: JSON.stringify(ids),
+      }),
+    );
+  }
+  wrangler([
+    'd1',
+    'execute',
+    d1,
+    '--remote',
+    '--yes',
+    '--command',
+    `DELETE FROM search_index WHERE kind='official' AND ref NOT IN (
+       SELECT DISTINCT person_id FROM interest_links
+       WHERE status='published' AND interest_class IN ('private_ownership','family_ownership')
+     )`,
+  ]);
   if (r2) {
     const stamp = await corpus.get(CORPUS_STAMP);
     if (!stamp || digest(stamp) !== digest(sourceStamp))
