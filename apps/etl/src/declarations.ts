@@ -29,6 +29,8 @@ interface DeclarationRun {
   total?: number;
   progressVersion: number;
   attemptProgressVersion: number;
+  attemptStage?: string;
+  attemptCompleted?: number;
   lastProgressAt: number;
 }
 interface ContainerStatus {
@@ -152,6 +154,8 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       run.attempt++;
       run.attemptStartedAt = Date.now();
       run.attemptProgressVersion = run.progressVersion;
+      delete run.attemptStage;
+      delete run.attemptCompleted;
       delete run.retryAt;
       delete run.reason;
       await this.ctx.storage.put('run', run);
@@ -208,6 +212,15 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
           run.total = status.total;
         else delete run.total;
         run.progressVersion++;
+      }
+      // Replaying a previous attempt is live progress, even below the durable high-water mark.
+      const attemptStage = stages.indexOf(run.attemptStage ?? '');
+      if (
+        next > attemptStage ||
+        (next === attemptStage && status.completed > (run.attemptCompleted ?? -1))
+      ) {
+        run.attemptStage = status.stage;
+        run.attemptCompleted = status.completed;
         run.lastProgressAt = Date.now();
         await this.ctx.storage.put('run', run);
       }

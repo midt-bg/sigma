@@ -129,3 +129,25 @@ it('surfaces audit failures and refuses a stale container instead of publishing'
   await f.job().alarm();
   expect(f.run()).toMatchObject({ state: 'failed', reason: 'Container run or attempt mismatch' });
 });
+
+it('keeps replay below the high-water mark alive but still detects a real stall', async () => {
+  const f = fixture();
+  await f.job().startRun();
+  await f.job().alarm();
+  f.answer({ stage: 'extract', completed: 180000 });
+  await f.job().alarm();
+  f.container.running = false;
+  await f.job().alarm();
+  await f.resume();
+  for (const completed of [1000, 2000, 3000]) {
+    vi.setSystemTime(Date.now() + 10 * 60000);
+    f.answer({ stage: 'extract', completed });
+    await f.job().alarm();
+    expect(f.run()).toMatchObject({ state: 'running', completed: 180000, attempt: 2 });
+    expect(f.run().retryAt).toBeUndefined();
+  }
+  vi.setSystemTime(Date.now() + 21 * 60000);
+  await f.job().alarm();
+  expect(f.run().retryAt).toBeGreaterThan(Date.now());
+  expect(f.run().failures).toBe(1); // Replay does not count as new durable progress.
+});
