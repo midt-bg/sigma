@@ -5,9 +5,9 @@
 // `wrangler deploy` needs the real IDs — this script substitutes them from env vars and
 // writes a sibling `wrangler.deploy.<ext>` that the package `deploy` script passes via
 // `--config`. Optional deploy-time name env vars (`SIGMA_WEB_NAME`, `SIGMA_ETL_NAME`,
-// `SIGMA_WORKFLOW_NAME`, `SIGMA_D1_NAME`, `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`,
-// `SIGMA_VECTORIZE_NAME`) explicitly override resource names for alternate environments while
-// leaving committed names unchanged when unset.
+// `SIGMA_WORKFLOW_NAME`, `SIGMA_REGISTRY_WORKFLOW_NAME`, `SIGMA_D1_NAME`,
+// `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`, `SIGMA_VECTORIZE_NAME`) explicitly override
+// resource names for alternate environments while leaving committed names unchanged when unset.
 //
 // usage: node scripts/wrangler-render.mjs <path/to/wrangler.toml|jsonc>
 
@@ -86,9 +86,10 @@ if (ext === '.json' || ext === '.jsonc') {
   const names = {
     etlName: process.env.SIGMA_ETL_NAME || '',
     workflowName: process.env.SIGMA_WORKFLOW_NAME || '',
+    registryWorkflowName: process.env.SIGMA_REGISTRY_WORKFLOW_NAME || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
   };
-  if (names.etlName || names.workflowName || names.d1Name) {
+  if (names.etlName || names.workflowName || names.registryWorkflowName || names.d1Name) {
     out = renderToml(out, names);
   }
 }
@@ -161,16 +162,27 @@ function stripJsonLineComments(text) {
 
 function renderToml(text, names) {
   let section = '';
+  let workflowBinding = '';
   return text
     .split('\n')
     .map((line) => {
       const sectionMatch = line.match(/^\s*(\[\[?[^\]]+\]?\])\s*$/);
-      if (sectionMatch) section = sectionMatch[1];
+      if (sectionMatch) {
+        section = sectionMatch[1];
+        workflowBinding = '';
+      }
+
+      if (section === '[[workflows]]') {
+        const bindingMatch = line.match(/^\s*binding\s*=\s*"([^"]+)"/);
+        if (bindingMatch) workflowBinding = bindingMatch[1];
+      }
 
       if (section === '' && names.etlName) {
         line = replaceTomlStringValue(line, 'name', names.etlName);
-      } else if (section === '[[workflows]]' && names.workflowName) {
-        line = replaceTomlStringValue(line, 'name', names.workflowName);
+      } else if (section === '[[workflows]]') {
+        const workflowName =
+          workflowBinding === 'REGISTRY' ? names.registryWorkflowName : names.workflowName;
+        if (workflowName) line = replaceTomlStringValue(line, 'name', workflowName);
       }
       if (names.d1Name) line = replaceTomlStringValue(line, 'database_name', names.d1Name);
       return line;

@@ -4,12 +4,13 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { assertIntegrity } from './integrity-checks.mjs';
+import { assertD1TargetAuthorized, resolveD1Name } from './ship-related-persons.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
-const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
 const TABLES = [
   'authorities',
   'bidders',
@@ -37,6 +38,7 @@ function arg(name) {
 const workDb = arg('work-db') || arg('source');
 if (!workDb || workDb === true) throw new Error('ship-domain requires --work-db=<path>');
 const remote = !!arg('remote');
+const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
 if (remote && !arg('yes')) throw new Error('--remote requires --yes');
 const replaceRemote = !!arg('replace');
 const allowShrink = !!arg('allow-shrink');
@@ -86,13 +88,8 @@ function d1Json(sql) {
   return parsed[0]?.results ?? [];
 }
 
-function sqliteJson(sql) {
-  const out = execFileSync('sqlite3', ['-json', String(workDb), sql], {
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-  }).trim();
-  return out ? JSON.parse(out) : [];
-}
+const sourceDb = new DatabaseSync(String(workDb), { readOnly: true });
+const sqliteJson = (sql) => sourceDb.prepare(sql).all();
 
 function sqlIdent(s) {
   return `"${String(s).replaceAll('"', '""')}"`;
@@ -164,6 +161,21 @@ function insertStatements(table, cols, rows) {
 }
 
 console.log(`==> shipping ${workDb} to D1 ${remote ? 'remote' : 'local'}`);
+if (remote) {
+  const info = JSON.parse(
+    execFileSync('wrangler', ['d1', 'info', d1Name, '--json'], {
+      cwd: apiDir,
+      encoding: 'utf8',
+    }),
+  );
+  assertD1TargetAuthorized({
+    remote,
+    shipEnv: process.env.SIGMA_SHIP_ENV ?? '',
+    d1Name,
+    expectedId: process.env.SIGMA_D1_ID,
+    resolvedId: info.uuid ?? info.database_id,
+  });
+}
 console.log('==> ensuring served D1 migrations are applied');
 d1MigrationsApply();
 
