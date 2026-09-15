@@ -13,8 +13,10 @@ import {
 
 const FILTER_VALUE: Record<string, unknown> = {
   authority: '000695089',
+  authorityTypes: ['министерство'],
   bidder: '103267194',
   bids: 'one',
+  flags: ['no_competition'],
   countBucket: '2-5',
   eu: 'eu',
   kinds: ['company'],
@@ -83,6 +85,8 @@ describe('route filter signatures', () => {
       'bidder',
       'q',
       'bids',
+      'flags',
+      'authorityTypes',
     ]);
     expect([...COMPANY_FILTER_KEYS]).toEqual([
       'kinds',

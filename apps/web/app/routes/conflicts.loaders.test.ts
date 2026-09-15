@@ -17,7 +17,19 @@ const q = vi.hoisted(() => ({
   // DB is the identity sentinel the query mocks assert on, so getDb just returns env.DB unchanged.
   getDb: vi.fn((env: { DB: unknown }) => env.DB),
 }));
-vi.mock('@sigma/db', () => q);
+// `../lib/filters` (imported transitively by the conflicts loaders) builds its `?flag=`/`?type=` allow-lists
+// from `[...FLAG_TYPES]` and `AUTHORITY_TYPE_GROUPS` at module load (#218), so the mock must carry those
+// non-fn constants or the import throws. Pull them from the real module (no drift) while keeping the query
+// functions mocked. Spread the real constants first, then `q`, so the mocked fns win. Added via the factory
+// (not `q`) so afterEach's mockReset loop over `q` stays fn-only.
+vi.mock('@sigma/db', async (importActual) => {
+  const actual = await importActual<typeof import('@sigma/db')>();
+  return {
+    FLAG_TYPES: actual.FLAG_TYPES,
+    AUTHORITY_TYPE_GROUPS: actual.AUTHORITY_TYPE_GROUPS,
+    ...q,
+  };
+});
 
 import { loader as leaderboardLoader } from './conflicts';
 import { loader as officialLoader } from './conflict.official';

@@ -53,8 +53,22 @@ export interface HomeTotals {
   refreshedAt: string;
 }
 
+/** Homepage flagged-value summary (issue #218). `totalEur` is de-duplicated (a contract with several
+ *  signals counts once); `byType` slices overlap; `bySector`/`byAuthorityType` partition the flagged set. */
+export interface FlaggedValue {
+  totalEur: number;
+  contracts: number;
+  byType: { type: string; eur: number; contracts: number }[];
+  bySector: { code: string; label: string; eur: number; contracts: number }[];
+  byAuthorityType: { typeGroup: string; eur: number; contracts: number }[];
+}
+
 export interface HomeData {
   totals: HomeTotals;
+  /** Total € running through contracts with a risk signal, + breakdowns (issue #218). */
+  flagged: FlaggedValue;
+  /** Top flagged contracts by value — for the homepage table (issue #218). */
+  topFlagged: ContractListItem[];
   topCompanies: CompanyListItem[];
   topMinistries: AuthorityListItem[];
   topMunicipalities: AuthorityListItem[];
