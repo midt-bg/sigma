@@ -107,14 +107,51 @@ interface HitRow {
   ownership_kind: OwnershipKind | null;
   eik_valid: number | null;
   has_conflict: number | null; // 1 when a company row has a published свързани-лица link — self or family (badge)
-  rank: number; // FTS bm25 score (lower = better); the group's top row gives its best rank for the gate
+  rank: number; // dampened rank (see RANK_EXPR), lower = better; the group's top row gives its best rank for the gate
 }
 
-// One group's ranked hits. Company rows additionally carry a свързани-лица flag: a LEFT JOIN against the
-// published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published, self OR family
-// stake, backed by a Trade Register evidence SEAL, AND the winner must have LIVE contracts (the same
-// read-time N9 gate LINK_SELECT applies), so search flags exactly the companies the /conflicts surface shows
-// and never one whose page would 404. A family-only winner badges — the /conflicts page already publishes
+// FTS5's default bm25() rewards raw term frequency: a title that repeats the query terms several
+// times (e.g. a municipality's name field concatenating several child-entity names — issue #25)
+// can outscore a title that matches once, cleanly. bm25's own length normalization isn't enough to
+// offset that within-document repetition, so we dampen `rank` by title length on top of it — the
+// divisor grows by 1 per 20 chars, a soft enough curve that it reorders repeat-heavy blobs below
+// clean short matches without sinking legitimate longer (but single-match) titles disproportionately.
+const RANK_EXPR = `r / (1.0 + LENGTH(title) / 20.0)`;
+
+// Two stages, deliberately. `ORDER BY rank` is the ONLY form FTS5 optimizes: it drives the query with
+// its rank-ordering index and pushes the LIMIT down (EXPLAIN: `VIRTUAL TABLE INDEX 32:M6`). Ordering by
+// any expression OVER rank drops that (`INDEX 0:M6` + `USE TEMP B-TREE FOR ORDER BY`), so every row a
+// common term matches — tens of thousands for e.g. „община" — gets materialized and sorted before the
+// LIMIT. D1 bills rows read, so that is a real cost on the busiest query in the app.
+// So: take the top CANDIDATES by the optimized rank path, then re-rank only those. The inner slice is
+// wide enough that a repeat-heavy blob and the clean match it outranks are both inside it, and the
+// sort in the outer query is over at most CANDIDATES rows, not the whole match set.
+const CANDIDATES = 50;
+
+// The outer `LIMIT ?` (bound to each group's `g.limit`) can never return more rows than the inner
+// subquery produces, which is capped at CANDIDATES — so a group asking for more than CANDIDATES
+// would be silently truncated below what it requested. Every GROUPS.limit must stay <= CANDIDATES;
+// asserted at module load so a future group with a larger limit fails fast instead of truncating.
+export function assertLimitsWithinCandidates(
+  groups: { kind: string; limit: number }[],
+  candidates: number,
+): void {
+  for (const g of groups) {
+    if (g.limit > candidates) {
+      throw new Error(
+        `search group "${g.kind}" limit (${g.limit}) exceeds CANDIDATES (${candidates}); the inner subquery only returns ${candidates} rows, so the outer LIMIT would silently truncate below the requested count`,
+      );
+    }
+  }
+}
+assertLimitsWithinCandidates(GROUPS, CANDIDATES);
+
+// One group's ranked hits, re-ranked (see RANK_EXPR) over the top CANDIDATES rows drawn via the optimized FTS5
+// rank path (see the CANDIDATES comment above). Company rows additionally carry a свързани-лица flag: a LEFT
+// JOIN against the published conflict links keyed on the winner's ЕИК (= the company row's `ident`). Published,
+// self OR family stake, backed by a Trade Register evidence SEAL, AND the winner must have LIVE contracts (the
+// same read-time N9 gate LINK_SELECT applies), so search flags exactly the companies the /conflicts surface
+// shows and never one whose page would 404. A family-only winner badges — the /conflicts page already publishes
 // that link by name, so the badge discloses nothing the surface doesn't. Binds: kind, match, limit.
 //
 // The seal EXISTS clause is the same one SURFACED_OWNERSHIP applies (related-persons.ts), and it belongs
@@ -129,27 +166,35 @@ interface HitRow {
 // ENTIRE search 500 with „no such table". search() detects both tables once per request and picks the
 // no-conflict variant when either is absent, so search degrades to has_conflict=0 rather than breaking
 // (ADR-0031 robustness ask).
-const hitsSql = (withConflict: boolean): string => `SELECT search_index.ref, search_index.title,
-        search_index.ident, search_index.subtitle, search_index.amount, rank,
-        ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
-        ${withConflict ? '(cf.eik IS NOT NULL)' : '0'} AS has_conflict
- FROM search_index
- LEFT JOIN company_totals ct
-   ON search_index.kind = 'company' AND ct.bidder_id = search_index.ref
- ${
-   withConflict
-     ? `LEFT JOIN (
-   SELECT DISTINCT il.eik FROM interest_links il
-   WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
-     AND EXISTS (SELECT 1 FROM interest_link_evidence e
-                 WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
-     AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
-                 WHERE bb.eik_normalized = il.eik)
- ) cf ON search_index.kind = 'company' AND cf.eik = search_index.ident`
-     : ''
- }
- WHERE search_index.kind = ? AND search_index MATCH ?
- ORDER BY rank LIMIT ?`;
+const hitsSql = (
+  withConflict: boolean,
+): string => `SELECT h.ref, h.title, h.ident, h.subtitle, h.amount,
+       ${RANK_EXPR} AS rank,
+       ct.kind AS entity_kind, ct.ownership_kind, ct.eik_valid,
+       ${withConflict ? '(cf.eik IS NOT NULL)' : '0'} AS has_conflict
+FROM (
+  SELECT search_index.ref AS ref, search_index.title AS title, search_index.ident AS ident,
+         search_index.subtitle AS subtitle, search_index.amount AS amount,
+         search_index.kind AS kind, rank AS r
+  FROM search_index
+  WHERE search_index.kind = ? AND search_index MATCH ?
+  ORDER BY rank LIMIT ${CANDIDATES}
+) h
+LEFT JOIN company_totals ct
+  ON h.kind = 'company' AND ct.bidder_id = h.ref
+${
+  withConflict
+    ? `LEFT JOIN (
+  SELECT DISTINCT il.eik FROM interest_links il
+  WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+    AND EXISTS (SELECT 1 FROM interest_link_evidence e
+                WHERE e.link_key = il.link_key AND e.evidence_kind IN ('document','confirmed'))
+    AND EXISTS (SELECT 1 FROM contracts cc JOIN bidders bb ON bb.id = cc.bidder_id
+                WHERE bb.eik_normalized = il.eik)
+) cf ON h.kind = 'company' AND cf.eik = h.ident`
+    : ''
+}
+ORDER BY rank, h.ref LIMIT ?`;
 
 export const SEARCH_HITS_SQL = hitsSql(true);
 export const SEARCH_HITS_SQL_NO_CONFLICT = hitsSql(false);
@@ -186,7 +231,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
         )
         .first<{ n: number }>()
     )?.n === 2;
-  const hitsSql = hasConflictTable ? SEARCH_HITS_SQL : SEARCH_HITS_SQL_NO_CONFLICT;
+  const hitsSqlToUse = hasConflictTable ? SEARCH_HITS_SQL : SEARCH_HITS_SQL_NO_CONFLICT;
 
   const built = await Promise.all(
     GROUPS.map(async (g) => {
@@ -203,7 +248,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           bestRank: Infinity,
         };
       }
-      const { results } = await db.prepare(hitsSql).bind(g.kind, match, g.limit).all<HitRow>();
+      const { results } = await db.prepare(hitsSqlToUse).bind(g.kind, match, g.limit).all<HitRow>();
       const hits: SearchHit[] = results.map((r) => {
         const href = hrefForEntity(g.kind, r.ref);
         const isCompany = g.kind === 'company';
@@ -240,7 +285,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           hits,
           moreHref: total > hits.length ? searchMoreHref(g.kind, query) : null,
         },
-        // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
+        // Best (lowest dampened rank) in the group = its top row, for the relevance gate below.
         bestRank: results.length ? results[0]!.rank : Infinity,
       };
     }),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, type FakeD1 } from '@sigma/test-support';
 import {
+  assertLimitsWithinCandidates,
   MAX_QUERY_CHARS,
   MAX_QUERY_TOKENS,
   search,
@@ -143,6 +144,16 @@ describe('search helpers', () => {
     expect(searchMatchQuery('и а с по')).toBe('по*');
     expect(searchMatchQuery('и')).toBeNull();
     expect(searchMatchQuery('a b c')).toBeNull();
+  });
+
+  it('rejects a group limit greater than the candidate pool it would be drawn from', () => {
+    // If a group ever asks for more rows than CANDIDATES, the inner subquery can't supply them —
+    // the outer LIMIT would silently return fewer rows than requested instead of throwing, which
+    // is exactly the truncation this assertion exists to catch at module load time.
+    expect(() => assertLimitsWithinCandidates([{ kind: 'contract', limit: 51 }], 50)).toThrow(
+      /exceeds CANDIDATES/,
+    );
+    expect(() => assertLimitsWithinCandidates([{ kind: 'contract', limit: 50 }], 50)).not.toThrow();
   });
 
   it('reduces FTS5 operators/punctuation to plain prefix terms — no MATCH-syntax injection', () => {
