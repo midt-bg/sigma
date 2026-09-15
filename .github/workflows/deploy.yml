@@ -25,6 +25,12 @@ on:
         type: choice
         options:
           - staging
+          # Once provision-environments.sh has been applied, selecting `production` here only
+          # works when the workflow is dispatched from a `v*` tag ref, e.g.:
+          #   gh workflow run deploy.yml --ref v1.0.1 -f environment=production
+          # Dispatching from a branch ref (e.g. main) is refused by the environment tag policy.
+          # Admins may bypass this via the `admins_can_bypass` setting (Settings → Environments
+          # → production) for emergency situations.
           - production
         default: staging
 
