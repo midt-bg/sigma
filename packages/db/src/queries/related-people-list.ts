@@ -49,7 +49,8 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
         FROM declarations d WHERE d.person_id IN (SELECT person_id FROM links WHERE identity=p.identity)) offices
     FROM grouped_people p JOIN representatives r ON r.identity=p.identity AND r.rn=1 JOIN totals t ON t.identity=p.identity
-    ORDER BY p.own_institution DESC,t.has_window DESC,t.window_eur DESC,p.identity`,
+    ORDER BY CASE WHEN p.own_institution THEN 2 WHEN t.has_window THEN 1 ELSE 0 END DESC,
+      t.total_eur DESC,p.identity`,
     )
     .bind(authorityId ?? null)
     .all<{

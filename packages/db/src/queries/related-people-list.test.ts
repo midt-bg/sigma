@@ -30,10 +30,46 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
     }
     db.exec(`INSERT INTO person_registry_links VALUES('person:0','canonical'),('person:1204','canonical');
       UPDATE interest_links SET first_declared_year='2022',last_declared_year='2022' WHERE person_id='person:1204';
-      INSERT INTO declarations VALUES('person:0','Институция А','Роля','2020'),('person:1204','Институция Б','Друга роля','2022');`);
+      INSERT INTO declarations VALUES('person:0','Институция А','Роля','2020'),('person:1204','Институция Б','Друга роля','2022');
+      INSERT INTO bidders VALUES
+        ('own-small-b','2','Собствена малка'),('own-big-b','3','Собствена голяма'),
+        ('rest-big-b','4','Останала голяма'),('rest-small-b','5','Останала малка'),
+        ('window-small-b','6','Съвпадение малка'),('window-big-b','7','Съвпадение голяма');
+      INSERT INTO persons VALUES
+        ('person:own-small','Собствена малка'),('person:own-big','Собствена голяма'),
+        ('person:rest-big','Останала голяма'),('person:rest-small','Останала малка'),
+        ('person:window-small','Съвпадение малка'),('person:window-big','Съвпадение голяма');
+      INSERT INTO interest_links VALUES
+        ('own-small','person:own-small','2','published','private_ownership','exact','2020','2020'),
+        ('own-big','person:own-big','3','published','private_ownership','exact','2020','2020'),
+        ('rest-big','person:rest-big','4','published','private_ownership','none','2020','2020'),
+        ('rest-small','person:rest-small','5','published','private_ownership','none','2020','2020'),
+        ('window-small','person:window-small','6','published','private_ownership','none','2020','2020'),
+        ('window-big','person:window-big','7','published','private_ownership','none','2020','2020');
+      INSERT INTO interest_link_evidence VALUES
+        ('own-small','document'),('own-big','document'),('rest-big','document'),
+        ('rest-small','document'),('window-small','document'),('window-big','document');
+      INSERT INTO contracts VALUES
+        ('own-small-c','own-small-b','t','2010-01-01',1),
+        ('own-big-c','own-big-b','t','2010-01-01',2),
+        ('rest-big-c','rest-big-b','t','2010-01-01',10000),
+        ('rest-small-c','rest-small-b','t','2010-01-01',1),
+        ('window-small-c','window-small-b','t','2020-01-01',50),
+        ('window-big-c','window-big-b','t','2020-01-01',5000);`);
     const d1 = d1FromSqlite(db);
     const rows = await getRelatedPersonRows(d1);
-    expect(rows).toHaveLength(1204);
+    expect(rows).toHaveLength(1210);
+    expect(rows.slice(0, 2).map((r) => r.official)).toEqual([
+      'Собствена голяма',
+      'Собствена малка',
+    ]);
+    expect(rows.findIndex((r) => r.official === 'Съвпадение малка')).toBeLessThan(
+      rows.findIndex((r) => r.official === 'Останала голяма'),
+    );
+    expect(rows.findIndex((r) => r.official === 'Съвпадение голяма')).toBeLessThan(
+      rows.findIndex((r) => r.official === 'Съвпадение малка'),
+    );
+    expect(rows.slice(-2).map((r) => r.official)).toEqual(['Останала голяма', 'Останала малка']);
     const combined = rows.find((r) => r.personIdentity === 'canonical')!;
     expect(combined).toMatchObject({
       companyCount: 1,
@@ -47,7 +83,12 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
         d1,
         rows.map((r) => r.personIdentity),
       ),
-    ).toEqual({ officialCount: 1204, linkCount: 1204, totalEur: 600, contemporaneousEur: 300 });
+    ).toEqual({
+      officialCount: 1210,
+      linkCount: 1210,
+      totalEur: 15654,
+      contemporaneousEur: 5350,
+    });
     expect(await getRelatedPersonRows(d1, 'unrelated')).toEqual([]);
     expect(await getRelatedPersonHeadline(d1, [])).toEqual({
       officialCount: 0,
