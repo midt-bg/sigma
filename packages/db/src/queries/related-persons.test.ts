@@ -22,7 +22,7 @@ function row(over: Record<string, unknown> = {}) {
     person_id: 'person:ИВАН МИНЕВ',
     official: 'Иван Минев',
     institution: 'Община Русе',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: 1,
@@ -118,7 +118,7 @@ describe('related-persons queries', () => {
     const db = fakeDb({ '111': [row(), row({ link_key: 'p2|111', official: 'Друг' })] });
     const res = await getCompanyConflicts(db, '111');
     expect(res?.eik).toBe('111');
-    expect(res?.company).toBe('ТРЕЙС ГРУП ХОЛД АД');
+    expect(res?.company).toBe('ТЕСТ ГРУП ХОЛД АД');
     expect(res?.links).toHaveLength(2);
     expect(await getCompanyConflicts(fakeDb({}), '999')).toBeNull();
   });

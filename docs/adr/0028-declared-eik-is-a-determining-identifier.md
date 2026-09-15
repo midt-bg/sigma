@@ -21,7 +21,7 @@ held `declared_eik` link was the system's *most certain* match being withheld on
 genericness) that its certainty does not depend on, while lower-certainty name-only matches published.
 
 Measured over the real backfill: 8 links ever resolve via inline ЕИК; 7 were held. Promoting them moves
-**3 links / 2 companies (АТЕЛИЕ ДУО ЕООД, Файнанс Консулт ЕООД), ≈€33k** onto the public surface (the other
+**3 links / 2 companies (АТЕЛИЕ ПРИМЕР ЕООД, Файнанс Консулт ЕООД), ≈€33k** onto the public surface (the other
 4 are АД/ЕАД management/board roles that never surface anyway — ADR-0022). Small in headline terms, but a
 correctness fix, not a volume one.
 

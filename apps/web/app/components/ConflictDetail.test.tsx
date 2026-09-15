@@ -22,7 +22,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'aXZhbg',
     official: 'Иван Петров',
     institution: 'Община Тест',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,

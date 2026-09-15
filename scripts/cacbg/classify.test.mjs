@@ -11,8 +11,8 @@ import {
 test('nameDistinctiveness: numbers / Latin / ≥3 words are distinctive; bare 1-2 word Cyrillic is generic', () => {
   assert.equal(nameDistinctiveness('СТЕЛИТ 1 ЕООД'), 'distinctive'); // number
   assert.equal(nameDistinctiveness('HALEON'), 'distinctive'); // Latin
-  assert.equal(nameDistinctiveness('ПЪТНО СТРОИТЕЛСТВО ПЛОВДИВ АД'), 'distinctive'); // 3 content words + form
-  assert.equal(nameDistinctiveness('ХИДРО СТРОЙ МОНТАЖ ЕООД'), 'distinctive'); // 3 content words + form
+  assert.equal(nameDistinctiveness('ПЪТНО СТРОИТЕЛСТВО ПРИМЕР АД'), 'distinctive'); // 3 content words + form
+  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД'), 'distinctive'); // 3 content words + form
   assert.equal(nameDistinctiveness('В И К ООД'), 'generic'); // 1 core word after forms
   assert.equal(nameDistinctiveness('ДОМИНО ЕООД'), 'generic'); // single common word
   // The Cyrillic legal form MUST be stripped before counting content words. A 2-content-word closely-held
@@ -20,7 +20,7 @@ test('nameDistinctiveness: numbers / Latin / ≥3 words are distinctive; bare 1-
   // a Cyrillic boundary, so the form token survived, inflated the count to 3, and mis-published these as
   // B_distinctive — the exact premature-publish/libel hazard the tiering exists to prevent.
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ЕООД'), 'generic'); // 2 content words + form → withhold
-  assert.equal(nameDistinctiveness('НИКАС КОМЕРС ООД'), 'generic'); // 2 content words + form → withhold
+  assert.equal(nameDistinctiveness('НИКО КОМЕРС ООД'), 'generic'); // 2 content words + form → withhold
   assert.equal(nameDistinctiveness('ВОДОСНАБДЯВАНЕ И КАНАЛИЗАЦИЯ ЕООД'), 'generic'); // 2 content words (И dropped)
   // companyNameKey keeps punctuation, so the form token must be dropped regardless of an abutting comma /
   // period / hyphen / quote — the standard registry forms „X ООД, гр.Y" / „X.ИНВЕСТ-ЕООД". A boundary regex
@@ -40,17 +40,17 @@ test('temporalStatus: contract within declared-year span is contemporaneous', ()
 });
 
 test('closelyHeldForm: ООД/ЕООД/ЕТ material; АД/ЕАД/АДСИЦ (listed) excluded; hyphenated ООD name kept', () => {
-  assert.equal(closelyHeldForm('ЕНЕРДЖИ СЪПЛАЙ ЕООД'), true);
+  assert.equal(closelyHeldForm('ЕНЕРГО ПРИМЕР ЕООД'), true);
   assert.equal(closelyHeldForm('"ТЕСТ АГРО" ЕООД'), true);
   assert.equal(closelyHeldForm('ЕТ Алекс'), true);
   assert.equal(closelyHeldForm('Вамос ООД'), true);
   assert.equal(closelyHeldForm('Тексим Банк АД'), false); // listed bank mis-filed in the ООД table
   assert.equal(closelyHeldForm('Наш Дом АД'), false);
   assert.equal(closelyHeldForm('Транспроект ЕАД'), false);
-  assert.equal(closelyHeldForm('ТРЕЙС ГРУП ХОЛД АД'), false); // the €88M defamation trap
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД'), false); // the €88M defamation trap
   assert.equal(closelyHeldForm('НЕС АДСИЦ'), false);
   assert.equal(closelyHeldForm('АД-ХОК ЕООД'), true); // „АД" glued by hyphen is not a form token
-  assert.equal(closelyHeldForm('КАДИЕВ ГЛОБАЛ ЕООД'), true); // „АД" inside a word is not a form token
+  assert.equal(closelyHeldForm('НАДЕЖДА ГЛОБАЛ ЕООД'), true); // „АД" inside a word is not a form token
   // „АД" as a LEADING name token, with a closely-held suffix — the form is ООД/ЕООД, not joint-stock.
   // The old „match АД anywhere" rule wrongly excluded these (a dropped conflict); the suffix anchor fixes it.
   assert.equal(closelyHeldForm('АД ГРУП ООД'), true);
@@ -79,13 +79,13 @@ test('nameDistinctiveness: КДА counts as a legal form, not a content word', (
 test('closelyHeldForm: a trailing седалище after the form does not flip an АД to closely-held (libel)', () => {
   // The declarant appended the seat to the name cell. Without stripping it, the end-anchored form test
   // misses the АД and returns closely-held=true → a listed-АД parcel presented as a material conflict.
-  assert.equal(closelyHeldForm('ТРЕЙС ГРУП ХОЛД АД, гр. София'), false); // comma + гр. marker
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД, гр. София'), false); // comma + гр. marker
   assert.equal(closelyHeldForm('Тексим Банк АД, София'), false); // comma + bare city (no marker)
   assert.equal(closelyHeldForm('Транспроект ЕАД гр.Пловдив'), false); // marker, no comma
   assert.equal(closelyHeldForm('НЕС АДСИЦ, обл. Варна'), false);
   // ...while a genuinely closely-held ООД keeps its material verdict even with a seat appended.
   assert.equal(closelyHeldForm('Вамос ООД, гр. Русе'), true);
-  assert.equal(closelyHeldForm('ЕНЕРДЖИ СЪПЛАЙ ЕООД гр.Бургас'), true);
+  assert.equal(closelyHeldForm('ЕНЕРГО ПРИМЕР ЕООД гр.Бургас'), true);
   // A comma-clause that itself bears a form is the фирма tail, not a seat — kept, so the anchor still reads it.
   assert.equal(closelyHeldForm('СТРОЙ, ИНВЕСТ АД'), false); // trailing clause has АД → joint-stock
   assert.equal(closelyHeldForm('СТРОЙ, ИНВЕСТ ООД'), true); // trailing clause has ООД → closely-held
@@ -110,22 +110,22 @@ test('the token set and the JOINT_STOCK regex name the SAME four forms', () => {
 
 test('closelyHeldForm: a seat with NO comma and NO „гр." marker still cannot flip an АД (libel)', () => {
   // The gap the marker/comma rules leave open. `SEAT_MARKER` requires a literal dot and the comma-peel
-  // requires a comma, so „ТРЕЙС ГРУП ХОЛД АД София" — the plainest way a declarant writes it — survives
+  // requires a comma, so „ТЕСТ ГРУП ХОЛД АД София" — the plainest way a declarant writes it — survives
   // both, no longer ENDS in the form, and the end-anchored JOINT_STOCK test misses it. A listed АД then
   // reads as closely-held: the „11 акции на Trace → €88M" trap, from the one input shape nothing strips.
-  assert.equal(closelyHeldForm('ТРЕЙС ГРУП ХОЛД АД София'), false);
-  assert.equal(closelyHeldForm('ТРЕЙС ГРУП ХОЛД АД СОФИЯ'), false);
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД София'), false);
+  assert.equal(closelyHeldForm('ТЕСТ ГРУП ХОЛД АД СОФИЯ'), false);
   assert.equal(closelyHeldForm('Транспроект ЕАД Пловдив'), false);
   assert.equal(closelyHeldForm('НЕС АДСИЦ Варна'), false);
   assert.equal(closelyHeldForm('АЛФА КДА София'), false);
   // POSITIVE CONTROLS — the bar must stay a bound, not become a blanket. A predicate that always returned
   // false would pass every assertion above; these are what distinguish the fix from that (ADR-0027).
   assert.equal(closelyHeldForm('Вамос ООД Русе'), true); // dot-less seat on a closely-held form
-  assert.equal(closelyHeldForm('ЕНЕРДЖИ СЪПЛАЙ ЕООД Бургас'), true);
+  assert.equal(closelyHeldForm('ЕНЕРГО ПРИМЕР ЕООД Бургас'), true);
   assert.equal(closelyHeldForm('АД ГРУП ООД'), true); // leading „АД" is not the form
   assert.equal(closelyHeldForm('АД-ХОК ЕООД'), true); // „АД" glued by a hyphen is not a form token
   assert.equal(closelyHeldForm('КДА ГРУП ООД'), true);
-  assert.equal(closelyHeldForm('КАДИЕВ ГЛОБАЛ ЕООД'), true); // „АД" inside a word
+  assert.equal(closelyHeldForm('НАДЕЖДА ГЛОБАЛ ЕООД'), true); // „АД" inside a word
   assert.equal(closelyHeldForm('ЕТ Алекс'), true); // ЕТ leads the фирма — nothing after it is a seat
 });
 
@@ -134,20 +134,20 @@ test('nameDistinctiveness: a dot-less trailing city is not counted as a content 
   // count to 3 ⇒ 'distinctive'. Since #279 rung 2 gates an uncorroborated „Документ" publish on exactly this
   // predicate (ADR-0035), a seat read as a content word is a false company-identity claim, not just noise.
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД София'), 'generic');
-  assert.equal(nameDistinctiveness('НИКАС КОМЕРС ЕООД Пловдив'), 'generic');
+  assert.equal(nameDistinctiveness('НИКО КОМЕРС ЕООД Пловдив'), 'generic');
   // POSITIVE CONTROLS: a genuinely ≥3-content-word фирма stays distinctive, and a leading-form ЕТ name
   // keeps its content words — nothing after „ЕТ" is a seat, so the strip must not reach them.
-  assert.equal(nameDistinctiveness('ХИДРО СТРОЙ МОНТАЖ ЕООД София'), 'distinctive');
+  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД София'), 'distinctive');
   assert.equal(nameDistinctiveness('ЕТ АЛЕКС ПЕТРОВ ДИМИТРОВ'), 'distinctive');
 });
 
 test('nameDistinctiveness: a trailing city is not counted as a content word (no premature publish)', () => {
   // The exact over-publish case: 2 real content words + a seat token would read as 3 → distinctive.
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД, СОФИЯ'), 'generic'); // was distinctive via +СОФИЯ
-  assert.equal(nameDistinctiveness('НИКАС КОМЕРС ООД гр.Пловдив'), 'generic'); // marker, no comma
+  assert.equal(nameDistinctiveness('НИКО КОМЕРС ООД гр.Пловдив'), 'generic'); // marker, no comma
   assert.equal(nameDistinctiveness('СТРОЙ ИНВЕСТ ООД, обл. Варна'), 'generic');
   // A genuinely distinctive (≥3 content word) name stays distinctive with or without a seat.
-  assert.equal(nameDistinctiveness('ХИДРО СТРОЙ МОНТАЖ ЕООД, гр. София'), 'distinctive');
+  assert.equal(nameDistinctiveness('ХИДРО ТЕСТ МОНТАЖ ЕООД, гр. София'), 'distinctive');
 });
 
 test('localityToken: regional bodies yield a town; ministries yield null', () => {

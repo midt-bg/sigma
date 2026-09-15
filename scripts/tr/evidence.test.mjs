@@ -111,9 +111,9 @@ test('rung 2 — a TWO-token declarant can never earn „Документ"', () 
 
 test('rung 2 — the match must fall inside ONE entity (the libel guard, end to end)', () => {
   const two = deed([
-    fld('CR_F_19_L', joined('ПЕНКО НЕСТОРОВ НЕСТОРОВ', 'ИЛИЯН КОСТАДИНОВ ФИЛИПОВ')),
+    fld('CR_F_19_L', joined('ПЕТЪР ТЕСТОВ ТЕСТОВ', 'ИЛИЯ ИВАНОВ ПРИМЕРОВ')),
   ]);
-  const v = evidenceVerdict({ ...base, deed: two, declarantName: 'ПЕНКО КОСТАДИНОВ ФИЛИПОВ' });
+  const v = evidenceVerdict({ ...base, deed: two, declarantName: 'ПЕТЪР ИВАНОВ ПРИМЕРОВ' });
   assert.notEqual(v.kind, 'document');
 });
 

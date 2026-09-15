@@ -24,7 +24,7 @@ import {
 } from './deed.mjs';
 
 // ── real markup ───────────────────────────────────────────────────────────────
-const F19_THREE = `<div class='record-container record-container--preview'><p class='field-text'>ПИМК ХОЛДИНГ ГРУП АД, ЕИК/ПИК 202294392, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 59980.00 лв.</p></div><hr class='hr--report' /><div class='record-container record-container--preview'><p class='field-text'>ПЕНКО НЕСТОРОВ НЕСТОРОВ, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 10.00 лв.</p></div><hr class='hr--report' /><div class='record-container record-container--preview'><p class='field-text'>ИЛИЯН КОСТАДИНОВ ФИЛИПОВ, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 10.00 лв.</p></div>`;
+const F19_THREE = `<div class='record-container record-container--preview'><p class='field-text'>ПИМК ХОЛДИНГ ГРУП АД, ЕИК/ПИК 202294392, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 59980.00 лв.</p></div><hr class='hr--report' /><div class='record-container record-container--preview'><p class='field-text'>ПЕТЪР ТЕСТОВ ТЕСТОВ, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 10.00 лв.</p></div><hr class='hr--report' /><div class='record-container record-container--preview'><p class='field-text'>ИЛИЯ ИВАНОВ ПРИМЕРОВ, Държава: БЪЛГАРИЯ, Размер на дяловото участие: 10.00 лв.</p></div>`;
 
 const F23_ERASED = `<div class='record-container record-container--preview'><div class='erasure-text-inline'><i class='ui-icon ui-icon-erased mr-1'></i>Заличено обстоятелство.</div></div>`;
 
@@ -54,17 +54,17 @@ test('entityBlocks splits one field into its separate registered entities', () =
   const blocks = entityBlocks(F19_THREE);
   assert.equal(blocks.length, 3, 'three съдружници, three blocks');
   assert.match(blocks[0].text, /ПИМК ХОЛДИНГ ГРУП АД/);
-  assert.match(blocks[1].text, /ПЕНКО НЕСТОРОВ НЕСТОРОВ/);
-  assert.match(blocks[2].text, /ИЛИЯН КОСТАДИНОВ ФИЛИПОВ/);
+  assert.match(blocks[1].text, /ПЕТЪР ТЕСТОВ ТЕСТОВ/);
+  assert.match(blocks[2].text, /ИЛИЯ ИВАНОВ ПРИМЕРОВ/);
   // No block may carry another block's name — that is the whole point.
   assert.ok(!blocks[1].text.includes('ФИЛИПОВ'));
   assert.ok(!blocks[2].text.includes('ПЕНКО'));
 });
 
 test('T1 — tokens from two DIFFERENT people never combine into a match', () => {
-  // „ПЕНКО … НЕСТОРОВ" and „ИЛИЯН КОСТАДИНОВ ФИЛИПОВ" are both in field 19. A declarant assembled
+  // „ПЕНКО … НЕСТОРОВ" and „ИЛИЯ ИВАНОВ ПРИМЕРОВ" are both in field 19. A declarant assembled
   // from one person's given name and another's patronymic+surname must NOT match.
-  const frankenstein = 'ПЕНКО КОСТАДИНОВ ФИЛИПОВ';
+  const frankenstein = 'ПЕТЪР ИВАНОВ ПРИМЕРОВ';
   const blocks = entityBlocks(F19_THREE);
   assert.equal(
     blocks.some((b) => fullSubsetMatch(frankenstein, b.text)),
@@ -91,11 +91,11 @@ test('T1 — the entity split survives double-quoted attributes (markup-drift ha
   const blocks = entityBlocks(dq(F19_THREE).replace(/<hr\b[^>]*>/gi, ''));
   assert.equal(blocks.length, 3, 'a quote style change must not merge three owners into one block');
   assert.equal(
-    blocks.some((b) => fullSubsetMatch('ПЕНКО КОСТАДИНОВ ФИЛИПОВ', b.text)),
+    blocks.some((b) => fullSubsetMatch('ПЕТЪР ИВАНОВ ПРИМЕРОВ', b.text)),
     false,
     'cross-entity match under double quotes — the libel bug via markup drift',
   );
-  assert.ok(blocks.some((b) => fullSubsetMatch('ПЕНКО НЕСТОРОВ НЕСТОРОВ', b.text)));
+  assert.ok(blocks.some((b) => fullSubsetMatch('ПЕТЪР ТЕСТОВ ТЕСТОВ', b.text)));
 });
 
 test('T1 — erasure is still detected and stripped under double-quoted attributes', () => {
@@ -110,7 +110,7 @@ test('T1 positive control — the CORRECT declarant does match', () => {
   // Without this, a matcher that always returns false passes every negative test above (ADR-0027).
   const blocks = entityBlocks(F19_THREE);
   assert.equal(
-    blocks.some((b) => fullSubsetMatch('ИЛИЯН КОСТАДИНОВ ФИЛИПОВ', b.text)),
+    blocks.some((b) => fullSubsetMatch('ИЛИЯ ИВАНОВ ПРИМЕРОВ', b.text)),
     true,
   );
   assert.equal(
@@ -183,7 +183,7 @@ test('an out-of-range numeric entity is dropped, never thrown out of the parser'
   const overflow = F19_THREE.replace('ПЕНКО', '&#999999999999;ПЕНКО');
   const blocks = entityBlocks(overflow);
   assert.equal(blocks.length, 3, 'the deed still parses into its three entities');
-  assert.match(blocks[1].text, /ПЕНКО НЕСТОРОВ НЕСТОРОВ/, 'the surrounding name survives intact');
+  assert.match(blocks[1].text, /ПЕТЪР ТЕСТОВ ТЕСТОВ/, 'the surrounding name survives intact');
   assert.ok(!blocks[1].text.includes('&#'), 'the escape itself does not survive as literal text');
 });
 
@@ -191,13 +191,13 @@ test('the hex numeric form is guarded too — both decode lines, not just the de
   const overflow = F19_THREE.replace('ИЛИЯН', '&#xFFFFFFFF;ИЛИЯН');
   const blocks = entityBlocks(overflow);
   assert.equal(blocks.length, 3);
-  assert.match(blocks[2].text, /ИЛИЯН КОСТАДИНОВ ФИЛИПОВ/);
+  assert.match(blocks[2].text, /ИЛИЯ ИВАНОВ ПРИМЕРОВ/);
 });
 
 test('an in-range numeric entity still decodes — the guard bounds, it does not disable', () => {
   // &#1055; is „П". A guard that dropped every numeric escape would silently mangle real names.
   const blocks = entityBlocks(F19_THREE.replace('ПЕНКО', '&#1055;ЕНКО'));
-  assert.match(blocks[1].text, /ПЕНКО НЕСТОРОВ НЕСТОРОВ/);
+  assert.match(blocks[1].text, /ПЕТЪР ТЕСТОВ ТЕСТОВ/);
 });
 
 test('registrySeat survives the same malformed entity rather than aborting the load', () => {
@@ -234,8 +234,8 @@ test('personTokens keeps tokens of length ≥2 and folds case/spacing', () => {
 });
 
 test('fullSubsetMatch requires EVERY declarant token, not a majority', () => {
-  const entity = 'ИЛИЯН КОСТАДИНОВ ФИЛИПОВ, Държава: БЪЛГАРИЯ';
-  assert.equal(fullSubsetMatch('ИЛИЯН КОСТАДИНОВ ФИЛИПОВ', entity), true);
+  const entity = 'ИЛИЯ ИВАНОВ ПРИМЕРОВ, Държава: БЪЛГАРИЯ';
+  assert.equal(fullSubsetMatch('ИЛИЯ ИВАНОВ ПРИМЕРОВ', entity), true);
   // 2-of-3 must fail: of 301 measured matches, 46 were two-token only — the homonym risk itself.
   assert.equal(fullSubsetMatch('ИЛИЯН КОСТАДИНОВ ПЕТРОВ', entity), false);
   assert.equal(fullSubsetMatch('ИЛИЯН ПЕТРОВ ФИЛИПОВ', entity), false);
@@ -380,7 +380,7 @@ test('the joint-stock suffix rule is identical in the TR parser and the classifi
   // Behavioural pin as well as textual: identical sources with different behaviour is impossible, but a
   // future refactor could legitimately change BOTH sources while breaking one. These are the forms the
   // bar exists for — every one must be caught by both, or a joint-stock parcel publishes as ownership.
-  for (const name of ['ТРЕЙС ГРУП ХОЛД АД', 'НЕЩО ЕАД', 'ФОНД АДСИЦ', 'НЕЩО КДА']) {
+  for (const name of ['ТЕСТ ГРУП ХОЛД АД', 'НЕЩО ЕАД', 'ФОНД АДСИЦ', 'НЕЩО КДА']) {
     assert.equal(JOINT_SUFFIX.test(name), true, name);
     assert.equal(JOINT_STOCK.test(name), true, name);
   }

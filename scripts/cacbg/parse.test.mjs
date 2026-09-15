@@ -132,7 +132,7 @@ const secDecl = `<?xml version="1.0"?>
       <Cell Num="2" Description="Вид на ценните книги">акции</Cell>
       <Cell Num="3" Description="Брой на ценните книги">25</Cell>
       <Cell Num="4" Description="Ценни книжа"></Cell>
-      <Cell Num="6" Description="Емитент">ТРЕЙС ГРУП ХОЛД АД</Cell>
+      <Cell Num="6" Description="Емитент">ТЕСТ ГРУП ХОЛД АД</Cell>
       <Cell Num="8" Description="Име: собствено, бащино и фамилно">Иван Петров Тестов</Cell></Row></Table></Tables>
 </PublicPerson>`;
 
@@ -140,7 +140,7 @@ test('asset decl: АД securities read from Емитент (col 6), tagged kind=
   const d = parseDeclaration(secDecl);
   assert.equal(d.interests.length, 1);
   assert.deepEqual(d.interests[0], {
-    entity: 'ТРЕЙС ГРУП ХОЛД АД',
+    entity: 'ТЕСТ ГРУП ХОЛД АД',
     kind: 'securities',
     detail: '',
     timing: 'annual',

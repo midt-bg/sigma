@@ -22,7 +22,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'aXZhbg',
     official: 'Иван Петров',
     institution: 'Община Тест',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,
@@ -156,7 +156,7 @@ describe('/conflicts route — render', () => {
     // Two winners for the SAME official → one person row, not two. (Distinct ЕИК so it is not a family
     // collapse — genuinely two winners folded by groupByPerson.)
     await renderConflicts([
-      link({ eik: '111', company: 'ТРЕЙС ГРУП ХОЛД АД', linkKey: 'k1' }),
+      link({ eik: '111', company: 'ТЕСТ ГРУП ХОЛД АД', linkKey: 'k1' }),
       link({ eik: '222', company: 'ГБС АД', linkKey: 'k2' }),
     ]);
     const rows = bodyRows();
@@ -248,7 +248,7 @@ describe('/conflicts route — render', () => {
     // Single-winner person → the winner's NAME in the Дружества cell.
     await renderConflicts([link()]);
     const soleCell = bodyRows()[0].querySelector('td[data-label="Дружества"]')!;
-    expect(soleCell.textContent).toContain('ТРЕЙС ГРУП ХОЛД АД');
+    expect(soleCell.textContent).toContain('ТЕСТ ГРУП ХОЛД АД');
   });
 
   it('признаци live in a SECONDARY column and a flag sourced from a SECOND link still renders', async () => {
