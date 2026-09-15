@@ -27,7 +27,9 @@ import { addDays, computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan
 import { runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
+  completeEntryBaseline,
   nextQueued,
+  prepareEntryBaseline,
   queueNewWinners,
   releaseRegistryLease,
   renewRegistryLease,
@@ -540,15 +542,27 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
     const maxDeeds = params.maxDeeds ?? REGISTRY_MAX_DEEDS;
     try {
       const today = params.today ?? registryDay(new Date(startedAt));
-      await fenced('seed-entry-passes', () => seedEntryPasses(this.env.DB, today, startedAt));
-      for (let page = 0; page < (params.maxPages ?? REGISTRY_MAX_PAGES); page++) {
+      const baseline = await fenced('prepare-entry-baseline', () =>
+        prepareEntryBaseline(this.env.DB, today, holder, startedAt),
+      );
+      if (baseline === 'missing-marker')
+        throw new NonRetryableError(
+          'registry data exists without a verified full-import marker; rebuild or restore its receipt',
+        );
+      if (baseline === 'ready')
+        await fenced('seed-entry-passes', () => seedEntryPasses(this.env.DB, today, startedAt));
+      for (
+        let page = 0;
+        baseline === 'ready' && page < (params.maxPages ?? REGISTRY_MAX_PAGES);
+        page++
+      ) {
         const pass = await step.do(`entry-pass:${page}`, () =>
           nextEntryPass(this.env.DB, today, new Date().toISOString()),
         );
         if (!pass) break;
         try {
-          if (page > 0 && (params.portalPaceMs ?? 6_000) > 0)
-            await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 6_000);
+          if (page > 0 && (params.portalPaceMs ?? 30_000) > 0)
+            await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 30_000);
           // Catch inside the durable step: Workflow retries must not bypass Retry-After,
           // and custom Error properties do not survive durable serialization.
           const read = await step.do(`portal-read:${page}`, async () => {
@@ -653,6 +667,18 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
         result.absent += batch.absent;
         result.roles += batch.roles;
         if (batch.read < REGISTRY_BATCH) break;
+      }
+      if (baseline === 'building') {
+        const complete = await fenced('complete-entry-baseline', () =>
+          completeEntryBaseline(this.env.DB, holder, new Date().toISOString()),
+        );
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: complete ? 'registry_baseline_complete' : 'registry_baseline_building',
+            runId: holder,
+          }),
+        );
       }
       console.log(JSON.stringify({ level: 'info', event: 'registry_refresh_complete', ...result }));
       return result;

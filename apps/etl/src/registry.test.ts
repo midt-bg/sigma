@@ -9,14 +9,12 @@ import type { RegistryDeed } from '@sigma/ingest';
 import { d1FromSqlite } from '@sigma/test-support';
 import {
   acquireRegistryLease,
+  completeEntryBaseline,
   nextQueued,
-  queueAllRead,
-  queueChanged,
   queueNewWinners,
-  registryChangesThrough,
+  prepareEntryBaseline,
   releaseRegistryLease,
   renewRegistryLease,
-  setRegistryChangesThrough,
   storeDeed,
   seedEntryPasses,
   nextEntryPass,
@@ -100,15 +98,6 @@ describe('the registry lease', () => {
     await releaseRegistryLease(db, 'b');
     expect(await acquireRegistryLease(db, 'a', later)).toBe(true);
   });
-
-  it('keeps how far the changes were followed across runs and releases', async () => {
-    const { db } = served();
-    expect(await registryChangesThrough(db)).toBeNull();
-    await setRegistryChangesThrough(db, '2026-09-08');
-    await acquireRegistryLease(db, 'a');
-    await releaseRegistryLease(db, 'a');
-    expect(await registryChangesThrough(db)).toBe('2026-09-08');
-  });
 });
 
 describe('the queue', () => {
@@ -120,20 +109,14 @@ describe('the queue', () => {
     expect((await nextQueued(db, 10)).sort()).toEqual(['111111111', '222222222']);
   });
 
-  it('queues a change only for a partida already read, and reads the changed ones first', async () => {
-    const { db } = served();
+  it('reads changed partidas before new ones', async () => {
+    const { db, sqlite } = served();
     await queueNewWinners(db, '2026-09-10T00:00:00Z', 10);
     await storeDeed(db, '222222222', { status: 'absent' }, '2026-09-10T00:00:00Z');
-    expect(await queueChanged(db, ['222222222', '999999999'], '2026-09-10T01:00:00Z')).toBe(1);
-    expect(await queueChanged(db, [], '2026-09-10T01:00:00Z')).toBe(0);
+    sqlite
+      .prepare("INSERT INTO registry_queue VALUES('222222222','changed','2026-09-10T01:00:00Z')")
+      .run();
     expect(await nextQueued(db, 10)).toEqual(['222222222', '111111111']);
-  });
-
-  it('queues every read partida again when the feed was left too far behind', async () => {
-    const { db } = served();
-    await storeDeed(db, '111111111', { status: 'absent' }, '2026-09-10T00:00:00Z');
-    await storeDeed(db, '222222222', { status: 'absent' }, '2026-09-10T00:00:00Z');
-    expect(await queueAllRead(db, '2026-09-11T00:00:00Z')).toBe(2);
   });
 });
 
@@ -235,36 +218,56 @@ describe('storeDeed', () => {
 });
 
 describe('entry passes and pending signals', () => {
-  it('seeds missed calendar days with all five passes and resumes pages', async () => {
+  it('builds a baseline only for an empty registry and accepts it after the full scope is loaded', async () => {
     const { db, sqlite } = served();
-    await storeDeed(
-      db,
-      '111111111',
-      { status: 'ok', deed: partida('111111111', []) },
-      '2026-09-12',
+    expect(await prepareEntryBaseline(db, '2026-09-13', 'run-1', '2026-09-13T00:00:00Z')).toBe(
+      'building',
     );
-    await seedEntryPasses(db, '2026-09-13', '2026-09-13T00:00:00Z');
-    expect(sqlite.prepare('SELECT count(*) n FROM registry_queue').get()?.n).toBe(0);
+    expect(await completeEntryBaseline(db, 'run-1', '2026-09-13T01:00:00Z')).toBe(false);
+    await storeDeed(db, '111111111', { status: 'absent' }, '2026-09-13T01:01:00Z');
+    await storeDeed(db, '222222222', { status: 'absent' }, '2026-09-13T01:02:00Z');
+    expect(await completeEntryBaseline(db, 'run-2', '2026-09-13T01:03:00Z')).toBe(true);
+    expect(
+      sqlite
+        .prepare(
+          'SELECT baseline_status,baseline_through,baseline_generation,baseline_run_id FROM registry_entry_state',
+        )
+        .get(),
+    ).toEqual({
+      baseline_status: 'ready',
+      baseline_through: '2026-09-12',
+      baseline_generation: 'run-1',
+      baseline_run_id: 'run-2',
+    });
+  });
+
+  it('refuses to guess a baseline for existing registry data', async () => {
+    const { db } = served();
+    await storeDeed(db, '111111111', { status: 'absent' }, '2026-09-12');
+    expect(await prepareEntryBaseline(db, '2026-09-13', 'run-1', '2026-09-13T00:00:00Z')).toBe(
+      'missing-marker',
+    );
+  });
+
+  it('seeds D+1 and D+14, fills primary gaps oldest-first, and resumes a started pass', async () => {
+    const { db, sqlite } = served();
+    sqlite
+      .prepare(
+        `INSERT INTO registry_entry_state
+         (id,seeded_through,baseline_status,baseline_through,baseline_run_id,baseline_completed_at)
+         VALUES(1,'2026-09-11','ready','2026-09-11','full-1','2026-09-12T23:59:00Z')`,
+      )
+      .run();
+    await seedEntryPasses(db, '2026-09-16', '2026-09-16T00:00:00Z');
     expect(
       sqlite
         .prepare("SELECT delay FROM registry_entry_passes WHERE day='2026-09-12' ORDER BY delay")
         .all()
         .map((r) => r.delay),
-    ).toEqual([1, 3, 7, 14, 33]);
-    await seedEntryPasses(db, '2026-09-16', '2026-09-16T00:00:00Z');
-    expect(
-      sqlite.prepare("SELECT count(*) n FROM registry_entry_passes WHERE day='2026-09-14'").get()
-        ?.n,
-    ).toBe(5);
+    ).toEqual([1, 14]);
+    expect((await nextEntryPass(db, '2026-10-01', '2026-10-01T00:00:00Z'))?.day).toBe('2026-09-12');
     const pass = (await nextEntryPass(db, '2026-09-16', '2026-09-16T00:00:00Z'))!;
-    expect(pass.day).toBe('2026-09-15');
-    expect(
-      sqlite
-        .prepare(
-          "SELECT count(*) n FROM registry_entry_passes WHERE day < '2026-09-15' AND completed_at IS NULL",
-        )
-        .get()?.n,
-    ).toBeGreaterThan(0);
+    expect(pass.day).toBe('2026-09-12');
     await recordEntryPage(
       db,
       pass,
@@ -321,8 +324,13 @@ describe('entry passes and pending signals', () => {
 });
 
 it('queued winners do not starve new winners; XML Retry-After pauses all reads', async () => {
-  const { db } = served();
-  await seedEntryPasses(db, '2026-09-13', '2026-09-13T00:00:00Z');
+  const { db, sqlite } = served();
+  sqlite
+    .prepare(
+      `INSERT INTO registry_entry_state
+       (id,seeded_through,baseline_status,baseline_through) VALUES(1,'2026-09-12','ready','2026-09-12')`,
+    )
+    .run();
   expect(await queueNewWinners(db, '2026-09-13T00:00:00Z', 1)).toBe(1);
   expect(await queueNewWinners(db, '2026-09-13T00:00:00Z', 1)).toBe(1);
   await deferXml(db, '2026-09-13T00:10:00Z');

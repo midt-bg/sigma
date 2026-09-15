@@ -55,24 +55,6 @@ async function leaseHolder(db: D1Database): Promise<string | null> {
   return r?.holder ?? null;
 }
 
-/** The last load day of the API whose changes have been queued, or null before the first. */
-export async function registryChangesThrough(db: D1Database): Promise<string | null> {
-  const r = await db
-    .prepare('SELECT changes_through FROM registry_sync WHERE id = 1')
-    .first<{ changes_through: string | null }>();
-  return r?.changes_through ?? null;
-}
-
-export async function setRegistryChangesThrough(db: D1Database, day: string): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO registry_sync (id, changes_through) VALUES (1, ?1)
-       ON CONFLICT(id) DO UPDATE SET changes_through = ?1`,
-    )
-    .bind(day)
-    .run();
-}
-
 const queued = async (db: D1Database) =>
   (await db.prepare('SELECT COUNT(*) AS n FROM registry_queue').first<{ n: number }>())?.n ?? 0;
 
@@ -98,39 +80,6 @@ export async function queueNewWinners(db: D1Database, now: string, limit: number
     .bind(now, limit)
     .run();
   return (await queued(db)) - before;
-}
-
-/** Queue again the read partidas the register changed; one it never read is the new-winner queue's job. */
-export async function queueChanged(db: D1Database, uics: string[], now: string): Promise<number> {
-  if (uics.length === 0) return 0;
-  const r = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM registry_deeds WHERE eik IN (SELECT value FROM json_each(?1))`,
-    )
-    .bind(JSON.stringify(uics))
-    .first<{ n: number }>();
-  await db
-    .prepare(
-      `INSERT INTO registry_queue (eik, reason, queued_at)
-       SELECT d.eik, 'changed', ?2 FROM registry_deeds d WHERE d.eik IN (SELECT value FROM json_each(?1))
-       ON CONFLICT(eik) DO UPDATE SET reason = 'changed', queued_at = excluded.queued_at`,
-    )
-    .bind(JSON.stringify(uics), now)
-    .run();
-  return r?.n ?? 0;
-}
-
-/** Queue every read partida again — the fallback when the changes feed was left too far behind to follow.
- *  (`WHERE true`: without a WHERE, SQLite reads the upsert's ON as a join constraint of the SELECT.) */
-export async function queueAllRead(db: D1Database, now: string): Promise<number> {
-  await db
-    .prepare(
-      `INSERT INTO registry_queue (eik, reason, queued_at) SELECT eik, 'changed', ?1 FROM registry_deeds WHERE true
-       ON CONFLICT(eik) DO UPDATE SET reason = 'changed', queued_at = excluded.queued_at`,
-    )
-    .bind(now)
-    .run();
-  return queued(db);
 }
 
 /** The next partidas to read: changed ones first (they are stale on the site), then new, oldest first. */
@@ -313,19 +262,93 @@ export async function storeDeed(
   return { roles: roles.length, persons: persons.length };
 }
 
-export const ENTRY_DELAYS = [1, 3, 7, 14, 33] as const;
+export const ENTRY_DELAYS = [1, 14] as const;
 const dayPlus = (day: string, n: number) =>
   new Date(Date.parse(`${day}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
-/** Seed every missed day, not just today's five targets. The first run starts 33 days back. */
-export async function seedEntryPasses(db: D1Database, today: string, now: string): Promise<void> {
+export type EntryBaseline = 'building' | 'ready' | 'missing-marker';
+
+/**
+ * Start a genuinely empty registry as a resumable full import. Existing data without a marker is
+ * deliberately not guessed from: an operator must prove its import receipt or rebuild it.
+ */
+export async function prepareEntryBaseline(
+  db: D1Database,
+  today: string,
+  runId: string,
+  now: string,
+): Promise<EntryBaseline> {
+  const state = await db
+    .prepare('SELECT baseline_status FROM registry_entry_state WHERE id=1')
+    .first<{ baseline_status: 'unknown' | 'building' | 'ready' }>();
+  if (state?.baseline_status === 'ready' || state?.baseline_status === 'building')
+    return state.baseline_status;
+  const existing = await db
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM registry_deeds) + (SELECT COUNT(*) FROM registry_queue) AS n`,
+    )
+    .first<{ n: number }>();
+  if (state || (existing?.n ?? 0) > 0) return 'missing-marker';
+  const through = dayPlus(today, -1);
   await db
-    .prepare('INSERT OR IGNORE INTO registry_entry_state(id, seeded_through) VALUES (1, ?1)')
-    .bind(dayPlus(today, -34))
+    .prepare(
+      `INSERT INTO registry_entry_state
+       (id,seeded_through,baseline_status,baseline_through,baseline_started_at,baseline_generation)
+       VALUES(1,?1,'building',?1,?2,?3)`,
+    )
+    .bind(through, now, runId)
+    .run();
+  return 'building';
+}
+
+/** Atomically accept a full import only when every company in scope has a complete local partida. */
+export async function completeEntryBaseline(
+  db: D1Database,
+  runId: string,
+  now: string,
+): Promise<boolean> {
+  await db
+    .prepare(
+      `UPDATE registry_entry_state
+       SET baseline_status='ready',baseline_run_id=?1,baseline_completed_at=?2
+       WHERE id=1 AND baseline_status='building'
+       AND NOT EXISTS (SELECT 1 FROM registry_queue)
+       AND NOT EXISTS (
+         SELECT 1 FROM (
+           SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
+           WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
+             AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
+           UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
+         ) requested
+         WHERE NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
+            OR EXISTS (
+              SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok'
+              AND (NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)
+                OR NOT EXISTS (
+                  SELECT 1 FROM registry_company_history h
+                  JOIN registry_identity_snapshots s USING(eik)
+                  WHERE h.eik=requested.eik AND h.source_hash=s.source_hash
+                ))
+            )
+       )`,
+    )
+    .bind(runId, now)
     .run();
   const state = await db
-    .prepare('SELECT seeded_through FROM registry_entry_state WHERE id=1')
+    .prepare('SELECT baseline_status FROM registry_entry_state WHERE id=1')
+    .first<{ baseline_status: string }>();
+  return state?.baseline_status === 'ready';
+}
+
+/** Seed every closed day after the accepted full-import baseline. */
+export async function seedEntryPasses(db: D1Database, today: string, now: string): Promise<void> {
+  const state = await db
+    .prepare(
+      `SELECT seeded_through FROM registry_entry_state
+       WHERE id=1 AND baseline_status='ready' AND baseline_through IS NOT NULL`,
+    )
     .first<{ seeded_through: string }>();
+  if (!state) throw new Error('registry full-import marker is missing');
   for (let day = dayPlus(state!.seeded_through, 1); day < today; day = dayPlus(day, 1)) {
     await db.batch([
       ...ENTRY_DELAYS.map((delay) =>
@@ -356,7 +379,8 @@ export async function nextEntryPass(
     .prepare(
       `SELECT p.* FROM registry_entry_passes p, registry_entry_state s
     WHERE s.id=1 AND (s.portal_retry_at IS NULL OR s.portal_retry_at <= ?2)
-    AND p.completed_at IS NULL AND p.due_on <= ?1 ORDER BY p.due_on DESC, p.day DESC, p.delay LIMIT 1`,
+    AND p.completed_at IS NULL AND p.due_on <= ?1
+    ORDER BY (p.next_page > 1) DESC, (p.delay = 1) DESC, p.day, p.delay LIMIT 1`,
     )
     .bind(today, now)
     .first<EntryPass>();

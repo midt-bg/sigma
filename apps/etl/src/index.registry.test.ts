@@ -6,10 +6,12 @@ const { client, reg } = vi.hoisted(() => ({
   client: { changes: vi.fn(), deed: vi.fn() },
   reg: {
     acquireRegistryLease: vi.fn(),
+    completeEntryBaseline: vi.fn(),
     renewRegistryLease: vi.fn(),
     releaseRegistryLease: vi.fn(),
     seedEntryPasses: vi.fn(),
     nextEntryPass: vi.fn(),
+    prepareEntryBaseline: vi.fn(),
     recordEntryPage: vi.fn(),
     deferPortal: vi.fn(),
     deferDeed: vi.fn(),
@@ -43,6 +45,8 @@ function run() {
 beforeEach(() => {
   for (const f of [...Object.values(client), ...Object.values(reg)]) f.mockReset();
   reg.acquireRegistryLease.mockResolvedValue(true);
+  reg.completeEntryBaseline.mockResolvedValue(true);
+  reg.prepareEntryBaseline.mockResolvedValue('ready');
   reg.renewRegistryLease.mockResolvedValue(true);
   reg.nextEntryPass.mockResolvedValue(null);
   reg.queueNewWinners.mockResolvedValue(1);
@@ -51,6 +55,20 @@ beforeEach(() => {
   reg.storeDeed.mockResolvedValue({ roles: 2, persons: 1 });
 });
 describe('published registry Workflow', () => {
+  it('refuses existing data without a verified full-import marker', async () => {
+    reg.prepareEntryBaseline.mockResolvedValue('missing-marker');
+    await expect(run()).rejects.toThrow('verified full-import marker');
+    expect(client.changes).not.toHaveBeenCalled();
+    expect(client.deed).not.toHaveBeenCalled();
+    expect(reg.releaseRegistryLease).toHaveBeenCalled();
+  });
+  it('builds an empty baseline before it begins daily portal passes', async () => {
+    reg.prepareEntryBaseline.mockResolvedValue('building');
+    expect(await run()).toMatchObject({ read: 1, roles: 2 });
+    expect(reg.seedEntryPasses).not.toHaveBeenCalled();
+    expect(client.changes).not.toHaveBeenCalled();
+    expect(reg.completeEntryBaseline).toHaveBeenCalledWith({}, 'run', expect.any(String));
+  });
   it('reads queued deeds independently of a portal refusal and preserves the pass', async () => {
     reg.nextEntryPass.mockResolvedValue({ day: '2026-09-12', delay: 1, next_page: 2 });
     client.changes.mockRejectedValue(new Error('portal down'));
