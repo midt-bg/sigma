@@ -77,6 +77,7 @@ jobs:
       SIGMA_WEB_NAME: ${{ vars.SIGMA_WEB_NAME }}
       SIGMA_ETL_NAME: ${{ vars.SIGMA_ETL_NAME }}
       SIGMA_WORKFLOW_NAME: ${{ vars.SIGMA_WORKFLOW_NAME }}
+      SIGMA_REGISTRY_WORKFLOW_NAME: ${{ vars.SIGMA_REGISTRY_WORKFLOW_NAME }}
       SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
       SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
       SIGMA_REPORTS_NAME: ${{ vars.SIGMA_REPORTS_NAME }}
@@ -120,6 +121,7 @@ jobs:
           check "$SIGMA_WEB_NAME"       sigma           SIGMA_WEB_NAME
           check "$SIGMA_ETL_NAME"       sigma-etl       SIGMA_ETL_NAME
           check "$SIGMA_WORKFLOW_NAME"  sigma-refresh   SIGMA_WORKFLOW_NAME
+          check "$SIGMA_REGISTRY_WORKFLOW_NAME" sigma-registry SIGMA_REGISTRY_WORKFLOW_NAME
           check "$SIGMA_D1_NAME"        sigma           SIGMA_D1_NAME
           check "$SIGMA_CSV_CACHE_NAME" sigma-csv-cache SIGMA_CSV_CACHE_NAME
           check "$SIGMA_REPORTS_NAME"   sigma-reports   SIGMA_REPORTS_NAME
