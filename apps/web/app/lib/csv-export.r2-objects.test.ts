@@ -6,7 +6,7 @@ import { fakeD1 } from '@sigma/test-support';
 import { servedCsvExport } from './csv-export';
 
 const CSV = '0123456789abcdef\n';
-const KEY = 'csv/contracts/20260613T100000Z';
+const OBJECT_PATH = 'csv/contracts/20260613T100000Z';
 const encoder = new TextEncoder();
 
 const db = () =>
@@ -29,7 +29,7 @@ const stream = (text: string) =>
 function bucketWith(range: unknown, text: string) {
   return {
     get: vi.fn(async () => ({
-      key: KEY,
+      key: OBJECT_PATH,
       size: encoder.encode(CSV).length,
       httpEtag: '"etag-1"',
       range,
@@ -57,7 +57,7 @@ describe('servedCsvExport — the object R2 returns', () => {
     expect(res.headers.get('Content-Length')).toBe('5');
     expect(res.headers.get('X-Csv-Cache')).toBe('HIT');
     expect(await res.text()).toBe('01234');
-    expect(bucket.get).toHaveBeenCalledWith(KEY, {
+    expect(bucket.get).toHaveBeenCalledWith(OBJECT_PATH, {
       onlyIf: expect.any(Headers),
       range: expect.any(Headers),
     });
@@ -86,7 +86,9 @@ describe('servedCsvExport — the object R2 returns', () => {
       get: vi.fn(async () => null),
       createMultipartUpload: vi.fn(async () => upload),
     };
-    await expect(serve(bucket)).rejects.toThrow(`CSV cache object missing after put: ${KEY}`);
+    await expect(serve(bucket)).rejects.toThrow(
+      `CSV cache object missing after put: ${OBJECT_PATH}`,
+    );
     expect(upload.complete).toHaveBeenCalledTimes(1);
     expect(upload.abort).not.toHaveBeenCalled();
     expect(bucket.get).toHaveBeenCalledTimes(2); // the miss, then the read-back after the upload
