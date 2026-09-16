@@ -184,3 +184,22 @@ it('notes ownership the register holds at the end of a reporting year that the a
     db.close();
   }
 });
+
+it('fails loudly when the declarations themselves are missing, not only an optional table', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE declaration_metadata(declaration_id,declaration_type,declared_on,submitted_on);
+      CREATE TABLE declaration_companies(declaration_id,eik,match_method);
+      CREATE TABLE declared_interests(declaration_id,entity_key,entity_raw,kind,timing);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE interest_links(person_id,entity_key,eik,status,interest_class,link_key,match_method,bidder_id);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE bidders(id,name);`);
+    await expect(getPersonDeclarations(d1FromSqlite(db), 'p')).rejects.toThrow(
+      /no such table: declarations/,
+    );
+  } finally {
+    db.close();
+  }
+});

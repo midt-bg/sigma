@@ -368,3 +368,10 @@ describe('branch completion — coercion + column-kind fallbacks', () => {
     expect(baseSqlLiteral('contracts', 'no_such_column', "a'b")).toBe("'a''b'");
   });
 });
+
+describe('toISODate — expanded ISO years', () => {
+  it('nulls a signed six-digit year rather than reading part of it', () => {
+    expect(toISODate('+010000-01-01', FIXED_NOW)).toBeNull();
+    expect(toISODate('-000001-01-01', FIXED_NOW)).toBeNull();
+  });
+});

@@ -43,3 +43,12 @@ it('focuses the exact declaration and restarts its temporary indication on repea
   vi.advanceTimersByTime(1700);
   expect(row.classList.contains('profile-target')).toBe(false);
 });
+
+it('leaves the page and the focus alone when the target is not on the page', () => {
+  document.body.innerHTML = '<button type="button">Назад</button>';
+  const button = document.querySelector('button')!;
+  button.focus();
+  expect(() => revealProfileTarget(declarationRowId('missing'))).not.toThrow();
+  expect(document.activeElement).toBe(button);
+  expect(document.querySelector('.profile-target')).toBeNull();
+});

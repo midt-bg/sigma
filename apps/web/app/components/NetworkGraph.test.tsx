@@ -157,3 +157,35 @@ describe('NetworkGraph', () => {
     ).toBeNull();
   });
 });
+
+describe('NetworkGraph — nodes beyond the drawn rings', () => {
+  it('leaves out a node it has no ring for, rather than drawing it at the origin', () => {
+    // Only the centre and two rings are laid out; a node reported any further out has no position.
+    const c = render(
+      <NetworkGraph
+        data={{
+          ...data,
+          nodes: [
+            ...data.nodes,
+            {
+              id: 'eik:9',
+              kind: 'company',
+              label: 'ДАЛЕЧНА ФИРМА ООД',
+              slug: '9',
+              valueEur: 5,
+              hop: 3,
+            },
+          ],
+          edges: [...data.edges, { from: 'eik:3', to: 'eik:9', valueEur: 5, contracts: 1 }],
+        }}
+      />,
+    );
+    expect([...c.querySelectorAll('a.node-link')].map((a) => a.getAttribute('href'))).toEqual([
+      '/companies/1',
+      '/authorities/2',
+      '/companies/3',
+    ]);
+    expect(c.querySelectorAll('line.edge')).toHaveLength(2);
+    expect(c.textContent).not.toContain('ДАЛЕЧНА');
+  });
+});

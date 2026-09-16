@@ -173,3 +173,51 @@ it('lists people the register places at a winner without a declared stake, by th
     db.close();
   }
 });
+
+it('names the only company of a single-company declarant, and tells own, family and mixed stakes apart', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,own_institution,first_declared_year,last_declared_year);
+      CREATE TABLE interest_link_evidence(link_key,evidence_kind);
+      CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      CREATE TABLE declarations(person_id,institution,position,declared_year);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);CREATE TABLE authorities(id PRIMARY KEY);
+      INSERT INTO authorities VALUES('a');INSERT INTO tenders VALUES('t','a');
+      INSERT INTO bidders VALUES('b1','111111111','Първа'),('b2','222222222','Втора');
+      INSERT INTO contracts VALUES('c1','b1','t','2020-01-01',100),('c2','b2','t','2020-01-01',200);
+      INSERT INTO persons VALUES('person:self','Собствен дял'),('person:family','Дял на свързано лице'),('person:mixed','Два вида дял');
+      INSERT INTO interest_links VALUES
+        ('s','person:self','111111111','published','private_ownership','none','2020','2020'),
+        ('f','person:family','222222222','published','family_ownership','none','2020','2020'),
+        ('m1','person:mixed','111111111','published','private_ownership','none','2020','2020'),
+        ('m2','person:mixed','222222222','published','family_ownership','none','2020','2020');
+      INSERT INTO interest_link_evidence SELECT link_key,'document' FROM interest_links;`);
+    const rows = await getRelatedPersonRows(d1FromSqlite(db));
+    const by = (official: string) => rows.find((r) => r.official === official)!;
+    expect(by('Собствен дял')).toMatchObject({
+      stakeKind: 'self',
+      companyCount: 1,
+      soleCompany: { company: 'Първа', eik: '111111111' },
+    });
+    expect(by('Дял на свързано лице')).toMatchObject({
+      stakeKind: 'family',
+      soleCompany: { company: 'Втора', eik: '222222222' },
+    });
+    expect(by('Два вида дял')).toMatchObject({
+      stakeKind: 'mixed',
+      companyCount: 2,
+      soleCompany: null,
+      contractValueEur: 300,
+      companies: [
+        { eik: '222222222', company: 'Втора', self: 0, family: 1 },
+        { eik: '111111111', company: 'Първа', self: 1, family: 0 },
+      ],
+    });
+  } finally {
+    db.close();
+  }
+});

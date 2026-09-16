@@ -32,3 +32,27 @@ it('keeps manual declaration runs in dev and waits for the actual container outc
   getRun.mockResolvedValue({ runId: 'another-run', state: 'complete' });
   await expect(run()).rejects.toThrow('run changed');
 });
+
+it('stops a manual run that disappears or fails without a reason', async () => {
+  const getRun = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValue({ runId: 'run-1', state: 'failed' });
+  const env = {
+    SIGMA_D1_ID: '713b98fa-6ab5-45f3-81c4-119f4c0907d6',
+    SIGMA_D1_NAME: 'sigma-dev',
+    SIGMA_SHIP_ENV: 'dev',
+    DECLARATIONS_BUCKET: 'sigma-declarations-dev',
+    DECLARATIONS: {
+      getByName: () => ({ startRun: async () => ({ runId: 'run-1', state: 'running' }), getRun }),
+    },
+  };
+  const step = { do: async (_name: string, fn: () => unknown) => fn(), sleep: async () => {} };
+  const run = () =>
+    new DevDeclarationsWorkflow({} as never, env as never).run(
+      { instanceId: 'workflow-1' } as never,
+      step as never,
+    );
+  await expect(run()).rejects.toThrow('Declaration run changed');
+  await expect(run()).rejects.toThrow(/^Declaration run failed: $/);
+});

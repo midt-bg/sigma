@@ -38,3 +38,10 @@ describe('a role tie in words', () => {
     expect(ROLE_LABEL.beneficial_owner).toBe('действителен собственик');
   });
 });
+
+describe('a role tie with no roles listed', () => {
+  it('says nothing rather than inventing a role', () => {
+    expect(roleSentence({ current: true })).toBe('');
+    expect(roleEdgeText({ current: true })).toBe('');
+  });
+});

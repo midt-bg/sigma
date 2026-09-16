@@ -3,7 +3,7 @@
 // tie it is, and nothing is drawn that the network did not contain.
 import { describe, expect, it } from 'vitest';
 import type { CompanyTieNetwork } from '@sigma/api-contract';
-import { boxLabel, layoutTies } from './tie-layout.server';
+import { boxLabel, edgeText, layoutTies } from './tie-layout.server';
 
 const node = (over: Partial<CompanyTieNetwork['nodes'][number]> = {}) => ({
   id: 'eik:1',
@@ -193,5 +193,24 @@ describe('layoutTies', () => {
   it('lays out nothing without a centre or with a lone node', () => {
     expect(layoutTies(net({ center: null }))).toBeNull();
     expect(layoutTies(net({ nodes: [node()] }))).toBeNull();
+  });
+});
+
+describe('edgeText — a tie through a shared declarant', () => {
+  const person = (n: number) => ({ id: `rp:${n}`, name: `Лице ${n}`, href: `/persons/${n}` });
+  const stake = (people?: ReturnType<typeof person>[]) =>
+    edge({ kind: 'declared_stake', weightEur: 0, occurrences: 1, people });
+
+  it('names the one declarant the two companies share', () => {
+    expect(edgeText(stake([person(1)]))).toBe('Лице 1');
+  });
+
+  it('counts the declarants when there are several', () => {
+    expect(edgeText(stake([person(1), person(2), person(3)]))).toBe('3 общи декларатори');
+  });
+
+  it('says only what kind of tie it is when no declarant is listed', () => {
+    expect(edgeText(stake([]))).toBe('общо свързано лице');
+    expect(edgeText(stake())).toBe('общо свързано лице');
   });
 });

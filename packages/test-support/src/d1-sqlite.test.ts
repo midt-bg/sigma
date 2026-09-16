@@ -102,6 +102,7 @@ describe('d1FromSqlite', () => {
       ['b'],
     );
     await expect(ids('SELECT id FROM t WHERE id GLOB ?', 'A*')).resolves.toEqual([]);
+    await expect(ids('SELECT id FROM t WHERE id LIKE NULL')).resolves.toEqual([]);
     await expect(ids('SELECT id FROM t WHERE id NOT LIKE ? ORDER BY id', 'a')).resolves.toEqual([
       'b',
     ]);

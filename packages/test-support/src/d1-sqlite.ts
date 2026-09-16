@@ -40,12 +40,12 @@ function capPatterns(db: DatabaseSync): void {
   db.function(
     'like',
     { varargs: true, deterministic: true },
-    capped((args) => (args.length > 2 ? likeEscape : like).get(...args)?.r ?? null),
+    capped((args) => (args.length > 2 ? likeEscape : like).get(...args)!.r as SQLOutputValue),
   );
   db.function(
     'glob',
     { varargs: true, deterministic: true },
-    capped((args) => glob.get(...args)?.r ?? null),
+    capped((args) => glob.get(...args)!.r as SQLOutputValue),
   );
 }
 

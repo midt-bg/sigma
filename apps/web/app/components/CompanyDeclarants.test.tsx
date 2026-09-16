@@ -112,3 +112,23 @@ it('preserves both kinds of declared participation in the combined row', () => {
 it('omits the section without declarants', () => {
   expect(render([]).innerHTML).toBe('');
 });
+
+it('labels each office-holder by whose stake they declared', () => {
+  const container = render([
+    { ...link('own', 'Община А', '2023'), relation: 'owns' },
+    link('relative', 'Община Б', '2023'),
+    { ...link('both', 'Община В', '2023'), relation: 'owns' },
+    { ...link('both', 'Община В', '2024'), linkKey: 'both|123456789|family' },
+  ]);
+  const stakes = Object.fromEntries(
+    [...container.querySelectorAll('tbody tr')].map((row) => [
+      row.querySelector('[data-label="Длъжностно лице"] a')!.getAttribute('href'),
+      row.querySelector('[data-label="Декларирано участие"] .chip')!.textContent,
+    ]),
+  );
+  expect(stakes).toEqual({
+    '/persons/own': 'деклариран собствен дял',
+    '/persons/relative': 'дял на свързано лице',
+    '/persons/both': 'собствен и свързан дял',
+  });
+});

@@ -555,3 +555,113 @@ describe('identity observations', () => {
     expect(r.observations[1]?.kind).toBe('collective');
   });
 });
+
+describe('registry shapes at the edges', () => {
+  const one = (value: unknown, fieldIdent = '00070') =>
+    rolesFromDeed('101010101', partida(field({ fieldIdent, value })));
+
+  it('reads the text of an element that carries attributes, and skips one that has none', () => {
+    const named = (RecordID: string, Name: unknown) => ({
+      RecordID,
+      Person: { ...person(RecordID, ''), Name },
+    });
+    const { roles, observations } = one({
+      Manager: [
+        named('1', { Lang: 'bg', $text: ' ИВАН ПЕТРОВ ' }),
+        named('2', { Lang: 'bg', $text: '   ' }),
+        named('3', { Lang: 'bg' }),
+      ],
+    });
+    expect(roles.map((r) => [r.subjectId, r.subjectName])).toEqual([[hash('1'), 'ИВАН ПЕТРОВ']]);
+    expect(observations.map((o) => o.name)).toEqual(['ИВАН ПЕТРОВ']);
+  });
+
+  it('keeps a hash the register gives without its IndentType inside the partida', () => {
+    const { roles, persons, observations } = one({
+      Manager: [{ RecordID: '1', Person: { Name: 'БЕЗ ВИД', Indent: hash('b') } }],
+    });
+    expect(roles.map((r) => [r.subjectKind, r.subjectId])).toEqual([
+      ['person', 'local:101010101:БЕЗ ВИД'],
+    ]);
+    expect(persons).toEqual([]);
+    expect(observations[0]).toMatchObject({ indent: null, indentType: null, kind: 'other' });
+  });
+
+  it('reads a lone owned right, skips empty ones and falls back to the rights text', () => {
+    const owner = (c: string, over: Record<string, unknown>) => ({
+      RecordID: c,
+      Person: person(c, `СОБСТВЕНИК ${c}`),
+      ...over,
+    });
+    const { roles } = one(
+      {
+        ActualOwner: [
+          owner('1', { OwnedRightsDetails: { OwnedRightsDetail: { OwnedRightSize: '100' } } }),
+          owner('2', {
+            OwnedRights: 'непряко',
+            OwnedRightsDetails: { OwnedRightsDetail: ['', { OwnedRightSize: 25 }] },
+          }),
+          owner('3', { OwnedRights: 'пряко', OwnedRightsDetails: { OwnedRightsDetail: [''] } }),
+        ],
+      },
+      '05500',
+    );
+    expect(roles.map((r) => [r.subjectId, r.share])).toEqual([
+      [hash('1'), '100'],
+      [hash('2'), '25'],
+      [hash('3'), 'пряко'],
+    ]);
+  });
+
+  it('orders the entries of one moment by their entry number, whatever order they come in', () => {
+    const at = (entryNumber: string, value: unknown) =>
+      field({ entryNumber, entryDate: '2015-01-01T09:00:00', value });
+    const { roles } = rolesFromDeed(
+      '101010101',
+      partida(
+        at('20150101000002', managers(['b', 'ИМЕ ДВЕ'])),
+        at('20150101000001', managers(['a', 'ИМЕ ЕДНО'])),
+      ),
+    );
+    expect(roles.map((r) => [r.subjectId, r.entryNumber, r.addedOn, r.removedOn])).toEqual([
+      [hash('a'), '20150101000001', '2015-01-01', '2015-01-01'],
+      [hash('b'), '20150101000002', '2015-01-01', null],
+    ]);
+  });
+
+  const seatAt = (d: string, value: unknown, over: Partial<RegistryField> = {}) =>
+    on(d, { fieldIdent: '00050', element: 'Seat', value, ...over });
+  const address = (Settlement: string) => ({ RecordID: '1', Address: { Settlement } });
+
+  it('lets the latest entry of the seat decide, whatever order the entries come in', () => {
+    const f = deedFacts(
+      partida(
+        seatAt('2013-05-23', address('гр. София')),
+        seatAt('2008-02-06', address('гр. Варна')),
+        seatAt('2013-05-23', address('гр. Бургас'), { entryNumber: '20130523080000' }),
+      ),
+    );
+    expect(f).toMatchObject({ seatSettlement: 'гр. София', seatEntryOn: '2013-05-23' });
+  });
+
+  it('dates a seat entry that carries no address, without inventing a settlement', () => {
+    expect(deedFacts(partida(seatAt('2011-11-11', { RecordID: '1' })))).toEqual({
+      seatSettlement: null,
+      seatEntryOn: '2011-11-11',
+      ownersEntryOn: null,
+    });
+  });
+
+  it('dates the ownership record by the latest of several standing fields, in any order', () => {
+    const partners = on('2016-03-03', {
+      fieldIdent: '00190',
+      value: { Partner: [{ RecordID: '1', Subject: person('1', 'СЪДРУЖНИК ЕДНО') }] },
+    });
+    const soleOwner = on('2012-02-02', {
+      fieldIdent: '00230',
+      value: { RecordID: '2', Subject: person('2', 'СОБСТВЕНИК ДВЕ') },
+    });
+    expect(deedFacts(partida(partners, soleOwner)).ownersEntryOn).toBe('2016-03-03');
+    expect(deedFacts(partida(soleOwner, partners)).ownersEntryOn).toBe('2016-03-03');
+  });
+});

@@ -20,6 +20,7 @@ import {
   nextEntryPass,
   recordEntryPage,
   deferDeed,
+  deferPortal,
   deferXml,
 } from './registry';
 
@@ -415,4 +416,124 @@ it('backfills and replaces company name history in the same transaction as regis
       ?.names_json,
   ).toBe('[]');
   sqlite.close();
+});
+
+describe('lease, baseline and portal pass edges', () => {
+  const NOW = '2026-09-13T00:00:00Z';
+  // A registry whose accepted import ends on 11 September: one closed day, 12 September, to scan.
+  async function onePass() {
+    const s = served();
+    s.sqlite.exec(
+      `INSERT INTO registry_entry_state (id,seeded_through,baseline_status,baseline_through)
+       VALUES(1,'2026-09-11','ready','2026-09-11')`,
+    );
+    await seedEntryPasses(s.db, '2026-09-13', NOW);
+    const pass = async () => (await nextEntryPass(s.db, '2026-09-13', NOW))!;
+    const row = () =>
+      s.sqlite
+        .prepare(
+          `SELECT next_page, first_count, rows_seen, last_page_key, completed_at
+           FROM registry_entry_passes WHERE day='2026-09-12' AND delay=1`,
+        )
+        .get();
+    return { ...s, pass, row };
+  }
+  const change = (uic: string) => ({ uic, entryDate: '2026-09-12T10:00:00', companyName: 'A' });
+
+  it('never renews a lease nobody took or its holder released', async () => {
+    const { db } = served();
+    expect(await renewRegistryLease(db, 'a')).toBe(false);
+    expect(await acquireRegistryLease(db, 'a')).toBe(true);
+    await releaseRegistryLease(db, 'a');
+    expect(await renewRegistryLease(db, 'a')).toBe(false);
+    expect(await acquireRegistryLease(db, 'b')).toBe(true);
+  });
+
+  it('continues a building baseline over its own rows and reports an accepted one as ready', async () => {
+    const { db, sqlite } = served();
+    expect(await prepareEntryBaseline(db, '2026-09-13', 'run-1', NOW)).toBe('building');
+    await storeDeed(db, '111111111', { status: 'absent' }, NOW);
+    // The rows this import already wrote are not "existing data without a marker".
+    expect(await prepareEntryBaseline(db, '2026-09-14', 'run-2', NOW)).toBe('building');
+    await storeDeed(db, '222222222', { status: 'absent' }, NOW);
+    expect(await completeEntryBaseline(db, 'run-2', NOW)).toBe(true);
+    expect(await prepareEntryBaseline(db, '2026-09-15', 'run-3', NOW)).toBe('ready');
+    expect(
+      sqlite
+        .prepare('SELECT baseline_through, baseline_generation FROM registry_entry_state')
+        .get(),
+    ).toEqual({ baseline_through: '2026-09-12', baseline_generation: 'run-1' });
+  });
+
+  it('seeds no pass before the full import is accepted', async () => {
+    const { db, sqlite } = served();
+    await expect(seedEntryPasses(db, '2026-09-13', NOW)).rejects.toThrow(
+      'full-import marker is missing',
+    );
+    await prepareEntryBaseline(db, '2026-09-13', 'run-1', NOW);
+    await expect(seedEntryPasses(db, '2026-09-14', NOW)).rejects.toThrow(
+      'full-import marker is missing',
+    );
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM registry_entry_passes').get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it('completes a pass on its last page against the count its first page announced', async () => {
+    const p = await onePass();
+    const page1 = { items: [change('111111111')], hasMore: true, total: 2 };
+    await recordEntryPage(p.db, await p.pass(), page1, NOW);
+    // A later page's own total does not move the target the first page set.
+    const page2 = { items: [change('222222222')], hasMore: false, total: 5 };
+    await recordEntryPage(p.db, await p.pass(), page2, '2026-09-13T00:05:00Z');
+    expect(p.row()).toMatchObject({
+      next_page: 3,
+      first_count: 2,
+      rows_seen: 2,
+      completed_at: '2026-09-13T00:05:00Z',
+    });
+    expect(await nextEntryPass(p.db, '2026-09-13', NOW)).toBeNull();
+    expect(p.sqlite.prepare('SELECT eik, reason FROM registry_queue ORDER BY eik').all()).toEqual([
+      { eik: '111111111', reason: 'changed' },
+      { eik: '222222222', reason: 'changed' },
+    ]);
+  });
+
+  it('restarts a pass whose last page ends short of the first page’s count', async () => {
+    const p = await onePass();
+    const page1 = { items: [change('111111111')], hasMore: true, total: 3 };
+    await recordEntryPage(p.db, await p.pass(), page1, NOW);
+    const short = { items: [change('222222222')], hasMore: false, total: null };
+    await expect(recordEntryPage(p.db, await p.pass(), short, NOW)).rejects.toThrow('restart pass');
+    expect(p.row()).toEqual({
+      next_page: 1,
+      first_count: null,
+      rows_seen: 0,
+      last_page_key: null,
+      completed_at: null,
+    });
+    // Nothing of the short page is recorded.
+    expect(p.sqlite.prepare('SELECT eik FROM registry_entry_signals').all()).toEqual([
+      { eik: '111111111' },
+    ]);
+  });
+
+  it('refuses a page the portal serves twice and keeps the pass where it was', async () => {
+    const p = await onePass();
+    const page = { items: [change('111111111')], hasMore: true, total: 2 };
+    await recordEntryPage(p.db, await p.pass(), page, NOW);
+    await expect(recordEntryPage(p.db, await p.pass(), page, NOW)).rejects.toThrow(
+      'repeated a page',
+    );
+    expect(p.row()).toMatchObject({ next_page: 2, rows_seen: 1, completed_at: null });
+  });
+
+  it('holds every portal pass back until the portal deferral has passed', async () => {
+    const p = await onePass();
+    await deferPortal(p.db, '2026-09-13T06:00:00Z');
+    expect(await nextEntryPass(p.db, '2026-09-13', '2026-09-13T05:59:59Z')).toBeNull();
+    expect((await nextEntryPass(p.db, '2026-09-13', '2026-09-13T06:00:00Z'))?.day).toBe(
+      '2026-09-12',
+    );
+  });
 });
