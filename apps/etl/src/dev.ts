@@ -13,7 +13,6 @@ interface DevEnv extends DeclarationEnv {
 export class DevDeclarationsWorkflow extends WorkflowEntrypoint<DevEnv> {
   override async run(event: WorkflowEvent<unknown>, step: WorkflowStep) {
     if (
-      this.env.CLOUDFLARE_ACCOUNT_ID !== '1a40aa4d0d78bed8ecf036dd22fbfa9f' ||
       this.env.SIGMA_D1_ID !== '713b98fa-6ab5-45f3-81c4-119f4c0907d6' ||
       this.env.SIGMA_D1_NAME !== 'sigma-dev' ||
       this.env.SIGMA_SHIP_ENV !== 'dev' ||
