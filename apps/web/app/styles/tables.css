@@ -208,7 +208,7 @@ td.rank {
    Every column becomes a labeled line, so no data is hidden and the row
    never needs horizontal scrolling. Two shapes: numeric "cards" and text
    "prose". */
-@media (max-width: 560px) {
+@media (max-width: 600px) {
   /* Bring back the column we hide on tablets — as a labeled line, it fits fine */
   .tbl-cards .col-secondary {
     display: flex;
@@ -266,6 +266,23 @@ td.rank {
   .tbl-cards tbody tr:hover td,
   .tbl-prose tbody tr:hover td {
     background: transparent;
+  }
+
+  /* A primary link can make the whole card actionable without JavaScript. Other links stay above
+     the stretched hit area, so a company link inside the same card keeps its own destination. */
+  .tbl-cards .card-link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  .tbl-cards td a:not(.card-link) {
+    position: relative;
+    z-index: 2;
+  }
+  .tbl-cards .card-link:focus-visible::after {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   /* Numeric rows: label left, value right. flex-wrap lets a long text value

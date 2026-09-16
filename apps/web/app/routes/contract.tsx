@@ -288,7 +288,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             title="История на измененията"
             hint="Публикуваните анекси към договора, в хронологичен ред — как се е променяла стойността и на какво основание. Всички суми в евро."
           >
-            <div className="table-wrap">
+            <div className="table-wrap tbl-prose">
               <table className="lot-table">
                 <caption className="sr-only">Анекси към договора в хронологичен ред</caption>
                 <thead>
@@ -306,13 +306,13 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 <tbody>
                   {c.amendments.map((a, i) => (
                     <tr key={`${a.documentNumber ?? 'amd'}-${i}`}>
-                      <td>{a.date ? longDate(a.date) : '—'}</td>
+                      <td data-label="Дата">{a.date ? longDate(a.date) : '—'}</td>
                       {/* #305 residual: an uncorrectable double-count — the source's value_after is the
                           untrusted doubled figure, so show „—" and mark the row rather than a number we
                           can't stand behind. A `restated` row is the opposite: СИГМА corrected the doubled
                           total from the основание text, so we show the corrected number and flag that we
                           rewrote it. */}
-                      <td className="money">
+                      <td className="money" data-label="Стойност след (€)">
                         {a.suspect ? (
                           <>
                             — <Chip>непотвърден тотал</Chip>
@@ -331,10 +331,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                           '—'
                         )}
                       </td>
-                      <td className="money">
+                      <td className="money" data-label="Промяна (€)">
                         {!a.suspect && a.deltaEur != null ? signedMoney(a.deltaEur) : '—'}
                       </td>
-                      <td className="annex-desc-cell">
+                      <td className="annex-desc-cell" data-label="Основание">
                         <AnnexDescription text={a.description} />
                       </td>
                     </tr>
@@ -367,7 +367,7 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
               </>
             }
           >
-            <div className="table-wrap">
+            <div className="table-wrap tbl-cards">
               <table className="lot-table">
                 <caption className="sr-only">Обособени позиции по преписката</caption>
                 <thead>
@@ -387,18 +387,26 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 </thead>
                 <tbody>
                   {c.lots.rows.map((l) => (
-                    <tr key={l.lotLabel} className={l.isCurrent ? 'current' : undefined}>
-                      <td className="rank">{l.lotLabel}</td>
-                      <td>
+                    <tr
+                      key={l.lotLabel}
+                      className={l.isCurrent ? 'current' : undefined}
+                      aria-current={l.isCurrent ? 'page' : undefined}
+                    >
+                      <td className="rank cell-rank" data-label="Лот">
+                        {l.lotLabel}
+                      </td>
+                      <td className="cell-title" data-label="Участък">
                         {l.isCurrent ? (
                           <strong>{l.subject}</strong>
                         ) : l.contractId ? (
-                          <Link to={`/contracts/${l.contractId}`}>{l.subject}</Link>
+                          <Link className="card-link" to={`/contracts/${l.contractId}`}>
+                            {l.subject}
+                          </Link>
                         ) : (
                           l.subject
                         )}
                       </td>
-                      <td>
+                      <td data-label="Изпълнител">
                         {l.contractorSlug ? (
                           l.isCurrent ? (
                             <strong>{l.contractorName}</strong>
@@ -409,10 +417,10 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                           <span className="muted">няма сключен договор</span>
                         )}
                       </td>
-                      <td className="money">
+                      <td className="money" data-label="Прогнозна (€)">
                         {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
                       </td>
-                      <td className="money">
+                      <td className="money" data-label="При сключване (€)">
                         {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
                       </td>
                     </tr>

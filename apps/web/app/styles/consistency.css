@@ -181,29 +181,18 @@ td .chip {
     flex: 1 1 140px;
   }
 }
-/* Reserve side gutters for floating controls, including while the page is scrolled. */
+/* Keep floating controls outside the content on medium-width screens. */
 @media (min-width: 760px) and (max-width: 1500px) {
   body {
     --gutter: 76px;
   }
 }
 @media (max-width: 759px) {
-  .scroll-to-top {
-    left: auto;
-    right: 8px;
-    bottom: 76px;
-    width: 36px;
-    height: 36px;
-  }
   body {
     --gutter: 16px;
   }
-  main,
   .site-footer {
-    padding-right: 72px;
-  }
-  .a11y-tools__button {
-    max-width: 40px;
+    padding-bottom: calc(var(--s-5) + 76px + env(safe-area-inset-bottom, 0px));
   }
 }
 .case-mag {
@@ -306,6 +295,7 @@ td .chip {
 .person-time-scroll {
   overflow-x: auto;
   padding-bottom: 12px;
+  container-type: inline-size;
 }
 .person-time {
   min-width: calc(240px + var(--timeline-years) * 42px);
@@ -364,12 +354,11 @@ td .chip {
   padding: 14px 0;
   margin-top: 14px;
 }
-.time-company-heading .person-time-label {
+.time-company-heading {
+  max-width: min(85ch, 100cqw);
   font-size: 14px;
-  padding-bottom: 12px;
-}
-.time-company-heading .person-time-track {
-  background: none;
+  padding: 7px 0 12px;
+  overflow-wrap: anywhere;
 }
 .time-observation {
   position: absolute;
@@ -442,11 +431,17 @@ td .chip {
   border: 1px solid #999;
   background: var(--paper, #faf8f2);
 }
-.time-history-note {
-  display: block;
-  padding: 6px 10px;
+.person-time-notes {
+  margin-top: 4px;
   font-size: 12px;
-  background: var(--paper, #faf8f2);
+  line-height: 1.6;
+}
+.person-time-notes p {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+}
+.person-time-notes:empty {
+  display: none;
 }
 .person-time-note {
   max-width: 85ch;
@@ -460,7 +455,8 @@ td .chip {
   border-radius: 50%;
 }
 
-.person-time-label {
+.person-time-label,
+.time-company-heading {
   position: sticky;
   left: 0;
   z-index: 2;
@@ -491,6 +487,10 @@ td .chip {
   outline-offset: 3px;
 }
 @media (max-width: 600px) {
+  .person-time-label,
+  .time-company-heading {
+    position: static;
+  }
   .person-time-row {
     grid-template-columns: 150px minmax(0, 1fr);
   }
@@ -703,21 +703,6 @@ td .chip {
   letter-spacing: normal;
   border-inline-start: 2px solid #b71916;
   padding-inline-start: 0.6rem;
-}
-
-/* Source notes describe the company, not a year on the scrollable axis. */
-.person-time-scroll {
-  container-type: inline-size;
-}
-.person-time-row:has(.time-history-note) {
-  position: sticky;
-  left: 0;
-  width: 100cqw;
-}
-@media (max-width: 600px) {
-  .person-time-row:has(.time-history-note) {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .declaration-discrepancy a {

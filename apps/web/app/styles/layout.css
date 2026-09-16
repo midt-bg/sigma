@@ -304,13 +304,21 @@
    anchors to the same container. `!important` beats the async widget stylesheet
    regardless of load order. */
 html .a11y-tools__button {
+  box-sizing: border-box;
   background-color: var(--accent);
   border-color: var(--accent);
 }
 @media (max-width: 760px) {
-  .a11y-tools__button {
+  .a11y-tools {
+    right: 0 !important;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  html .a11y-tools__button {
     top: auto !important;
     bottom: 0 !important;
+    left: -64px !important;
+    width: 48px;
+    height: 48px;
   }
 }
 

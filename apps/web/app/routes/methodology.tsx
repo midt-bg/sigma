@@ -483,7 +483,7 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                 Кои полета са налични, кои са частични и кои липсват. Частичните се показват само за
                 записите, за които има данни — никога като измислена стойност.
               </p>
-              <div className="table-wrap">
+              <div className="table-wrap tbl-prose">
                 <table className="gap-table">
                   <caption className="sr-only">
                     Наличност на полетата спрямо източника в АОП
@@ -498,9 +498,9 @@ export default function Methodology({ loaderData }: Route.ComponentProps) {
                   <tbody>
                     {gaps.map(([field, src, cls, badge, variant]) => (
                       <tr className={cls} key={field}>
-                        <td>{field}</td>
-                        <td>{src}</td>
-                        <td>
+                        <td data-label="Поле">{field}</td>
+                        <td data-label="Източник в АОП">{src}</td>
+                        <td data-label="Готово">
                           {variant === 'none' ? (
                             <Flag>{badge}</Flag>
                           ) : (
