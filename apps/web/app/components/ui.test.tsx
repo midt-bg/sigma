@@ -6,7 +6,18 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { Callout, Chip, ExternalEikLink, Flag, OwnershipChip, Section, ShareBar } from './ui';
+import {
+  Callout,
+  Chip,
+  Explanation,
+  ExternalEikLink,
+  Flag,
+  OwnershipChip,
+  RegistryCta,
+  Section,
+  ShareBar,
+  registryUrl,
+} from './ui';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,6 +43,33 @@ function render(node: React.ReactNode) {
 }
 
 describe('Chip', () => {
+  it('explains labels containing acronyms regardless of their displayed case', () => {
+    for (const label of ['без ЕИК', 'Лична роля в ТР']) {
+      const el = render(<Chip>{label}</Chip>);
+      const button = el.querySelector('button')!;
+      expect(button.textContent).toBe(label);
+      expect(button.classList.contains('chip')).toBe(true);
+      expect(el.querySelector('.help-trigger')).toBeNull();
+      expect(button.getAttribute('aria-label')).toContain(label);
+      const target = document.getElementById(button.getAttribute('popovertarget')!);
+      expect(target?.getAttribute('popover')).toBe('auto');
+      expect(target?.textContent?.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('keeps question buttons in standalone explanations and static chips inside links', () => {
+    expect(render(<Explanation text="Легенда" />).querySelector('.help-trigger')?.textContent).toBe(
+      '?',
+    );
+    const el = render(
+      <a href="/company">
+        <Chip explain={false}>без ЕИК</Chip>
+      </a>,
+    );
+    expect(el.querySelector('button')).toBeNull();
+    expect(el.querySelector('.chip')?.textContent).toBe('без ЕИК');
+  });
+
   it('emits a bare chip class with no tone and a toned modifier with one', () => {
     expect(render(<Chip>плайн</Chip>).querySelector('span')!.className).toBe('chip');
     expect(render(<Chip tone="strong">силен</Chip>).querySelector('span')!.className).toBe(
@@ -54,6 +92,19 @@ describe('ExternalEikLink', () => {
 
     const withClass = render(<ExternalEikLink eik="111" className="inline" />).querySelector('a')!;
     expect(withClass.className).toBe('external-eik-link inline');
+  });
+});
+
+describe('RegistryCta', () => {
+  it("opens the ЕИК's register report in a new tab, as a labelled header action", () => {
+    const a = render(<RegistryCta eik="831646048" />).querySelector('a')!;
+    expect(a.getAttribute('href')).toBe(registryUrl('831646048'));
+    expect(a.getAttribute('href')).toContain('uic=831646048');
+    expect(a.className).toBe('source-cta'); // the header-action style, :visited guard included
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.textContent).toContain('Виж в Търговския регистър');
+    expect(a.textContent).toContain('в нов раздел'); // said, not just drawn as ↗
   });
 });
 
@@ -153,5 +204,53 @@ describe('Section', () => {
       </Section>,
     );
     expect(el.querySelector('.section-hint')!.textContent).toBe('пояснение');
+  });
+});
+
+describe('Chip — only a plain label is explained', () => {
+  it('draws a static chip for composed content, even when its words have an explanation', () => {
+    const el = render(
+      <Chip>
+        <strong>без ЕИК</strong>
+      </Chip>,
+    );
+    expect(el.querySelector('button')).toBeNull();
+    expect(el.querySelector('span.chip strong')!.textContent).toBe('без ЕИК');
+  });
+});
+
+describe('Explanation — the popover stays on screen', () => {
+  // jsdom lays nothing out, so each test places the trigger or the panel itself; its viewport is 1024 × 768.
+  const at = (box: Partial<DOMRect>) => () => ({ ...new DOMRect(), ...box, toJSON: () => box });
+
+  it('opens by its trigger, but never past the right or bottom edge nor into the margin', () => {
+    const el = render(<Explanation text="Пояснение" />);
+    const button = el.querySelector('button')!;
+    const panel = document.getElementById(button.getAttribute('popovertarget')!)!;
+    const open = (box: Partial<DOMRect>) => {
+      button.getBoundingClientRect = at(box);
+      act(() => button.click());
+      return [panel.style.left, panel.style.top];
+    };
+    expect(open({ left: 100, bottom: 200 })).toEqual(['100px', '208px']);
+    expect(open({ left: 900, bottom: 700 })).toEqual([
+      `${window.innerWidth - 332}px`,
+      `${window.innerHeight - 180}px`,
+    ]);
+    expect(open({ left: -40, bottom: -30 })).toEqual(['12px', '12px']);
+  });
+
+  it('lifts an opened popover above the bottom edge, and leaves a closing one alone', () => {
+    const el = render(<Explanation text="Пояснение" />);
+    const panel = el.querySelector<HTMLElement>('.help-popover')!;
+    panel.getBoundingClientRect = at({ top: 700, height: 100 });
+    const toggle = (newState: string) =>
+      act(() => {
+        panel.dispatchEvent(Object.assign(new Event('toggle'), { newState }));
+      });
+    toggle('closed');
+    expect(panel.style.top).toBe('');
+    toggle('open');
+    expect(panel.style.top).toBe(`${window.innerHeight - 100 - 12}px`);
   });
 });

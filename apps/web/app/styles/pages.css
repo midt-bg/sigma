@@ -112,6 +112,54 @@
   color: var(--warning-strong);
 }
 
+/* An untrustworthy figure must not look like a trustworthy one. The old marking was a
+   grey italic line under a 32px serif number, i.e. the warning was quieter than the thing it warned
+   about. The figure now carries the accent, and the explanation gets the same weight as a risk box. */
+.value-history .vh .num.num-unverified {
+  color: var(--warning-strong);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+}
+.value-history .vh .value-badge {
+  display: inline-block;
+  margin-top: var(--s-3);
+  padding: 2px 8px;
+  font: 500 10.5px/1.5 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--warning-bg);
+  color: var(--warning-strong);
+  border: 1px solid var(--warning);
+}
+.value-alert {
+  margin: var(--s-6) 0 0;
+  padding: var(--s-5);
+  background: var(--warning-bg);
+  border-left: 3px solid var(--warning);
+}
+.value-alert-title {
+  margin: 0 0 var(--s-3);
+  font: 500 13px/1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--warning-strong);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.value-alert p {
+  margin: 0 0 var(--s-2);
+}
+.value-alert p:last-child {
+  margin-bottom: 0;
+}
+.value-alert-source {
+  font-size: 0.9em;
+  color: var(--ink-mid);
+}
+
 /* Value-history strip + current lot row */
 .value-history {
   display: grid;
@@ -550,6 +598,25 @@
   stroke: #fff;
   stroke-width: 1.5;
 }
+/* Nodes are links: give them a pointer, a hover cue and a focus ring that is visible on
+   an SVG shape — the default outline is drawn around the <a>'s bounding box and is easy to miss. */
+.network-svg .node-link {
+  cursor: pointer;
+}
+.network-svg .node-link:hover .node,
+.network-svg .node-link:focus-visible .node {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.network-svg .node-link:hover .node-label,
+.network-svg .node-link:focus-visible .node-label {
+  fill: var(--accent);
+  text-decoration: underline;
+}
+.network-svg .node-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .network-svg .node-label {
   fill: var(--ink, #111);
   font: 11px var(--font-mono, monospace);
@@ -659,4 +726,147 @@
   width: 22px;
   height: 12px;
   border-radius: 2px;
+}
+
+/* Company tie graph. A different graph from `.network-svg`: there the edge is a money flow
+   between an authority and a winner, here it is a RELATIONSHIP between two companies, so the edge — not
+   the node — carries the meaning and needs to be told apart at a glance. */
+.tie-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.tie-svg .tie-edge {
+  stroke: var(--ink-soft);
+  fill: none;
+}
+.tie-svg .tie-consortium {
+  stroke: var(--ink);
+}
+.tie-svg .tie-subcontract {
+  stroke: var(--ink-mid);
+  stroke-dasharray: 7 4;
+}
+/* The one tie that rests on a person. Accent-coloured because it is the strongest signal on the page,
+   dotted because it is a declared interest, not a transaction. */
+.tie-svg .tie-declared_stake {
+  stroke: var(--accent);
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+.tie-svg .tie-money {
+  stroke: #d8d6cf;
+}
+/* A role the Trade Register records: a person — or a company — holding it at the company it points to.
+   Faded once every such role has ended, so the history stays in the picture without reading as standing. */
+.tie-svg .tie-role {
+  stroke: var(--ink-mid);
+}
+.tie-svg .tie-past {
+  stroke-opacity: 0.4;
+}
+.tie-svg .tie-arrow-head {
+  fill: var(--ink-mid);
+}
+/* Boxes, as in a flowchart: a company is a plain box, an institution a rounded dashed one, the centre
+   the one filled box — the page is about it. The name sits inside the box. */
+.tie-svg .tie-node {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+.tie-svg .tie-node-authority {
+  stroke: var(--ink-mid);
+  stroke-dasharray: 3 2;
+}
+/* A person is a rounded box, as a flowchart draws one. */
+.tie-svg .tie-node-person {
+  stroke: var(--ink-mid);
+}
+.tie-svg .tie-node-center {
+  fill: var(--ink);
+}
+.tie-svg .tie-node-label {
+  fill: var(--ink);
+  font: 11px var(--font-mono, monospace);
+  text-decoration: none;
+  pointer-events: none;
+}
+.tie-svg .tie-node-center + .tie-node-label {
+  fill: var(--paper);
+  font-weight: 600;
+}
+/* The kind of tie, written on its edge, on a paper plate so it reads over the line. */
+.tie-svg .tie-edge-plate {
+  fill: var(--paper);
+}
+.tie-svg .tie-edge-label {
+  fill: var(--ink-soft);
+  font: 10px var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.tie-svg .tie-node-link {
+  cursor: pointer;
+  text-decoration: none; /* the site underlines links; a box name is not underlined until hovered */
+}
+.tie-svg .tie-node-link:hover .tie-node,
+.tie-svg .tie-node-link:focus-visible .tie-node {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.tie-svg .tie-node-link:hover .tie-node-label,
+.tie-svg .tie-node-link:focus-visible .tie-node-label {
+  text-decoration: underline;
+}
+.tie-svg .tie-node-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tie-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-5);
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  font: 11px/1.4 var(--font-mono);
+  color: var(--ink-soft);
+}
+.tie-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.tie-key {
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--ink);
+}
+.tie-key.tie-subcontract {
+  border-top-style: dashed;
+  border-top-color: var(--ink-mid);
+}
+.tie-key.tie-declared_stake {
+  border-top-style: dotted;
+  border-top-color: var(--accent);
+}
+.tie-key.tie-money {
+  border-top-color: #d8d6cf;
+}
+.tie-key.tie-role {
+  border-top-width: 1.5px;
+  border-top-color: var(--ink-mid);
+}
+.tie-key.tie-past {
+  opacity: 0.4;
+}
+.registry-ended {
+  margin-top: var(--s-3);
+}
+.registry-ended > summary {
+  cursor: pointer;
+  color: var(--ink-soft);
 }

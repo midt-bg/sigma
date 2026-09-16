@@ -1,12 +1,21 @@
 import { Link } from 'react-router';
 import { EU_SCOREBOARD, type IndicatorRating, rateLowerIsBetter } from '@sigma/config';
-import { count, money, moneyBare, pct, periodRange, plural } from '@sigma/shared';
+import {
+  count,
+  money,
+  moneyBare,
+  pct,
+  periodRange,
+  plural,
+  tradeRegisterLegalForm,
+} from '@sigma/shared';
 import {
   authorityIdFromSlug,
   getAuthority,
+  getAuthorityConflictSummary,
   getAuthorityProcedureCompetition,
   getAuthoritySingleOffer,
-  getEntityNetwork,
+  getAuthoritySupplierTies,
   getSpendingTrend,
   getDb,
 } from '@sigma/db';
@@ -16,14 +25,15 @@ import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { StackedBar } from '../components/StackedBar';
 import { DataTable } from '../components/DataTable';
-import { TrendChart } from '../components/TrendChart';
-import { NetworkGraph } from '../components/NetworkGraph';
+import { TrendBlock } from '../components/TrendBlock';
+import { layoutTies } from '../lib/tie-layout.server';
+import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
-import { ShareBar, Chip, Section } from '../components/ui';
+import { ShareBar, Chip, Section, RegistryCta } from '../components/ui';
 import { publicCache } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
-import { networkColumns, networkRows, trendYearColumns } from '../lib/entity-tables';
+import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 
@@ -48,16 +58,28 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const db = getDb(context.cloudflare.env);
   const authorityId = authorityIdFromSlug(eik);
   return withDbRetry(async () => {
-    const [authority, coverage, trend, network, competition, procedure] = await Promise.all([
-      getAuthority(db, authorityId),
-      getCoverageMeta(db),
-      getSpendingTrend(db, { authorityId, granularity: 'month' }, { includeSectors: false }),
-      getEntityNetwork(db, { kind: 'authority', id: authorityId }, { includeCenterOptions: false }),
-      getAuthoritySingleOffer(db, authorityId),
-      getAuthorityProcedureCompetition(db, authorityId),
-    ]);
+    const [authority, coverage, trend, ties, competition, procedure, conflicts] = await Promise.all(
+      [
+        getAuthority(db, authorityId),
+        getCoverageMeta(db),
+        getSpendingTrend(db, { authorityId, granularity: 'year' }, { includeSectors: false }),
+        getAuthoritySupplierTies(db, authorityId),
+        getAuthoritySingleOffer(db, authorityId),
+        getAuthorityProcedureCompetition(db, authorityId),
+        getAuthorityConflictSummary(db, authorityId),
+      ],
+    );
     if (!authority) throw new Response('Not Found', { status: 404 });
-    return { authority, coverage, trend, network, competition, procedure };
+    return {
+      authority,
+      coverage,
+      trend,
+      ties,
+      tieLayout: layoutTies(ties),
+      competition,
+      procedure,
+      conflicts,
+    };
   });
 }
 
@@ -70,7 +92,7 @@ const RATING_LABEL: Record<IndicatorRating, string> = {
 
 export default function Authority({ loaderData }: Route.ComponentProps) {
   const a = loaderData.authority;
-  const { trend, network, competition, procedure } = loaderData;
+  const { trend, ties, tieLayout, competition, procedure, conflicts } = loaderData;
   const ct = competition;
   // Both verdicts use the COUNT share - the basis the EU Scoreboard thresholds are defined on.
   const singleOfferRating = rateLowerIsBetter(ct.singleOfferShare, EU_SCOREBOARD.singleBidder);
@@ -103,11 +125,16 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
                   · <Chip>{a.typeLabel}</Chip>
                 </>
               )}
+              {' · '}ЕИК&nbsp;{a.eik}
             </>
           }
           title={a.name}
           lede={`Колко публични средства е похарчила институцията за обществени поръчки през ${range} г. Зад всяко число по-долу стоят конкретните договори, които го формират.`}
-        />
+        >
+          {/* Only a trader has a partida in the Търговски регистър; a municipality or a school is registered
+              in БУЛСТАТ alone, and the register would open an empty report for it. */}
+          {tradeRegisterLegalForm(a.name) && <RegistryCta eik={a.eik} />}
+        </PageHeader>
 
         <FactsList
           label="Ключови показатели"
@@ -115,7 +142,21 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             { term: 'Обща стойност', value: money(a.spentEur) },
             { term: 'Брой договори', value: count(a.contracts) },
             { term: 'Период', value: periodRange(a.periodFirst, a.periodLast) },
-            { term: 'Различни изпълнители', value: count(a.suppliers) },
+            { term: 'Изпълнители', value: count(a.suppliers) },
+            conflicts.companies > 0 && {
+              term: 'С деклариран дял на длъжностно лице',
+              value: (
+                <Link to={`/conflicts?authority=${a.eik}`}>
+                  {count(conflicts.companies)}{' '}
+                  {plural(conflicts.companies, 'изпълнител', 'изпълнители')}
+                </Link>
+              ),
+              sub:
+                conflicts.ownCompanies > 0
+                  ? `в т.ч. ${count(conflicts.ownCompanies)} — на лице от самата институция`
+                  : undefined,
+            },
+            topSectors ? { term: 'Основни сектори', value: topSectors } : null,
             {
               term: 'Дял с финансиране от ЕС',
               value: pct(a.euSharePct),
@@ -128,11 +169,10 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             a.settlement
               ? { term: 'Седалище', value: a.settlement, sub: a.region ?? undefined }
               : { term: 'Седалище', value: <span className="muted">—</span>, sub: 'няма данни' },
-            topSectors ? { term: 'Топ сектори', value: topSectors } : null,
             a.suspect > 0 && {
               term: 'Непотвърдена стойност',
               value: `${count(a.suspect)} ${plural(a.suspect, 'договор', 'договора')}`,
-              sub: 'изключени от сумите',
+              sub: 'в броя и в сумите, с прогнозната стойност вместо подадената',
             },
           ]}
         />
@@ -143,21 +183,12 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             title="Тренд"
             hint={`Разходите на ${a.name} във времето. Договорите без валидна дата не влизат в графиката.`}
           >
-            {trend.points.length >= 2 ? (
-              <>
-                <TrendChart points={trend.points} granularity={trend.granularity} />
-                <div className="mt-8">
-                  <DataTable
-                    columns={trendYearColumns}
-                    rows={trend.years}
-                    getKey={(r) => r.year}
-                    caption="Разходи по години"
-                  />
-                </div>
-              </>
-            ) : (
-              <p className="muted">Няма достатъчно данни за времева графика.</p>
-            )}
+            <TrendBlock
+              points={trend.points}
+              years={trend.years}
+              granularity={trend.granularity}
+              caption="Разходи по години"
+            />
           </Section>
 
           <Section
@@ -204,30 +235,74 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
           </Section>
         </div>
 
+        <div className="two-col">
+          <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
+            <table>
+              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Сектор (CPV)</th>
+                  <th scope="col">Стойност и дял</th>
+                </tr>
+              </thead>
+              <tbody>
+                {a.sectors.map((s) => (
+                  <tr key={s.code}>
+                    <td>
+                      <Link to={`/contracts?authority=${a.eik}&sector=${s.code}`}>
+                        {s.label} (CPV {s.code})
+                      </Link>
+                    </td>
+                    <td className="money">
+                      {money(s.valueEur)}
+                      <span className="sub">{pct(s.sharePct)}</span>
+                    </td>
+                  </tr>
+                ))}
+                {a.sectorsOther && (
+                  <tr>
+                    <td className="muted">{a.sectorsOther.label}</td>
+                    <td className="money">
+                      {money(a.sectorsOther.valueEur)}
+                      <span className="sub">{pct(a.sectorsOther.sharePct)}</span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Section>
+
+          <Section id="how" title="Как купува" hint="Разпределение на договорите по вид процедура.">
+            <StackedBar slices={a.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
+          </Section>
+        </div>
+
         <Section
           id="network"
-          title="Мрежа"
+          title="Най-големи изпълнители и връзките между тях"
           hint={
             <span>
-              Най-силните преки връзки около институцията и по една следваща връзка за всеки
-              контрагент. <Link to={`/network?center=a:${a.eik}`}>Виж пълната мрежа →</Link>
+              Изпълнителите с най-много получени средства от институцията, и кои от тях са свързани
+              помежду си: съвместно участие в обединение, подизпълнителство, деклариран интерес на
+              едно и също длъжностно лице, или общо лице или собственик по Търговския регистър.{' '}
+              <Link to={`/network?center=a:${a.eik}`}>Виж паричната мрежа →</Link>
             </span>
           }
         >
-          {network.center && network.nodes.length >= 2 ? (
+          {tieLayout ? (
             <>
-              <NetworkGraph data={network} />
+              <TieGraph layout={tieLayout} />
               <div className="sr-only">
                 <DataTable
-                  columns={networkColumns}
-                  rows={networkRows(network)}
-                  getKey={(r) => `${r.from}-${r.to}`}
-                  caption="Връзки в графа"
+                  columns={tieColumns}
+                  rows={tieRows(ties)}
+                  getKey={(r) => `${r.from}-${r.to}-${r.kind}`}
+                  caption="Изпълнители и връзките между тях"
                 />
               </div>
             </>
           ) : (
-            <p className="muted">Няма достатъчно връзки за граф.</p>
+            <p className="muted">Няма достатъчно данни за схема.</p>
           )}
         </Section>
 
@@ -288,48 +363,6 @@ export default function Authority({ loaderData }: Route.ComponentProps) {
             </p>
           )}
         </Section>
-
-        <div className="two-col">
-          <Section id="what" title="Какво купува" hint="CPV категориите, подредени по обем.">
-            <table>
-              <caption className="sr-only">Какво купува {a.name} — по CPV категория</caption>
-              <thead className="sr-only">
-                <tr>
-                  <th scope="col">Сектор (CPV)</th>
-                  <th scope="col">Стойност и дял</th>
-                </tr>
-              </thead>
-              <tbody>
-                {a.sectors.map((s) => (
-                  <tr key={s.code}>
-                    <td>
-                      <Link to={`/contracts?authority=${a.eik}&sector=${s.code}`}>
-                        {s.label} (CPV {s.code})
-                      </Link>
-                    </td>
-                    <td className="money">
-                      {money(s.valueEur)}
-                      <span className="sub">{pct(s.sharePct)}</span>
-                    </td>
-                  </tr>
-                ))}
-                {a.sectorsOther && (
-                  <tr>
-                    <td className="muted">{a.sectorsOther.label}</td>
-                    <td className="money">
-                      {money(a.sectorsOther.valueEur)}
-                      <span className="sub">{pct(a.sectorsOther.sharePct)}</span>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Section>
-
-          <Section id="how" title="Как купува" hint="Разпределение на договорите по вид процедура.">
-            <StackedBar slices={a.procedureMix.filter((s) => s.sharePct >= 0.0005)} />
-          </Section>
-        </div>
 
         <Section
           id="all"

@@ -289,7 +289,6 @@ a.flag:hover {
 .list-controls p {
   margin: 0;
 }
-
 /* In-table search — a quiet utility field on its own row above the count/sort strip. Deliberately
    lighter than the hero/header .smart-search; it filters the list in place via the `q` URL param. */
 .list-controls-bar {
@@ -538,6 +537,19 @@ tbody td,
 }
 
 /* „данните се преглеждат" — suppressed suspect value */
+/* A value_low row HAS a figure and IS summed — so without a mark it reads as a genuine amount. The
+   mark rides with the number itself (a trailing ⚠ + accent colour) rather than replacing it: the
+   figure is what the source published and stays visible. `.suspect` above is the other case — no
+   usable figure at all. */
+.money-unverified {
+  color: var(--warning-strong);
+  white-space: nowrap;
+}
+.money-unverified-mark {
+  margin-left: 0.35em;
+  font-size: 0.85em;
+}
+
 .suspect {
   color: var(--ink-soft);
   font-style: italic;

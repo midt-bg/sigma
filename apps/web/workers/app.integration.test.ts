@@ -46,6 +46,7 @@ type WorkerFetch = (request: Request, env: Env, ctx: ExecutionContext) => Promis
 let workerFetch: WorkerFetch;
 
 beforeAll(async () => {
+  vi.stubEnv('DEV', false);
   workerFetch = (await import('./app')).default.fetch as unknown as WorkerFetch;
 });
 
@@ -115,6 +116,11 @@ describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)
     'http://local/conflicts/link/self/ivan-petrov-1/123456789/contracts.data',
     // Search now surfaces свързани-лица officials by name → its HTML, its .data twin, and the
     // /search/suggest typeahead JSON (a headless resource route) all name individuals.
+    'http://local/persons/abc',
+    'http://local/persons/abc.data',
+    'http://local/contracts.csv',
+    'http://local/companies.data',
+    'http://local/conflicts/methodology.data',
     'http://local/search?q=ivan',
     'http://local/search.data?q=ivan',
     'http://local/search/suggest?q=ivan',
@@ -128,10 +134,7 @@ describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)
   }
 
   // Methodology is the deliberately-indexed public credibility anchor (ADR-0020/0021) — HTML and .data alike.
-  for (const url of [
-    'http://local/conflicts/methodology',
-    'http://local/conflicts/methodology.data',
-  ]) {
+  for (const url of ['http://local/conflicts/methodology']) {
     it(`does NOT noindex ${url.replace('http://local', '')} (indexed anchor)`, async () => {
       const req = new Request(url, { headers: { 'CF-Connecting-IP': '203.0.113.51' } });
       const res = await workerFetch(req, env(underLimit), ctx);
@@ -139,8 +142,8 @@ describe('handleRequest — /conflicts responses are noindex (HTML + .data twin)
     });
   }
 
-  it('does NOT noindex a non-conflicts path (/companies.data)', async () => {
-    const req = new Request('http://local/companies.data', {
+  it('does NOT noindex a company listing (/companies)', async () => {
+    const req = new Request('http://local/companies', {
       headers: { 'CF-Connecting-IP': '203.0.113.52' },
     });
     const res = await workerFetch(req, env(underLimit), ctx);

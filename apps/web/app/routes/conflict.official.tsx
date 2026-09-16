@@ -1,84 +1,98 @@
-import { Link } from 'react-router';
-import { getOfficialConflicts, personIdFromSlug, getDb } from '@sigma/db';
+import {
+  getDb,
+  getPersonDestinations,
+  getPersonSourceArchive,
+  personIdFromSlug,
+  personSlug,
+} from '@sigma/db';
+import { Link, redirect } from 'react-router';
 import type { Route } from './+types/conflict.official';
-import { Breadcrumbs } from '../components/Breadcrumbs';
-import { PageHeader } from '../components/PageHeader';
-import { Section, Callout } from '../components/ui';
-import { ConflictDetail } from '../components/ConflictDetail';
+import { PersonProfile } from '../components/PersonProfile';
+import { loadPersonProfile } from '../lib/person-profile.server';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { declaredStakeNoun } from '../lib/conflicts';
+import { personName } from '../lib/person-name';
+import { PageHeader } from '../components/PageHeader';
+import { Declarations } from '../components/Declarations';
+import { Section } from '../components/ui';
 
-// One office-holder's declared ownership links. Reads published interest_links, which per ADR-0032
-// include a close relative's declared stake alongside the person's own — the relative is never named and
-// the relationship never asserted. 404 (not an empty page) when the person has no published link — a bare
-// page under someone's name reads as an unfounded accusation.
 export function meta({ data, matches, params }: Route.MetaArgs) {
-  const name = data?.official ?? 'Длъжностно лице';
-  const tags = seoMeta({
-    matches,
-    path: `/conflicts/official/${params.id}`,
-    title: `${name} — свързани лица — СИГМА`,
-    description: `Деклариран дял на ${name} в дружества, спечелили обществени поръчки.`,
-  });
-  tags.push({ name: 'robots', content: 'noindex' }); // names an individual — not indexed
-  return tags;
+  return [
+    ...seoMeta({
+      matches,
+      path: `/conflicts/official/${params.id}`,
+      title: `${data && 'name' in data ? personName(data.name) : data && 'source' in data && data.source ? personName(data.source.name) : 'Длъжностно лице'} — СИГМА`,
+      description: 'Декларирани интереси, източници и обществени поръчки на свързаните дружества.',
+    }),
+    { name: 'robots', content: 'noindex' },
+  ];
 }
-
 export function headers() {
   return { 'Cache-Control': publicCache(3600) };
 }
-
-export async function loader({ params, context }: Route.LoaderArgs) {
-  const personId = personIdFromSlug(params.id);
-  if (!personId) throw new Response('Not Found', { status: 404 });
+export async function loader({ params, context, request }: Route.LoaderArgs) {
+  const id = personIdFromSlug(params.id);
+  if (!id) throw new Response('Not Found', { status: 404 });
   const db = getDb(context.cloudflare.env);
-  const data = await withDbRetry(() => getOfficialConflicts(db, personId));
-  if (!data) throw new Response('Not Found', { status: 404 });
-  return data;
+  const url = new URL(request.url);
+  const destinations = await withDbRetry(() => getPersonDestinations(db, id));
+  if (destinations.length > 1 && url.searchParams.get('view') !== 'profile')
+    return { destinations };
+  if (destinations.length === 1 && destinations[0]!.id !== id)
+    throw redirect(
+      `/conflicts/official/${personSlug(destinations[0]!.id)}${url.search}${url.hash}`,
+      302,
+    );
+  const profile = await withDbRetry(() =>
+    loadPersonProfile(db, { officialId: id, search: url.searchParams }),
+  );
+  if (!profile) {
+    const source = await withDbRetry(() => getPersonSourceArchive(db, id));
+    if (source) return { source };
+    throw new Response('Not Found', { status: 404 });
+  }
+  return profile;
 }
-
 export default function ConflictOfficial({ loaderData }: Route.ComponentProps) {
-  const { official, links, contracts } = loaderData;
-  // Family-AWARE, not family-blind: the page must not assert an own stake above cards that say „свързано
-  // лице", and must not go vague where the stake really is the official's own (§2.6).
-  const stake = declaredStakeNoun(links);
-  return (
-    <>
-      <Breadcrumbs
-        items={[
-          { label: 'Начало', to: '/' },
-          { label: 'Свързани лица', to: '/conflicts' },
-          { label: official },
-        ]}
-      />
+  if ('source' in loaderData && loaderData.source)
+    return (
       <main id="main">
         <PageHeader
-          kicker={links[0]?.institution ?? 'Длъжностно лице'}
-          title={official}
-          lede={`Дружества, спечелили обществени поръчки, за които това лице е декларирало ${stake} пред КПКОНПИ. Всяка връзка почива на проверим факт от Търговския регистър — деклариран интерес, не установено нарушение.`}
+          kicker="Декларации от източника"
+          title={personName(loaderData.source.name)}
+          lede="Документите са запазени като отделен източников запис. Няма достатъчно доказателства да ги отнесем към общ профил с установена връзка с дружество."
         />
-
-        <Callout titleAs="h2" title="Източник и обхват">
-          <p className="m-0">
-            Данните са от декларациите на лицето пред КПКОНПИ (публичен регистър), съпоставени точно
-            с регистъра на изпълнителите. Показваме деклариран дял — собствен или на свързано лице;
-            името на близкия не се показва и видът на връзката не се твърди. Показваме само 100%
-            съвпадения, и само когато самоличността на дружеството е потвърдена от Търговския
-            регистър. Сигнал за неточност:{' '}
-            <Link to="/conflicts/methodology#contest">Методология → Поправки</Link>.
-          </p>
-        </Callout>
-
-        <Section
-          id="holdings"
-          title="Деклариран дял в компании изпълнители"
-          hint={`Дружества, спечелили обществени поръчки, за които лицето е декларирало ${stake}. Подредени по силата на връзката.`}
-        >
-          <ConflictDetail links={links} contracts={contracts} perspective="official" />
+        <Section id="declarations" title="Всички декларации">
+          <Declarations declarations={loaderData.source.declarations} />
         </Section>
       </main>
-    </>
-  );
+    );
+  if ('destinations' in loaderData)
+    return (
+      <main id="main">
+        <PageHeader
+          kicker="Длъжностни лица"
+          title="Профили и декларации"
+          lede="Документите от стария адрес са показани според установените връзки. Отделните групи не означават непременно различни хора."
+        />
+        <ul>
+          {loaderData.destinations.map((p) => (
+            <li key={p.id}>
+              <Link to={`/conflicts/official/${personSlug(p.id)}?view=profile`}>
+                {personName(p.name)}
+              </Link>
+              <p>
+                {p.kind === 'person'
+                  ? 'Обединен профил'
+                  : 'Декларации с непотвърдена принадлежност'}{' '}
+                · {p.declaration_count} {p.declaration_count === 1 ? 'декларация' : 'декларации'}
+              </p>
+              {p.institutions && <p>{p.institutions}</p>}
+            </li>
+          ))}
+        </ul>
+      </main>
+    );
+  return <PersonProfile profile={loaderData} />;
 }

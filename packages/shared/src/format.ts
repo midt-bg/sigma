@@ -193,9 +193,25 @@ export function parseConsortiumMembers(name: string): ConsortiumMembership | nul
   return { kind: 'list', members: unique };
 }
 
-export function isNaturalPersonProfileName(name: string): boolean {
+/** Indexing policy for an identified natural person / sole trader, not a name-based identity match. */
+export function isNaturalPersonProfileName(name: string, legalForm?: string | null): boolean {
   const normalized = name.trim().toUpperCase();
-  return normalized.startsWith('ЕТ ') || normalized.startsWith('ET ');
+  const form = legalForm?.trim().toUpperCase() ?? '';
+  return (
+    /^(?:ЕТ|ET)(?:\s|$)/u.test(normalized) ||
+    /^(?:ЕТ|ET)$|ЕДНОЛИЧЕН ТЪРГОВЕЦ|SOLE TRADER|INDIVIDUAL|ФИЗИЧЕСКО ЛИЦЕ/u.test(form)
+  );
+}
+
+// The commercial legal forms a Търговски регистър entry carries in its firm name. A body whose name holds
+// one of them is a trader with a partida in the register; a municipality, school or ministry is registered
+// only in БУЛСТАТ, and a link to the register would open an empty report. Matched as a whole token, allowing
+// the quotes and punctuation the source puts around it („…" АД, … ЕООД, гр. Варна).
+const TRADE_REGISTER_FORM = /(?:^|[\s"„“”«»(])(АДСИЦ|ЕАД|АД|ЕООД|ООД)(?=$|[\s"„“”«»),.])/u;
+
+/** The Търговски регистър legal form in an entity name (АД, ЕАД, АДСИЦ, ООД, ЕООД), or null. */
+export function tradeRegisterLegalForm(name: string): string | null {
+  return TRADE_REGISTER_FORM.exec(name.toUpperCase())?.[1] ?? null;
 }
 
 /**

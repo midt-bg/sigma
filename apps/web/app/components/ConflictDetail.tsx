@@ -1,34 +1,45 @@
 import { type CSSProperties, type ReactNode, useId } from 'react';
 import { Link } from 'react-router';
-import { count, money, pct, plural } from '@sigma/shared';
+import { personName } from '../lib/person-name';
+import { count, money, moneyBare, pct, plural } from '@sigma/shared';
 import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
-import { Chip, ExternalEikLink, ShareBar } from './ui';
+import { Chip, ExternalEikLink, RegistryCta, Section, ShareBar } from './ui';
+import { Declarations } from './Declarations';
+import { FactsList } from './FactsList';
+import { DataTable, type Column } from './DataTable';
 import {
-  authorityShares,
   authorityShareDisplay,
+  authorityShares,
   companyProfileHref,
   contractHref,
+  contractsCountLabel,
   contractTimeline,
   contractYear,
   contractYearsLabel,
-  contractsCountLabel,
   fundsCellLabel,
   fundsMagnitude,
+  groupDeclaredInstitutions,
   hasContemporaneousContracts,
   isHttpsUrl,
   markContracts,
   officialHref,
+  officialRole,
   partitionContracts,
   registryEvidenceLabel,
   relationLabel,
   temporalLabel,
+  type AuthorityShare,
 } from '../lib/conflicts';
 
-// The rich per-link case detail, lifted out of the retired ConflictCards so the person/company pages can
-// render it EAGERLY (no lazy fetcher — those pages exist to show the detail, and the contracts are loaded
-// server-side by getOfficialConflicts / getCompanyConflicts). Each sub-block keeps its original
-// (link, contracts) prop contract. Styles stay in styles/conflict-cards.css (globally imported), shared
-// with nothing else now that the list is a table.
+// The rich per-link case detail, rendered EAGERLY (no lazy fetcher — these pages exist to show the detail,
+// and the contracts are loaded server-side by getOfficialConflicts / getCompanyConflicts).
+//
+// Built from the SAME parts as every other detail page. It used to have a private design
+// language — a card <article> nobody else used, `.cc-stats` instead of FactsList, `.cc-section` + <h4>
+// instead of Section + <h2>, `.contract-list` instead of DataTable — carried by a 464-line private
+// stylesheet, and it nested h1 → h2 → h3 → h4 for a SINGLE company while every sibling page stops at
+// h2 (h3 only for a pair inside a section). One company is now one <Section>, so the outline reads
+// h1 → h2 (company) → h3 (timeline / shares / contracts), like the contract and authority pages.
 //
 // `perspective` chooses which party heads each block: 'official' pages head by the winning COMPANY (ЕИК +
 // profile link, the counterparty the reader came to see), 'company' pages head by the OFFICIAL (institution
@@ -43,222 +54,288 @@ export function ConflictDetail({
   links,
   contracts,
   perspective,
+  contractListHref,
 }: {
   links: ConflictLink[];
   contracts: Record<string, ConflictContractFacts[]>;
   perspective: 'official' | 'company';
+  contractListHref?: string;
 }) {
   return (
-    <ol className="conflict-detail-list" role="list">
-      {links.map((l) => (
-        <li key={l.linkKey}>
-          <ConflictDetailBlock
-            link={l}
-            contracts={markContracts(
-              contracts[l.eik] ?? [],
-              l.firstDeclaredYear,
-              l.lastDeclaredYear,
-            )}
-            perspective={perspective}
-          />
-        </li>
+    <>
+      {links.map((l, i) => (
+        <ConflictDetailBlock
+          key={l.linkKey}
+          link={l}
+          // A section id must be a valid, stable HTML id and `linkKey` carries a person key with spaces
+          // and Cyrillic. The ЕИК is the natural per-block identity on an official page; the index
+          // disambiguates a company page, where every block shares one ЕИК.
+          domId={`link-${i + 1}-${l.eik}`}
+          contracts={markContracts(
+            contracts[l.eik] ?? [],
+            l.firstDeclaredYear,
+            l.lastDeclaredYear,
+            l.disputedYears,
+          )}
+          perspective={perspective}
+          contractListHref={contractListHref}
+        />
       ))}
-    </ol>
+    </>
   );
 }
 
-// One link's full detail, eagerly expanded: the counterparty header + interest strip + stat grid +
-// provenance, then the CaseDetail (magnitude bar, timeline, per-authority shares, contract list).
+// One link's full detail as a <Section>: the counterparty is the section heading, the interest strip and
+// the key figures sit directly under it, then the timeline, the per-authority shares and the contracts.
 function ConflictDetailBlock({
   link: l,
+  domId,
   contracts,
   perspective,
+  contractListHref,
 }: {
   link: ConflictLink;
+  domId: string;
   contracts: ConflictContract[];
   perspective: 'official' | 'company';
+  contractListHref?: string;
 }) {
-  const titleId = useId();
   const conflict = hasContemporaneousContracts(l);
   const funds = fundsCellLabel(l);
-  // The head names the OTHER party (the page's own subject is in the PageHeader). Official page → the
-  // winning company (ЕИК + profile link); company page → the official (institution sub-label + profile link).
-  let head: ReactNode;
-  if (perspective === 'official') {
-    head = (
+  const mag = fundsMagnitude(l);
+  const sourceInstitutions = groupDeclaredInstitutions(l.declarations ?? []);
+  // The heading names the OTHER party (the page's own subject is in the PageHeader). Official page → the
+  // winning company (ЕИК + profile link); company page → the official (institution sub-label + link).
+  const title =
+    perspective === 'official' ? (
       <>
-        <h3 id={titleId} className="cc-title">
-          <Link to={companyProfileHref(l.eik)}>{l.company}</Link>
-          <ExternalEikLink eik={l.eik} />
-        </h3>
-        <p className="cc-official-inst small muted">ЕИК&nbsp;{l.eik}</p>
+        <Link to={companyProfileHref(l.eik)}>{l.company}</Link>
+        <ExternalEikLink eik={l.eik} />
       </>
+    ) : (
+      <Link to={officialHref(l.officialSlug)}>{personName(l.official)}</Link>
     );
-  } else {
-    head = (
-      <>
-        <h3 id={titleId} className="cc-title">
-          <Link to={officialHref(l.officialSlug)}>{l.official}</Link>
-        </h3>
-        {l.institution && <p className="cc-official-inst small muted">{l.institution}</p>}
-      </>
-    );
-  }
-  return (
-    <article
-      className={`conflict-card conflict-detail${conflict ? ' has-conflict' : ''}`}
-      aria-labelledby={titleId}
-    >
-      {head}
+  const subLabel = perspective === 'official' ? `ЕИК\u00a0${l.eik}` : officialRole(l);
 
+  return (
+    <Section id={domId} title={title} hint={subLabel ?? undefined}>
       <div className="cc-interest">
         <span>{relationLabel(l.relation)}</span>
         {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
         {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
-            so the chip can't claim „към момента на договор" from a flag that drifted out of sync with the
+            so the chip can't claim „съвпадение по години" from a flag that drifted out of sync with the
             current contract set. */}
-        {conflict && <Chip tone="window">към момента на договор</Chip>}
+        {conflict && <Chip tone="window">съвпадение по години</Chip>}
         {(l.firstDeclaredYear || l.lastDeclaredYear) && (
           <span className="small muted">
             деклариран {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г.
+            {!!l.disputedYears?.length && (
+              <> · разминаване в декларациите за {l.disputedYears.join(', ')} г.</>
+            )}
           </span>
         )}
       </div>
 
-      <dl className="cc-stats">
-        <div className="cc-stat">
-          <dt>Договори</dt>
-          <dd>{contractsCountLabel(l)}</dd>
-        </div>
-        <div className="cc-stat">
-          <dt>Публични средства</dt>
-          <dd>
-            <span className="cc-funds-primary" title="по договори в декларирания период">
-              {funds.primary}
-            </span>
-            {funds.total && <span className="cc-funds-total">от {funds.total}</span>}
-          </dd>
-        </div>
-        <div className="cc-stat">
-          <dt>Период</dt>
-          <dd>{contractYearsLabel(l.firstContractYear, l.lastContractYear)}</dd>
-        </div>
-        <div className="cc-stat">
-          <dt>Източник</dt>
-          <dd>
-            {isHttpsUrl(l.sourceUrl) ? (
+      {l.laterDeclarationYear && (
+        <p className="small muted">
+          Участието е запазено за декларираните години. То не присъства в по-късна съпоставима
+          декларация; това не установява точна дата на прекратяване.
+        </p>
+      )}
+
+      <FactsList
+        label="Ключови показатели за връзката"
+        rows={[
+          ...(sourceInstitutions.length
+            ? [
+                {
+                  term: 'Институции в източниците',
+                  value: sourceInstitutions.map((i) => i.institution).join('; '),
+                },
+              ]
+            : []),
+          { term: 'Договори', value: contractsCountLabel(l) },
+          {
+            // „Публични средства" alone left the reader to guess that the lead figure is the
+            // declared-window subset and that the „от" figure is the COMPANY's whole procurement, not
+            // the person's. Both are now labelled, and the share that used to be a
+            // separate bar with its own heading rides here as the percentage it always was.
+            term: 'Публични средства',
+            value: (
+              <>
+                <span className="cc-funds-primary">{funds.primary}</span>
+                <span className="cc-funds-window">
+                  {conflict ? ' в декларирания период' : ' общо за дружеството'}
+                </span>
+              </>
+            ),
+            sub: funds.total ? (
+              <>
+                от {funds.total} на дружеството по обществени поръчки
+                {mag != null && <> · {pct(mag, 0)}</>}
+              </>
+            ) : undefined,
+          },
+          { term: 'Период', value: contractYearsLabel(l.firstContractYear, l.lastContractYear) },
+          {
+            term: 'Източници',
+            value: l.declarations?.length ? (
+              <a
+                href={`#sources-${domId}`}
+                onClick={() => {
+                  const details = document.getElementById(`sources-${domId}`);
+                  if (details instanceof HTMLDetailsElement) details.open = true;
+                }}
+              >
+                Виж всички декларации ({l.declarations.length})
+              </a>
+            ) : isHttpsUrl(l.sourceUrl) ? (
               <a href={l.sourceUrl!} target="_blank" rel="noopener noreferrer">
-                декларация
+                {l.sourceYear ? `декларация за ${l.sourceYear} г.` : 'декларация'}
               </a>
             ) : (
               <span className="muted">—</span>
-            )}
-          </dd>
-        </div>
-        {/* The Trade Register fact the link's identity rests on (#279, ADR-0033) — the register records a
-            ROLE, it does not certify the ownership claim, which comes from the official's own declaration. */}
-        <div className="cc-stat">
-          <dt>Регистър</dt>
-          <dd>
-            <ExternalEikLink eik={l.eik} />
-            <span className="small muted cc-evidence">
-              {registryEvidenceLabel(l)}
-              {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
-              {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
-              {l.registryLookupDate ? ` · справка ${l.registryLookupDate}` : ''}
-            </span>
-          </dd>
-        </div>
-      </dl>
+            ),
+          },
+          {
+            // The Trade Register fact the link's identity rests on (#279, ADR-0033) — the register records
+            // a ROLE, it does not certify the ownership claim, which comes from the official's declaration.
+            term: 'Регистър',
+            value: <RegistryCta eik={l.eik} />,
+            sub: (
+              <>
+                {registryEvidenceLabel(l)}
+                {l.registryEntryDate ? ` · вписване ${l.registryEntryDate}` : ''}
+                {l.registryEntryNumber ? ` · № ${l.registryEntryNumber}` : ''}
+                {/* NOT NULL in the DTO — the claim always carries the date we read the deed. */}
+                {` · справка ${l.registryLookupDate}`}
+              </>
+            ),
+          },
+        ]}
+      />
 
-      {l.contractCount > 0 && <CaseDetail link={l} contracts={contracts} />}
-    </article>
+      {l.declarations && (
+        <div className="source-documents" id={`sources-${domId}`}>
+          <h3>Декларации за тази връзка ({l.declarations.length})</h3>
+          <Declarations declarations={l.declarations} compact />
+        </div>
+      )}
+      {contracts.length < l.contractCount && (
+        <p className="small muted">
+          Времевата ос показва {count(contracts.length)} от {count(l.contractCount)} договора.{' '}
+          <Link to={`${officialHref(l.officialSlug)}?company=${l.eik}#contracts`}>
+            Всички договори с филтри и страници →
+          </Link>
+        </p>
+      )}
+      {l.contractCount > 0 && (
+        <CaseDetail link={l} contracts={contracts} showContracts={!contractListHref} />
+      )}
+      {contractListHref && (
+        <p className="detail-contract-action">
+          <Link to={`${contractListHref}?company=${l.eik}&basis=declaration#contracts`}>
+            Виж договорите на {l.company} в общия списък →
+          </Link>
+        </p>
+      )}
+    </Section>
   );
 }
 
-// The expanded case, in three headed sub-sections: the magnitude bar (how much of the money moved while the
-// stake was declared), a timeline placing each contract against the declared window, and the contract list.
+// The expanded case: a timeline placing each contract against the declared window, the per-authority
+// capture shares, and the contracts themselves.
+//
+// The „В декларирания период" bar that used to open this block is gone. It carried no number the funds
+// figure above did not already carry — only the percentage, which now rides in that figure's sub-line
+//. That removes one of the four sub-headings this block used to stack under a company.
 export function CaseDetail({
   link: l,
   contracts,
+  showContracts = true,
 }: {
   link: ConflictLink;
   contracts: ConflictContract[];
+  showContracts?: boolean;
 }) {
-  const mag = fundsMagnitude(l);
-  const funds = fundsCellLabel(l);
   return (
-    <div className="cc-case">
-      {mag != null && funds.total && (
-        <section className="cc-section">
-          <h4 className="cc-section-title">В декларирания период</h4>
-          <div className="case-mag">
-            <ShareBar ratio={mag} warn />
-            <span className="case-mag-figures">
-              <strong>{funds.primary}</strong> от {funds.total}
-            </span>
-          </div>
-        </section>
-      )}
+    <>
       <Timeline link={l} contracts={contracts} />
-      <AuthorityShares contracts={contracts} />
-      <ContractList contracts={contracts} />
-    </div>
+      {showContracts && <AuthorityShares contracts={contracts} />}
+      {showContracts && <ContractList contracts={contracts} />}
+    </>
   );
 }
 
 // How big a slice of each awarding body's recorded procurement this winner captured — the materiality axis
-// the timeline lacks (a small sum can still be a huge share of a small municipality). Each row is a stat:
-// the body + its capture share paired on one line, a neutral bar tied directly beneath, then the figures.
-// The bar is neutral (a high share is a question, not a verdict); a contract in the declared window is marked.
+// the timeline lacks (a small sum can still be a huge share of a small municipality). The share is neutral
+// (a high share is a question, not a verdict); a contract in the declared window is marked.
+//
+// Rendered as a DataTable with a ShareBar in the „Дял" column — exactly how the company and authority
+// profiles show the same idea (company.tsx / authority.tsx), instead of the private `.auth-shares` list.
+const authorityShareColumns: Column<AuthorityShare>[] = [
+  {
+    key: 'authority',
+    header: 'Възложител',
+    isTitle: true,
+    cell: (s) => (
+      <>
+        {s.authority}
+        {s.inWindow && <Chip tone="window">в декларирания период</Chip>}
+      </>
+    ),
+  },
+  {
+    key: 'value',
+    header: 'Получено (€)',
+    align: 'money',
+    cell: (s) =>
+      authorityShareDisplay(s).mode === 'no-value' ? (
+        <span className="muted">сума не е налична</span>
+      ) : (
+        moneyBare(s.companyEur)
+      ),
+  },
+  {
+    key: 'total',
+    header: 'От общо (€)',
+    align: 'money',
+    secondary: true,
+    cell: (s) => (s.authorityTotalEur != null ? moneyBare(s.authorityTotalEur) : '—'),
+  },
+  {
+    key: 'contracts',
+    header: 'Договори',
+    align: 'num',
+    secondary: true,
+    cell: (s) => count(s.contractCount),
+  },
+  {
+    key: 'share',
+    header: 'Дял',
+    cell: (s) => {
+      const display = authorityShareDisplay(s);
+      // Only a plottable share gets a bar. „под 0,1%" is a real sub-threshold capture; „—" means there is
+      // no denominator or no value — neither may read as a hard number.
+      if (display.mode === 'bar') return <ShareBar ratio={display.ratio} />;
+      return <span className="muted">{display.mode === 'tiny' ? 'под 0,1%' : '—'}</span>;
+    },
+  },
+];
+
 export function AuthorityShares({ contracts }: { contracts: ConflictContract[] }) {
   const shares = authorityShares(contracts);
   if (shares.length === 0) return null;
   return (
-    <section className="cc-section">
-      <h4 className="cc-section-title">Дял при възложителите</h4>
-      <ul className="auth-shares" role="list">
-        {shares.map((s) => {
-          const display = authorityShareDisplay(s);
-          const bar = display.mode === 'bar';
-          // The share value labels the body. „под 0,1%" for a real sub-threshold capture, „—" when there is
-          // no denominator/value — both muted, so only a plottable share reads as a hard number.
-          const pctLabel = bar ? pct(display.ratio, 1) : display.mode === 'tiny' ? 'под 0,1%' : '—';
-          return (
-            <li key={s.authorityId} className="auth-share">
-              <div className="auth-share-top">
-                <span className="auth-share-name">
-                  {s.authority}
-                  {s.inWindow && <Chip tone="window">в декларирания период</Chip>}
-                </span>
-                <span className={`auth-share-pct${bar ? '' : ' is-muted'}`}>{pctLabel}</span>
-              </div>
-              {(bar || display.mode === 'tiny') && (
-                <span className="auth-bar" aria-hidden="true">
-                  {bar && <i style={{ width: `${(display.ratio * 100).toFixed(1)}%` }} />}
-                </span>
-              )}
-              <span className="auth-share-figures small muted">
-                {display.mode === 'no-value' ? (
-                  'сума не е налична'
-                ) : (
-                  <>
-                    {money(s.companyEur)}
-                    {s.authorityTotalEur != null && (
-                      <> от общо {money(s.authorityTotalEur)} възложени</>
-                    )}
-                  </>
-                )}
-                {' · '}
-                <span className="auth-share-count">
-                  {count(s.contractCount)} {plural(s.contractCount, 'договор', 'договора')}
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <>
+      <h3 className="cc-subhead">Дял при възложителите</h3>
+      <DataTable
+        columns={authorityShareColumns}
+        rows={shares}
+        getKey={(s) => s.authorityId}
+        caption="Дял на дружеството в поръчките на всеки възложител"
+      />
+    </>
   );
 }
 
@@ -281,21 +358,25 @@ export function Timeline({
   // Narrow both edges inline: TS loses the narrowing if it's hidden behind an intermediate boolean.
   const ws = tl.windowStartPct;
   const we = tl.windowEndPct;
-  const hasBand = ws != null && we != null;
+  const hasBand = ws != null && we != null && !l.disputedYears?.length;
   const bandLeft = ws != null && we != null ? Math.min(ws, we) : 0;
   const bandWidth = ws != null && we != null ? Math.abs(we - ws) : 0;
   const maxStack = tl.marks.reduce((m, k) => Math.max(m, k.stackIndex), 0);
+  const description = `${count(inCount)} от ${count(dated)} ${datedNoun} ${datedVerb} в декларирания период`;
   return (
-    <section className="cc-section">
-      <h4 className="cc-section-title">
+    <>
+      <h3 className="cc-subhead">
         Времева ос · дял {contractYearsLabel(l.firstDeclaredYear, l.lastDeclaredYear)} г. срещу
         договори
-      </h4>
+      </h3>
+      {/* The track is decoration; the sentence below it is the content. Previously the div itself carried
+          role="img" with the sentence hidden in aria-label, so a sighted reader never got the summary and a
+          screen-reader user got it with no way to reach the contracts it describes — they are in the table
+          under this block. */}
       <div
         className="tl-track"
         style={{ height: `${34 + (maxStack + 1) * 14}px` }}
-        role="img"
-        aria-label={`${count(inCount)} от ${count(dated)} ${datedNoun} ${datedVerb} в декларирания период`}
+        aria-hidden="true"
       >
         <div className="tl-axis" />
         {hasBand && (
@@ -320,7 +401,8 @@ export function Timeline({
         <span className="tl-sep">·</span>
         <span className="tl-dot out" aria-hidden="true" /> извън периода
       </p>
-    </section>
+      <p className="small muted m-0">{description}</p>
+    </>
   );
 }
 
@@ -332,64 +414,81 @@ function tickStyle(pct: number): CSSProperties {
   return { left: `${pct}%`, transform: 'translateX(-50%)' };
 }
 
+// The contracts, as the same kind of table as every other contract list on the site — subject / authority /
+// procedure / kind / year / value — with the SUBJECT as the link.
+//
+// The old list did have links: 13 of them on the page that prompted this. But the anchor was the bare
+// „№ 219949" token wedged between „Услуги" and the amount, while the subject — the only part a reader
+// recognises and would click — was a plain <span>. The link existed; the click target did not.
+const contractColumns: Column<ConflictContract>[] = [
+  {
+    key: 'subject',
+    header: 'Предмет',
+    isTitle: true,
+    cell: (c) => (
+      <Link to={contractHref(c)}>
+        {c.subject || (c.contractNumber ? `Договор № ${c.contractNumber}` : 'Договор')}
+      </Link>
+    ),
+  },
+  { key: 'authority', header: 'Възложител', cell: (c) => c.authority || '—' },
+  {
+    key: 'procedure',
+    header: 'Процедура',
+    secondary: true,
+    // Award procedure verbatim (open vs direct/no-notice) — the competition signal. Shown neutrally for
+    // now; emphasis + a "без открита процедура" aggregate wait until the ЗОП type allowlist is pinned.
+    cell: (c) => c.procedureType || '—',
+  },
+  { key: 'kind', header: 'Вид', secondary: true, cell: (c) => c.contractKind || '—' },
+  { key: 'year', header: 'Година', align: 'num', cell: (c) => contractYear(c) },
+  { key: 'amount', header: 'Стойност (€)', align: 'money', cell: (c) => moneyBare(c.amountEur) },
+];
+
 export function ContractList({ contracts }: { contracts: ConflictContract[] }) {
-  if (contracts.length === 0)
+  if (contracts.length === 0) {
     return (
-      <section className="cc-section">
+      <>
+        <h3 className="cc-subhead">Договори</h3>
         <p className="muted small m-0">Няма намерени договори.</p>
-      </section>
+      </>
     );
+  }
   const { inConflict, outside } = partitionContracts(contracts);
   return (
-    <section className="cc-section">
+    <>
+      <h3 className="cc-subhead">
+        Договори, сключени в декларирания период ({count(inConflict.length)})
+      </h3>
       {inConflict.length > 0 ? (
-        <>
-          <h4 className="cc-section-title">
-            Договори, сключени в декларирания период ({count(inConflict.length)})
-          </h4>
-          <ul className="contract-list">
-            {inConflict.map((c, i) => (
-              <ContractItem key={c.contractNumber ?? `in-${i}`} c={c} conflict />
-            ))}
-          </ul>
-        </>
+        <DataTable
+          columns={contractColumns}
+          rows={inConflict}
+          getKey={(c, i) => c.contractSlug || `in-${i}`}
+          caption="Договори, сключени в декларирания период"
+        />
       ) : (
         <p className="small muted m-0">Няма договори, сключени в декларирания период.</p>
       )}
       {outside.length > 0 && (
-        <details className="contract-outside">
-          <summary className="small muted">Извън периода ({count(outside.length)})</summary>
-          <ul className="contract-list">
-            {outside.map((c, i) => (
-              <ContractItem key={c.contractNumber ?? `out-${i}`} c={c} />
-            ))}
-          </ul>
-        </details>
+        <div className="contract-outside">
+          <h4>Извън периода ({count(outside.length)})</h4>
+          <DataTable
+            columns={[
+              ...contractColumns,
+              {
+                key: 'temporal',
+                header: 'Спрямо периода',
+                secondary: true,
+                cell: (c) => temporalLabel(c.temporal),
+              },
+            ]}
+            rows={outside}
+            getKey={(c, i) => c.contractSlug || `out-${i}`}
+            caption="Договори извън декларирания период"
+          />
+        </div>
       )}
-    </section>
-  );
-}
-
-function ContractItem({ c, conflict = false }: { c: ConflictContract; conflict?: boolean }) {
-  return (
-    <li className={conflict ? 'contract-item contract-item-conflict' : 'contract-item'}>
-      {/* The tender subject (предмет) — what the money bought — leads; it's the concrete fact a reader wants. */}
-      {c.subject && <span className="contract-subject">{c.subject}</span>}
-      <span className="contract-meta">
-        <span className="contract-year">{contractYear(c)}</span>
-        <span className="contract-authority">{c.authority || '—'}</span>
-        {/* Award procedure verbatim (open vs direct/no-notice) — the competition signal. Shown neutrally for
-            now; emphasis + a "без открита процедура" aggregate wait until the ЗОП type allowlist is pinned. */}
-        {c.procedureType && <span className="contract-procedure">{c.procedureType}</span>}
-        {c.contractKind && <span className="contract-kind">{c.contractKind}</span>}
-        <Link to={contractHref(c)} className="contract-link">
-          {c.contractNumber ? `№ ${c.contractNumber}` : 'договор'}
-        </Link>
-        <span className="contract-amt">{money(c.amountEur)}</span>
-        {/* In-window items sit under the „…в декларирания период" heading + carry a left accent rail,
-            so a per-item chip would just repeat that; only the outside items need a temporal tag. */}
-        {!conflict && <span className="small muted">{temporalLabel(c.temporal)}</span>}
-      </span>
-    </li>
+    </>
   );
 }

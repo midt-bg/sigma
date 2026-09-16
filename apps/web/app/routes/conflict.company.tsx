@@ -1,15 +1,16 @@
 import { Link } from 'react-router';
-import { count, plural } from '@sigma/shared';
+import { count, money, plural } from '@sigma/shared';
 import { getCompanyConflicts, getDb } from '@sigma/db';
 import type { Route } from './+types/conflict.company';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Section, Callout, ExternalEikLink } from '../components/ui';
+import { FactsList } from '../components/FactsList';
 import { ConflictDetail } from '../components/ConflictDetail';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
-import { companyProfileHref, declaredStakeNoun } from '../lib/conflicts';
+import { companyProfileHref, conflictHeadline, declaredStakeNoun } from '../lib/conflicts';
 
 // Officials with a published declared interest in one winner (by ЕИК). Reads published interest_links,
 // which per ADR-0032 include a stake declared for a close relative alongside the official's own — the
@@ -43,6 +44,10 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
 export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
   const { company, eik, links, contracts } = loaderData;
+  // Same opening panel as the official page. Money is per-ЕИК-deduped by `conflictHeadline`;
+  // every link on this page shares one ЕИК, so the winner's contract count is a company-level constant.
+  const head = conflictHeadline(links);
+  const contractCount = links[0]?.contractCount ?? 0;
   return (
     <>
       <Breadcrumbs
@@ -75,10 +80,40 @@ export default function ConflictCompany({ loaderData }: Route.ComponentProps) {
           </p>
         </Callout>
 
+        <FactsList
+          label="Ключови показатели"
+          rows={[
+            {
+              term: 'Длъжностни лица',
+              value: `${count(head.officialCount)} ${plural(head.officialCount, 'лице', 'лица')}`,
+            },
+            {
+              term: 'Договори',
+              value: `${count(contractCount)} ${plural(contractCount, 'договор', 'договора')}`,
+            },
+            {
+              // The lead figure is the declared-window subset and the „от" figure is the COMPANIES'
+              // whole procurement — neither was labelled before, so „3,1 млн. от 11,9 млн." was
+              // unreadable.
+              term: 'Публични средства',
+              value: (
+                <>
+                  {money(head.contemporaneousEur)}
+                  <span className="cc-funds-window"> в декларирания период</span>
+                </>
+              ),
+              sub:
+                head.totalEur > 0
+                  ? `от ${money(head.totalEur)} на дружеството по обществени поръчки`
+                  : undefined,
+            },
+          ]}
+        />
+
         <Section
           id="officials"
           title="Длъжностни лица с деклариран дял"
-          hint="Подредени по силата на връзката: първо договори от собствената институция, после дял към момента на договора."
+          hint="Подредени по силата на връзката: първо договори от собствената институция, после съвпадение по години между декларации и договори."
         >
           <ConflictDetail links={links} contracts={contracts} perspective="company" />
         </Section>

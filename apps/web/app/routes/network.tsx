@@ -1,5 +1,4 @@
 import { Form, Link, useNavigation, useSubmit } from 'react-router';
-import { count, money } from '@sigma/shared';
 import {
   authorityIdFromSlug,
   bidderIdFromSlug,
@@ -10,8 +9,9 @@ import {
 import type { Route } from './+types/network';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { DataTable, type Column } from '../components/DataTable';
+import { DataTable } from '../components/DataTable';
 import { NetworkGraph } from '../components/NetworkGraph';
+import { networkColumns, networkRows } from '../lib/entity-tables';
 import { Callout, Section } from '../components/ui';
 import { publicCache } from '../lib/cache';
 
@@ -56,13 +56,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return { data };
 }
 
-interface LinkRow {
-  from: string;
-  to: string;
-  valueEur: number;
-  contracts: number;
-}
-
 export default function Network({ loaderData }: Route.ComponentProps) {
   const { data } = loaderData;
   const submit = useSubmit();
@@ -71,34 +64,9 @@ export default function Network({ loaderData }: Route.ComponentProps) {
     ? `${data.center.kind === 'authority' ? 'a' : 'c'}:${data.center.slug}`
     : '';
 
-  const nodeById = new Map(data.nodes.map((n) => [n.id, n] as const));
-  // Normalise each row to the real procurement direction (authority -> company), regardless of how the
-  // edge is oriented in the graph topology: the institution awards and pays the company, never the
-  // reverse. Every edge connects one authority and one company.
-  const rows: LinkRow[] = data.edges.map((e) => {
-    const a = nodeById.get(e.from);
-    const b = nodeById.get(e.to);
-    const authority = a?.kind === 'authority' ? a : b;
-    const company = a?.kind === 'authority' ? b : a;
-    return {
-      from: authority?.label ?? e.from,
-      to: company?.label ?? e.to,
-      valueEur: e.valueEur,
-      contracts: e.contracts,
-    };
-  });
-  const columns: Column<LinkRow>[] = [
-    { key: 'from', header: 'От', isTitle: true, cell: (r) => r.from },
-    { key: 'to', header: 'Към', cell: (r) => r.to },
-    { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.valueEur) },
-    {
-      key: 'contracts',
-      header: 'Договори',
-      align: 'num',
-      secondary: true,
-      cell: (r) => count(r.contracts),
-    },
-  ];
+  // Same rows and columns as the profile pages' network section (entity-tables): one definition, so
+  // the endpoints link to their profiles everywhere rather than only where someone remembered to.
+  const rows = networkRows(data);
 
   return (
     <>
@@ -158,7 +126,7 @@ export default function Network({ loaderData }: Route.ComponentProps) {
 
             <Section id="links" title="Връзки в графа">
               <DataTable
-                columns={columns}
+                columns={networkColumns}
                 rows={rows}
                 getKey={(r) => `${r.from}-${r.to}`}
                 caption="Връзки в графа"

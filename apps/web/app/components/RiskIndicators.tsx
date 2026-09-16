@@ -16,7 +16,7 @@ export function RiskIndicators({ contract }: { contract: ContractDetail }) {
   }
 
   return (
-    <div className="risk-indicators">
+    <div className="risk-indicators" id="risk">
       <h2 className="risk-title">
         <svg
           width="16"

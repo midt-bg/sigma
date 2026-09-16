@@ -11,11 +11,14 @@ function cacheUrl(input: string): URL {
 // singleSelectFilters / pageNav), AND server-rendered components (e.g. SiteHeader reads `q`). So we
 // scan the whole app/ tree, not just loaders. Loaded as raw text through Vite's glob (workers/* is
 // typed for the Cloudflare runtime, so no Node fs here).
-const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,tsx}', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-});
+const APP_SOURCES: Record<string, string> = import.meta.glob(
+  ['../app/**/*.{ts,tsx}', '../../../packages/db/src/queries/person-activity.ts'],
+  {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  },
+);
 
 // Statically collect every query param those sources read off the URL. Anchored on the
 // URLSearchParams access patterns actually used so it ignores FormData.get() / Headers.has():
@@ -32,7 +35,7 @@ const APP_SOURCES: Record<string, string> = import.meta.glob('../app/**/*.{ts,ts
 //   - A new URLSearchParams binding name (other than sp/searchParams/base) needs a pattern added here.
 function consumedQueryParams(): Set<string> {
   const patterns = [
-    /(?:\bsp|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
+    /(?:\bsp|\bsearch|\bsearchParams|\bbase|\.searchParams|URLSearchParams\([^)]*\))\.(?:get|getAll|has)\(\s*['"]([A-Za-z_]\w*)['"]/g,
     /\bgetMulti\(\s*\w+\s*,\s*['"]([A-Za-z_]\w*)['"]/g,
     // The `const sel = (k) => sp.get(k)` helper in the dashboard routes (map/competition/flows/trends).
     /\bsel\(\s*['"]([A-Za-z_]\w*)['"]/g,

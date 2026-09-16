@@ -3,18 +3,20 @@ import type { TrendPoint } from '@sigma/api-contract';
 // Server-rendered area + line of spend over time (no chart JS, like SankeyDiagram). The accessible
 // data is the per-year table beside it; this SVG is a visual summary (role="img" + aria-label) with
 // year labels on the x-axis. Single oklch series matching the palette.
-const W = 760;
-const H = 240;
 const PAD_B = 22; // room under the line for year labels
-const PAD_T = 10;
+const PAD_T = 28;
 
 export function TrendChart({
   points,
   granularity,
+  compact = false,
 }: {
   points: TrendPoint[];
   granularity: 'month' | 'year';
+  compact?: boolean;
 }) {
+  const W = compact ? 460 : 760;
+  const H = compact ? 180 : 240;
   if (points.length < 2) return null;
   const max = Math.max(1, ...points.map((p) => p.valueEur));
   const n = points.length;
