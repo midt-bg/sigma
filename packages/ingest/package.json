@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "@sigma/test-support": "workspace:*"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.10.1"
   }
 }

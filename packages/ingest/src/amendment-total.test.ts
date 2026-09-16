@@ -346,3 +346,16 @@ describe('#305 amendment value double-count heuristic', () => {
     ).toBe(1234.56);
   });
 });
+
+describe('#305 figures too long to be a number', () => {
+  it('never takes a runaway digit string for the delta', () => {
+    const text = (figure: string) => `Цената на договора се увеличава с ${figure} лв. без ДДС`;
+    expect(
+      classifyAmendmentValue(mk(100000, 250000, 150000, 'BGN', text('9'.repeat(400)))),
+    ).toEqual({ kind: 'none' });
+    // Control: the same wording with the real figure is a genuine increment.
+    expect(classifyAmendmentValue(mk(100000, 250000, 150000, 'BGN', text('150 000')))).toEqual({
+      kind: 'genuine_increment',
+    });
+  });
+});
