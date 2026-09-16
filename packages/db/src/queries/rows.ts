@@ -8,8 +8,13 @@ import type {
   OwnershipKind,
 } from '@sigma/api-contract';
 import { ENTITY_TYPES } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
-import { authoritySlug, companySlug } from './identity';
+import {
+  MASKED_NATURAL_PERSON_LABEL,
+  cleanName,
+  entityName,
+  isNaturalPersonBidder,
+} from '@sigma/shared';
+import { authoritySlug, companySlug, maskedCompanySlug } from './identity';
 import { sectorRef } from './sectors';
 
 // Friendly authority type_group → display label (the bucket keys are themselves Bulgarian words;
@@ -44,19 +49,58 @@ export interface CompanyTotalsRow {
   eu_eur: number;
   first_date: string | null;
   last_date: string | null;
+  legal_form: string | null;
 }
 
 export function toCompanyListItem(r: CompanyTotalsRow): CompanyListItem {
-  const hasEik = r.eik_valid === 1 && Boolean(r.eik);
+  // Privacy (PR #183 review): a sole trader / natural person has the same `ЕТ` / sole-trader signal
+  // in the rollup as on the detail page and in the CSV/JSON exports. Mask ЕИК and the source name
+  // here so /companies, /companies.data (RRv7 single-fetch twin), and the home top-10 all carry
+  // the masked values — they share this mapper, so the new branch covers all three in one place.
+  //
+  // Consortium guard mirrors the CSV streamer (`bidder_kind !== 'consortium' && isNaturalPersonBidder(...)`
+  // in companies.ts): isNaturalPersonBidder's docstring delegates JV filtering to the caller, so a
+  // consortium whose first member is a sole trader (e.g. "ЕТ Иван Петров; Строй ООД") would
+  // otherwise over-mask — losing the "… и др." shape and the consortium ЕИК. The guard keeps the
+  // JV's name + ЕИК verbatim.
+  //
+  // The unmasked name is also held back from `displayName`: a masked row must read "Частно лице"
+  // everywhere on the list page (and on the home page) — exposing the masked `displayName` next
+  // to a null ЕИК would let a crawler infer the natural-person class without needing the ЕИК.
+  //
+  // `eikValid` is the ЕИК-validation bit from the rollup (`r.eik_valid === 1`). For a masked row
+  // the ЕИК is intentionally nullified, so the bit must follow `hasEik` — a consumer that sees
+  // `eik: null, hasEik: false, eikValid: true` would render a "валиден ЕИК" badge next to an
+  // empty value (ydimitrof review 2026-08-31, thread on packages/db/src/queries/rows.ts:80). The
+  // bit is masked in lock-step with the field so the payload stays internally consistent.
+  //
+  // The `masked` boolean surfaces the same privacy signal as the `MASKED_NATURAL_PERSON_LABEL`
+  // label and the null ЕИК, so callers can branch on a single source-of-truth instead of
+  // comparing the masking label string (which is brittle to label changes or mapper moves —
+  // ydimitrof review 2026-08-31, thread on apps/web/app/routes/companies.tsx:84). The flag is
+  // set here, where the masking actually happens; consumers just read it.
+  //
+  // The `slug` is also opaque for masked rows — `companySlug('eik:<digits>')` returns the digits
+  // verbatim, so a masked eik-keyed row's slug would still carry the natural-person's ЕИК into
+  // the `/companies.data` machine-readable twin (RRv7 single-fetch turbo-stream) and the
+  // hydration payload of the public indexable leaderboard, defeating the mask. `maskedCompanySlug`
+  // is a one-way token (no ЕИК, no name, non-round-trippable; `bidderIdFromSlug` returns null) so
+  // the masked profile stays reachable only via direct URL or a noindexed contract-page backlink
+  // — never via a clickable href on the public leaderboard. lyubomir-bozhinov review 2026-09-02,
+  // thread on packages/db/src/queries/rows.ts:86.
+  const isNaturalPerson =
+    r.kind !== 'consortium' && isNaturalPersonBidder(cleanName(r.name), r.legal_form);
+  const name = isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : cleanName(r.name);
   return {
-    slug: companySlug(r.bidder_id),
-    name: cleanName(r.name),
-    displayName: entityName(cleanName(r.name), r.kind),
+    slug: isNaturalPerson ? maskedCompanySlug(r.bidder_id) : companySlug(r.bidder_id),
+    name,
+    displayName: isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : entityName(name, r.kind),
     kind: r.kind,
     isConsortium: r.kind === 'consortium',
-    eik: r.eik,
-    eikValid: r.eik_valid === 1,
-    hasEik,
+    eik: isNaturalPerson ? null : r.eik,
+    eikValid: isNaturalPerson ? false : r.eik_valid === 1,
+    hasEik: isNaturalPerson ? false : r.eik_valid === 1 && Boolean(r.eik),
+    masked: isNaturalPerson,
     ownershipKind: r.ownership_kind,
     settlement: r.settlement,
     sector: sectorRef(r.primary_sector),

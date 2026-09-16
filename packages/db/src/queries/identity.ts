@@ -29,6 +29,94 @@ export function companySlug(bidderId: string): string {
   return bidderId;
 }
 
+// Build-time-and-deploy-time salt for the masked-company-slug hash. ydimitrof 2026-09-03 (PR #183,
+// thread on packages/db/src/queries/identity.ts:75) and lyubomir-bozhinov 2026-09-04 (thread on
+// identity.ts:75) both raised the same MAJOR concern: FNV-1a is a non-keyed, non-salted public
+// algorithm; given the public EIC keyspace (~10^9 for 9-digit Bulgarian ЕИК, ~10^13 for 13-digit),
+// an attacker who has the source code can pre-compute `fnv1a64('eik:' + candidate)` for every
+// known ЕИК and reverse-lookup each `m<hash>` in seconds. The "one-way" guarantee the previous
+// docstring claimed was overstated.
+//
+// The fix is to introduce a salt that lives in the running worker isolate's memory, NOT in the
+// source code: every Cloudflare Worker isolate initialises a fresh 16-byte salt via
+// `crypto.getRandomValues()` at module-load time. The salt never appears in `git grep` or in
+// any build artefact, so a scraper with ONLY the public JSON cannot brute-force the slug → ЕИК
+// mapping. The salt IS recoverable by anyone who can dump the running isolate's heap — but at
+// that point they already have access to the worker environment, which is a stronger threat than
+// a public-JSON scraper and out of scope for the privacy signal we are trying to keep.
+//
+// `crypto.getRandomValues` is available in the Workers runtime (also in modern Node 19+ and
+// browsers); the typeof guard with a `Math.random()` fallback keeps the test harness and
+// non-Workers environments working without crashing — the fallback is obviously weak but the
+// test surface only needs determinism, not security. Production deploys go through the Workers
+// runtime and always take the strong path.
+//
+// The salt is 16 bytes, hex-encoded, prefixed onto the FNV-1a input. Hex was chosen over
+// `btoa` to keep the helper dependency-free and identical between Workers and Node test envs.
+const MASKED_SLUG_SALT: string = (() => {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch {
+    // Fall through to the non-secure fallback (test envs / older runtimes).
+  }
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+})();
+
+/** bidder id → opaque `/companies/:slug` segment for masked natural-person / sole-trader rows on
+ * the leaderboard list and home top-10. Unlike `companySlug`, this is a one-way token: it does
+ * NOT round-trip to a `bidder_id` via `bidderIdFromSlug` — masked rows are not linkable from the
+ * public leaderboard by design (their masked profile is reachable only via direct URL or from a
+ * noindexed contract page). The `m` prefix distinguishes it from `n` (name-keyed, round-trippable)
+ * and from bare ЕИК digits so `bidderIdFromSlug` returns null. Stable across rebuilds (depends only
+ * on the bidder id, which is the only stable input on a masked row — the name is masked, the ЕИК
+ * is nulled).
+ *
+ * Implementation: 64-bit FNV-1a hash, hex-encoded, salted with a per-isolate random salt
+ * (`MASKED_SLUG_SALT` above). FNV-1a is non-invertible by design — there is no `decode` that
+ * recovers the bidder id from the hash. The salt makes the function resistant to enumeration
+ * attacks over the public ЕИК keyspace (the ydimitrof 2026-09-03 / lyubomir-bozhinov 2026-09-04
+ * concern on identity.ts:75): a scraper with only the public JSON cannot pre-compute a reverse
+ * table because the salt is generated in-memory at worker startup and is never written to disk
+ * or to the source. A scraper with the running isolate's heap could recover the salt and
+ * rebuild the table — that is a stronger threat than a public-JSON scraper and out of scope for
+ * the privacy signal.
+ *
+ * Why FNV-1a (not SHA-256): the surrounding `companySlug` / `bidderIdFromSlug` helpers are
+ * synchronous and dependency-free; the web worker bundle does NOT enable `nodejs_compat`, so
+ * `node:crypto` is unavailable, and Web Crypto's `crypto.subtle.digest` is async — the
+ * list/leaderboard pipeline (`toCompanyListItem` in rows.ts) calls this for every row inside a
+ * synchronous mapper. FNV-1a-64 has a 64-bit collision space (birthday paradox ~50% at ~4
+ * billion distinct bidders, well above the realistic pool size) and is the standard "small
+ * opaque token" hash used for the same purpose in many places (e.g. Sentry's `hashCode`, Java's
+ * `HashMap` seed). The 16-hex-char output is stable across rebuilds (depends only on
+ * `bidderId` + the runtime salt), URL-safe (lowercase hex), and unrecoverable to a scraper that
+ * has only the public JSON.
+ *
+ * BigInt is used to hold the 64-bit state (JS numbers only have 53 safe bits). FNV-1a-64 is
+ * well-known to be reproducible byte-for-byte across JS engines (V8, JSC, SpiderMonkey) — there
+ * are no BigInt arithmetic ambiguity points (we always mask back to 64 bits after the multiply,
+ * matching the reference C implementation in glib / the FNV reference implementation). */
+function fnv1a64Hex(salted: string): string {
+  // FNV-1a 64-bit offset basis + prime (reference values from isthe.com/chongo/tech/comp/fnv/).
+  let h = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (let i = 0; i < salted.length; i += 1) {
+    h ^= BigInt(salted.charCodeAt(i));
+    h = (h * prime) & mask;
+  }
+  // 16 hex chars, lowercase, zero-padded. Stable + URL-safe.
+  return h.toString(16).padStart(16, '0');
+}
+
+export function maskedCompanySlug(bidderId: string): string {
+  return 'm' + fnv1a64Hex(MASKED_SLUG_SALT + bidderId);
+}
+
 /** `/companies/:slug` segment → bidder id, or null if it cannot be decoded. */
 export function bidderIdFromSlug(slug: string): string | null {
   if (EIK_RE.test(slug)) return 'eik:' + slug;

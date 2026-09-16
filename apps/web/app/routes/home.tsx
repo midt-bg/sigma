@@ -186,10 +186,20 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 <tr key={c.slug}>
                   <td className="rank">{i + 1}</td>
                   <td>
-                    <Link to={`/companies/${c.slug}`}>{c.displayName}</Link>
+                    {/* Masked (sole-trader / natural-person) rows on the public indexable home top-10
+                        must NOT render an href that either leaks the ЕИК (pre-fix: bare ЕИК slug)
+                        or 404s against the new opaque slug (post-fix: `m<base64(bidder_id)>`).
+                        Same invariant as companies.tsx:174-178 — the masked profile is reachable
+                        only via direct URL or a noindexed contract-page backlink. lyubomir-bozhinov
+                        review 2026-09-02, thread on packages/db/src/queries/rows.ts:86. */}
+                    {c.masked ? (
+                      <span>{c.displayName}</span>
+                    ) : (
+                      <Link to={`/companies/${c.slug}`}>{c.displayName}</Link>
+                    )}
                     <br />
                     <span className="small muted">
-                      {c.kind === 'consortium' ? (
+                      {c.masked ? null : c.kind === 'consortium' ? (
                         <span className="flag soft">обединение</span>
                       ) : (
                         <>
@@ -197,7 +207,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           {c.sector ? ` · ${c.sector.short}` : ''}
                         </>
                       )}
-                      {c.ownershipKind && (
+                      {!c.masked && c.ownershipKind && (
                         <>
                           {' '}
                           <OwnershipChip kind={c.ownershipKind} />
