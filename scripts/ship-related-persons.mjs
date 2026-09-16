@@ -212,9 +212,9 @@ export function sqlLiteral(v) {
 }
 
 /** Promote the complete staged image, writing only changed rows when the schema supplies a key.
- * Obsolete rows are removed first, children before parents — a document whose id moved to a merged
- * person must vacate its secondary unique key before the new row arrives — then parents are upserted
- * before children.
+ * Parents are upserted before children; obsolete rows are then removed children-first. An identity merge
+ * that moves documents between persons and swaps their secondary unique keys does not fit this diff: such a
+ * run needs a full replacement of the shipped tables.
  * The guards and all data changes still execute in the same atomic trigger. */
 export function promotionSql(reads, wipeTables = WIPE_ORDER) {
   const keyed = (r) => r.primaryKey?.length && r.columns?.length;
@@ -264,8 +264,8 @@ CREATE TABLE IF NOT EXISTS rp_publish (id INTEGER PRIMARY KEY, published_at TEXT
 DROP TRIGGER IF EXISTS rp_publish_apply;
 CREATE TRIGGER rp_publish_apply AFTER INSERT ON rp_publish BEGIN
 ${guards}
-${clear}${remove}
-${inserts}
+${clear}${inserts}
+${remove}
 END;`;
 }
 
