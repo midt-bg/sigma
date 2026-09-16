@@ -5,7 +5,8 @@
 // `wrangler deploy` needs the real IDs — this script substitutes them from env vars and
 // writes a sibling `wrangler.deploy.<ext>` that the package `deploy` script passes via
 // `--config`. Optional deploy-time name env vars (`SIGMA_WEB_NAME`, `SIGMA_ETL_NAME`,
-// `SIGMA_WORKFLOW_NAME`, `SIGMA_REGISTRY_WORKFLOW_NAME`, `SIGMA_D1_NAME`,
+// `SIGMA_WORKFLOW_NAME`, `SIGMA_REGISTRY_WORKFLOW_NAME`, `SIGMA_DECLARATIONS_WORKFLOW_NAME`,
+// `SIGMA_DECLARATIONS_BUCKET`, `SIGMA_SHIP_ENV`, `SIGMA_D1_NAME`,
 // `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`, `SIGMA_VECTORIZE_NAME`) explicitly override
 // resource names for alternate environments while leaving committed names unchanged when unset.
 //
@@ -87,6 +88,9 @@ if (ext === '.json' || ext === '.jsonc') {
     etlName: process.env.SIGMA_ETL_NAME || '',
     workflowName: process.env.SIGMA_WORKFLOW_NAME || '',
     registryWorkflowName: process.env.SIGMA_REGISTRY_WORKFLOW_NAME || '',
+    declarationsWorkflowName: process.env.SIGMA_DECLARATIONS_WORKFLOW_NAME || '',
+    declarationsBucket: process.env.SIGMA_DECLARATIONS_BUCKET || '',
+    shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
   };
   if (names.etlName || names.workflowName || names.registryWorkflowName || names.d1Name) {
@@ -181,8 +185,19 @@ function renderToml(text, names) {
         line = replaceTomlStringValue(line, 'name', names.etlName);
       } else if (section === '[[workflows]]') {
         const workflowName =
-          workflowBinding === 'REGISTRY' ? names.registryWorkflowName : names.workflowName;
+          {
+            REGISTRY: names.registryWorkflowName,
+            DECLARATIONS_RUN: names.declarationsWorkflowName,
+          }[workflowBinding] ?? names.workflowName;
         if (workflowName) line = replaceTomlStringValue(line, 'name', workflowName);
+      } else if (section === '[[r2_buckets]]' && names.declarationsBucket) {
+        line = replaceTomlStringValue(line, 'bucket_name', names.declarationsBucket);
+      } else if (section === '[vars]') {
+        // The declarations container reads its target from these vars (ADR-0045).
+        if (names.d1Name) line = replaceTomlStringValue(line, 'SIGMA_D1_NAME', names.d1Name);
+        if (names.shipEnv) line = replaceTomlStringValue(line, 'SIGMA_SHIP_ENV', names.shipEnv);
+        if (names.declarationsBucket)
+          line = replaceTomlStringValue(line, 'DECLARATIONS_BUCKET', names.declarationsBucket);
       }
       if (names.d1Name) line = replaceTomlStringValue(line, 'database_name', names.d1Name);
       return line;

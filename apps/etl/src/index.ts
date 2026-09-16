@@ -45,6 +45,8 @@ import {
 export interface Env extends DeclarationEnv {
   DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
   DECLARATIONS_ENABLED?: string;
+  /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
+  DECLARATIONS_RUN?: Workflow;
   DB: D1Database;
   REFRESH: Workflow;
   EOP_OPEN_DATA_BASE_URL?: string;
@@ -665,14 +667,62 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
   }
 }
 
+/** The cron that starts the declarations run: Mondays 03:00 UTC, as the register is quiet then. */
+export const DECLARATIONS_CRON = '0 3 * * 1';
+
+/** An operator-started declarations run that waits for the container's outcome, so `wrangler workflows
+ * trigger` reports the real result instead of a fire-and-forget. The cron starts the same run. */
+export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
+  override async run(event: WorkflowEvent<unknown>, step: WorkflowStep) {
+    const declarations = this.env.DECLARATIONS;
+    if (!declarations) throw new NonRetryableError('The declarations container is not bound');
+    const start = await step.do('start-declarations', async () => {
+      const { runId, state } = await declarations
+        .getByName('declarations')
+        .startRun(event.instanceId);
+      return { runId, state };
+    });
+    for (let poll = 0; ; poll++) {
+      await step.sleep(`wait-${poll}`, '5 minutes');
+      const run = await step.do(`status-${poll}`, async () => {
+        const current = await declarations.getByName('declarations').getRun();
+        return current
+          ? {
+              runId: current.runId,
+              state: current.state,
+              audit: current.audit ?? false,
+              published: current.published ?? false,
+              reason: current.reason ?? null,
+              startedAt: current.startedAt ?? null,
+              finishedAt: current.finishedAt ?? null,
+              attempt: current.attempt,
+              stage: current.stage,
+              completed: current.completed,
+              lastProgressAt: current.lastProgressAt,
+              retryAt: current.retryAt ?? null,
+            }
+          : null;
+      });
+      if (!run || run.runId !== start.runId) throw new NonRetryableError('Declaration run changed');
+      if (run.state === 'complete') return run;
+      if (run.state !== 'running')
+        throw new NonRetryableError(`Declaration run ${run.state}: ${run.reason ?? ''}`);
+    }
+  }
+}
+
 export default {
   // Cron entrypoint: kick one durable refresh run, and the register layer beside it where it is configured.
   // No public route or HTTP trigger is configured.
-  async scheduled(_controller, env): Promise<void> {
-    const jobs: [string, () => Promise<unknown>][] = [['refresh', () => env.REFRESH.create()]];
-    if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
-      jobs.push(['registry', () => env.REGISTRY!.create()]);
-    if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
+  async scheduled(controller, env): Promise<void> {
+    // The weekly cron owns the declarations; every other tick refreshes procurement and the register.
+    const weekly = controller?.cron === DECLARATIONS_CRON;
+    const jobs: [string, () => Promise<unknown>][] = [];
+    if (!weekly) {
+      jobs.push(['refresh', () => env.REFRESH.create()]);
+      if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
+        jobs.push(['registry', () => env.REGISTRY!.create()]);
+    } else if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
       jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
     const results = await Promise.allSettled(
       jobs.map(async ([job, start]) => {

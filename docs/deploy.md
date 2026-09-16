@@ -56,6 +56,9 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_ETL_NAME` | *(незададена → `sigma-etl`)* | `sigma-etl-stage` | render → име на etl worker |
 | `SIGMA_WORKFLOW_NAME` | *(незададена → `sigma-refresh`)* | `sigma-refresh-stage` | render → `[[workflows]] name` |
 | `SIGMA_REGISTRY_WORKFLOW_NAME` | *(незададена → `sigma-registry`)* | `sigma-registry-stage` | render → registry `[[workflows]] name` |
+| `SIGMA_DECLARATIONS_WORKFLOW_NAME` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → declarations `[[workflows]] name` |
+| `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
+| `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
 | `SIGMA_D1_NAME` | *(незададена → `sigma`)* | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
 | `SIGMA_CSV_CACHE_NAME` | *(незададена → `sigma-csv-cache`)* | `sigma-csv-cache-stage` | render → `r2_buckets[].bucket_name` на web worker-а |
 
@@ -330,6 +333,30 @@ Workflow-а `sigma-refresh`; големите догонвания остава�
 > По-ранните pipeline-и през `data.egov.bg` (OCDS) и админ-експорта на АОП са изведени от употреба;
 > единственият текущ източник е EOP MinIO (`storage.eop.bg`). Обмислете разместване на staging
 > графика (напр. `30 */6 * * *`), за да не удря източника в същата минута като prod.
+
+## Декларациите: контейнер в Cloudflare
+
+Заданието за свързаните лица върви в Cloudflare Container, координиран от Durable Object в etl
+worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); корпусът от декларации
+живее в R2. GitHub само деплойва кода. Еднократно за всяка среда:
+
+1. **R2 bucket:** `wrangler r2 bucket create <SIGMA_DECLARATIONS_BUCKET>` (staging:
+   `sigma-declarations-stage`; production: `sigma-declarations`). Bucket-ът е празен; първият ход
+   изтегля целия корпус (няколко часа, в няколко опита на контейнера, всеки до 60 минути изтегляне).
+2. **GitHub Environment:** променливите `SIGMA_DECLARATIONS_WORKFLOW_NAME` и
+   `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
+   `SUPPRESSION_KEY_VERSION` като променлива). Деплоят ги подава на etl worker-а като секрети.
+3. **Деплой.** `wrangler deploy` строи образа от `containers/declarations/Dockerfile` (изпълнителят
+   има Docker) и създава Durable Object namespace-а с миграцията `v1-declarations`.
+4. **Първи ход на ръка:** `wrangler workflows trigger <SIGMA_DECLARATIONS_WORKFLOW_NAME>` от
+   `apps/etl` с `--config wrangler.deploy.toml`. Workflow-ът приключва с реалния резултат на хода;
+   `declarations/corpus-v2/accepted.json` в bucket-а е разписката за одитирано и публикувано.
+5. **Оттам нататък** седмичният cron (понеделник, 03:00 UTC) стартира хода сам. Едновременно
+   с него може да тече само един ход: Durable Object-ът връща текущия, ако вече има такъв.
+
+Публикуването в D1 е размяна на таблици в една атомарна партида (`rp_next_*` → обслужвани →
+`rp_prev_*`), затова не зависи от обема на промяната; предишното поколение стои до следващата
+публикация.
 
 ## Бележки
 

@@ -22,9 +22,13 @@ EOP_OPEN_DATA_BASE_URL = "https://storage.eop.bg"
 # The currently published Trade Register API used by the register layer (ADR-0041).
 REGISTRY_API_BASE_URL = "https://api-sigma-cr.registryagency.bg"
 REGISTRY_PORTAL_URL = "https://portal.registryagency.bg/CR/api/Applications/Entries"
-# Enable only during the separately approved writer cutover.
-DECLARATIONS_ENABLED = "false"
-DECLARATIONS_BUCKET = "sigma-declarations-local"
+# The declarations run in the Container below (ADR-0045); the weekly cron starts them. The container
+# ships to the D1 these vars name — the renderer fills them per environment, like `database_name`.
+DECLARATIONS_ENABLED = "true"
+DECLARATIONS_BUCKET = "sigma-declarations"
+SIGMA_D1_ID = "00000000-0000-0000-0000-000000000000"
+SIGMA_D1_NAME = "sigma"
+SIGMA_SHIP_ENV = "production"
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -44,8 +48,35 @@ binding = "REGISTRY"
 name = "sigma-registry"
 class_name = "RegistryWorkflow"
 
+# An operator's declarations run (`wrangler workflows trigger`), waiting for the container's outcome.
+[[workflows]]
+binding = "DECLARATIONS_RUN"
+name = "sigma-declarations"
+class_name = "DeclarationsWorkflow"
+
+# The declarations job: one container per run, coordinated by its Durable Object, the corpus in R2.
+[[containers]]
+class_name = "DeclarationContainer"
+image = "../../containers/declarations/Dockerfile"
+image_build_context = "../.."
+max_instances = 1
+instance_type = { vcpu = 2, memory_mib = 10240, disk_mb = 20000 }
+
+[[durable_objects.bindings]]
+name = "DECLARATIONS"
+class_name = "DeclarationContainer"
+
+[[migrations]]
+tag = "v1-declarations"
+new_sqlite_classes = ["DeclarationContainer"]
+
+[[r2_buckets]]
+binding = "DECLARATIONS_CORPUS"
+bucket_name = "sigma-declarations"
+
+# Six-hourly: procurement and the register. Mondays 03:00 UTC: the declarations (DECLARATIONS_CRON).
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 */6 * * *", "0 3 * * 1"]
 
 [observability]
 enabled = true
@@ -61,6 +92,3 @@ invocation_logs = true
 enabled = false
 persist = true
 head_sampling_rate = 1
-
-# The declarations Container/DO/R2 bindings are deliberately absent here. They are provisioned only
-# during their separately approved writer cutover; DECLARATIONS_ENABLED=false keeps the existing job.
