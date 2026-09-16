@@ -1,9 +1,18 @@
-import { getDb, getRegistrySourceCompanies, registryPersonIdFromSlug } from '@sigma/db';
-import { data, Link } from 'react-router';
+import {
+  getDb,
+  getPersonDestinations,
+  getPersonSourceArchive,
+  getRegistrySourceCompanies,
+  personIdFromSlug,
+  personSlug,
+  registryPersonIdFromSlug,
+} from '@sigma/db';
+import { data, Link, redirect } from 'react-router';
 import { PageHeader } from '../components/PageHeader';
 import { DataTable } from '../components/DataTable';
 import type { Route } from './+types/person';
 import { PersonProfile } from '../components/PersonProfile';
+import { Declarations } from '../components/Declarations';
 import { loadPersonProfile } from '../lib/person-profile.server';
 import { publicCache } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
@@ -11,40 +20,62 @@ import { seoMeta } from '../lib/meta';
 import { personName } from '../lib/person-name';
 import { date } from '@sigma/shared';
 import { RegistrySource } from '../components/RegistryRoles';
-import { registryUrl } from '../components/ui';
+import { registryUrl, Section } from '../components/ui';
 
+// One address for a person. The slug is either the identifier the Trade Register publishes for them (64 hex
+// characters) or the id their declarations resolved to (base64url); both lead to the same profile.
 export function meta({ data, params, matches }: Route.MetaArgs) {
+  const name =
+    data && 'name' in data
+      ? personName(data.name)
+      : data && 'source' in data && data.source
+        ? personName(data.source.name)
+        : 'Лице';
   const tags = seoMeta({
     matches,
     path: `/persons/${params.id}`,
-    title: `${data && 'name' in data ? personName(data.name) : 'Лице'} — СИГМА`,
+    title: `${name} — СИГМА`,
     description: 'Роли, декларации и обществени поръчки на свързаните дружества.',
   });
   tags.push({ name: 'robots', content: 'noindex' });
   return tags;
 }
-export function headers({ loaderHeaders }: Route.HeadersArgs) {
+export function headers() {
   const headers = new Headers({ 'Cache-Control': publicCache(3600) });
   headers.set('X-Robots-Tag', 'noindex');
   return headers;
 }
+const NOINDEX = { headers: { 'X-Robots-Tag': 'noindex' } };
 export async function loader({ params, context, request }: Route.LoaderArgs) {
   const indent = registryPersonIdFromSlug(params.id ?? '');
-  if (!indent) throw new Response('Not Found', { status: 404 });
+  const officialId = indent ? null : personIdFromSlug(params.id ?? '');
+  if (!indent && !officialId) throw new Response('Not Found', { status: 404 });
+  const db = getDb(context.cloudflare.env);
+  const url = new URL(request.url);
+  if (officialId) {
+    // An id from an earlier identity grain may have been carried into one or several current profiles.
+    const destinations = await withDbRetry(() => getPersonDestinations(db, officialId));
+    if (destinations.length > 1 && url.searchParams.get('view') !== 'profile')
+      return data({ destinations }, NOINDEX);
+    if (destinations.length === 1 && destinations[0]!.id !== officialId)
+      throw redirect(`/persons/${personSlug(destinations[0]!.id)}${url.search}${url.hash}`, 302);
+  }
   const profile = await withDbRetry(() =>
-    loadPersonProfile(getDb(context.cloudflare.env), {
-      indent,
-      search: new URL(request.url).searchParams,
+    loadPersonProfile(db, {
+      indent: indent ?? undefined,
+      officialId: officialId ?? undefined,
+      search: url.searchParams,
     }),
   );
-  if (!profile) {
-    const sources = await withDbRetry(() =>
-      getRegistrySourceCompanies(getDb(context.cloudflare.env), indent),
-    );
-    if (sources.length) return data({ sources }, { headers: { 'X-Robots-Tag': 'noindex' } });
-    throw new Response('Not Found', { status: 404 });
+  if (profile) return data(profile, NOINDEX);
+  if (indent) {
+    const sources = await withDbRetry(() => getRegistrySourceCompanies(db, indent));
+    if (sources.length) return data({ sources }, NOINDEX);
+  } else {
+    const source = await withDbRetry(() => getPersonSourceArchive(db, officialId!));
+    if (source) return data({ source }, NOINDEX);
   }
-  return data(profile, { headers: { 'X-Robots-Tag': 'noindex' } });
+  throw new Response('Not Found', { status: 404 });
 }
 export default function Person({ loaderData }: Route.ComponentProps) {
   if ('sources' in loaderData)
@@ -85,6 +116,43 @@ export default function Person({ loaderData }: Route.ComponentProps) {
           ]}
         />
         <RegistrySource />
+      </main>
+    );
+  if ('source' in loaderData)
+    return (
+      <main id="main">
+        <PageHeader
+          kicker="Декларации от източника"
+          title={personName(loaderData.source.name)}
+          lede="Документите са запазени като отделен източников запис. Няма достатъчно доказателства да ги отнесем към общ профил с установена връзка с дружество."
+        />
+        <Section id="declarations" title="Всички декларации">
+          <Declarations declarations={loaderData.source.declarations} />
+        </Section>
+      </main>
+    );
+  if ('destinations' in loaderData)
+    return (
+      <main id="main">
+        <PageHeader
+          kicker="Длъжностни лица"
+          title="Профили и декларации"
+          lede="Документите от стария адрес са показани според установените връзки. Отделните групи не означават непременно различни хора."
+        />
+        <ul>
+          {loaderData.destinations.map((p) => (
+            <li key={p.id}>
+              <Link to={`/persons/${personSlug(p.id)}?view=profile`}>{personName(p.name)}</Link>
+              <p>
+                {p.kind === 'person'
+                  ? 'Обединен профил'
+                  : 'Декларации с непотвърдена принадлежност'}{' '}
+                · {p.declaration_count} {p.declaration_count === 1 ? 'декларация' : 'декларации'}
+              </p>
+              {p.institutions && <p>{p.institutions}</p>}
+            </li>
+          ))}
+        </ul>
       </main>
     );
   return <PersonProfile profile={loaderData} />;

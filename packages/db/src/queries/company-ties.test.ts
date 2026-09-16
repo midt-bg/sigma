@@ -89,7 +89,9 @@ describe('getCompanyTies', () => {
       'eik:1',
     );
     expect(net.nodes.find((n) => n.id === 'eik:2')?.conflictsHref).toBeNull();
-    expect(net.nodes.find((n) => n.id === 'eik:3')?.conflictsHref).toBe('/conflicts/company/3');
+    expect(net.nodes.find((n) => n.id === 'eik:3')?.conflictsHref).toBe(
+      '/companies/3#declared-people',
+    );
   });
 
   it('never emits a person node, and points a declared-stake edge at the published surface', async () => {
@@ -99,9 +101,9 @@ describe('getCompanyTies', () => {
     );
     expect(net.nodes.every((n) => n.kind === 'company' || n.kind === 'authority')).toBe(true);
     expect(net.edges[0]!.weightEur).toBe(0); // not monetary — the UI must not size it by money
-    expect(net.edges[0]!.href).toBe('/conflicts/company/1');
+    expect(net.edges[0]!.href).toBe('/companies/1#declared-people');
     expect(net.edges[0]!.people?.[0]?.name).toBe('Публично лице');
-    expect(net.edges[0]!.people?.[0]?.href).toMatch(/^\/conflicts\/official\//);
+    expect(net.edges[0]!.people?.[0]?.href).toMatch(/^\/persons\//);
   });
 
   it('adds the paying institutions as a second layer only when asked', async () => {
@@ -280,7 +282,9 @@ describe('getAuthoritySupplierTies', () => {
       ),
       'auth:9',
     );
-    expect(net.edges.find((e) => e.kind === 'declared_stake')?.href).toBe('/conflicts/company/1');
+    expect(net.edges.find((e) => e.kind === 'declared_stake')?.href).toBe(
+      '/companies/1#declared-people',
+    );
     // Still no person node anywhere — the tie is between the two companies.
     expect(net.nodes.every((n) => n.kind === 'company' || n.kind === 'authority')).toBe(true);
   });

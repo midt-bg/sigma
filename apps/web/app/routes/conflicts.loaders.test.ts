@@ -20,7 +20,6 @@ const q = vi.hoisted(() => ({
   getPersonSourceArchive: vi.fn(),
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
-  getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
   getAuthorityName: vi.fn(),
   personSlug: vi.fn((id: string) => `slug-of-${id}`),
@@ -33,8 +32,6 @@ const q = vi.hoisted(() => ({
 vi.mock('@sigma/db', () => q);
 
 import { loader as leaderboardLoader } from './conflicts';
-import { loader as officialLoader } from './conflict.official';
-import { loader as companyLoader } from './conflict.company';
 import { loader as contractsLoader } from './conflict.contracts';
 
 import { emptyActivity } from '../lib/person-profile.test-support';
@@ -69,7 +66,7 @@ const call = (loader: unknown, params: Record<string, string | undefined>) =>
   )({
     params,
     context,
-    request: new Request('http://localhost:5173/conflicts/official/test'),
+    request: new Request('http://localhost:5173/conflicts/test'),
   });
 
 const req = (qs = '') => new Request(`https://sigma.test/conflicts${qs}`);
@@ -168,94 +165,6 @@ describe('leaderboard loader (/conflicts)', () => {
     expect(filtered.data.total).toBe(1);
     expect(filtered.data.page).toBe(1);
     expect(filtered.data.pageRows[0]!.personIdentity).toBe('p1204');
-  });
-});
-
-describe('official loader (/conflicts/official/:id)', () => {
-  it('404s an unresolvable slug before any DB read (no bare page under a name)', async () => {
-    q.personIdFromSlug.mockReturnValue(null);
-    await expectStatus(call(officialLoader, { id: 'not-a-real-slug' }), 404);
-    expect(q.getOfficialConflicts).not.toHaveBeenCalled();
-  });
-
-  it('404s when the person has no published links (null result)', async () => {
-    q.personIdFromSlug.mockReturnValue('person:1');
-    q.getOfficialConflicts.mockResolvedValue(null);
-    await expectStatus(call(officialLoader, { id: 'ivan-petrov-1' }), 404);
-  });
-
-  it('does not redirect obsolete identities; an absent profile returns 404', async () => {
-    q.personIdFromSlug.mockReturnValue('person:old');
-    q.getOfficialConflicts.mockResolvedValue(null);
-    await expectStatus(call(officialLoader, { id: 'old-slug' }), 404);
-  });
-
-  it('returns the conflict payload for a valid official', async () => {
-    q.personIdFromSlug.mockReturnValue('person:1');
-    // Match the real OfficialConflicts DTO shape — incl. the eager `contracts` map added in #287 (niki #312
-    // LOW 1: the untyped mock previously omitted it, the one gap the api-contract type exists to catch).
-    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
-    const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { name: string };
-    expect(res.name).toBe('Иван Петров');
-    expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1', { contracts: false });
-  });
-
-  it('renders a bridged registry identity at the requested official address without redirecting', async () => {
-    q.personIdFromSlug.mockReturnValue('person:1');
-    q.getPersonScope.mockResolvedValue({ indent: 'a'.repeat(64), officialIds: ['person:1'] });
-    q.getRegistryPerson.mockResolvedValue({
-      name: 'Иван Петров',
-      network: { center: null, nodes: [], edges: [] },
-    });
-    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
-    const res = (await call(officialLoader, { id: 'current-official' })) as {
-      name: string;
-      person: unknown;
-    };
-    expect(res).not.toBeInstanceOf(Response);
-    expect(res.name).toBe('Иван Петров');
-    expect(res.person).not.toBeNull();
-    expect(q.getPersonActivity).toHaveBeenCalledWith(
-      DB,
-      'a'.repeat(64),
-      ['person:1'],
-      expect.any(URLSearchParams),
-      'all',
-    );
-  });
-});
-
-describe('company loader (/conflicts/company/:eik)', () => {
-  it('404s a blank eik before any DB read', async () => {
-    await expectStatus(call(companyLoader, { eik: '   ' }), 404);
-    expect(q.getCompanyConflicts).not.toHaveBeenCalled();
-  });
-
-  it('404s when the company has no published links (null result)', async () => {
-    q.getCompanyConflicts.mockResolvedValue(null);
-    await expectStatus(call(companyLoader, { eik: '123456789' }), 404);
-  });
-
-  // A БГ ЕИК is 9 or 13 digits — always numeric. A non-numeric :eik can only be a probe/garbage; 404 it
-  // before any DB read, and before it reaches meta/URL. Guards uniformly with the sibling loaders.
-  it.each([
-    { eik: 'abc', why: 'non-numeric' },
-    { eik: '123|family', why: 'a decoded key-delimiter (%7C)' },
-    { eik: '12 34', why: 'embedded whitespace' },
-  ])('404s a $why eik before any DB read', async ({ eik }) => {
-    await expectStatus(call(companyLoader, { eik }), 404);
-    expect(q.getCompanyConflicts).not.toHaveBeenCalled();
-  });
-
-  it('returns the conflict payload for a valid company', async () => {
-    q.getCompanyConflicts.mockResolvedValue({
-      company: 'АЛФА ООД',
-      eik: '123456789',
-      links: [],
-      contracts: {},
-    });
-    const res = (await call(companyLoader, { eik: '123456789' })) as { company: string };
-    expect(res.company).toBe('АЛФА ООД');
   });
 });
 

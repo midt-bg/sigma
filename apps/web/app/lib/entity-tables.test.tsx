@@ -215,7 +215,7 @@ describe('tieColumns', () => {
           kind: 'declared_stake',
           weightEur: 0,
           occurrences: 1,
-          href: '/conflicts/company/1',
+          href: '/companies/1#declared-people',
         },
       ],
     });
@@ -226,7 +226,7 @@ describe('tieColumns', () => {
       .filter((td) => td.getAttribute('data-label') === 'Основание')
       .map((td) => td.textContent);
     expect(basis).toEqual(['', 'виж свързаните лица']);
-    expect(table.querySelector('a[href="/conflicts/company/1"]')).not.toBeNull();
+    expect(table.querySelector('a[href="/companies/1#declared-people"]')).not.toBeNull();
   });
 });
 

@@ -321,7 +321,7 @@ FROM contracts c JOIN tenders t ON t.id = c.tender_id JOIN authorities a ON a.id
 JOIN bidders b ON b.id = c.bidder_id
 WHERE COALESCE(NULLIF(c.contract_subject, ''), t.title) IS NOT NULL;
 -- Свързани лица: one row per official with a PUBLISHED ownership conflict link — self OR a relative's stake
--- (ADR-0032) — so a NAME search reaches their /conflicts/official profile. ref = person_id (→ personSlug at
+-- (ADR-0032) — so a NAME search reaches their /persons profile. ref = person_id (→ personSlug at
 -- read), title = name, subtitle = latest declared institution (disambiguates homonyms), amount = contract €
 -- of their linked winners, each winner counted once. Published-only inherits the surface's expiry — a
 -- withdrawn/left-office official drops out.

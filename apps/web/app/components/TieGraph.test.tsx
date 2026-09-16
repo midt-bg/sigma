@@ -144,7 +144,7 @@ describe('TieGraph', () => {
           directed: false,
           weightEur: 0,
           occurrences: 1,
-          href: '/conflicts/company/1',
+          href: '/companies/1#declared-people',
         },
       ],
     });

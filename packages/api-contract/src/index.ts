@@ -827,7 +827,7 @@ export interface ConflictLink {
   disputedYears?: string[];
   declarations?: PersonDeclaration[];
   linkKey: string;
-  officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
+  officialSlug: string; // URL-safe person id → /persons/:slug (base64url, never the raw key)
   official: string; // declarant (office-holder) name as declared
   institution: string | null; // the official's latest declared institution — disambiguates namesakes
   //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct

@@ -71,7 +71,7 @@ it('groups a shared registry identity, preserving offices, roles, years and the 
     expect(offices.textContent).toContain(value);
   }
   expect(container.querySelector('[data-label="Длъжностно лице"] a')?.getAttribute('href')).toBe(
-    '/conflicts/official/source-a',
+    '/persons/source-a',
   );
   expect(container.querySelectorAll('.chip')).toHaveLength(1);
   expect(JSON.stringify(links)).toBe(original);

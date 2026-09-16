@@ -135,8 +135,8 @@ async function renderConflicts(
       },
     },
     { path: '/authorities/:eik', Component: () => null },
-    { path: '/conflicts/official/:slug', Component: () => null },
-    { path: '/conflicts/company/:eik', Component: () => null },
+    { path: '/persons/:id', Component: () => null },
+    { path: '/companies/:eik', Component: () => null },
     { path: '/conflicts/methodology', Component: () => null },
     { path: '/', Component: () => null },
   ]);
@@ -152,7 +152,7 @@ describe('/conflicts route — render', () => {
   it('formats the person name only, preserving source data, profile links and company casing', async () => {
     const source = link({ official: 'МАРИНА ПЕТРОВА ТЕСТОВА' });
     await renderConflicts([source]);
-    expect(container.querySelector('tbody a[href="/conflicts/official/aXZhbg"]')?.textContent).toBe(
+    expect(container.querySelector('tbody a[href="/persons/aXZhbg"]')?.textContent).toBe(
       'Марина Петрова Тестова',
     );
     expect(container.querySelector('tbody a[href="/companies/111"]')?.textContent).toBe(
@@ -420,7 +420,7 @@ describe('/conflicts route — render', () => {
     // Title column carries the name+institution and links to the person page.
     const titleCell = row.querySelector('td.cell-title')!;
     const link = titleCell.querySelector('a')!;
-    expect(link.getAttribute('href')).toContain('/conflicts/official/');
+    expect(link.getAttribute('href')).toContain('/persons/');
     // …and the identity-free „свързано лице" qualifier, so a family-ONLY row is not read as an own stake
     // (niki #312 MEDIUM 1). It states the kind, never who the relative is or the relationship type.
     expect(titleCell.textContent).not.toContain('свързано лице');

@@ -69,7 +69,7 @@ function renderName(hit: SearchHit, re: RegExp | null): ReactNode {
   const ownershipBadge =
     hit.kind === 'company' && hit.ownershipKind ? <OwnershipChip kind={hit.ownershipKind} /> : null;
   // A company that appears in the свързани-лица surface carries a trailing flag; the card links to the
-  // company page, which links on to /conflicts/company/:eik (a nested <a> here would be invalid).
+  // company page, which lists the declared people (a nested <a> here would be invalid).
   const conflictBadge =
     hit.kind === 'company' && hit.hasConflict ? <Chip>свързани лица</Chip> : null;
   return (

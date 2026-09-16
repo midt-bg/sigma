@@ -201,7 +201,7 @@ describe('search', () => {
       title: 'Иван Минев',
       subtitle: 'Община Русе',
       amountLabel: 'по договори',
-      href: `/conflicts/official/${personSlug('person:ИВАН МИНЕВ')}`,
+      href: `/persons/${personSlug('person:ИВАН МИНЕВ')}`,
     });
   });
 

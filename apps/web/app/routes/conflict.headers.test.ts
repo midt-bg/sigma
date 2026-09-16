@@ -3,8 +3,6 @@
 // surface, not an implementation detail: a wrong TTL keeps a corrected or withdrawn link on an edge cache
 // after it has been pulled from the database.
 import { describe, expect, it } from 'vitest';
-import { headers as officialHeaders } from './conflict.official';
-import { headers as companyHeaders } from './conflict.company';
 import { headers as methodologyHeaders } from './conflict.methodology';
 import { headers as leaderboardHeaders, meta as leaderboardMeta } from './conflicts';
 import { meta as methodologyMeta } from './conflict.methodology';
@@ -12,12 +10,10 @@ import { meta as methodologyMeta } from './conflict.methodology';
 const ONE_HOUR = /s-maxage=3600/;
 
 describe('свързани-лица cache headers', () => {
-  it('caches every conflict page publicly for an hour', () => {
-    for (const h of [officialHeaders, companyHeaders, methodologyHeaders]) {
-      const cc = h()['Cache-Control'];
-      expect(cc).toMatch(ONE_HOUR);
-      expect(cc).toMatch(/public/);
-    }
+  it('caches the methodology publicly for an hour', () => {
+    const cc = methodologyHeaders()['Cache-Control'];
+    expect(cc).toMatch(ONE_HOUR);
+    expect(cc).toMatch(/public/);
   });
 
   it('the leaderboard honours a Cache-Control the loader set, and falls back when it set none', () => {

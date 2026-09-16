@@ -405,7 +405,8 @@ export async function getCompanyTies(
       directed: r.directed === 1,
       weightEur: r.weight_eur,
       occurrences: r.occurrences,
-      href: r.kind === 'declared_stake' ? `/conflicts/company/${companySlug(bidderId)}` : null,
+      href:
+        r.kind === 'declared_stake' ? `/companies/${companySlug(bidderId)}#declared-people` : null,
     });
   }
   let omitted = Math.max(0, ranked.length - drawn.size);
@@ -614,7 +615,10 @@ export async function getAuthoritySupplierTies(
       directed: r.directed === 1,
       weightEur: r.weight_eur,
       occurrences: r.occurrences,
-      href: r.kind === 'declared_stake' ? `/conflicts/company/${companySlug(r.a_bidder_id)}` : null,
+      href:
+        r.kind === 'declared_stake'
+          ? `/companies/${companySlug(r.a_bidder_id)}#declared-people`
+          : null,
     });
   }
 
@@ -657,7 +661,7 @@ async function attachDeclaredPeople(db: D1Database, edges: CompanyTieEdge[]) {
           .all<{ id: string; name: string }>();
         edge.people = rows.results.map((p) => ({
           ...p,
-          href: `/conflicts/official/${personSlug(p.id)}`,
+          href: `/persons/${personSlug(p.id)}`,
         }));
         edge.occurrences = edge.people.length;
       }),

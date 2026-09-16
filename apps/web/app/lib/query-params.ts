@@ -26,6 +26,6 @@ export const CANONICAL_QUERY_PARAMS = new Set([
   'top', // top-20 vs top-50 on /flows, /competition
   'type',
   'value',
-  'view', // /conflicts/official — the profile instead of the list of matching people
+  'view', // /persons — the profile instead of the list of matching people
   'year',
 ]);
