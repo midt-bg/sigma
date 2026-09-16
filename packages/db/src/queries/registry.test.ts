@@ -56,6 +56,9 @@ INSERT INTO registry_deeds (eik, name, legal_form, status, outcome, fetched_at) 
   ('222222222', 'БЕТА АД', 'AD', 'N', 'ok', '2026-09-09T03:00:00Z'),
   ('333333333', 'ГАМА ЕООД', 'EOOD', 'N', 'ok', '2026-09-08T03:00:00Z'),
   ('555555555', NULL, NULL, NULL, 'absent', '2026-09-08T03:00:00Z');
+INSERT INTO person_entities (id, registry_indent, created_at) VALUES ('person:identity:anna', '${ANNA}', '2026-09-10');
+INSERT INTO person_sources (id, namespace, source_key, source_hash, name, entity_id, active) VALUES
+  ('cacbg:2025:anna.xml', 'cacbg', '2025:anna.xml', '${hash('e')}', 'Анна Петрова', 'person:identity:anna', 1);
 INSERT INTO registry_persons (indent, name, indent_type) VALUES
   ('${ANNA}', 'АННА ПЕТРОВА', 'EGN'),
   ('${BORIS}', 'БОРИС ИВАНОВ', 'EGN'),
@@ -152,7 +155,9 @@ describe('getCompanyPeople', () => {
       href: `/persons/${ANNA}`,
       eik: null,
       country: null,
+      official: true, // she filed declarations here
     });
+    expect(by('БОРИС ИВАНОВ').official).toBeUndefined();
     expect(by('ХОЛДИНГ АД')).toMatchObject({
       kind: 'entity',
       href: '/companies/444444444',

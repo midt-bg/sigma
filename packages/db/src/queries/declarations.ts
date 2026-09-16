@@ -1,4 +1,5 @@
-import type { PersonDeclaration } from '@sigma/api-contract';
+import type { PersonDeclaration, RegistryRoleKind } from '@sigma/api-contract';
+import { companyNameKey } from '@sigma/shared';
 import { declarationMatchesLink, declarationYearDisputed } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -71,6 +72,44 @@ export async function getPersonDeclarations(
       timing: string;
       scope: 'self' | 'family';
     }>();
+  // Ownership the register recorded for the declarant at the end of a reporting year: the annual
+  // declaration for that year should name the company. Ownership only — a board seat is often held by
+  // appointment — and only where the site has read the partida.
+  const omissions = metadata
+    ? await db
+        .prepare(
+          `SELECT d.id declaration_id, r.eik, COALESCE(rd.name, r.eik) company, r.role, r.entry_number, r.added_on
+    FROM declarations d
+    JOIN declaration_metadata m ON m.declaration_id=d.id AND lower(m.declaration_type) IN ('annualy','annual','yearly')
+    JOIN person_entities e ON e.id=d.person_id AND e.registry_indent IS NOT NULL
+    JOIN registry_roles r ON r.subject_id=e.registry_indent AND r.subject_kind='person'
+      AND r.role IN ('sole_owner','partner','trader') AND r.added_on<>''
+      AND date(r.added_on)<=date(d.declared_year||'-12-31')
+      AND (r.removed_on IS NULL OR date(r.removed_on)>date(d.declared_year||'-12-31'))
+      AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31'))
+    LEFT JOIN registry_deeds rd ON rd.eik=r.eik
+    WHERE d.person_id=? AND d.declared_year IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM declaration_companies dc WHERE dc.declaration_id=d.id AND dc.eik=r.eik)
+    ORDER BY d.id, r.eik, r.role`,
+        )
+        .bind(personId)
+        .all<{
+          declaration_id: string;
+          eik: string;
+          company: string;
+          role: RegistryRoleKind;
+          entry_number: string;
+          added_on: string;
+        }>()
+        .then((q) => q.results)
+        .catch((e: unknown) => {
+          if (
+            /no such table:?\s*(person_entities|declaration_companies|registry_)/i.test(String(e))
+          )
+            return [];
+          throw e;
+        })
+    : [];
   return rows.results
     .map((r) => ({
       id: String(r.id),
@@ -119,6 +158,24 @@ export async function getPersonDeclarations(
           ],
         })),
       companyEiks: JSON.parse(String(r.companies ?? '[]')) as string[],
+      // A company the document names by a spelling the resolver did not tie to its ЕИК is still named.
+      registryOmissions: omissions
+        .filter(
+          (o) =>
+            o.declaration_id === r.id &&
+            !interests.results.some(
+              (i) =>
+                i.declaration_id === r.id &&
+                companyNameKey(i.entity_raw) === companyNameKey(o.company),
+            ),
+        )
+        .map(({ eik, company, role, entry_number, added_on }) => ({
+          eik,
+          company,
+          role,
+          entryNumber: entry_number,
+          addedOn: added_on,
+        })),
     }))
     .sort(
       (a, b) =>

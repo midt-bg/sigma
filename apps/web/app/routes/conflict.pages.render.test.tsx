@@ -193,6 +193,43 @@ describe('/persons/:id — render', () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
+  it('explains ownership the register holds that a declaration does not name, without asserting a breach', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        {
+          id: '2021',
+          year: '2021',
+          institution: 'Община Русе',
+          position: 'Кмет',
+          template: 'assets',
+          type: 'Annualy',
+          declaredOn: null,
+          submittedOn: null,
+          url: 'https://example.test/2021',
+          companyEiks: [],
+          registryOmissions: [
+            {
+              eik: '222',
+              company: 'ГАМА ЕООД',
+              role: 'sole_owner',
+              entryNumber: 'e2',
+              addedOn: '2021-03-01',
+            },
+          ],
+        },
+      ],
+    });
+    const note = container.querySelector('.declaration-discrepancy')!;
+    expect(note.textContent).toContain('Регистър срещу декларация за 2021 г.');
+    expect(note.textContent).toContain('едноличен собственик на капитала');
+    expect(note.textContent).toContain('ГАМА ЕООД');
+    expect(note.textContent).toContain('Възможни причини');
+    expect(note.textContent).not.toContain('нарушение');
+    expect(note.querySelector('a[href="/companies/222"]')).not.toBeNull();
+  });
+
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
       linkKey: 'k1',

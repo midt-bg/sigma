@@ -4,7 +4,7 @@ import { count, date, pct } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
-import { registryUrl } from './ui';
+import { Chip, registryUrl } from './ui';
 import { personName } from '../lib/person-name';
 
 // The Trade Register's roles as tables (ADR-0039): a company's management and ownership, and a person's roles
@@ -66,6 +66,12 @@ function Holder({ holder }: { holder: CompanyRole['holder'] }) {
     <>
       {name}
       {about.length > 0 && <span className="muted"> · {about.join(' · ')}</span>}
+      {holder.official && (
+        <>
+          {' '}
+          <Chip>длъжностно лице</Chip>
+        </>
+      )}
     </>
   );
 }

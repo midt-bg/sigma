@@ -135,6 +135,7 @@ interface CompanyRoleRow {
   added_on: string;
   removed_on: string | null;
   uncertain_after: string | null;
+  official: number;
 }
 
 const COMPANY_DEED_SQL = `SELECT fetched_at FROM registry_deeds WHERE eik = ?1 AND outcome = 'ok'`;
@@ -168,7 +169,9 @@ END`;
 const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
          b.id AS entity_bidder, r.share, ${sharePct('r')} AS share_pct,
-         r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after
+         r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after,
+         EXISTS (SELECT 1 FROM person_entities e JOIN person_sources s ON s.entity_id = e.id
+                 WHERE e.registry_indent = r.subject_id AND s.active = 1 AND s.namespace = 'cacbg') AS official
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id
@@ -185,6 +188,7 @@ function holderOf(r: CompanyRoleRow): RoleHolder {
       href: joinable ? `/persons/${registryPersonSlug(r.subject_id)}` : null,
       eik: null,
       country: null,
+      ...(r.official ? { official: true } : {}),
     };
   }
   return {

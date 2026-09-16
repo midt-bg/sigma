@@ -79,6 +79,17 @@ describe('CompanyRolesTables', () => {
     expect(cells(standing!, 'Вписване №')).toEqual(['20190312101010']);
   });
 
+  it('marks a holder who filed declarations here as an official', () => {
+    const c = render(
+      <CompanyRolesTables
+        roles={[role({ holder: { ...role().holder, official: true } }), role({ role: 'partner' })]}
+      />,
+    );
+    const holders = cells(c.querySelector('table')!, 'Лице');
+    expect(holders[0]).toContain('длъжностно лице');
+    expect(holders[1]).not.toContain('длъжностно лице');
+  });
+
   it('says who a company is where it has no page here, and never a person’s country', () => {
     const c = render(
       <CompanyRolesTables

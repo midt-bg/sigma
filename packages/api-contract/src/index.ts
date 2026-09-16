@@ -549,6 +549,8 @@ export interface RoleHolder {
   eik: string | null;
   /** A company's country, where the register gives one. Never set for a person. */
   country: string | null;
+  /** A person who has filed a declaration of interests published here. */
+  official?: boolean;
 }
 
 /** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */
@@ -919,6 +921,15 @@ export interface CompanyConflicts {
 
 /** A source document, with dates kept distinct from the reporting year. */
 export interface PersonDeclaration {
+  /** Ownership the Trade Register recorded for the declarant at the end of the reporting year, in a
+   *  company this document does not name. Only partidas the site has read; never a finding by itself. */
+  registryOmissions?: {
+    eik: string;
+    company: string;
+    role: RegistryRoleKind;
+    entryNumber: string;
+    addedOn: string;
+  }[];
   /** Comparison notes, separate from interests actually declared in this document. */
   discrepancies?: {
     eik: string;

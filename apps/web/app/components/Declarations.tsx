@@ -3,6 +3,7 @@ import { declarationRowId, revealProfileTarget } from '../lib/profile-navigation
 import { Chip } from './ui';
 import type { PersonDeclaration } from '@sigma/api-contract';
 import { date } from '@sigma/shared';
+import { ROLE_LABEL } from '../lib/registry-roles';
 import { DataTable, type Column } from './DataTable';
 
 export function declarationTypeLabel(d: Pick<PersonDeclaration, 'type' | 'template'>): string {
@@ -134,6 +135,16 @@ const columns: Column<PersonDeclaration>[] = [
                 </a>
               </span>
             ))}
+          </p>
+        ))}
+        {d.registryOmissions?.map((o) => (
+          <p className="small declaration-discrepancy" key={`registry-${o.eik}-${o.role}`}>
+            <strong>Регистър срещу декларация за {d.year} г.</strong> Към 31.12.{d.year} лицето е
+            вписано в Търговския регистър като {ROLE_LABEL[o.role]} в{' '}
+            <Link to={`/companies/${o.eik}`}>{o.company}</Link> (вписване от {date(o.addedOn)}), а
+            дружеството не е посочено в тази декларация. Възможни причини: разлика в изписването на
+            дружеството, отчетен период, който не съвпада с вписването, или пропуск в декларацията.{' '}
+            <Link to="/conflicts/methodology#contest">Възражение</Link>
           </p>
         ))}
       </>
