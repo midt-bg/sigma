@@ -71,6 +71,70 @@ test('a non-404 miss (500 after retries) is a real shortfall → exit 1', async 
   assert.equal(await runGate(routes), 1);
 });
 
+test('404 and 403 history survives failed crawls without certifying missing data', async () => {
+  const routes = { ...list2, [`${BASE}/${FOLDER}/a2.xml`]: { status: 403 } };
+  assert.equal(await runGate(routes), 1);
+  const eventRoot = path.join(dir, 'fetch-events');
+  const firstCrawl = fs.readdirSync(eventRoot)[0];
+  const records = fs
+    .readdirSync(path.join(eventRoot, firstCrawl))
+    .map((file) => JSON.parse(fs.readFileSync(path.join(eventRoot, firstCrawl, file), 'utf8')));
+  assert.deepEqual(
+    records
+      .filter((r) => r.folder === FOLDER)
+      .map((r) => r.status)
+      .sort(),
+    [403, 404],
+  );
+  for (const record of records) {
+    assert.equal(record.crawlId, firstCrawl);
+    assert.equal(record.url, `${BASE}/${record.folder}/${record.file}`);
+    assert(Number.isFinite(Date.parse(record.checkedAt)));
+    assert(Object.hasOwn(record, 'runId') && Object.hasOwn(record, 'attempt'));
+  }
+  assert(!fs.existsSync(path.join(dir, FOLDER, '.index.json')));
+  assert(!fs.existsSync(path.join(dir, '.corpus-complete.json')));
+  assert.equal(await runGate({ ...list2, ...ok('a2.xml') }), 0);
+  assert.equal(fs.readdirSync(eventRoot).length, 2, 'a later crawl preserves earlier history');
+  assert.equal(fs.readdirSync(path.join(eventRoot, firstCrawl)).length, records.length);
+});
+
+test('failed requests retain file, HTTP status and network error for diagnosis', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const code = await run({
+    rawDir: dir,
+    guard: () => {},
+    argv: ['--folders', FOLDER, '--concurrency', '1'],
+    httpGet: async (url) => {
+      if (url.endsWith('/list.xml'))
+        return { status: 200, body: Buffer.from(listXml(['a1.xml', 'a2.xml'])) };
+      if (url.endsWith('/a1.xml')) return { status: 503, headers: { 'retry-after': '10' } };
+      throw Object.assign(new Error('socket closed'), { code: 'ECONNRESET' });
+    },
+  });
+  assert.equal(code, 1);
+  const events = log.mock.calls
+    .map((c) => c.arguments[0])
+    .filter((s) => s.startsWith('{'))
+    .map((s) => JSON.parse(s));
+  assert.deepEqual(events, [
+    {
+      event: 'declarations_source_error',
+      folder: FOLDER,
+      file: 'a1.xml',
+      status: 503,
+      retryAfter: '10',
+    },
+    {
+      event: 'declarations_source_error',
+      folder: FOLDER,
+      file: 'a2.xml',
+      error: 'socket closed',
+      code: 'ECONNRESET',
+    },
+  ]);
+});
+
 test('a wholesale-skipped set (list.xml non-200) → exit 1', async () => {
   assert.equal(await runGate({ [`${BASE}/${FOLDER}/list.xml`]: { status: 503, body: '' } }), 1);
 });

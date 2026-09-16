@@ -27,7 +27,17 @@ const dirs = [];
 
 // Build a fixture DB (bidders + declarations + declared_interests + interest_links), run audit.mjs against
 // it as a subprocess, and return { threw, out } — threw=true iff the audit exited non-zero (a hard finding).
-function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snapshot = null }) {
+function buildAndAudit({
+  bidders,
+  decls = [],
+  dis = [],
+  links,
+  seals = [],
+  snapshot = null,
+  history = [],
+  extraSql = '',
+  inventory = [],
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cacbg-audit-'));
   dirs.push(dir);
   const DB = path.join(dir, 'fixture.sqlite');
@@ -36,6 +46,11 @@ function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snaps
   // The pre-wipe export load.mjs writes before it drops the CACBG tables. Absent === a first run.
   if (snapshot)
     fs.writeFileSync(path.join(staging, 'published-snapshot.json'), JSON.stringify(snapshot));
+  if (inventory.length)
+    fs.writeFileSync(
+      path.join(staging, 'inventory-conflicts.jsonl'),
+      inventory.map((r) => JSON.stringify(r)).join('\n'),
+    );
   const db = new DatabaseSync(DB);
   db.exec(`
     CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT);
@@ -54,7 +69,12 @@ function buildAndAudit({ bidders, decls = [], dis = [], links, seals = [], snaps
     ${dis.map((d) => `INSERT INTO declared_interests(declaration_id, entity_raw) VALUES (${d});`).join('\n')}
     ${links.map((l) => `INSERT INTO interest_links VALUES (${l});`).join('\n')}
     ${seals.map((e) => `INSERT INTO interest_link_evidence(link_key,evidence_kind,registry_role,matched_fact,lookup_date,rules_version,live_status) VALUES (${e});`).join('\n')}
+    ALTER TABLE interest_links ADD COLUMN first_declared_year TEXT DEFAULT '2021';
+    ALTER TABLE interest_links ADD COLUMN last_declared_year TEXT DEFAULT '2021';
+    CREATE TABLE interest_link_history(link_key TEXT, later_declaration_year TEXT, registry_role_ended_on TEXT);
+    ${history.map((h) => `INSERT INTO interest_link_history VALUES (${h});`).join('\n')}
   `);
+  if (extraSql) db.exec(extraSql);
   db.close();
 
   let threw = false;
@@ -82,6 +102,28 @@ after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })))
 // Two real winners fold to the same name key but carry distinct valid ЕИК → the "colliding name" case.
 const COLLIDING_BIDDERS = [`'b1','„ОБЩ" ЕООД','100000001',1`, `'b2','ОБЩ ЕООД','200000002',1`];
 const KEY = K('„ОБЩ" ЕООД'); // == K('ОБЩ ЕООД') — the shared key both winners map to
+
+test('history requires dated provenance and never overrides a withholding evidence verdict', () => {
+  for (const [kind, live, history, axis] of [
+    ['confirmed', 'terminated', [`'p1|100000001','2022',NULL`], null],
+    ['confirmed', 'terminated', [], 'H_missing_history'],
+    ['confirmed', 'terminated', [`'p1|100000001','2020',NULL`], 'H_later_declaration'],
+    ['confirmed', 'live', [`'p1|100000001',NULL,'2022-01-01'`], 'H_registry_period'],
+    ['unknown', 'terminated', [`'p1|100000001','2022',NULL`], 'C_withholding_evidence'],
+    ['refuted', 'terminated', [`'p1|100000001','2022',NULL`], 'C_withholding_evidence'],
+  ]) {
+    const { threw, out } = buildAndAudit({
+      bidders: [`'b1','„ОБЩ" ЕООД','100000001',1`],
+      links: [
+        `'il1','p1|100000001','p1','100000001','${KEY}','exact_name_key','${kind}','b1','owns',0,1000,'published'`,
+      ],
+      seals: [`'p1|100000001','${kind}',NULL,NULL,'2026-08-05','${RULES_VERSION}','${live}'`],
+      history,
+    });
+    assert.equal(threw, Boolean(axis), out);
+    if (axis) assert.ok(out.includes(axis), out);
+  }
+});
 
 test('A_eik behind a colliding name, backed by a real ЕИК+name double-lock, PASSES the gate', () => {
   const { threw, out } = buildAndAudit({
@@ -487,4 +529,80 @@ test('the four axes above are a BOUND: a clean, valid, sealed link passes them a
   assert.equal(threw, false, `a clean link must pass: ${out}`);
   for (const axis of ['A_key_missing', 'A_eik_mismatch', 'B_bidder_eik', 'B_eik_invalid'])
     assert.equal(new RegExp(axis).test(out), false, `${axis} must not fire on a clean link`);
+});
+
+test('a public source profile cannot conceal competing registry identities behind a name key', () => {
+  const { threw, out } = buildAndAudit({
+    bidders: ["'b1','РЕАЛЕН ЕООД','100000001',1"],
+    decls: ["'d1','p1'", "'d2','p1'"],
+    links: [
+      `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+    ],
+    seals: [
+      "'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'",
+    ],
+    extraSql: `CREATE TABLE persons(id); INSERT INTO persons VALUES('p1');
+      CREATE TABLE person_registry_links(person_id,registry_indent);
+      INSERT INTO person_registry_links VALUES('p1','a'),('p1','b');
+      ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
+      ${fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0018_person_entities.sql'), 'utf8')}
+      INSERT INTO person_entities VALUES('p1','a','2026-01-01');`,
+  });
+  assert.equal(threw, true);
+  assert.match(out, /I_source_identity/);
+});
+
+test('inventory differences retain proven links only with both dated comparison sources', () => {
+  for (const variant of ['complete', 'missing', 'wrong_year']) {
+    const { threw, out } = buildAndAudit({
+      bidders: ["'b1','РЕАЛЕН ЕООД','100000001',1"],
+      decls: ["'positive','p1'", "'empty','p1'"],
+      links: [
+        `'il1','p1|100000001','p1','100000001','${K('РЕАЛЕН ЕООД')}','exact_name_key','document','b1','owns',0,1000,'published'`,
+      ],
+      seals: [
+        "'p1|100000001','document','owner','role:owner:CR_F_19_L','2026-08-12','tr-rules-1','live'",
+      ],
+      inventory: [
+        {
+          personId: 'p1',
+          eik: '100000001',
+          scope: 'self',
+          year: '2021',
+          positiveDocuments: ['positive'],
+          otherDocuments: ['empty'],
+        },
+      ],
+      extraSql: `CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
+        INSERT INTO interest_link_observations VALUES('p1|100000001','positive','shares','annual','2021');
+        ${variant === 'missing' ? '' : `INSERT INTO interest_link_observations VALUES('p1|100000001','empty','shares','not_listed','${variant === 'wrong_year' ? '2022' : '2021'}');`}`,
+    });
+    assert.equal(threw, variant !== 'complete', out);
+    if (threw) assert.match(out, /H_inventory_provenance/);
+  }
+});
+
+test('identity evidence must be automatic and match active source versions', () => {
+  const schema = fs.readFileSync(
+    path.join(ROOT, 'packages/db/migrations/0018_person_entities.sql'),
+    'utf8',
+  );
+  for (const variant of ['current', 'reviewed', 'stale', 'revoked', 'unproven_continuity']) {
+    const { threw, out } = buildAndAudit({
+      bidders: [],
+      links: [],
+      extraSql: `
+      CREATE TABLE persons(id); CREATE TABLE person_registry_links(person_id,registry_indent);
+      ALTER TABLE declarations ADD COLUMN folder_year; ALTER TABLE declarations ADD COLUMN xml_file;
+      ${schema}
+      INSERT INTO person_sources(id,namespace,source_key,source_hash,name) VALUES('a','cacbg','a','v1','Лице'),('b','cacbg','b','v2','Лице');
+      INSERT INTO person_identity_evidence VALUES('edge','a','b','${variant === 'stale' ? 'old' : 'v1'}','v2','same','${variant === 'revoked' ? 'revoked' : 'accepted'}','${variant === 'reviewed' || variant === 'revoked' ? 'reviewed' : 'automatic'}','${variant === 'unproven_continuity' ? 'declaration-continuity-2' : 'source-groups-1'}','{}','2026-01-01');`,
+    });
+    assert.equal(threw, ['reviewed', 'stale', 'unproven_continuity'].includes(variant), out);
+    if (threw)
+      assert.match(
+        out,
+        variant === 'unproven_continuity' ? /I_declaration_continuity/ : /I_automatic_evidence/,
+      );
+  }
 });

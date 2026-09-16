@@ -773,3 +773,13 @@ describe('branch completion — amendment id/date/ocid and value-less lot', () =
     expect(row).toMatchObject({ lot_id: 'L', value_amount: null, value_currency: null });
   });
 });
+
+describe('date normalization — expanded ISO years (via releaseToContracts.contract_date)', () => {
+  it('nulls a signed six-digit year rather than reading part of it', () => {
+    const contractDate = (dateSigned: string) =>
+      releaseToContracts({ tag: ['contract'], contracts: [{ id: 'c1', dateSigned }] }, meta)[0]
+        ?.contract_date;
+    expect(contractDate('+010000-01-01')).toBeNull();
+    expect(contractDate('-000001-01-01')).toBeNull();
+  });
+});

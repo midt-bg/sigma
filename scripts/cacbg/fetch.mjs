@@ -1,12 +1,8 @@
-// CACBG crawler. The on-demand full-corpus crawl of the public declaration register into a LOCAL,
-// git-ignored raw cache — the `full_crawl` path of the related-persons-data workflow (steady-state
-// incremental refresh is the sigma-etl Worker's R2-backed job, ADR-0006). Pure I/O: it fetches list.xml
-// + every declaration XML and writes them under scratch/cacbg/raw/<year>/. Parsing/extraction is a
-// separate re-runnable step (extract.mjs) so the parser can evolve without re-fetching.
-//
-// Resumable + idempotent: a declaration already on disk is skipped (the source is immutable per year).
-// PII: raw XML lives ONLY in git-ignored scratch (workflow-cached across runs, never committed). EGN is
-// already stripped upstream; addresses/family are dropped by extract.mjs, never persisted to staging.
+// CACBG crawler: the same polite crawl writes original XML bytes to local scratch or private R2.
+// CACBG_CORPUS_URL selects the Container's native R2 binding. Each successful file is immediately
+// durable; a restart lists existing objects and fetches only missing declarations. Extraction remains
+// a separate rerunnable step, so parser changes never require another crawl of unchanged source XML.
+// Raw files are private and never committed. The register's per-folder XML URLs are treated as immutable.
 //
 // Usage:
 //   node scripts/cacbg/fetch.mjs                        # all folders discovered from the register index
@@ -14,11 +10,13 @@
 //   node scripts/cacbg/fetch.mjs --limit 300 --concurrency 6  # concurrency is capped at MAX_CONCURRENCY
 //   node scripts/cacbg/fetch.mjs --deadline-minutes 240  # stop cleanly before a CI job cap (see run())
 
-import fs from 'node:fs';
+import { corpusStore, CORPUS_STAMP, CORPUS_VERSION, digest } from './corpus.mjs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { getPinned, CACBG_HOST } from './tls.mjs';
+import { getPinned, CACBG_HOST, MAX_CONCURRENCY } from './tls.mjs';
+import { progress } from './progress.mjs';
 import { parseList } from './parse.mjs';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import {
@@ -30,14 +28,14 @@ import {
 } from './guard.mjs';
 
 const BASE = `https://${CACBG_HOST}`;
-const RAW = path.join(SCRATCH, 'raw');
+const RAW = process.env.CACBG_RAW || path.join(SCRATCH, 'raw');
 
 // The politeness ceiling on parallel requests to register.cacbg.bg. `--concurrency` had a floor but no
 // roof, so `--concurrency 500` was a valid way to ask a state server for five hundred simultaneous
 // connections — from a script whose whole design (backoff, circuit breaker, inter-request sleep) exists to
 // avoid exactly that. 8 is what the workflow runs and what the corpus measurement was taken at; ADR-0012's
 // original „≤6" predates it. Raising this is a deliberate edit with a server on the other end, not a flag.
-export const MAX_CONCURRENCY = 8;
+export { MAX_CONCURRENCY };
 
 // Parse + VALIDATE crawl options. An unvalidated Number() lets `--concurrency abc/0` become NaN/0 →
 // `Array.from({length})` spawns zero workers → the crawl fetches nothing and exits 0 (a silent no-op),
@@ -64,7 +62,7 @@ export function parseCrawlOptions(argv) {
   };
   const limitRaw = get('limit', '');
   const deadlineRaw = get('deadline-minutes', '');
-  const concurrency = posInt(get('concurrency', '6'), 'concurrency');
+  const concurrency = posInt(get('concurrency', String(MAX_CONCURRENCY)), 'concurrency');
   if (concurrency > MAX_CONCURRENCY)
     throw new Error(
       `--concurrency must be at most ${MAX_CONCURRENCY} — the register is a state server, not a load target; ` +
@@ -81,6 +79,7 @@ export function parseCrawlOptions(argv) {
     // (a set whose list.xml never loaded, or an announced declaration we failed to fetch for a non-404
     // reason) exits non-zero; the operator passes --allow-incomplete to proceed knowingly (#226, Todor #2).
     allowIncomplete: argv.includes('--allow-incomplete'),
+    yieldOnDeadline: argv.includes('--yield-on-deadline'),
   };
 }
 
@@ -125,21 +124,31 @@ export function nextBreaker(consecutive, outcome) {
   return outcome === 'ok' || outcome === 'missing' ? 0 : consecutive + 1;
 }
 
-async function politeGet(url, { tries = 5 } = {}) {
+export async function politeGet(
+  url,
+  { tries = 5, get = getPinned, pause = sleep, now = Date.now } = {},
+) {
   let wait = 500;
   for (let attempt = 1; ; attempt++) {
     let res;
     try {
-      res = await getPinned(url);
+      res = await get(url);
     } catch (err) {
       if (attempt >= tries) throw err;
-      await sleep(wait);
+      await pause(wait);
       wait *= 2;
       continue;
     }
     if (res.status === 403 || res.status === 429 || res.status >= 500) {
       if (attempt >= tries) return res;
-      await sleep(wait);
+      const header = res.headers?.['retry-after'];
+      const retryAfter =
+        header == null
+          ? 0
+          : /^\d+$/.test(String(header))
+            ? Number(header) * 1000
+            : Math.max(0, Date.parse(String(header)) - now());
+      await pause(Math.max(wait, Number.isFinite(retryAfter) ? retryAfter : 0));
       wait *= 2;
       continue;
     }
@@ -147,10 +156,42 @@ async function politeGet(url, { tries = 5 } = {}) {
   }
 }
 
-function atomicWrite(file, buf) {
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, buf);
-  fs.renameSync(tmp, file);
+// The register republishes lists across sibling folders without copying every XML with them.
+// Only the same filename within the same publication year is a fallback, never another year.
+export function declarationFolders(folder, knownFolders) {
+  const year = safeFolder(folder).slice(0, 4);
+  return [...new Set([folder, `${year}y`, year, `${year}f1`, `${year}h`, ...knownFolders])].filter(
+    (f) => safeFolder(f).slice(0, 4) === year,
+  );
+}
+
+export async function findDeclaration(folder, file, folders, get, record) {
+  let failure;
+  for (const sourceFolder of declarationFolders(folder, folders)) {
+    let res;
+    try {
+      res = await get(sourceFolder, file);
+    } catch (error) {
+      await record(sourceFolder, { indexFolder: folder, error: error.message, code: error.code });
+      throw Object.assign(error, { sourceFolder });
+    }
+    if (res.status === 200) {
+      if (sourceFolder !== folder)
+        await record(sourceFolder, { status: 200, indexFolder: folder, cached: !!res.cached });
+      return { ...res, sourceFolder };
+    }
+    await record(sourceFolder, {
+      status: res.status,
+      indexFolder: folder,
+      location: res.headers?.location,
+      retryAfter: res.headers?.['retry-after'],
+      server: res.headers?.server,
+    });
+    if (res.status !== 403 && res.status !== 404) return { ...res, sourceFolder };
+    // A 404 on a later path must not erase an unresolved 403 on an earlier one.
+    if (!failure || res.status !== 404) failure = { ...res, sourceFolder };
+  }
+  return failure;
 }
 
 // Discover EVERY declaration-set folder from the register's own root index, rather than guessing that
@@ -202,6 +243,7 @@ export async function run({
   argv = process.argv,
   guard = assertScratchIgnored,
   now = () => Date.now(),
+  store = corpusStore(rawDir),
 } = {}) {
   guard();
   // The corpus directory the crawl writes into must clear the PII rail too — a symlink at rawDir would
@@ -214,7 +256,29 @@ export async function run({
     folders: override,
     allowIncomplete,
     deadlineMinutes,
+    yieldOnDeadline,
   } = parseCrawlOptions(argv);
+
+  // Persist each source gap/failure immediately, even if this crawl never seals its folder index.
+  // A separate namespace keeps diagnostic history out of the XML inventory and completeness proof.
+  const crawlId = randomUUID();
+  let eventSequence = 0;
+  const recordSourceResult = async (folder, file, details) => {
+    const record = {
+      crawlId,
+      runId: process.env.SIGMA_RUN_ID ?? null,
+      attempt: process.env.SIGMA_ATTEMPT ?? null,
+      checkedAt: new Date().toISOString(),
+      url: `${BASE}/${folder}/${file}`,
+      folder,
+      file,
+      ...details,
+    };
+    await store.put(
+      `fetch-events/${crawlId}/${++eventSequence}.json`,
+      Buffer.from(JSON.stringify(record)),
+    );
+  };
 
   // WHY A SELF-IMPOSED DEADLINE. The full corpus is ~37 sets / ~281 000 declarations and does not fit in the
   // related-persons-data job's 300-minute cap. When the cap fired mid-crawl (run 31889519937) the runner
@@ -235,7 +299,7 @@ export async function run({
   // and a stamp from an earlier run would describe a corpus that no longer exists. Clearing first also
   // means every abnormal exit — deadline stop, circuit breaker, an uncaught throw, the runner being
   // killed — leaves the corpus unstamped without needing its own cleanup path.
-  fs.rmSync(sentinelPath(rawDir), { force: true });
+  await store.remove(CORPUS_STAMP);
 
   // Default: discover every folder from the register index. --folders 2021_nc,2025y restricts to a subset.
   const folders = override
@@ -257,6 +321,14 @@ export async function run({
   // Per-set accounting so completeness can be reconciled announced↔obtained (Todor #2). A set whose list.xml
   // never loaded is a WHOLESALE gap (we don't even know its declaration count) → tracked separately.
   const stats = { folders: {}, skippedFolders: [] };
+  const inventory = [];
+  const cachedFolders = new Map();
+  const filesFor = (folder) => {
+    if (!cachedFolders.has(folder)) cachedFolders.set(folder, store.files(folder));
+    return cachedFolders.get(folder);
+  };
+  let completed = 0;
+  progress('fetch');
   for (const folder of folders) {
     // Checked BEFORE mkdir/list.xml so an out-of-budget set leaves no trace at all — an empty directory
     // and a cached list.xml would read, to the next run, like a set that had genuinely been visited.
@@ -265,10 +337,10 @@ export async function run({
       console.log(`  deadline reached — stopping before ${folder} (not attempted)`);
       break;
     }
-    const dir = path.join(rawDir, folder);
-    fs.mkdirSync(dir, { recursive: true });
+    const cachedFiles = await filesFor(folder);
     const listRes = await httpGet(`${BASE}/${folder}/list.xml`);
     if (listRes.status !== 200) {
+      await recordSourceResult(folder, 'list.xml', { status: listRes.status });
       console.log(`  ${folder}/list.xml → ${listRes.status}, SKIP (announced set not crawled)`);
       stats.skippedFolders.push({ folder, status: listRes.status });
       continue;
@@ -300,7 +372,7 @@ export async function run({
     // makes the corpus incomplete, so no stamp; a genuinely empty brand-new set (never yet observed)
     // would go red for an operator to look at, which is the right failure direction for a certifier.
     if (rows.length === 0) {
-      const onDisk = fs.readdirSync(dir).some((f) => f.endsWith('.xml') && f !== 'list.xml');
+      const onDisk = [...cachedFiles.keys()].some((f) => f !== 'list.xml');
       console.log(
         `  ${folder}: list.xml parsed to 0 rows${onDisk ? ' (declarations exist on disk!)' : ''} — SKIP`,
       );
@@ -316,14 +388,15 @@ export async function run({
     // (review round 3: reproduced — cached [a1,a2], incoming [a1], stamped). Keep the cache, skip the
     // folder; if the register ever legitimately withdraws a declaration, the red run is the place a
     // human decides that, not a certifier.
-    const cachedListPath = path.join(dir, 'list.xml');
-    if (fs.existsSync(cachedListPath)) {
+    const listKey = `${folder}/list.xml`;
+    const cachedList = await store.get(listKey);
+    if (cachedList) {
       // A corrupt cached list (a legacy DOCTYPE, a truncated write) must not crash the shrink check —
       // the valid INCOMING list is exactly what heals it. Unparseable-cached reads as zero rows: no
       // shrink objection, and the atomicWrite below replaces the corrupt cache (round 4, minor).
       const cachedRows = (() => {
         try {
-          return parseList(fs.readFileSync(cachedListPath, 'utf8')).length;
+          return parseList(cachedList.toString('utf8')).length;
         } catch {
           return 0;
         }
@@ -334,7 +407,9 @@ export async function run({
         continue;
       }
     }
-    atomicWrite(cachedListPath, listRes.body); // cache list for extract.mjs
+    await store.put(listKey, listRes.body); // original bytes, immediately durable in R2
+    const obtainedFiles = new Map();
+    const sourceGaps = new Set();
     // `announced` is what the SET declares, so it is read BEFORE --limit truncates the work. Taking it
     // after the slice made a deliberately partial crawl report announced == obtained, i.e. the completeness
     // gate certified a corpus it had never attempted to fetch (ydimitrof #226).
@@ -345,6 +420,16 @@ export async function run({
     console.log(`  ${folder}: ${rows.length} declarations`);
 
     let consecutive = 0;
+    const reportFailure = (file, details, sourceFolder = folder) => {
+      console.error(
+        JSON.stringify({
+          event: 'declarations_source_error',
+          folder: sourceFolder,
+          file,
+          ...details,
+        }),
+      );
+    };
     const withheld = await pool(
       rows,
       concurrency,
@@ -352,19 +437,38 @@ export async function run({
         let xmlFile;
         try {
           xmlFile = safeXmlFile(row.xmlFile);
-        } catch {
+        } catch (error) {
+          await recordSourceResult(folder, row.xmlFile, { error: error.message });
+          reportFailure(row.xmlFile, { error: error.message });
           fstat.errors++;
           return;
         }
-        const dest = path.join(dir, xmlFile);
-        if (fs.existsSync(dest)) {
+        if (cachedFiles.has(xmlFile)) {
+          obtainedFiles.set(xmlFile, { sha256: cachedFiles.get(xmlFile) });
           fstat.cached++;
+          progress('fetch', ++completed);
           return;
         }
         let res;
         try {
-          res = await httpGet(`${BASE}/${folder}/${xmlFile}`);
-        } catch {
+          res = await findDeclaration(
+            folder,
+            xmlFile,
+            folders,
+            async (sourceFolder, file) => {
+              const files = await filesFor(sourceFolder);
+              if (files.has(file)) {
+                const body = await store.get(`${sourceFolder}/${file}`);
+                if (!body || (store.remote && digest(body) !== files.get(file)))
+                  throw Error(`Cached declaration missing or changed: ${sourceFolder}/${file}`);
+                return { status: 200, body, cached: true };
+              }
+              return httpGet(`${BASE}/${sourceFolder}/${file}`);
+            },
+            (sourceFolder, details) => recordSourceResult(sourceFolder, xmlFile, details),
+          );
+        } catch (error) {
+          reportFailure(xmlFile, { error: error.message, code: error.code }, error.sourceFolder);
           fstat.errors++;
           consecutive = nextBreaker(consecutive, 'fail');
           if (consecutive > BREAKER_TRIP)
@@ -373,10 +477,26 @@ export async function run({
         }
         if (res.status === 404) {
           fstat.missing++;
+          sourceGaps.add(xmlFile);
+          progress('fetch', ++completed);
           consecutive = nextBreaker(consecutive, 'missing');
           return;
-        } // listed-but-unpublished (source gap)
+        } // absent from every checked sibling path (source gap)
         if (res.status !== 200) {
+          reportFailure(
+            xmlFile,
+            {
+              status: res.status,
+              location: res.headers?.location,
+              retryAfter: res.headers?.['retry-after'],
+              server: res.headers?.server,
+              address: res.address,
+              response: res.headers?.['content-type']?.includes('text/html')
+                ? res.body?.toString('utf8').slice(0, 1200)
+                : undefined,
+            },
+            res.sourceFolder,
+          );
           // A sustained 403/429/5xx wall (politeGet already retried) counts toward the breaker too — not
           // just network throws — so the crawl stops instead of hammering the register indefinitely.
           fstat.errors++;
@@ -386,8 +506,19 @@ export async function run({
           return;
         }
         consecutive = nextBreaker(consecutive, 'ok');
-        atomicWrite(dest, res.body);
-        fstat.fetched++;
+        const sha256 = digest(res.body);
+        if (!res.cached) {
+          await store.put(`${res.sourceFolder}/${xmlFile}`, res.body);
+          (await filesFor(res.sourceFolder)).set(xmlFile, sha256);
+        }
+        obtainedFiles.set(xmlFile, {
+          sha256,
+          ...(res.sourceFolder !== folder ? { sourceFolder: res.sourceFolder } : {}),
+        });
+        fstat[res.cached ? 'cached' : 'fetched']++;
+        progress('fetch', ++completed);
+        if (!res.cached && fstat.fetched % 500 === 0)
+          console.log(`  ${folder}: ${fstat.fetched} fetched, ${fstat.cached} cached`);
         await sleep(15);
       },
       pastDeadline,
@@ -397,6 +528,21 @@ export async function run({
     // otherwise the run that finally completes the corpus is the one declared partial and refused. If the
     // clock is spent but this set finished, the next iteration's top-of-loop guard stops us; if this was
     // the LAST set, there is nothing left to withhold and the corpus is complete.
+    if (
+      !withheld &&
+      !fstat.errors &&
+      obtainedFiles.size + sourceGaps.size === new Set(rows.map((r) => r.xmlFile)).size
+    ) {
+      const index = Buffer.from(
+        JSON.stringify({
+          listHash: digest(listRes.body),
+          files: [...obtainedFiles].sort().map(([file, entry]) => ({ file, ...entry })),
+          missing: [...sourceGaps].sort(),
+        }),
+      );
+      await store.put(`${folder}/.index.json`, index);
+      inventory.push({ folder, sha256: digest(index) });
+    }
     if (withheld) {
       deadlineHit = true;
       console.log(`  deadline reached inside ${folder} — stopping`);
@@ -405,6 +551,7 @@ export async function run({
   }
 
   const completeness = assessCompleteness(stats.folders, stats.skippedFolders);
+  progress('fetch', completed, undefined, true);
   console.log('\n=== crawl summary ===');
   console.log(JSON.stringify({ folders: stats.folders, ...completeness, deadlineHit }, null, 2));
   console.log(`raw cache → ${rawDir}`);
@@ -424,7 +571,7 @@ export async function run({
         `by construction: ${completeness.reachedSets} of ${folders.length} set(s) reached. The raw cache is ` +
         `intact and consistent; re-run to resume from it (declarations already on disk are skipped).`,
     );
-    return 1;
+    return yieldOnDeadline && store.remote ? 75 : 1;
   }
 
   // Completeness gate (Todor #2): a partial corpus published unannounced is the opposite of a transparency
@@ -472,24 +619,29 @@ export async function run({
   //     against a future regression of those guards, which is also why no test pins it: a mutant
   //     deleting it survives, deliberately, rather than a test encoding an impossible scenario.
   const stampable = !override && !completeness.incomplete && completeness.announcedDeclarations > 0;
-  if (stampable) writeSentinel(rawDir, { folders: folders.length, ...completeness });
+  if (stampable)
+    await store.put(
+      CORPUS_STAMP,
+      Buffer.from(
+        JSON.stringify(
+          {
+            schemaVersion: CORPUS_VERSION,
+            runId: process.env.SIGMA_RUN_ID ?? null,
+            inventory,
+            folders: folders.length,
+            ...completeness,
+            stampedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ) + '\n',
+      ),
+    );
   return 0;
 }
 
 /** Sentinel path for a raw corpus directory. Exported so the reader and the writer cannot drift. */
 export const sentinelPath = (rawDir) => path.join(rawDir, '.corpus-complete.json');
-
-/**
- * Stamp a corpus as publishable. Called on the clean-exit path only; every other path REMOVES the file so
- * a stale sentinel can never outlive the corpus it described (a resumed crawl that then fails must not
- * leave yesterday's stamp behind).
- */
-function writeSentinel(rawDir, summary) {
-  fs.writeFileSync(
-    sentinelPath(rawDir),
-    `${JSON.stringify({ ...summary, stampedAt: new Date().toISOString() }, null, 2)}\n`,
-  );
-}
 
 // Only crawl when invoked directly (`node fetch.mjs`). Importing the module — e.g. the unit/integration tests
 // above — must NOT kick off a live network crawl of the register. run() returns the exit code; assign it to

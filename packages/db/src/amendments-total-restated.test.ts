@@ -29,6 +29,13 @@ const migration7Path = resolve(root, 'packages/db/migrations/0007_amendment_valu
 const migration8Path = resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql');
 // #279/ADR-0033: refresh-slice.sql + normalize-raw.sql read interest_link_evidence, so 0009 must be applied too.
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
+// person_sources (0018).
+const personMigrationPaths = [
+  'packages/db/migrations/0014_person_profile.sql',
+  'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0018_person_entities.sql',
+].map((p) => resolve(root, p));
 const stagingPath = resolve(root, 'scripts/work-staging-schema.sql');
 const derivePath = resolve(root, 'scripts/derive-amendments.sql');
 const normalizePath = resolve(root, 'scripts/normalize-raw.sql');
@@ -69,6 +76,7 @@ function withEtlDb(label: string, run: (dbPath: string) => void): void {
     readScript(dbPath, migration7Path);
     readScript(dbPath, migration8Path);
     readScript(dbPath, migration9Path);
+    for (const path of personMigrationPaths) readScript(dbPath, path);
     readScript(dbPath, stagingPath);
     run(dbPath);
   } finally {

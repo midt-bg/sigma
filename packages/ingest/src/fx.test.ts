@@ -399,3 +399,28 @@ describe('loadFxRates', () => {
     expect(summary.uncovered).toEqual([]);
   });
 });
+
+describe('loadFxRates — default fetch and non-Error failures', () => {
+  it('uses the global fetch when none is injected', async () => {
+    const { db, d1 } = fxDb();
+    stageContract(db, 'USD', '2026-07-08');
+    const fetchFn = vi.fn(async () => seriesResponse({ '2026-07-07': { EUR: 0.87 } }));
+    vi.stubGlobal('fetch', fetchFn);
+    try {
+      const summary = await loadFxRates(d1, { fetchedAt: FETCHED_AT });
+      expect(fetchFn).toHaveBeenCalledWith(fxSeriesUrl('USD', '2026-06-28', '2026-07-08'));
+      expect(summary).toMatchObject({ inserted: 1, uncovered: [] });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports a failure thrown as a bare value by its text', async () => {
+    const { db, d1 } = fxDb();
+    stageContract(db, 'USD', '2026-07-08');
+    const fetchFn = vi.fn().mockRejectedValue('connection reset') as unknown as typeof fetch;
+    await expect(loadFxRates(d1, { fetchedAt: FETCHED_AT, fetchFn })).rejects.toThrow(
+      /USD 2026-07-08\.\.2026-07-08 \(1 dates\): connection reset/,
+    );
+  });
+});

@@ -23,4 +23,21 @@ if (!found) {
   process.exit(1);
 }
 
-process.stdout.write(`${found.statements.map((s) => `${s};`).join('\n')}\n`);
+const statements = [...found.statements];
+const scopedIdsJson = process.env.SIGMA_OFFICIAL_PERSON_IDS_JSON;
+if (scopedIdsJson) {
+  if (group !== 'official-search-index')
+    throw new Error('SIGMA_OFFICIAL_PERSON_IDS_JSON is valid only for official-search-index');
+  const ids = JSON.parse(scopedIdsJson);
+  if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== 'string' || !id))
+    throw new Error('SIGMA_OFFICIAL_PERSON_IDS_JSON must be a non-empty string array');
+  const scopeInsert = statements.findIndex((statement) =>
+    statement.includes('INSERT INTO refresh_official_reindex_scope'),
+  );
+  if (scopeInsert < 0) throw new Error('official-search-index has no scope insert');
+  statements[scopeInsert] =
+    'INSERT INTO refresh_official_reindex_scope (person_id) VALUES ' +
+    ids.map((id) => `('${id.replaceAll("'", "''")}')`).join(',');
+}
+
+process.stdout.write(`${statements.map((s) => `${s};`).join('\n')}\n`);

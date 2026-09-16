@@ -1,0 +1,55 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sigma-etl-dev",
+  "main": "src/dev.ts",
+  "compatibility_date": "2026-09-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "subrequests": 100000 },
+  "workers_dev": false,
+  "preview_urls": false,
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+  "vars": {
+    "REGISTRY_API_BASE_URL": "https://api-sigma-cr.registryagency.bg",
+    "REGISTRY_PORTAL_URL": "https://portal.registryagency.bg/CR/api/Applications/Entries",
+    "SIGMA_D1_ID": "713b98fa-6ab5-45f3-81c4-119f4c0907d6",
+    "SIGMA_D1_NAME": "sigma-dev",
+    "SIGMA_SHIP_ENV": "dev",
+    "DECLARATIONS_BUCKET": "sigma-declarations-dev",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sigma-dev",
+      "database_id": "713b98fa-6ab5-45f3-81c4-119f4c0907d6",
+    },
+  ],
+  "workflows": [
+    { "binding": "REGISTRY", "name": "sigma-registry-dev", "class_name": "RegistryWorkflow" },
+    {
+      "binding": "DECLARATIONS_RUN",
+      "name": "sigma-declarations-dev",
+      "class_name": "DevDeclarationsWorkflow",
+    },
+  ],
+  "containers": [
+    {
+      "class_name": "DeclarationContainer",
+      "image": "../../containers/declarations/Dockerfile",
+      "image_build_context": "../..",
+      "instance_type": { "vcpu": 2, "memory_mib": 10240, "disk_mb": 20000 },
+      "max_instances": 1,
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "DECLARATIONS", "class_name": "DeclarationContainer" }],
+  },
+  "migrations": [{ "tag": "v1-declarations", "new_sqlite_classes": ["DeclarationContainer"] }],
+  "r2_buckets": [{ "binding": "DECLARATIONS_CORPUS", "bucket_name": "sigma-declarations-dev" }],
+  "triggers": { "crons": [] },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "persist": true, "invocation_logs": true },
+    "traces": { "enabled": true, "persist": true },
+  },
+}

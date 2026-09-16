@@ -1,17 +1,15 @@
 // node:test — path sanitizers and the refuse-to-run rail for the Trade Register leg.
 //
-// The deed cache holds third-party personal data (owner/manager names, company addresses), so the
-// same rail the CACBG crawl runs behind applies here: everything is written under scratch/, and
-// scratch/ must be git-ignored, asserted BEFORE any fetch. ADR-0010 decision 6 as extended by ADR-0033.
+// The verdict cache is written under scratch/, and scratch/ must be git-ignored — asserted BEFORE anything
+// is written. ADR-0010 decision 6, the same rail the CACBG crawl runs behind.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { TR_SCRATCH, TR_RAW, TR_DB, safeEik, assertTrScratchIgnored } from './paths.mjs';
+import { TR_SCRATCH, TR_DB, safeEik, assertTrScratchIgnored } from './paths.mjs';
 import { assertScratchIgnored } from '../cacbg/guard.mjs';
 
 test('the TR scratch tree sits under scratch/ and is git-ignored in this repo', () => {
   assert.ok(TR_SCRATCH.split(path.sep).includes('scratch'), TR_SCRATCH);
-  assert.ok(TR_RAW.startsWith(TR_SCRATCH));
   assert.ok(TR_DB.startsWith(TR_SCRATCH));
   assert.doesNotThrow(() => assertTrScratchIgnored());
 });
@@ -30,8 +28,8 @@ test('the guard is the CACBG one generalized, not a second copy', () => {
 test('safeEik accepts only a bare 9/13-digit code and returns it verbatim', () => {
   assert.equal(safeEik('115536179'), '115536179');
   assert.equal(safeEik('1155361790001'), '1155361790001');
-  // Leading zeros survive — public bodies are exactly this shape, and losing them fetches a
-  // DIFFERENT company's deed.
+  // Leading zeros survive — public bodies are exactly this shape, and losing them decides a link
+  // against a DIFFERENT company.
   assert.equal(safeEik('000696327'), '000696327');
 });
 

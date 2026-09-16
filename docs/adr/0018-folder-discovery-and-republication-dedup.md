@@ -31,12 +31,14 @@ claim was an artifact of the assumption, not a property of the source (2026 genu
    `[A-Za-z0-9_]` chars, so a hostile index cannot inject a path segment. A `--folders a,b` override
    remains for targeted re-crawls. This is also correct for the cron refresh (ADR-0012): new folders
    (next year's filing set, new compliance sets) are picked up automatically.
-2. **Dedup republications by ControlHash.** The same signed declaration is republished across sets (the
-   filing set, its end-of-year `*y` copy, and often a compliance `nc/nonc` copy) carrying the **same
-   ControlHash** (content hash). `extract.mjs` keeps a global `Set` of seen ControlHashes and emits each
-   declaration once (first folder wins; filing folders sort before their `*y` republication). A *corrected*
-   re-filing carries a *different* ControlHash and is legitimately kept — the loader aggregates per
-   (person → company) link, so distinct filings reinforce one link rather than inflating counts.
+2. **Amended 2026-09-12: deduplicate only byte-identical XML, using SHA-256.** `ControlHash`
+   is not a unique document identifier: the archive contains distinct declarations with the same
+   value, including the literal validation-error message `Неуспешна Валидация`. The supplied checksum
+   is retained as source metadata, never used alone to discard a document. Different source bytes
+   are retained even with the same checksum; formatting-only variants may therefore remain until
+   their equivalence is established. Attribution to the declarant is checked before deduplication,
+   so an incorrectly listed first copy cannot mask a later valid copy. Contract counts and sums
+   remain deduplicated independently of the number of source documents.
 
 ## Consequences
 

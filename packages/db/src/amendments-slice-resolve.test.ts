@@ -29,6 +29,11 @@ const migrations = [
   'packages/db/migrations/0008_amendment_provenance.sql',
   // #279/ADR-0033: refresh-slice.sql reads interest_link_evidence.
   'packages/db/migrations/0009_interest_link_evidence.sql',
+  // The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
+  // person_sources (0018).
+  'packages/db/migrations/0014_person_profile.sql',
+  'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0018_person_entities.sql',
 ].map((p) => resolve(root, p));
 const workStagingSchema = resolve(root, 'scripts/work-staging-schema.sql');
 const refreshSlice = resolve(root, 'scripts/refresh-slice.sql');

@@ -174,6 +174,10 @@ importers:
         version: link:../test-support
 
   packages/ingest:
+    dependencies:
+      fast-xml-parser:
+        specifier: 5.10.1
+        version: 5.10.1
     devDependencies:
       '@sigma/test-support':
         specifier: workspace:*
