@@ -24,7 +24,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'aXZhbg',
     official: 'Иван Петров',
     institution: 'Община Тест',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,
@@ -418,7 +418,7 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
 describe('/conflicts/company/:eik — render', () => {
   it('heads each block by the official (institution sub-label + profile link), never repeats the company inside', async () => {
     await mount(ConflictCompany as never, {
-      company: 'ТРЕЙС ГРУП ХОЛД АД',
+      company: 'ТЕСТ ГРУП ХОЛД АД',
       eik: '111',
       links: [
         link({ linkKey: 'k1' }),
@@ -432,7 +432,7 @@ describe('/conflicts/company/:eik — render', () => {
       // both officials share ЕИК 111 → ONE contracts entry keyed by ЕИК, shared by both blocks (#312 HIGH 1)
       contracts: { '111': [contract()] },
     });
-    expect(text()).toContain('ТРЕЙС ГРУП ХОЛД АД');
+    expect(text()).toContain('ТЕСТ ГРУП ХОЛД АД');
     expect(text()).toContain('111'); // ЕИК in the header
     expect(text()).toContain('Иван Петров'); // an official heads a block
     expect(text()).toContain('Втори Официал');
@@ -441,12 +441,12 @@ describe('/conflicts/company/:eik — render', () => {
     expect(block.querySelector('a[href="/conflicts/official/aXZhbg"]')).not.toBeNull();
     expect(block.textContent).toContain('Община Тест'); // institution sub-label
     // the company is the page's subject (PageHeader) and is NOT repeated inside a block
-    expect(block.textContent).not.toContain('ТРЕЙС ГРУП ХОЛД АД');
+    expect(block.textContent).not.toContain('ТЕСТ ГРУП ХОЛД АД');
   });
 
   it('renders the rich detail EAGERLY — timeline, per-authority shares, contract split — no expand click', async () => {
     await mount(ConflictCompany as never, {
-      company: 'ТРЕЙС ГРУП ХОЛД АД',
+      company: 'ТЕСТ ГРУП ХОЛД АД',
       eik: '111',
       links: [link({ linkKey: 'k1' })],
       contracts: {
@@ -472,11 +472,11 @@ describe('/conflicts/company/:eik — render', () => {
 
   it('meta() names the company and marks the page noindex', () => {
     const tags = companyMeta({
-      data: { company: 'ТРЕЙС ГРУП ХОЛД АД', eik: '111', links: [], contracts: {} },
+      data: { company: 'ТЕСТ ГРУП ХОЛД АД', eik: '111', links: [], contracts: {} },
       matches: [],
       params: { eik: '111' },
     } as never);
-    expect(JSON.stringify(tags)).toContain('ТРЕЙС ГРУП ХОЛД АД');
+    expect(JSON.stringify(tags)).toContain('ТЕСТ ГРУП ХОЛД АД');
     expect(tags).toContainEqual({ name: 'robots', content: 'noindex' });
   });
 

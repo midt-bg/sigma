@@ -154,10 +154,10 @@ test('rung 2 — a TWO-token declarant can never earn „Документ"', () 
 
 test('rung 2 — the match must fall inside ONE registered person (the libel guard, end to end)', () => {
   const two = registry([
-    holder('00190', 'ПЕНКО НЕСТОРОВ НЕСТОРОВ'),
-    holder('00190', 'ИЛИЯН КОСТАДИНОВ ФИЛИПОВ'),
+    holder('00190', 'ПЕТЪР ТЕСТОВ ТЕСТОВ'),
+    holder('00190', 'ИЛИЯ ИВАНОВ ПРИМЕРОВ'),
   ]);
-  const v = evidenceVerdict({ ...base, registry: two, declarantName: 'ПЕНКО КОСТАДИНОВ ФИЛИПОВ' });
+  const v = evidenceVerdict({ ...base, registry: two, declarantName: 'ПЕТЪР ИВАНОВ ПРИМЕРОВ' });
   assert.notEqual(v.kind, 'document');
 });
 

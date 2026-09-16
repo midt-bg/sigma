@@ -113,8 +113,8 @@ describe('dates', () => {
 
 describe('entityName', () => {
   it('collapses a consortium member list to first + „и др."', () => {
-    expect(entityName('МЕДЕКС ООД; АЛТА ФАРМАСЮТИКЪЛС ООД; ЕКОФАРМ ЕООД', 'consortium')).toBe(
-      'МЕДЕКС ООД и др.',
+    expect(entityName('МЕДПРИМЕР ООД; АЛФА ФАРМА ООД; ЕКОПРИМЕР ЕООД', 'consortium')).toBe(
+      'МЕДПРИМЕР ООД и др.',
     );
   });
   it('passes company names through as source truth', () => {
@@ -181,7 +181,7 @@ describe('parseConsortiumMembers', () => {
 
 describe('isNaturalPersonProfileName', () => {
   it('detects sole-trader names that embed a natural person', () => {
-    expect(isNaturalPersonProfileName('ЕТ ДРИФТ - НИКОЛАЙ КИРОВ')).toBe(true);
+    expect(isNaturalPersonProfileName('ЕТ ДРИФТ - ИВАН ТЕСТОВ')).toBe(true);
     expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ET')).toBe(true);
     expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ФИЗИЧЕСКО ЛИЦЕ')).toBe(true);
     expect(isNaturalPersonProfileName('ФИРМА', 'EOOD')).toBe(false);

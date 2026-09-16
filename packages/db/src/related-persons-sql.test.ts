@@ -53,7 +53,7 @@ function rows(dbPath: string, sql: string): Record<string, string | number | nul
   return out ? JSON.parse(out) : [];
 }
 
-// Иван OWNS ТРЕЙС (private_ownership, own institution, €88M). Борис + Виктор both MANAGE ХОЛДИНГ 9
+// Иван OWNS ТЕСТ ГРУП (private_ownership, own institution, €88M). Борис + Виктор both MANAGE ХОЛДИНГ 9
 // (declared by two officials → ex_officio_board, €5M each). Кмет declares a CLOSE RELATIVE's stake in
 // ЕВРОСТРОЙ (family_ownership, €250k) — under ADR-0032 this PUBLISHES on the named surface identically to a
 // self stake (relation 'related'), with the relative never named. Голям owns ГОЛЯМ (private, €50M, NO nexus)
@@ -62,11 +62,11 @@ function rows(dbPath: string, sql: string): Record<string, string | number | nul
 // the family link); the others do not (NULL).
 const FIXTURE = `
 INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
-  ('eik:111','ТРЕЙС ГРУП ХОЛД АД','111','111',1,'company'),
+  ('eik:111','ТЕСТ ГРУП ХОЛД АД','111','111',1,'company'),
   ('eik:222','ХОЛДИНГ 9 ЕАД','222','222',1,'company'),
   ('eik:333','ЕВРОСТРОЙ 21 ЕООД','333','333',1,'company'),
   ('eik:444','ГОЛЯМ ООД','444','444',1,'company'),
-  ('eik:555','П2АРХ ООД','555','555',1,'company');
+  ('eik:555','П2ТЕСТ ООД','555','555',1,'company');
 INSERT INTO persons (id, name) VALUES
   ('person:ivan','Иван Минев'),('person:boris','Борис Манолов'),('person:viktor','Виктор Асенов'),
   ('person:kmet','Кмет Тестов'),('person:big','Голям Официал'),('person:dual','Двоен Тестов');
@@ -76,11 +76,11 @@ INSERT INTO declarations (id, person_id, xml_file, control_hash, folder_year, de
   ('decl:i','person:ivan','i.xml','H1','2024','2023','assets','','ТЕСТ','', 'https://register.cacbg.bg/2024/i.xml'),
   ('decl:k','person:kmet','k.xml','H2','2021','2020','assets','','ОБЩИНА','', 'https://register.cacbg.bg/2021/k.xml');
 INSERT INTO declared_interests (id, declaration_id, entity_raw, entity_key, kind, detail, timing, seat) VALUES
-  ('di:i','decl:i','ТРЕЙС ГРУП ХОЛД АД','ТРЕЙС ГРУП ХОЛД АД','shares','','annual',''),
+  ('di:i','decl:i','ТЕСТ ГРУП ХОЛД АД','ТЕСТ ГРУП ХОЛД АД','shares','','annual',''),
   ('di:k','decl:k','ЕВРОСТРОЙ 21 ЕООД','ЕВРОСТРОЙ 21 ЕООД','shares','','annual','');
 INSERT INTO interest_links
   (id, link_key, person_id, bidder_id, eik, entity_key, match_method, matcher_version, publish_tier, relation, interest_class, contemporaneous, own_institution, evidence_count, first_declared_year, last_declared_year, contract_count, contract_value_eur, first_contract_year, last_contract_year, status) VALUES
-  ('il:ivan','person:ivan|111','person:ivan','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2019','2023',35,88000000,'2021','2024','published'),
+  ('il:ivan','person:ivan|111','person:ivan','eik:111','111','ТЕСТ ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'exact',1,'2019','2023',35,88000000,'2021','2024','published'),
   ('il:boris','person:boris|222','person:boris','eik:222','222','ХОЛДИНГ 9 ЕАД','exact_name_key','v1','B_distinctive','manages','ex_officio_board',0,'none',1,'2023','2023',10,5000000,'2023','2023','published'),
   ('il:viktor','person:viktor|222','person:viktor','eik:222','222','ХОЛДИНГ 9 ЕАД','exact_name_key','v1','B_distinctive','manages','ex_officio_board',0,'none',1,'2023','2023',10,5000000,'2023','2023','published'),
   -- family_ownership now PUBLISHES on the named surface (ADR-0032, superseding ADR-0030), identically to a
@@ -89,16 +89,16 @@ INSERT INTO interest_links
   -- (c:33) so the N9 read gate keeps him.
   ('il:fam','person:kmet|333|family','person:kmet','eik:333','333','ЕВРОСТРОЙ 21 ЕООД','exact_name_key','v1','B_distinctive','related','family_ownership',1,'none',1,'2018','2020',5,250000,'2019','2020','published'),
   ('il:big','person:big|444','person:big','eik:444','444','ГОЛЯМ ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2020','2021',10,50000000,'2020','2021','published'),
-  -- Двоен declared BOTH his OWN stake and a RELATIVE's stake in П2АРХ (eik 555): two published links, same
+  -- Двоен declared BOTH his OWN stake and a RELATIVE's stake in П2ТЕСТ (eik 555): two published links, same
   -- winner, same €79k. The own stake already names him on the winner, so the redundant-family collapse
   -- (ADR-0032) DROPS the family link — only the 'owns' row surfaces. This is the de-anonymization + double-
   -- count guard: where a self stake exists, the relative row adds nothing but a ТР re-identification path.
-  ('il:dual-self','person:dual|555','person:dual','eik:555','555','П2АРХ ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
-  ('il:dual-fam','person:dual|555|family','person:dual','eik:555','555','П2АРХ ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
+  ('il:dual-self','person:dual|555','person:dual','eik:555','555','П2ТЕСТ ООД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
+  ('il:dual-fam','person:dual|555|family','person:dual','eik:555','555','П2ТЕСТ ООД','exact_name_key','v1','B_distinctive','related','family_ownership',0,'none',1,'2020','2022',4,79000,'2021','2022','published'),
   -- a HELD link must never surface in any query
   ('il:held','person:ivan|999','person:ivan','eik:111','999','НЯКОЙ ООД','exact_name_key','v1','C_hold','owns','private_ownership',0,'none',1,'2022','2022',3,1000,'2022','2022','held'),
   -- a WITHDRAWN (divested — later filing omits the company) link must never surface either (§8/E11)
-  ('il:gone','person:viktor|111','person:viktor','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2015','2015',5,2000000,'2016','2016','withdrawn');
+  ('il:gone','person:viktor|111','person:viktor','eik:111','111','ТЕСТ ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',0,'none',1,'2015','2015',5,2000000,'2016','2016','withdrawn');
 -- Contracts for Иван's winner (eik 111), against his declared span 2019–2023: c:1 (2020) and c:2 (2023)
 -- fall IN the window, c:3 (2024) AFTER it, c:4 (undated) UNKNOWN. This makes the read-time split
 -- deterministic: contemporaneous = 2 contracts / €30M; the total contract_value_eur column is unrelated
@@ -221,7 +221,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
         `INSERT INTO declarations(id,person_id,xml_file,folder_year,declared_year,template,source_url) VALUES
         ('decl:other','person:ivan','other.xml','2025','2024','assets','https://example.test/other');
         INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES
-        ('di:other','decl:other','same name, another EIK','ТРЕЙС ГРУП ХОЛД АД','shares');
+        ('di:other','decl:other','same name, another EIK','ТЕСТ ГРУП ХОЛД АД','shares');
         INSERT INTO declaration_companies VALUES('decl:other','999','declared_eik');`,
       );
       expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!.source_url).toBe(
@@ -392,7 +392,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
     withDb((dbPath) => {
       const ivan = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'));
       expect(ivan).toHaveLength(1); // published private only — the held link is excluded
-      expect(ivan[0]!.company).toBe('ТРЕЙС ГРУП ХОЛД АД');
+      expect(ivan[0]!.company).toBe('ТЕСТ ГРУП ХОЛД АД');
 
       // ЕИК 111: only Иван (published) — Виктор's withdrawn (divested) link to the same winner is excluded
       const trace = rows(dbPath, lit(COMPANY_SQL, '111'));
@@ -402,7 +402,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
 
   it('collapses the redundant family link when the official also declared an own stake in the same winner (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Двоен has an own stake (private_ownership) AND a relative's stake (family_ownership) in П2АРХ. The own
+      // Двоен has an own stake (private_ownership) AND a relative's stake (family_ownership) in П2ТЕСТ. The own
       // stake already names him on the winner, so the family row would only re-point at the same company via a
       // relative — a ТР de-anonymization vector AND a money double-count. ADR-0032's redundant-family collapse
       // drops the family row wherever a published self stake exists on the same (official, ЕИК); only 'owns' survives.
@@ -428,7 +428,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
       sqlite(
         dbPath,
         `INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
-           ('eik:111b','ТРЕЙС ГРУП ХОЛД АД (дубликат)',NULL,'111',1,'company');
+           ('eik:111b','ТЕСТ ГРУП ХОЛД АД (дубликат)',NULL,'111',1,'company');
          INSERT INTO contracts (id, tender_id, bidder_id, amount, currency, signed_at, contract_number, amount_eur) VALUES
            ('c:1b','t:1','eik:111b',4000000,'EUR','2021-06-01','Д-1Б',4000000);`,
       );
@@ -602,7 +602,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
 
   it('the /contracts drill-down collapses a redundant family link_key but serves the surviving self key (ADR-0032)', () => {
     withDb((dbPath) => {
-      // Двоен's own and family links both point at П2АРХ (eik 555). The self key serves eik 555's one contract
+      // Двоен's own and family links both point at П2ТЕСТ (eik 555). The self key serves eik 555's one contract
       // (c:55); the family key collapses (a published self stake exists on the same ЕИК) and serves nothing —
       // the same read gate the surface applies, so a drilled-down family URL can't resurrect the collapsed link.
       expect(rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:dual|555'))).toHaveLength(1);
@@ -704,7 +704,7 @@ describe('свързани-лица SQL (real SQLite)', () => {
            ${links
              .map(
                (p) =>
-                 `('il:${p.split(':')[1]}','${p}|111','${p}','eik:111','111','ТРЕЙС ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2019','2023',3,1000,'2020','2021','published')`,
+                 `('il:${p.split(':')[1]}','${p}|111','${p}','eik:111','111','ТЕСТ ГРУП ХОЛД АД','exact_name_key','v1','B_distinctive','owns','private_ownership',1,'none',1,'2019','2023',3,1000,'2020','2021','published')`,
              )
              .join(',')};
          INSERT INTO interest_link_evidence (link_key, evidence_kind, registry_role, matched_fact, lookup_date, rules_version, live_status) VALUES

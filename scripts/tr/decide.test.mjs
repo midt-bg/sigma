@@ -40,7 +40,7 @@ function fixture() {
                                 share, country, entry_number, added_on, removed_on) VALUES
       ('201122335', '0000', '00190', 'partner', 'person', '${hash('a')}', 'ИВАН ПЕТРОВ ТЕСТОВ', '500 BGN', NULL,
        '20090502101007', '2009-05-02', NULL),
-      ('201122335', '0000', '00070', 'manager', 'person', '${hash('b')}', 'ГЕОРГИ ДИМИТРОВ ПЕТКОВ', NULL, NULL,
+      ('201122335', '0000', '00070', 'manager', 'person', '${hash('b')}', 'ГЕОРГИ ДИМИТРОВ ТЕСТОВ', NULL, NULL,
        '20090502101007', '2009-05-02', '2019-01-01'),
       ('201122335', '0000', '05500', 'beneficial_owner', 'person', '${hash('c')}', 'МАРИЯ ИВАНОВА ПЕТРОВА', '100',
        NULL, '20190101000000', '2019-01-01', NULL);
@@ -61,7 +61,7 @@ function fixture() {
     link({
       linkKey: 'person:georgi|201122335',
       eik: '201122335',
-      declarantName: 'Георги Димитров Петков',
+      declarantName: 'Георги Димитров Тестов',
     }),
     link({
       linkKey: 'person:maria|201122335',
