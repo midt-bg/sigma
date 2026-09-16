@@ -1,3 +1,4 @@
+import { registryCompanyName } from '@sigma/shared';
 import { companySlug, personSlug } from './identity';
 import { publicRole, registryRead } from './registry';
 import { getRegistryIdentity, getRegistryOfficials } from './person-activity';
@@ -81,6 +82,16 @@ const RELATIVE_PAGE = `EXISTS (SELECT 1 FROM registry_roles r JOIN bidders b ON 
   JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
   WHERE r.subject_id=pr.relative_indent AND r.subject_kind='person' AND ${publicRole('r')})`;
 
+type CompanyNameRow = {
+  eik: string;
+  bidder_name: string | null;
+  registry_name: string | null;
+  legal_form: string | null;
+};
+/** The winner's name where the company won; otherwise the register's фирма with its form; else the ЕИК. */
+const companyName = (r: CompanyNameRow) =>
+  r.bidder_name ?? (r.registry_name ? registryCompanyName(r.registry_name, r.legal_form) : r.eik);
+
 /** Relatives the official declared a stake for, whom the register lists at that company (ADR-0044). */
 export async function getPersonRelatives(db: D1Database, ids: string[]): Promise<PersonRelative[]> {
   if (!ids.length) return [];
@@ -89,20 +100,21 @@ export async function getPersonRelatives(db: D1Database, ids: string[]): Promise
       db
         .prepare(
           `SELECT pr.relative_name name, pr.relative_indent indent, pr.eik,
-            COALESCE(b.name, pr.eik) company, ${RELATIVE_PAGE} has_page
+            b.name bidder_name, rd.name registry_name, rd.legal_form, ${RELATIVE_PAGE} has_page
           FROM person_relatives pr LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          LEFT JOIN registry_deeds rd ON rd.eik=pr.eik
           WHERE pr.person_id IN (${ids.map(() => '?').join(',')})
           GROUP BY pr.relative_indent, pr.eik ORDER BY pr.relative_name, pr.eik`,
         )
         .bind(...ids)
-        .all<{ name: string; indent: string; eik: string; company: string; has_page: number }>()
+        .all<{ name: string; indent: string; eik: string; has_page: number } & CompanyNameRow>()
         .then((r) => r.results),
     [],
   );
   return rows.map((r) => ({
     name: r.name,
     indent: r.indent,
-    company: { name: r.company, eik: r.eik },
+    company: { name: companyName(r), eik: r.eik },
     href: r.has_page ? `/persons/${r.indent}` : null,
   }));
 }
@@ -113,20 +125,21 @@ export async function getPersonNamedBy(db: D1Database, indent: string): Promise<
     () =>
       db
         .prepare(
-          `SELECT p.id, p.name official, pr.eik, COALESCE(b.name, pr.eik) company
+          `SELECT p.id, p.name official, pr.eik, b.name bidder_name, rd.name registry_name, rd.legal_form
           FROM person_relatives pr JOIN persons p ON p.id=pr.person_id
           LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          LEFT JOIN registry_deeds rd ON rd.eik=pr.eik
           WHERE pr.relative_indent=? ORDER BY p.name, pr.eik`,
         )
         .bind(indent)
-        .all<{ id: string; official: string; eik: string; company: string }>()
+        .all<{ id: string; official: string; eik: string } & CompanyNameRow>()
         .then((r) => r.results),
     [],
   );
   return rows.map((r) => ({
     official: r.official,
     href: `/persons/${personSlug(r.id)}`,
-    company: { name: r.company, eik: r.eik },
+    company: { name: companyName(r), eik: r.eik },
   }));
 }
 

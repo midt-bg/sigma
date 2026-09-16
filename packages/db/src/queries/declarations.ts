@@ -1,5 +1,5 @@
 import type { PersonDeclaration, RegistryRoleKind } from '@sigma/api-contract';
-import { companyNameKey } from '@sigma/shared';
+import { companyNamesAlike, registryCompanyName } from '@sigma/shared';
 import { declarationMatchesLink, declarationYearDisputed } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -78,7 +78,7 @@ export async function getPersonDeclarations(
   const omissions = metadata
     ? await db
         .prepare(
-          `SELECT d.id declaration_id, r.eik, COALESCE(rd.name, r.eik) company, r.role, r.entry_number, r.added_on
+          `SELECT d.id declaration_id, r.eik, rd.name company, rd.legal_form, r.role, r.entry_number, r.added_on
     FROM declarations d
     JOIN declaration_metadata m ON m.declaration_id=d.id AND lower(m.declaration_type) IN ('annualy','annual','yearly')
     JOIN person_entities e ON e.id=d.person_id AND e.registry_indent IS NOT NULL
@@ -96,7 +96,8 @@ export async function getPersonDeclarations(
         .all<{
           declaration_id: string;
           eik: string;
-          company: string;
+          company: string | null;
+          legal_form: string | null;
           role: RegistryRoleKind;
           entry_number: string;
           added_on: string;
@@ -158,7 +159,8 @@ export async function getPersonDeclarations(
           ],
         })),
       companyEiks: JSON.parse(String(r.companies ?? '[]')) as string[],
-      // A company the document names by a spelling the resolver did not tie to its ЕИК is still named.
+      // A company the document names under any spelling — with its legal form, a typo, a Latin letter —
+      // is named; the resolver ties only winners to an ЕИК. A blank filing names nothing.
       registryOmissions: omissions
         .filter(
           (o) =>
@@ -166,12 +168,13 @@ export async function getPersonDeclarations(
             !interests.results.some(
               (i) =>
                 i.declaration_id === r.id &&
-                companyNameKey(i.entity_raw) === companyNameKey(o.company),
+                !!o.company &&
+                companyNamesAlike(i.entity_raw, o.company),
             ),
         )
-        .map(({ eik, company, role, entry_number, added_on }) => ({
+        .map(({ eik, company, legal_form, role, entry_number, added_on }) => ({
           eik,
-          company,
+          company: company ? registryCompanyName(company, legal_form) : eik,
           role,
           entryNumber: entry_number,
           addedOn: added_on,

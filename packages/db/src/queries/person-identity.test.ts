@@ -112,9 +112,11 @@ describe('relatives the register confirms', () => {
         CREATE TABLE bidders(id,eik_normalized,name);
         CREATE TABLE company_totals(bidder_id,contracts);
         CREATE TABLE registry_roles(eik,subject_id,subject_kind,role);
+        CREATE TABLE registry_deeds(eik,name,legal_form);
+        INSERT INTO registry_deeds VALUES('222','БЕТА','EOOD');
         INSERT INTO persons VALUES('p','Иван Петров'),('q','Георги Иванов');
         INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова');
-        INSERT INTO bidders VALUES('eik:111','111','АЛФА'),('eik:222','222','БЕТА');
+        INSERT INTO bidders VALUES('eik:111','111','АЛФА');
         INSERT INTO company_totals VALUES('eik:111',3);
         INSERT INTO registry_roles VALUES('111','${H}','person','partner');`);
       const d1 = d1FromSqlite(db);
@@ -122,7 +124,7 @@ describe('relatives the register confirms', () => {
         {
           name: 'Зоя Иванова',
           indent: 'z'.repeat(64),
-          company: { name: 'БЕТА', eik: '222' },
+          company: { name: 'БЕТА ЕООД', eik: '222' },
           href: null,
         },
         {
