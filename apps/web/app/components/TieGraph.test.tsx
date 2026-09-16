@@ -117,7 +117,7 @@ describe('TieGraph', () => {
     expect(c.querySelector('.tie-edge.tie-consortium')).not.toBeNull();
     expect(c.querySelector('.tie-edge.tie-subcontract')).not.toBeNull();
     const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);
-    expect(labels).toEqual(['обединение', 'подизпълнител']);
+    expect(labels).toEqual(['съвместно изпълнение', 'подизпълнител']);
   });
 
   it('marks a directed tie with an arrow and leaves a symmetric one unmarked', () => {
@@ -225,7 +225,7 @@ describe('TieGraph', () => {
     const legend = [...render(base).querySelectorAll('.tie-legend li')].map((l) =>
       l.textContent?.trim(),
     );
-    expect(legend).toEqual(['общо обединение']);
+    expect(legend).toEqual(['съвместно изпълнение']);
   });
 
   it('gives the full name to a reader even where the box cuts it', () => {
