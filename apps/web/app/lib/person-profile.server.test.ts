@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { PersonDeclaration } from '@sigma/api-contract';
+import { fakeD1 } from '@sigma/test-support';
 import { emptyActivity } from './person-profile.test-support';
 
 const q = vi.hoisted(() => ({
@@ -67,7 +68,8 @@ it('limits company mentions to eligible profiles while retaining every source an
     observations: [{ eik: eligible }, { eik: outside }],
   });
 
-  const p = (await loadPersonProfile({} as D1Database, {
+  // Every query is mocked above, so the binding is never read.
+  const p = (await loadPersonProfile(fakeD1([]).db, {
     officialId: 'p',
     search: new URLSearchParams('year=1900'),
   }))!;
