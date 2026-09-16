@@ -1,7 +1,6 @@
 import { declaredOfficeYear } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
-import { publicRole } from './registry';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
@@ -105,9 +104,10 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
   }));
 }
 
-/** People with declarations whom the register records in a public role at a procurement winner, and
- *  who have no published declared stake: the same row shape as the declared list, so the two read as one.
- *  The role is the register's fact; the period figures follow the person's declared office years. */
+/** People with declarations whom the register records as an OWNER of a procurement winner — partner, sole
+ *  owner or sole trader — and who have no published declared stake: the same row shape as the declared
+ *  list, so the two read as one. Management seats are left out: at a state-owned company they are held by
+ *  appointment (ADR-0019), and a manager owns nothing. The period figures follow the declared office years. */
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
@@ -120,7 +120,8 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
     SELECT DISTINCT pe.person_id, r.eik
-    FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person' AND ${publicRole('r')}
+    FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
+      AND r.role IN ('sole_owner','partner','trader')
     JOIN bidders b ON b.eik_normalized=r.eik JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
       JOIN bidders bb ON bb.id=c.bidder_id WHERE bb.eik_normalized=r.eik AND t.authority_id=?1)

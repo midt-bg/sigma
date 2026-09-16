@@ -74,7 +74,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const sp = new URL(request.url).searchParams;
   const filters = conflictListFilters(sp);
-  // Declared stakes first; then people the register alone places at a winner, in the same row shape.
+  // Declared stakes first; then people the register alone records as owners of a winner, in the same row shape.
   const everyone = (
     await withDbRetry(() =>
       Promise.all([
@@ -178,7 +178,7 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               )}
               {c.registry && (
                 <div>
-                  <Chip>роля по Търговския регистър</Chip>
+                  <Chip>дял по Търговския регистър</Chip>
                 </div>
               )}
             </li>
@@ -241,7 +241,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         },
         {
           value: 'registry',
-          label: 'роля по Търговския регистър',
+          label: 'дял по Търговския регистър',
           count: facets.registry,
         },
       ],

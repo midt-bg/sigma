@@ -129,7 +129,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
   }
 });
 
-it('lists people the register places at a winner without a declared stake, by their office years', async () => {
+it('lists people the register records as owners of a winner without a declared stake, by their office years', async () => {
   const db = new DatabaseSync(':memory:');
   const H = 'h'.repeat(64);
   try {
@@ -147,8 +147,8 @@ it('lists people the register places at a winner without a declared stake, by th
       INSERT INTO person_entities VALUES('p','${H}'),('q','${'q'.repeat(64)}'),('r','${'r'.repeat(64)}');
       INSERT INTO person_sources VALUES('p','cacbg',1),('q','cacbg',1),('r','tr',1);
       INSERT INTO interest_links VALUES('q','published','private_ownership');
-      INSERT INTO registry_roles VALUES('${H}','person','manager','111111111'),('${H}','person','beneficial_owner','222222222'),
-        ('${'q'.repeat(64)}','person','manager','111111111'),('${'r'.repeat(64)}','person','manager','111111111');
+      INSERT INTO registry_roles VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
+        ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
       INSERT INTO declarations VALUES('p','Община','Кмет','2020');
       INSERT INTO bidders VALUES('b1','111111111','Изпълнител'),('b2','222222222','Друг');
       INSERT INTO company_totals VALUES('b1',2),('b2',1);
@@ -160,7 +160,7 @@ it('lists people the register places at a winner without a declared stake, by th
       official: 'Лице Роля',
       personIdentity: H,
       stakeKind: 'registry',
-      companyCount: 1, // the actual-owner role is not a public role
+      companyCount: 1, // a management seat is not ownership
       contractCount: 2,
       contractValueEur: 150,
       contemporaneousValueEur: 100,
