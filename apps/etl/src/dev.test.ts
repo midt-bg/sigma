@@ -8,7 +8,6 @@ it('keeps manual declaration runs in dev and waits for the actual container outc
     .mockResolvedValueOnce({ runId: 'run-1', state: 'running' })
     .mockResolvedValue({ runId: 'run-1', state: 'complete' });
   const env = {
-    CLOUDFLARE_ACCOUNT_ID: '1a40aa4d0d78bed8ecf036dd22fbfa9f',
     SIGMA_D1_ID: '713b98fa-6ab5-45f3-81c4-119f4c0907d6',
     SIGMA_D1_NAME: 'sigma-dev',
     SIGMA_SHIP_ENV: 'dev',

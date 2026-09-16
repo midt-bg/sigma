@@ -29,7 +29,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'aXZhbg',
     official: 'Иван Петров',
     institution: 'Община Тест',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,
@@ -151,15 +151,15 @@ const bodyRows = () => [...container.querySelectorAll('tbody tr')];
 
 describe('/conflicts route — render', () => {
   it('formats the person name only, preserving source data, profile links and company casing', async () => {
-    const source = link({ official: 'ФИДАНКА ДИМИТРОВА ЦИРОВА' });
+    const source = link({ official: 'МАРИНА ПЕТРОВА ТЕСТОВА' });
     await renderConflicts([source]);
     expect(container.querySelector('tbody a[href="/conflicts/official/aXZhbg"]')?.textContent).toBe(
-      'Фиданка Димитрова Цирова',
+      'Марина Петрова Тестова',
     );
     expect(container.querySelector('tbody a[href="/companies/111"]')?.textContent).toBe(
-      'ТРЕЙС ГРУП ХОЛД АД',
+      'ТЕСТ ГРУП ХОЛД АД',
     );
-    expect(source.official).toBe('ФИДАНКА ДИМИТРОВА ЦИРОВА');
+    expect(source.official).toBe('МАРИНА ПЕТРОВА ТЕСТОВА');
   });
   it('shows one proven person with their different declared institutions and years', async () => {
     await renderConflicts([
@@ -270,7 +270,7 @@ describe('/conflicts route — render', () => {
     // Two winners for the SAME official → one person row, not two. (Distinct ЕИК so it is not a family
     // collapse — genuinely two winners folded by groupByPerson.)
     await renderConflicts([
-      link({ eik: '111', company: 'ТРЕЙС ГРУП ХОЛД АД', linkKey: 'k1' }),
+      link({ eik: '111', company: 'ТЕСТ ГРУП ХОЛД АД', linkKey: 'k1' }),
       link({ eik: '222', company: 'ГБС АД', linkKey: 'k2' }),
     ]);
     const rows = bodyRows();
@@ -363,7 +363,7 @@ describe('/conflicts route — render', () => {
     // Single-winner person → the winner's NAME in the Дружества cell.
     await renderConflicts([link()]);
     const soleCell = bodyRows()[0].querySelector('td[data-label="Дружества"]')!;
-    expect(soleCell.textContent).toContain('ТРЕЙС ГРУП ХОЛД АД');
+    expect(soleCell.textContent).toContain('ТЕСТ ГРУП ХОЛД АД');
   });
 
   it('признаци stay visible and a flag sourced from a SECOND link still renders', async () => {

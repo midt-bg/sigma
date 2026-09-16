@@ -9,7 +9,7 @@
 
 Many officials do not type a clean фирма in the company field. They write a sentence
 ("2 дружествени дяла на „ЕН-ФРЕШ" ООД, прехвърлени нотариално…"), append the town
-("„Кристална вода" АД София"), or write the ЕИК inline ("„ТРАНСПОМЕД" ЕООД, ЕИК 101677351").
+("„Бистра вода" АД София"), or write the ЕИК inline ("„ТРАНСПОМЕД" ЕООД, ЕИК 101677351").
 The whole-string normalizer then keys the entire prose and misses a real winner — a recall loss.
 ~530 declared entries are prose; the signal is recoverable **without** sacrificing the certainty bar.
 

@@ -8,7 +8,7 @@ function fixture() {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE registry_deeds(eik,name,legal_form,seat_settlement,outcome);
     CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
-    INSERT INTO registry_deeds VALUES('123456789','А ДЕЙТА ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
+    INSERT INTO registry_deeds VALUES('123456789','А ТЕСТ ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
   db.exec(
     readFileSync(
       new URL(
@@ -42,7 +42,7 @@ function fixture() {
   const doc = {
     declarant: name,
     interests: [
-      { entity: 'А Дейта Про ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
+      { entity: 'А Тест Про ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
     ],
   };
   return { db, add, name, alias, doc };
@@ -113,7 +113,7 @@ test('historic forms resolve only through observed name/form pairs on the same E
     add('123456789', 'a'.repeat(64), name);
     assert.equal(registryIdentityResolver(db)(doc, [name]).evidence.length, 0);
     const historic = {
-      name: 'А Дейта Про',
+      name: 'А Тест Про',
       legalForm: 'ООД',
       from: '2010-01-01T12:00:00',
       until: '2020-01-01T12:00:00',
@@ -132,7 +132,7 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'c'.repeat(64),
       '2026-01-01',
     );
-    for (const entity of ['А Дейта Про ООД', 'А Дейта Про ООД, ЕИК 123456789']) {
+    for (const entity of ['А Тест Про ООД', 'А Тест Про ООД, ЕИК 123456789']) {
       const r = registryIdentityResolver(db)(
         { ...doc, interests: [{ ...doc.interests[0], entity }] },
         [name],
@@ -148,7 +148,7 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'history from a superseded snapshot is not current evidence',
     );
     db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('c'.repeat(64));
-    db.exec("UPDATE registry_deeds SET name='А ДЕЙТА ПРО', legal_form='OOD' WHERE eik='987654321'");
+    db.exec("UPDATE registry_deeds SET name='А ТЕСТ ПРО', legal_form='OOD' WHERE eik='987654321'");
     assert.equal(
       registryIdentityResolver(db)(doc, [name]).evidence.length,
       0,

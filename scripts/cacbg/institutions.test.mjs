@@ -70,7 +70,7 @@ test('identityInstitution — one body under its different spellings is one key'
     'гр. Карнобат',
   ])
     assert.equal(identityInstitution(s), 'КАРНОБАТ', s);
-  assert.equal(identityInstitution('СОБАЛ ПЕНТАГРАМ ЕООД, гр. София'), 'СОБАЛ ПЕНТАГРАМ ЕООД');
+  assert.equal(identityInstitution('СОБАЛ ПРИМЕР ЕООД, гр. София'), 'СОБАЛ ПРИМЕР ЕООД');
   assert.equal(identityInstitution('Областна администрация - Смолян'), 'ОБЛАСТ СМОЛЯН');
   assert.equal(identityInstitution('Област - Смолян'), 'ОБЛАСТ СМОЛЯН');
   assert.equal(

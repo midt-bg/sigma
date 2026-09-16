@@ -40,8 +40,8 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
   ];
   const companyRows = [
     {
-      ref: 'name:А1 БЪЛГАРИЯ ЕАД; БЕТА ООД',
-      title: 'А1 БЪЛГАРИЯ ЕАД; БЕТА ООД',
+      ref: 'name:А1 ПРИМЕР ЕАД; БЕТА ООД',
+      title: 'А1 ПРИМЕР ЕАД; БЕТА ООД',
       ident: '',
       subtitle: null,
       amount: 2000,
@@ -173,7 +173,7 @@ describe('search', () => {
     const hits = results.groups.find((g) => g.kind === 'company')?.hits ?? [];
 
     expect(hits[0]).toMatchObject({
-      title: 'А1 БЪЛГАРИЯ ЕАД и др.',
+      title: 'А1 ПРИМЕР ЕАД и др.',
       ident: null,
       isConsortium: true,
       hasEik: false,

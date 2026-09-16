@@ -40,7 +40,7 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     officialSlug: 'c2VydA',
     official: 'Иван Минев',
     institution: 'Община Русе',
-    company: 'ТРЕЙС ГРУП ХОЛД АД',
+    company: 'ТЕСТ ГРУП ХОЛД АД',
     eik: '111',
     relation: 'owns',
     contemporaneous: true,
@@ -779,11 +779,11 @@ describe('groupByPerson', () => {
         linkKey: 'p:a|9',
         officialSlug: 'a',
         eik: '999',
-        company: 'ТРЕЙС ГРУП ХОЛД АД',
+        company: 'ТЕСТ ГРУП ХОЛД АД',
       }),
     ]);
     expect(one[0].companyCount).toBe(1);
-    expect(one[0].soleCompany).toEqual({ company: 'ТРЕЙС ГРУП ХОЛД АД', eik: '999' });
+    expect(one[0].soleCompany).toEqual({ company: 'ТЕСТ ГРУП ХОЛД АД', eik: '999' });
   });
 
   it('sets a признак flag sourced only from a SECOND link', () => {
