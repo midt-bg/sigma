@@ -47,6 +47,16 @@ export const TABLES = [
   'declaration_identity_evidence',
   'interest_link_observations',
 ];
+// The registry layer, parents first. Only the dev environment, which has no registry process of its own,
+// takes these tables from a local work database (`--with-registry`).
+export const REGISTRY_TABLES = [
+  'registry_deeds',
+  'registry_persons',
+  'registry_roles',
+  'registry_identity_observations',
+  'registry_identity_snapshots',
+  'registry_company_history',
+];
 // DELETE order for the pre-insert wipe — children before parents. related_persons_internal (PII, never
 // re-shipped) also REFERENCES declarations, so it is wiped before declarations; otherwise a populated D1
 // carrying internal rows would block DELETE FROM declarations.
@@ -583,6 +593,9 @@ async function main() {
   const workDb = arg('work-db', 'data/work/backfill.sqlite');
   const emit = arg('emit', '');
   const remote = Boolean(arg('remote', false));
+  const withRegistry = Boolean(arg('with-registry', false));
+  if (withRegistry && process.env.SIGMA_SHIP_ENV !== 'dev')
+    throw new Error('--with-registry ships the registry layer to dev only');
   const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
   if (arg('min-links', undefined) !== undefined)
     throw new Error('--min-links has been removed; ship requires a completed, audited build');
@@ -648,7 +661,8 @@ async function main() {
   try {
     let sequence = 0;
     summary = runShip({
-      tables: TABLES,
+      tables: withRegistry ? [...REGISTRY_TABLES, ...TABLES] : TABLES,
+      wipeTables: withRegistry ? [...REGISTRY_TABLES.slice().reverse(), ...WIPE_ORDER] : WIPE_ORDER,
       readTable,
       apply: emit
         ? (name, sql) =>

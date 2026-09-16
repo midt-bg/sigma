@@ -51,6 +51,14 @@ export class RegistryError extends Error {
   }
 }
 export const REGISTRY_CHANGES_PAGE = 25;
+export const REGISTRY_SEARCH_PAGE = 100;
+/** One entry naming a person in a deed, as the name search lists it. */
+export interface RegistryNameHit {
+  uic: string;
+  companyName: string;
+  fieldIdent: string;
+  name: string;
+}
 const UIC = /^\d{9}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const array = (v: unknown): unknown[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
@@ -213,6 +221,59 @@ export function registryClient(opts: RegistryClientOptions) {
     const total = page === 1 && count !== null && /^\d+$/.test(count) ? Number(count) : null;
     return { items, total, hasMore: items.length === REGISTRY_CHANGES_PAGE };
   }
-  return { deed, changes };
+  // The name search exists in two generations of the service: `/deeds/search` (the current contract)
+  // and `/deeds/fields/summary` (the instance served today). The first refusal of the new route
+  // switches the client to the old one for the rest of its life; the hits are normalised to one shape.
+  let legacySearch = false;
+  async function holdersNamed(
+    name: string,
+    page = 1,
+  ): Promise<{ items: RegistryNameHit[]; total: number; hasMore: boolean }> {
+    const target = name.trim();
+    if (!target || target.length > 200) throw new RegistryError('invalid search name');
+    if (!Number.isSafeInteger(page) || page < 1) throw new RegistryError('invalid search page');
+    const url = new URL(`${base}/deeds/${legacySearch ? 'fields/summary' : 'search'}`);
+    url.search = new URLSearchParams(
+      legacySearch
+        ? { name: target, page: String(page), pageSize: String(REGISTRY_SEARCH_PAGE) }
+        : {
+            target,
+            limit: String(REGISTRY_SEARCH_PAGE),
+            offset: String((page - 1) * REGISTRY_SEARCH_PAGE),
+          },
+    ).toString();
+    let res: Response | null;
+    try {
+      res = await get(url.toString(), 'application/json');
+    } catch (error) {
+      if (legacySearch || !(error instanceof RegistryError) || error.status !== 400) throw error;
+      res = null;
+    }
+    if (!res) {
+      if (legacySearch) throw new RegistryError('registry has no name search');
+      legacySearch = true;
+      return holdersNamed(name, page);
+    }
+    const raw = object(await res.json());
+    const items = array(raw.items).map((value) => {
+      const r = object(value);
+      const uic = string(r.uic);
+      if (!UIC.test(uic)) throw new RegistryError('invalid search hit');
+      return {
+        uic,
+        companyName: string(r.companyName),
+        fieldIdent: string(r.fieldIdent) || string(r.field),
+        name: string(r.name),
+      };
+    });
+    const total = Number(raw.total);
+    if (!Number.isSafeInteger(total) || total < 0) throw new RegistryError('invalid search total');
+    return {
+      items,
+      total,
+      hasMore: typeof raw.hasMore === 'boolean' ? raw.hasMore : page * REGISTRY_SEARCH_PAGE < total,
+    };
+  }
+  return { deed, changes, holdersNamed };
 }
 export type RegistryClient = ReturnType<typeof registryClient>;
