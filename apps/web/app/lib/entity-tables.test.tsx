@@ -189,7 +189,7 @@ describe('tieRows', () => {
       fromHref: '/companies/1',
       toHref: '/companies/2',
     });
-    expect(rows[0]!.relation).toContain('обединение');
+    expect(rows[0]!.relation).toContain('съвместно изпълнение');
     expect(rows[1]!.fromHref).toBe('/authorities/9'); // the money layer's institution
   });
 

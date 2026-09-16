@@ -61,7 +61,11 @@ beforeAll(async () => {
   worker = ((await import('./app')) as { default: typeof worker }).default;
 });
 
-beforeEach(() => store.clear());
+beforeEach(() => {
+  store.clear();
+  // Local development bypasses the edge cache; these tests cover the production path.
+  vi.stubEnv('DEV', false);
+});
 
 function run(url: string, init?: RequestInit) {
   const waits: Promise<unknown>[] = [];

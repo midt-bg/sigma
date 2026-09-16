@@ -15,6 +15,9 @@ const q = vi.hoisted(() => ({
   getRegistryIdentity: vi.fn(),
   getRegistryPerson: vi.fn(),
   getRegistryOfficials: vi.fn(),
+  getPersonDestinations: vi.fn(),
+  getPersonScope: vi.fn(),
+  getPersonSourceArchive: vi.fn(),
   getPersonDeclarations: vi.fn(),
   getPersonActivity: vi.fn(),
   getCompanyConflicts: vi.fn(),
@@ -38,6 +41,12 @@ import { loader as contractsLoader } from './conflict.contracts';
 import { emptyActivity } from '../lib/person-profile.test-support';
 beforeEach(() => {
   q.getRegistryIdentity.mockResolvedValue(null);
+  q.getPersonDestinations.mockResolvedValue([]);
+  q.getPersonScope.mockImplementation(async (_db, { officialId }: { officialId?: string }) => ({
+    indent: null,
+    officialIds: officialId ? [officialId] : [],
+  }));
+  q.getPersonSourceArchive.mockResolvedValue(null);
   q.getPersonTimeline.mockResolvedValue({ contracts: [], observations: [], reads: [] });
   q.getRelatedPersonHeadline.mockResolvedValue({
     officialCount: 0,
@@ -196,12 +205,11 @@ describe('official loader (/conflicts/official/:id)', () => {
 
   it('renders a bridged registry identity at the requested official address without redirecting', async () => {
     q.personIdFromSlug.mockReturnValue('person:1');
-    q.getRegistryIdentity.mockResolvedValue('a'.repeat(64));
+    q.getPersonScope.mockResolvedValue({ indent: 'a'.repeat(64), officialIds: ['person:1'] });
     q.getRegistryPerson.mockResolvedValue({
       name: 'Иван Петров',
       network: { center: null, nodes: [], edges: [] },
     });
-    q.getRegistryOfficials.mockResolvedValue(['person:1']);
     q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
     const res = (await call(officialLoader, { id: 'current-official' })) as {
       name: string;
