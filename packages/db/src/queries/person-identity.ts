@@ -47,6 +47,21 @@ export async function getPersonDestinations(db: D1Database, id: string) {
   }
 }
 
+/** Every name the person's declarations were filed under, for the ids that make up one profile. */
+export async function getPersonSourceNames(db: D1Database, ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT s.name FROM person_sources s
+       WHERE s.active=1 AND s.namespace='cacbg'
+         AND coalesce(s.entity_id,s.legacy_person_id) IN (${ids.map(() => '?').join(',')})
+       ORDER BY s.name`,
+    )
+    .bind(...ids)
+    .all<{ name: string }>();
+  return rows.results.map((r) => r.name);
+}
+
 /** An attributed source archive can remain readable without a published company connection. */
 export async function getPersonSourceArchive(db: D1Database, id: string) {
   const person = await db

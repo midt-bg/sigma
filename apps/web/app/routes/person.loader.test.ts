@@ -14,6 +14,7 @@ const q = vi.hoisted(() => ({
   getPersonSourceArchive: vi.fn(),
   getOfficialConflicts: vi.fn(),
   getPersonDeclarations: vi.fn(),
+  getPersonSourceNames: vi.fn(async (): Promise<string[]> => []),
   registryPersonIdFromSlug: vi.fn((slug: string) => (/^[0-9a-f]{64}$/.test(slug) ? slug : null)),
   // The declaration-derived slug; here only slugs of the form id-* decode, so a plain word is a 404.
   personIdFromSlug: vi.fn((slug: string) => (slug.startsWith('id-') ? `person:${slug}` : null)),

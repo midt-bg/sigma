@@ -109,6 +109,7 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
       },
       declarations: d.declarations ?? [],
       tieLayout: null,
+      aliases: [],
       activity: emptyActivity,
       totals: {
         companies: new Set(d.links.map((l) => l.eik)).size,

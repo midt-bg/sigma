@@ -1,4 +1,5 @@
 import {
+  getPersonSourceNames,
   getOfficialConflicts,
   getPersonTimeline,
   getPersonDeclarations,
@@ -8,6 +9,7 @@ import {
 } from '@sigma/db';
 import { layoutTies } from './tie-layout.server';
 import type { PersonDeclaration } from '@sigma/api-contract';
+import { personNameKey } from '@sigma/shared';
 
 export async function loadPersonProfile(
   db: D1Database,
@@ -42,9 +44,15 @@ export async function loadPersonProfile(
   const declaredActivity = officialIds.length
     ? await getPersonActivity(db, indent ?? null, officialIds, new URLSearchParams(), 'declaration')
     : null;
+  const name = person?.name ?? cases[0]!.official;
+  // Declarations of one person filed under a changed or differently written name.
+  const aliases = (await getPersonSourceNames(db, officialIds)).filter(
+    (n) => personNameKey(n) !== personNameKey(name),
+  );
   return {
     person,
-    name: person?.name ?? cases[0]!.official,
+    name,
+    aliases,
     links: links.filter((l) => companyEiks.has(l.eik)),
     timeline: {
       ...timeline,

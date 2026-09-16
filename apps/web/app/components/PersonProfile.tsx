@@ -44,7 +44,11 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
               ? 'Декларирани интереси и обществени поръчки на свързаните дружества. Декларациите и регистърните роли са отделни източници — деклариран интерес не означава установено нарушение.'
               : 'Роли в дружества и обществените поръчки, спечелени от тях, по данни от Търговския регистър и ЦАИС ЕОП.'
           }
-        />
+        >
+          {p.aliases.length > 0 && (
+            <p className="muted small">Среща се и като {p.aliases.map(personName).join(', ')}</p>
+          )}
+        </PageHeader>
         <nav className="profile-nav" aria-label="В профила">
           {official && <a href="#declared-overview">Декларирани интереси</a>}
           <a href="#timeline">Времева линия</a>
