@@ -16,6 +16,7 @@ import {
   parseConsortiumMembers,
   signedMoney,
   signedPct,
+  tradeRegisterLegalForm,
   unp,
 } from './format';
 
@@ -181,6 +182,9 @@ describe('parseConsortiumMembers', () => {
 describe('isNaturalPersonProfileName', () => {
   it('detects sole-trader names that embed a natural person', () => {
     expect(isNaturalPersonProfileName('ЕТ ДРИФТ - ИВАН ТЕСТОВ')).toBe(true);
+    expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ET')).toBe(true);
+    expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ФИЗИЧЕСКО ЛИЦЕ')).toBe(true);
+    expect(isNaturalPersonProfileName('ФИРМА', 'EOOD')).toBe(false);
   });
 
   it('does not flag ordinary company names', () => {
@@ -191,6 +195,27 @@ describe('isNaturalPersonProfileName', () => {
     expect(isNaturalPersonProfileName('ET DRIFT')).toBe(true);
     expect(isNaturalPersonProfileName('  ет дрифт  ')).toBe(true); // trims + upcases first
     expect(isNaturalPersonProfileName('ЕТАЖ ООД')).toBe(false); // "ЕТ" without the space is not a prefix
+  });
+});
+
+describe('tradeRegisterLegalForm', () => {
+  it('finds the commercial legal form a trader carries in its name', () => {
+    expect(tradeRegisterLegalForm('МЕТРОПОЛИТЕН ЕАД')).toBe('ЕАД');
+    expect(tradeRegisterLegalForm('"СОФИЙСКА ВОДА" АД')).toBe('АД');
+    expect(tradeRegisterLegalForm('В и К ООД')).toBe('ООД');
+    expect(tradeRegisterLegalForm('БОЛНИЦА - ВАРНА ЕООД, гр. Варна')).toBe('ЕООД');
+    expect(tradeRegisterLegalForm('ФОНД ИМОТИ АДСИЦ')).toBe('АДСИЦ');
+  });
+
+  it('finds nothing in a public body registered only in БУЛСТАТ', () => {
+    expect(tradeRegisterLegalForm('ОБЩИНА ВАРНА')).toBeNull();
+    expect(tradeRegisterLegalForm('МИНИСТЕРСТВО НА ЗДРАВЕОПАЗВАНЕТО')).toBeNull();
+    expect(tradeRegisterLegalForm('ОСНОВНО УЧИЛИЩЕ "ХРИСТО БОТЕВ"')).toBeNull();
+  });
+
+  it('does not read a form out of the middle of a word', () => {
+    expect(tradeRegisterLegalForm('АДМИНИСТРАЦИЯ НА ПРЕЗИДЕНТА')).toBeNull();
+    expect(tradeRegisterLegalForm('ПЛОВДИВ ЕАДЖ')).toBeNull();
   });
 });
 

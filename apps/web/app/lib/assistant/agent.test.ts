@@ -110,3 +110,35 @@ describe('runAssistant (SDK wiring)', () => {
     expect(Array.isArray(r.errors)).toBe(true);
   });
 });
+
+describe('runAssistant — the emit_report tool', () => {
+  it('returns the report bound to this turn’s results', async () => {
+    streamTextMock.mockReturnValue({ toUIMessageStreamResponse: () => new Response('') });
+    const results = [{ handle: 'R1', columns: ['total_eur'], rows: [[2124567]] }];
+    await runAssistant({
+      env: { BGGPT_API_KEY: 'k' },
+      ctx: { db: fakeD1([]).db, results, userQuestion: 'колко общо?' },
+      messages: [],
+    });
+    const tools = streamTextMock.mock.calls.at(-1)![0].tools;
+    const r = await tools.emit_report.execute({
+      title: 'Общо',
+      question: 'ехо от модела',
+      blocks: [
+        {
+          type: 'totals',
+          items: [
+            { label: 'Общо', ref: { resultId: 'R1', row: 0, col: 'total_eur' }, format: 'money' },
+          ],
+        },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.errors).toBeUndefined();
+    expect(r.report).toMatchObject({
+      title: 'Общо',
+      question: 'колко общо?',
+      blocks: [{ type: 'totals', items: [{ label: 'Общо', value: 2124567, format: 'money' }] }],
+    });
+  });
+});

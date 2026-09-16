@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { fakeD1, throwingD1, type FakeD1Call } from '@sigma/test-support';
 import {
+  AUTHORITY_CONFLICTS_SQL,
+  AUTHORITY_LEADERBOARD_SQL,
   EIK_CONTRACTS_SQL,
   LINK_CONTRACTS_SQL,
+  getAuthorityConflictSummary,
   getCompanyConflicts,
+  getPersonRedirect,
   isMissingConflictTableError,
   getConflictLeaderboard,
   getLinkContracts,
@@ -65,6 +69,7 @@ function fakeDb(byKey: Record<string, unknown[]>): D1Database & { calls: FakeD1C
       return byKey[`contracts:${String(call.binds[0])}`] ?? [];
     };
   const fake = fakeD1([
+    { when: 'SELECT d.id, d.declared_year', all: [] },
     { when: EIK_CONTRACTS_SQL, all: contracts(EIK_CONTRACTS_SQL) },
     { when: LINK_CONTRACTS_SQL, all: contracts(LINK_CONTRACTS_SQL) },
     { when: 'FROM interest_links il', all: (call) => byKey[String(call.binds[0])] ?? [] },
@@ -357,5 +362,85 @@ describe('registry_role is narrowed to the two rungs the card can render', () =>
       const db = fakeDb({ '10': [row({ registry_role: role })] });
       expect((await getConflictLeaderboard(db, 10))[0]!.registryRole).toBeNull();
     }
+  });
+});
+
+describe('getAuthorityConflictSummary', () => {
+  it('counts the surfaced winners of one body, the own-institution ones apart', async () => {
+    const { db, calls } = fakeD1([
+      { when: AUTHORITY_CONFLICTS_SQL, first: { companies: 3, own_companies: 1 } },
+    ]);
+    expect(await getAuthorityConflictSummary(db, 'auth:1')).toEqual({
+      companies: 3,
+      ownCompanies: 1,
+    });
+    expect(calls[0]!.binds).toEqual(['auth:1']);
+  });
+
+  it('reads zero when the body has none', async () => {
+    const { db } = fakeD1([
+      { when: AUTHORITY_CONFLICTS_SQL, first: { companies: null, own_companies: null } },
+    ]);
+    expect(await getAuthorityConflictSummary(db, 'auth:1')).toEqual({
+      companies: 0,
+      ownCompanies: 0,
+    });
+  });
+
+  it('degrades to zero where the свързани-лица tables are absent, and rethrows anything else', async () => {
+    const missing = throwingD1(new Error('D1_ERROR: no such table: interest_link_authorities'));
+    expect(await getAuthorityConflictSummary(missing.db, 'auth:1')).toEqual({
+      companies: 0,
+      ownCompanies: 0,
+    });
+    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
+    await expect(getAuthorityConflictSummary(boom.db, 'auth:1')).rejects.toThrow(/syntax error/);
+  });
+});
+
+describe('getConflictLeaderboard — narrowed to one awarding body', () => {
+  it('binds the body before the limit, and only when asked to narrow', async () => {
+    const { db, calls } = fakeD1([{ when: 'FROM interest_links il', all: [] }]);
+    await getConflictLeaderboard(db, 10, 'auth:1');
+    await getConflictLeaderboard(db, 10);
+    expect(calls[0]!.sql).toBe(AUTHORITY_LEADERBOARD_SQL);
+    expect(calls[0]!.binds).toEqual(['auth:1', 10]);
+    expect(calls[1]!.binds).toEqual([10]);
+  });
+});
+
+describe('getPersonRedirect', () => {
+  it('names the id an old official id became, and null when it became none', async () => {
+    const moved = fakeD1([{ when: 'FROM person_redirects', first: { new_id: 'person:new' } }]);
+    expect(await getPersonRedirect(moved.db, 'person:old')).toBe('person:new');
+    expect(moved.calls[0]!.binds).toEqual(['person:old']);
+    const stayed = fakeD1([{ when: 'FROM person_redirects', first: null }]);
+    expect(await getPersonRedirect(stayed.db, 'person:x')).toBeNull();
+  });
+
+  it('is a 404, not a 500, where the table is not there yet — and rethrows anything else', async () => {
+    const missing = throwingD1(
+      new Error('D1_ERROR: no such table: person_redirects: SQLITE_ERROR'),
+    );
+    expect(await getPersonRedirect(missing.db, 'person:old')).toBeNull();
+    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
+    await expect(getPersonRedirect(boom.db, 'person:old')).rejects.toThrow(/syntax error/);
+  });
+});
+
+describe('the official’s role and the filing on a link', () => {
+  it('carries the position and the filing year through, and reads an empty position as none', async () => {
+    const { db } = fakeD1([
+      {
+        when: 'FROM interest_links il',
+        all: [
+          row({ link_key: 'a|1', position: 'Кмет', source_year: '2023' }),
+          row({ link_key: 'b|2', position: '', source_year: null }),
+        ],
+      },
+    ]);
+    const [a, b] = await getConflictLeaderboard(db, 10);
+    expect([a!.position, a!.sourceYear]).toEqual(['Кмет', '2023']);
+    expect([b!.position, b!.sourceYear]).toEqual([null, null]);
   });
 });

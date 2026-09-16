@@ -266,3 +266,16 @@ export function streamAuthoritiesCsv(db: D1Database, p: AuthorityListParams): Re
     },
   });
 }
+
+/** An institution's name by id — for a page about something else that only needs to say whose it is (the
+ *  /conflicts list narrowed to one body). Null when the id names no institution. */
+export async function getAuthorityName(
+  db: D1Database,
+  authorityId: string,
+): Promise<string | null> {
+  const r = await db
+    .prepare('SELECT name FROM authorities WHERE id = ?')
+    .bind(authorityId)
+    .first<{ name: string }>();
+  return r?.name ?? null;
+}

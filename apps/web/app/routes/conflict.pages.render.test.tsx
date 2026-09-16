@@ -1,3 +1,4 @@
+import { emptyActivity } from '../lib/person-profile.test-support';
 // @vitest-environment jsdom
 // Deep render tests for the per-entity conflict pages (official, company) and the static methodology page.
 // Each is mounted as a real route through createRoutesStub so ConflictDetail/Link resolve, and the
@@ -10,7 +11,7 @@ import { act, type ComponentType } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRoutesStub } from 'react-router';
-import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import type { ConflictContract, ConflictLink, PersonDeclaration } from '@sigma/api-contract';
 import ConflictOfficial, { meta as officialMeta } from './conflict.official';
 import ConflictCompany, { meta as companyMeta } from './conflict.company';
 import ConflictMethodology from './conflict.methodology';
@@ -44,6 +45,8 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     registryEntryNumber: '20110502101007',
     registryEntryDate: '2011-05-02',
     registryLookupDate: '2026-08-05',
+    position: null,
+    sourceYear: null,
     ...over,
   };
 }
@@ -78,6 +81,48 @@ afterEach(() => {
 });
 
 async function mount(Component: ComponentType<{ loaderData: never }>, loaderData: unknown) {
+  if (Component === (ConflictOfficial as unknown)) {
+    const d = loaderData as {
+      official: string;
+      links: ConflictLink[];
+      contracts?: Record<string, ConflictContract[]>;
+      declarations?: PersonDeclaration[];
+    };
+    loaderData = {
+      ...d,
+      name: d.official,
+      person: null,
+      timeline: {
+        contracts: Object.entries(d.contracts ?? {}).flatMap(([eik, rows]) =>
+          rows.map((c) => ({
+            eik,
+            company: d.links.find((l) => l.eik === eik)?.company ?? eik,
+            year: c.signedAt?.slice(0, 4) ?? null,
+            contracts: 1,
+            eligible: c.temporal === 'contemporaneous' ? 1 : 0,
+            role: 0,
+            declared: c.temporal === 'contemporaneous' ? 1 : 0,
+            valueEur: c.amountEur,
+          })),
+        ),
+        observations: [],
+        reads: [],
+        buyers: [],
+        institutionProfiles: [],
+      },
+      declarations: d.declarations ?? [],
+      tieLayout: null,
+      activity: emptyActivity,
+      totals: {
+        companies: new Set(d.links.map((l) => l.eik)).size,
+        contracts: 0,
+        valueEur: null,
+        declaredCount: 0,
+        declaredEur: null,
+      },
+      contracts: d.contracts ?? {},
+    };
+  }
   const Stub = createRoutesStub([
     {
       path: '/x',
@@ -99,7 +144,57 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
 }
 const text = () => container.textContent ?? '';
 
+/**
+ * One link's detail block. It used to be `<article class="conflict-detail">` — a card idiom no other page
+ * had; it is now a plain `<Section>`, identified by the `link-<n>-<ЕИК>` id its heading
+ * carries. Throwing on a miss keeps the assertions below honest: a null block would make every
+ * `not.toContain` pass vacuously.
+ */
+function detailBlock(): HTMLElement {
+  const el = container.querySelector('section[aria-labelledby^="link-"]');
+  if (!el) throw new Error('no detail <Section> rendered');
+  return el as HTMLElement;
+}
+
 describe('/conflicts/official/:id — render', () => {
+  it('puts distinct declared institutions, positions and observed years above the source documents', async () => {
+    const declaration = (
+      institution: string,
+      position: string,
+      year: string,
+    ): PersonDeclaration => ({
+      id: year,
+      year,
+      institution,
+      position,
+      template: 'assets',
+      type: 'Annualy',
+      declaredOn: null,
+      submittedOn: null,
+      url: `https://example.test/${year}`,
+      companyEiks: ['111'],
+    });
+    await mount(ConflictOfficial as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      declarations: [
+        declaration('Община Русе', 'Съветник', '2019'),
+        declaration('Народно събрание', 'Народен представител', '2025'),
+      ],
+    });
+    const institutions = container.querySelector('#timeline')!.closest('section')!;
+    expect(institutions.textContent).toContain('Община Русе');
+    expect(institutions.textContent).toContain('Съветник');
+    expect(institutions.textContent).toContain('2019');
+    expect(institutions.textContent).toContain('Народно събрание');
+    expect(institutions.textContent).toContain('Народен представител');
+    expect(institutions.textContent).toContain('2025');
+    expect(institutions.textContent).toContain('не установява точен мандат');
+    expect(
+      institutions.compareDocumentPosition(container.querySelector('#declarations')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
       linkKey: 'k1',
@@ -115,18 +210,17 @@ describe('/conflicts/official/:id — render', () => {
     });
     expect(text()).toContain('Кмет Тестов'); // page header names the official
     expect(text()).toContain('ЕВРОСТРОЙ 21 ЕООД'); // the winner heads the block
-    expect(text()).toContain('деклариран дял на свързано лице'); // family label
+    expect(text().toLowerCase()).toContain('декларирало дял на свързано лице'); // family label
     // each detail block heads by the company with a link to its spending profile + its ЕИК
-    const block = container.querySelector('.conflict-detail')!;
+    const block = container.querySelector('.person-time-company')!;
     const profile = block.querySelector('a[href="/companies/333"]');
     expect(profile).not.toBeNull();
-    expect(block.textContent).toContain('ЕИК'); // ЕИК sub-label present in the block
-    expect(block.textContent).toContain('333');
+    expect(container.querySelector('[id=holdings]')).toBeNull();
     // the official is the page's subject (PageHeader) and is NOT repeated as a link inside a block
     expect(block.textContent).not.toContain('Кмет Тестов');
   });
 
-  it('renders the rich detail EAGERLY — timeline, per-authority shares, contract split — no expand click', async () => {
+  it('keeps the timeline visible and sends company contracts to the one common list', async () => {
     const l = link({ linkKey: 'k1', company: 'ЕВРОСТРОЙ 21 ЕООД', eik: '333' });
     await mount(ConflictOfficial as never, {
       official: 'Кмет Тестов',
@@ -145,17 +239,14 @@ describe('/conflicts/official/:id — render', () => {
       },
     });
     const t = text();
-    // timeline heading + the per-authority share section, both from the eagerly-loaded contracts
-    expect(t).toContain('Времева ос');
-    expect(t).toContain('Дял при възложителите');
-    // contracts split in/out the declared period — the in-window heading is present with no toggle
-    expect(t).toContain('Договори, сключени в декларирания период');
-    expect(t).toContain('Извън периода');
-    // no expand affordance survives — the detail is inlined, not behind a „Виж договорите" button
+    expect(t).toContain('Участия и договори');
+    expect(t).toContain('Договори по свързаните дружества');
+    expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain(
+      '/x?company=333&basis=matched&year=2021#contract-filters',
+    );
+    expect(container.querySelector('.person-time-company a[href*="/contracts/"]')).toBeNull();
+    expect(t).not.toContain('Дял при възложителите');
     expect(container.querySelector('.cc-toggle')).toBeNull();
-    expect(t).not.toContain('Виж договорите');
-    // a contract is actually listed (its number links to the contract page)
-    expect(container.querySelector('a[href*="/contracts/"]')).not.toBeNull();
   });
 
   it('a family-only page never asserts the official owns the stake (§2.6)', async () => {
@@ -168,8 +259,12 @@ describe('/conflicts/official/:id — render', () => {
       ],
       contracts: {},
     });
-    expect(text()).not.toContain('собствен дял');
-    expect(text()).toContain('деклариран дял на свързано лице');
+    expect(container.querySelector('#declared-overview')?.textContent).not.toContain(
+      'собствен дял',
+    );
+    const overview = container.querySelector('#declared-overview')!.closest('section')!;
+    expect(overview.textContent).not.toContain('собствен дял');
+    expect(overview.textContent).toContain('декларирало дял на свързано лице');
   });
 
   it('an own-stake page still says so — the wording is family-AWARE, not family-blind', async () => {
@@ -190,14 +285,14 @@ describe('/conflicts/official/:id — render', () => {
       contracts: {},
     });
     const t = text();
-    expect(t).toContain('Източник и обхват'); // the callout heading is preserved
-    expect(t).toContain('деклариран дял — собствен или на свързано лице'); // corrected ADR-0032 copy
-    expect(t).toContain('името на близкия не се показва'); // relative never named
+    expect(t).toContain('Декларирани интереси');
+    expect(t).toContain('декларирало собствен дял');
+    expect(t).toContain('без името на близкия');
   });
 
   it('meta() names the person in the title and marks the page noindex', () => {
     const tags = officialMeta({
-      data: { official: 'Иван Петров', links: [], contracts: {} },
+      data: { name: 'ИВАН ПЕТРОВ', links: [], contracts: {} },
       matches: [],
       params: { id: 'aXZhbg' },
     } as never);
@@ -230,7 +325,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   const official = 'Кмет Тестов';
 
   it('renders the registry fact the link rests on, so the block explains itself', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'document', registryRole: 'owner' })],
       contracts: {},
@@ -247,7 +344,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   it('omits the entry number rather than printing an empty „· №" when there is none', async () => {
     // POSITIVE CONTROL for the row's shape: a confirmed link (seat/ЕИК) has no act entry to cite, so the label
     // must be absent entirely — not „· №" with nothing after it, which reads as missing data.
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [
         link({
@@ -265,13 +364,15 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
   });
 
   it('a seat/ЕИК confirmation never implies somebody was found in the act', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', evidenceKind: 'confirmed', registryRole: null })],
       contracts: {},
     });
     const t = text();
-    expect(t).toContain('самоличност, потвърдена по декларирани данни');
+    expect(t).toContain('дружеството е потвърдено по декларирани данни');
     expect(t).not.toContain('вписано като');
   });
 
@@ -280,7 +381,9 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
     // can only be confirmed/registryRole:null. „вписано като съдружник/собственик" here would assert that the
     // named official is recorded as an owner of this company — a false, named, libel-shaped claim on the one
     // block whose whole design keeps the stakeholder anonymous (ADR-0030/0032).
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [
         link({
@@ -293,14 +396,16 @@ describe('Trade Register evidence on the detail page (#279, ADR-0033)', () => {
       ],
       contracts: {},
     });
-    const block = container.querySelector('.conflict-detail')!;
+    const block = detailBlock();
     expect(block.textContent).toContain('деклариран дял на свързано лице');
-    expect(block.textContent).toContain('самоличност, потвърдена по декларирани данни');
+    expect(block.textContent).toContain('дружеството е потвърдено по декларирани данни');
     expect(block.textContent).not.toContain('вписано като');
   });
 
   it('links out to the register so a reader can check the same act we read', async () => {
-    await mount(ConflictOfficial as never, {
+    await mount(ConflictCompany as never, {
+      company: 'Тестова компания',
+      eik: '111',
       official,
       links: [link({ linkKey: 'k1', eik: '201122335' })],
       contracts: {},
@@ -331,7 +436,7 @@ describe('/conflicts/company/:eik — render', () => {
     expect(text()).toContain('111'); // ЕИК in the header
     expect(text()).toContain('Иван Петров'); // an official heads a block
     expect(text()).toContain('Втори Официал');
-    const block = container.querySelector('.conflict-detail')!;
+    const block = detailBlock();
     // block heads by the official, linking to their conflicts page, with the institution sub-label
     expect(block.querySelector('a[href="/conflicts/official/aXZhbg"]')).not.toBeNull();
     expect(block.textContent).toContain('Община Тест'); // institution sub-label
@@ -397,9 +502,9 @@ describe('/conflicts/methodology — render', () => {
     // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
     expect(t).toContain('Акционерна форма');
     expect(t).toContain('не е публична');
-    // rung 2 — all three names, one record, and the two refusals
+    // rung 2 — all three names, one registered person, and the two refusals
     expect(t).toContain('пълно съвпадение и на трите имена');
-    expect(t).toContain('един и същ запис');
+    expect(t).toContain('едно и също вписано лице');
     // ADR-0035 — the company gate, the part a reader most needs to judge the claim
     expect(t).toContain('Съвпадението по име само по себе си не стига');
     // R10 — the seat's temporal guard, both halves

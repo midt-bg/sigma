@@ -85,7 +85,10 @@ beforeAll(async () => {
   worker = ((await import('./app')) as { default: typeof worker }).default;
 });
 
-beforeEach(() => fakeCache.store.clear());
+beforeEach(() => {
+  fakeCache.store.clear();
+  vi.stubEnv('DEV', false);
+});
 
 async function get(url: string) {
   const waits: Promise<unknown>[] = [];
@@ -100,6 +103,12 @@ async function get(url: string) {
 }
 
 describe('app.ts edge cache middleware', () => {
+  it('bypasses persisted edge responses in local development across reloads', async () => {
+    vi.stubEnv('DEV', true);
+    expect((await get('https://x/contracts')).edge).toBe('BYPASS');
+    expect((await get('https://x/contracts')).edge).toBe('BYPASS');
+    expect(fakeCache.store.size).toBe(0);
+  });
   it('caches per response — a repeated GET HITs', async () => {
     expect((await get('https://x/contracts')).edge).toBe('MISS');
     expect((await get('https://x/contracts')).edge).toBe('HIT');

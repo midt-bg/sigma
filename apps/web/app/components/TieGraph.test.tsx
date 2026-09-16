@@ -1,0 +1,341 @@
+// @vitest-environment jsdom
+// The company tie graph, drawn from its server-side layout. Two things are load-bearing and both are
+// pinned here (the layout itself is pinned in lib/tie-layout.server.test.ts):
+//
+//  1. The EDGE carries the meaning. Unlike the money graph, where every edge means the same thing, here a
+//     solid line and a dotted one are different claims — so each kind must reach the DOM as its own class
+//     and its own written label, and a declared-stake tie must not be sized by money it does not have.
+//  2. A declared-stake office-holder is never a node: that tie is drawn between the two COMPANIES and links
+//     to /conflicts. A person the Trade Register records in a role is a node of its own — a rounded box that
+//     links to the person's page and is never labelled with a sum (ADR-0039).
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { createRoutesStub } from 'react-router';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CompanyTieNetwork } from '@sigma/api-contract';
+import { layoutTies } from '../lib/tie-layout.server';
+import { TieGraph, tieDescription } from './TieGraph';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let container: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
+
+const node = (over: Partial<CompanyTieNetwork['nodes'][number]> = {}) => ({
+  id: 'eik:1',
+  kind: 'company' as const,
+  label: 'АЛФА СТРОЙ АД',
+  slug: '1',
+  valueEur: 100,
+  hop: 0,
+  conflictsHref: null,
+  ...over,
+});
+
+const base: CompanyTieNetwork = {
+  center: node(),
+  nodes: [node(), node({ id: 'eik:2', slug: '2', label: 'БЕТА ИНЖЕНЕРИНГ АД', hop: 1 })],
+  edges: [
+    {
+      from: 'eik:1',
+      to: 'eik:2',
+      kind: 'consortium',
+      directed: false,
+      weightEur: 900,
+      occurrences: 3,
+      href: null,
+    },
+  ],
+  omitted: 0,
+};
+
+const person: CompanyTieNetwork['nodes'][number] = {
+  id: 'rp:ab',
+  kind: 'person',
+  label: 'АННА ПЕТРОВА',
+  slug: 'ab',
+  valueEur: 0,
+  hop: 1,
+  conflictsHref: null,
+};
+const roleTie = (
+  over: Partial<CompanyTieNetwork['edges'][number]> = {},
+): CompanyTieNetwork['edges'][number] => ({
+  from: 'rp:ab',
+  to: 'eik:1',
+  kind: 'role',
+  directed: false,
+  weightEur: 0,
+  occurrences: 2,
+  href: null,
+  roles: ['manager', 'partner'],
+  current: true,
+  ...over,
+});
+
+function render(data: CompanyTieNetwork) {
+  const layout = layoutTies(data);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <TieGraph layout={layout} /> },
+    { path: '/companies/:slug', Component: () => null },
+    { path: '/authorities/:slug', Component: () => null },
+    { path: '/persons/:slug', Component: () => null },
+  ]);
+  act(() => {
+    root.render(<Stub initialEntries={['/']} />);
+  });
+  return container;
+}
+
+describe('TieGraph', () => {
+  it('gives each tie kind its own class and its own written label', () => {
+    const c = render({
+      ...base,
+      nodes: [...base.nodes, node({ id: 'eik:3', slug: '3', label: 'ГАМА ООД', hop: 1 })],
+      edges: [
+        ...base.edges,
+        {
+          from: 'eik:1',
+          to: 'eik:3',
+          kind: 'subcontract',
+          directed: true,
+          weightEur: 500,
+          occurrences: 1,
+          href: null,
+        },
+      ],
+    });
+    expect(c.querySelector('.tie-edge.tie-consortium')).not.toBeNull();
+    expect(c.querySelector('.tie-edge.tie-subcontract')).not.toBeNull();
+    const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);
+    expect(labels).toEqual(['съвместно изпълнение', 'подизпълнител']);
+  });
+
+  it('marks a directed tie with an arrow and leaves a symmetric one unmarked', () => {
+    const c = render({
+      ...base,
+      edges: [{ ...base.edges[0]!, kind: 'subcontract', directed: true }],
+    });
+    expect(c.querySelector('.tie-subcontract')?.getAttribute('marker-end')).toContain('tie-arrow');
+    const sym = render(base);
+    expect(sym.querySelector('.tie-consortium')?.getAttribute('marker-end')).toBeNull();
+  });
+
+  it('does not draw a declared-stake tie thinner just because it carries no money', () => {
+    // Sized by money it would be the faintest line on the page — the one edge that rests on a declared
+    // interest would read as the weakest, which is the opposite of what it is.
+    const c = render({
+      ...base,
+      edges: [
+        { ...base.edges[0]!, weightEur: 1_000_000 },
+        {
+          from: 'eik:1',
+          to: 'eik:2',
+          kind: 'declared_stake',
+          directed: false,
+          weightEur: 0,
+          occurrences: 1,
+          href: '/conflicts/company/1',
+        },
+      ],
+    });
+    const width = (sel: string) =>
+      Number.parseFloat((c.querySelector(sel) as SVGElement).style.strokeWidth);
+    expect(width('.tie-declared_stake')).toBeGreaterThan(1);
+  });
+
+  it('links every company and institution to its profile', () => {
+    const c = render({
+      ...base,
+      nodes: [
+        ...base.nodes,
+        node({ id: 'auth:9', kind: 'authority', slug: '9', label: 'ОБЩИНА ТЕСТОВО', hop: 1 }),
+      ],
+      edges: [
+        ...base.edges,
+        {
+          from: 'auth:9',
+          to: 'eik:1',
+          kind: 'money',
+          directed: true,
+          weightEur: 700,
+          occurrences: 0,
+          href: null,
+        },
+      ],
+    });
+    const hrefs = [...c.querySelectorAll('a.tie-node-link')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['/companies/1', '/companies/2', '/authorities/9']);
+  });
+
+  it('draws a person the register records as a rounded box that links to their page, never with a sum', () => {
+    const c = render({
+      ...base,
+      nodes: [...base.nodes, person],
+      edges: [...base.edges, roleTie()],
+    });
+    const link = c.querySelector('a.tie-node-link[href="/persons/ab"]')!;
+    expect(link.getAttribute('aria-label')).toBe('Анна Петрова — лице');
+    expect(link.querySelector('title')!.textContent).toBe('Анна Петрова');
+    expect(link.querySelector('.tie-node-label')!.textContent).toBe('Анна Петрова');
+    expect(c.querySelector('a[href="/companies/1"] .tie-node-label')!.textContent).toBe(
+      'АЛФА СТРОЙ АД',
+    );
+    expect(person.label).toBe('АННА ПЕТРОВА');
+    expect(link.querySelector('rect')!.classList.contains('tie-node-person')).toBe(true);
+    expect(c.querySelector('.tie-edge.tie-role')).not.toBeNull();
+    const labels = [...c.querySelectorAll('.tie-edge-label')].map((t) => t.textContent);
+    expect(labels).toContain('управител и съдружник');
+  });
+
+  it('fades a role that has ended, and says so in the legend', () => {
+    const c = render({
+      ...base,
+      nodes: [...base.nodes, person],
+      edges: [roleTie({ current: false })],
+    });
+    expect(c.querySelector('.tie-role.tie-past')).not.toBeNull();
+    const legend = [...c.querySelectorAll('.tie-legend li')].map((l) => l.textContent?.trim());
+    expect(legend).toEqual(['роля по Търговския регистър', 'прекратена роля']);
+  });
+
+  it('is a group of links, not one image — role="img" would hide the nodes', () => {
+    const svg = render(base).querySelector('svg')!;
+    expect(svg.getAttribute('role')).toBe('group');
+    expect(svg.getAttribute('aria-label')).toContain('АЛФА СТРОЙ АД');
+  });
+
+  it('names every box inside it, the centre included', () => {
+    const labels = [...render(base).querySelectorAll('text.tie-node-label')].map(
+      (t) => t.textContent,
+    );
+    expect(labels).toEqual(['АЛФА СТРОЙ АД', 'БЕТА ИНЖЕНЕРИНГ АД']);
+  });
+
+  it('lists only the tie kinds actually drawn', () => {
+    const legend = [...render(base).querySelectorAll('.tie-legend li')].map((l) =>
+      l.textContent?.trim(),
+    );
+    expect(legend).toEqual(['съвместно изпълнение']);
+  });
+
+  it('gives the full name to a reader even where the box cuts it', () => {
+    const long = 'ОБЕДИНЕНИЕ С МНОГО ДЪЛГО ИМЕ, КОЕТО НЯМА ДА СЕ ПОБЕРЕ В НИТО ЕДНА КУТИЯ';
+    const c = render({
+      ...base,
+      nodes: [node(), node({ id: 'eik:2', slug: '2', label: long, hop: 1 })],
+    });
+    const link = [...c.querySelectorAll('a.tie-node-link')][1]!;
+    expect(link.querySelector('text')!.textContent).toContain('…');
+    expect(link.getAttribute('aria-label')).toContain(long);
+  });
+
+  it('renders nothing without a centre or with a lone node', () => {
+    expect(render({ ...base, center: null }).querySelector('svg')).toBeNull();
+    expect(render({ ...base, nodes: [node()] }).querySelector('svg')).toBeNull();
+  });
+});
+
+describe('tieDescription', () => {
+  const e = (over: Partial<CompanyTieNetwork['edges'][number]>) => ({ ...base.edges[0]!, ...over });
+
+  it('says how often a tie recurs, and drops the count when it happened once', () => {
+    expect(tieDescription(e({ occurrences: 3 }))).toContain('3');
+    expect(tieDescription(e({ occurrences: 1 }))).not.toContain('1 пъти');
+  });
+
+  it('describes a stake tie without a sum, and by how many officials back it', () => {
+    expect(tieDescription(e({ kind: 'declared_stake', weightEur: 0, occurrences: 1 }))).toBe(
+      'общо свързано лице',
+    );
+    expect(tieDescription(e({ kind: 'declared_stake', weightEur: 0, occurrences: 2 }))).toContain(
+      'лица',
+    );
+  });
+
+  it('describes the money layer as a payment', () => {
+    expect(tieDescription(e({ kind: 'money', weightEur: 1000 }))).toContain('плаща');
+  });
+
+  it('describes a role tie by its roles, and as past once they all ended', () => {
+    expect(tieDescription(roleTie())).toBe('управител и съдружник');
+    expect(tieDescription(roleTie({ roles: ['manager'], current: false }))).toBe('бивш управител');
+  });
+});
+
+describe('TieGraph — the office-holders behind a declared-stake tie', () => {
+  const ivan = { id: 'p1', name: 'ИВАН ПЕТРОВ', href: '/conflicts/official/p1' };
+  const maria = { id: 'p2', name: 'МАРИЯ ИВАНОВА', href: '/conflicts/official/p2' };
+  const stake = (people: (typeof ivan)[]): CompanyTieNetwork['edges'][number] => ({
+    from: 'eik:1',
+    to: 'eik:2',
+    kind: 'declared_stake',
+    directed: false,
+    weightEur: 0,
+    occurrences: people.length,
+    href: '/conflicts/company/1',
+    people,
+  });
+  const evidence = (c: HTMLElement) =>
+    [...c.querySelectorAll('.graph-evidence li')].map((li) => ({
+      text: li.textContent,
+      links: [...li.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]),
+    }));
+
+  it('writes the one shared declarant on the tie and links their page under the graph', () => {
+    const c = render({ ...base, edges: [stake([ivan])] });
+    expect(c.querySelector('.tie-edge-label')!.textContent).toBe('Иван Петров');
+    expect(c.querySelector('.tie-declared_stake title')!.textContent).toBe(
+      'Общ деклариран интерес: Иван Петров',
+    );
+    expect(c.querySelector('.graph-evidence p')!.textContent).toBe(
+      'Общи декларатори — източници и профили:',
+    );
+    expect(evidence(c)).toEqual([
+      {
+        text: 'АЛФА СТРОЙ АД · БЕТА ИНЖЕНЕРИНГ АД: Иван Петров',
+        links: [['Иван Петров', '/conflicts/official/p1']],
+      },
+    ]);
+  });
+
+  it('counts several shared declarants on the tie and lists every one of them', () => {
+    const c = render({ ...base, edges: [stake([ivan, maria])] });
+    expect(c.querySelector('.tie-edge-label')!.textContent).toBe('2 общи декларатори');
+    expect(c.querySelector('.tie-declared_stake title')!.textContent).toBe(
+      'Общ деклариран интерес: Иван Петров, Мария Иванова',
+    );
+    expect(evidence(c)).toEqual([
+      {
+        text: 'АЛФА СТРОЙ АД · БЕТА ИНЖЕНЕРИНГ АД: Иван Петров; Мария Иванова',
+        links: [
+          ['Иван Петров', '/conflicts/official/p1'],
+          ['Мария Иванова', '/conflicts/official/p2'],
+        ],
+      },
+    ]);
+  });
+
+  it('adds no evidence list when no tie names its declarants', () => {
+    expect(render(base).querySelector('.graph-evidence')).toBeNull();
+  });
+
+  it('names a graph centred on a person the way their page does', () => {
+    const c = render({
+      center: { ...person, hop: 0 },
+      nodes: [{ ...person, hop: 0 }, node({ hop: 1 })],
+      edges: [roleTie()],
+      omitted: 0,
+    });
+    expect(c.querySelector('svg')!.getAttribute('aria-label')).toBe('Връзки на Анна Петрова');
+  });
+});

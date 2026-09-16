@@ -1,0 +1,25 @@
+import type { PersonActivity } from '@sigma/db';
+export const emptyActivity: PersonActivity = {
+  contracts: [],
+  page: 1,
+  pageSize: 50,
+  total: 0,
+  companyCount: 0,
+  valueEur: null,
+  roleCount: 0,
+  roleEur: null,
+  declaredCount: 0,
+  declaredEur: null,
+  companies: [],
+  authorities: [],
+  years: [],
+  yearOptions: [],
+  filterCounts: {
+    company: { '': 0 },
+    authority: { '': 0 },
+    year: { '': 0 },
+    basis: { all: 0, matched: 0, context: 0, role: 0, declaration: 0, self: 0, family: 0 },
+  },
+  byAuthority: [],
+  filters: { company: '', authority: '', year: '', basis: 'all' },
+};

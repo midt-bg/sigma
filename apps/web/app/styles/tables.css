@@ -27,6 +27,44 @@ thead th {
   text-transform: uppercase;
   white-space: nowrap;
 }
+
+/* The people leaderboard gives its narrative columns most of the room. Its compact numeric headers may
+   wrap to two lines instead of forcing the value columns wider than their contents. */
+@media (min-width: 601px) {
+  .conflicts-people-table table {
+    table-layout: fixed;
+  }
+  .conflicts-people-table th {
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .conflicts-people-table th.num {
+    white-space: normal;
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+  }
+  .conflicts-people-table th:nth-child(1) {
+    width: 4%;
+  }
+  .conflicts-people-table th:nth-child(2) {
+    width: 31%;
+  }
+  .conflicts-people-table th:nth-child(3) {
+    width: 23%;
+  }
+  .conflicts-people-table th:nth-child(4) {
+    width: 10%;
+  }
+  .conflicts-people-table th:nth-child(5) {
+    width: 9%;
+  }
+  .conflicts-people-table th:nth-child(6) {
+    width: 8%;
+  }
+  .conflicts-people-table th:nth-child(7) {
+    width: 15%;
+  }
+}
 thead th:first-child {
   padding-left: var(--s-3);
 }
@@ -259,7 +297,6 @@ td.rank {
     color: var(--ink-soft);
     overflow-wrap: anywhere;
   }
-
   /* Title cell: full-width heading, no label, leaves room for the rank badge */
   .tbl-cards td.cell-title {
     display: block;

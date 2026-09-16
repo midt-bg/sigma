@@ -12,11 +12,14 @@ interface AuthRow {
   last_date: string | null;
 }
 interface CompRow {
+  legal_form?: string;
   bidder_id: string;
   name: string;
   last_date: string | null;
 }
 interface ContractRow {
+  bidder_name?: string;
+  legal_form?: string;
   rid: number;
   id: string;
   signed_at: string | null;
@@ -259,4 +262,37 @@ describe('empty-input terminals', () => {
     expect(xml.match(/<url>/g)).toBeNull();
     expect(xml.endsWith('</urlset>\n')).toBe(true);
   });
+});
+
+it('omits ET profiles and contracts by legal form even without ET in the name', async () => {
+  const db = fakeDb({
+    companies: [
+      { bidder_id: 'eik:111111111', name: 'Иван Петров', legal_form: 'ET', last_date: null },
+      { bidder_id: 'eik:222222222', name: 'Фирма', legal_form: 'EOOD', last_date: null },
+    ],
+    contracts: [
+      {
+        rid: 1,
+        id: 'et-contract',
+        bidder_name: 'Иван Петров',
+        legal_form: 'ET',
+        signed_at: null,
+        published_at: null,
+      },
+      {
+        rid: 2,
+        id: 'company-contract',
+        bidder_name: 'Фирма',
+        legal_form: 'EOOD',
+        signed_at: null,
+        published_at: null,
+      },
+    ],
+  });
+  const companies = await streamCompanySitemap(db, 'https://test').text();
+  expect(companies).not.toContain('111111111');
+  expect(companies).toContain('222222222');
+  const contracts = await streamContractSitemap(db, 'https://test', 1).text();
+  expect(contracts).not.toContain('et-contract');
+  expect(contracts).toContain('company-contract');
 });

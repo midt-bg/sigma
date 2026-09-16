@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { data, Link } from 'react-router';
 import {
   count,
   isNaturalPersonProfileName,
@@ -16,6 +16,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { FactsList } from '../components/FactsList';
 import { Chip, Flag, Section, ExternalEikLink } from '../components/ui';
+import { unverifiedValueNote } from '../lib/contractValue';
 import { RiskIndicators } from '../components/RiskIndicators';
 import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexText';
 import { publicCache } from '../lib/cache';
@@ -93,21 +94,30 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   // sole-trader company profiles (company.tsx) and their exclusion from the sitemap. The contract stays
   // fully public on the site; only search-engine amplification of a named individual + risk label is
   // avoided.
-  if (c && isNaturalPersonProfileName(c.bidder.displayName)) {
+  if (c && isNaturalPersonProfileName(c.bidder.displayName, c.bidder.legalForm)) {
     tags.push({ name: 'robots', content: 'noindex' });
   }
   return tags;
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  const headers = new Headers(loaderHeaders);
+  headers.set('Cache-Control', publicCache(3600));
+  return headers;
 }
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
   const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
-  return { contract };
+  return data(
+    { contract },
+    {
+      headers: isNaturalPersonProfileName(contract.bidder.displayName, contract.bidder.legalForm)
+        ? { 'X-Robots-Tag': 'noindex' }
+        : {},
+    },
+  );
 }
 
 // Coarse cohort bands only (never a fake-precise "топ 4.7%") - @sigma/db cohortBand only claims a
@@ -123,12 +133,16 @@ const COHORT_BAND_LABELS: Record<CohortBand, string> = {
   bottom25: 'сред най-ниските 25% по стойност',
 };
 
-const UNVERIFIED_VALUE_LABEL = 'стойност с непотвърдена достоверност';
-
 export default function Contract({ loaderData }: Route.ComponentProps) {
   const c = loaderData.contract;
   const cohort = c.cohort;
   const v = c.value;
+  // A populated but untrustworthy figure is the dangerous case: it renders exactly like a real one.
+  // `unverifiedValueNote` turns the DTO's verdict into copy that names the specific problem and puts
+  // it on the source, where it belongs.
+  const valueNote = unverifiedValueNote(v);
+  const signingUnverified = valueNote != null && valueNote.scope !== 'current';
+  const currentUnverified = valueNote != null && valueNote.scope !== 'signing';
   const crumbId = c.unp || c.contractNumber || c.id;
   // Direct links to the day's raw ЦАИС ЕОП open-data files (storage.eop.bg) this record was
   // published in — empty when there's no usable publication date.
@@ -199,6 +213,8 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           )}
         </PageHeader>
 
+        <RiskIndicators contract={c} />
+
         <Section
           id="values"
           title="Стойности във времето"
@@ -216,31 +232,47 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             </div>
             <div className="vh">
               <div className="step">При сключване</div>
-              <strong className="num">{v.signingEur != null ? money(v.signingEur) : '—'}</strong>
-              {v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>}
+              <strong className={`num${signingUnverified ? ' num-unverified' : ''}`}>
+                {v.signingEur != null ? money(v.signingEur) : '—'}
+              </strong>
+              {signingUnverified && <div className="value-badge">{valueNote!.badge}</div>}
             </div>
             <div className="vh now">
               <div className="step">Текуща стойност</div>
-              <strong className="num">{v.currentEur != null ? money(v.currentEur) : '—'}</strong>
-              {v.currentValueDoubled ? (
-                <div className="sub suspect">
-                  стойността изглежда двойно отчетена и не се показва
-                </div>
-              ) : (
-                v.suspect && <div className="sub suspect">{UNVERIFIED_VALUE_LABEL}</div>
-              )}
+              <strong className={`num${currentUnverified ? ' num-unverified' : ''}`}>
+                {v.currentEur != null ? money(v.currentEur) : '—'}
+              </strong>
+              {currentUnverified && <div className="value-badge">{valueNote!.badge}</div>}
               {v.deltaPct != null && (
                 <div className="delta">{signedPct(v.deltaPct)} спрямо сключване</div>
               )}
             </div>
           </div>
-          {v.suspect && (
-            <p className="small muted">
-              {v.currentValueDoubled
-                ? 'Текущата стойност изглежда двойно отчетена в източника и затова не се показва. '
-                : 'Показана е публикуваната стойност от източника, без СИГМА да я коригира. '}
-              Виж <Link to="/methodology">методология</Link>.
-            </p>
+          {valueNote && (
+            <div className="value-alert">
+              <h3 className="value-alert-title">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                </svg>
+                {valueNote.title}
+              </h3>
+              <p>{valueNote.headline}</p>
+              <p className="value-alert-source">
+                {valueNote.detail} Виж <Link to="/methodology#flagged">методология</Link>.
+              </p>
+            </div>
           )}
           {c.frameworkAwards != null && (
             <p className="small muted">
@@ -322,6 +354,186 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
             )}
           </Section>
         )}
+
+        {c.lots && c.lots.rows.length > 0 && (
+          <Section
+            id="lots"
+            title="Обособени позиции по преписката"
+            hint={
+              <>
+                Преписка <span className="mono">{c.lots.unp}</span> е разделена на обособени
+                позиции. Връзката договор↔лот е приблизителна — съпоставяме я по идентификатора на
+                позицията (вж. <Link to="/methodology">методология</Link>).
+              </>
+            }
+          >
+            <div className="table-wrap">
+              <table className="lot-table">
+                <caption className="sr-only">Обособени позиции по преписката</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className="col-w-60">
+                      Лот
+                    </th>
+                    <th scope="col">Участък</th>
+                    <th scope="col">Изпълнител</th>
+                    <th scope="col" className="num">
+                      Прогнозна (€)
+                    </th>
+                    <th scope="col" className="num">
+                      При сключване (€)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.lots.rows.map((l) => (
+                    <tr key={l.lotLabel} className={l.isCurrent ? 'current' : undefined}>
+                      <td className="rank">{l.lotLabel}</td>
+                      <td>
+                        {l.isCurrent ? (
+                          <strong>{l.subject}</strong>
+                        ) : l.contractId ? (
+                          <Link to={`/contracts/${l.contractId}`}>{l.subject}</Link>
+                        ) : (
+                          l.subject
+                        )}
+                      </td>
+                      <td>
+                        {l.contractorSlug ? (
+                          l.isCurrent ? (
+                            <strong>{l.contractorName}</strong>
+                          ) : (
+                            <Link to={`/companies/${l.contractorSlug}`}>{l.contractorName}</Link>
+                          )
+                        ) : (
+                          <span className="muted">няма сключен договор</span>
+                        )}
+                      </td>
+                      <td className="money">
+                        {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
+                      </td>
+                      <td className="money">
+                        {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {(c.lots.estimatedTotalEur || c.lots.signedTotalEur) && (
+              <p className="small muted mt-8">
+                {c.lots.estimatedTotalEur && (
+                  <>
+                    Прогнозна стойност на всички лотове:{' '}
+                    <strong>{money(c.lots.estimatedTotalEur)}</strong>.{' '}
+                  </>
+                )}
+                {c.lots.signedTotalEur && (
+                  <>
+                    Сключени договори: <strong>{money(c.lots.signedTotalEur)}</strong> при
+                    подписване.
+                  </>
+                )}
+              </p>
+            )}
+          </Section>
+        )}
+
+        <Section id="facts" title="Подробности">
+          <FactsList
+            rows={[
+              c.contractNumber && {
+                term: 'Номер на договор',
+                value: c.contractNumber,
+                sub: c.documentNumber ? `· документ № ${c.documentNumber}` : undefined,
+              },
+              { term: 'УНП на преписката', value: <span className="mono">{c.unp}</span> },
+              c.lotLabel && { term: 'Обособена позиция', value: c.lotLabel },
+              { term: 'Предмет', value: c.subject },
+              c.contractKind && { term: 'Обект', value: c.contractKind },
+              c.cpvCode && {
+                term: 'CPV',
+                value: (
+                  <>
+                    <span className="mono">{c.cpvCode}</span>
+                    {c.cpvDescription ? ` ${c.cpvDescription}` : ''}
+                  </>
+                ),
+                sub: 'вторичният CPV код не се публикува в източника',
+              },
+              c.sector && { term: 'Сектор', value: c.sector.short },
+              { term: 'Процедура', value: c.procedureLabel },
+              {
+                term: 'Брой оферти',
+                value:
+                  c.bidsReceived != null ? (
+                    count(c.bidsReceived)
+                  ) : (
+                    <span className="muted">не е посочен в данните</span>
+                  ),
+                // Break the gross count down by status/category — surfaces what „Брой оферти" actually
+                // means (it's the gross submitted count, including rejections — see docs/etl.md
+                // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
+                // only appears when the source published a non-zero value, so contracts without any
+                // rejection/SME data fall back to the original „самите оферти…" footnote.
+                sub: bidsBreakdown(c) ?? 'самите оферти и стойностите им ги няма в АОП',
+              },
+              {
+                term: 'Финансиране от ЕС',
+                value:
+                  c.euFunded == null ? (
+                    <span className="muted">няма данни</span>
+                  ) : c.euFunded ? (
+                    <Flag variant="soft">да</Flag>
+                  ) : (
+                    <Flag variant="soft">не</Flag>
+                  ),
+                sub: c.euProgramme ?? undefined,
+              },
+              {
+                term: 'Подписан на',
+                value: c.signedAt ? (
+                  <>
+                    {longDate(c.signedAt)}{' '}
+                    {c.dateSuspect && (
+                      <span className="suspect">
+                        Възможна грешка в датата — договорът е подписан след публикуване на
+                        обявлението
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="muted">липсва</span>
+                ),
+              },
+              {
+                term: 'Публикуван в регистъра',
+                value: c.publishedAt ? (
+                  longDate(c.publishedAt)
+                ) : (
+                  <span className="muted">липсва</span>
+                ),
+              },
+              {
+                term: 'Срок за изпълнение',
+                value:
+                  c.durationDays != null ? (
+                    `${count(c.durationDays)} дни`
+                  ) : (
+                    <span className="muted">липсва за този запис</span>
+                  ),
+              },
+              {
+                term: 'Начална дата',
+                value: c.startDate ? longDate(c.startDate) : <span className="muted">липсва</span>,
+              },
+              {
+                term: 'Очакван край',
+                value: c.endDate ? longDate(c.endDate) : <span className="muted">липсва</span>,
+              },
+            ]}
+          />
+        </Section>
 
         <Section id="who" title="Възложител и изпълнител">
           <div className="two-col">
@@ -415,8 +627,6 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
           </div>
         </Section>
 
-        <RiskIndicators contract={c} />
-
         {cohort && (
           <Section
             id="similar"
@@ -442,193 +652,6 @@ export default function Contract({ loaderData }: Route.ComponentProps) {
                 Виж договорите в сектора →
               </Link>
             </p>
-          </Section>
-        )}
-
-        <Section id="facts" title="Подробности">
-          <FactsList
-            rows={[
-              c.contractNumber && {
-                term: 'Номер на договор',
-                value: c.contractNumber,
-                sub: c.documentNumber ? `· документ № ${c.documentNumber}` : undefined,
-              },
-              { term: 'УНП на преписката', value: <span className="mono">{c.unp}</span> },
-              c.lotLabel && { term: 'Обособена позиция', value: c.lotLabel },
-              { term: 'Предмет', value: c.subject },
-              c.contractKind && { term: 'Обект', value: c.contractKind },
-              c.cpvCode && {
-                term: 'CPV',
-                value: (
-                  <>
-                    <span className="mono">{c.cpvCode}</span>
-                    {c.cpvDescription ? ` ${c.cpvDescription}` : ''}
-                  </>
-                ),
-                sub: 'вторичният CPV код не се публикува в източника',
-              },
-              c.sector && { term: 'Сектор', value: c.sector.short },
-              { term: 'Процедура', value: c.procedureLabel },
-              {
-                term: 'Брой оферти',
-                value:
-                  c.bidsReceived != null ? (
-                    count(c.bidsReceived)
-                  ) : (
-                    <span className="muted">не е посочен в данните</span>
-                  ),
-                // Break the gross count down by status/category — surfaces what „Брой оферти" actually
-                // means (it's the gross submitted count, including rejections — see docs/etl.md
-                // and the staging columns at packages/db/migrations/0000_init.sql:363-365). Each clause
-                // only appears when the source published a non-zero value, so contracts without any
-                // rejection/SME data fall back to the original „самите оферти…" footnote.
-                sub: bidsBreakdown(c) ?? 'самите оферти и стойностите им ги няма в АОП',
-              },
-              {
-                term: 'Финансиране от ЕС',
-                value:
-                  c.euFunded == null ? (
-                    <span className="muted">няма данни</span>
-                  ) : c.euFunded ? (
-                    <Flag variant="soft">да</Flag>
-                  ) : (
-                    <Flag variant="soft">не</Flag>
-                  ),
-                sub: c.euProgramme ?? undefined,
-              },
-            ]}
-          />
-        </Section>
-
-        <Section id="dates" title="Дати и срокове">
-          <FactsList
-            rows={[
-              {
-                term: 'Подписан на',
-                value: c.signedAt ? (
-                  <>
-                    {longDate(c.signedAt)}{' '}
-                    {c.dateSuspect && (
-                      <span className="suspect">
-                        Възможна грешка в датата — договорът е подписан след публикуване на
-                        обявлението
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="muted">липсва</span>
-                ),
-              },
-              {
-                term: 'Публикуван в регистъра',
-                value: c.publishedAt ? (
-                  longDate(c.publishedAt)
-                ) : (
-                  <span className="muted">липсва</span>
-                ),
-              },
-              {
-                term: 'Срок за изпълнение',
-                value:
-                  c.durationDays != null ? (
-                    `${count(c.durationDays)} дни`
-                  ) : (
-                    <span className="muted">липсва за този запис</span>
-                  ),
-              },
-              {
-                term: 'Начална дата',
-                value: c.startDate ? longDate(c.startDate) : <span className="muted">липсва</span>,
-              },
-              {
-                term: 'Очакван край',
-                value: c.endDate ? longDate(c.endDate) : <span className="muted">липсва</span>,
-              },
-            ]}
-          />
-        </Section>
-
-        {c.lots && c.lots.rows.length > 0 && (
-          <Section
-            id="lots"
-            title="Обособени позиции по преписката"
-            hint={
-              <>
-                Преписка <span className="mono">{c.lots.unp}</span> е разделена на обособени
-                позиции. Връзката договор↔лот е приблизителна — съпоставяме я по идентификатора на
-                позицията (вж. <Link to="/methodology">методология</Link>).
-              </>
-            }
-          >
-            <div className="table-wrap">
-              <table className="lot-table">
-                <caption className="sr-only">Обособени позиции по преписката</caption>
-                <thead>
-                  <tr>
-                    <th scope="col" className="col-w-60">
-                      Лот
-                    </th>
-                    <th scope="col">Участък</th>
-                    <th scope="col">Изпълнител</th>
-                    <th scope="col" className="num">
-                      Прогнозна (€)
-                    </th>
-                    <th scope="col" className="num">
-                      При сключване (€)
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {c.lots.rows.map((l) => (
-                    <tr key={l.lotLabel} className={l.isCurrent ? 'current' : undefined}>
-                      <td className="rank">{l.lotLabel}</td>
-                      <td>
-                        {l.isCurrent ? (
-                          <strong>{l.subject}</strong>
-                        ) : l.contractId ? (
-                          <Link to={`/contracts/${l.contractId}`}>{l.subject}</Link>
-                        ) : (
-                          l.subject
-                        )}
-                      </td>
-                      <td>
-                        {l.contractorSlug ? (
-                          l.isCurrent ? (
-                            <strong>{l.contractorName}</strong>
-                          ) : (
-                            <Link to={`/companies/${l.contractorSlug}`}>{l.contractorName}</Link>
-                          )
-                        ) : (
-                          <span className="muted">няма сключен договор</span>
-                        )}
-                      </td>
-                      <td className="money">
-                        {l.estimatedEur != null ? moneyBare(l.estimatedEur) : '—'}
-                      </td>
-                      <td className="money">
-                        {l.signingEur != null ? moneyBare(l.signingEur) : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {(c.lots.estimatedTotalEur || c.lots.signedTotalEur) && (
-              <p className="small muted mt-8">
-                {c.lots.estimatedTotalEur && (
-                  <>
-                    Прогнозна стойност на всички лотове:{' '}
-                    <strong>{money(c.lots.estimatedTotalEur)}</strong>.{' '}
-                  </>
-                )}
-                {c.lots.signedTotalEur && (
-                  <>
-                    Сключени договори: <strong>{money(c.lots.signedTotalEur)}</strong> при
-                    подписване.
-                  </>
-                )}
-              </p>
-            )}
           </Section>
         )}
 

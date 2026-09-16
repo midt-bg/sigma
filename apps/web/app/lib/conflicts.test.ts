@@ -6,26 +6,32 @@ import {
   authorityShares,
   companyConflictsHref,
   companyProfileHref,
+  conflictHeadline,
+  conflictListFilters,
   contractHref,
+  contractsCountLabel,
   contractTemporal,
   contractTimeline,
   contractYear,
   contractYearsLabel,
-  contractsCountLabel,
   declaredStakeNoun,
+  filterConflictRows,
   fundsCellLabel,
   fundsMagnitude,
-  hasContemporaneousContracts,
-  conflictHeadline,
   groupByPerson,
+  groupDeclaredInstitutions,
+  hasContemporaneousContracts,
+  institutionOptions,
   isHttpsUrl,
   markContracts,
   officialHref,
+  officialRole,
   partitionContracts,
-  personFundsCell,
-  relationLabel,
-  temporalLabel,
   registryEvidenceLabel,
+  relationLabel,
+  sortConflictRows,
+  temporalLabel,
+  type ConflictPersonRow,
 } from './conflicts';
 
 function link(over: Partial<ConflictLink> = {}): ConflictLink {
@@ -55,6 +61,8 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     registryEntryNumber: '20110502101007',
     registryEntryDate: '2011-05-02',
     registryLookupDate: '2026-08-05',
+    position: null,
+    sourceYear: null,
     ...over,
   };
 }
@@ -210,25 +218,6 @@ describe('contemporaneous split', () => {
     );
     expect(noValue.total).toBeNull();
   });
-
-  it('personFundsCell mirrors the split over a collapsed person row — no synthetic link, no cast', () => {
-    // an in-window sum → the window figure leads, the total is kept as „от" context
-    const withWindow = personFundsCell({
-      hasContemporaneous: true,
-      contemporaneousValueEur: 3_000_000,
-      contractValueEur: 8_000_000,
-    });
-    expect(withWindow.primary).toBe(moneyBare(3_000_000));
-    expect(withWindow.total).toBe(moneyBare(8_000_000));
-    // nothing signed in the window → only the total, no split
-    const noWindow = personFundsCell({
-      hasContemporaneous: false,
-      contemporaneousValueEur: 0,
-      contractValueEur: 8_000_000,
-    });
-    expect(noWindow.primary).toBe(moneyBare(8_000_000));
-    expect(noWindow.total).toBeNull();
-  });
 });
 
 describe('fundsMagnitude', () => {
@@ -376,7 +365,7 @@ describe('contract list helpers', () => {
     expect(temporalLabel('contemporaneous')).toBe('в декларирания период');
     expect(temporalLabel('before')).toBe('преди декларирания период');
     expect(temporalLabel('after')).toBe('след декларирания период');
-    expect(temporalLabel('unknown')).toBe('без дата');
+    expect(temporalLabel('unknown')).toBe('без установено времево съвпадение');
   });
   it('contractYear takes the signing year, or „—" when undated', () => {
     expect(contractYear(contract({ signedAt: '2021-05-01' }))).toBe('2021');
@@ -607,7 +596,7 @@ describe('registryEvidenceLabel', () => {
     // „Потвърдено" means the COMPANY was identified from something the official declared — nobody was
     // found in the act, so the label must not imply anyone was.
     const label = registryEvidenceLabel({ evidenceKind: 'confirmed', registryRole: null });
-    expect(label).toBe('самоличност, потвърдена по декларирани данни');
+    expect(label).toBe('дружеството е потвърдено по декларирани данни');
     expect(label).not.toMatch(/вписан/);
   });
 
@@ -619,6 +608,28 @@ describe('registryEvidenceLabel', () => {
 });
 
 describe('groupByPerson', () => {
+  it('combines institutions only through proven registry identity and uses the union of their windows', () => {
+    const first = link({
+      officialSlug: 'a',
+      registryPersonId: 'registry-person',
+      contemporaneousValueEur: 60,
+      personCompanyValueEur: 120,
+      laterDeclarationYear: '2025',
+    });
+    const second = link({
+      officialSlug: 'b',
+      registryPersonId: 'registry-person',
+      contemporaneousValueEur: 80,
+      personCompanyValueEur: 120,
+    });
+    const grouped = groupByPerson([first, second]);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].contemporaneousValueEur).toBe(120);
+    expect(grouped[0].contractCount).toBe(first.contractCount);
+    expect(conflictHeadline([first, second]).officialCount).toBe(1);
+    // Identical names are insufficient evidence of one human.
+    expect(groupByPerson([first, { ...second, registryPersonId: null }])).toHaveLength(2);
+  });
   // Collapses per-relationship links into one row per PERSON for the /conflicts leaderboard (#287). The DB
   // returns links NEXUS-sorted, but the helper must be correct for ANY input order — it computes the
   // strongest link explicitly and sorts rows itself.
@@ -892,14 +903,18 @@ describe('groupByPerson', () => {
     expect(Object.keys(rows[0]).sort()).toEqual(
       [
         'companyCount',
+        'companies',
         'contemporaneousValueEur',
         'contractCount',
         'contractValueEur',
         'hasContemporaneous',
+        'declaredInstitutions',
+        'personIdentity',
         'institution',
         'official',
         'officialSlug',
         'ownInstitution',
+        'position',
         'soleCompany',
         'stakeKind',
       ].sort(),
@@ -923,17 +938,13 @@ describe('groupByPerson', () => {
     expect(family[0].stakeKind).toBe('family');
     expect(family[0].contractValueEur).toBeNull();
     expect(family[0].contemporaneousValueEur).toBeNull();
-    expect(personFundsCell(family[0]).primary).toBe(moneyBare(null)); // „—", never „0"
 
     // self-only person → 'self'
     const self = groupByPerson([link({ linkKey: 'p:s|1', officialSlug: 's', relation: 'owns' })]);
     expect(self[0].stakeKind).toBe('self');
   });
 
-  it('preserves the window-null case: in-window contracts with NULL € show total-only, never „0 … от …"', () => {
-    // hasContemporaneous is true (a link has an in-window contract) but its window € is NULL, so the row window
-    // € must stay NULL and personFundsCell falls back to the total-only shape — the exact case fundsCellLabel
-    // guards per link, which a 0-coerced row could not reproduce (niki #312 MEDIUM 3).
+  it('preserves the window-null case instead of fabricating a zero amount', () => {
     const rows = groupByPerson([
       link({
         linkKey: 'p:a|1',
@@ -946,9 +957,7 @@ describe('groupByPerson', () => {
     ]);
     expect(rows[0].hasContemporaneous).toBe(true);
     expect(rows[0].contemporaneousValueEur).toBeNull();
-    const cell = personFundsCell(rows[0]);
-    expect(cell.primary).toBe(moneyBare(88_000_000));
-    expect(cell.total).toBeNull(); // no split — not „0 … от 88 млн."
+    expect(rows[0].contractValueEur).toBe(88_000_000);
   });
 });
 
@@ -1042,4 +1051,210 @@ describe('declaredStakeNoun — page prose must not out-claim the cards', () => 
     expect(declaredStakeNoun([self, family])).toBe(mixed);
     expect(declaredStakeNoun([family, self])).toBe(mixed); // order must not decide the claim
   });
+});
+
+describe('officialRole', () => {
+  it('says who the official is — position and institution, in that order', () => {
+    expect(officialRole({ position: 'Кмет', institution: 'Община Ямбол' })).toBe(
+      'Кмет · Община Ямбол',
+    );
+  });
+
+  it('keeps whichever one is on record, and says nothing when neither is', () => {
+    expect(officialRole({ position: null, institution: 'Община Ямбол' })).toBe('Община Ямбол');
+    expect(officialRole({ position: ' Кмет ', institution: '' })).toBe('Кмет');
+    expect(officialRole({ position: null, institution: null })).toBeNull();
+  });
+});
+
+describe('/conflicts list filters', () => {
+  it('keeps each declared institution searchable and filterable without inventing continuous years', () => {
+    const offices = [
+      { institution: 'Община Русе', position: 'Съветник', year: '2019' },
+      { institution: 'ОБЩИНА РУСЕ', position: 'Съветник', year: '2021' },
+      { institution: 'Народно събрание', position: 'Народен представител', year: '2025' },
+    ];
+    const institutions = groupDeclaredInstitutions(offices);
+    expect(institutions).toHaveLength(2);
+    expect(institutions.find((i) => i.institution === 'Община Русе')?.years).toEqual([
+      '2019',
+      '2021',
+    ]);
+    const rows = groupByPerson([link({ declaredOffices: offices })]);
+    expect(
+      filterConflictRows(rows, conflictListFilters(new URLSearchParams('institution=Община Русе'))),
+    ).toHaveLength(1);
+    expect(
+      filterConflictRows(rows, conflictListFilters(new URLSearchParams('q=Народен представител'))),
+    ).toHaveLength(1);
+    expect(
+      institutionOptions(rows, [])
+        .map((i) => i.value)
+        .sort(),
+    ).toEqual(['НАРОДНО СЪБРАНИЕ', 'ОБЩИНА РУСЕ']);
+  });
+  const row = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
+    official: 'Иван Минев',
+    officialSlug: 'a',
+    institution: 'Община Русе',
+    position: 'Кмет',
+    companyCount: 1,
+    soleCompany: null,
+    contractCount: 1,
+    contractValueEur: 100,
+    contemporaneousValueEur: null,
+    stakeKind: 'self',
+    ownInstitution: false,
+    hasContemporaneous: false,
+    ...over,
+  });
+  const sp = (qs: string) => new URLSearchParams(qs);
+
+  it('reads the state from the URL and drops what it does not know', () => {
+    expect(
+      conflictListFilters(
+        sp('stake=family&signal=own&signal=bogus&institution=Община Русе&sort=total&q= Иван '),
+      ),
+    ).toEqual({
+      stake: 'family',
+      signals: ['own'],
+      institutions: ['ОБЩИНА РУСЕ'],
+      sort: 'total',
+      q: 'Иван',
+    });
+    expect(conflictListFilters(sp('stake=x&sort=y'))).toEqual({
+      stake: null,
+      signals: [],
+      institutions: [],
+      sort: 'period',
+      q: null,
+    });
+  });
+
+  it('lets a person with both kinds of stake answer both stake filters', () => {
+    const rows = [
+      row({ officialSlug: 's' }),
+      row({ officialSlug: 'f', stakeKind: 'family' }),
+      row({ officialSlug: 'm', stakeKind: 'mixed' }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('stake=self')).toEqual(['s', 'm']);
+    expect(slugs('stake=family')).toEqual(['f', 'm']);
+    expect(slugs('')).toEqual(['s', 'f', 'm']);
+  });
+
+  it('requires every chosen signal', () => {
+    const rows = [
+      row({ officialSlug: 'o', ownInstitution: true }),
+      row({ officialSlug: 'w', hasContemporaneous: true }),
+      row({ officialSlug: 'b', ownInstitution: true, hasContemporaneous: true }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('signal=own')).toEqual(['o', 'b']);
+    expect(slugs('signal=own&signal=window')).toEqual(['b']);
+  });
+
+  it('filters by the official’s institution whatever its spelling, and searches name, position and institution', () => {
+    const rows = [
+      row({ officialSlug: 'r', institution: 'ОБЩИНА РУСЕ' }),
+      row({
+        officialSlug: 'v',
+        official: 'Петя Колева',
+        institution: 'Община Варна',
+        position: 'Общински съветник',
+      }),
+    ];
+    const slugs = (qs: string) =>
+      filterConflictRows(rows, conflictListFilters(sp(qs))).map((r) => r.officialSlug);
+    expect(slugs('institution=Община Русе')).toEqual(['r']);
+    expect(slugs('q=петя')).toEqual(['v']);
+    expect(slugs('q=съветник')).toEqual(['v']);
+    expect(slugs('q=варна')).toEqual(['v']);
+  });
+
+  it('sorts independently by period value, total value, or contract count', () => {
+    const rows = [
+      row({ officialSlug: 'a', contractValueEur: 900, contractCount: 9 }),
+      row({
+        officialSlug: 'b',
+        contractValueEur: 5_000,
+        contractCount: 1,
+        hasContemporaneous: true,
+        contemporaneousValueEur: 100,
+      }),
+      row({
+        officialSlug: 'c',
+        contractValueEur: 900,
+        contractCount: 2,
+        hasContemporaneous: true,
+        contemporaneousValueEur: 300,
+      }),
+      row({ officialSlug: 'd', contractValueEur: 500, contractCount: 10 }),
+    ];
+    expect(sortConflictRows(rows, 'period').map((r) => r.officialSlug)).toEqual([
+      'c',
+      'b',
+      'a',
+      'd',
+    ]);
+    expect(sortConflictRows(rows, 'total').map((r) => r.officialSlug)).toEqual([
+      'b',
+      'a',
+      'c',
+      'd',
+    ]);
+    expect(sortConflictRows(rows, 'contracts').map((r) => r.officialSlug)).toEqual([
+      'd',
+      'a',
+      'c',
+      'b',
+    ]);
+  });
+
+  it('offers the institutions by how many officials each carries, under the most common spelling, keeping a selected one', () => {
+    const rows = [
+      row({ officialSlug: '1', institution: 'Община Русе' }),
+      row({ officialSlug: '2', institution: 'Община Русе' }),
+      row({ officialSlug: '3', institution: 'ОБЩИНА РУСЕ' }),
+      row({ officialSlug: '4', institution: 'Община Варна' }),
+      row({ officialSlug: '5', institution: null }),
+    ];
+    expect(institutionOptions(rows, [])).toEqual([
+      { value: 'ОБЩИНА РУСЕ', label: 'Община Русе', count: 3 },
+      { value: 'ОБЩИНА ВАРНА', label: 'Община Варна', count: 1 },
+    ]);
+    expect(institutionOptions(rows, ['ОБЩИНА ВАРНА'], 1).map((o) => o.value)).toEqual([
+      'ОБЩИНА РУСЕ',
+      'ОБЩИНА ВАРНА',
+    ]);
+  });
+});
+
+it('a disputed declaration year is context without denying the historical link', () => {
+  expect(contractTemporal('2023-05-01', '2020', '2024', ['2023'])).toBe('unknown');
+  expect(contractTemporal('2022-05-01', '2020', '2024', ['2023'])).toBe('contemporaneous');
+});
+
+it('sorts period values and keeps unknown amounts last', () => {
+  const rows = groupByPerson([
+    link({ officialSlug: 'a' }),
+    link({ officialSlug: 'b' }),
+    link({ officialSlug: 'c' }),
+  ]);
+  Object.assign(rows.find((r) => r.officialSlug === 'a')!, {
+    contemporaneousValueEur: null,
+    hasContemporaneous: true,
+  });
+  Object.assign(rows.find((r) => r.officialSlug === 'b')!, {
+    contemporaneousValueEur: 0,
+    hasContemporaneous: true,
+  });
+  Object.assign(rows.find((r) => r.officialSlug === 'c')!, {
+    contemporaneousValueEur: 100,
+    hasContemporaneous: true,
+  });
+  expect(conflictListFilters(new URLSearchParams('sort=period-contracts')).sort).toBe('period');
+  expect(sortConflictRows(rows, 'period').map((r) => r.officialSlug)).toEqual(['c', 'b', 'a']);
 });

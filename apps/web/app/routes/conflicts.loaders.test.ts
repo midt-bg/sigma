@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Loader-level tests for the свързани-лица routes. The rendered surface is covered by Playwright E2E;
 // these prove the loader GLUE in isolation (node env, no DOM) — the 404 guards that keep a bare page from
@@ -8,10 +8,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // @sigma/db is mocked so the loaders run without a real D1: the query functions are the trust boundary the
 // loaders sit on top of, and here we drive their return values to exercise every branch.
 const q = vi.hoisted(() => ({
-  getConflictLeaderboard: vi.fn(),
+  getRelatedPersonRows: vi.fn(),
+  getRelatedPersonHeadline: vi.fn(),
+  getPersonTimeline: vi.fn(),
   getOfficialConflicts: vi.fn(),
+  getRegistryIdentity: vi.fn(),
+  getRegistryPerson: vi.fn(),
+  getRegistryOfficials: vi.fn(),
+  getPersonDestinations: vi.fn(),
+  getPersonScope: vi.fn(),
+  getPersonSourceArchive: vi.fn(),
+  getPersonDeclarations: vi.fn(),
+  getPersonActivity: vi.fn(),
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
+  getAuthorityName: vi.fn(),
+  getPersonRedirect: vi.fn(),
+  personSlug: vi.fn((id: string) => `slug-of-${id}`),
+  authorityIdFromSlug: vi.fn((slug: string) => `auth:${slug}`),
   personIdFromSlug: vi.fn(),
   // #199 chokepoint: loaders wrap env with getDb(env) → returns the read-only D1. In the test the env's
   // DB is the identity sentinel the query mocks assert on, so getDb just returns env.DB unchanged.
@@ -24,13 +38,42 @@ import { loader as officialLoader } from './conflict.official';
 import { loader as companyLoader } from './conflict.company';
 import { loader as contractsLoader } from './conflict.contracts';
 
+import { emptyActivity } from '../lib/person-profile.test-support';
+beforeEach(() => {
+  q.getRegistryIdentity.mockResolvedValue(null);
+  q.getPersonDestinations.mockResolvedValue([]);
+  q.getPersonScope.mockImplementation(async (_db, { officialId }: { officialId?: string }) => ({
+    indent: null,
+    officialIds: officialId ? [officialId] : [],
+  }));
+  q.getPersonSourceArchive.mockResolvedValue(null);
+  q.getPersonTimeline.mockResolvedValue({ contracts: [], observations: [], reads: [] });
+  q.getRelatedPersonHeadline.mockResolvedValue({
+    officialCount: 0,
+    linkCount: 0,
+    totalEur: 0,
+    contemporaneousEur: 0,
+  });
+  q.getPersonDeclarations.mockResolvedValue([]);
+  q.getPersonActivity.mockResolvedValue(emptyActivity);
+});
+
 const DB = {}; // the loaders only forward it to the (mocked) query fns; identity is all we assert on
 const context = { cloudflare: { env: { DB } } };
 const call = (loader: unknown, params: Record<string, string | undefined>) =>
-  (loader as (a: { params: typeof params; context: typeof context }) => Promise<unknown>)({
+  (
+    loader as (a: {
+      params: typeof params;
+      context: typeof context;
+      request: Request;
+    }) => Promise<unknown>
+  )({
     params,
     context,
+    request: new Request('http://localhost:5173/conflicts/official/test'),
   });
+
+const req = (qs = '') => new Request(`https://sigma.test/conflicts${qs}`);
 
 // A loader that throws a Response is the 404 contract. Assert both that it throws and the status.
 async function expectStatus(promise: Promise<unknown>, status: number) {
@@ -48,40 +91,84 @@ afterEach(() => {
   for (const fn of Object.values(q)) fn.mockReset();
 });
 
+describe('leaderboard loader — narrowed to one institution (?authority=)', () => {
+  it('fetches only that body’s links and names it for the page', async () => {
+    q.getAuthorityName.mockResolvedValue('ОБЩИНА ТЕСТ');
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Иван Петров', officialSlug: 'p1', personIdentity: 'p1', declaredOffices: [] },
+    ]);
+    const res = (await leaderboardLoader({
+      request: req('?authority=000123456'),
+      context,
+    } as never)) as { data: { authority: unknown } };
+    expect(q.getAuthorityName).toHaveBeenCalledWith(DB, 'auth:000123456');
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, 'auth:000123456');
+    expect(res.data.authority).toEqual({ slug: '000123456', name: 'ОБЩИНА ТЕСТ' });
+  });
+
+  it('404s an ЕИК that names no institution, before reading any link', async () => {
+    q.getAuthorityName.mockResolvedValue(null);
+    await expectStatus(
+      leaderboardLoader({ request: req('?authority=000123456'), context } as never),
+      404,
+    );
+    expect(q.getRelatedPersonRows).not.toHaveBeenCalled();
+  });
+
+  it('ignores a malformed value and serves the whole list', async () => {
+    q.getRelatedPersonRows.mockResolvedValue([]);
+    const res = (await leaderboardLoader({ request: req('?authority=abc'), context } as never)) as {
+      data: { authority: unknown };
+    };
+    expect(q.getAuthorityName).not.toHaveBeenCalled();
+    expect(q.getRelatedPersonRows).toHaveBeenCalledWith(DB, undefined);
+    expect(res.data.authority).toBeNull();
+  });
+});
+
 describe('leaderboard loader (/conflicts)', () => {
   it('caches for an hour when there are links (self or family, ADR-0032)', async () => {
-    q.getConflictLeaderboard.mockResolvedValue([{ linkKey: 'p|1' }]);
-    const res = (await leaderboardLoader({ context } as never)) as {
-      data: { links: unknown[] };
+    q.getRelatedPersonRows.mockResolvedValue([
+      { official: 'Иван Петров', officialSlug: 'p1', personIdentity: 'p1', declaredOffices: [] },
+    ]);
+    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
+      data: { pageRows: unknown[] };
       init: { headers: Record<string, string> };
     };
-    expect(res.data.links).toHaveLength(1);
+    expect(res.data.pageRows).toHaveLength(1);
     expect(res.init.headers['Cache-Control']).toMatch(/s-maxage=3600/);
   });
 
   it('does NOT cache an empty read (avoids pinning a just-shipped empty surface for an hour)', async () => {
-    q.getConflictLeaderboard.mockResolvedValue([]);
-    const res = (await leaderboardLoader({ context } as never)) as {
+    q.getRelatedPersonRows.mockResolvedValue([]);
+    const res = (await leaderboardLoader({ request: req(), context } as never)) as {
       init: { headers: Record<string, string> };
     };
     expect(res.init.headers['Cache-Control']).toBe('no-store');
   });
 
-  it('slices to the ceiling and warns when the eligible set exceeds it (partial-aggregate guard)', async () => {
-    // The loader fetches ceiling+1 to DETECT truncation; on overflow it slices back to the ceiling and warns an
-    // operator, because per-person aggregates go partial past the cut (niki #312 MEDIUM 2). 1001 sentinels.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    q.getConflictLeaderboard.mockResolvedValue(
-      Array.from({ length: 1001 }, (_, i) => ({
-        linkKey: `p|${i}`,
+  it('paginates the complete filtered person set on the server without a ceiling', async () => {
+    q.getRelatedPersonRows.mockResolvedValue(
+      Array.from({ length: 1205 }, (_, i) => ({
+        official: `Лице ${i}`,
         officialSlug: `s${i}`,
-        eik: `${i}`,
+        personIdentity: `p${i}`,
+        contemporaneousValueEur: 1205 - i,
+        declaredOffices: [],
       })),
     );
-    const res = (await leaderboardLoader({ context } as never)) as { data: { links: unknown[] } };
-    expect(res.data.links).toHaveLength(1000); // sliced to the ceiling, never renders the +1 sentinel
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceed the 1000 ceiling'));
-    warn.mockRestore();
+    const res = await leaderboardLoader({ request: req('?page=13'), context } as never);
+    expect(res.data.total).toBe(1205);
+    expect(res.data.pageRows).toHaveLength(5);
+    expect(res.data.pageRows[0]!.personIdentity).toBe('p1200');
+    expect(q.getRelatedPersonHeadline).not.toHaveBeenCalled();
+    const filtered = await leaderboardLoader({
+      request: req('?q=Лице%201204&page=13'),
+      context,
+    } as never);
+    expect(filtered.data.total).toBe(1);
+    expect(filtered.data.page).toBe(1);
+    expect(filtered.data.pageRows[0]!.personIdentity).toBe('p1204');
   });
 });
 
@@ -98,14 +185,47 @@ describe('official loader (/conflicts/official/:id)', () => {
     await expectStatus(call(officialLoader, { id: 'ivan-petrov-1' }), 404);
   });
 
+  it('does not redirect obsolete identities; an absent profile returns 404', async () => {
+    q.personIdFromSlug.mockReturnValue('person:old');
+    q.getPersonRedirect.mockResolvedValue('person:new');
+    q.getOfficialConflicts.mockResolvedValue(null);
+    await expectStatus(call(officialLoader, { id: 'old-slug' }), 404);
+    expect(q.getPersonRedirect).not.toHaveBeenCalled();
+  });
+
   it('returns the conflict payload for a valid official', async () => {
     q.personIdFromSlug.mockReturnValue('person:1');
     // Match the real OfficialConflicts DTO shape — incl. the eager `contracts` map added in #287 (niki #312
     // LOW 1: the untyped mock previously omitted it, the one gap the api-contract type exists to catch).
     q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
-    const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { official: string };
-    expect(res.official).toBe('Иван Петров');
-    expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1');
+    const res = (await call(officialLoader, { id: 'ivan-petrov-1' })) as { name: string };
+    expect(res.name).toBe('Иван Петров');
+    expect(q.getOfficialConflicts).toHaveBeenCalledWith(DB, 'person:1', { contracts: false });
+  });
+
+  it('renders a bridged registry identity at the requested official address without redirecting', async () => {
+    q.personIdFromSlug.mockReturnValue('person:1');
+    q.getPersonScope.mockResolvedValue({ indent: 'a'.repeat(64), officialIds: ['person:1'] });
+    q.getRegistryPerson.mockResolvedValue({
+      name: 'Иван Петров',
+      network: { center: null, nodes: [], edges: [] },
+    });
+    q.getOfficialConflicts.mockResolvedValue({ official: 'Иван Петров', links: [], contracts: {} });
+    const res = (await call(officialLoader, { id: 'current-official' })) as {
+      name: string;
+      person: unknown;
+    };
+    expect(res).not.toBeInstanceOf(Response);
+    expect(res.name).toBe('Иван Петров');
+    expect(res.person).not.toBeNull();
+    expect(q.getPersonRedirect).not.toHaveBeenCalled();
+    expect(q.getPersonActivity).toHaveBeenCalledWith(
+      DB,
+      'a'.repeat(64),
+      ['person:1'],
+      expect.any(URLSearchParams),
+      'all',
+    );
   });
 });
 

@@ -289,3 +289,20 @@ describe('guardSelect', () => {
     if (ok.ok) expect(ok.sql).toMatch(/LIMIT 500/);
   });
 });
+
+describe('guardSelect — joins and CTEs below the top level', () => {
+  it('accepts a JOIN … USING, which connects the tables by construction', () => {
+    const r = guardSelect(
+      'SELECT a.name FROM authorities a JOIN authority_totals t USING (authority_id)',
+    );
+    expect(r).toEqual({
+      ok: true,
+      sql: 'SELECT a.name FROM authorities a JOIN authority_totals t USING (authority_id) LIMIT 500',
+    });
+  });
+
+  it('rejects a self-referencing CTE declared inside a sub-query', () => {
+    const r = guardSelect('SELECT n FROM (WITH r AS (SELECT n FROM r) SELECT n FROM r) sub');
+    expect(r).toEqual({ ok: false, reason: 'recursive CTE "r" is not allowed' });
+  });
+});

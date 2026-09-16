@@ -1,91 +1,13 @@
-/* Свързани лица — the /conflicts detail surface. Since #287 the /conflicts LIST is a DataTable (tables.css);
-   this stylesheet dresses the person/company DETAIL pages, where the case detail is rendered EAGERLY as one
-   block per link (identity + signal strip + the always-open case: magnitude bar, timeline, contract list) —
-   no lazy fetch, no expand control (those rules were removed with the retired cards). All conflict-detail CSS
-   lives here so it can be found and changed together; branching logic stays in ../lib/conflicts.ts. */
+/* Свързани лица — the /conflicts detail surface.
+ *
+ * Was 464 lines carrying a whole private design language for two pages: a card shell no other
+ * page used, a `.cc-stats` grid duplicating FactsList, `.cc-section` duplicating Section, and a
+ * `.contract-list` duplicating DataTable. All four are gone — those blocks now use the shared components,
+ * so their styling lives with everyone else's.
+ *
+ * What survives is what genuinely has no analogue elsewhere: the timeline (contracts as dots on a year
+ * axis against the declared window), the two signal chips, the interest strip and the funds emphasis. */
 
-/* ── The detail block list + card shell ───────────────────────────────────── */
-
-/* Detail-page block list (#287). The person/company pages render the case detail EAGERLY as one block per
-   link; each block reuses the .conflict-card shell, but the wrapper is an <ol> that must reset the default
-   list markers + indent and space the blocks (without this the classes were missing entirely — niki #312
-   MEDIUM 4: inherited indent + zero gap between blocks). The blocks ARE the detail, not links elsewhere, so
-   they take no hover lift. */
-.conflict-detail-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-}
-.conflict-detail {
-  transition: none;
-}
-@media (hover: hover) and (pointer: fine) {
-  .conflict-detail:hover {
-    transform: none;
-    border-color: var(--rule);
-    box-shadow: none;
-  }
-  .conflict-detail.has-conflict:hover {
-    border-left-color: var(--accent);
-  }
-}
-
-.conflict-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  border: 1px solid var(--rule);
-  /* A constant 3px left rail (rule-coloured, so it blends until it matters) turns accent when the winner
-     signed a contract in the declared window — the glanceable strength marker, no content shift. */
-  border-left-width: 3px;
-  border-left-color: var(--rule);
-  border-radius: var(--radius-card);
-  background: var(--paper);
-  padding: var(--s-4);
-  transition:
-    transform 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-.conflict-card.has-conflict {
-  border-left-color: var(--accent);
-}
-/* Pointer devices only — never a phantom lift under a finger. */
-@media (hover: hover) and (pointer: fine) {
-  .conflict-card:hover {
-    transform: translateY(-1px);
-    border-color: var(--ink);
-    box-shadow: var(--shadow-elevate);
-  }
-  .conflict-card.has-conflict:hover {
-    border-left-color: var(--accent);
-  }
-}
-
-/* ── Identity ─────────────────────────────────────────────────────────────── */
-
-.cc-title {
-  margin: 0;
-  padding-right: var(--s-6); /* clear the rank badge */
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 400;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-}
-.cc-title a {
-  color: var(--ink);
-  text-decoration: none;
-}
-.cc-title a:hover {
-  color: var(--accent);
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-}
 .cc-interest {
   display: flex;
   flex-wrap: wrap;
@@ -95,128 +17,42 @@
   color: var(--ink);
 }
 
-/* ── Signal strip (always-visible facts) ──────────────────────────────────── */
-
-.cc-stats {
-  margin: 0;
-  padding-top: var(--s-3);
-  border-top: 1px dotted var(--rule-soft);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-.cc-stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--s-3);
-}
-.cc-stat dt {
-  margin: 0;
-  font: 500 10px/1.5 var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-}
-.cc-stat dd {
-  margin: 0;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
 .cc-funds-primary {
   font: 600 15px/1.2 var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
-.cc-funds-total {
-  display: block;
-  margin-top: 1px;
-  font-size: 11px;
-  color: var(--ink-soft);
-}
 
-/* ── Expanded case: three headed sub-sections ─────────────────────────────── */
-
-.cc-case {
-  display: flex;
-  flex-direction: column;
-}
-.cc-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-4) 0;
-}
-.cc-section:first-child {
-  padding-top: 0;
-}
-.cc-section:last-child {
-  padding-bottom: 0;
-}
-.cc-section + .cc-section {
-  border-top: 1px solid var(--rule-soft);
-}
-/* .cc-section-title needs no rule — base h4 (base.css) is already mono-uppercase ink-soft. */
-
-/* ── Magnitude bar (carried from the table version, div-based) ─────────────── */
-
-.case-mag {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-2) var(--s-3);
-}
-.case-mag-label {
-  font: 500 10px/1.5 var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-}
-.case-mag-figures {
-  font-size: 13px;
-  color: var(--ink-mid);
-  font-variant-numeric: tabular-nums;
-}
-.case-mag-figures strong {
-  color: var(--accent);
-  font-weight: 600;
-}
-/* Overview hero bar (routes/conflicts.tsx) sits between the summary facts and the list. As the page's
-   headline stat it stacks (label / bar / figures) with real breathing room, and a wider bar than the
-   inline per-card version — rather than the cramped single wrapped line. */
 .conflict-headline-mag {
   margin: var(--s-5) 0 var(--s-6);
   flex-direction: column;
   align-items: flex-start;
   gap: var(--s-3);
 }
+
 .conflict-headline-mag .share-bar {
   width: min(240px, 60vw);
   height: 8px;
 }
-
-/* ── Signal-weighted chips ────────────────────────────────────────────────── */
 
 .chip-strong {
   background: var(--accent);
   color: var(--paper);
   border-color: var(--accent);
 }
+
 .chip-window {
   background: var(--accent-bg);
   color: var(--accent);
   border-color: var(--accent);
 }
 
-/* ── Timeline: contracts as dots on a year axis, the declared-stake window as a band ──
-   Year labels at top:0, axis at 30px, dots centred on the axis and fanned downward by stackIndex when
-   several fall in one year. Track height is set inline from the max stack so dots never clip. */
 .tl-track {
   position: relative;
   /* Breathing room between the „Времева ос…" heading and the year axis (adds to the section gap). */
   margin-top: var(--s-3);
 }
+
 .tl-axis {
   position: absolute;
   left: 0;
@@ -225,6 +61,7 @@
   height: 1px;
   background: var(--rule);
 }
+
 .tl-band {
   position: absolute;
   top: 24px;
@@ -235,6 +72,7 @@
   border-right: 2px solid var(--accent);
   border-radius: 2px;
 }
+
 .tl-mark {
   position: absolute;
   width: 12px;
@@ -243,15 +81,17 @@
   transform: translateX(-50%);
   border: 2px solid var(--paper);
 }
+
 .tl-mark.in {
   background: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+
 .tl-mark.out {
   background: var(--ink-soft);
   box-shadow: 0 0 0 1px var(--rule);
 }
-/* Year labels (start … middle years … end) — each anchored inline by tickStyle() in the component. */
+
 .tl-year {
   position: absolute;
   top: 0;
@@ -259,6 +99,7 @@
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
+
 .tl-legend {
   display: flex;
   align-items: center;
@@ -267,74 +108,30 @@
   font: 11px/1.4 var(--font-mono);
   color: var(--ink-soft);
 }
+
 .tl-dot {
   display: inline-block;
   width: 10px;
   height: 10px;
   border-radius: 50%;
 }
+
 .tl-dot.in {
   background: var(--accent);
 }
+
 .tl-dot.out {
   background: var(--ink-soft);
 }
+
 .tl-sep {
   margin: 0 2px;
 }
 
-/* ── Contract list: each contract a flex-wrap row of small facts, "·"-separated via ::before ──────── */
-
-.contract-list {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.contract-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0 4px 10px;
-  border-left: 2px solid var(--rule);
-  font-size: 13px;
-  line-height: 1.4;
-}
-.contract-item-conflict {
-  border-left-color: var(--accent);
-}
-/* The subject (предмет) leads on its own line — it can run long, so it must not share the wrapping meta row. */
-.contract-subject {
-  color: var(--ink);
-  font-weight: 500;
-}
-/* The meta row: the compact dot-separated facts (year · authority · procedure · kind · № · amount). */
-.contract-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 0;
-  color: var(--ink-mid);
-}
-.contract-meta > * + *::before {
-  content: '·';
-  display: inline-block;
-  margin: 0 6px;
-  color: var(--ink-soft);
-}
-.contract-year,
-.contract-amt {
-  font-variant-numeric: tabular-nums;
-}
-.contract-year {
-  font-weight: 600;
-}
 .contract-outside {
   margin-top: 4px;
 }
-/* Custom disclosure marker with a real gap — the native marker sat too close to „Извън периода". */
+
 .contract-outside > summary {
   display: inline-flex;
   align-items: center;
@@ -342,9 +139,11 @@
   cursor: pointer;
   list-style: none;
 }
+
 .contract-outside > summary::-webkit-details-marker {
   display: none;
 }
+
 .contract-outside > summary::before {
   content: '';
   flex: 0 0 auto;
@@ -355,110 +154,25 @@
   border-top: 5px solid currentColor;
   transition: transform 0.15s ease;
 }
+
 .contract-outside[open] > summary::before {
   transform: rotate(180deg);
 }
 
-/* ── Дял при възложителите: per-authority capture rows ───────────────────────────
-   Each body is a stat block: name + its capture share paired on one line, a neutral full-width bar tied
-   directly beneath, then the € figures. A hairline rule between rows makes the shares a scannable column.
-   The bar shows only for a real share (a sub-0,1% capture reads „под 0,1%" with an empty track; a missing
-   denominator/value shows „—" and no bar — absence, never a fake 0%). */
-.auth-shares {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-.auth-share {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) 0;
-}
-.auth-share:first-child {
-  padding-top: 0;
-}
-.auth-share + .auth-share {
-  border-top: 1px solid var(--rule-soft);
-}
-/* Name (label) left, share (value) right — a paired stat, so the number sits with what it measures. */
-.auth-share-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s-2) var(--s-3);
-}
-.auth-share-name {
-  flex: 1;
-  min-width: 0;
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-1) var(--s-2);
-  font-weight: 500;
-  color: var(--ink);
-  line-height: 1.3;
-}
-.auth-share-pct {
-  flex-shrink: 0;
-  font: 600 14px/1 var(--font-mono);
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.auth-share-pct.is-muted {
-  font-weight: 500;
-  font-size: 12px;
+/* Sub-headings inside a company's <Section> (timeline / authority shares / contracts). Base h3 is a serif
+   display size meant for a section of its own; here it labels a block inside one, so it takes the same
+   mono-uppercase treatment the retired `.cc-section-title` had — one level up in the outline, same weight
+   on the page. */
+.cc-subhead {
+  margin: var(--s-6) 0 var(--s-3);
+  font: 500 12px/1.3 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--ink-soft);
 }
-.auth-bar {
-  display: block;
-  position: relative;
-  width: 100%;
-  height: 6px;
-  background: var(--rule-soft);
-  border-radius: 1px;
-}
-.auth-bar > i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: block;
-  min-width: 2px; /* a real (≥0,1%) share is always at least a visible sliver, never a zero-width ghost */
-  background: var(--ink-mid);
-  border-radius: 1px;
-}
-.auth-share-figures {
-  font-variant-numeric: tabular-nums;
-}
-.auth-share-count {
-  white-space: nowrap;
-}
 
-/* ── Enhance: wider viewport → the signal strip lays its facts out in a row ──── */
-
-@media (min-width: 640px) {
-  .cc-stats {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: var(--s-2) var(--s-6);
-  }
-  .cc-stat {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    gap: 2px;
-    min-width: 88px;
-  }
-  .cc-stat dd {
-    text-align: left;
-  }
-}
-
-@media (min-width: 760px) {
-  .conflict-card {
-    padding: var(--s-5);
-    gap: var(--s-4);
-  }
+/* „3,1 млн. в декларирания период" — the qualifier that used to exist only as a comment in the code. */
+.cc-funds-window {
+  font-size: 0.85em;
+  color: var(--ink-mid);
 }

@@ -1,3 +1,9 @@
+import {
+  declarationMatchesLink,
+  declarationWindow,
+  declarationYearDisputed,
+} from './declaration-source';
+import { getPersonDeclarations } from './declarations';
 import type {
   ConflictLink,
   ConflictContract,
@@ -18,11 +24,16 @@ const CONFLICT_TABLES = [
   'persons',
   'declarations',
   'declared_interests',
+  'declaration_companies',
   'interest_link_authorities',
   'related_persons_internal',
   // 0006 (#279, ADR-0033). Listed here for the same reason as the rest: on an environment where 0006
   // has not been applied yet, the evidence join must degrade to an empty surface rather than a 500.
   'interest_link_evidence',
+  'interest_link_history',
+  'person_registry_links',
+  // 0012 (ADR-0040): an environment without it has no old ids to redirect — a 404, not a 500.
+  'person_redirects',
 ];
 // „D1_ERROR: no such table: interest_links: SQLITE_ERROR" → capture the table name and test membership.
 const MISSING_TABLE = /no such table:\s*(?:main\.)?"?([a-z_]+)"?/i;
@@ -59,15 +70,17 @@ function conflictSchemaAbsent(e: unknown, op: string): boolean {
 // own stake in the same winner (NOT_REDUNDANT_FAMILY below) — showing both re-identifies the relative via a ТР
 // owner lookup. Management/board roles without a declared stake, and listed securities, are still never
 // surfaced (noise at best, defamatory at worst). Only status='published' rows leave the pipeline; held,
-// suppressed and withdrawn (divested) links never surface. Ranking is NEXUS-first
+// suppressed and refuted links never surface. Proven history remains published. Ranking is NEXUS-first
 // (own-institution, then contemporaneous) so the strongest signals lead — never company revenue, which
 // surfaced blue-chip noise first.
 
 interface LinkRow {
+  disputed_years?: string;
   link_key: string;
   person_id: string;
   official: string;
   institution: string | null;
+  position: string | null;
   company: string;
   eik: string;
   relation: string;
@@ -83,11 +96,17 @@ interface LinkRow {
   first_contract_year: string | null;
   last_contract_year: string | null;
   source_url: string | null;
+  source_year: string | null;
   evidence_kind: string | null;
   registry_role: string | null;
   entry_number: string | null;
   entry_date: string | null;
   lookup_date: string | null;
+  later_declaration_year: string | null;
+  registry_role_ended_on: string | null;
+  registry_person_id: string | null;
+  person_company_value_eur: number | null;
+  declared_offices: string | null;
 }
 
 // The winner's contracts, joined exactly as the ETL aggregate does (contracts→tenders→authorities→bidders,
@@ -109,18 +128,8 @@ const CONTRACT_JOIN = `FROM contracts cc
     JOIN tenders tt ON tt.id = cc.tender_id
     JOIN authorities aa ON aa.id = tt.authority_id
     JOIN bidders bb ON bb.id = cc.bidder_id`;
-// Contemporaneous = signing year within [first_declared_year, last_declared_year] — the same min/max span
-// classify.temporalStatus uses for the stored `contemporaneous` flag, so count>0 ⇔ contemporaneous. NULL
-// bounds (no declared year) ⇒ never in-window, matching the flag. `il` is the outer LINK_SELECT row.
-// SCOPE, stated honestly (todorkolev #226 — N7): this is the SPAN from first to last filing, so a gap year
-// inside it (the official skipped a filing) still counts as in-window. The card + methodology call this „в
-// декларирания период" — the declared PERIOD, first→last — not a per-year claim, so the span is not silently
-// presented as continuous coverage. Narrowing it to the exact set of filed years needs the per-year filing
-// set (a data-model change) and is tracked separately; today the honest framing is the span.
-const IN_WINDOW = `il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
-      AND cc.signed_at IS NOT NULL
-      AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
-          BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)`;
+// A disputed annual snapshot retains the link but does not establish contract timing.
+const IN_WINDOW = declarationWindow('il', 'cc.signed_at');
 
 // Shared projection: published material-ownership links (self + family) + names + a representative
 // declaration URL (provenance, never fabricated). Callers append a scope predicate + ORDER BY.
@@ -160,7 +169,9 @@ export const NOT_REDUNDANT_FAMILY = `NOT (il.interest_class = 'family_ownership'
       SELECT 1 FROM interest_links s
       WHERE s.person_id = il.person_id AND s.eik = il.eik
         AND s.status = 'published' AND s.interest_class = 'private_ownership'))`;
-export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
+export const LINK_SELECT = `SELECT
+    (SELECT json_group_array(DISTINCT years.reported_year) FROM interest_link_observations years
+      WHERE years.timing='not_listed' AND years.reported_year IS NOT NULL AND ${declarationYearDisputed('il', 'years.reported_year')}) AS disputed_years, il.link_key, il.person_id, p.name AS official, b.name AS company, il.eik,
     il.relation, il.contemporaneous, il.own_institution,
     il.first_declared_year, il.last_declared_year, il.match_method,
     il.contract_count, il.contract_value_eur, il.first_contract_year, il.last_contract_year,
@@ -177,20 +188,45 @@ export const LINK_SELECT = `SELECT il.link_key, il.person_id, p.name AS official
     -- relative's stake is declared IN the official's own asset declaration (parse.mjs reads it from that one
     -- document), so d.person_id = il.person_id resolves to the office-holder either way — the URL always names
     -- the office-holder's document, never a relative's (ConflictDetail renders it as „декларация").
-    (SELECT d.source_url FROM declared_interests di JOIN declarations d ON d.id = di.declaration_id
-     WHERE d.person_id = il.person_id AND di.entity_key = il.entity_key
-     ORDER BY d.declared_year DESC LIMIT 1) AS source_url,
+    (SELECT d.source_url FROM declarations d
+     WHERE d.person_id = il.person_id AND ${declarationMatchesLink()}
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_url,
+    -- …and the year of that same filing (same order, same tiebreak), so the card says which one it is.
+    (SELECT d.declared_year FROM declarations d
+     WHERE d.person_id = il.person_id AND ${declarationMatchesLink()}
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS source_year,
     -- The official's LATEST declared institution — disambiguates namesakes on the surface (person grain is
     -- (name, institution), ADR-0026; same subquery the search projection uses). Correlated per row, but the
     -- leaderboard is ≤1000 rows and hourly-cached, so the extra scan is immaterial.
     (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-     ORDER BY d.declared_year DESC LIMIT 1) AS institution,
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS institution,
+    -- …and the position from the SAME filing (same order, same tiebreak), so the pair reads as one role.
+    (SELECT d.position FROM declarations d WHERE d.person_id = il.person_id
+     ORDER BY d.declared_year DESC, d.id DESC LIMIT 1) AS position,
     -- The evidence the link rests on, so the card can explain itself (ADR-0033 decision 7). LEFT JOIN
     -- rather than an inner one: SURFACED_OWNERSHIP already requires a publishing seal, and an inner join
     -- here would silently re-filter rather than surface a contradiction.
-    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date
+    ev.evidence_kind, ev.registry_role, ev.entry_number, ev.entry_date, ev.lookup_date,
+    hist.later_declaration_year, hist.registry_role_ended_on, pl.registry_indent AS registry_person_id,
+    (SELECT json_group_array(json_object('institution', office.institution, 'position', office.position, 'year', office.declared_year))
+     FROM (SELECT DISTINCT institution, position, declared_year FROM declarations d
+           WHERE d.person_id=il.person_id AND COALESCE(d.institution,'')<>'') office) AS declared_offices,
+    -- The leaderboard combines proven aliases of one human. Count each contract
+    -- once across their separate declaration windows; never fill gaps or add overlaps.
+    (SELECT SUM(cc.amount_eur) ${CONTRACT_JOIN}
+     WHERE bb.eik_normalized=il.eik AND EXISTS (
+       SELECT 1 FROM interest_links alias_link
+       LEFT JOIN person_registry_links alias_person ON alias_person.person_id=alias_link.person_id
+       WHERE alias_link.eik=il.eik
+         AND (alias_link.person_id=il.person_id OR (pl.registry_indent IS NOT NULL AND alias_person.registry_indent=pl.registry_indent))
+         AND ${SURFACED_OWNERSHIP.replaceAll('il.', 'alias_link.')}
+         AND ${NOT_REDUNDANT_FAMILY.replaceAll('il.', 'alias_link.')}
+         AND ${declarationWindow('alias_link', 'cc.signed_at')}
+     )) AS person_company_value_eur
   FROM interest_links il
   LEFT JOIN interest_link_evidence ev ON ev.link_key = il.link_key
+  LEFT JOIN interest_link_history hist ON hist.link_key = il.link_key
+  LEFT JOIN person_registry_links pl ON pl.person_id = il.person_id
   JOIN persons p ON p.id = il.person_id
   JOIN bidders b ON b.id = il.bidder_id
   WHERE ${SURFACED_OWNERSHIP}
@@ -230,13 +266,21 @@ function toLink(r: LinkRow): ConflictLink {
     officialSlug: personSlug(r.person_id),
     official: r.official,
     institution: r.institution,
+    position: r.position || null, // an empty filing field is no position
+
     company: r.company,
     eik: r.eik,
     relation: r.relation as ConflictRelation,
-    contemporaneous: r.contemporaneous === 1,
+    contemporaneous: r.contemporaneous_contract_count > 0,
+    disputedYears: JSON.parse(r.disputed_years ?? '[]'),
     ownInstitution: r.own_institution === 'exact',
     firstDeclaredYear: r.first_declared_year,
     lastDeclaredYear: r.last_declared_year,
+    laterDeclarationYear: r.later_declaration_year ?? null,
+    registryRoleEndedOn: r.registry_role_ended_on ?? null,
+    registryPersonId: r.registry_person_id ?? null,
+    personCompanyValueEur: r.person_company_value_eur ?? null,
+    declaredOffices: JSON.parse(r.declared_offices ?? '[]'),
     matchMethod: r.match_method,
     contractCount: r.contract_count,
     contractValueEur: r.contract_value_eur,
@@ -245,6 +289,7 @@ function toLink(r: LinkRow): ConflictLink {
     firstContractYear: r.first_contract_year,
     lastContractYear: r.last_contract_year,
     sourceUrl: r.source_url,
+    sourceYear: r.source_year ?? null,
     // Narrowed, not defaulted — `sealed()` above has already dropped every other value, so this asserts
     // what the filter guarantees instead of inventing a rung the row never carried.
     evidenceKind: r.evidence_kind as 'document' | 'confirmed',
@@ -263,11 +308,27 @@ function toLink(r: LinkRow): ConflictLink {
 export const LEADERBOARD_SQL = `${LINK_SELECT}
   ORDER BY ${NEXUS_ORDER} LIMIT ?`;
 
+// The same list narrowed to one awarding body: links whose winner that body paid. The per-(link, authority)
+// split is already stored by the ETL (interest_link_authorities), so this is an EXISTS on the link, not a
+// scan of the contracts.
+export const AUTHORITY_LEADERBOARD_SQL = `${LINK_SELECT}
+    AND EXISTS (SELECT 1 FROM interest_link_authorities ila
+                WHERE ila.link_key = il.link_key AND ila.authority_id = ?)
+  ORDER BY ${NEXUS_ORDER} LIMIT ?`;
+
 /** The leaderboard: office-holders who declared a material ownership stake (their own or a close
- *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value). */
-export async function getConflictLeaderboard(db: D1Database, limit = 100): Promise<ConflictLink[]> {
+ *  relative's) in a procurement winner, ranked NEXUS-first (own-institution → contemporaneous → value).
+ *  With `authorityId`, only the links whose winner that body paid. */
+export async function getConflictLeaderboard(
+  db: D1Database,
+  limit = 100,
+  authorityId?: string,
+): Promise<ConflictLink[]> {
   try {
-    const rows = sealed((await db.prepare(LEADERBOARD_SQL).bind(limit).all<LinkRow>()).results);
+    const stmt = authorityId
+      ? db.prepare(AUTHORITY_LEADERBOARD_SQL).bind(authorityId, limit)
+      : db.prepare(LEADERBOARD_SQL).bind(limit);
+    const rows = sealed((await stmt.all<LinkRow>()).results);
     return rows.map(toLink);
   } catch (e) {
     if (conflictSchemaAbsent(e, 'leaderboard')) return []; // un-migrated env → empty surface, not a 500
@@ -283,7 +344,7 @@ export async function getConflictLeaderboard(db: D1Database, limit = 100): Promi
 export const DETAIL_LINKS_LIMIT = 50;
 
 export const OFFICIAL_SQL = `${LINK_SELECT} AND il.person_id = ?
-  ORDER BY ${NEXUS_ORDER} LIMIT ${DETAIL_LINKS_LIMIT}`;
+  ORDER BY ${NEXUS_ORDER}`;
 
 // The union declared window across the links on ONE ЕИК: [min firstDeclaredYear, max lastDeclaredYear]. The
 // ЕИК read orders contracts INSIDE this union first, so the LIMIT can never drop a contract that falls in ANY
@@ -336,6 +397,7 @@ async function loadLinkContracts(
 export async function getOfficialConflicts(
   db: D1Database,
   personId: string,
+  options: { contracts?: boolean } = {},
 ): Promise<OfficialConflicts | null> {
   try {
     // Filtered BEFORE the emptiness check, so a person whose every link is withheld 404s rather than
@@ -343,7 +405,19 @@ export async function getOfficialConflicts(
     const rows = sealed((await db.prepare(OFFICIAL_SQL).bind(personId).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
-    const contracts = await loadLinkContracts(db, links);
+    const documentSets = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.person_id))].map(
+          async (id) => [id, await getPersonDeclarations(db, id)] as const,
+        ),
+      ),
+    );
+    links.forEach((link, i) => {
+      link.declarations = (documentSets.get(rows[i]!.person_id) ?? []).filter((d) =>
+        d.companyEiks.includes(link.eik),
+      );
+    });
+    const contracts = options.contracts === false ? {} : await loadLinkContracts(db, links);
     return { official: links[0]!.official, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'official')) return null; // un-migrated env → 404, not a 500
@@ -353,6 +427,15 @@ export async function getOfficialConflicts(
 
 export const COMPANY_SQL = `${LINK_SELECT} AND il.eik = ?
   ORDER BY ${NEXUS_ORDER} LIMIT ${DETAIL_LINKS_LIMIT}`;
+
+/** All evidenced declarants for a company's compact profile section, without contract/document payloads. */
+export async function getCompanyDeclarants(db: D1Database, eik: string): Promise<ConflictLink[]> {
+  const rows = await db
+    .prepare(`${LINK_SELECT} AND il.eik=? ORDER BY ${NEXUS_ORDER}`)
+    .bind(eik)
+    .all<LinkRow>();
+  return sealed(rows.results).map(toLink);
+}
 
 /** Office-holders with a declared ownership stake in one winner (by ЕИК), with each link's contracts loaded
  *  eagerly. Null when there are none. */
@@ -364,10 +447,53 @@ export async function getCompanyConflicts(
     const rows = sealed((await db.prepare(COMPANY_SQL).bind(eik).all<LinkRow>()).results);
     if (rows.length === 0) return null;
     const links = rows.map(toLink);
+    const documentSets = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.person_id))].map(
+          async (id) => [id, await getPersonDeclarations(db, id)] as const,
+        ),
+      ),
+    );
+    links.forEach((link, i) => {
+      link.declarations = (documentSets.get(rows[i]!.person_id) ?? []).filter((d) =>
+        d.companyEiks.includes(link.eik),
+      );
+    });
     const contracts = await loadLinkContracts(db, links);
     return { company: rows[0]!.company, eik, links, contracts };
   } catch (e) {
     if (conflictSchemaAbsent(e, 'company')) return null; // un-migrated env → 404, not a 500
+    throw e;
+  }
+}
+
+// How many of one body's winners carry a surfaced declared stake, and how many of those were declared by an
+// official OF that body (ila.own = 'exact' — the deterministic own-institution verdict, never the locality
+// heuristic). Winners, not links: two officials in one company are one company.
+export const AUTHORITY_CONFLICTS_SQL = `SELECT COUNT(DISTINCT il.eik) AS companies,
+    COUNT(DISTINCT CASE WHEN ila.own = 'exact' THEN il.eik END) AS own_companies
+  FROM interest_link_authorities ila
+  JOIN interest_links il ON il.link_key = ila.link_key
+  WHERE ila.authority_id = ? AND ${SURFACED_OWNERSHIP}`;
+
+export interface AuthorityConflictSummary {
+  companies: number;
+  ownCompanies: number;
+}
+
+/** The declared-stake figure an institution's profile shows and links to /conflicts?authority= with. */
+export async function getAuthorityConflictSummary(
+  db: D1Database,
+  authorityId: string,
+): Promise<AuthorityConflictSummary> {
+  try {
+    const r = await db
+      .prepare(AUTHORITY_CONFLICTS_SQL)
+      .bind(authorityId)
+      .first<{ companies: number | null; own_companies: number | null }>();
+    return { companies: r?.companies ?? 0, ownCompanies: r?.own_companies ?? 0 };
+  } catch (e) {
+    if (conflictSchemaAbsent(e, 'authority summary')) return { companies: 0, ownCompanies: 0 };
     throw e;
   }
 }
@@ -464,7 +590,8 @@ export const LINK_CONTRACTS_SQL = `SELECT cc.id, cc.signed_at, aa.name AS author
     COALESCE(NULLIF(cc.contract_subject, ''), tt.title) AS subject,
     NULLIF(tt.procedure_type, 'неизвестна') AS procedure_type,
     CASE
-      WHEN cc.signed_at IS NULL OR il.first_declared_year IS NULL OR il.last_declared_year IS NULL THEN 'unknown'
+      WHEN strftime('%Y',cc.signed_at) IS NULL OR il.first_declared_year IS NULL OR il.last_declared_year IS NULL THEN 'unknown'
+      WHEN ${declarationYearDisputed('il', "strftime('%Y',cc.signed_at)")} THEN 'unknown'
       WHEN CAST(strftime('%Y', cc.signed_at) AS INTEGER) < CAST(il.first_declared_year AS INTEGER) THEN 'before'
       WHEN CAST(strftime('%Y', cc.signed_at) AS INTEGER) > CAST(il.last_declared_year AS INTEGER) THEN 'after'
       ELSE 'contemporaneous'
@@ -499,4 +626,19 @@ export async function getLinkContracts(
     throw e;
   }
   return rows.map(toContract);
+}
+
+/** Where an official page asked for under an id that no longer exists moved to (ADR-0040): the id the loader
+ *  carried it to, or null. Soft-fails to null where the table is not there yet. */
+export async function getPersonRedirect(db: D1Database, personId: string): Promise<string | null> {
+  try {
+    const r = await db
+      .prepare('SELECT new_id FROM person_redirects WHERE old_id = ?')
+      .bind(personId)
+      .first<{ new_id: string }>();
+    return r?.new_id ?? null;
+  } catch (e) {
+    if (conflictSchemaAbsent(e, 'person redirect')) return null;
+    throw e;
+  }
 }

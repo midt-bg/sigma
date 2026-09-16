@@ -1,4 +1,5 @@
 import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sigma/api-contract';
+import { getMulti } from './filters';
 import { count, moneyBare } from '@sigma/shared';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -35,8 +36,11 @@ const RELATION_LABEL: Record<string, string> = {
 export function registryEvidenceLabel(l: {
   evidenceKind: 'document' | 'confirmed';
   registryRole: 'owner' | 'manager' | null;
+  registryRoleEndedOn?: string | null;
 }): string {
-  if (l.evidenceKind === 'confirmed') return 'самоличност, потвърдена по декларирани данни';
+  if (l.evidenceKind === 'confirmed') return 'дружеството е потвърдено по декларирани данни';
+  if (l.registryRoleEndedOn)
+    return `лицето е било вписано като ${l.registryRole === 'manager' ? 'управител' : 'съдружник/собственик'} до ${l.registryRoleEndedOn}`;
   return l.registryRole === 'manager'
     ? 'лицето е вписано като управител'
     : 'лицето е вписано като съдружник/собственик';
@@ -150,7 +154,7 @@ const TEMPORAL_LABEL: Record<ConflictContract['temporal'], string> = {
   contemporaneous: 'в декларирания период',
   before: 'преди декларирания период',
   after: 'след декларирания период',
-  unknown: 'без дата',
+  unknown: 'без установено времево съвпадение',
 };
 
 /** Bulgarian tag for a contract's position relative to the DECLARED (disclosure) window — not an ownership
@@ -193,11 +197,12 @@ export function contractTemporal(
   signedAt: string | null,
   firstDeclaredYear: string | null,
   lastDeclaredYear: string | null,
+  disputedYears: string[] = [],
 ): ConflictContract['temporal'] {
   const y = parseYear(signedAt);
   const lo = parseYear(firstDeclaredYear);
   const hi = parseYear(lastDeclaredYear);
-  if (y == null || lo == null || hi == null) return 'unknown';
+  if (y == null || lo == null || hi == null || disputedYears.includes(String(y))) return 'unknown';
   if (y < lo) return 'before';
   if (y > hi) return 'after';
   return 'contemporaneous';
@@ -211,11 +216,12 @@ export function markContracts(
   facts: ConflictContractFacts[],
   firstDeclaredYear: string | null,
   lastDeclaredYear: string | null,
+  disputedYears: string[] = [],
 ): ConflictContract[] {
   return facts
     .map((f) => ({
       ...f,
-      temporal: contractTemporal(f.signedAt, firstDeclaredYear, lastDeclaredYear),
+      temporal: contractTemporal(f.signedAt, firstDeclaredYear, lastDeclaredYear, disputedYears),
     }))
     .sort(
       (a, b) =>
@@ -433,8 +439,13 @@ export function conflictHeadline(links: ConflictLink[]): {
   totalEur: number;
   contemporaneousEur: number;
 } {
-  const officials = new Set(links.map((l) => l.officialSlug));
-  const perEik = dedupeMoneyPerEik(links);
+  const officials = new Set(links.map((l) => l.registryPersonId ?? l.officialSlug));
+  const perEik = dedupeMoneyPerEik(
+    links.map((l) => ({
+      ...l,
+      contemporaneousValueEur: l.personCompanyValueEur ?? l.contemporaneousValueEur,
+    })),
+  );
   let totalEur = 0;
   let contemporaneousEur = 0;
   for (const v of perEik.values()) {
@@ -442,7 +453,7 @@ export function conflictHeadline(links: ConflictLink[]): {
     contemporaneousEur += v.contemporaneous ?? 0;
   }
   return {
-    linkCount: links.length,
+    linkCount: new Set(links.map((l) => `${l.registryPersonId ?? l.officialSlug}|${l.eik}`)).size,
     officialCount: officials.size,
     totalEur,
     contemporaneousEur,
@@ -462,22 +473,25 @@ export interface ConflictPersonRow {
   official: string;
   /** URL-safe person id → /conflicts/official/:slug — the group key. */
   officialSlug: string;
+  personIdentity?: string;
   /** The official's latest declared institution — disambiguates namesakes; from the strongest link. */
   institution: string | null;
+  /** The official's position, from the same filing as `institution`. */
+  position: string | null;
   /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
   companyCount: number;
+  companies?: { company: string; eik: string; self: number; family: number }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
   /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,
    *  constant within a ЕИК, like the money), null-guarded (never NaN). */
   contractCount: number;
-  /** Total public money to the person's winners — per-ЕИК-deduped „от" figure (a winner's € is company-level,
+  /** Total public money to the person's winners — per-ЕИК-deduped (a winner's € is company-level,
    *  not per-link; shares `dedupeMoneyPerEik`). NULL — not 0 — when no winner carries a summable value, so the
    *  cell renders „—" like the per-link card rather than a fabricated „0" (niki #312 MEDIUM 3). */
   contractValueEur: number | null;
-  /** Conflict-window subset of that money (the „по време на конфликта" lead figure), per-ЕИК-deduped (MAX).
-   *  NULL when the window carries no summable € (e.g. in-window contracts with NULL amounts), so `personFundsCell`
-   *  suppresses the split exactly as `fundsCellLabel`'s `!= null` guard does — never „0 … от 88 млн.". */
+  /** Conflict-window subset of that money, per-ЕИК-deduped (MAX). NULL when the window carries no
+   *  summable € (e.g. in-window contracts with NULL amounts), so the list shows „—", never a fabricated 0. */
   contemporaneousValueEur: number | null;
   /** Whose declared stake(s) this row aggregates: 'self' (own only), 'family' (a close relative's only,
    *  ADR-0032 — relative never named), or 'mixed' (both). Identity-free; drives the „свързано лице" qualifier
@@ -485,20 +499,9 @@ export interface ConflictPersonRow {
   stakeKind: 'self' | 'family' | 'mixed';
   /** ≥1 of the person's links has a contract from the official's OWN institution — OR across links. */
   ownInstitution: boolean;
-  /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
+  /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
-}
-
-/** Public-funds cell for a collapsed person row (#287): the same lead/total split as the per-link
- *  `fundsCellLabel`, but computed from the row's OR-ed window flag and per-ЕИК-deduped sums — no synthetic
- *  `ConflictLink` and no cast, so it cannot silently drift if `fundsCellLabel` grows a new field read. */
-export function personFundsCell(
-  row: Pick<
-    ConflictPersonRow,
-    'hasContemporaneous' | 'contemporaneousValueEur' | 'contractValueEur'
-  >,
-): FundsCell {
-  return fundsSplit(row.hasContemporaneous, row.contemporaneousValueEur, row.contractValueEur);
+  declaredInstitutions?: DeclaredInstitution[];
 }
 
 /** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's
@@ -546,9 +549,10 @@ function isStrongerLink(a: ConflictLink, b: ConflictLink): boolean {
 export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
   const groups = new Map<string, { strongest: ConflictLink; links: ConflictLink[] }>();
   for (const l of links) {
-    const g = groups.get(l.officialSlug);
+    const identity = l.registryPersonId ?? l.officialSlug;
+    const g = groups.get(identity);
     if (!g) {
-      groups.set(l.officialSlug, { strongest: l, links: [l] });
+      groups.set(identity, { strongest: l, links: [l] });
     } else {
       g.links.push(l);
       if (isStrongerLink(l, g.strongest)) g.strongest = l;
@@ -559,7 +563,12 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
   for (const { strongest, links: groupLinks } of groups.values()) {
     // Per-ЕИК money dedup (shared with conflictHeadline). Null-aware: a per-ЕИК value contributes only when
     // non-null, and the row stays NULL when NO winner carries a summable value — so „—", not a fabricated „0".
-    const perEik = dedupeMoneyPerEik(groupLinks);
+    const perEik = dedupeMoneyPerEik(
+      groupLinks.map((l) => ({
+        ...l,
+        contemporaneousValueEur: l.personCompanyValueEur ?? l.contemporaneousValueEur,
+      })),
+    );
     let contractValueEur: number | null = null;
     let contemporaneousValueEur: number | null = null;
     for (const v of perEik.values()) {
@@ -603,15 +612,30 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
       row: {
         official: strongest.official,
         officialSlug: strongest.officialSlug,
+        personIdentity: strongest.registryPersonId ?? strongest.officialSlug,
         institution: strongest.institution,
+        position: strongest.position,
         companyCount,
         soleCompany,
+        companies: [...new Set(groupLinks.map((l) => l.eik))].map((eik) => ({
+          eik,
+          company: groupLinks.find((l) => l.eik === eik)!.company,
+          self: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'owns')),
+          family: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'related')),
+        })),
         contractCount,
         contractValueEur,
         contemporaneousValueEur,
         stakeKind,
         ownInstitution: groupLinks.some((l) => l.ownInstitution),
         hasContemporaneous: groupLinks.some((l) => l.contemporaneousContractCount > 0),
+        declaredInstitutions: groupDeclaredInstitutions(
+          groupLinks.flatMap((l) =>
+            l.declaredOffices?.length
+              ? l.declaredOffices
+              : [{ institution: l.institution ?? '', position: l.position, year: null }],
+          ),
+        ),
       },
     });
   }
@@ -632,4 +656,185 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         : 0;
   });
   return rows.map((r) => r.row);
+}
+
+/** „Позиция · институция" — the two facts that say which official this is, in one line, wherever a name is
+ *  shown. Null when neither is on record. */
+export function officialRole(o: {
+  position: string | null;
+  institution: string | null;
+}): string | null {
+  const parts = [o.position, o.institution].map((s) => s?.trim()).filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+// ── /conflicts list filters ────────────────────────────────────────────────────────────────────────
+// The whole surfaced set is loaded (≤1000 links), so the list filters, sorts and pages in memory: the same
+// rows on the server render and in the browser, and no extra query per filter.
+
+export type ConflictStakeFilter = 'self' | 'family';
+export type ConflictSignal = 'own' | 'window';
+export type ConflictSort = 'period' | 'total' | 'contracts';
+
+export interface ConflictListFilters {
+  stake: ConflictStakeFilter | null;
+  signals: ConflictSignal[];
+  /** Institution keys (see `institutionKey`). */
+  institutions: string[];
+  sort: ConflictSort;
+  q: string | null;
+}
+
+/** The /conflicts filter state from the URL. A value it does not know is dropped, not an error. */
+export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
+  const stake = sp.get('stake');
+  const sort = sp.get('sort');
+  return {
+    stake: stake === 'self' || stake === 'family' ? stake : null,
+    signals: getMulti(sp, 'signal').filter(
+      (s): s is ConflictSignal => s === 'own' || s === 'window',
+    ),
+    institutions: getMulti(sp, 'institution').map(institutionKey).filter(Boolean),
+    sort: sort === 'total' || sort === 'contracts' ? sort : 'period',
+    q: sp.get('q')?.trim() || null,
+  };
+}
+
+/** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together. */
+export function institutionKey(name: string | null | undefined): string {
+  let value = (name ?? '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('bg');
+  if (/[А-Я]/u.test(value)) {
+    const lookalikes: Record<string, string> = {
+      A: 'А',
+      B: 'В',
+      C: 'С',
+      E: 'Е',
+      H: 'Н',
+      K: 'К',
+      M: 'М',
+      O: 'О',
+      P: 'Р',
+      T: 'Т',
+      X: 'Х',
+      Y: 'У',
+    };
+    value = value.replace(/[ABCEHKMOPTXY]/g, (c) => lookalikes[c]!);
+  }
+  return value;
+}
+
+export interface DeclaredInstitution {
+  institution: string;
+  positions: string[];
+  years: string[];
+}
+
+/** Years are observations in declarations, never an inferred continuous mandate. */
+export function groupDeclaredInstitutions(
+  offices: {
+    institution: string | null;
+    position: string | null;
+    year: string | null;
+  }[],
+): DeclaredInstitution[] {
+  const groups = new Map<string, DeclaredInstitution>();
+  for (const o of offices) {
+    const key = institutionKey(o.institution);
+    if (!key || !o.institution) continue;
+    const g = groups.get(key) ?? { institution: o.institution, positions: [], years: [] };
+    const position = o.position?.trim();
+    if (position && !g.positions.some((p) => institutionKey(p) === institutionKey(position)))
+      g.positions.push(position);
+    if (o.year && /^\d{4}$/.test(o.year) && !g.years.includes(o.year)) g.years.push(o.year);
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, years: g.years.sort(), positions: g.positions.sort() }))
+    .sort(
+      (a, b) =>
+        (b.years.at(-1) ?? '').localeCompare(a.years.at(-1) ?? '') ||
+        a.institution.localeCompare(b.institution, 'bg'),
+    );
+}
+
+const rowInstitutions = (r: ConflictPersonRow): DeclaredInstitution[] =>
+  r.declaredInstitutions?.length
+    ? r.declaredInstitutions
+    : r.institution
+      ? [{ institution: r.institution, positions: r.position ? [r.position] : [], years: [] }]
+      : [];
+
+const matchText = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase('bg');
+
+/** The rows the filters keep. A person with both an own and a relative's stake ('mixed') answers both
+ *  stake filters; every chosen signal must hold; the search matches the name, position or institution. */
+export function filterConflictRows(
+  rows: ConflictPersonRow[],
+  f: ConflictListFilters,
+): ConflictPersonRow[] {
+  const q = f.q ? matchText(f.q) : null;
+  const institutions = new Set(f.institutions);
+  return rows.filter(
+    (r) =>
+      (f.stake == null || r.stakeKind === 'mixed' || r.stakeKind === f.stake) &&
+      (!f.signals.includes('own') || r.ownInstitution) &&
+      (!f.signals.includes('window') || r.hasContemporaneous) &&
+      (institutions.size === 0 ||
+        rowInstitutions(r).some((i) => institutions.has(institutionKey(i.institution)))) &&
+      (q == null ||
+        matchText(
+          `${r.official} ${r.position ?? ''} ${r.institution ?? ''} ${rowInstitutions(r)
+            .map((i) => `${i.institution} ${i.positions.join(' ')}`)
+            .join(' ')}`,
+        ).includes(q)),
+  );
+}
+
+/** Each named sort is monotonic by its displayed figure; unknown amounts come last. */
+export function sortConflictRows(
+  rows: ConflictPersonRow[],
+  sort: ConflictSort,
+): ConflictPersonRow[] {
+  const key = (r: ConflictPersonRow) =>
+    sort === 'period'
+      ? (r.contemporaneousValueEur ?? -1)
+      : sort === 'total'
+        ? (r.contractValueEur ?? -1)
+        : r.contractCount;
+  return [...rows].sort(
+    (a, b) =>
+      key(b) - key(a) ||
+      (a.officialSlug < b.officialSlug ? -1 : a.officialSlug > b.officialSlug ? 1 : 0),
+  );
+}
+
+/** The institution options for the filter rail: the officials' institutions by how many persons each
+ *  carries — the top ones, plus any already selected — each under its most common spelling. */
+export function institutionOptions(
+  rows: ConflictPersonRow[],
+  selected: string[],
+  top = 12,
+): { value: string; label: string; count: number }[] {
+  const byKey = new Map<string, { count: number; spellings: Map<string, number> }>();
+  for (const r of rows) {
+    for (const { institution } of rowInstitutions(r)) {
+      const key = institutionKey(institution);
+      if (!key) continue;
+      const e = byKey.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+      e.count++;
+      e.spellings.set(institution, (e.spellings.get(institution) ?? 0) + 1);
+      byKey.set(key, e);
+    }
+  }
+  const ranked = [...byKey.entries()].sort(
+    (a, b) => b[1].count - a[1].count || (a[0] < b[0] ? -1 : 1),
+  );
+  const keep = new Set([...ranked.slice(0, top).map(([k]) => k), ...selected]);
+  return ranked
+    .filter(([k]) => keep.has(k))
+    .map(([value, e]) => ({
+      value,
+      label: [...e.spellings.entries()].sort((a, b) => b[1] - a[1])[0]![0],
+      count: e.count,
+    }));
 }

@@ -4,6 +4,7 @@ import { money } from '@sigma/shared';
 import type { SearchHit } from '@sigma/api-contract';
 import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { personName } from '../lib/person-name';
 
 const KIND_LABEL: Record<SearchHit['kind'], string> = {
   // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
@@ -230,7 +231,9 @@ export function SmartSearch({
                     >
                       <span className="smart-search-option-kind">{KIND_LABEL[hit.kind]}</span>
                       <span className="smart-search-option-body">
-                        <span className="smart-search-option-title">{hit.title}</span>
+                        <span className="smart-search-option-title">
+                          {hit.kind === 'official' ? personName(hit.title) : hit.title}
+                        </span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>
                       {hit.amountEur != null && (
