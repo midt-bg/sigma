@@ -229,8 +229,14 @@ function ConflictDetailBlock({
           </Link>
         </p>
       )}
+      {/* The expanded case: a timeline placing each contract against the declared window, the
+          per-authority capture shares, and the contracts themselves. */}
       {l.contractCount > 0 && (
-        <CaseDetail link={l} contracts={contracts} showContracts={!contractListHref} />
+        <>
+          <Timeline link={l} contracts={contracts} />
+          {!contractListHref && <AuthorityShares contracts={contracts} />}
+          {!contractListHref && <ContractList contracts={contracts} />}
+        </>
       )}
       {contractListHref && (
         <p className="detail-contract-action">
@@ -240,30 +246,6 @@ function ConflictDetailBlock({
         </p>
       )}
     </Section>
-  );
-}
-
-// The expanded case: a timeline placing each contract against the declared window, the per-authority
-// capture shares, and the contracts themselves.
-//
-// The „В декларирания период" bar that used to open this block is gone. It carried no number the funds
-// figure above did not already carry — only the percentage, which now rides in that figure's sub-line
-//. That removes one of the four sub-headings this block used to stack under a company.
-export function CaseDetail({
-  link: l,
-  contracts,
-  showContracts = true,
-}: {
-  link: ConflictLink;
-  contracts: ConflictContract[];
-  showContracts?: boolean;
-}) {
-  return (
-    <>
-      <Timeline link={l} contracts={contracts} />
-      {showContracts && <AuthorityShares contracts={contracts} />}
-      {showContracts && <ContractList contracts={contracts} />}
-    </>
   );
 }
 

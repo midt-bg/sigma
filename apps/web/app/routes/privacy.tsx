@@ -2,9 +2,9 @@ import { Link } from 'react-router';
 import type { Route } from './+types/privacy';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
-import { publicCache } from '../lib/cache';
-import { contactEmail } from '../lib/contact';
+import { cached } from '../lib/cache';
 import { seoMeta } from '../lib/meta';
+import { CONTACT_EMAIL } from '../lib/contact';
 
 export function meta({ matches }: Route.MetaArgs) {
   return seoMeta({
@@ -15,15 +15,9 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
-export function loader({ context }: Route.LoaderArgs) {
-  return { contact: contactEmail(context.cloudflare.env) };
-}
-
-export default function Privacy({ loaderData }: Route.ComponentProps) {
+export default function Privacy() {
   return (
     <>
       <Breadcrumbs items={[{ label: 'Начало', to: '/' }, { label: 'Поверителност' }]} />
@@ -48,7 +42,7 @@ export default function Privacy({ loaderData }: Route.ComponentProps) {
             <div className="row">
               <dt>Контакт</dt>
               <dd>
-                <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>
+                <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
               </dd>
             </div>
           </dl>
@@ -97,10 +91,9 @@ export default function Privacy({ loaderData }: Route.ComponentProps) {
             вече са публични.
           </p>
           <p>
-            Заявленията се изпращат на{' '}
-            <a href={`mailto:${loaderData.contact}`}>{loaderData.contact}</a>. Посочете конкретния
-            запис, URL или идентификатор (например ЕИК, УНП или номер на договор), за да бъде
-            заявлението разгледано точно.
+            Заявленията се изпращат на <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+            Посочете конкретния запис, URL или идентификатор (например ЕИК, УНП или номер на
+            договор), за да бъде заявлението разгледано точно.
           </p>
           <p>
             Информация за предприетите действия се предоставя без ненужно забавяне и в срок до един

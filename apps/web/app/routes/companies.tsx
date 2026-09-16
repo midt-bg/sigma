@@ -19,7 +19,7 @@ import {
   withParams,
   PAGE_SIZE,
 } from '../lib/filters';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { getCoverageMeta, yearOptions } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 
@@ -40,9 +40,7 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
-}
+export const headers = cached(1800);
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;

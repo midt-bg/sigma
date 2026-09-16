@@ -13,7 +13,7 @@ import { DataTable } from '../components/DataTable';
 import { NetworkGraph } from '../components/NetworkGraph';
 import { networkColumns, networkRows } from '../lib/entity-tables';
 import { Callout, Section } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -26,9 +26,7 @@ export function meta(_: Route.MetaArgs) {
   ];
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
-}
+export const headers = cached(1800);
 
 // ?center=a:<eik> | c:<slug>; null falls back to the biggest authority in the query layer.
 function parseCenter(token: string | null): NetworkParams | null {

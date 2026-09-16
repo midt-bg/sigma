@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { Section, Callout, ExternalEikLink } from '../components/ui';
 import { FactsList } from '../components/FactsList';
 import { ConflictDetail } from '../components/ConflictDetail';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { companyProfileHref, conflictHeadline, declaredStakeNoun } from '../lib/conflicts';
@@ -28,9 +28,7 @@ export function meta({ data, matches, params }: Route.MetaArgs) {
   return tags;
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   // A БГ ЕИК is 9 or 13 digits — always numeric. Require digits (not just non-blank) so a garbage/probe

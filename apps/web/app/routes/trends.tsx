@@ -8,7 +8,7 @@ import { PageHeader } from '../components/PageHeader';
 import { DataTable, type Column } from '../components/DataTable';
 import { TrendChart } from '../components/TrendChart';
 import { Callout, Section } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { singleSelectFilters } from '../lib/filters';
 
 export function meta(_: Route.MetaArgs) {
@@ -22,9 +22,7 @@ export function meta(_: Route.MetaArgs) {
   ];
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
-}
+export const headers = cached(1800);
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const sp = new URL(request.url).searchParams;

@@ -9,7 +9,7 @@ import { Link, redirect } from 'react-router';
 import type { Route } from './+types/conflict.official';
 import { PersonProfile } from '../components/PersonProfile';
 import { loadPersonProfile } from '../lib/person-profile.server';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { withDbRetry } from '../lib/retry';
 import { seoMeta } from '../lib/meta';
 import { personName } from '../lib/person-name';
@@ -28,9 +28,7 @@ export function meta({ data, matches, params }: Route.MetaArgs) {
     { name: 'robots', content: 'noindex' },
   ];
 }
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 export async function loader({ params, context, request }: Route.LoaderArgs) {
   const id = personIdFromSlug(params.id);
   if (!id) throw new Response('Not Found', { status: 404 });

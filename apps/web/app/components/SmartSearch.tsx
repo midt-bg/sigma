@@ -6,7 +6,7 @@ import type { loader as suggestLoader } from '../routes/search.suggest';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { personName } from '../lib/person-name';
 
-const KIND_LABEL: Record<SearchHit['kind'], string> = {
+export const KIND_LABEL: Record<SearchHit['kind'], string> = {
   // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
   // never the official themselves; mislabeling the official that way is a category error (todorkolev #226 — C14).
   official: 'длъжностно лице',

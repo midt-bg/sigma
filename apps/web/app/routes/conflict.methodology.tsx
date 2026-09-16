@@ -3,7 +3,7 @@ import type { Route } from './+types/conflict.methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Callout } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { seoMeta } from '../lib/meta';
 
 // Public methodology + corrections/appeal page for свързани лица (spec §9 — a hard libel-defence requirement).
@@ -19,9 +19,7 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
 const TOC = [
   ['sources', 'Източници и правно основание'],

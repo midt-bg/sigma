@@ -13,11 +13,11 @@ import {
   authorityIdFromSlug,
   getAuthority,
   getAuthorityConflictSummary,
-  getAuthorityProcedureCompetition,
-  getAuthoritySingleOffer,
   getAuthoritySupplierTies,
   getSpendingTrend,
   getDb,
+  competitionTotals,
+  procedureCompetition,
 } from '@sigma/db';
 import type { Route } from './+types/authority';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -31,7 +31,7 @@ import { TieGraph } from '../components/TieGraph';
 import { ContractMiniTable } from '../components/ContractMiniTable';
 import { EuBenchmarkStat } from '../components/EuBenchmarkStat';
 import { ShareBar, Chip, Section, RegistryCta } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { coverageRange, getCoverageMeta } from '../lib/coverage';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { withDbRetry } from '../lib/retry';
@@ -48,9 +48,7 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   const eik = params.eik;
@@ -64,8 +62,8 @@ export async function loader({ params, context }: Route.LoaderArgs) {
         getCoverageMeta(db),
         getSpendingTrend(db, { authorityId, granularity: 'year' }, { includeSectors: false }),
         getAuthoritySupplierTies(db, authorityId),
-        getAuthoritySingleOffer(db, authorityId),
-        getAuthorityProcedureCompetition(db, authorityId),
+        competitionTotals(db, { authorityId }),
+        procedureCompetition(db, { authorityId }),
         getAuthorityConflictSummary(db, authorityId),
       ],
     );

@@ -5,7 +5,7 @@ import type { Route } from './+types/methodology';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
 import { Callout, Flag } from '../components/ui';
-import { publicCache } from '../lib/cache';
+import { cached } from '../lib/cache';
 import { START_YEAR, coverageEndYear } from '../lib/coverage';
 import { seoMeta } from '../lib/meta';
 
@@ -18,9 +18,7 @@ export function meta({ matches }: Route.MetaArgs) {
   });
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(3600) };
-}
+export const headers = cached(3600);
 
 // Pull the live corpus figures so the credibility-critical copy matches reality, not hard-coded numbers.
 export async function loader({ context }: Route.LoaderArgs) {
