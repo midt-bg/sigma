@@ -99,13 +99,18 @@ export function streamCompanySitemap(db: D1Database, origin: string): Response {
   return streamUrls(origin, async (after) => {
     const { results } = await db
       .prepare(
-        `SELECT bidder_id, name, last_date FROM company_totals WHERE bidder_id > ? ORDER BY bidder_id LIMIT ?`,
+        `SELECT ct.bidder_id, ct.name, ct.last_date, b.legal_form FROM company_totals ct LEFT JOIN bidders b ON b.id = ct.bidder_id WHERE ct.bidder_id > ? ORDER BY ct.bidder_id LIMIT ?`,
       )
       .bind(after, CHUNK)
-      .all<{ bidder_id: string; name: string; last_date: string | null }>();
+      .all<{
+        bidder_id: string;
+        name: string;
+        legal_form?: string | null;
+        last_date: string | null;
+      }>();
     const fallback = await asOf;
     const slugs = results
-      .filter((r) => !isNaturalPersonProfileName(r.name))
+      .filter((r) => !isNaturalPersonProfileName(r.name, r.legal_form))
       .map(
         (r) =>
           `<url><loc>${xmlEscape(origin)}/companies/${xmlEscape(companySlug(r.bidder_id))}</loc>${lastmod(r.last_date ?? fallback)}</url>\n`,
@@ -136,10 +141,17 @@ export function streamContractSitemap(db: D1Database, origin: string, page: numb
       }
       const { results } = await db
         .prepare(
-          `SELECT rowid AS rid, id, signed_at, published_at FROM contracts WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT ?`,
+          `SELECT c.rowid AS rid, c.id, c.signed_at, c.published_at, b.name AS bidder_name, b.legal_form FROM contracts c LEFT JOIN bidders b ON b.id = c.bidder_id WHERE c.rowid > ? AND c.rowid <= ? ORDER BY c.rowid LIMIT ?`,
         )
         .bind(after, hi, CHUNK)
-        .all<{ rid: number; id: string; signed_at: string | null; published_at: string | null }>();
+        .all<{
+          rid: number;
+          id: string;
+          bidder_name?: string;
+          legal_form?: string | null;
+          signed_at: string | null;
+          published_at: string | null;
+        }>();
       if (results.length === 0) {
         controller.enqueue(enc.encode(TAIL));
         done = true;
@@ -147,6 +159,7 @@ export function streamContractSitemap(db: D1Database, origin: string, page: numb
         return;
       }
       const block = results
+        .filter((r) => !isNaturalPersonProfileName(r.bidder_name ?? '', r.legal_form))
         .map(
           (r) =>
             `<url><loc>${xmlEscape(origin)}/contracts/${xmlEscape(contractSlug(r.id))}</loc>${lastmod(r.signed_at ?? r.published_at ?? fallback)}</url>\n`,

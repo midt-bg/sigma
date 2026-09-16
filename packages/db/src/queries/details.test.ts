@@ -553,6 +553,7 @@ function companyDb(
 ): D1Database {
   return fakeD1([
     { when: 'FROM company_totals', first: row },
+    { when: 'FROM bidders WHERE id=?', first: null },
     { when: 'nuts_regions', first: { legal_form: 'ООД', region: 'София' } },
     { when: 'AS primary_eur', first: extra },
     { when: 'four_plus', first: { one: 1, two: 2, three: 0, four_plus: 1, unknown: 0 } },
@@ -644,6 +645,7 @@ describe('getCompany', () => {
     const row = { ...companyRow, primary_sector: null };
     const db = fakeD1([
       { when: 'FROM company_totals', first: row },
+      { when: 'FROM bidders WHERE id=?', first: null },
       { when: 'nuts_regions', first: null }, // bidderMeta null
       { when: 'AS primary_eur', first: null }, // extra null
       { when: 'four_plus', first: null }, // bidsRow null

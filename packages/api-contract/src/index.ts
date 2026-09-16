@@ -229,9 +229,13 @@ export interface ContractListItem {
   signedAt: string | null;
   bidsReceived: number | null;
   valueEur: number | null; // null = suspect / unconvertible → render the проверяват note
+  /** The value is present and summed, but the source figure looks wrong (`value_flag = 'value_low'`).
+   *  Lists must mark it: unmarked, 92 € reads exactly like a genuine 92 € contract. */
+  valueUnverified: boolean;
 }
 
 export interface ContractParty {
+  legalForm?: string | null;
   slug: string;
   name: string;
   displayName: string;
@@ -245,13 +249,26 @@ export interface ContractParty {
   totalEur: number;
 }
 
+/** `contracts.value_flag` — the data-quality verdict assigned in scripts/normalize-raw.sql. Carried to
+ *  the UI so the page can say WHY a figure is untrustworthy instead of one generic label for all of
+ *  them: `value_low` (published far below the forecast) reads nothing like `annex_total_suspect`
+ *  (a known 2× double-count). */
+export type ContractValueFlag =
+  | 'ok'
+  | 'review'
+  | 'value_low'
+  | 'value_suspect'
+  | 'annex_suspect'
+  | 'annex_total_suspect';
+
 export interface ContractValueTimeline {
   estimatedEur: number | null; // lot forecast when available; otherwise procurement-level forecast
   procedureEstimatedEur: number | null; // procurement-level forecast (whole prepiska), for context
   signingEur: number | null;
   currentEur: number | null;
   deltaPct: number | null; // (current − signing) / signing, when both present
-  suspect: boolean; // value_/annex_suspect/review → render with an unverified-value label
+  suspect: boolean; // value_/annex_suspect/review/value_low → render with an unverified-value label
+  flag: ContractValueFlag; // the specific verdict behind `suspect`, so the copy can be specific
   // annex_total_suspect → the current value is a KNOWN exact 2× double-count. currentEur is blanked (—)
   // rather than shown as a labelled doubled figure — a known-wrong number is worse than an honest gap (#307).
   currentValueDoubled: boolean;
@@ -458,6 +475,134 @@ export interface NetworkEdge {
   to: string; // node id
   valueEur: number;
   contracts: number;
+}
+
+/** How two entities are tied. Company ties come from `company_links`; a shared office-holder
+ *  (declared_stake) is drawn as a tie between the two COMPANIES and points at /conflicts, where the name is
+ *  published under its own rules. A `role` tie is a role the Trade Register records: its holder — a person
+ *  node, or a company — holds it at the company it points to (ADR-0039). */
+export type CompanyTieKind = 'consortium' | 'subcontract' | 'declared_stake' | 'money' | 'role';
+
+export interface CompanyTieNode {
+  id: string; // domain id ('eik:ЕИК' | 'name:…' | 'auth:ЕИК' for a paying institution | 'rp:…' for a person)
+  kind: 'company' | 'authority' | 'person';
+  label: string;
+  slug: string; // /companies/:slug | /authorities/:slug | /persons/:slug
+  valueEur: number; // the entity's total procurement — node size; 0 for a person
+  hop: number; // 0 centre, 1 tied directly, 2 tied through a node of hop 1
+  /** Set when the entity has published declared-interest links; the surface offers the /conflicts page. */
+  conflictsHref: string | null;
+}
+
+export interface CompanyTieEdge {
+  people?: { id: string; name: string; href: string }[];
+  from: string; // node id
+  to: string; // node id
+  kind: CompanyTieKind;
+  directed: boolean; // subcontract: from = prime, to = subcontractor; role between companies: holder → company
+  weightEur: number; // 0 for declared_stake and role — those ties are not monetary and must not be sized by money
+  occurrences: number; // shared consortia / contracts / officials; roles held
+  /** For a declared_stake tie: where the reader can see the named, already-published basis. */
+  href: string | null;
+  /** For a role tie: the roles `from` holds at `to`, each once, most senior first. */
+  roles?: RegistryRoleKind[];
+  /** For a role tie: whether any of those roles still stands (false: every one was struck off). */
+  current?: boolean;
+}
+
+/** The tie network around ONE company: who it is connected to, and how. */
+export interface CompanyTieNetwork {
+  center: CompanyTieNode | null;
+  nodes: CompanyTieNode[];
+  edges: CompanyTieEdge[];
+  /** Ties that exist but did not fit the drawn set, so the surface can say so honestly. */
+  omitted: number;
+}
+
+// ---- Trade Register roles (ADR-0039, ADR-0041) --------------------------------------------------------------
+
+/** A role the Trade Register records at a company. */
+export type RegistryRoleKind =
+  | 'manager'
+  | 'representative'
+  | 'chair'
+  | 'board_of_directors'
+  | 'management_board'
+  | 'governing_body'
+  | 'board_of_trustees'
+  | 'supervisory_board'
+  | 'controlling_board'
+  | 'verification_commission'
+  | 'partner'
+  | 'sole_owner'
+  | 'trader'
+  | 'procurator'
+  | 'branch_manager'
+  | 'liquidator'
+  | 'trustee'
+  | 'beneficial_owner';
+
+/** Who holds a role: a natural person or a company, with their page here where there is one. */
+export interface RoleHolder {
+  kind: 'person' | 'entity';
+  name: string;
+  href: string | null;
+  /** A company's ЕИК, where the register gives one. Never set for a person. */
+  eik: string | null;
+  /** A company's country, where the register gives one. Never set for a person. */
+  country: string | null;
+}
+
+/** One registered role at a company: who holds it, since when, until when, and the entry it rests on. */
+export interface CompanyRole {
+  holder: RoleHolder;
+  role: RegistryRoleKind;
+  /** As registered, where the field carries one (a partner's share). */
+  share: string | null;
+  /** The registered share divided by all partner shares in force at the same point in time. */
+  sharePct: number | null;
+  addedOn: string;
+  removedOn: string | null;
+  /** Evidence becomes ambiguous here; not a registered termination. */
+  uncertainAfter?: string | null;
+  entryNumber: string;
+}
+
+/** A company's management and ownership as the Trade Register records them. */
+export interface CompanyPeople {
+  /** Standing roles first, most senior first; then the struck-off ones, most recent first. */
+  roles: CompanyRole[];
+  /** The day the register was last read for this company; null when it has not been. */
+  asOf: string | null;
+}
+
+/** One role a person holds, or held, at one company. */
+export interface PersonRole {
+  company: { name: string; eik: string; href: string | null };
+  role: RegistryRoleKind;
+  share: string | null;
+  sharePct: number | null;
+  addedOn: string;
+  removedOn: string | null;
+  /** Evidence becomes ambiguous here; not a registered termination. */
+  uncertainAfter?: string | null;
+  entryNumber: string;
+  /** When this company’s registry deed was retrieved, independently of entry dates. */
+  fetchedAt: string;
+}
+
+/** A natural person the Trade Register records in a role at a company in the corpus. */
+export interface PersonProfile {
+  slug: string;
+  name: string;
+  roles: PersonRole[];
+  /** Distinct companies, and what they won by public procurement between them. */
+  companies: number;
+  wonEur: number;
+  /** The latest day the register was read for any of those companies. */
+  asOf: string | null;
+  /** The person at the centre, the companies around. */
+  network: CompanyTieNetwork;
 }
 
 export interface NetworkCenterOption {
@@ -685,19 +830,32 @@ export type ConflictRelation = 'owns' | 'manages' | 'owns+manages' | 'related';
 
 /** One office-holder↔company ownership link with its contract facts and a provenance URL. */
 export interface ConflictLink {
+  /** Comparable annual documents disagree; these years do not establish declaration timing. */
+  disputedYears?: string[];
+  declarations?: PersonDeclaration[];
   linkKey: string;
   officialSlug: string; // URL-safe person id → /conflicts/official/:slug (base64url, never the raw key)
   official: string; // declarant (office-holder) name as declared
   institution: string | null; // the official's latest declared institution — disambiguates namesakes
   //   (person grain is (name, institution), ADR-0026): two „Георги Иванов" at different bodies are distinct
   //   people, so the surface must SHOW the body rather than render two identical bare names.
+  position: string | null; // the official's position from the same (latest) declaration as `institution`
   company: string; // winner company name as registered
   eik: string; // winner ЕИК
   relation: ConflictRelation; // 'related' ⇒ the stake is a close relative's (anonymized), not the official's own
   contemporaneous: boolean; // stake declared in a year overlapping a contract award
   ownInstitution: boolean; // ≥1 contract from the official's OWN institution (deterministic 'exact' only)
   firstDeclaredYear: string | null; // declared span — the link is DATED, never asserted "current"
-  lastDeclaredYear: string | null; // divested links (later filing omits the company) are withdrawn upstream
+  lastDeclaredYear: string | null; // historical links retain the observed declaration window
+  /** Later comparable filing which omits this stake; NOT a sale date. */
+  laterDeclarationYear?: string | null;
+  /** The end of the particular registry role cited as evidence; NOT a relative's ownership end. */
+  registryRoleEndedOn?: string | null;
+  /** Proven registry identity for grouping declaration profiles across institutions. */
+  registryPersonId?: string | null;
+  /** Union of this person's declared windows in this company; each contract once. */
+  personCompanyValueEur?: number | null;
+  declaredOffices?: { institution: string; position: string | null; year: string | null }[];
   matchMethod: string;
   contractCount: number;
   contractValueEur: number | null;
@@ -710,6 +868,7 @@ export interface ConflictLink {
   firstContractYear: string | null;
   lastContractYear: string | null;
   sourceUrl: string | null; // a representative declaration URL — provenance, never a fabricated value
+  sourceYear: string | null; // the declared year of the filing `sourceUrl` points to
   // Trade Register evidence (#279, ADR-0033). A link only reaches this DTO when its identity rests on a
   // checkable registry fact, so these describe WHICH fact — the surface's whole point is that every shown
   // link can explain itself. `registryRole` is the role the register records, NOT a claim about who owns
@@ -770,4 +929,35 @@ export interface CompanyConflicts {
   eik: string;
   links: ConflictLink[];
   contracts: Record<string, ConflictContractFacts[]>; // ЕИК → the winner's contract facts
+}
+
+/** A source document, with dates kept distinct from the reporting year. */
+export interface PersonDeclaration {
+  /** Comparison notes, separate from interests actually declared in this document. */
+  discrepancies?: {
+    eik: string;
+    company: string;
+    year: string;
+    scope: 'self' | 'family';
+    listed: boolean;
+    otherDeclarationIds: string[];
+  }[];
+  id: string;
+  year: string | null;
+  template: string;
+  type: string | null;
+  declaredOn: string | null;
+  submittedOn: string | null;
+  institution: string | null;
+  position: string | null;
+  url: string;
+  companyEiks: string[];
+  /** Business interests in this document only; unresolved entities have no profile link. */
+  interests?: {
+    company: string;
+    eik: string | null;
+    kind: string;
+    timing: string;
+    scope: 'self' | 'family' | 'unknown';
+  }[];
 }

@@ -103,13 +103,14 @@ interface ContractRow {
   signed_at: string | null;
   bids_received: number | null;
   amount_eur: number | null;
+  value_flag: string;
 }
 
 const SELECT = `
   SELECT c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title) AS subject, t.source_id AS unp,
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
          c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
-         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur`;
+         t.procedure_type, c.signed_at, c.bids_received, c.amount_eur, c.value_flag`;
 const FROM = `
   FROM contracts c
   JOIN tenders t ON t.id = c.tender_id
@@ -223,6 +224,11 @@ function toItem(r: ContractRow): ContractListItem {
     signedAt: r.signed_at,
     bidsReceived: r.bids_received,
     valueEur: r.amount_eur,
+    // A `value_low` row HAS a value and is summed, so without this the list renders it exactly like a
+    // trustworthy figure — the headline counts them („N с непотвърдена стойност") while the rows stay
+    // silent about which ones. The other verdicts either blank the value (handled by valueEur === null)
+    // or are repaired upstream, so this single boolean covers what the list can usefully say.
+    valueUnverified: r.value_flag === 'value_low',
   };
 }
 

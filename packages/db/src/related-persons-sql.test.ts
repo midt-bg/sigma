@@ -6,6 +6,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  AUTHORITY_CONFLICTS_SQL,
+  AUTHORITY_LEADERBOARD_SQL,
   COMPANY_SQL,
   EIK_CONTRACTS_SQL,
   LEADERBOARD_SQL,
@@ -15,6 +17,7 @@ import {
   OFFICIAL_SQL,
   SURFACED_OWNERSHIP,
 } from './queries/related-persons';
+import { declarationYearDisputed } from './queries/declaration-source';
 import { SEARCH_HITS_SQL } from './queries/search';
 
 // Integration test for the свързани-лица SQL. The query layer's unit tests (queries/related-persons.test)
@@ -145,12 +148,98 @@ describe('свързани-лица SQL (real SQLite)', () => {
       readScript(dbPath, migration0);
       readScript(dbPath, migration2);
       readScript(dbPath, migration9);
+      readScript(dbPath, resolve(root, 'packages/db/migrations/0014_person_profile.sql'));
+      readScript(dbPath, resolve(root, 'packages/db/migrations/0015_person_observations.sql'));
       sqlite(dbPath, FIXTURE);
       return fn(dbPath);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  it('keeps a declared link but excludes disputed years consistently from counts, money and drilldown', () => {
+    withDb((dbPath) => {
+      sqlite(
+        dbPath,
+        `INSERT INTO interest_link_observations VALUES('person:ivan|111','decl:i','shares','not_listed','2023');`,
+      );
+      const ivan = rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!;
+      const contracts = rows(dbPath, lit(LINK_CONTRACTS_SQL, 'person:ivan|111'));
+      expect(contracts.find((r) => r.contract_number === 'Д-2')!.temporal).toBe('unknown');
+      expect(Number(ivan.contemporaneous_contract_count)).toBe(1);
+      expect(Number(ivan.contemporaneous_value_eur)).toBe(10000000);
+      expect(JSON.parse(String(ivan.disputed_years))).toEqual(['2023']);
+      expect(contracts).toHaveLength(4);
+    });
+  });
+
+  it('proven historical links surface with their sources and unchanged contract window', () => {
+    withDb((dbPath) => {
+      const before = rows(dbPath, lit(LEADERBOARD_SQL, 100))[0]!;
+      sqlite(
+        dbPath,
+        `UPDATE interest_link_evidence SET live_status='terminated';
+        INSERT INTO interest_link_history SELECT link_key, '2025', '2024-03-10' FROM interest_links;`,
+      );
+      const after = rows(dbPath, lit(LEADERBOARD_SQL, 100))[0]!;
+      expect(after.link_key).toBe(before.link_key);
+      expect(after.later_declaration_year).toBe('2025');
+      expect(after.registry_role_ended_on).toBe('2024-03-10');
+      expect(after.source_url).toBe(before.source_url);
+      expect(after.contemporaneous_contract_count).toBe(before.contemporaneous_contract_count);
+      expect(after.contemporaneous_value_eur).toBe(before.contemporaneous_value_eur);
+    });
+  });
+
+  it('sums the union of proven aliases’ windows, keeping gaps and overlap accurate', () => {
+    withDb((dbPath) => {
+      sqlite(
+        dbPath,
+        `INSERT INTO persons(id,name) VALUES('person:alias','Иван Минев');
+        CREATE TEMP TABLE alias_copy AS SELECT * FROM interest_links WHERE id='il:ivan';
+        UPDATE alias_copy SET id='il:alias',link_key='person:alias|111',person_id='person:alias',first_declared_year='2024',last_declared_year='2024';
+        INSERT INTO interest_links SELECT * FROM alias_copy;
+        INSERT INTO interest_link_evidence(link_key,evidence_kind,lookup_date,rules_version,live_status)
+          VALUES('person:alias|111','document','2026-08-05','test','live');
+        INSERT INTO person_registry_links VALUES
+          ('person:ivan','identity','person:ivan|111','entry','2026-09-12'),
+          ('person:alias','identity','person:alias|111','entry','2026-09-12');
+        UPDATE interest_links SET last_declared_year='2020' WHERE id='il:ivan';`,
+      );
+      const sum = () =>
+        rows(dbPath, lit(LEADERBOARD_SQL, 100)).filter((r) => r.registry_person_id === 'identity');
+      expect(sum().map((r) => r.person_company_value_eur)).toEqual([15000000, 15000000]); // gap in 2023
+      sqlite(dbPath, "UPDATE interest_links SET first_declared_year='2020' WHERE id='il:alias'");
+      expect(sum().map((r) => r.person_company_value_eur)).toEqual([35000000, 35000000]); // 2020 counted once
+    });
+  });
+
+  it('source URLs follow resolved EIKs instead of borrowing newer declarations with the same company name', () => {
+    withDb((dbPath) => {
+      sqlite(
+        dbPath,
+        `INSERT INTO declarations(id,person_id,xml_file,folder_year,declared_year,template,source_url) VALUES
+        ('decl:other','person:ivan','other.xml','2025','2024','assets','https://example.test/other');
+        INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES
+        ('di:other','decl:other','same name, another EIK','ТРЕЙС ГРУП ХОЛД АД','shares');
+        INSERT INTO declaration_companies VALUES('decl:other','999','declared_eik');`,
+      );
+      expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!.source_url).toBe(
+        'https://register.cacbg.bg/2024/i.xml',
+      );
+      sqlite(
+        dbPath,
+        `INSERT INTO declarations(id,person_id,xml_file,folder_year,declared_year,template,source_url) VALUES
+        ('decl:prose','person:ivan','prose.xml','2026','2025','assets','https://example.test/prose');
+        INSERT INTO declared_interests(id,declaration_id,entity_raw,entity_key,kind) VALUES
+        ('di:prose','decl:prose','company in longer prose','OTHER RAW KEY','shares');
+        INSERT INTO declaration_companies VALUES('decl:prose','111','extracted_name');`,
+      );
+      expect(rows(dbPath, lit(OFFICIAL_SQL, 'person:ivan'))[0]!.source_url).toBe(
+        'https://example.test/prose',
+      );
+    });
+  });
 
   it('leaderboard surfaces self AND family ownership (ADR-0032), NEXUS-ranked; redundant family collapsed; held/withdrawn/ex-officio excluded', () => {
     withDb((dbPath) => {
@@ -180,6 +269,31 @@ describe('свързани-лица SQL (real SQLite)', () => {
       expect(board[0]!.source_url).toBe('https://register.cacbg.bg/2024/i.xml');
       // institution carries through from the latest declaration — the namesake disambiguator (I7).
       expect(board[0]!.institution).toBe('ТЕСТ');
+    });
+  });
+
+  it('narrowed to one awarding body: counts its surfaced winners (own-institution apart) and lists their links', () => {
+    withDb((db) => {
+      sqlite(
+        db,
+        `INSERT INTO authorities (id, name) VALUES ('a:2','ДРУГА ОБЩИНА');
+         INSERT INTO interest_link_authorities (link_key, authority_id, authority_name, contract_count, value_eur, own) VALUES
+           ('person:ivan|111','a:1','ОБЩИНА ТЕСТ',2,30000000,'exact'),
+           ('person:big|444','a:1','ОБЩИНА ТЕСТ',1,50000000,'none'),
+           ('person:ivan|999','a:1','ОБЩИНА ТЕСТ',3,1000,'exact'),
+           ('person:boris|222','a:1','ОБЩИНА ТЕСТ',10,5000000,'none');`,
+      );
+      // The held link (ivan|999) and the ex-officio one (boris|222) are paid by the same body and still
+      // never count: the summary sits on the same gate as the list.
+      expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:1'))).toEqual([
+        { companies: 2, own_companies: 1 },
+      ]);
+      expect(rows(db, lit(AUTHORITY_CONFLICTS_SQL, 'a:2'))).toEqual([
+        { companies: 0, own_companies: 0 },
+      ]);
+      const keys = rows(db, lit(AUTHORITY_LEADERBOARD_SQL, 'a:1', 10)).map((r) => r.link_key);
+      expect(keys).toEqual(['person:ivan|111', 'person:big|444']);
+      expect(rows(db, lit(AUTHORITY_LEADERBOARD_SQL, 'a:2', 10))).toEqual([]);
     });
   });
 
@@ -718,4 +832,11 @@ describe('the evidence-seal gate is identical in all four places it is written',
     expect(kinds.length).toBeGreaterThan(0);
     for (const k of kinds) expect(k).toBe('document,confirmed');
   });
+});
+
+it('both search projections use the runtime disputed-year predicate', () => {
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const predicate = normalize(declarationYearDisputed('il', "strftime('%Y',cc.signed_at)"));
+  for (const file of ['scripts/precompute.sql', 'scripts/refresh-slice.sql'])
+    expect(normalize(readFileSync(resolve(root, file), 'utf8'))).toContain(predicate);
 });

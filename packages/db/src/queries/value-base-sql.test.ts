@@ -8,6 +8,7 @@ import { d1FromSqlite } from '@sigma/test-support';
 import { listAuthorities } from './authorities';
 import { listCompanies } from './companies';
 import { contractsSummary, listSingleOfferContracts } from './contracts';
+import { getCompany } from './details';
 import { getHomeData } from './home';
 
 // End-to-end value-base guard: build the production rollups, then exercise the live aggregation
@@ -110,5 +111,32 @@ describe('canonical contract value base', () => {
     expect(home.totals.valueEur).toBe(1060);
     expect(home.singleOffer).toEqual({ valueEur: 1060, contracts: 5 });
     expect(contracts.map((contract) => contract.valueEur)).toEqual([500, 300, 200, 100, -40]);
+  });
+});
+
+describe('a company whose negative rows outweigh the rest', () => {
+  it('shows no negative or inflated procedure share', async () => {
+    const { sqlite, db } = realDb();
+    sqlite.exec(`
+      INSERT INTO bidders (id, name, bulstat, eik_normalized, eik_valid, kind) VALUES
+        ('eik:200000003', 'Фирма Z', '200000003', '200000003', 1, 'company');
+      INSERT INTO tenders (id, source_id, title, authority_id, cpv_code, procedure_type, status) VALUES
+        ('t:Z-open', 'UNP-Z-OPEN', 'Открита Z', 'auth:100000001', '45000000', 'Открита процедура', 'awarded'),
+        ('t:Z-direct', 'UNP-Z-DIRECT', 'Пряка Z', 'auth:100000001', '45000000', 'Пряко договаряне', 'awarded');
+      INSERT INTO contracts
+        (id, tender_id, bidder_id, amount, currency, signed_at, bids_received, value_flag, amount_eur)
+      VALUES
+        ('c:z-open', 't:Z-open',   'eik:200000003',  100, 'EUR', '2024-02-01', 2, 'ok',        100),
+        ('c:z-low',  't:Z-direct', 'eik:200000003', -300, 'EUR', '2024-02-02', 1, 'value_low', -300);
+    `);
+    sqlite.exec(precompute);
+
+    const company = (await getCompany(db, 'eik:200000003'))!;
+    expect(company.wonEur).toBe(-200);
+    // The net-negative group is dropped; the positive one is kept at a zero share of a non-positive
+    // total — never -50%, and never a share above the whole.
+    expect(company.procedureMix).toEqual([
+      expect.objectContaining({ key: 'open', contracts: 1, valueEur: 100, sharePct: 0 }),
+    ]);
   });
 });
