@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
 import { getParticipantContracts } from './queries/details';
@@ -21,7 +23,7 @@ it('counts resolved member sets once, preserves incomplete groups and every sour
       INSERT INTO tenders VALUES('t','Subject','auth:1');
       INSERT INTO contracts VALUES('c1','ab','t','One','2023-01-01',100),('c2','ba','t','Two','2024-01-01',200),('c3','abc','t','Three','2025-01-01',300),('c4','abd','t','Four',NULL,400);`);
     const precompute = readFileSync(
-      new URL('../../../scripts/precompute.sql', import.meta.url),
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../../scripts/precompute.sql'),
       'utf8',
     );
     const start = precompute.indexOf('INSERT INTO company_links');
