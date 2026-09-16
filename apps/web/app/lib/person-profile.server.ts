@@ -1,4 +1,6 @@
 import {
+  getPersonNamedBy,
+  getPersonRelatives,
   getPersonSourceNames,
   getOfficialConflicts,
   getPersonTimeline,
@@ -49,10 +51,16 @@ export async function loadPersonProfile(
   const aliases = (await getPersonSourceNames(db, officialIds)).filter(
     (n) => personNameKey(n) !== personNameKey(name),
   );
+  const [relatives, namedBy] = await Promise.all([
+    getPersonRelatives(db, officialIds),
+    indent ? getPersonNamedBy(db, indent) : Promise.resolve([]),
+  ]);
   return {
     person,
     name,
     aliases,
+    relatives,
+    namedBy,
     links: links.filter((l) => companyEiks.has(l.eik)),
     timeline: {
       ...timeline,

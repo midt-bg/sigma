@@ -84,6 +84,8 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
       links: ConflictLink[];
       contracts?: Record<string, ConflictContract[]>;
       declarations?: PersonDeclaration[];
+      relatives?: unknown[];
+      namedBy?: unknown[];
     };
     loaderData = {
       ...d,
@@ -110,6 +112,8 @@ async function mount(Component: ComponentType<{ loaderData: never }>, loaderData
       declarations: d.declarations ?? [],
       tieLayout: null,
       aliases: [],
+      relatives: d.relatives ?? [],
+      namedBy: d.namedBy ?? [],
       activity: emptyActivity,
       totals: {
         companies: new Set(d.links.map((l) => l.eik)).size,
@@ -230,6 +234,38 @@ describe('/persons/:id — render', () => {
     expect(note.querySelector('a[href="/companies/222"]')).not.toBeNull();
   });
 
+  it('names a relative the register confirms, linking only one with a page, and the reverse mention', async () => {
+    await mount(Person as never, {
+      official: 'Иван Петров',
+      links: [link()],
+      relatives: [
+        {
+          name: 'МАРИЯ ПЕТРОВА',
+          indent: 'a'.repeat(64),
+          company: { name: 'АЛФА', eik: '111' },
+          href: `/persons/${'a'.repeat(64)}`,
+        },
+        {
+          name: 'ЗОЯ ИВАНОВА',
+          indent: 'b'.repeat(64),
+          company: { name: 'БЕТА', eik: '222' },
+          href: null,
+        },
+      ],
+      namedBy: [
+        { official: 'ГЕОРГИ ИВАНОВ', href: '/persons/Zw', company: { name: 'АЛФА', eik: '111' } },
+      ],
+    });
+    const relatives = container.querySelector('#relatives')!.closest('section')!;
+    expect(relatives.textContent).toContain('Мария Петрова');
+    expect(relatives.querySelector(`a[href="/persons/${'a'.repeat(64)}"]`)).not.toBeNull();
+    expect(relatives.textContent).toContain('Зоя Иванова');
+    expect(relatives.querySelectorAll('a[href^="/persons/"]')).toHaveLength(1);
+    expect(relatives.textContent).not.toMatch(/съпруг|дете|родител/);
+    const namedBy = container.querySelector('#named-by')!.closest('section')!;
+    expect(namedBy.querySelector('a[href="/persons/Zw"]')!.textContent).toBe('Георги Иванов');
+  });
+
   it('heads each block by the winning company (ЕИК + profile link), never repeats the official inside', async () => {
     const l = link({
       linkKey: 'k1',
@@ -322,7 +358,7 @@ describe('/persons/:id — render', () => {
     const t = text();
     expect(t).toContain('Декларирани интереси');
     expect(t).toContain('декларирало собствен дял');
-    expect(t).toContain('без името на близкия');
+    expect(t).toContain('се назовава само');
   });
 
   it('meta() names the person in the title and marks the page noindex', () => {

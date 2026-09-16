@@ -46,6 +46,7 @@ export const TABLES = [
   'interest_link_history',
   'declaration_identity_evidence',
   'interest_link_observations',
+  'person_relatives',
 ];
 // The registry layer, parents first. Only the dev environment, which has no registry process of its own,
 // takes these tables from a local work database (`--with-registry`).
@@ -61,6 +62,7 @@ export const REGISTRY_TABLES = [
 // re-shipped) also REFERENCES declarations, so it is wiped before declarations; otherwise a populated D1
 // carrying internal rows would block DELETE FROM declarations.
 export const WIPE_ORDER = [
+  'person_relatives',
   'registry_requested_companies',
   'person_source_aliases',
   'person_identity_evidence',

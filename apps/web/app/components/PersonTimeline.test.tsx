@@ -108,6 +108,8 @@ it('shows one company for multiple source identities, sequential sections and hi
     totals: { companies: 0, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     tieLayout: null,
     aliases: [],
+    relatives: [],
+    namedBy: [],
   };
   const companies = timelineCompanies(p);
   expect(companies).toHaveLength(1);

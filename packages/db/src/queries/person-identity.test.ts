@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
+import { getPersonRelatives, getPersonNamedBy } from './person-identity';
 import { getPersonDestinations, getPersonScope, getPersonSourceArchive } from './person-identity';
 
 it('keeps unresolved source archives alongside a proven profile when an old URL splits', async () => {
@@ -95,6 +96,56 @@ describe('getPersonSourceArchive', () => {
         CREATE TABLE bidders(id,name);
         INSERT INTO persons VALUES('p','Иван Тестов');`);
       expect(await getPersonSourceArchive(d1FromSqlite(db), 'p')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('relatives the register confirms', () => {
+  it('names each relative once per company and links only those with a page here, both ways', async () => {
+    const db = new DatabaseSync(':memory:');
+    const H = 'h'.repeat(64);
+    try {
+      db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+        CREATE TABLE person_relatives(person_id,relative_indent,eik,relative_name);
+        CREATE TABLE bidders(id,eik_normalized,name);
+        CREATE TABLE company_totals(bidder_id,contracts);
+        CREATE TABLE registry_roles(eik,subject_id,subject_kind,role);
+        INSERT INTO persons VALUES('p','Иван Петров'),('q','Георги Иванов');
+        INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова');
+        INSERT INTO bidders VALUES('eik:111','111','АЛФА'),('eik:222','222','БЕТА');
+        INSERT INTO company_totals VALUES('eik:111',3);
+        INSERT INTO registry_roles VALUES('111','${H}','person','partner');`);
+      const d1 = d1FromSqlite(db);
+      expect(await getPersonRelatives(d1, ['p'])).toEqual([
+        {
+          name: 'Зоя Иванова',
+          indent: 'z'.repeat(64),
+          company: { name: 'БЕТА', eik: '222' },
+          href: null,
+        },
+        {
+          name: 'Мария Петрова',
+          indent: H,
+          company: { name: 'АЛФА', eik: '111' },
+          href: `/persons/${H}`,
+        },
+      ]);
+      expect(await getPersonRelatives(d1, [])).toEqual([]);
+      expect(
+        (await getPersonNamedBy(d1, H)).map((n) => [n.official, n.href, n.company.eik]),
+      ).toEqual([
+        [
+          'Георги Иванов',
+          `/persons/${'q'}`.replace(
+            '/persons/q',
+            '/persons/' + Buffer.from('q').toString('base64url'),
+          ),
+          '111',
+        ],
+        ['Иван Петров', '/persons/' + Buffer.from('p').toString('base64url'), '111'],
+      ]);
     } finally {
       db.close();
     }

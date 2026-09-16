@@ -77,6 +77,7 @@ CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${resolve(ROOT, 'packages/db/migrations/0013_registry.sql')}
 .read ${resolve(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql')}
 .read ${resolve(ROOT, 'packages/db/migrations/0018_person_entities.sql')}
+.read ${resolve(ROOT, 'packages/db/migrations/0022_person_relatives.sql')}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');`;
 

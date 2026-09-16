@@ -124,6 +124,8 @@ function profile(over: Partial<LoadedPersonProfile> = {}): LoadedPersonProfile {
     totals: { companies: 1, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
     tieLayout: layoutTies(person.network),
     aliases: [],
+    relatives: [],
+    namedBy: [],
     ...over,
   };
 }
@@ -222,6 +224,8 @@ describe('PersonProfile', () => {
         links: [link],
         tieLayout: null,
         aliases: [],
+        relatives: [],
+        namedBy: [],
         totals: {
           companies: 1,
           contracts: 3,

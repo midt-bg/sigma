@@ -116,6 +116,7 @@ if (remote) {
     '0014_person_profile',
     '0015_person_observations',
     '0018_person_entities',
+    '0022_person_relatives',
   ])
     wrangler([
       'd1',

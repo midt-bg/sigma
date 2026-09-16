@@ -11,6 +11,8 @@ const q = vi.hoisted(() => ({
   getPersonActivity: vi.fn(),
   getPersonTimeline: vi.fn(),
   getPersonSourceNames: vi.fn(async (): Promise<string[]> => []),
+  getPersonRelatives: vi.fn(async () => []),
+  getPersonNamedBy: vi.fn(async () => []),
 }));
 vi.mock('@sigma/db', () => q);
 import { loadPersonProfile } from './person-profile.server';

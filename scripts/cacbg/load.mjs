@@ -1,4 +1,5 @@
 import { documentFingerprint } from './source-identity.mjs';
+import { buildPersonRelatives } from './relatives.mjs';
 import { rebuildPersonEntities, declarationSourceId } from './person-entities.mjs';
 import { buildPersonRegistryLinks } from './person-registry-links.mjs';
 import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
@@ -268,6 +269,7 @@ for (const t of [
   'interest_link_observations',
   'declaration_identity_evidence',
   'declaration_companies',
+  'person_relatives',
   'person_registry_links',
   'declaration_metadata',
   'person_redirects', // no references either way
@@ -288,6 +290,9 @@ db.exec(fs.readFileSync(MIGRATION_REDIRECTS, 'utf8'));
 db.exec(fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0014_person_profile.sql'), 'utf8'));
 db.exec(
   fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0015_person_observations.sql'), 'utf8'),
+);
+db.exec(
+  fs.readFileSync(path.join(ROOT, 'packages/db/migrations/0022_person_relatives.sql'), 'utf8'),
 );
 // A link is suppressed when its fingerprint is in the list. Only compute the HMAC when the list is
 // non-empty (size>0 ⇒ salt present, else the loader above threw), so the empty common path skips crypto.
@@ -1259,8 +1264,11 @@ const classValueByClass = new Map(
     "SELECT interest_class, ROUND(COALESCE(SUM(v),0)) v FROM (SELECT interest_class, eik, MAX(contract_value_eur) v FROM interest_links WHERE status='published' GROUP BY interest_class, eik) GROUP BY interest_class",
   ).map((r) => [r.interest_class, r.v]),
 );
+// Relatives the register confirms at the declared company, after every link has its observations.
+const relativesLinked = buildPersonRelatives(db);
 const S = {
   persons: one('SELECT COUNT(*) n FROM persons').n,
+  relatives_linked: relativesLinked,
   declarations: one('SELECT COUNT(*) n FROM declarations').n,
   declared_interests: one('SELECT COUNT(*) n FROM declared_interests').n,
   related_internal: one('SELECT COUNT(*) n FROM related_persons_internal').n,

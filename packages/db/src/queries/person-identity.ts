@@ -1,4 +1,4 @@
-import { companySlug } from './identity';
+import { companySlug, personSlug } from './identity';
 import { publicRole, registryRead } from './registry';
 import { getRegistryIdentity, getRegistryOfficials } from './person-activity';
 import { getPersonDeclarations } from './declarations';
@@ -60,6 +60,74 @@ export async function getPersonSourceNames(db: D1Database, ids: string[]): Promi
     .bind(...ids)
     .all<{ name: string }>();
   return rows.results.map((r) => r.name);
+}
+
+/** A relative the register confirms at a declared company: named, and linked when they have a page here. */
+export interface PersonRelative {
+  name: string;
+  indent: string;
+  company: { name: string; eik: string };
+  href: string | null;
+}
+
+/** The same fact from the register's side: the officials whose declarations name this person. */
+export interface PersonNamedBy {
+  official: string;
+  href: string;
+  company: { name: string; eik: string };
+}
+
+const RELATIVE_PAGE = `EXISTS (SELECT 1 FROM registry_roles r JOIN bidders b ON b.id='eik:'||r.eik
+  JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+  WHERE r.subject_id=pr.relative_indent AND r.subject_kind='person' AND ${publicRole('r')})`;
+
+/** Relatives the official declared a stake for, whom the register lists at that company (ADR-0044). */
+export async function getPersonRelatives(db: D1Database, ids: string[]): Promise<PersonRelative[]> {
+  if (!ids.length) return [];
+  const rows = await registryRead(
+    () =>
+      db
+        .prepare(
+          `SELECT pr.relative_name name, pr.relative_indent indent, pr.eik,
+            COALESCE(b.name, pr.eik) company, ${RELATIVE_PAGE} has_page
+          FROM person_relatives pr LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          WHERE pr.person_id IN (${ids.map(() => '?').join(',')})
+          GROUP BY pr.relative_indent, pr.eik ORDER BY pr.relative_name, pr.eik`,
+        )
+        .bind(...ids)
+        .all<{ name: string; indent: string; eik: string; company: string; has_page: number }>()
+        .then((r) => r.results),
+    [],
+  );
+  return rows.map((r) => ({
+    name: r.name,
+    indent: r.indent,
+    company: { name: r.company, eik: r.eik },
+    href: r.has_page ? `/persons/${r.indent}` : null,
+  }));
+}
+
+/** The officials whose declarations name the person the register identifies by `indent`. */
+export async function getPersonNamedBy(db: D1Database, indent: string): Promise<PersonNamedBy[]> {
+  const rows = await registryRead(
+    () =>
+      db
+        .prepare(
+          `SELECT p.id, p.name official, pr.eik, COALESCE(b.name, pr.eik) company
+          FROM person_relatives pr JOIN persons p ON p.id=pr.person_id
+          LEFT JOIN bidders b ON b.eik_normalized=pr.eik
+          WHERE pr.relative_indent=? ORDER BY p.name, pr.eik`,
+        )
+        .bind(indent)
+        .all<{ id: string; official: string; eik: string; company: string }>()
+        .then((r) => r.results),
+    [],
+  );
+  return rows.map((r) => ({
+    official: r.official,
+    href: `/persons/${personSlug(r.id)}`,
+    company: { name: r.company, eik: r.eik },
+  }));
 }
 
 /** An attributed source archive can remain readable without a published company connection. */
