@@ -57,10 +57,9 @@ export async function getRegistryOfficials(db: D1Database, indent: string): Prom
   try {
     const r = await db
       .prepare(
-        `SELECT pl.person_id FROM person_registry_links pl WHERE pl.registry_indent=? AND EXISTS (
-        SELECT 1 FROM person_registry_links sibling JOIN interest_links il ON il.person_id=sibling.person_id
-        WHERE sibling.registry_indent=pl.registry_indent AND ${SURFACED_OWNERSHIP}
-      ) ORDER BY pl.person_id`,
+        // Every declarant the register identifies as this person, with or without a published stake:
+        // their declarations belong on the page either way.
+        `SELECT pl.person_id FROM person_registry_links pl WHERE pl.registry_indent=? ORDER BY pl.person_id`,
       )
       .bind(indent)
       .all<{ person_id: string }>();

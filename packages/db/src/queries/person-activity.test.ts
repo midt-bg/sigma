@@ -278,7 +278,7 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
   expect(result.observations.find((o) => o.timing === 'prior')!.reportedYear).toBe('2025');
 });
 
-it('includes every proven source identity only when the canonical person has a public interest', async () => {
+it('includes every proven source identity of the register identity, with or without a public interest', async () => {
   const d1 = fixture();
   db.exec(
     "INSERT INTO person_registry_links VALUES('official','canonical'),('alias-without-own-link','canonical'),('unrelated','other')",
@@ -287,7 +287,8 @@ it('includes every proven source identity only when the canonical person has a p
     'alias-without-own-link',
     'official',
   ]);
-  expect(await getRegistryOfficials(d1, 'other')).toEqual([]);
+  expect(await getRegistryOfficials(d1, 'other')).toEqual(['unrelated']);
+  expect(await getRegistryOfficials(d1, 'nobody')).toEqual([]);
 });
 
 it('defaults to all contracts, preserving unknown dates and separating contextual amounts', async () => {
@@ -409,12 +410,9 @@ it('resolves a declarant to the register identity only through the evidenced bri
 });
 
 it('rethrows every other failure of the identity reads', async () => {
-  const d1 = fixture();
-  db.exec('DROP TABLE interest_links');
-  await expect(getRegistryOfficials(d1, 'canonical')).rejects.toThrow(
-    /no such table: interest_links/,
-  );
+  fixture();
   const locked = throwingD1(new Error('D1_ERROR: database is locked'));
+  await expect(getRegistryOfficials(locked.db, 'canonical')).rejects.toThrow(/locked/);
   await expect(getRegistryIdentity(locked.db, 'official')).rejects.toThrow(/locked/);
 });
 

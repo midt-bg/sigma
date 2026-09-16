@@ -170,8 +170,7 @@ const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
          b.id AS entity_bidder, r.share, ${sharePct('r')} AS share_pct,
          r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after,
-         EXISTS (SELECT 1 FROM person_entities e JOIN person_sources s ON s.entity_id = e.id
-                 WHERE e.registry_indent = r.subject_id AND s.active = 1 AND s.namespace = 'cacbg') AS official
+         EXISTS (SELECT 1 FROM person_registry_links pl WHERE pl.registry_indent = r.subject_id) AS official
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id

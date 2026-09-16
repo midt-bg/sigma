@@ -112,11 +112,9 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   const result = await db
     .prepare(
       `WITH people AS MATERIALIZED (
-    SELECT e.id person_id, e.registry_indent identity, p.name
-    FROM person_entities e JOIN persons p ON p.id=e.id
-    WHERE e.registry_indent IS NOT NULL
-      AND EXISTS (SELECT 1 FROM person_sources s WHERE s.entity_id=e.id AND s.active=1 AND s.namespace='cacbg')
-      AND NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=e.id AND il.status='published'
+    SELECT pl.person_id, pl.registry_indent identity, p.name
+    FROM person_registry_links pl JOIN persons p ON p.id=pl.person_id
+    WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
         AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
     SELECT DISTINCT pe.person_id, r.eik

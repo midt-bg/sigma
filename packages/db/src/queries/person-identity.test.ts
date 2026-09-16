@@ -46,10 +46,10 @@ describe('getPersonScope', () => {
       expect(await getPersonScope(d1, { indent: 'indent' })).toEqual(identified);
       // An old declarant URL reaches the same scope through the bridge.
       expect(await getPersonScope(d1, { officialId: 'alias' })).toEqual(identified);
-      // Bridged, but nothing surfaces under that identity: no declarant is brought into the scope.
+      // Bridged without a published stake: the declarant still belongs to the identity's page.
       expect(await getPersonScope(d1, { officialId: 'quiet' })).toEqual({
         indent: 'withheld',
-        officialIds: [],
+        officialIds: ['quiet'],
       });
       expect(await getPersonScope(d1, { officialId: 'loner' })).toEqual({
         indent: null,

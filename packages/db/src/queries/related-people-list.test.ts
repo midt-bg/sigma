@@ -134,8 +134,7 @@ it('lists people the register records as owners of a winner without a declared s
   const H = 'h'.repeat(64);
   try {
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
-      CREATE TABLE person_entities(id PRIMARY KEY,registry_indent);
-      CREATE TABLE person_sources(entity_id,namespace,active);
+      CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
       CREATE TABLE interest_links(person_id,status,interest_class);
       CREATE TABLE registry_roles(subject_id,subject_kind,role,eik);
       CREATE TABLE declarations(person_id,institution,position,declared_year);
@@ -144,8 +143,7 @@ it('lists people the register records as owners of a winner without a declared s
       CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
       CREATE TABLE tenders(id PRIMARY KEY,authority_id);
       INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
-      INSERT INTO person_entities VALUES('p','${H}'),('q','${'q'.repeat(64)}'),('r','${'r'.repeat(64)}');
-      INSERT INTO person_sources VALUES('p','cacbg',1),('q','cacbg',1),('r','tr',1);
+      INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
       INSERT INTO interest_links VALUES('q','published','private_ownership');
       INSERT INTO registry_roles VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
         ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
@@ -155,7 +153,7 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO tenders VALUES('t','a'),('t2','other');
       INSERT INTO contracts VALUES('c1','b1','t','2020-05-01',100),('c2','b1','t2','2022-05-01',50),('c3','b2','t','2020-01-01',999);`);
     const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
-    expect(rows).toHaveLength(1); // q has a declared stake, r never filed a declaration
+    expect(rows).toHaveLength(1); // q has a declared stake, r is not a declarant the register identifies
     expect(rows[0]).toMatchObject({
       official: 'Лице Роля',
       personIdentity: H,
