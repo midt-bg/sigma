@@ -8,8 +8,5 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@sigma/shared": "workspace:*"
   }
 }

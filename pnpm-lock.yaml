@@ -147,17 +147,9 @@ importers:
         specifier: 'catalog:'
         version: 4.128.0(@cloudflare/workers-types@4.20260521.1)(@types/node@24.13.3)
 
-  packages/api-contract:
-    dependencies:
-      '@sigma/shared':
-        specifier: workspace:*
-        version: link:../shared
+  packages/api-contract: {}
 
-  packages/config:
-    dependencies:
-      '@sigma/shared':
-        specifier: workspace:*
-        version: link:../shared
+  packages/config: {}
 
   packages/db:
     dependencies:

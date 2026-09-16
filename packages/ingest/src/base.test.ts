@@ -8,10 +8,8 @@ import {
   escapeSqlText,
   mapBaseRecord,
   toBool,
-  toEventDate,
   toISODate,
   toInt,
-  toPeriodDate,
   toReal,
   toSignedReal,
 } from './base';
@@ -87,8 +85,8 @@ describe('base EOP mapper', () => {
     expect(toISODate(utcDay(2), FIXED_NOW)).toBe(utcDay(2));
     expect(toISODate(utcDay(30), FIXED_NOW)).toBe(utcDay(30));
     expect(toISODate('2027-01-15', FIXED_NOW)).toBe('2027-01-15');
-    expect(toEventDate('2029-05-14', FIXED_NOW)).toBe('2029-05-14');
-    expect(toPeriodDate('2029-05-14', FIXED_NOW)).toBe('2029-05-14');
+    expect(toISODate('2029-05-14', FIXED_NOW)).toBe('2029-05-14');
+    expect(toISODate('2029-05-14', FIXED_NOW)).toBe('2029-05-14');
     expect(toISODate('9999-01-01', FIXED_NOW)).toBeNull();
   });
 
@@ -108,9 +106,9 @@ describe('base EOP mapper', () => {
       expect(row?.end_date).toBe(`${year}-12-31`);
     }
 
-    expect(toPeriodDate('31.02.2024', FIXED_NOW)).toBeNull();
-    expect(toPeriodDate('9999-01-01', FIXED_NOW)).toBeNull();
-    expect(toPeriodDate('2025-06-01', FIXED_NOW)).toBe('2025-06-01');
+    expect(toISODate('31.02.2024', FIXED_NOW)).toBeNull();
+    expect(toISODate('9999-01-01', FIXED_NOW)).toBeNull();
+    expect(toISODate('2025-06-01', FIXED_NOW)).toBe('2025-06-01');
     expect(baseSqlLiteral('tenders', 'end_date', '2043-12-31')).toBe("'2043-12-31'");
   });
 
@@ -281,8 +279,8 @@ describe('toISODate — Date.parse fallback branch', () => {
     // Neither the ISO nor the D.M.Y regex matches, so normalizedDateOnly falls to Date.parse.
     // GMT-anchored input keeps the result timezone-independent.
     expect(toISODate('01 Jan 2020 00:00:00 GMT', FIXED_NOW)).toBe('2020-01-01');
-    expect(toEventDate('15 Mar 2021 00:00:00 GMT', FIXED_NOW)).toBe('2021-03-15');
-    expect(toPeriodDate('01 Jan 2020 00:00:00 GMT', FIXED_NOW)).toBe('2020-01-01');
+    expect(toISODate('15 Mar 2021 00:00:00 GMT', FIXED_NOW)).toBe('2021-03-15');
+    expect(toISODate('01 Jan 2020 00:00:00 GMT', FIXED_NOW)).toBe('2020-01-01');
   });
   it('rejects a string Date.parse cannot read', () => {
     expect(toISODate('изобщо не е дата', FIXED_NOW)).toBeNull();

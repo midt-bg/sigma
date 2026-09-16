@@ -242,8 +242,7 @@ async function procedureCompetition(
   const where = s.where.length ? `WHERE ${s.where.join(' AND ')}` : '';
   const { results } = await db
     .prepare(
-      // value sums positive amount_eur only, so nonCompetitiveValueShare stays in [0,1] (#153 review);
-      // contracts (the count) is unaffected.
+      // value sums positive amount_eur only (#153 review); contracts (the count) is unaffected.
       `SELECT t.procedure_type AS procedure_type,
               COUNT(*) AS contracts,
               COALESCE(SUM(CASE WHEN c.amount_eur > 0 THEN c.amount_eur ELSE 0 END), 0) AS value_eur
@@ -254,42 +253,27 @@ async function procedureCompetition(
     .bind(...s.params)
     .all<ProcedureRow>();
 
-  let competitiveContracts = 0;
+  let classifiedContracts = 0;
   let nonCompetitiveContracts = 0;
-  let neutralContracts = 0;
-  let unknownContracts = 0;
-  let classifiedValueEur = 0;
   let nonCompetitiveValueEur = 0;
   let totalContracts = 0;
   for (const r of results) {
     const g = procedureGroup(r.procedure_type);
     totalContracts += r.contracts;
     if (g.competitive === true) {
-      competitiveContracts += r.contracts;
-      classifiedValueEur += r.value_eur;
+      classifiedContracts += r.contracts;
     } else if (g.competitive === false) {
+      classifiedContracts += r.contracts;
       nonCompetitiveContracts += r.contracts;
       nonCompetitiveValueEur += r.value_eur;
-      classifiedValueEur += r.value_eur;
-    } else if (g.key === PROCEDURE_UNKNOWN_KEY) {
-      unknownContracts += r.contracts;
-    } else {
-      neutralContracts += r.contracts;
     }
   }
-  const classifiedContracts = competitiveContracts + nonCompetitiveContracts;
   return {
     classifiedContracts,
     nonCompetitiveContracts,
     nonCompetitiveShare:
       classifiedContracts > 0 ? nonCompetitiveContracts / classifiedContracts : 0,
-    classifiedValueEur,
     nonCompetitiveValueEur,
-    nonCompetitiveValueShare:
-      classifiedValueEur > 0 ? nonCompetitiveValueEur / classifiedValueEur : 0,
-    competitiveContracts,
-    neutralContracts,
-    unknownContracts,
     totalContracts,
   };
 }

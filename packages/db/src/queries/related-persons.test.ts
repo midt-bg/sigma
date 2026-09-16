@@ -7,7 +7,6 @@ import {
   LINK_CONTRACTS_SQL,
   getAuthorityConflictSummary,
   getCompanyConflicts,
-  getPersonRedirect,
   isMissingConflictTableError,
   getConflictLeaderboard,
   getLinkContracts,
@@ -406,25 +405,6 @@ describe('getConflictLeaderboard — narrowed to one awarding body', () => {
     expect(calls[0]!.sql).toBe(AUTHORITY_LEADERBOARD_SQL);
     expect(calls[0]!.binds).toEqual(['auth:1', 10]);
     expect(calls[1]!.binds).toEqual([10]);
-  });
-});
-
-describe('getPersonRedirect', () => {
-  it('names the id an old official id became, and null when it became none', async () => {
-    const moved = fakeD1([{ when: 'FROM person_redirects', first: { new_id: 'person:new' } }]);
-    expect(await getPersonRedirect(moved.db, 'person:old')).toBe('person:new');
-    expect(moved.calls[0]!.binds).toEqual(['person:old']);
-    const stayed = fakeD1([{ when: 'FROM person_redirects', first: null }]);
-    expect(await getPersonRedirect(stayed.db, 'person:x')).toBeNull();
-  });
-
-  it('is a 404, not a 500, where the table is not there yet — and rethrows anything else', async () => {
-    const missing = throwingD1(
-      new Error('D1_ERROR: no such table: person_redirects: SQLITE_ERROR'),
-    );
-    expect(await getPersonRedirect(missing.db, 'person:old')).toBeNull();
-    const boom = throwingD1(new Error('D1_ERROR: near "SELEC": syntax error'));
-    await expect(getPersonRedirect(boom.db, 'person:old')).rejects.toThrow(/syntax error/);
   });
 });
 

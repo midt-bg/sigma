@@ -124,14 +124,6 @@ export function toISODate(v: unknown, now: Date = new Date()): string | null {
   return day !== null && day <= saneDateCeiling(now) ? day : null;
 }
 
-export function toEventDate(v: unknown, now: Date = new Date()): string | null {
-  return toISODate(v, now);
-}
-
-export function toPeriodDate(v: unknown, now: Date = new Date()): string | null {
-  return toISODate(v, now);
-}
-
 function toSecuredFinancing(v: unknown): number | null {
   const unsecured = toBool(v);
   return unsecured === null ? null : unsecured === 1 ? 0 : 1;

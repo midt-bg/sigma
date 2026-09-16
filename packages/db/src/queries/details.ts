@@ -199,7 +199,6 @@ export async function getCompany(db: D1Database, bidderId: string): Promise<Comp
     kind: row.kind,
     isConsortium: row.kind === 'consortium',
     eik: row.eik,
-    eikValid: row.eik_valid === 1,
     hasEik,
     ownershipKind: row.ownership_kind,
     settlement: row.settlement,

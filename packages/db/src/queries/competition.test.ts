@@ -163,15 +163,12 @@ describe('getCompetition', () => {
   it('folds the procedure mix into the direct-award headline', async () => {
     const { procedure } = await getCompetition(fakeDb().db, {});
     expect(procedure).toMatchObject({
-      competitiveContracts: 6,
       nonCompetitiveContracts: 2,
       classifiedContracts: 8, // competitive + non-competitive (neutral/synthetic excluded)
-      neutralContracts: 1,
-      unknownContracts: 1,
+      nonCompetitiveValueEur: 2000,
       totalContracts: 10,
     });
     expect(procedure.nonCompetitiveShare).toBeCloseTo(0.25); // 2 / 8
-    expect(procedure.nonCompetitiveValueShare).toBeCloseTo(0.25); // 2000 / 8000
   });
 
   it('maps the direct-award leaderboard with per-row share', async () => {
@@ -270,7 +267,6 @@ describe('getCompetition', () => {
     expect(data.bySingleOffer[0]?.singleOfferShare).toBe(0); // r.contracts 0 → 0
     expect(data.byDirectAward[0]?.nonCompetitiveShare).toBe(0); // r.classified 0 → 0
     expect(data.procedure.nonCompetitiveShare).toBe(0); // classifiedContracts 0 → 0
-    expect(data.procedure.nonCompetitiveValueShare).toBe(0); // classifiedValueEur 0 → 0
     expect(data.scope.year).toBe(2024); // year scoped through Number()
   });
 

@@ -74,7 +74,6 @@ export interface CompanyListItem {
   kind: EntityKind;
   isConsortium: boolean;
   eik: string | null;
-  eikValid: boolean;
   hasEik: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
@@ -118,7 +117,6 @@ export interface CompanyDetail {
   kind: EntityKind;
   isConsortium: boolean;
   eik: string | null;
-  eikValid: boolean;
   hasEik: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
@@ -733,13 +731,8 @@ export interface ProcedureCompetition {
   classifiedContracts: number; // competitive + non-competitive (the share denominator)
   nonCompetitiveContracts: number; // awarded without a call for bids
   nonCompetitiveShare: number; // 0 to 1, by contract count
-  classifiedValueEur: number; // value over classified contracts (positive amount_eur only)
   nonCompetitiveValueEur: number;
-  nonCompetitiveValueShare: number; // 0 to 1, by value
-  competitiveContracts: number;
-  neutralContracts: number; // negotiated-with-invitation / other — competitiveness not asserted
-  unknownContracts: number; // synthetic, contract-only tenders („Неизвестна")
-  totalContracts: number; // every contract in scope (the four buckets above sum to this)
+  totalContracts: number; // every contract in scope
 }
 
 /** One authority on the direct-award (non-competitive procedure) leaderboard. */
@@ -856,7 +849,6 @@ export interface ConflictLink {
   /** Union of this person's declared windows in this company; each contract once. */
   personCompanyValueEur?: number | null;
   declaredOffices?: { institution: string; position: string | null; year: string | null }[];
-  matchMethod: string;
   contractCount: number;
   contractValueEur: number | null;
   // Contemporaneous split: the subset of the winner's contracts SIGNED while the declared stake was held
@@ -903,12 +895,6 @@ export interface ConflictContract {
  *  detail component derives `temporal` per link. This is what stops a company page from serialising the same
  *  contract set once per official (ydimitrof #312 HIGH 1). */
 export type ConflictContractFacts = Omit<ConflictContract, 'temporal'>;
-
-/** The on-demand per-link contract list (the standalone lazy resource route). */
-export interface LinkContracts {
-  linkKey: string;
-  contracts: ConflictContract[];
-}
 
 /** One office-holder's declared ownership links, with each WINNER's contracts loaded EAGERLY and deduped by
  *  ЕИК. The detail page renders the full case (timeline, per-authority shares, contract split) for every link

@@ -144,16 +144,6 @@ export function periodRange(
   return monthYear(first ?? last);
 }
 
-/** ЕИК passthrough (digits kept verbatim — source truth; the UI renders it in mono). */
-export function eik(value: string | null | undefined): string {
-  return value ? value.trim() : '';
-}
-
-/** УНП passthrough — kept exactly as published (format `NNNNN-YYYY-NNNN`); the UI renders it in mono. */
-export function unp(value: string | null | undefined): string {
-  return value ? value.trim() : '';
-}
-
 /**
  * Parse the consortium `bidders.name` string into a participants view.
  *
