@@ -354,3 +354,95 @@ describe('ConflictDetail — timeline and contract rows on sparse data', () => {
     expect(tableByCaption(CONTRACTS_OUT).textContent).toContain('период');
   });
 });
+
+describe('ConflictDetail — the declarations and contracts behind a block', () => {
+  type Declaration = NonNullable<ConflictLink['declarations']>[number];
+  const doc = (over: Partial<Declaration> = {}): Declaration => ({
+    id: 'd1',
+    year: '2022',
+    template: 'interests',
+    type: 'Annual',
+    declaredOn: '2023-05-01',
+    submittedOn: '2023-05-02',
+    institution: 'Община Тест',
+    position: 'Кмет',
+    url: 'https://register.cacbg.bg/2023/d1.xml',
+    companyEiks: ['111'],
+    ...over,
+  });
+
+  it('names the institutions its sources cite and lists every document in the block', async () => {
+    const d2 = doc({
+      id: 'd2',
+      year: '2023',
+      institution: 'Министерство на теста',
+      position: null,
+    });
+    await render([link({ declarations: [doc(), d2] })], { '111': [facts()] });
+    expect(statValue('Институции в източниците').textContent).toBe(
+      'Министерство на теста; Община Тест',
+    );
+    const list = container.querySelector('#sources-link-1-111')!;
+    expect(list.querySelector('h3')!.textContent).toBe('Декларации за тази връзка (2)');
+    expect(list.querySelectorAll('.declarations.compact tbody tr')).toHaveLength(2);
+
+    const sources = statValue('Източници').querySelector('a')!;
+    expect(sources.textContent).toBe('Виж всички декларации (2)');
+    expect(sources.getAttribute('href')).toBe('#sources-link-1-111');
+    const jump = new MouseEvent('click', { bubbles: true, cancelable: true });
+    act(() => {
+      sources.dispatchEvent(jump);
+    });
+    expect(jump.defaultPrevented).toBe(false); // a plain in-page jump to the list, which is always open
+    history.replaceState(null, '', location.pathname);
+  });
+
+  it('notes the years the declarations disagree on, and neither bands nor counts them as in the period', async () => {
+    await render([link({ disputedYears: ['2021'] })], {
+      '111': [
+        facts({ contractSlug: 'e:a', signedAt: '2022-03-01' }),
+        facts({ contractSlug: 'e:b', signedAt: '2021-03-01' }),
+      ],
+    });
+    expect(container.querySelector('.cc-interest')!.textContent).toContain(
+      'деклариран 2019 – 2023 г. · разминаване в декларациите за 2021 г.',
+    );
+    const marks = Object.fromEntries(
+      [...container.querySelectorAll('.tl-mark')].map((m) => [
+        m.getAttribute('title'),
+        m.className,
+      ]),
+    );
+    expect(marks).toEqual({ '2022': 'tl-mark in', '2021': 'tl-mark out' });
+    expect(container.querySelector('.tl-band')).toBeNull();
+  });
+
+  it('names a contract with no subject by its number', async () => {
+    await render([link()], { '111': [facts({ subject: null, contractNumber: 'Д-7' })] });
+    expect(cell(CONTRACTS_IN, 'Предмет').textContent).toBe('Договор № Д-7');
+  });
+
+  it('sends the reader to the page’s contract list instead of repeating the contracts', async () => {
+    const Stub = createRoutesStub([
+      {
+        path: '/x',
+        Component: () => (
+          <ConflictDetail
+            links={[link()]}
+            contracts={{ '111': [facts()] }}
+            perspective="official"
+            contractListHref="/persons/ab"
+          />
+        ),
+      },
+    ]);
+    await act(async () => {
+      root.render(<Stub initialEntries={['/x']} />);
+    });
+    const action = container.querySelector('.detail-contract-action a')!;
+    expect(action.textContent).toBe('Виж договорите на ТЕСТ ГРУП ХОЛД АД в общия списък →');
+    expect(action.getAttribute('href')).toBe('/persons/ab?company=111&basis=declaration#contracts');
+    expect(container.querySelector('.tl-track')).not.toBeNull(); // the timeline stays in the block
+    expect(container.querySelector('table')).toBeNull(); // the shares and contracts live in that list
+  });
+});

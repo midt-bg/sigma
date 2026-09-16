@@ -271,3 +271,71 @@ describe('tieDescription', () => {
     expect(tieDescription(roleTie({ roles: ['manager'], current: false }))).toBe('бивш управител');
   });
 });
+
+describe('TieGraph — the office-holders behind a declared-stake tie', () => {
+  const ivan = { id: 'p1', name: 'ИВАН ПЕТРОВ', href: '/conflicts/official/p1' };
+  const maria = { id: 'p2', name: 'МАРИЯ ИВАНОВА', href: '/conflicts/official/p2' };
+  const stake = (people: (typeof ivan)[]): CompanyTieNetwork['edges'][number] => ({
+    from: 'eik:1',
+    to: 'eik:2',
+    kind: 'declared_stake',
+    directed: false,
+    weightEur: 0,
+    occurrences: people.length,
+    href: '/conflicts/company/1',
+    people,
+  });
+  const evidence = (c: HTMLElement) =>
+    [...c.querySelectorAll('.graph-evidence li')].map((li) => ({
+      text: li.textContent,
+      links: [...li.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]),
+    }));
+
+  it('writes the one shared declarant on the tie and links their page under the graph', () => {
+    const c = render({ ...base, edges: [stake([ivan])] });
+    expect(c.querySelector('.tie-edge-label')!.textContent).toBe('Иван Петров');
+    expect(c.querySelector('.tie-declared_stake title')!.textContent).toBe(
+      'Общ деклариран интерес: Иван Петров',
+    );
+    expect(c.querySelector('.graph-evidence p')!.textContent).toBe(
+      'Общи декларатори — източници и профили:',
+    );
+    expect(evidence(c)).toEqual([
+      {
+        text: 'АЛФА СТРОЙ АД · БЕТА ИНЖЕНЕРИНГ АД: Иван Петров',
+        links: [['Иван Петров', '/conflicts/official/p1']],
+      },
+    ]);
+  });
+
+  it('counts several shared declarants on the tie and lists every one of them', () => {
+    const c = render({ ...base, edges: [stake([ivan, maria])] });
+    expect(c.querySelector('.tie-edge-label')!.textContent).toBe('2 общи декларатори');
+    expect(c.querySelector('.tie-declared_stake title')!.textContent).toBe(
+      'Общ деклариран интерес: Иван Петров, Мария Иванова',
+    );
+    expect(evidence(c)).toEqual([
+      {
+        text: 'АЛФА СТРОЙ АД · БЕТА ИНЖЕНЕРИНГ АД: Иван Петров; Мария Иванова',
+        links: [
+          ['Иван Петров', '/conflicts/official/p1'],
+          ['Мария Иванова', '/conflicts/official/p2'],
+        ],
+      },
+    ]);
+  });
+
+  it('adds no evidence list when no tie names its declarants', () => {
+    expect(render(base).querySelector('.graph-evidence')).toBeNull();
+  });
+
+  it('names a graph centred on a person the way their page does', () => {
+    const c = render({
+      center: { ...person, hop: 0 },
+      nodes: [{ ...person, hop: 0 }, node({ hop: 1 })],
+      edges: [roleTie()],
+      omitted: 0,
+    });
+    expect(c.querySelector('svg')!.getAttribute('aria-label')).toBe('Връзки на Анна Петрова');
+  });
+});
