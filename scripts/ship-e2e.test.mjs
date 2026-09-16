@@ -153,7 +153,7 @@ try {
     const skip = process.env.SHIP_FAKE_SKIP;
     if (!skip || !file.endsWith(skip)) run('.read ' + file);
   } else if (command) {
-    if (process.env.SHIP_FAKE_READFAIL) { process.stderr.write('read-back exploded'); process.exit(1); }
+    if (process.env.SHIP_FAKE_READFAIL && /COUNT\\(\\*\\)/.test(command)) { process.stderr.write('read-back exploded'); process.exit(1); }
     const rows = JSON.parse(run('.mode json\\n' + command) || '[]');
     const shaped = process.env.SHIP_FAKE_NULLN
       ? rows.map((r) => (r.t === process.env.SHIP_FAKE_NULLN ? { ...r, n: null } : r))
@@ -257,7 +257,7 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
 
   const applies = calls.filter((c) => c.file);
   assert.equal(applies[0].file, 'prepare_persons.sql');
-  assert.equal(applies.at(-1).file, 'cleanup_publish.sql');
+  assert.equal(applies.at(-1).file, 'publish.sql');
 
   // Chunking: a table past the batch budget must arrive as several CONTIGUOUSLY numbered requests.
   const nums = applies
@@ -400,7 +400,7 @@ test('a read-back that cannot answer at all fails the run', (t) => {
   assert.match(res.stderr, /no answer/);
 });
 
-test('--emit writes ordered staging and atomic promotion SQL without touching a database', (t) => {
+test('--emit writes ordered staging and swap SQL without touching a database', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-emit-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const out = join(dir, 'emitted');
@@ -410,9 +410,10 @@ test('--emit writes ordered staging and atomic promotion SQL without touching a 
   const files = readdirSync(out).sort();
   const sql = files.map((f) => readFileSync(join(out, f), 'utf8')).join('\n');
   assert.match(files[0], /prepare_persons/);
-  assert.match(sql, /CREATE TRIGGER/);
-  assert.match(sql, /INSERT OR REPLACE INTO rp_publish/);
-  for (const table of TABLES) assert.match(sql, new RegExp(`DELETE FROM "${table}"`));
+  for (const table of TABLES) {
+    assert.match(sql, new RegExp(`ALTER TABLE "${table}" RENAME TO "rp_prev_${table}"`));
+    assert.match(sql, new RegExp(`ALTER TABLE "rp_next_${table}" RENAME TO "${table}"`));
+  }
   // The artifact is also executable in its documented filename order.
   sqlite(fake.target, 'PRAGMA foreign_keys=ON;\n' + sql);
   for (const table of TABLES)

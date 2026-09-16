@@ -8,6 +8,7 @@ import {
   insertStatements,
   chunkStatements,
   runShip,
+  schemaFromRows,
   assertShippedCounts,
   readCountsWithRetry,
   readShippedCounts,
@@ -691,7 +692,10 @@ const shipHarness = (over = {}) => {
   const opts = {
     tables: over.tables ?? ['persons', 'declarations'],
     readTable: (t) => source[t] ?? null,
-    wipeSql: 'DELETE FROM persons;',
+    readSchema:
+      over.readSchema ??
+      ((ts) =>
+        Object.fromEntries(ts.map((t) => [t, { sql: `CREATE TABLE ${t}(id)`, indexes: [] }]))),
     apply: (name, sql) => calls.push([name, sql]),
     sleep: (ms) => naps.push(ms),
     readCounts: over.readCounts ?? ((expected) => ({ ...expected })),
@@ -701,22 +705,25 @@ const shipHarness = (over = {}) => {
   return { calls, naps, run: () => runShip(opts) };
 };
 
-test('runShip uploads staging before atomic promotion and paces every request', () => {
+test('runShip uploads staging before the swap and paces every request', () => {
   const h = shipHarness();
   assert.deepEqual(h.run(), { persons: 5, declarations: 1 });
   const names = h.calls.map(([name]) => name);
   assert.equal(names[0], 'prepare_persons');
-  assert.ok(names.indexOf('prepare_publish') > names.indexOf('declarations.0'));
-  assert.equal(names.at(-2), 'publish');
+  assert.equal(names.at(-1), 'publish');
+  assert.ok(names.indexOf('publish') > names.indexOf('declarations.0'));
   assert.ok(!names.includes('0_wipe'));
   assert.equal(h.naps.length, h.calls.length - 1);
 });
 
-test('atomic promotion preserves the live tables on a short staging table or a foreign-key failure', () => {
-  for (const [failure, keyed] of ['short', 'foreign-key'].flatMap((f) => [
-    [f, false],
-    [f, true],
-  ])) {
+test('runShip refuses a target that lacks a shipped table before any request', () => {
+  const h = shipHarness({ readSchema: () => ({}) });
+  assert.throws(() => h.run(), /target lacks table persons/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('the swap preserves the live tables on a short staging table or a foreign-key failure', () => {
+  for (const failure of ['short', 'foreign-key']) {
     const db = new DatabaseSync(':memory:');
     try {
       db.exec(`PRAGMA foreign_keys=ON;
@@ -731,15 +738,14 @@ test('atomic promotion preserves the live tables on a short staging table or a f
             paceMs: 0,
             sleep() {},
             readCounts: (x) => x,
+            readSchema: (tables) =>
+              schemaFromRows(
+                db.prepare('SELECT type, tbl_name, sql FROM sqlite_master').all(),
+                tables,
+              ),
             readTable(table) {
               return {
                 rowCount: 1,
-                ...(keyed
-                  ? {
-                      columns: table === 'persons' ? ['id'] : ['id', 'person_id'],
-                      primaryKey: ['id'],
-                    }
-                  : {}),
                 statements: [
                   table === 'persons'
                     ? 'INSERT INTO "persons" VALUES(2);'
@@ -753,7 +759,7 @@ test('atomic promotion preserves the live tables on a short staging table or a f
               db.exec(sql);
             },
           }),
-        failure === 'short' ? /incomplete staging/ : /FOREIGN KEY/,
+        failure === 'short' ? /incomplete_staging/ : /FOREIGN KEY/,
       );
       assert.equal(db.prepare('SELECT id FROM persons').get().id, 1);
       assert.equal(db.prepare('SELECT person_id FROM declarations').get().person_id, 1);
@@ -763,39 +769,22 @@ test('atomic promotion preserves the live tables on a short staging table or a f
   }
 });
 
-test('keyed promotion updates only differences and preserves foreign keys while moving children', () => {
+test('the swap moves whole generations: children follow their parents and the replaced one stays', () => {
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(`PRAGMA foreign_keys=ON;
       CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
       CREATE TABLE declarations(id INTEGER PRIMARY KEY,person_id REFERENCES persons(id));
-      CREATE TABLE memberships(person_id REFERENCES persons(id),declaration_id REFERENCES declarations(id),PRIMARY KEY(person_id,declaration_id));
-      CREATE TABLE writes(table_name TEXT, id INTEGER);
-      CREATE TRIGGER person_updated AFTER UPDATE ON persons BEGIN INSERT INTO writes VALUES('persons',new.id); END;
-      CREATE TRIGGER declaration_updated AFTER UPDATE ON declarations BEGIN INSERT INTO writes VALUES('declarations',new.id); END;
-      INSERT INTO persons VALUES(1,'unchanged'),(2,'old name'),(3,'obsolete');
-      INSERT INTO declarations VALUES(1,1),(2,2),(3,3),(4,3);
-      INSERT INTO memberships VALUES(1,1),(3,3),(3,4);`);
+      CREATE INDEX idx_declarations_person ON declarations(person_id);
+      INSERT INTO persons VALUES(1,'old'); INSERT INTO declarations VALUES(1,1);`);
     const rows = {
-      persons: [
-        { id: 1, name: 'unchanged' },
-        { id: 2, name: 'new name' },
-        { id: 4, name: null },
-      ],
-      declarations: [
-        { id: 1, person_id: 1 },
-        { id: 2, person_id: 4 },
-        { id: 3, person_id: 4 },
-      ],
-      memberships: [
-        { person_id: 1, declaration_id: 1 },
-        { person_id: 4, declaration_id: 3 },
-      ],
+      persons: [{ id: 2, name: 'new' }],
+      declarations: [{ id: 2, person_id: 2 }],
     };
     const ship = () =>
       runShip({
         tables: Object.keys(rows),
-        wipeTables: ['memberships', 'declarations', 'persons'],
+        wipeTables: ['declarations', 'persons'],
         paceMs: 0,
         sleep() {},
         maxStatements: 5,
@@ -806,16 +795,15 @@ test('keyed promotion updates only differences and preserves foreign keys while 
               db.prepare(`SELECT count(*) n FROM "${t}"`).get().n,
             ]),
           ),
+        readSchema: (tables) =>
+          schemaFromRows(db.prepare('SELECT type, tbl_name, sql FROM sqlite_master').all(), tables),
         readTable(table) {
-          const info = db.prepare(`PRAGMA table_info("${table}")`).all();
-          const columns = info.map((c) => c.name);
+          const columns = db
+            .prepare(`PRAGMA table_info("${table}")`)
+            .all()
+            .map((c) => c.name);
           return {
             rowCount: rows[table].length,
-            columns,
-            primaryKey: info
-              .filter((c) => c.pk)
-              .sort((a, b) => a.pk - b.pk)
-              .map((c) => c.name),
             statements: insertStatements(table, columns, rows[table]),
           };
         },
@@ -824,33 +812,30 @@ test('keyed promotion updates only differences and preserves foreign keys while 
         },
       });
     ship();
-    for (const [table, expected] of Object.entries(rows)) {
-      assert.deepEqual(
-        db
-          .prepare(`SELECT * FROM "${table}" ORDER BY 1,2`)
-          .all()
-          .map((r) => ({ ...r })),
-        expected,
-      );
-    }
-    const writes = db
-      .prepare('SELECT * FROM writes ORDER BY table_name,id')
-      .all()
-      .map((r) => ({ ...r }));
-    assert.deepEqual(writes, [
-      { table_name: 'declarations', id: 2 },
-      { table_name: 'declarations', id: 3 },
-      { table_name: 'persons', id: 2 },
-    ]);
-    ship();
     assert.deepEqual(
       db
-        .prepare('SELECT * FROM writes ORDER BY table_name,id')
+        .prepare('SELECT * FROM declarations')
         .all()
         .map((r) => ({ ...r })),
-      writes,
+      rows.declarations,
+    );
+    assert.equal(db.prepare('SELECT name FROM rp_prev_persons').get().name, 'old');
+    const ddl = Object.fromEntries(
+      db
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => [r.name, r.sql]),
+    );
+    assert.match(ddl.declarations, /REFERENCES "?persons"?\(id\)/);
+    assert.match(ddl.rp_prev_declarations, /REFERENCES "rp_prev_persons"\(id\)/);
+    assert.equal(
+      db.prepare("SELECT tbl_name FROM sqlite_master WHERE name='idx_declarations_person'").get()
+        .tbl_name,
+      'declarations',
     );
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    ship(); // a second publication replaces the previous generation without a name clash
+    assert.equal(db.prepare('SELECT name FROM rp_prev_persons').get().name, 'new');
   } finally {
     db.close();
   }

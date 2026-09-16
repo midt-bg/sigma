@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { wipeSql, TABLES } from './ship-related-persons.mjs';
+import { WIPE_ORDER, TABLES } from './ship-related-persons.mjs';
+const wipeSql = () => WIPE_ORDER.map((t) => `DELETE FROM "${t}";`).join('\n');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIG = resolve(HERE, '..', 'packages/db/migrations/0003_related_persons_foundation.sql');

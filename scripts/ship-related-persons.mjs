@@ -84,9 +84,6 @@ export const WIPE_ORDER = [
   'declarations',
   'persons',
 ];
-export function wipeSql(tables = WIPE_ORDER) {
-  return tables.map((t) => `DELETE FROM ${sqlIdent(t)};`).join('\n') + '\n';
-}
 const MAX_BATCH_BYTES = 90_000;
 export const MAX_BATCH_ROWS = 400;
 
@@ -128,14 +125,15 @@ const sleepSync = (ms) => {
   if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-/** Upload off to the side. One SQLite trigger makes promotion one atomic statement,
- * including constraints and FK validation; an interrupted upload never touches served rows.
- * Keyed tables write differences only; unchanged rows remain in place.
- */
+/** Upload off to the side, then publish by renaming: the served tables become the previous generation
+ * and the staged ones take their names, in one atomic batch. Staged tables carry the served schema
+ * (constraints, foreign keys to their staged parents), so a bad row fails while staging and never
+ * touches served rows; an interrupted upload leaves the served tables as they were. */
 export function runShip({
   tables,
   wipeTables = WIPE_ORDER,
   readTable,
+  readSchema,
   apply,
   sleep,
   readCounts,
@@ -154,11 +152,14 @@ export function runShip({
     setOwn(summary, table, read.rowCount);
     return { table, ...read };
   });
+  const schema = readSchema([...new Set([...tables, ...wipeTables])]);
+  for (const table of tables)
+    if (!schema[table]?.sql) throw new Error(`target lacks table ${table}`);
   for (const { table, statements } of reads) {
     const staged = `rp_next_${table}`;
     send(
       `prepare_${table}`,
-      `DROP TABLE IF EXISTS ${sqlIdent(staged)}; CREATE TABLE ${sqlIdent(staged)} AS SELECT * FROM ${sqlIdent(table)} WHERE 0;`,
+      `DROP TABLE IF EXISTS ${sqlIdent(staged)};\n${stagingDdl(schema[table].sql, table, tables)};`,
     );
     chunkStatements(statements, maxStatements).forEach((chunk, i) =>
       send(
@@ -171,17 +172,78 @@ export function runShip({
   }
   const stagedCounts = Object.fromEntries(reads.map((r) => [`rp_next_${r.table}`, r.rowCount]));
   assertShippedCounts(stagedCounts, readCounts(stagedCounts));
-  send('prepare_publish', promotionSql(reads, wipeTables));
-  // Trigger bodies execute within the INSERT's transaction, including all their DELETE/INSERT work.
-  send('publish', "INSERT OR REPLACE INTO rp_publish(id,published_at) VALUES (1,datetime('now'));");
+  send('publish', swapSql(schema, reads, wipeTables));
   assertShippedCounts(summary, readCounts(summary));
-  send(
-    'cleanup_publish',
-    'DROP TRIGGER IF EXISTS rp_publish_apply;\n' +
-      reads.map(({ table }) => `DROP TABLE IF EXISTS ${sqlIdent(`rp_next_${table}`)};`).join('\n'),
-  );
   return summary;
 }
+
+/** The served table's DDL, renamed for staging; its foreign keys point at the staged parents, so the
+ * references land on the served names when the parents are renamed (SQLite rewrites references with a
+ * RENAME). */
+export function stagingDdl(sql, table, shipped) {
+  const staged = new Set(shipped);
+  return sql
+    .replace(
+      /^(CREATE\s+(?:VIRTUAL\s+)?TABLE\s+)(?:"[^"]*"|'[^']*'|[^\s("']+)/i,
+      (_, head) => `${head}${sqlIdent(`rp_next_${table}`)}`,
+    )
+    .replace(/(REFERENCES\s+)("?)([A-Za-z_]\w*)\2(?=\s*\()/g, (m, head, _q, ref) =>
+      staged.has(ref) ? `${head}${sqlIdent(`rp_next_${ref}`)}` : m,
+    );
+}
+
+const indexName = (sql) =>
+  /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?("?)([^"\s]+)\1/i.exec(sql)[2];
+
+/** One batch: the generation before goes (children first), the served tables become the previous
+ * generation, the staged ones take their names (parents first) and their indexes. A staged table
+ * short of its expected rows fails the batch before any rename. Wipe-only tables are emptied, never
+ * swapped. The previous generation stays until the next publication: rollback is the swap in reverse. */
+export function swapSql(schema, reads, wipeTables = WIPE_ORDER) {
+  const shipped = new Set(reads.map((r) => r.table));
+  const prev = (t) => sqlIdent(`rp_prev_${t}`);
+  const next = (t) => sqlIdent(`rp_next_${t}`);
+  const indexes = reads.flatMap((r) => schema[r.table].indexes ?? []);
+  return [
+    'DROP TABLE IF EXISTS rp_staging_guard;',
+    'CREATE TABLE rp_staging_guard (n INTEGER CONSTRAINT incomplete_staging CHECK (n = 0));',
+    ...reads.map(
+      ({ table, rowCount }) =>
+        `INSERT INTO rp_staging_guard SELECT COUNT(*) - ${rowCount} FROM ${next(table)};`,
+    ),
+    'DROP TABLE rp_staging_guard;',
+    ...wipeTables.filter((t) => shipped.has(t)).map((t) => `DROP TABLE IF EXISTS ${prev(t)};`),
+    ...reads.map(({ table }) => `ALTER TABLE ${sqlIdent(table)} RENAME TO ${prev(table)};`),
+    ...indexes.map((sql) => `DROP INDEX IF EXISTS ${sqlIdent(indexName(sql))};`),
+    ...reads.map(({ table }) => `ALTER TABLE ${next(table)} RENAME TO ${sqlIdent(table)};`),
+    ...indexes.map((sql) => sql.replace(/;?\s*$/, ';')),
+    ...wipeTables
+      .filter((t) => !shipped.has(t) && schema[t]?.sql)
+      .map((t) => `DELETE FROM ${sqlIdent(t)};`),
+    // The trigger-based promotion of earlier versions leaves nothing behind.
+    'DROP TRIGGER IF EXISTS rp_publish_apply;',
+    'DROP TABLE IF EXISTS rp_publish;',
+  ].join('\n');
+}
+
+/** The served schema of the given tables: each table's DDL and its named indexes, as sqlite_master
+ * holds them. Rows come from `SELECT type, tbl_name, sql FROM sqlite_master`. */
+export function schemaFromRows(rows, tables) {
+  const schema = {};
+  for (const t of tables) schema[t] = { sql: null, indexes: [] };
+  for (const r of rows) {
+    const entry = schema[r.tbl_name];
+    if (!entry || !r.sql) continue;
+    if (r.type === 'table') entry.sql = r.sql;
+    else if (r.type === 'index') entry.indexes.push(r.sql);
+  }
+  return schema;
+}
+
+const schemaQuery = (tables) =>
+  `SELECT type, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL AND tbl_name IN (${tables
+    .map((t) => `'${t.replaceAll("'", "''")}'`)
+    .join(',')}) ORDER BY type DESC, name`;
 
 // Supports --name=value, --name value, and bare --name (boolean). A --name whose next token is another
 // --flag (or absent) is a boolean; otherwise it consumes the next token as its value.
@@ -209,64 +271,6 @@ export function sqlLiteral(v) {
   if (typeof v === 'bigint') return String(v);
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   return `'${String(v).replaceAll('\x00', '').replaceAll("'", "''")}'`;
-}
-
-/** Promote the complete staged image, writing only changed rows when the schema supplies a key.
- * Parents are upserted before children; obsolete rows are then removed children-first. An identity merge
- * that moves documents between persons and swaps their secondary unique keys does not fit this diff: such a
- * run needs a full replacement of the shipped tables.
- * The guards and all data changes still execute in the same atomic trigger. */
-export function promotionSql(reads, wipeTables = WIPE_ORDER) {
-  const keyed = (r) => r.primaryKey?.length && r.columns?.length;
-  const byTable = new Map(reads.map((r) => [r.table, r]));
-  const indexes = reads
-    .filter(keyed)
-    .map(
-      (r) =>
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${sqlIdent(`rp_key_${r.table}`)} ON ${sqlIdent(`rp_next_${r.table}`)} (${r.primaryKey.map(sqlIdent).join(',')});`,
-    )
-    .join('\n');
-  const guards = reads
-    .map(
-      ({ table, rowCount }) =>
-        `SELECT RAISE(ABORT, 'incomplete staging') WHERE (SELECT COUNT(*) FROM ${sqlIdent(`rp_next_${table}`)}) != ${rowCount};`,
-    )
-    .join('\n');
-  const clear = wipeSql(wipeTables.filter((t) => !keyed(byTable.get(t) ?? {})));
-  const inserts = reads
-    .map((r) => {
-      const table = sqlIdent(r.table),
-        staged = sqlIdent(`rp_next_${r.table}`);
-      if (!keyed(r)) return `INSERT INTO ${table} SELECT * FROM ${staged};`;
-      const cols = r.columns.map(sqlIdent).join(',');
-      const changes = r.columns.filter((c) => !r.primaryKey.includes(c));
-      const conflict = changes.length
-        ? `DO UPDATE SET ${changes.map((c) => `${sqlIdent(c)}=excluded.${sqlIdent(c)}`).join(',')}`
-        : 'DO NOTHING';
-      const same = r.columns.map((c) => `current.${sqlIdent(c)} IS s.${sqlIdent(c)}`).join(' AND ');
-      return `INSERT INTO ${table} (${cols}) SELECT ${r.columns.map((c) => `s.${sqlIdent(c)}`).join(',')} FROM ${staged} s WHERE NOT EXISTS (SELECT 1 FROM ${table} current WHERE ${same}) ON CONFLICT (${r.primaryKey.map(sqlIdent).join(',')}) ${conflict};`;
-    })
-    .join('\n');
-  const remove = wipeTables
-    .filter((t) => keyed(byTable.get(t) ?? {}))
-    .map((t) => {
-      const r = byTable.get(t),
-        table = sqlIdent(t),
-        staged = sqlIdent(`rp_next_${t}`);
-      const same = r.primaryKey
-        .map((c) => `s.${sqlIdent(c)} IS ${table}.${sqlIdent(c)}`)
-        .join(' AND ');
-      return `DELETE FROM ${table} WHERE NOT EXISTS (SELECT 1 FROM ${staged} s WHERE ${same});`;
-    })
-    .join('\n');
-  return `${indexes}
-CREATE TABLE IF NOT EXISTS rp_publish (id INTEGER PRIMARY KEY, published_at TEXT);
-DROP TRIGGER IF EXISTS rp_publish_apply;
-CREATE TRIGGER rp_publish_apply AFTER INSERT ON rp_publish BEGIN
-${guards}
-${clear}${inserts}
-${remove}
-END;`;
 }
 
 /** Shared shape check for the pacing flags: a bare `--flag` must not silently mean 1 (or 0). */
@@ -627,7 +631,7 @@ async function main() {
       resolvedId: remote ? resolveD1Id(d1Name) : '',
     });
 
-  // Upload staging tables, verify, then promote with one atomic statement.
+  // Upload staging tables, verify, then publish with one rename swap.
   const tmp = emit ? null : mkdtempSync(join(tmpdir(), 'sigma-ship-'));
   const applyFile = (name, sql) => {
     const f = join(tmp, `${name}.sql`);
@@ -650,16 +654,30 @@ async function main() {
     const columns = info.map((r) => r.name);
     if (!columns.length) return null;
     const rows = sqliteJson(`SELECT * FROM ${sqlIdent(table)}`);
-    return {
-      rowCount: rows.length,
-      columns,
-      primaryKey: info
-        .filter((r) => r.pk)
-        .sort((a, b) => a.pk - b.pk)
-        .map((r) => r.name),
-      statements: insertStatements(table, columns, rows),
-    };
+    return { rowCount: rows.length, statements: insertStatements(table, columns, rows) };
   };
+  // Staged tables copy the schema the target serves; an emitted script can only follow the work DB.
+  const readSchema = (tables) =>
+    schemaFromRows(
+      emit
+        ? sqliteJson(schemaQuery(tables))
+        : (parseWranglerJson(
+            execFileSync(
+              'wrangler',
+              [
+                'd1',
+                'execute',
+                d1Name,
+                remote ? '--remote' : '--local',
+                '--json',
+                '--command',
+                schemaQuery(tables),
+              ],
+              { cwd: resolve('apps/web'), encoding: 'utf8' },
+            ),
+          )[0]?.results ?? []),
+      tables,
+    );
 
   let summary = {};
   try {
@@ -668,6 +686,7 @@ async function main() {
       tables: withRegistry ? [...REGISTRY_TABLES, ...TABLES] : TABLES,
       wipeTables: withRegistry ? [...REGISTRY_TABLES.slice().reverse(), ...WIPE_ORDER] : WIPE_ORDER,
       readTable,
+      readSchema,
       apply: emit
         ? (name, sql) =>
             writeFileSync(
@@ -677,7 +696,7 @@ async function main() {
             )
         : applyFile,
       sleep: emit ? () => {} : sleepSync,
-      // SQL guards validate staging during promotion; live runs also read it before requesting promotion.
+      // The swap re-checks the staged counts in its own batch; live runs also read them back first.
       readCounts: emit
         ? (expected) => expected
         : (expected) => readShippedCounts(d1Name, remote, expected),
