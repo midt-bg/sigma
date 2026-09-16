@@ -27,7 +27,6 @@ it('shows one company for multiple source identities, sequential sections and hi
     ownInstitution: false,
     firstDeclaredYear: null,
     lastDeclaredYear: null,
-    matchMethod: 'exact_name_key',
     contractCount: 2,
     contractValueEur: 100,
     contemporaneousContractCount: 0,

@@ -45,11 +45,6 @@ td .chip {
 .cc-interest .chip {
   margin: 0;
 }
-.case-mag-compare,
-.case-mag-summary,
-.case-mag-row {
-  gap: var(--s-3);
-}
 .share {
   margin-inline: 0.35em;
 }
@@ -195,18 +190,6 @@ td .chip {
     padding-bottom: calc(var(--s-5) + 76px + env(safe-area-inset-bottom, 0px));
   }
 }
-.case-mag {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-3);
-}
-.case-mag-figures {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--s-3);
-}
 /* Keep the profile trend's table legible beside its chart. */
 .trend-split {
   grid-template-columns: minmax(0, 1fr) minmax(440px, 1fr);
@@ -236,27 +219,6 @@ td .chip {
   margin-top: var(--s-1);
 }
 
-/* A person's evidence reads vertically, on one common time axis. */
-.person-overview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
-  padding: 8px 0 20px;
-}
-.person-overview > div {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.person-overview strong {
-  font-size: clamp(25px, 3vw, 40px);
-  font-weight: 500;
-  line-height: 1.15;
-}
-.person-overview span {
-  font-size: 14px;
-  color: var(--muted);
-}
 .person-time-legend {
   display: flex;
   flex-wrap: wrap;

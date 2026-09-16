@@ -22,9 +22,6 @@ const DEBOUNCE_MS = 150;
 interface SmartSearchProps {
   variant: 'hero' | 'drawer';
   defaultValue?: string;
-  placeholder?: string;
-  inputLabel?: string;
-  submitLabel?: string;
   // Drawer wants to close itself once a suggestion navigates away.
   onNavigate?: () => void;
   inputRef?: React.RefObject<HTMLInputElement | null>;
@@ -37,9 +34,6 @@ interface SmartSearchProps {
 export function SmartSearch({
   variant,
   defaultValue = '',
-  placeholder = 'Институция, компания или договор',
-  inputLabel = 'Търсене',
-  submitLabel = 'Намери',
   onNavigate,
   inputRef: externalInputRef,
 }: SmartSearchProps) {
@@ -174,8 +168,8 @@ export function SmartSearch({
           name="q"
           className="smart-search-input"
           value={query}
-          placeholder={placeholder}
-          aria-label={inputLabel}
+          placeholder="Институция, компания или договор"
+          aria-label="Търсене"
           autoComplete="off"
           role="combobox"
           aria-expanded={showList}
@@ -190,7 +184,7 @@ export function SmartSearch({
           onKeyDown={onKeyDown}
         />
         <button type="submit" className="smart-search-submit">
-          {submitLabel}
+          Намери
         </button>
       </form>
 

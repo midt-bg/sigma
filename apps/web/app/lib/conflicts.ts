@@ -76,11 +76,6 @@ export function officialHref(officialSlug: string): string {
   return `/conflicts/official/${encodeURIComponent(officialSlug)}`;
 }
 
-/** /conflicts/company/:eik — officials with a declared interest in this winner. */
-export function companyConflictsHref(eik: string): string {
-  return `/conflicts/company/${encodeURIComponent(eik)}`;
-}
-
 /** /companies/:eik — the winner's spending profile (matched winners always carry a valid ЕИК). */
 export function companyProfileHref(eik: string): string {
   return `/companies/${encodeURIComponent(eik)}`;

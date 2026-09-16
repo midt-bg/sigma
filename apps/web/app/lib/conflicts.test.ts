@@ -4,7 +4,6 @@ import type { ConflictContract, ConflictContractFacts, ConflictLink } from '@sig
 import {
   authorityShareDisplay,
   authorityShares,
-  companyConflictsHref,
   companyProfileHref,
   conflictHeadline,
   conflictListFilters,
@@ -47,7 +46,6 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     ownInstitution: false,
     firstDeclaredYear: '2019',
     lastDeclaredYear: '2023',
-    matchMethod: 'exact_name_key',
     contractCount: 35,
     contractValueEur: 88_000_000,
     contemporaneousContractCount: 20,
@@ -102,7 +100,6 @@ describe('relationLabel', () => {
 describe('href builders', () => {
   it('point at the conflict + company routes', () => {
     expect(officialHref('c2VydA')).toBe('/conflicts/official/c2VydA');
-    expect(companyConflictsHref('111')).toBe('/conflicts/company/111');
     expect(companyProfileHref('111')).toBe('/companies/111');
   });
 });

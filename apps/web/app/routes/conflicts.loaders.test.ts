@@ -20,7 +20,6 @@ const q = vi.hoisted(() => ({
   getCompanyConflicts: vi.fn(),
   getLinkContracts: vi.fn(),
   getAuthorityName: vi.fn(),
-  getPersonRedirect: vi.fn(),
   personSlug: vi.fn((id: string) => `slug-of-${id}`),
   authorityIdFromSlug: vi.fn((slug: string) => `auth:${slug}`),
   personIdFromSlug: vi.fn(),
@@ -178,10 +177,8 @@ describe('official loader (/conflicts/official/:id)', () => {
 
   it('does not redirect obsolete identities; an absent profile returns 404', async () => {
     q.personIdFromSlug.mockReturnValue('person:old');
-    q.getPersonRedirect.mockResolvedValue('person:new');
     q.getOfficialConflicts.mockResolvedValue(null);
     await expectStatus(call(officialLoader, { id: 'old-slug' }), 404);
-    expect(q.getPersonRedirect).not.toHaveBeenCalled();
   });
 
   it('returns the conflict payload for a valid official', async () => {
@@ -210,7 +207,6 @@ describe('official loader (/conflicts/official/:id)', () => {
     expect(res).not.toBeInstanceOf(Response);
     expect(res.name).toBe('Иван Петров');
     expect(res.person).not.toBeNull();
-    expect(q.getPersonRedirect).not.toHaveBeenCalled();
     expect(q.getPersonActivity).toHaveBeenCalledWith(
       DB,
       'a'.repeat(64),

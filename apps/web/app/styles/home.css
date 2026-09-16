@@ -153,33 +153,3 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-
-/* Municipality grid */
-.muni-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 var(--s-6);
-  border-top: 1px solid var(--ink);
-  margin: var(--s-2) 0 var(--s-3);
-}
-.muni-grid a {
-  padding: var(--s-3) 0;
-  border-bottom: 1px solid var(--rule-soft);
-  font: 15px/1.35 var(--font-sans);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--s-3);
-  text-decoration: none;
-  color: var(--ink);
-}
-.muni-grid a:hover {
-  color: var(--accent);
-}
-.muni-grid a .num {
-  color: var(--ink-soft);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  white-space: nowrap;
-}

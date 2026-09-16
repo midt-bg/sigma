@@ -31,7 +31,6 @@ function link(over: Partial<ConflictLink> = {}): ConflictLink {
     ownInstitution: true,
     firstDeclaredYear: '2019',
     lastDeclaredYear: '2023',
-    matchMethod: 'exact_name_key',
     contractCount: 2,
     contractValueEur: 88_000_000,
     contemporaneousContractCount: 1,

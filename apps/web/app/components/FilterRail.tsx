@@ -24,7 +24,6 @@ export interface FilterGroup {
   categories?: FilterCategory[];
   selected: string[];
   allLabel?: string; // radio groups: the „Всички" (clear) option label
-  more?: { href: string; label: string };
 }
 
 // Sticky filter rail. Filters live in the URL (shareable). A `<Form method="get">` auto-submits on
@@ -190,11 +189,6 @@ export function FilterRail({
                       {o.count != null && <span className="muted small">{fmtCount(o.count)}</span>}
                     </label>
                   ))}
-              {g.more && (
-                <p className="small muted mt-s2">
-                  <Link to={g.more.href}>{g.more.label} →</Link>
-                </p>
-              )}
             </details>
           );
         })}

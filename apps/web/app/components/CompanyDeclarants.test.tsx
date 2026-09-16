@@ -17,7 +17,6 @@ const link = (officialSlug: string, institution: string, year: string): Conflict
   ownInstitution: false,
   firstDeclaredYear: year,
   lastDeclaredYear: year,
-  matchMethod: 'eik',
   contractCount: 11,
   contractValueEur: 500,
   contemporaneousContractCount: 1,
