@@ -4,6 +4,7 @@ import {
   registryClient,
   registryDayBoundary,
   registryDay,
+  RegistryError,
   retryAfterMs,
 } from './registry';
 const XML = `<DeedResult><Deed UIC="000000001" CompanyName="ТЕСТ" LegalForm="EOOD"><SubDeed SubUIC="01"><Managers FieldIdent="00070" FieldOperation="Erase" FieldEntryNumber="001" FieldEntryDate="2026-09-01T10:00:00.123"><Manager><Person><Indent>00abc</Indent><Name>Тест</Name></Person></Manager></Managers></SubDeed></Deed><DeedActualState UIC="000000001" /></DeedResult>`;
@@ -237,4 +238,15 @@ it('refuses a day the portal does not know and an entry list it cannot trust', a
   for (let i = 0; i < 4; i++)
     await expect(c.changes('2026-09-01')).rejects.toThrow(/^invalid portal entry$/);
   await expect(c.changes('2026-09-01')).rejects.toThrow('invalid registry object');
+});
+it('rejects an impossible calendar day as a register error before any request', async () => {
+  const fetchFn = vi.fn();
+  vi.stubGlobal('fetch', fetchFn);
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  for (const day of ['2026-13-01', '2026-01-00', '2026-01-32', '2026-02-30']) {
+    expect(() => registryDayBoundary(day)).toThrow(RegistryError);
+    expect(() => registryDayBoundary(day)).toThrow(`not a day: ${day}`);
+    await expect(c.changes(day)).rejects.toThrow(RegistryError);
+  }
+  expect(fetchFn).not.toHaveBeenCalled();
 });

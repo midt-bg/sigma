@@ -125,7 +125,8 @@ export function registryDay(date: Date): string {
   }).format(date);
 }
 export function registryDayBoundary(day: string, end = false): string {
-  if (!DAY.test(day) || new Date(`${day}T12:00:00Z`).toISOString().slice(0, 10) !== day)
+  // toJSON() is null for an invalid date (2026-13-01), where toISOString() would throw a RangeError.
+  if (!DAY.test(day) || new Date(`${day}T12:00:00Z`).toJSON()?.slice(0, 10) !== day)
     throw new RegistryError(`not a day: ${day}`);
   // Midnight and 23:59 may have different offsets on the DST transition day.
   const utc = new Date(`${day}T${end ? '21:59:59.999' : '00:00:00'}Z`);
