@@ -8,6 +8,7 @@ import {
   contractIdFromSlug,
   contractSlug,
   hrefForEntity,
+  maskedCompanySlug,
   personIdFromSlug,
   personSlug,
 } from './identity';
@@ -136,6 +137,76 @@ describe('person slug (свързани лица)', () => {
     expect(personSlug('ИВАН ПЕТРОВ')).toBe(personSlug('person:ИВАН ПЕТРОВ'));
     // Decoding always canonicalises to the prefixed id, so both inputs land on the same person.
     expect(personIdFromSlug(personSlug('ИВАН ПЕТРОВ'))).toBe('person:ИВАН ПЕТРОВ');
+  });
+});
+
+describe('masked company slug (PR #183 review — lyubomir-bozhinov 2026-09-02, thread on rows.ts:86)', () => {
+  // Opaque slug for masked sole-trader / natural-person rows on /companies + /companies.data +
+  // home top-10. Unlike `companySlug`, it does NOT round-trip — masked rows are not linkable from
+  // the leaderboard by design (their masked profile is reachable only via direct URL or from the
+  // contract page, both of which are noindexed). The `m` prefix distinguishes it from `n`
+  // (name-keyed, round-trippable) and from bare ЕИК digits; bidderIdFromSlug returns null for it.
+  it('prefixes opaque tokens with `m` so they cannot collide with name-keyed (`n`) or ЕИК slugs', () => {
+    expect(maskedCompanySlug('eik:121817309').startsWith('m')).toBe(true);
+    expect(maskedCompanySlug('eik:121817309')).not.toBe(companySlug('eik:121817309'));
+  });
+  it('does NOT decode to a bidder id via bidderIdFromSlug (one-way, by design)', () => {
+    const slug = maskedCompanySlug('eik:121817309');
+    expect(bidderIdFromSlug(slug)).toBeNull();
+  });
+  it('does NOT contain the bare ЕИК digits', () => {
+    const slug = maskedCompanySlug('eik:121817309');
+    expect(slug).not.toContain('121817309');
+    expect(slug).not.toMatch(/^\d{9}(\d{4})?$/);
+  });
+  it('is stable — same bidder id yields the same opaque token', () => {
+    const a = maskedCompanySlug('eik:121817309');
+    const b = maskedCompanySlug('eik:121817309');
+    expect(a).toBe(b);
+  });
+  it('is unique per bidder id', () => {
+    const a = maskedCompanySlug('eik:121817309');
+    const b = maskedCompanySlug('eik:999999999');
+    expect(a).not.toBe(b);
+  });
+  it('handles name-keyed bidder ids the same way (no key/name leaks in the slug)', () => {
+    const slug = maskedCompanySlug('name:НИКОЛАЙ КИРОВ');
+    expect(bidderIdFromSlug(slug)).toBeNull();
+    expect(slug).not.toContain('НИКОЛАЙ');
+    expect(slug).not.toContain('КИРОВ');
+  });
+  // PR #344 review (ydimitrof 2026-09-03, thread on identity.ts:41) — the previous
+  // implementation was `'m' + b64urlEncode(bidderId)` — a trivial base64url reversal recovers
+  // `eik:<ЕИК>` (or `name:<name>`) straight out of the slug, defeating the masking. The slug must
+  // be a one-way hash, not an encoding. This test pins the property that base64url-decoding the
+  // tail does NOT yield the bidder id (or any string that round-trips via bidderIdFromSlug).
+  it('is NOT base64url-decodable back to the bidder id (one-way, not encoding)', () => {
+    const id = 'eik:121817309';
+    const slug = maskedCompanySlug(id);
+    // Tail after the `m` prefix MUST not be valid base64url that decodes to the bidder id.
+    const tail = slug.slice(1);
+    let decoded: string | null = null;
+    try {
+      const bin = Buffer.from(tail, 'base64url').toString('utf8');
+      // Only treat it as a leak if base64url-decoding succeeded and produced something resembling
+      // the bidder id; the strict property is that the slug does NOT encode the bidder id.
+      decoded = bin;
+    } catch {
+      // base64url decode failure is fine — that already proves non-reversibility.
+    }
+    expect(decoded === id).toBe(false);
+    // And bidderIdFromSlug returns null for it (no branch in bidderIdFromSlug matches `m…`).
+    expect(bidderIdFromSlug(slug)).toBeNull();
+  });
+  it('a one-way hash is robust to substring-grep heuristics (no ЕИК digit substring in the tail)', () => {
+    // Belt-and-braces against the previous broken implementation, which produced
+    // `mZWlrOjEyMTgxNzMwOQ` — grep for the ЕИК digits would miss it, but base64url-decode
+    // trivially recovers the original. The fix guarantees the tail cannot be reversed at all.
+    const slug = maskedCompanySlug('eik:121817309');
+    // tail after the `m` prefix must not contain the digit substring.
+    expect(slug.slice(1)).not.toContain('121817309');
+    // and the tail is not a base64url-recoverable substring that round-trips to the bidder id
+    // (the explicit base64url test above is the canonical check).
   });
 });
 

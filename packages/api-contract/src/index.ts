@@ -76,6 +76,10 @@ export interface CompanyListItem {
   eik: string | null;
   eikValid: boolean;
   hasEik: boolean;
+  /** True for sole-trader / natural-person rows whose ЕИК + name have been masked by
+   *  `toCompanyListItem` (PR #183, ydimitrof review 2026-08-31). Surfaces a single privacy signal
+   *  consumers can branch on without re-comparing the masking label or the source name. */
+  masked: boolean;
   ownershipKind: OwnershipKind | null;
   settlement: string | null;
   sector: SectorRef | null; // primary sector
@@ -221,10 +225,21 @@ export interface ContractListItem {
   isConsortium: boolean;
   authoritySlug: string;
   authorityName: string;
+  /** /companies/:slug. For a sole-trader / natural-person row, this is the opaque
+   *  `m<base64(bidder_id)>` token from `maskedCompanySlug()` — it does NOT round-trip
+   *  via `bidderIdFromSlug` and does NOT contain the bare ЕИК. The masked profile is
+   *  reachable only via direct URL or a noindexed contract-page backlink; masked rows
+   *  are rendered as a non-link `<span>` in the home single-offer tables and the
+   *  contracts list. Mirrors the masked-flag invariant from `CompanyListItem.masked`
+   *  (PR #183 review, lyubomir-bozhinov 2026-09-02, thread on rows.ts:86). */
   bidderSlug: string;
   bidderName: string;
   bidderDisplayName: string;
   bidderKind: EntityKind;
+  /** True for sole-trader / natural-person rows whose ЕИК + name have been masked by
+   *  `toItem` (PR #183, lyubomir-bozhinov review 2026-09-02). Consumers branch on this
+   *  single source-of-truth rather than string-comparing the masking label. */
+  masked: boolean;
   procedureLabel: string;
   signedAt: string | null;
   bidsReceived: number | null;

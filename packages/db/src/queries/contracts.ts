@@ -3,7 +3,12 @@
 
 import type { ContractListItem, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, PROCEDURE_GROUPS, procedureGroup } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
+import {
+  cleanName,
+  entityName,
+  isNaturalPersonBidder,
+  MASKED_NATURAL_PERSON_LABEL,
+} from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
 import {
@@ -12,6 +17,7 @@ import {
   bidderIdFromSlug,
   companySlug,
   contractSlug,
+  maskedCompanySlug,
 } from './identity';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -99,6 +105,7 @@ interface ContractRow {
   bidder_id: string;
   bidder_name: string;
   bidder_kind: 'company' | 'consortium';
+  bidder_legal_form: string | null;
   procedure_type: string;
   signed_at: string | null;
   bids_received: number | null;
@@ -108,7 +115,7 @@ interface ContractRow {
 const SELECT = `
   SELECT c.id, COALESCE(NULLIF(c.contract_subject, ''), t.title) AS subject, t.source_id AS unp,
          t.cpv_code, c.eu_funded, t.authority_id, a.name AS authority_name,
-         c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind,
+         c.bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, b.legal_form AS bidder_legal_form,
          t.procedure_type, c.signed_at, c.bids_received, c.amount_eur`;
 const FROM = `
   FROM contracts c
@@ -206,6 +213,28 @@ function contractFilterSignature(p: ContractListParams): string {
 function toItem(r: ContractRow): ContractListItem {
   const authorityName = cleanName(r.authority_name);
   const bidderName = cleanName(r.bidder_name);
+  // Privacy (PR #183 review): the contract list — /contracts + /contracts.data (RRv7 single-fetch
+  // twin) and the home single-offer tables — shares this mapper. A sole trader must read
+  // "Частно лице" with no source name exposed on the leaderboard; the CSV path already masks the
+  // same row upstream of bytes hitting R2 (streamContractsCsv), and the JSON masker
+  // (maskContractForPrivacy) covers /contracts/:id.json. This is the third surface. The
+  // bidder_kind !== 'consortium' guard is required by isNaturalPersonBidder's docstring
+  // (caller filters JVs).
+  //
+  // The `bidderSlug` is also opaque for masked rows — `companySlug('eik:<digits>')` returns the
+  // digits verbatim, so a masked eik-keyed row's slug would still carry the natural-person's ЕИК
+  // into the `/contracts.data` machine-readable twin (RRv7 single-fetch turbo-stream) and the
+  // hydration payload of the public indexable home single-offer tables. `maskedCompanySlug` is a
+  // one-way token (no ЕИК, no name, non-round-trippable; `bidderIdFromSlug` returns null) so the
+  // masked profile stays reachable only via direct URL or a noindexed contract-page backlink —
+  // never via a clickable href on the public HTML page. The `masked` flag surfaces the same
+  // privacy signal as the label, so consumers branch on a single source-of-truth instead of
+  // string-comparing `MASKED_NATURAL_PERSON_LABEL` (which is brittle to label changes or mapper
+  // moves — ydimitrof review 2026-08-31, thread on companies.tsx:84). lyubomir-bozhinov review
+  // 2026-09-02, thread on packages/db/src/queries/rows.ts:86 (extended to the contract mapper).
+  const isNaturalPerson =
+    r.bidder_kind !== 'consortium' && isNaturalPersonBidder(bidderName, r.bidder_legal_form);
+  const maskedBidderName = isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : bidderName;
   return {
     id: contractSlug(r.id),
     subject: r.subject,
@@ -215,10 +244,13 @@ function toItem(r: ContractRow): ContractListItem {
     isConsortium: r.bidder_kind === 'consortium',
     authoritySlug: authoritySlug(r.authority_id),
     authorityName,
-    bidderSlug: companySlug(r.bidder_id),
-    bidderName,
-    bidderDisplayName: entityName(bidderName, r.bidder_kind),
+    bidderSlug: isNaturalPerson ? maskedCompanySlug(r.bidder_id) : companySlug(r.bidder_id),
+    bidderName: maskedBidderName,
+    bidderDisplayName: isNaturalPerson
+      ? MASKED_NATURAL_PERSON_LABEL
+      : entityName(maskedBidderName, r.bidder_kind),
     bidderKind: r.bidder_kind,
+    masked: isNaturalPerson,
     procedureLabel: procedureGroup(r.procedure_type).label,
     signedAt: r.signed_at,
     bidsReceived: r.bids_received,
@@ -456,6 +488,17 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
       }
       let block = '';
       for (const r of results) {
+        const bidderName = cleanName(r.bidder_name);
+        // `isNaturalPersonBidder`'s docstring delegates consortium filtering to the caller (a JV is a
+        // legal entity even if a lead member's name / legal_form looks like a sole trader). Guard with
+        // `bidder_kind` first so a consortium such as „ЕТ Иван Петров; Строй ООД" is NOT over-masked as
+        // a natural person — it keeps the „… и др." shape and the consortium ЕИК.
+        const isNatural =
+          r.bidder_kind !== 'consortium' && isNaturalPersonBidder(bidderName, r.bidder_legal_form);
+        const contractor = isNatural
+          ? MASKED_NATURAL_PERSON_LABEL
+          : entityName(bidderName, r.bidder_kind);
+        const contractorEik = isNatural ? '' : r.contractor_eik;
         block +=
           [
             // CSV carries the RAW id (no URL escaping): literal `/`, `%`, … — not the `%2F`/`%25`
@@ -466,8 +509,8 @@ export function streamContractsCsv(db: D1Database, p: ContractListParams): Respo
             r.subject,
             cleanName(r.authority_name),
             r.authority_eik,
-            entityName(cleanName(r.bidder_name), r.bidder_kind),
-            r.contractor_eik,
+            contractor,
+            contractorEik,
             r.bidder_kind,
             r.cpv_code ? r.cpv_code.slice(0, 2) : '',
             procedureGroup(r.procedure_type).label,

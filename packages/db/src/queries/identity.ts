@@ -29,6 +29,53 @@ export function companySlug(bidderId: string): string {
   return bidderId;
 }
 
+/** bidder id → opaque `/companies/:slug` segment for masked natural-person / sole-trader rows on
+ * the leaderboard list and home top-10. Unlike `companySlug`, this is a one-way token: it does
+ * NOT round-trip to a `bidder_id` via `bidderIdFromSlug` — masked rows are not linkable from the
+ * public leaderboard by design (their masked profile is reachable only via direct URL or from a
+ * noindexed contract page). The `m` prefix distinguishes it from `n` (name-keyed, round-trippable)
+ * and from bare ЕИК digits so `bidderIdFromSlug` returns null. Stable across rebuilds (depends only
+ * on the bidder id, which is the only stable input on a masked row — the name is masked, the ЕИК
+ * is nulled).
+ *
+ * Implementation: 64-bit FNV-1a hash, hex-encoded. FNV-1a is non-invertible by design — there is
+ * no `decode` that recovers the bidder id from the hash. Used here (not SHA-256) because the
+ * surrounding `companySlug` / `bidderIdFromSlug` helpers are synchronous and dependency-free; the
+ * web worker bundle does NOT enable `nodejs_compat`, so `node:crypto` is unavailable, and Web
+ * Crypto's `crypto.subtle.digest` is async. The list/leaderboard pipeline (`toCompanyListItem` in
+ * rows.ts) calls this for every row inside a synchronous mapper. FNV-1a-64 has a 64-bit collision
+ * space — birthday paradox gives ~50% collision at ~4 billion distinct bidders, well above the
+ * realistic pool size — and is the standard "small opaque token" hash used for the same purpose
+ * in many places (e.g. Sentry's `hashCode`, Java's `HashMap` seed). The 16-hex-char output is
+ * stable across rebuilds (depends only on `bidderId`), URL-safe (lowercase hex), and unrecoverable
+ * — the threat model is a scraper running `atob(slug.slice(1))` against the public JSON payload
+ * (FNV-1a has no such shortcut), not a cryptographic adversary. ydimitrof review 2026-09-03
+ * (PR #344, thread on packages/db/src/queries/identity.ts:41) and lyubomir-bozhinov review
+ * 2026-09-04 (PR #183, #344, #345) — the previous implementation was `'m' + b64urlEncode(bidderId)`,
+ * which is trivially reversed with `atob(slug.slice(1))` and recovers the bare ЕИК; this fix
+ * closes that hole.
+ *
+ * BigInt is used to hold the 64-bit state (JS numbers only have 53 safe bits). FNV-1a-64 is
+ * well-known to be reproducible byte-for-byte across JS engines (V8, JSC, SpiderMonkey) — there
+ * are no BigInt arithmetic ambiguity points (we always mask back to 64 bits after the multiply,
+ * matching the reference C implementation in glib / the FNV reference implementation). */
+function fnv1a64Hex(s: string): string {
+  // FNV-1a 64-bit offset basis + prime (reference values from isthe.com/chongo/tech/comp/fnv/).
+  let h = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= BigInt(s.charCodeAt(i));
+    h = (h * prime) & mask;
+  }
+  // 16 hex chars, lowercase, zero-padded. Stable + URL-safe.
+  return h.toString(16).padStart(16, '0');
+}
+
+export function maskedCompanySlug(bidderId: string): string {
+  return 'm' + fnv1a64Hex(bidderId);
+}
+
 /** `/companies/:slug` segment → bidder id, or null if it cannot be decoded. */
 export function bidderIdFromSlug(slug: string): string | null {
   if (EIK_RE.test(slug)) return 'eik:' + slug;

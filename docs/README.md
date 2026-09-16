@@ -6,6 +6,7 @@
 - [`adr/`](adr/README.md) — Architecture Decision Records: по едно архитектурно решение на файл, с индекс и шаблон.
 - [`runbooks/related-persons-suppression.md`](runbooks/related-persons-suppression.md) — оперативен наръчник за сваляне/поправка на връзка от свързани лица (версиониран списък с HMAC-отпечатък, спешна процедура, ротация на salt-а).
 - [`core-scope.md`](core-scope.md) — доменният модел и **речникът на данните**: таблици, rollup-и, `value_flag`/`date_flag`, семантиката на `amount_eur`.
+- [`privacy-masking.md`](privacy-masking.md) — оперативно ръководство за механиката на маскирането на естествени лица и `X-Robots-Tag: noindex`: маркерният договор, как да се добави нова машинно-четима повърхност и как се тества.
 - [`etl.md`](etl.md) — ETL pipeline-ът и open-data емисията на ЦАИС ЕОП (`storage.eop.bg`): зареждане, опресняване и производни таблици.
 - [`etl-pipeline-state.md`](etl-pipeline-state.md) — анализ на текущото състояние на ETL pipeline-а.
 - [`etl-architecture.md`](etl-architecture.md) — целевата ETL архитектура (RFC): предложение за състоянието и реда на изпълнение.
