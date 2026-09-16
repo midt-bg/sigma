@@ -83,4 +83,27 @@ describe('d1FromSqlite', () => {
     const out = await db.batch([db.prepare(`INSERT INTO t (id, n) VALUES ('c', 3)`)]);
     expect(out).toEqual([{ results: [], success: true, meta: {} }]);
   });
+
+  it('rejects a LIKE or GLOB pattern over 50 bytes, as D1 does, and matches shorter ones like SQLite', async () => {
+    const long = `%:${'a'.repeat(49)}`;
+    for (const sql of ['SELECT id FROM t WHERE id LIKE ?', 'SELECT id FROM t WHERE id GLOB ?'])
+      await expect(db.prepare(sql).bind(long).all()).rejects.toThrow(
+        'LIKE or GLOB pattern too complex',
+      );
+    const ids = async (sql: string, ...bound: string[]) =>
+      (
+        await db
+          .prepare(sql)
+          .bind(...bound)
+          .all<{ id: string }>()
+      ).results.map((r) => r.id);
+    await expect(ids('SELECT id FROM t WHERE id LIKE ?', 'A%')).resolves.toEqual(['a']);
+    await expect(ids("SELECT id FROM t WHERE id || '_' LIKE ? ESCAPE '!'", 'b!_')).resolves.toEqual(
+      ['b'],
+    );
+    await expect(ids('SELECT id FROM t WHERE id GLOB ?', 'A*')).resolves.toEqual([]);
+    await expect(ids('SELECT id FROM t WHERE id NOT LIKE ? ORDER BY id', 'a')).resolves.toEqual([
+      'b',
+    ]);
+  });
 });
