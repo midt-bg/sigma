@@ -8,6 +8,7 @@ const pairRow = {
   authority_name: 'Министерство на финансите',
   bidder_name: 'ТЕСТ ООД',
   bidder_kind: 'company' as const,
+  bidder_legal_form: 'ООД',
   won_eur: 500000,
   contracts: 10,
 };
@@ -121,6 +122,93 @@ describe('getFlows', () => {
     const data = await getFlows(fake().db, {});
 
     expect(Array.isArray(data.sectors)).toBe(true);
+  });
+});
+
+describe('getFlows — privacy masking on the flows Sankey + top-pairs table (PR #183 review — lyubomir-bozhinov 2026-09-02, extended from the rows.ts:86 thread)', () => {
+  // The flows mapper joins `flow_pairs` against `bidders` to recover `bidder_legal_form` (the rollup
+  // table doesn't carry it — see the JOIN rationale in `topPairs` in flows.ts). The mapper then masks
+  // sole-trader / natural-person pairs the same way `toCompanyListItem` + `toItem` (contract mapper)
+  // do: opaque `m<base64(bidder_id)>` slug + „Частно лице" label + `masked: true` flag. The
+  // `bidder_kind !== 'consortium'` guard preserves the consortium shape.
+
+  const soleTraderRow = {
+    authority_id: 'auth:1',
+    bidder_id: 'eik:121817309',
+    authority_name: 'Authority',
+    bidder_name: 'ЕТ ДРИФТ - НИКОЛАЙ КИРОВ',
+    bidder_kind: 'company' as const,
+    bidder_legal_form: 'ЕТ',
+    won_eur: 1000,
+    contracts: 1,
+  };
+  const legalEntityRow = { ...pairRow };
+  const consortiumRow = {
+    ...pairRow,
+    bidder_name: 'ЕТ Иван Петров; Строй ООД',
+    bidder_kind: 'consortium' as const,
+    bidder_legal_form: null,
+  };
+
+  function only(rows: object[]) {
+    return fakeD1([
+      { when: 'FROM sector_totals', all: [{ division: '45' }] },
+      { when: 'FROM flow_pairs', all: rows },
+      { when: 'FROM contracts c', all: rows },
+    ]);
+  }
+
+  it('masks bidderName + bidderDisplayName for a sole trader (ЕТ, legal_form=ЕТ)', async () => {
+    const data = await getFlows(only([soleTraderRow]).db, {});
+    expect(data.pairs).toHaveLength(1);
+    const pair = data.pairs[0]!;
+    expect(pair.masked).toBe(true);
+    expect(pair.bidderName).toBe('Частно лице');
+    expect(pair.bidderDisplayName).toBe('Частно лице');
+  });
+
+  it('replaces bidderSlug with the opaque `m<base64(bidder_id)>` token for a sole trader', async () => {
+    // The pre-fix `bidderSlug` was the bare ЕИК, leaking the natural-person ЕИК into the flows
+    // page HTML payload and the .data RRv7 single-fetch turbo-stream. The opaque form mirrors the
+    // invariant on /companies (`rows.ts:86`), the home top-10 (#9308672), and the home single-offer
+    // + /contracts tables.
+    const data = await getFlows(only([soleTraderRow]).db, {});
+    const pair = data.pairs[0]!;
+    expect(pair.bidderSlug.startsWith('m')).toBe(true);
+    expect(pair.bidderSlug).not.toContain('121817309');
+    expect(pair.bidderSlug).not.toMatch(/^\d{9}(\d{4})?$/);
+  });
+
+  it('drops the Sankey node `href` for a masked sole trader (non-resolvable opaque slug)', async () => {
+    // The Sankey right-column bar is a navigation surface in the public flows view. A masked
+    // bidder's opaque slug would 404 against the masked profile, which is reachable only via
+    // direct URL or a noindexed contract-page backlink. The bar reads „Частно лице" and has no
+    // href — a screen reader hears the label, a click does nothing.
+    const data = await getFlows(only([soleTraderRow]).db, {});
+    const maskedNode = data.sankey.nodes.find((n) => n.label === 'Частно лице');
+    expect(maskedNode).toBeDefined();
+    expect(maskedNode?.href).toBeUndefined();
+    // The legal-entity case keeps its round-trippable href (the public flows view is still a
+    // navigation surface for non-masked bidders).
+    const legal = await getFlows(only([legalEntityRow]).db, {});
+    const legalNode = legal.sankey.nodes.find((n) => n.side === 'company');
+    expect(legalNode?.href).toMatch(/^\/companies\//);
+  });
+
+  it('keeps bidderSlug as the bare ЕИК for a legal entity (round-trippable)', async () => {
+    const data = await getFlows(only([legalEntityRow]).db, {});
+    const pair = data.pairs[0]!;
+    expect(pair.masked).toBe(false);
+    expect(pair.bidderSlug).toBe('103267194');
+  });
+
+  it('does NOT mask a consortium whose first member is a sole trader (MAJOR-class guard)', async () => {
+    // The `bidder_kind !== 'consortium'` guard mirrors `toCompanyListItem`: a JV whose lead member
+    // is a sole trader stays a legal entity, keeps its consortium ЕИК + „… и др." shape.
+    const data = await getFlows(only([consortiumRow]).db, {});
+    const pair = data.pairs[0]!;
+    expect(pair.masked).toBe(false);
+    expect(pair.bidderName).toBe('ЕТ Иван Петров; Строй ООД');
   });
 });
 

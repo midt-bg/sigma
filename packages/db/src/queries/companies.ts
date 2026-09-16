@@ -4,6 +4,7 @@
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
+import { cleanName, isNaturalPersonBidder, MASKED_NATURAL_PERSON_LABEL } from '@sigma/shared';
 import { csvCell } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
@@ -61,7 +62,7 @@ const COUNT_BUCKETS: Record<string, string> = lookup({
 
 const qs = (n: number) => Array.from({ length: n }, () => '?').join(', ');
 
-const COLS = `bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, primary_sector, eu_eur, first_date, last_date`;
+const COLS = `bidder_id, name, kind, ownership_kind, eik, eik_valid, settlement, won_eur, contracts, authorities, primary_sector, eu_eur, first_date, last_date, legal_form`;
 
 function normalizeEu(eu: unknown): 'eu' | 'national' | null {
   return eu === 'eu' || eu === 'national' ? eu : null;
@@ -74,9 +75,38 @@ function needsBase(p: CompanyListParams): boolean {
 /**
  * The FROM source: the rollup table, or a scoped base-aggregation CTE for sector/year/EU cross-cuts.
  * Keep consumed filter keys in sync with COMPANY_FILTER_KEYS and companyFilterSignature().
+ *
+ * `legalForm` controls whether the `b.legal_form AS legal_form` projection is added on the
+ * rollup subquery (the unfiltered path). Both consumers need it on every path: the CSV streamer
+ * keys its natural-person masker off `r.legal_form`, and `toCompanyListItem` (the list-path mapper)
+ * ALSO reads `r.legal_form` for the same masking decision (PR #183 review T-001 — see the
+ * `fix(privacy): mask sole-trader rows in leaderboard list mappers` commit). The rollup subquery
+ * therefore ALWAYS projects legal_form on the list path; the `legalForm` flag is now a no-op
+ * preserved for the explicit "this query masks on legal_form" assertion at call sites. The
+ * base-aggregation CTE (filtered path) always projects legal_form: it already does an INNER JOIN
+ * on `bidders b` for the grouping, so the projection is free.
  */
-function source(p: CompanyListParams): { from: string; params: unknown[] } {
-  if (!needsBase(p)) return { from: 'company_totals', params: [] };
+function source(
+  p: CompanyListParams,
+  opts: { legalForm?: boolean } = {},
+): { from: string; params: unknown[] } {
+  // PR #183 review MAJOR #1 (lyubomir-bozhinov, 2026-08-24): listCompanies's COLS names
+  // `legal_form` (the mapper consumes it for masking), so the rollup subquery MUST project it.
+  // A previous perf optimization (`3cd5d23 perf(db): project legal_form only on the CSV path`)
+  // made this conditional, but the conditional predated the masking mapper's consumption and
+  // broke the unfiltered list path with `no such column: legal_form` on real D1. The join is on
+  // bidders.id (PK), so the cost is bounded — restoring it on both paths is the simplest
+  // correct change. The flag remains so callers can be explicit about their need and tests can
+  // assert the SQL shape.
+  const projectLegalForm = opts.legalForm ?? true;
+  if (!needsBase(p)) {
+    const project = projectLegalForm ? ', b.legal_form AS legal_form' : '';
+    const join = projectLegalForm ? ' LEFT JOIN bidders AS b ON b.id = ct.bidder_id' : '';
+    return {
+      from: `(SELECT ct.*${project} FROM company_totals AS ct${join})`,
+      params: [],
+    };
+  }
   const where: string[] = ['c.amount_eur IS NOT NULL'];
   const params: unknown[] = [];
   if (p.sectors?.length) {
@@ -91,8 +121,10 @@ function source(p: CompanyListParams): { from: string; params: unknown[] } {
   if (eu === 'eu') where.push('c.eu_funded = 1');
   else if (eu === 'national') where.push('(c.eu_funded IS NULL OR c.eu_funded = 0)');
   const single = p.sectors?.length === 1 ? p.sectors[0]! : null;
+  // Base-aggregation CTE always projects legal_form (see docstring above).
   const from = `(
     SELECT b.id AS bidder_id, b.name, b.kind, b.ownership_kind, b.eik_normalized AS eik, b.eik_valid, b.settlement,
+           b.legal_form AS legal_form,
            SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts, COUNT(DISTINCT t.authority_id) AS authorities,
            ${single ? '?' : 'NULL'} AS primary_sector,
            SUM(CASE WHEN c.eu_funded = 1 THEN c.amount_eur ELSE 0 END) AS eu_eur,
@@ -144,7 +176,10 @@ export async function listCompanies(
 ): Promise<Page<CompanyListItem>> {
   const sort = SORTS[p.sort as keyof typeof SORTS] ?? SORTS['won'];
   const pageSize = p.pageSize ?? 25;
-  const src = source(p);
+  // toCompanyListItem masks sole-trader rows on `r.legal_form` (PR #183 review T-001) — the rollup
+  // subquery therefore must project it (the source() default is now to project, see PR #183 review
+  // MAJOR #1). Pass the flag explicitly so the SQL intent is searchable.
+  const src = source(p, { legalForm: true });
   const ew = entityWhere(p);
   const signature = companyFilterSignature(p);
   const ks = keyset({
@@ -227,7 +262,7 @@ export async function getCompanyFacets(db: D1Database): Promise<CompanyFacets> {
 
 /** Streamed CSV of the company leaderboard (honours the same filters as the list page). */
 export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Response {
-  const src = source(p);
+  const src = source(p, { legalForm: true }); // CSV masker keys off r.legal_form
   const ew = entityWhere(p);
   const cols = [
     'eik',
@@ -261,17 +296,16 @@ export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Respon
       }
       let block = '';
       for (const r of results) {
+        // `isNaturalPersonBidder`'s docstring delegates consortium filtering to the caller (a JV is a
+        // legal entity even if a lead member's name / legal_form looks like a sole trader). Guard with
+        // `kind` first so a consortium such as „ЕТ Иван Петров; Строй ООД" is NOT masked as a natural
+        // person — it keeps its name + ЕИК. Mirrors the guard in streamContractsCsv (PR #183 T-006).
+        const isNatural =
+          r.kind !== 'consortium' && isNaturalPersonBidder(cleanName(r.name), r.legal_form);
+        const name = isNatural ? MASKED_NATURAL_PERSON_LABEL : r.name;
+        const eik = isNatural ? '' : r.eik;
         block +=
-          [
-            r.eik,
-            r.name,
-            r.kind,
-            r.settlement,
-            r.won_eur,
-            r.contracts,
-            r.authorities,
-            r.primary_sector,
-          ]
+          [eik, name, r.kind, r.settlement, r.won_eur, r.contracts, r.authorities, r.primary_sector]
             .map(csvCell)
             .join(',') + '\n';
         afterId = r.bidder_id;

@@ -29,8 +29,21 @@ export function meta(_: Route.MetaArgs) {
   ];
 }
 
-export function headers() {
-  return { 'Cache-Control': publicCache(1800) };
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the `.data` Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response. (PR #183 review #2:
+  // the competition top-pairs table now shares the masked-bidder invariant with the leaderboard
+  // (`rows.ts:86`), the contract mapper, and flows — when ANY pair on the page is a sole trader /
+  // natural person, the marker stamps the response and the worker noindexes the .data twin.)
+  const headers: Record<string, string> = {
+    'Cache-Control': loaderHeaders.get('Cache-Control') ?? publicCache(1800),
+  };
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    headers['X-Privacy-Mask'] = 'applied';
+  }
+  return headers;
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -42,6 +55,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     years,
   );
   const data = await getCompetition(db, { sector, year, funding, top });
+  // Privacy (PR #183 review #2): if any pair on this page was masked by the shared competition
+  // mapper (sole trader / natural person), stamp the privacy-mask marker so the worker
+  // `hardenResponse` translates it into `X-Robots-Tag: noindex` on the `.data` twin (RRv7
+  // single-fetch). The detection reads the `masked` boolean the mapper sets on the same branch
+  // (lyubomir-bozhinov review 2026-09-02, thread on packages/db/src/queries/rows.ts:86) instead of
+  // string-comparing `MASKED_NATURAL_PERSON_LABEL` — the flag is the single source-of-truth,
+  // kept in lock-step with the label and the opaque slug inside the competition mapper.
+  if (data.topPairs.some((p) => p.masked)) {
+    return Response.json(
+      { data, coverage, years, unknownSector, unknownYear },
+      { headers: { 'X-Privacy-Mask': 'applied' } },
+    );
+  }
   return { data, coverage, years, unknownSector, unknownYear };
 }
 
@@ -154,7 +180,20 @@ const pairColumns: Column<CompetitionPair>[] = [
   {
     key: 'bidder',
     header: 'Изпълнител',
-    cell: (r) => <Link to={`/companies/${r.bidderSlug}`}>{r.bidderDisplayName}</Link>,
+    cell: (r) =>
+      // Masked (sole-trader / natural-person) pairs on the public /competition page must NOT
+      // render a clickable href that would either leak the ЕИК (pre-fix: bare ЕИК via
+      // `companySlug`) or 404 against the new opaque `m<base64(bidder_id)>` slug. The page is
+      // noindexed when ANY pair is masked (the loader stamps `X-Privacy-Mask` for the worker
+      // `hardenResponse`), but the per-row invariant from `companies.tsx:174-178` + flows + the
+      // contract mapper still applies — masked profile is reachable only via direct URL or a
+      // noindexed contract-page backlink. lyubomir-bozhinov review 2026-09-02, thread on
+      // packages/db/src/queries/rows.ts:86 (extended to the competition mapper).
+      r.masked ? (
+        <span>{r.bidderDisplayName}</span>
+      ) : (
+        <Link to={`/companies/${r.bidderSlug}`}>{r.bidderDisplayName}</Link>
+      ),
   },
   { key: 'contracts', header: 'Договори', align: 'num', cell: (r) => count(r.contracts) },
   { key: 'value', header: 'Стойност', align: 'money', cell: (r) => money(r.wonEur) },

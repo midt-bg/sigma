@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import {
   count,
+  isNaturalPersonBidder,
   isNaturalPersonProfileName,
   longDate,
   money,
@@ -21,6 +22,7 @@ import { annexNeedsExpand, annexParagraphs, annexPreview } from '../lib/annexTex
 import { publicCache } from '../lib/cache';
 import { eopSourceFiles } from '../lib/eopSource';
 import { seoMeta } from '../lib/meta';
+import { markPrivacyMaskApplied } from '../lib/security';
 
 /**
  * Compose the muted sub-line under „Брой оферти". The AOP feed gives us the gross submitted count
@@ -99,7 +101,16 @@ export function meta({ data, params, matches }: Route.MetaArgs) {
   return tags;
 }
 
-export function headers() {
+export function headers({ loaderHeaders }: Route.HeadersArgs) {
+  // Forward the internal privacy-mask marker set by the loader on the masked Response. React
+  // Router's `getDocumentHeadersImpl` does not auto-propagate loader headers (only `Set-Cookie`),
+  // so the route must forward explicitly — without this the worker `hardenResponse` cannot
+  // translate the marker into `X-Robots-Tag: noindex` on the HTML response (same shape as
+  // `company.tsx:47`). The `.data` RRv7 single-fetch twin shares the same loader, so the marker
+  // set on the loader Response covers both surfaces.
+  if (loaderHeaders.get('X-Privacy-Mask') === 'applied') {
+    return { 'Cache-Control': publicCache(3600), 'X-Privacy-Mask': 'applied' };
+  }
   return { 'Cache-Control': publicCache(3600) };
 }
 
@@ -107,7 +118,41 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   if (!params.id?.trim()) throw new Response('Not Found', { status: 404 });
   const contract = await getContract(getDb(context.cloudflare.env), contractIdFromSlug(params.id));
   if (!contract) throw new Response('Not Found', { status: 404 });
-  return { contract };
+
+  // Privacy policy for the contract detail page (ADR-0039 §6, decision recorded in PR #183 review):
+  // the trading `displayName` is PUBLIC, the ЕИК is the sensitive natural-person identifier. This
+  // is the MOST-indexable surface — `robots.txt` does not block `/contracts/:id` (or its `.data`
+  // twin), and the contract page is among the most-visited. Masking + signalling in the shared
+  // loader covers both the rendered HTML and the RRv7 single-fetch `.data` payload at once, rather
+  // than per-surface. The policy mirrors `company.tsx:89` exactly: ЕИК → null on the shared object,
+  // the marker is translated to `X-Robots-Tag: noindex` by `hardenResponse` in workers/app.ts. The
+  // `kind === 'consortium'` guard matches the JSON masker (MAJOR 1) and the CSV streamer
+  // (`bidder_kind !== 'consortium'`, contracts.ts:459) so a JV whose first member is a sole trader
+  // is never over-masked/noindexed. Legal-entity records keep the plain-object return (no marker).
+  const isNatural =
+    contract.bidder.kind !== 'consortium' &&
+    isNaturalPersonBidder(contract.bidder.name, contract.bidder_legal_form);
+  if (isNatural) {
+    contract.bidder.eik = null;
+    // Strip the server-only `bidder_legal_form` field before serialising the contract into the
+    // `.data` RRv7 single-fetch payload — the JSON resource route (`contract.json.tsx`) already
+    // does this via `stripServerOnlyFields` for parity (PR #183 review #2, "не бива да достига
+    // клиента"); the contract page loader must do the same for its `.data` twin or the
+    // natural-person classifier leaks verbatim next to the masked name in the single-fetch
+    // payload (ydimitrof review 2026-08-31, thread on apps/web/app/routes/contract.tsx:139).
+    // Same goes for the legal-entity / consortium passthrough branch below, which returns the
+    // `contract` object directly and otherwise carries `bidder_legal_form` for a legal entity too
+    // (a useless identifier-classifier next to a public name, so the strip is just hygiene).
+    const { bidder_legal_form: _omit, ...publicContract } = contract;
+    const responseHeaders = new Headers({ 'Cache-Control': publicCache(3600) });
+    markPrivacyMaskApplied(responseHeaders);
+    return Response.json({ contract: publicContract }, { headers: responseHeaders });
+  }
+  // Passthrough branch — strip the server-only field for parity with the masked branch above
+  // and with `contract.json.tsx` so a legal entity / consortium payload does not carry the
+  // classifier field into the `.data` twin.
+  const { bidder_legal_form: _omit, ...publicContract } = contract;
+  return { contract: publicContract };
 }
 
 // Coarse cohort bands only (never a fake-precise "топ 4.7%") - @sigma/db cohortBand only claims a

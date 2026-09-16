@@ -1,5 +1,6 @@
 import { withDataSource } from './dataSource';
 import { getDb } from '@sigma/db';
+import { markPrivacyMaskApplied } from './security';
 
 const CSV_CONTENT_TYPE = 'text/csv; charset=utf-8';
 const CSV_CACHE_CONTROL = 'public, max-age=3600';
@@ -56,6 +57,7 @@ function hasSearchFilter(params: object): boolean {
 function markCsvCache(response: Response, cache: CsvCacheState): Response {
   const withSource = withDataSource(response);
   withSource.headers.set('X-Csv-Cache', cache);
+  markPrivacyMaskApplied(withSource.headers);
   return withSource;
 }
 
@@ -94,10 +96,13 @@ function responseFromR2Object(
   cache: CsvCacheState,
 ) {
   if (!hasBody(obj)) {
-    return markCsvCache(
-      new Response(null, { status: 304, headers: { ETag: obj.httpEtag } }),
-      cache,
-    );
+    const response304 = new Response(null, {
+      status: 304,
+      headers: { ETag: obj.httpEtag },
+    });
+    // `markCsvCache` (below) stamps the privacy mask on the final headers — the single source of
+    // truth for the marker on every CSV path. Do not call `markPrivacyMaskApplied` here as well.
+    return markCsvCache(response304, cache);
   }
 
   const range = rangeInfo(obj);
@@ -111,6 +116,8 @@ function responseFromR2Object(
   });
   if (range) headers.set('Content-Range', `bytes ${range.start}-${range.end}/${obj.size}`);
 
+  // `markCsvCache` stamps the privacy mask on the final headers — the single source of truth for the
+  // marker on every CSV path. Do not call `markPrivacyMaskApplied` here as well (was a duplicate call).
   return markCsvCache(new Response(obj.body, { status: range ? 206 : 200, headers }), cache);
 }
 

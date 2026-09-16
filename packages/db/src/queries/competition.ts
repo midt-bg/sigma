@@ -20,8 +20,13 @@ import {
   PROCEDURE_UNKNOWN_KEY,
   procedureGroup,
 } from '@sigma/config';
-import { cleanName, entityName } from '@sigma/shared';
-import { authoritySlug, companySlug } from './identity';
+import {
+  cleanName,
+  entityName,
+  isNaturalPersonBidder,
+  MASKED_NATURAL_PERSON_LABEL,
+} from '@sigma/shared';
+import { authoritySlug, companySlug, maskedCompanySlug } from './identity';
 import { typeLabel } from './rows';
 import { sectorOptions } from './sectors';
 
@@ -357,6 +362,7 @@ interface PairRow {
   authority_name: string;
   bidder_name: string;
   bidder_kind: 'company' | 'consortium';
+  bidder_legal_form: string | null;
   won_eur: number;
   contracts: number;
 }
@@ -375,10 +381,16 @@ async function topRecurringPairs(
   );
   let rows: PairRow[];
   if (!filtered) {
+    // Same JOIN pattern as flows.ts: the `flow_pairs` rollup doesn't carry `bidder_legal_form`, so
+    // JOIN against `bidders` to recover the natural-person signal. PR #183 review
+    // (lyubomir-bozhinov 2026-09-02, thread on packages/db/src/queries/rows.ts:86).
     const { results } = await db
       .prepare(
-        `SELECT authority_id, bidder_id, authority_name, bidder_name, bidder_kind, won_eur, contracts
-         FROM flow_pairs ORDER BY contracts DESC, won_eur DESC LIMIT ?`,
+        `SELECT fp.authority_id, fp.bidder_id, fp.authority_name, fp.bidder_name,
+                fp.bidder_kind, b.legal_form AS bidder_legal_form,
+                fp.won_eur, fp.contracts
+         FROM flow_pairs fp JOIN bidders b ON b.id = fp.bidder_id
+         ORDER BY contracts DESC, won_eur DESC LIMIT ?`,
       )
       .bind(top)
       .all<PairRow>();
@@ -392,7 +404,7 @@ async function topRecurringPairs(
     const { results } = await db
       .prepare(
         `SELECT t.authority_id AS authority_id, c.bidder_id AS bidder_id, a.name AS authority_name,
-                b.name AS bidder_name, b.kind AS bidder_kind,
+                b.name AS bidder_name, b.kind AS bidder_kind, b.legal_form AS bidder_legal_form,
                 SUM(c.amount_eur) AS won_eur, COUNT(*) AS contracts
          FROM contracts c ${s.join} JOIN authorities a ON a.id = t.authority_id
          JOIN bidders b ON b.id = c.bidder_id
@@ -406,14 +418,25 @@ async function topRecurringPairs(
   }
   return rows.map((r, i) => {
     const bidderName = cleanName(r.bidder_name);
+    // Privacy (PR #183 review): same invariant as flows.ts and the contract mapper. A
+    // sole-trader / natural-person pair reads „Частно лице" on /competition with an opaque
+    // non-round-trippable bidderSlug. The `bidder_kind !== 'consortium'` guard preserves the
+    // consortium shape ("ЕТ X; ООД Y и др."). The page also gets the `X-Privacy-Mask` marker
+    // via the routes layer when ANY pair is masked.
+    const isNaturalPerson =
+      r.bidder_kind !== 'consortium' && isNaturalPersonBidder(bidderName, r.bidder_legal_form);
+    const maskedBidderName = isNaturalPerson ? MASKED_NATURAL_PERSON_LABEL : bidderName;
     return {
       rank: i + 1,
       authoritySlug: authoritySlug(r.authority_id),
       authorityName: cleanName(r.authority_name),
-      bidderSlug: companySlug(r.bidder_id),
-      bidderName,
-      bidderDisplayName: entityName(bidderName, r.bidder_kind),
+      bidderSlug: isNaturalPerson ? maskedCompanySlug(r.bidder_id) : companySlug(r.bidder_id),
+      bidderName: maskedBidderName,
+      bidderDisplayName: isNaturalPerson
+        ? MASKED_NATURAL_PERSON_LABEL
+        : entityName(maskedBidderName, r.bidder_kind),
       bidderKind: r.bidder_kind,
+      masked: isNaturalPerson,
       contracts: r.contracts,
       wonEur: r.won_eur,
     };
