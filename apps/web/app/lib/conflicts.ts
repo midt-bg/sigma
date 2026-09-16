@@ -95,7 +95,7 @@ export interface ConflictPersonRow {
   position: string | null;
   /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
   companyCount: number;
-  companies?: { company: string; eik: string; self: number; family: number }[];
+  companies?: { company: string; eik: string; self: number; family: number; registry?: number }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
   /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,
@@ -111,7 +111,7 @@ export interface ConflictPersonRow {
   /** Whose declared stake(s) this row aggregates: 'self' (own only), 'family' (a close relative's only,
    *  ADR-0032 — relative never named), or 'mixed' (both). Identity-free; drives the „свързано лице" qualifier
    *  so a family-only row is never visually indistinguishable from an own stake (niki #312 MEDIUM 1). */
-  stakeKind: 'self' | 'family' | 'mixed';
+  stakeKind: 'self' | 'family' | 'mixed' | 'registry';
   /** ≥1 of the person's links has a contract from the official's OWN institution — OR across links. */
   ownInstitution: boolean;
   /** ≥1 contract is signed in an observed year with institution and position data for the person. */
@@ -287,7 +287,7 @@ export function officialRole(o: {
 // The whole surfaced set is loaded (≤1000 links), so the list filters, sorts and pages in memory: the same
 // rows on the server render and in the browser, and no extra query per filter.
 
-export type ConflictStakeFilter = 'self' | 'family';
+export type ConflictStakeFilter = 'self' | 'family' | 'registry';
 export type ConflictSignal = 'own' | 'window';
 export type ConflictSort = 'period' | 'total' | 'contracts';
 
@@ -305,7 +305,7 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
   const stake = sp.get('stake');
   const sort = sp.get('sort');
   return {
-    stake: stake === 'self' || stake === 'family' ? stake : null,
+    stake: stake === 'self' || stake === 'family' || stake === 'registry' ? stake : null,
     signals: getMulti(sp, 'signal').filter(
       (s): s is ConflictSignal => s === 'own' || s === 'window',
     ),

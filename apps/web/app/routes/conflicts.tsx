@@ -1,6 +1,12 @@
 import { Link, useSearchParams, data } from 'react-router';
 import { count, moneyBare } from '@sigma/shared';
-import { authorityIdFromSlug, getAuthorityName, getRelatedPersonRows, getDb } from '@sigma/db';
+import {
+  authorityIdFromSlug,
+  getAuthorityName,
+  getRelatedPersonRows,
+  getRegistryRolePersonRows,
+  getDb,
+} from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { PageHeader } from '../components/PageHeader';
@@ -68,19 +74,28 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const sp = new URL(request.url).searchParams;
   const filters = conflictListFilters(sp);
-  const everyone = (await withDbRetry(() => getRelatedPersonRows(db, authorityId))).map(
-    ({ declaredOffices, ...row }) => ({
+  // Declared stakes first; then people the register alone places at a winner, in the same row shape.
+  const everyone = (
+    await withDbRetry(() =>
+      Promise.all([
+        getRelatedPersonRows(db, authorityId),
+        getRegistryRolePersonRows(db, authorityId),
+      ]),
+    )
+  )
+    .flat()
+    .map(({ declaredOffices, ...row }) => ({
       ...row,
       declaredInstitutions: groupDeclaredInstitutions(declaredOffices),
-    }),
-  );
+    }));
   const persons = sortConflictRows(filterConflictRows(everyone, filters), filters.sort);
   const pageCount = Math.max(1, Math.ceil(persons.length / PER_PAGE));
   const asked = Number(sp.get('page') || 1);
   const page = Math.min(pageCount, Number.isSafeInteger(asked) && asked > 0 ? asked : 1);
   const facets = {
-    self: everyone.filter((r) => r.stakeKind !== 'family').length,
-    family: everyone.filter((r) => r.stakeKind !== 'self').length,
+    self: everyone.filter((r) => r.stakeKind === 'self' || r.stakeKind === 'mixed').length,
+    family: everyone.filter((r) => r.stakeKind === 'family' || r.stakeKind === 'mixed').length,
+    registry: everyone.filter((r) => r.stakeKind === 'registry').length,
     own: everyone.filter((r) => r.ownInstitution).length,
     window: everyone.filter((r) => r.hasContemporaneous).length,
     institutions: institutionOptions(everyone, filters.institutions),
@@ -161,6 +176,11 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   <Chip>{c.self ? 'собствен и свързан дял' : 'дял на свързано лице'}</Chip>
                 </div>
               )}
+              {c.registry && (
+                <div>
+                  <Chip>роля по Търговския регистър</Chip>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -218,6 +238,11 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
           value: 'family',
           label: 'на свързано лице',
           count: facets.family,
+        },
+        {
+          value: 'registry',
+          label: 'роля по Търговския регистър',
+          count: facets.registry,
         },
       ],
     },

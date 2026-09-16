@@ -1,7 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
-import { getRelatedPersonRows, getRelatedPersonHeadline } from './related-people-list';
+import {
+  getRelatedPersonRows,
+  getRelatedPersonHeadline,
+  getRegistryRolePersonRows,
+} from './related-people-list';
 it('groups beyond 1000 source links, preserving identity, distinct pairs and contract unions', async () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -120,6 +124,51 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
     expect(
       (await getRelatedPersonRows(d1)).find((r) => r.personIdentity === 'canonical'),
     ).toMatchObject({ contemporaneousValueEur: 300 });
+  } finally {
+    db.close();
+  }
+});
+
+it('lists people the register places at a winner without a declared stake, by their office years', async () => {
+  const db = new DatabaseSync(':memory:');
+  const H = 'h'.repeat(64);
+  try {
+    db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
+      CREATE TABLE person_entities(id PRIMARY KEY,registry_indent);
+      CREATE TABLE person_sources(entity_id,namespace,active);
+      CREATE TABLE interest_links(person_id,status,interest_class);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik);
+      CREATE TABLE declarations(person_id,institution,position,declared_year);
+      CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
+      CREATE TABLE company_totals(bidder_id,contracts);
+      CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
+      CREATE TABLE tenders(id PRIMARY KEY,authority_id);
+      INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
+      INSERT INTO person_entities VALUES('p','${H}'),('q','${'q'.repeat(64)}'),('r','${'r'.repeat(64)}');
+      INSERT INTO person_sources VALUES('p','cacbg',1),('q','cacbg',1),('r','tr',1);
+      INSERT INTO interest_links VALUES('q','published','private_ownership');
+      INSERT INTO registry_roles VALUES('${H}','person','manager','111111111'),('${H}','person','beneficial_owner','222222222'),
+        ('${'q'.repeat(64)}','person','manager','111111111'),('${'r'.repeat(64)}','person','manager','111111111');
+      INSERT INTO declarations VALUES('p','Община','Кмет','2020');
+      INSERT INTO bidders VALUES('b1','111111111','Изпълнител'),('b2','222222222','Друг');
+      INSERT INTO company_totals VALUES('b1',2),('b2',1);
+      INSERT INTO tenders VALUES('t','a'),('t2','other');
+      INSERT INTO contracts VALUES('c1','b1','t','2020-05-01',100),('c2','b1','t2','2022-05-01',50),('c3','b2','t','2020-01-01',999);`);
+    const rows = await getRegistryRolePersonRows(d1FromSqlite(db));
+    expect(rows).toHaveLength(1); // q has a declared stake, r never filed a declaration
+    expect(rows[0]).toMatchObject({
+      official: 'Лице Роля',
+      personIdentity: H,
+      stakeKind: 'registry',
+      companyCount: 1, // the actual-owner role is not a public role
+      contractCount: 2,
+      contractValueEur: 150,
+      contemporaneousValueEur: 100,
+      hasContemporaneous: true,
+      companies: [{ eik: '111111111', company: 'Изпълнител', self: 0, family: 0, registry: 1 }],
+    });
+    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(1);
+    expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
   } finally {
     db.close();
   }

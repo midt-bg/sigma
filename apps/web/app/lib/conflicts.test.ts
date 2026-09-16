@@ -655,3 +655,21 @@ it('sorts period values and keeps unknown amounts last', () => {
   expect(conflictListFilters(new URLSearchParams('sort=period-contracts')).sort).toBe('period');
   expect(sortConflictRows(rows, 'period').map((r) => r.officialSlug)).toEqual(['c', 'b', 'a']);
 });
+
+it('reads the registry-role stake filter and keeps registry rows out of the own/family counts', () => {
+  expect(conflictListFilters(new URLSearchParams('stake=registry')).stake).toBe('registry');
+  const registry = {
+    ...groupByPerson([link()])[0]!,
+    stakeKind: 'registry' as const,
+    officialSlug: 'reg',
+  };
+  const own = groupByPerson([link()])[0]!;
+  const f = (stake: 'self' | 'family' | 'registry' | null) =>
+    filterConflictRows([own, registry], {
+      ...conflictListFilters(new URLSearchParams()),
+      stake,
+    }).map((r) => r.officialSlug);
+  expect(f('registry')).toEqual(['reg']);
+  expect(f('self')).toEqual([own.officialSlug]);
+  expect(f(null)).toEqual([own.officialSlug, 'reg']);
+});

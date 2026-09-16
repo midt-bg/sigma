@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // loaders sit on top of, and here we drive their return values to exercise every branch.
 const q = vi.hoisted(() => ({
   getRelatedPersonRows: vi.fn(),
+  getRegistryRolePersonRows: vi.fn(),
   getRelatedPersonHeadline: vi.fn(),
   getPersonTimeline: vi.fn(),
   getOfficialConflicts: vi.fn(),
@@ -36,6 +37,7 @@ import { loader as contractsLoader } from './conflict.contracts';
 
 import { emptyActivity } from '../lib/person-profile.test-support';
 beforeEach(() => {
+  q.getRegistryRolePersonRows.mockResolvedValue([]);
   q.getRegistryIdentity.mockResolvedValue(null);
   q.getPersonDestinations.mockResolvedValue([]);
   q.getPersonScope.mockImplementation(async (_db, { officialId }: { officialId?: string }) => ({

@@ -1,6 +1,7 @@
 import { declaredOfficeYear } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
+import { publicRole } from './registry';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
@@ -95,6 +96,94 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       | 'self'
       | 'family',
     ownInstitution: !!r.own_institution,
+    hasContemporaneous: !!r.has_window,
+    declaredOffices: JSON.parse(r.offices) as {
+      institution: string | null;
+      position: string | null;
+      year: string | null;
+    }[],
+  }));
+}
+
+/** People with declarations whom the register records in a public role at a procurement winner, and
+ *  who have no published declared stake: the same row shape as the declared list, so the two read as one.
+ *  The role is the register's fact; the period figures follow the person's declared office years. */
+export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
+  const result = await db
+    .prepare(
+      `WITH people AS MATERIALIZED (
+    SELECT e.id person_id, e.registry_indent identity, p.name
+    FROM person_entities e JOIN persons p ON p.id=e.id
+    WHERE e.registry_indent IS NOT NULL
+      AND EXISTS (SELECT 1 FROM person_sources s WHERE s.entity_id=e.id AND s.active=1 AND s.namespace='cacbg')
+      AND NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=e.id AND il.status='published'
+        AND il.interest_class IN ('private_ownership','family_ownership'))
+  ), roles AS MATERIALIZED (
+    SELECT DISTINCT pe.person_id, r.eik
+    FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person' AND ${publicRole('r')}
+    JOIN bidders b ON b.eik_normalized=r.eik JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+    WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
+      JOIN bidders bb ON bb.id=c.bidder_id WHERE bb.eik_normalized=r.eik AND t.authority_id=?1)
+  ), office_years AS MATERIALIZED (
+    SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
+    WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
+  ), company_contracts AS MATERIALIZED (
+    SELECT c.id, b.eik_normalized eik, c.amount_eur, c.signed_at
+    FROM bidders b JOIN contracts c ON c.bidder_id=b.id
+    WHERE b.eik_normalized IN (SELECT eik FROM roles)
+  ), person_contracts AS (
+    SELECT ro.person_id, c.id, c.eik, c.amount_eur, MAX(oy.person_id IS NOT NULL) in_window
+    FROM roles ro JOIN company_contracts c ON c.eik=ro.eik
+    LEFT JOIN office_years oy ON oy.person_id=ro.person_id AND oy.year=strftime('%Y',c.signed_at)
+    GROUP BY ro.person_id, c.id
+  ), totals AS (
+    SELECT person_id, COUNT(*) contract_count, COUNT(DISTINCT eik) company_count, SUM(amount_eur) total_eur,
+      SUM(CASE WHEN in_window THEN amount_eur END) window_eur, MAX(in_window) has_window
+    FROM person_contracts GROUP BY person_id
+  )
+  SELECT pe.person_id, pe.identity, pe.name, t.*,
+    (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1)) FROM (
+      SELECT ro.eik, COALESCE(b.name, ro.eik) company FROM roles ro
+      LEFT JOIN bidders b ON b.eik_normalized=ro.eik WHERE ro.person_id=pe.person_id GROUP BY ro.eik ORDER BY b.name
+    ) co) companies,
+    (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
+      FROM declarations d WHERE d.person_id=pe.person_id) offices
+  FROM people pe JOIN totals t ON t.person_id=pe.person_id
+  ORDER BY t.has_window DESC, t.total_eur DESC, pe.identity`,
+    )
+    .bind(authorityId ?? null)
+    .all<{
+      person_id: string;
+      identity: string;
+      name: string;
+      contract_count: number;
+      company_count: number;
+      total_eur: number | null;
+      window_eur: number | null;
+      has_window: number;
+      companies: string;
+      offices: string;
+    }>();
+  return result.results.map((r) => ({
+    official: r.name,
+    officialSlug: personSlug(r.person_id),
+    personIdentity: r.identity,
+    institution: null,
+    position: null,
+    companyCount: r.company_count,
+    companies: JSON.parse(r.companies) as {
+      company: string;
+      eik: string;
+      self: number;
+      family: number;
+      registry: number;
+    }[],
+    soleCompany: null,
+    contractCount: r.contract_count,
+    contractValueEur: r.total_eur,
+    contemporaneousValueEur: r.window_eur,
+    stakeKind: 'registry' as const,
+    ownInstitution: false,
     hasContemporaneous: !!r.has_window,
     declaredOffices: JSON.parse(r.offices) as {
       institution: string | null;
