@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import type { CompanyRole, PersonRole } from '@sigma/api-contract';
-import { count, date } from '@sigma/shared';
+import { count, date, pct } from '@sigma/shared';
 import { DataTable, type Column } from './DataTable';
 import { ROLE_LABEL } from '../lib/registry-roles';
 import { roleRowId } from '../lib/profile-navigation';
@@ -32,15 +32,17 @@ const role: Column<{ role: CompanyRole['role'] }> = {
   header: 'Роля',
   cell: (r) => ROLE_LABEL[r.role],
 };
-const share: Column<{ share: string | null }> = {
+const share: Column<{ sharePct: number | null }> = {
   key: 'share',
   header: 'Дял',
   secondary: true,
   cell: (r) =>
-    r.share ?? (
+    r.sharePct == null ? (
       <span className="muted" aria-label="Няма данни за дял">
         —
       </span>
+    ) : (
+      pct(r.sharePct)
     ),
 };
 const entry: Column<{ entryNumber: string }> = {

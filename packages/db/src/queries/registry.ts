@@ -129,6 +129,7 @@ interface CompanyRoleRow {
   person_name: string | null;
   entity_bidder: string | null;
   share: string | null;
+  share_pct: number | null;
   country: string | null;
   entry_number: string;
   added_on: string;
@@ -138,9 +139,36 @@ interface CompanyRoleRow {
 
 const COMPANY_DEED_SQL = `SELECT fetched_at FROM registry_deeds WHERE eik = ?1 AND outcome = 'ok'`;
 
+const shareAmount = (alias: string) =>
+  `CAST(REPLACE(REPLACE(trim(${alias}.share), ' ', ''), ',', '.') AS REAL)`;
+const roleEnd = (alias: string) =>
+  `COALESCE(${alias}.removed_on, ${alias}.uncertain_after, '9999-12-31')`;
+const partnerAtRoleEnd = (partner: string, role: string) =>
+  `${partner}.eik = ${role}.eik
+   AND ${partner}.sub_uic = ${role}.sub_uic
+   AND ${partner}.field_ident = ${role}.field_ident
+   AND ${partner}.role = 'partner'
+   AND ${partner}.added_on < ${roleEnd(role)}
+   AND ${roleEnd(partner)} >= ${roleEnd(role)}`;
+const sharePct = (alias: string) => `CASE
+  WHEN ${alias}.role IN ('sole_owner', 'trader') THEN 1.0
+  WHEN ${alias}.role = 'partner' AND trim(${alias}.share) GLOB '[0-9]*'
+    AND NOT EXISTS (
+      SELECT 1 FROM registry_roles missing
+      WHERE ${partnerAtRoleEnd('missing', alias)}
+        AND (missing.share IS NULL OR trim(missing.share) NOT GLOB '[0-9]*')
+    )
+  THEN ${shareAmount(alias)} / NULLIF((
+    SELECT SUM(${shareAmount('partner')}) FROM registry_roles partner
+    WHERE ${partnerAtRoleEnd('partner', alias)}
+  ), 0)
+  ELSE NULL
+END`;
+
 const COMPANY_ROLES_SQL = `
   SELECT r.role, r.subject_kind, r.subject_id, r.subject_name, p.name AS person_name,
-         b.id AS entity_bidder, r.share, r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after
+         b.id AS entity_bidder, r.share, ${sharePct('r')} AS share_pct,
+         r.country, r.entry_number, r.added_on, r.removed_on, r.uncertain_after
   FROM registry_roles r
   LEFT JOIN registry_persons p ON r.subject_kind = 'person' AND p.indent = r.subject_id
   LEFT JOIN bidders b ON r.subject_kind = 'entity' AND b.id = 'eik:' || r.subject_id
@@ -185,6 +213,7 @@ export async function getCompanyPeople(db: D1Database, bidderId: string): Promis
         holder: holderOf(r),
         role: r.role,
         share: r.share,
+        sharePct: r.share_pct,
         addedOn: r.added_on,
         removedOn: r.removed_on,
         ...(r.uncertain_after ? { uncertainAfter: r.uncertain_after } : {}),
@@ -202,6 +231,7 @@ interface PersonRoleRow {
   eik: string;
   role: RegistryRoleKind;
   share: string | null;
+  share_pct: number | null;
   entry_number: string;
   added_on: string;
   removed_on: string | null;
@@ -217,7 +247,8 @@ interface PersonRoleRow {
 const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
 
 const PERSON_ROLES_SQL = `
-  SELECT r.eik, r.role, r.share, r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
+  SELECT r.eik, r.role, r.share, ${sharePct('r')} AS share_pct,
+         r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
          d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
@@ -249,6 +280,7 @@ export async function getRegistryPerson(
         },
         role: r.role,
         share: r.share,
+        sharePct: r.share_pct,
         addedOn: r.added_on,
         removedOn: r.removed_on,
         ...(r.uncertain_after ? { uncertainAfter: r.uncertain_after } : {}),

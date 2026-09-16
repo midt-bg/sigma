@@ -559,6 +559,8 @@ export interface CompanyRole {
   role: RegistryRoleKind;
   /** As registered, where the field carries one (a partner's share). */
   share: string | null;
+  /** The registered share divided by all partner shares in force at the same point in time. */
+  sharePct: number | null;
   addedOn: string;
   removedOn: string | null;
   /** Evidence becomes ambiguous here; not a registered termination. */
@@ -579,6 +581,7 @@ export interface PersonRole {
   company: { name: string; eik: string; href: string | null };
   role: RegistryRoleKind;
   share: string | null;
+  sharePct: number | null;
   addedOn: string;
   removedOn: string | null;
   /** Evidence becomes ambiguous here; not a registered termination. */

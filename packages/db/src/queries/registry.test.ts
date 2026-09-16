@@ -164,6 +164,31 @@ describe('getCompanyPeople', () => {
     );
   });
 
+  it('turns registered partner amounts into percentages at the end of each role period', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO bidders (id,name,kind) VALUES ('eik:666666666','ДЯЛ ООД','company');
+      INSERT INTO company_totals (bidder_id,name,kind,won_eur,contracts,authorities)
+        VALUES ('eik:666666666','ДЯЛ ООД','company',100,1,1);
+      INSERT INTO registry_deeds (eik,name,outcome,fetched_at)
+        VALUES ('666666666','ДЯЛ ООД','ok','2026-09-10');
+      INSERT INTO registry_roles
+        (eik,sub_uic,field_ident,role,subject_kind,subject_id,subject_name,share,entry_number,added_on,removed_on)
+      VALUES
+        ('666666666','0000','00190','partner','person','${ANNA}','АННА ПЕТРОВА','25 BGN','old','2010-01-01','2020-01-01'),
+        ('666666666','0000','00190','partner','person','${BORIS}','БОРИС ИВАНОВ','75 BGN','same','2010-01-01',NULL),
+        ('666666666','0000','00190','partner','person','${VERA}','ВЕРА ГЕОРГИЕВА','25 BGN','new','2020-01-01',NULL);
+    `);
+    const company = await getCompanyPeople(db, 'eik:666666666');
+    expect(company.roles.map((r) => [r.holder.name, r.sharePct])).toEqual([
+      ['БОРИС ИВАНОВ', 0.75],
+      ['ВЕРА ГЕОРГИЕВА', 0.25],
+      ['АННА ПЕТРОВА', 0.25],
+    ]);
+    const person = (await getRegistryPerson(db, ANNA))!;
+    expect(person.roles.find((r) => r.company.eik === '666666666')?.sharePct).toBe(0.25);
+  });
+
   it('is empty for a company whose partida is not read yet, one the register does not have, and one with no ЕИК', async () => {
     const db = served();
     for (const id of ['eik:444444444', 'eik:555555555', 'name:ФИРМА', 'eik:1111111110001'])

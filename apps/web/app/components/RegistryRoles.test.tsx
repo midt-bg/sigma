@@ -39,6 +39,7 @@ const role = (over: Partial<CompanyRole> = {}): CompanyRole => ({
   holder: { kind: 'person', name: 'АННА ПЕТРОВА', href: '/persons/ab', eik: null, country: null },
   role: 'manager',
   share: null,
+  sharePct: null,
   addedOn: '2019-03-12',
   removedOn: null,
   entryNumber: '20190312101010',
@@ -92,6 +93,7 @@ describe('CompanyRolesTables', () => {
             },
             role: 'partner',
             share: '500 EUR',
+            sharePct: 0.25,
           }),
           role({
             holder: {
@@ -108,7 +110,7 @@ describe('CompanyRolesTables', () => {
     );
     const names = cells(c.querySelector('table')!, 'Лице');
     expect(names).toEqual(['ЧУЖДА ФИРМА ГМБХ · ГЕРМАНИЯ', 'ХОЛДИНГ АД · ЕИК 444444444']);
-    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['500 EUR', '—']);
+    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['25%', '—']);
   });
 
   it('says so when no role is standing', () => {
@@ -123,6 +125,7 @@ describe('PersonRolesTables', () => {
       company: { name: 'АЛФА ООД', eik: '111111111', href: '/companies/111111111' },
       role: 'partner',
       share: '500 BGN',
+      sharePct: 0.5,
       addedOn: '2019-03-12',
       removedOn: null,
       entryNumber: 'e1',
@@ -137,6 +140,7 @@ describe('PersonRolesTables', () => {
     expect(partida.getAttribute('href')).toContain('111111111');
     expect(partida.getAttribute('target')).toBe('_blank');
     expect(c.textContent).toContain('Извлечено на 09.09.2026');
+    expect(cells(c.querySelector('table')!, 'Дял')).toEqual(['50%']);
   });
 });
 
