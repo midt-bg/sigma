@@ -38,3 +38,30 @@ test('erased, unknown and contradictory fields do not invent aliases', () => {
   expect(companyNamesFromDeed(parse(name(a, 'ИМЕ') + form(a, 'Непозната форма')))).toEqual([]);
   expect(companyNamesFromDeed(parse(fields + name(a, 'ДРУГО')))).toEqual([]);
 });
+test('a name or a form alone names nothing until its pair is registered; other fields do not count', () => {
+  const a = '2008-01-01T12:00:00',
+    b = '2010-06-01T12:00:00';
+  const seat = entry('Seat', '00050', a, '<Address><Settlement>гр. Варна</Settlement></Address>');
+  const nameFirst = companyNamesFromDeed(
+    parse(seat + name(a, 'ИМЕ') + form(b, 'Акционерно дружество')),
+  );
+  expect(nameFirst.map((n) => [n.name, n.legalForm, n.from, n.until])).toEqual([
+    ['ИМЕ', 'АД', b, null],
+  ]);
+  expect(nameFirst[0]).toMatchObject({ nameEntry: '20080101120000', formEntry: '20100601120000' });
+  expect(
+    companyNamesFromDeed(parse(form(a, 'Едноличен търговец') + name(b, 'ТЪРГОВЕЦ'))).map((n) => [
+      n.name,
+      n.legalForm,
+      n.from,
+    ]),
+  ).toEqual([['ТЪРГОВЕЦ', 'ЕТ', b]]);
+});
+test('an entry without a number or a register timestamp leaves the whole history unread', () => {
+  const a = '2008-01-01T12:00:00';
+  const pair = name(a, 'ИМЕ') + form(a, 'Дружество с ограничена отговорност');
+  expect(companyNamesFromDeed(parse(pair))).toHaveLength(1);
+  const unnumbered = `<Company FieldIdent="00020" FieldOperation="Add" FieldEntryDate="2021-01-01T12:00:00">ДРУГО</Company>`;
+  expect(companyNamesFromDeed(parse(pair + unnumbered))).toEqual([]);
+  expect(companyNamesFromDeed(parse(pair + name('01.01.2021', 'ДРУГО')))).toEqual([]);
+});
