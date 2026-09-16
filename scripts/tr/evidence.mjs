@@ -54,7 +54,10 @@ import { declarantNameKey } from '../cacbg/source-identity.mjs';
 // corroborate company identity. The company gate is unchanged. Absence today
 // does not refute a documented past role; current-role reconciliation stays separate.
 // r6 preserves distinguishing company-name prefixes and excludes collective holders from personal-role evidence.
-export const RULES_VERSION = 'tr-rules-6';
+// r7: the declarant identifier joins one person's documents across offices (ADR-0042); links follow the
+// merged person ids, so a key published under r6 may reappear under a new id. Old addresses resolve
+// through the aliases.
+export const RULES_VERSION = 'tr-rules-7';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
