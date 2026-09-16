@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import {
   FX_LOOKBACK_DAYS,
   FX_SOURCE,
@@ -29,17 +30,12 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
-function arg(name) {
-  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
-  if (!hit) return undefined;
-  const eq = hit.indexOf('=');
-  return eq === -1 ? true : hit.slice(eq + 1);
-}
-const outFile = resolve(root, String(arg('out') || 'data/fx-load.sql'));
+const { values: cli } = parseArgs({ strict: false, allowPositionals: true });
+const outFile = resolve(root, String(cli.out || 'data/fx-load.sql'));
 const apply = process.argv.includes('--apply');
 const remoteFlag = process.argv.includes('--remote') ? '--remote' : '--local';
-const workDb = arg('work-db');
-const persistTo = arg('persist-to');
+const workDb = cli['work-db'];
+const persistTo = cli['persist-to'];
 if (workDb && process.argv.includes('--remote'))
   throw new Error('--work-db and --remote are mutually exclusive');
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';

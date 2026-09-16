@@ -13,11 +13,13 @@
 // small enough to fetch and JSON.parse whole. Wipes are scoped to the requested source days.
 
 import { execFileSync } from 'node:child_process';
-import { createWriteStream, readFileSync } from 'node:fs';
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { dirname, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import {
   BASE_CATEGORIES,
   baseInsertColumns,
@@ -97,14 +99,9 @@ function sqlLiteral(col, value) {
 
 const fetchedAt = new Date().toISOString().replace('.000Z', 'Z');
 
-function arg(name) {
-  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
-  if (!hit) return undefined;
-  const eq = hit.indexOf('=');
-  return eq === -1 ? true : hit.slice(eq + 1);
-}
+const { values: cli } = parseArgs({ strict: false, allowPositionals: true });
 function outSqlPath(kind, chunkIndex = null) {
-  const out = arg('out');
+  const out = cli.out;
   if (!out || out === true) {
     if (kind === 'ocds') return resolve(root, 'data/eop-ocds-load.sql');
     const suffix = chunkIndex === 0 ? '' : `.${String(chunkIndex).padStart(2, '0')}`;
@@ -162,9 +159,6 @@ export function isWithinMissingSettleWindow(
   const cutoffMs = todayMs - settleDays * MS_PER_DAY;
   return dayMs >= cutoffMs;
 }
-function sleep(ms) {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
 async function writeChunk(stream, str) {
   if (!stream.write(str)) await once(stream, 'drain');
 }
@@ -181,15 +175,6 @@ function cacheDir(day) {
 }
 function cachePath(day, name) {
   return resolve(cacheDir(day), name);
-}
-async function pathExists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch (err) {
-    if (err?.code === 'ENOENT') return false;
-    throw err;
-  }
 }
 async function atomicWrite(path, text) {
   await mkdir(dirname(path), { recursive: true });
@@ -212,15 +197,11 @@ function errText(err) {
 async function retryOperation(label, fn) {
   let lastErr;
   for (let i = 1; i <= FETCH_ATTEMPTS; i++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      return await fn(controller.signal);
+      return await fn(AbortSignal.timeout(FETCH_TIMEOUT_MS));
     } catch (err) {
       if (err instanceof MissingBucketError) throw err;
       lastErr = err;
-    } finally {
-      clearTimeout(timer);
     }
     if (i < FETCH_ATTEMPTS) await sleep(backoffMs(i));
   }
@@ -263,15 +244,15 @@ async function bucketKeysFor(day) {
 async function readBucketKeysFor(day) {
   const missingPath = cachePath(day, '_missing');
   const withinSettleWindow = isWithinMissingSettleWindow(day);
-  if ((await pathExists(missingPath)) && !withinSettleWindow) {
+  if (existsSync(missingPath) && !withinSettleWindow) {
     process.stderr.write(`!! ${day}: not published (cached) — skipping\n`);
     return null;
-  } else if (withinSettleWindow && (await pathExists(missingPath))) {
+  } else if (withinSettleWindow && existsSync(missingPath)) {
     process.stderr.write(`!! ${day}: ignoring recent _missing cache; re-probing\n`);
   }
 
   const keysPath = cachePath(day, '_keys.json');
-  if (await pathExists(keysPath)) {
+  if (existsSync(keysPath)) {
     return JSON.parse(await readFile(keysPath, 'utf8'));
   }
 
@@ -362,7 +343,7 @@ async function recordsForDay(cat, day, failures, skips) {
     }
 
     const jsonPath = cachePath(day, RESOURCE_FILES[cat]);
-    if (await pathExists(jsonPath)) {
+    if (existsSync(jsonPath)) {
       process.stderr.write(`==> ${cat} ${day}: cache HIT ${jsonPath}\n`);
       return {
         records: parseCachedJson(cat, day, await readFile(jsonPath, 'utf8')),
@@ -401,7 +382,7 @@ async function ocdsPackageForDay(day, failures, skips) {
     }
 
     const jsonPath = cachePath(day, 'ocds.json');
-    if (await pathExists(jsonPath)) {
+    if (existsSync(jsonPath)) {
       process.stderr.write(`==> ${cat} ${day}: cache HIT ${jsonPath}\n`);
       return {
         pkg: parseCachedAnyJson(cat, day, await readFile(jsonPath, 'utf8')),
@@ -766,26 +747,26 @@ function reportSkips(skips) {
 }
 
 async function main() {
-  const from = arg('from') || DEFAULT_FROM;
-  const to = arg('to') || DEFAULT_TO;
-  const cat = arg('cat');
-  const noOcds = !!arg('no-ocds');
-  const ocdsOnly = !!arg('ocds-only');
+  const from = cli.from || DEFAULT_FROM;
+  const to = cli.to || DEFAULT_TO;
+  const cat = cli.cat;
+  const noOcds = !!cli['no-ocds'];
+  const ocdsOnly = !!cli['ocds-only'];
   if (noOcds && ocdsOnly) throw new Error('--no-ocds and --ocds-only are mutually exclusive');
   const cats = ocdsOnly ? [] : cat ? [cat] : CATEGORIES;
   for (const c of cats) {
     if (!BASE_CATEGORIES[c])
       throw new Error(`unknown --cat=${c}; expected ${CATEGORIES.join('|')}`);
   }
-  const rawConcurrency = Number(arg('concurrency') || DEFAULT_CONCURRENCY);
+  const rawConcurrency = Number(cli.concurrency || DEFAULT_CONCURRENCY);
   const concurrency =
     Number.isFinite(rawConcurrency) && rawConcurrency > 0
       ? Math.floor(rawConcurrency)
       : DEFAULT_CONCURRENCY;
-  const apply = !!arg('apply');
-  const remote = !!arg('remote');
-  const workDb = arg('work-db');
-  const persistTo = arg('persist-to');
+  const apply = !!cli.apply;
+  const remote = !!cli.remote;
+  const workDb = cli['work-db'];
+  const persistTo = cli['persist-to'];
   if (workDb && remote) throw new Error('--work-db and --remote are mutually exclusive');
   const days = daysBetween(from, to);
 

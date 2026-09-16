@@ -83,7 +83,7 @@ export function nameDistinctiveness(key) {
   return tokens.length >= 3 ? 'distinctive' : 'generic';
 }
 
-const norm = (s) =>
+export const norm = (s) =>
   String(s ?? '')
     .normalize('NFC')
     .toUpperCase()

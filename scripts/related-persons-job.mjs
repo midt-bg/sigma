@@ -152,24 +152,16 @@ if (remote) {
       '--command',
       'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT',
     ]);
-  wrangler([
-    'd1',
-    'execute',
-    d1,
-    '--remote',
-    '--yes',
-    '--file',
-    resolve('packages/db/migrations/0019_registry_scoped_birthdates.sql'),
-  ]);
-  wrangler([
-    'd1',
-    'execute',
-    d1,
-    '--remote',
-    '--yes',
-    '--file',
-    resolve('packages/db/migrations/0020_registry_company_history.sql'),
-  ]);
+  for (const name of ['0019_registry_scoped_birthdates', '0020_registry_company_history'])
+    wrangler([
+      'd1',
+      'execute',
+      d1,
+      '--remote',
+      '--yes',
+      '--file',
+      resolve(`packages/db/migrations/${name}.sql`),
+    ]);
   const tables = [
     ...new Set([
       'bidders',

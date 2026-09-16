@@ -26,6 +26,7 @@ import {
   localityToken,
   closelyHeldForm,
   nameDistinctiveness,
+  norm,
 } from './classify.mjs';
 import {
   openCache,
@@ -86,12 +87,6 @@ const EMIT_CANDIDATES_ONLY = process.argv.includes('--emit-candidates');
 const { companyNameKey, isMatchableKey } =
   await import('../../packages/shared/src/company-name-key.ts');
 
-const norm = (s) =>
-  String(s ?? '')
-    .normalize('NFC')
-    .toUpperCase()
-    .replace(/[\s.\-–—]+/g, ' ')
-    .trim();
 const yr = (s) => {
   const m = String(s ?? '').match(/\b(20\d{2})\b/);
   return m ? Number(m[1]) : NaN;
