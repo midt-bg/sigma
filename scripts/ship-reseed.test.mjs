@@ -32,6 +32,9 @@ CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${resolve(HERE, '../packages/db/migrations/0012_person_redirects.sql')}
 .read ${resolve(HERE, '../packages/db/migrations/0014_person_profile.sql')}
 .read ${resolve(HERE, '../packages/db/migrations/0015_person_observations.sql')}
+.read ${resolve(HERE, '../packages/db/migrations/0013_registry.sql')}
+.read ${resolve(HERE, '../packages/db/migrations/0017_registry_identity_observations.sql')}
+.read ${resolve(HERE, '../packages/db/migrations/0018_person_entities.sql')}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');
 INSERT INTO persons(id,name) VALUES('p1','П Тест');
@@ -41,6 +44,11 @@ INSERT INTO interest_links(id,link_key,person_id,bidder_id,eik,entity_key,matche
 INSERT INTO interest_link_authorities(link_key,authority_id,authority_name) VALUES('p1|1','auth:1','A');
 INSERT INTO related_persons_internal(id,declaration_id,related_name,related_kind) VALUES('rp1','d1','X','related_person');
 INSERT INTO interest_link_evidence(link_key,evidence_kind,matched_fact,lookup_date,rules_version,live_status) VALUES('p1|1','document','role:owner:CR_F_19_L','2026-08-05','tr-rules-1','live');
+INSERT INTO person_entities(id,created_at) VALUES('e1','2026-09-01');
+INSERT INTO person_sources(id,namespace,source_key,source_hash,name,entity_id) VALUES('s1','cacbg','k1','h1','П Тест','e1');
+INSERT INTO person_identity_evidence(id,left_source,right_source,left_hash,right_hash,relation,decision,origin,rule_version,facts,observed_at) VALUES('e1|s1','s1','s1','h1','h1','same','accepted','automatic','v1','{}','2026-09-01');
+INSERT INTO person_source_aliases(alias_id,source_id) VALUES('p1','s1');
+INSERT INTO registry_requested_companies(eik,declaration_id,declared_name) VALUES('1','d1','E');
 `;
   execFileSync('sqlite3', ['-bail', db], { input: setup, stdio: 'pipe' });
   return { dir, db };
