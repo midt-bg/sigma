@@ -159,7 +159,7 @@ test('asset year comes from <Year>, not the folder (off-by-one guard)', () => {
   assert.equal(parseDeclaration(assetDecl({ year: '2023' })).year, '2023');
 });
 
-test('family holdings CAPTURED as related interests, holder names never retained', () => {
+test('family holdings CAPTURED as related interests; the holder name only on the family row', () => {
   const d = parseDeclaration(assetDecl({ rows: selfRow + familyRow }));
   assert.equal(d.familyHoldingCount, 1);
   assert.equal(d.interests.length, 2, 'family holding now captured, not discarded');
@@ -168,7 +168,13 @@ test('family holdings CAPTURED as related interests, holder names never retained
   assert.equal(self.entity, '"ТЕСТ АГРО" ЕООД');
   assert.equal(fam.entity, '"ФАМИЛНА" ЕООД'); // the company is captured…
   assert.equal(fam.kind, 'shares');
-  assert.ok(!JSON.stringify(d).includes('Мария'), 'family holder name leaked'); // …but the relative's NAME never is
+  assert.match(fam.holder, /Мария/); // …and the relative's name only here, for the internal table
+  assert.equal(self.holder, undefined);
+  const { holder, ...rest } = fam;
+  assert.ok(
+    !JSON.stringify({ ...d, interests: [self, rest] }).includes('Мария'),
+    'name leaked elsewhere',
+  );
 });
 
 test('asset decl: a self stake whose holder repeats the OWN name with case/spacing drift stays self', () => {

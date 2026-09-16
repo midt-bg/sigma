@@ -16,7 +16,7 @@ test('names a relative only when the register lists them at the declared company
     INSERT INTO persons VALUES('p');
     INSERT INTO interest_links VALUES('f','p','111','published','family_ownership'),('s','p','222','published','private_ownership'),('h','p','333','held','family_ownership');
     INSERT INTO interest_link_observations VALUES('f','d1'),('s','d1'),('h','d1');
-    INSERT INTO related_persons_internal VALUES('d1','Мария Иванова Петрова','related_person'),('d1','Петър Иванов','related_person'),('d1','Фирма ООД','related_contract');
+    INSERT INTO related_persons_internal VALUES('d1','Мария Иванова Петрова','stake_holder'),('d1','Петър Иванов','stake_holder'),('d1','Мария Иванова Петрова','related_person'),('d1','Фирма ООД','related_contract');
     INSERT INTO registry_roles VALUES('111','person','${H}','МАРИЯ ИВАНОВА ПЕТРОВА'),('111','person','local:111:ПЕТЪР ИВАНОВ','ПЕТЪР ИВАНОВ'),
       ('222','person','${'x'.repeat(64)}','МАРИЯ ИВАНОВА ПЕТРОВА'),('333','person','${'y'.repeat(64)}','МАРИЯ ИВАНОВА ПЕТРОВА'),('111','person','${'z'.repeat(64)}','ИВАН ПЕТРОВ ГЕОРГИЕВ');
     INSERT INTO registry_persons VALUES('${H}','Мария Иванова Петрова');`);

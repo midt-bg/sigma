@@ -300,7 +300,16 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           stats.holdings++;
           stats.byKind[it.kind] = (stats.byKind[it.kind] ?? 0) + 1;
         }
-        for (const rp of d.relatedPersons) {
+        // A family stake's holder: internal only, so the register can confirm the relative (ADR-0044).
+        const stakeHolders = d.interests
+          .filter((it) => it.holderRelation === 'related' && it.holder)
+          .map((it) => ({
+            name: it.holder,
+            kind: 'stake_holder',
+            info: it.entity,
+            timing: it.timing,
+          }));
+        for (const rp of [...d.relatedPersons, ...stakeHolders]) {
           relatedOut.write(
             JSON.stringify({
               folder,

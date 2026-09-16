@@ -1,8 +1,8 @@
 import { declarantNameKey } from './source-identity.mjs';
 
 /** Relatives the register confirms: for each published family stake, a holder of the declared company
- * whose three names are those the official listed as a related person in the same declaration. Names
- * alone never decide anything else here — the declared company and the register's own record do. */
+ * whose three names are those the declaration itself gives for the stake's holder. Names alone never
+ * decide anything else here — the declared company and the register's own record do. */
 export function buildPersonRelatives(db) {
   const rows = db
     .prepare(
@@ -10,7 +10,7 @@ export function buildPersonRelatives(db) {
         COALESCE(p.name, r.subject_name) registry_name
       FROM interest_links il
       JOIN interest_link_observations o ON o.link_key=il.link_key
-      JOIN related_persons_internal rp ON rp.declaration_id=o.declaration_id AND rp.related_kind='related_person'
+      JOIN related_persons_internal rp ON rp.declaration_id=o.declaration_id AND rp.related_kind='stake_holder'
       JOIN registry_roles r ON r.eik=il.eik AND r.subject_kind='person' AND r.subject_id NOT LIKE 'local:%'
       LEFT JOIN registry_persons p ON p.indent=r.subject_id
       WHERE il.status='published' AND il.interest_class='family_ownership'`,

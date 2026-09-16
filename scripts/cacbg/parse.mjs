@@ -228,6 +228,9 @@ function parseAssets(pp) {
         timing: disposition ? 'disposed' : 'annual',
         seat,
         holderRelation,
+        // The relative's name stays on the family row for the internal related-persons table only; the
+        // holdings export never carries it (ADR-0044).
+        ...(holderRelation === 'related' ? { holder: by[cHolder] } : {}),
       });
     }
   }
