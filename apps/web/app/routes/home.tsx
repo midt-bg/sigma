@@ -161,7 +161,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           (ДЗЗД/консорциуми) се броят като един изпълнител.{' '}
           <Link to="/companies">Виж пълния списък →</Link>
         </p>
-        <div className="table-wrap">
+        <div className="table-wrap tbl-cards">
           <table>
             <caption className="sr-only">
               Топ печеливши компании по стойност на спечелените договори
@@ -184,8 +184,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <tbody>
               {topCompanies.map((c, i) => (
                 <tr key={c.slug}>
-                  <td className="rank">{i + 1}</td>
-                  <td>
+                  <td className="rank cell-rank" data-label="#">
+                    {i + 1}
+                  </td>
+                  <td className="cell-title" data-label="Компания">
                     <Link to={`/companies/${c.slug}`}>{c.displayName}</Link>
                     <br />
                     <span className="small muted">
@@ -205,9 +207,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       )}
                     </span>
                   </td>
-                  <td className="money">{moneyBare(c.wonEur)}</td>
-                  <td className="money">{count(c.contracts)}</td>
-                  <td className="money">{count(c.authorities)}</td>
+                  <td className="money" data-label="Спечелено (€)">
+                    {moneyBare(c.wonEur)}
+                  </td>
+                  <td className="money" data-label="Договори">
+                    {count(c.contracts)}
+                  </td>
+                  <td className="money" data-label="Институции">
+                    {count(c.authorities)}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -232,6 +232,19 @@
   box-shadow: inset 3px 0 0 var(--accent);
   padding-left: calc(var(--s-3) + 3px);
 }
+@media (max-width: 600px) {
+  .tbl-cards .lot-table tbody tr.current {
+    border-left: 3px solid var(--accent);
+    background: var(--paper-warm);
+  }
+  .tbl-cards .lot-table tbody tr.current td {
+    background: transparent;
+  }
+  .tbl-cards .lot-table tbody tr.current td:first-child {
+    box-shadow: none;
+    padding-left: 0;
+  }
+}
 /* Annex „Основание" texts are run-on legal blocks (up to ~6k chars). Collapsed: word-boundary
    preview + toggle in a width-capped cell. Open: clause paragraphs. Native <details>, so the
    expander works without JS; the marker is hidden because the toggle label is the affordance. */
