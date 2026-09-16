@@ -58,7 +58,8 @@ export async function getPersonSourceArchive(db: D1Database, id: string) {
   return declarations.length ? { name: person.name, declarations } : null;
 }
 
-/** Old date-of-birth URLs resolve to source companies, never a combined personal profile. */
+/** Old date-of-birth URLs resolve to source companies, never a combined personal profile.
+ *  instr, not LIKE: a pattern carrying the 64-character identifier exceeds D1's 50-byte LIKE limit. */
 export async function getRegistrySourceCompanies(db: D1Database, indent: string) {
   return registryRead(async () => {
     const rows = await db
@@ -67,7 +68,8 @@ export async function getRegistrySourceCompanies(db: D1Database, indent: string)
       coalesce(b.name,d.name,r.eik) company, b.id bidder_id, d.fetched_at AS fetchedAt
       FROM registry_roles r JOIN registry_deeds d ON d.eik=r.eik
       LEFT JOIN bidders b ON b.id='eik:'||r.eik
-      WHERE r.subject_kind='person' AND r.subject_id LIKE 'local:%:birthdate:'||?||':%'
+      WHERE r.subject_kind='person' AND r.subject_id LIKE 'local:%'
+      AND instr(r.subject_id, ':birthdate:'||?||':') > 0
       AND ${publicRole('r')} ORDER BY name,company,r.eik`,
       )
       .bind(indent)
