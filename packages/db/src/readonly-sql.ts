@@ -53,49 +53,68 @@ function isQuoteOpen(ch: string): boolean {
   return ch === "'" || ch === '"' || ch === '`' || ch === '[';
 }
 
+// The one quote-tracking scan the three passes below share. `onCode(i)` sees each character outside a
+// quoted region and returns the index to resume from (a comment consumes several); `onQuoted` gets each
+// region as (open delimiter, raw body incl. doubled-delimiter escapes, close delimiter — '' when the
+// region runs to the end of the text).
+function walk(
+  sql: string,
+  onCode: (i: number) => number,
+  onQuoted: (open: string, body: string, close: string) => void,
+): void {
+  const n = sql.length;
+  let i = 0;
+  while (i < n) {
+    const open = sql[i]!;
+    if (!isQuoteOpen(open)) {
+      i = onCode(i);
+      continue;
+    }
+    const close = QUOTE_CLOSE[open]!;
+    let j = i + 1;
+    while (j < n) {
+      if (sql[j] === close) {
+        if (open !== '[' && sql[j + 1] === close) {
+          j += 2; // doubled delimiter is an escape, not a close
+          continue;
+        }
+        break;
+      }
+      j++;
+    }
+    onQuoted(open, sql.slice(i + 1, j), j < n ? close : '');
+    i = j + 1;
+  }
+}
+
 // Strip `-- line` and `/* block */` comments, but treat a comment marker inside any quoted region as
 // data (a `--`/`/*` inside a string or identifier is preserved).
 function stripComments(sql: string): string {
   let out = '';
-  let i = 0;
   const n = sql.length;
-  let quote: string | null = null; // open delimiter of the current quoted region, or null
-  while (i < n) {
-    const ch = sql[i]!;
-    if (quote) {
-      const close = QUOTE_CLOSE[quote]!;
-      if (ch === close && quote !== '[' && sql[i + 1] === close) {
-        out += ch + close; // doubled delimiter is an escape, not a close
+  walk(
+    sql,
+    (i) => {
+      const ch = sql[i]!;
+      if (ch === '-' && sql[i + 1] === '-') {
         i += 2;
-        continue;
+        while (i < n && sql[i] !== '\n') i++;
+        out += ' ';
+        return i;
+      }
+      if (ch === '/' && sql[i + 1] === '*') {
+        i += 2;
+        while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+        out += ' ';
+        return i + 2;
       }
       out += ch;
-      if (ch === close) quote = null;
-      i++;
-      continue;
-    }
-    if (isQuoteOpen(ch)) {
-      quote = ch;
-      out += ch;
-      i++;
-      continue;
-    }
-    if (ch === '-' && sql[i + 1] === '-') {
-      i += 2;
-      while (i < n && sql[i] !== '\n') i++;
-      out += ' ';
-      continue;
-    }
-    if (ch === '/' && sql[i + 1] === '*') {
-      i += 2;
-      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
-      i += 2;
-      out += ' ';
-      continue;
-    }
-    out += ch;
-    i++;
-  }
+      return i + 1;
+    },
+    (open, body, close) => {
+      out += open + body + close;
+    },
+  );
   return out;
 }
 
@@ -104,32 +123,22 @@ function stripComments(sql: string): string {
 function splitStatements(sql: string): string[] {
   const out: string[] = [];
   let current = '';
-  let quote: string | null = null;
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i]!;
-    if (quote) {
-      const close = QUOTE_CLOSE[quote]!;
-      if (ch === close && quote !== '[' && sql[i + 1] === close) {
-        current += ch + close;
-        i++;
-        continue;
+  walk(
+    sql,
+    (i) => {
+      const ch = sql[i]!;
+      if (ch === ';') {
+        out.push(current);
+        current = '';
+      } else {
+        current += ch;
       }
-      current += ch;
-      if (ch === close) quote = null;
-      continue;
-    }
-    if (isQuoteOpen(ch)) {
-      quote = ch;
-      current += ch;
-      continue;
-    }
-    if (ch === ';') {
-      out.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
+      return i + 1;
+    },
+    (open, body, close) => {
+      current += open + body + close;
+    },
+  );
   out.push(current);
   return out.map((s) => s.trim()).filter(Boolean);
 }
@@ -139,28 +148,16 @@ function splitStatements(sql: string): string[] {
 // write-verb blocklist, and a quote inside an identifier cannot hide a following write.
 function stripQuoted(sql: string): string {
   let out = '';
-  let quote: string | null = null;
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i]!;
-    if (quote) {
-      const close = QUOTE_CLOSE[quote]!;
-      if (ch === close && quote !== '[' && sql[i + 1] === close) {
-        i++; // doubled-delimiter escape — drop both, stay in the region
-        continue;
-      }
-      if (ch === close) {
-        quote = null;
-        out += ' '; // closing delimiter → boundary space
-        continue;
-      }
-      continue; // drop the region's content
-    }
-    if (isQuoteOpen(ch)) {
-      quote = ch;
-      continue;
-    }
-    out += ch;
-  }
+  walk(
+    sql,
+    (i) => {
+      out += sql[i]!;
+      return i + 1;
+    },
+    (_open, _body, close) => {
+      if (close) out += ' '; // closing delimiter → boundary space; the region's content is dropped
+    },
+  );
   return out;
 }
 

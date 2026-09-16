@@ -4,7 +4,7 @@
 
 import type { CompanyListItem, EntityKind, FacetCount, Page } from '@sigma/api-contract';
 import { CPV_SECTORS, ENTITY_TYPES } from '@sigma/config';
-import { csvCell } from './csv';
+import { csvResponse } from './csv';
 import { assertCovers } from './filter-guard';
 import { filterSignature, keyset, pageCursors } from './keyset';
 import { lookup } from './lookup';
@@ -241,53 +241,28 @@ export function streamCompaniesCsv(db: D1Database, p: CompanyListParams): Respon
   ];
   const CHUNK = 2000;
   let afterId = '';
-  let done = false;
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(c) {
-      c.enqueue(enc.encode('﻿' + cols.join(',') + '\n'));
-    },
-    async pull(controller) {
-      if (done) return;
-      const conds = [ew.sql, 'bidder_id > ?'].filter(Boolean).join(' AND ');
+  const conds = [ew.sql, 'bidder_id > ?'].filter(Boolean).join(' AND ');
+  return csvResponse(
+    cols,
+    CHUNK,
+    async () => {
       const { results } = await db
         .prepare(`SELECT ${COLS} FROM ${src.from} WHERE ${conds} ORDER BY bidder_id LIMIT ?`)
         .bind(...src.params, ...ew.params, afterId, CHUNK)
         .all<CompanyTotalsRow>();
-      if (!results.length) {
-        done = true;
-        controller.close();
-        return;
-      }
-      let block = '';
-      for (const r of results) {
-        block +=
-          [
-            r.eik,
-            r.name,
-            r.kind,
-            r.settlement,
-            r.won_eur,
-            r.contracts,
-            r.authorities,
-            r.primary_sector,
-          ]
-            .map(csvCell)
-            .join(',') + '\n';
-        afterId = r.bidder_id;
-      }
-      controller.enqueue(enc.encode(block));
-      if (results.length < CHUNK) {
-        done = true;
-        controller.close();
-      }
+      if (results.length) afterId = results[results.length - 1]!.bidder_id;
+      return results;
     },
-  });
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="sigma-companies.csv"',
-      'Cache-Control': 'public, max-age=3600',
-    },
-  });
+    (r) => [
+      r.eik,
+      r.name,
+      r.kind,
+      r.settlement,
+      r.won_eur,
+      r.contracts,
+      r.authorities,
+      r.primary_sector,
+    ],
+    'sigma-companies.csv',
+  );
 }

@@ -1,15 +1,9 @@
 import type { HomeTotals } from '@sigma/api-contract';
+import { toHomeTotals, type HomeTotalsRow } from './home';
 
-interface MethodologyTotalsRow {
-  contracts: number;
-  value_eur: number;
-  authorities: number;
-  bidders: number;
-  suspect: number;
+interface MethodologyTotalsRow extends HomeTotalsRow {
   first_date: string | null;
   last_date: string | null;
-  as_of: string | null;
-  refreshed_at: string;
 }
 
 interface ContractCoverageRow {
@@ -49,25 +43,7 @@ export async function getMethodologyStats(db: D1Database): Promise<MethodologySt
     db.prepare(`SELECT COUNT(*) AS n FROM sector_totals`).first<{ n: number }>(),
   ]);
 
-  const totals: HomeTotals = totalsRow
-    ? {
-        contracts: totalsRow.contracts,
-        valueEur: totalsRow.value_eur,
-        authorities: totalsRow.authorities,
-        bidders: totalsRow.bidders,
-        suspect: totalsRow.suspect,
-        asOf: totalsRow.as_of,
-        refreshedAt: totalsRow.refreshed_at,
-      }
-    : {
-        contracts: 0,
-        valueEur: 0,
-        authorities: 0,
-        bidders: 0,
-        suspect: 0,
-        asOf: null,
-        refreshedAt: '',
-      };
+  const totals = toHomeTotals(totalsRow);
 
   const total = coverageRow?.total ?? 0;
   const ratio = (n: number | undefined) => (total > 0 ? (n ?? 0) / total : 0);

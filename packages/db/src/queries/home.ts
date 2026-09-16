@@ -7,7 +7,7 @@ import {
 } from './rows';
 import { listSingleOfferContracts } from './contracts';
 
-interface HomeTotalsRow {
+export interface HomeTotalsRow {
   contracts: number;
   value_eur: number;
   authorities: number;
@@ -17,19 +17,9 @@ interface HomeTotalsRow {
   refreshed_at: string;
 }
 
-// type_groups shown in the home "Министерства, агенции и държавни предприятия" column (everything but
-// общини, болници и образование — those live in the full list).
-const STATE_TYPES = ['министерство', 'агенция', 'държавна компания', 'друго'];
-
-/** Home page: the KPI strip (from home_totals), top-10 companies, and the ministries/общини slices. */
-export async function getHomeData(db: D1Database): Promise<HomeData> {
-  const totalsRow = await db
-    .prepare(
-      `SELECT contracts, value_eur, authorities, bidders, suspect, as_of, refreshed_at FROM home_totals WHERE id = 1`,
-    )
-    .first<HomeTotalsRow>();
-
-  const totals: HomeTotals = totalsRow
+/** The KPI strip from a home_totals row; zeroes when the rollup has not run yet. */
+export function toHomeTotals(totalsRow: HomeTotalsRow | null): HomeTotals {
+  return totalsRow
     ? {
         contracts: totalsRow.contracts,
         valueEur: totalsRow.value_eur,
@@ -48,6 +38,21 @@ export async function getHomeData(db: D1Database): Promise<HomeData> {
         asOf: null,
         refreshedAt: '',
       };
+}
+
+// type_groups shown in the home "Министерства, агенции и държавни предприятия" column (everything but
+// общини, болници и образование — those live in the full list).
+const STATE_TYPES = ['министерство', 'агенция', 'държавна компания', 'друго'];
+
+/** Home page: the KPI strip (from home_totals), top-10 companies, and the ministries/общини slices. */
+export async function getHomeData(db: D1Database): Promise<HomeData> {
+  const totalsRow = await db
+    .prepare(
+      `SELECT contracts, value_eur, authorities, bidders, suspect, as_of, refreshed_at FROM home_totals WHERE id = 1`,
+    )
+    .first<HomeTotalsRow>();
+
+  const totals = toHomeTotals(totalsRow);
 
   const placeholders = STATE_TYPES.map(() => '?').join(', ');
   const [companies, ministries, municipalities, recentSingleOffer, topSingleOffer, singleOfferRow] =

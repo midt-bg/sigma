@@ -75,9 +75,9 @@ const HOMOGLYPHS: Record<string, string> = {
   X: 'Х',
 };
 
-const CYRILLIC = /[\p{Script=Cyrillic}]/u;
+export const CYRILLIC = /[\p{Script=Cyrillic}]/u;
 
-function deHomoglyph(q: string): string {
+export function deHomoglyph(q: string): string {
   return q.replace(/[aceopxykmtABCEHKMOPTX]/g, (ch) => HOMOGLYPHS[ch] ?? ch);
 }
 

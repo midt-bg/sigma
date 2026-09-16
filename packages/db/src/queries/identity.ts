@@ -5,7 +5,7 @@
 // (it depends only on the normalised name). These entities are flagged „непотвърден ЕИК" and may
 // fragment across name variants — a known limit until the Trade Register lands.
 
-function b64urlEncode(s: string): string {
+export function b64urlEncode(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);

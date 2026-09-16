@@ -4,6 +4,8 @@
 // the caller reverses the rows. The absolute page number is carried in the URL for display only —
 // deep random page-jumps are intentionally not offered (they would force OFFSET).
 
+import { b64urlEncode } from './identity';
+
 export type SortDir = 'asc' | 'desc';
 
 export interface DecodedCursor {
@@ -20,10 +22,7 @@ export function encodeCursor(
   sortToken?: string,
 ): string {
   const tuple = sortToken ? [value, id, sortToken] : [value, id];
-  const payload = btoa(unescape(encodeURIComponent(JSON.stringify(tuple))))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  const payload = b64urlEncode(JSON.stringify(tuple));
   return `${dir}:${payload}`;
 }
 

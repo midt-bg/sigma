@@ -72,7 +72,10 @@ interface TotalsRow {
 // single offer — by contract count, and by VALUE. The value share sums POSITIVE amount_eur only
 // (CASE … > 0); a negative upstream value_low value would otherwise push the share outside [0,1]
 // (#153 review). The count share is unaffected — it counts rows, not value.
-async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<CompetitionTotals> {
+export async function competitionTotals(
+  db: D1Database,
+  p: CompetitionParams,
+): Promise<CompetitionTotals> {
   const s = scope(p);
   const where = ['c.bids_received IS NOT NULL', 'c.bids_received >= 1', ...s.where];
   const row = await db
@@ -98,20 +101,6 @@ async function competitionTotals(db: D1Database, p: CompetitionParams): Promise<
     singleOfferValueEur: singleValueEur,
     singleOfferValueShare: valueEur > 0 ? singleValueEur / valueEur : 0,
   };
-}
-
-export async function getAuthoritySingleOffer(
-  db: D1Database,
-  authorityId: string,
-): Promise<CompetitionTotals> {
-  return competitionTotals(db, { authorityId });
-}
-
-export async function getAuthorityProcedureCompetition(
-  db: D1Database,
-  authorityId: string,
-): Promise<ProcedureCompetition> {
-  return procedureCompetition(db, { authorityId });
 }
 
 interface AuthorityShareRow {
@@ -234,7 +223,7 @@ interface ProcedureRow {
 // folds facet_counts). „Direct award" = a non-competitive procedure (awarded without a call for bids).
 // The share denominator is the classified set (competitive + non-competitive); neutral and synthetic
 // („Неизвестна") procedures are reported on the side, never folded into the share.
-async function procedureCompetition(
+export async function procedureCompetition(
   db: D1Database,
   p: CompetitionParams,
 ): Promise<ProcedureCompetition> {
