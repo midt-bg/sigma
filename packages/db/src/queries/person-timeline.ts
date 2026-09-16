@@ -35,7 +35,7 @@ export async function getPersonTimeline(
       .prepare(
         `${cte} SELECT eik,company,strftime('%Y',signed_at) year,COUNT(*) contracts,
       SUM(during_role) role,SUM(during_declaration) declared,
-      SUM(during_role OR during_declaration) eligible,SUM(amount_eur) valueEur
+      SUM(during_office_year) eligible,SUM(amount_eur) valueEur
       FROM activity GROUP BY eik,year ORDER BY company,year`,
       )
       .bind(...params)
@@ -62,7 +62,7 @@ export async function getPersonTimeline(
     db
       .prepare(
         `${cte} SELECT eik,strftime('%Y',signed_at) year,authority_id id,authority name,
-      COUNT(*) contracts,SUM(during_role OR during_declaration) eligible,SUM(amount_eur) valueEur
+      COUNT(*) contracts,SUM(during_office_year) eligible,SUM(amount_eur) valueEur
       FROM activity GROUP BY eik,year,authority_id ORDER BY eik,year,valueEur DESC`,
       )
       .bind(...params)

@@ -121,7 +121,6 @@ function ConflictDetailBlock({
     <Section id={domId} title={title} hint={subLabel ?? undefined}>
       <div className="cc-interest">
         <span>{relationLabel(l.relation)}</span>
-        {(l.laterDeclarationYear || l.registryRoleEndedOn) && <Chip>исторически данни</Chip>}
         {l.ownInstitution && <Chip tone="strong">от собствената институция</Chip>}
         {/* Live-derived (the read-time contemporaneous count), not the stored il.contemporaneous flag —
             so the chip can't claim „съвпадение по години" from a flag that drifted out of sync with the

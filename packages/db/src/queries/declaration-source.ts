@@ -24,6 +24,13 @@ export const declarationYearDisputed = (link: string, year: string): string => `
       WHERE source_person.person_id=source_link.person_id AND target_person.person_id=${link}.person_id))
 )`;
 
+/** An observed office year, never an inferred mandate or a filled gap between filings. */
+export const declaredOfficeYear = (declaration = 'd'): string => `(
+  NULLIF(TRIM(${declaration}.institution),'') IS NOT NULL
+  AND NULLIF(TRIM(${declaration}.position),'') IS NOT NULL
+  AND ${declaration}.declared_year GLOB '[0-9][0-9][0-9][0-9]'
+)`;
+
 export const declarationWindow = (link: string, signedAt: string): string => `(
   strftime('%Y',${signedAt}) BETWEEN ${link}.first_declared_year AND ${link}.last_declared_year
   AND NOT ${declarationYearDisputed(link, `strftime('%Y',${signedAt})`)}

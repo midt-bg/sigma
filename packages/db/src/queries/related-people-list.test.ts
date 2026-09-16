@@ -9,7 +9,6 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class,own_institution,first_declared_year,last_declared_year);
       CREATE TABLE interest_link_evidence(link_key,evidence_kind);
       CREATE TABLE interest_link_observations(link_key,declaration_id,kind,timing,reported_year);
-      CREATE TABLE interest_link_history(link_key,later_declaration_year,registry_role_ended_on);
       CREATE TABLE person_registry_links(person_id,registry_indent);
       CREATE TABLE declarations(person_id,institution,position,declared_year);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
@@ -27,6 +26,12 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       p.run(`person:${i}`, `Лице ${i}`);
       l.run(`l${i}`, `person:${i}`, '2020', '2020');
       e.run(`l${i}`);
+      db.prepare('INSERT INTO declarations VALUES(?,?,?,?)').run(
+        `person:${i}`,
+        'Институция',
+        'Съветник',
+        '2020',
+      );
     }
     db.exec(`INSERT INTO person_registry_links VALUES('person:0','canonical'),('person:1204','canonical');
       UPDATE interest_links SET first_declared_year='2022',last_declared_year='2022' WHERE person_id='person:1204';
@@ -49,6 +54,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       INSERT INTO interest_link_evidence VALUES
         ('own-small','document'),('own-big','document'),('rest-big','document'),
         ('rest-small','document'),('window-small','document'),('window-big','document');
+      INSERT INTO declarations VALUES('person:window-small','Институция','Съветник','2020'),('person:window-big','Институция','Съветник','2020');
       INSERT INTO contracts VALUES
         ('own-small-c','own-small-b','t','2010-01-01',1),
         ('own-big-c','own-big-b','t','2010-01-01',2),
@@ -77,7 +83,7 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       contractValueEur: 600,
       contemporaneousValueEur: 300,
     });
-    expect(combined.declaredOffices).toHaveLength(2);
+    expect(combined.declaredOffices).toHaveLength(4);
     expect(
       await getRelatedPersonHeadline(
         d1,
@@ -96,6 +102,24 @@ it('groups beyond 1000 source links, preserving identity, distinct pairs and con
       totalEur: 0,
       contemporaneousEur: 0,
     });
+    // An evidenced alias can supply an office year without declaring this company at all.
+    db.exec(`INSERT INTO persons VALUES('alias','Лице');
+      INSERT INTO person_registry_links VALUES('alias','canonical');
+      INSERT INTO declarations VALUES('alias','Институция','Съветник','2021'),('alias','Институция','Съветник','2021');
+      INSERT INTO contracts VALUES('unknown-amount','b','t','2022-03-01',NULL),('zero-amount','b','t','2022-04-01',0),('unknown-date','b','t',NULL,50);`);
+    const withAlias = (await getRelatedPersonRows(d1)).find(
+      (r) => r.personIdentity === 'canonical',
+    )!;
+    expect(withAlias).toMatchObject({
+      contemporaneousValueEur: 600,
+      contractCount: 6,
+      contractValueEur: 650,
+    });
+    // Removing office evidence does not change the company link, but must remove the year's contracts.
+    db.exec("UPDATE declarations SET position='' WHERE declared_year='2021'");
+    expect(
+      (await getRelatedPersonRows(d1)).find((r) => r.personIdentity === 'canonical'),
+    ).toMatchObject({ contemporaneousValueEur: 300 });
   } finally {
     db.close();
   }

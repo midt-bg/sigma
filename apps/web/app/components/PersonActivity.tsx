@@ -33,12 +33,13 @@ const columns: Column<PersonContractRow>[] = [
     header: 'Основание за връзката',
     cell: (r) => (
       <>
+        {r.duringOfficeYear && <Chip tone="window">година с данни за длъжността</Chip>}
         {r.duringRole && <Chip>лична роля в ТР</Chip>}
-        {(r.declarationBasis & 1) !== 0 && <Chip tone="window">деклариран собствен дял</Chip>}
-        {(r.declarationBasis & 2) !== 0 && <Chip tone="window">дял на свързано лице</Chip>}
+        {(r.declarationBasis & 1) !== 0 && <Chip>деклариран собствен дял</Chip>}
+        {(r.declarationBasis & 2) !== 0 && <Chip>дял на свързано лице</Chip>}
         {!r.signedAt ? (
           'Без дата'
-        ) : !r.duringRole && !r.duringDeclaration ? (
+        ) : !r.duringRole && !r.duringDeclaration && !r.duringOfficeYear ? (
           <span className="muted">Без установено припокриване</span>
         ) : null}
       </>
@@ -152,7 +153,7 @@ export function PersonActivity({
       <Section
         id="contracts"
         title="Договори по свързаните дружества"
-        hint="Всички налични договори на свързаните дружества. Филтрирай по деклариран период или вписана лична роля. Всеки договор се брои веднъж; времевото основание е означено в реда."
+        hint="Всички налични договори на свързаните дружества. Филтрирай по години с данни за длъжността, деклариран дял или вписана лична роля. Всеки договор се брои веднъж; времевото основание е означено в реда."
       >
         <Form
           method="get"
@@ -206,11 +207,9 @@ export function PersonActivity({
               <select name="basis" value={filterValue('basis')} onChange={applyFilters}>
                 <option value="all">Всички договори{optionCount('basis', 'all')}</option>
                 <option value="matched">
-                  С времево съвпадение{optionCount('basis', 'matched')}
+                  В годините с данни за длъжността{optionCount('basis', 'matched')}
                 </option>
-                <option value="context">
-                  Без установено съвпадение{optionCount('basis', 'context')}
-                </option>
+                <option value="context">Извън тези години{optionCount('basis', 'context')}</option>
                 <option value="role">Лична роля в ТР{optionCount('basis', 'role')}</option>
                 <option value="declaration" disabled={!hasDeclarations}>
                   Само в декларирания период{optionCount('basis', 'declaration')}
@@ -279,6 +278,8 @@ export function PersonActivity({
         )}
         <p className="small muted profile-period-note">
           Стойностите са на договорите на дружествата, а не лични доходи или извършени плащания.
+          Годините с данни за длъжността са годините на наличните декларации с институция и
+          длъжност, без запълване на липсващи години. Те не установяват точните дати на мандата.
           Личната роля следва датите на вписване и заличаване. При отворена роля съпоставката е до
           последната успешна справка в регистъра. Декларираният период е между първата и последната
           налична декларация за съответния дял; той не доказва лична регистърна роля. При началния

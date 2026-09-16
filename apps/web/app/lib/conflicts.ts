@@ -486,13 +486,12 @@ export interface ConflictPersonRow {
   /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,
    *  constant within a ЕИК, like the money), null-guarded (never NaN). */
   contractCount: number;
-  /** Total public money to the person's winners — per-ЕИК-deduped „от" figure (a winner's € is company-level,
+  /** Total public money to the person's winners — per-ЕИК-deduped (a winner's € is company-level,
    *  not per-link; shares `dedupeMoneyPerEik`). NULL — not 0 — when no winner carries a summable value, so the
    *  cell renders „—" like the per-link card rather than a fabricated „0" (niki #312 MEDIUM 3). */
   contractValueEur: number | null;
-  /** Conflict-window subset of that money (the „по време на конфликта" lead figure), per-ЕИК-deduped (MAX).
-   *  NULL when the window carries no summable € (e.g. in-window contracts with NULL amounts), so `personFundsCell`
-   *  suppresses the split exactly as `fundsCellLabel`'s `!= null` guard does — never „0 … от 88 млн.". */
+  /** Conflict-window subset of that money, per-ЕИК-deduped (MAX). NULL when the window carries no
+   *  summable € (e.g. in-window contracts with NULL amounts), so the list shows „—", never a fabricated 0. */
   contemporaneousValueEur: number | null;
   /** Whose declared stake(s) this row aggregates: 'self' (own only), 'family' (a close relative's only,
    *  ADR-0032 — relative never named), or 'mixed' (both). Identity-free; drives the „свързано лице" qualifier
@@ -500,22 +499,9 @@ export interface ConflictPersonRow {
   stakeKind: 'self' | 'family' | 'mixed';
   /** ≥1 of the person's links has a contract from the official's OWN institution — OR across links. */
   ownInstitution: boolean;
-  /** ≥1 of the person's links has a contract signed in the declared window — OR across links. */
+  /** ≥1 contract is signed in an observed year with institution and position data for the person. */
   hasContemporaneous: boolean;
-  hasHistoricalLinks: boolean;
   declaredInstitutions?: DeclaredInstitution[];
-}
-
-/** Public-funds cell for a collapsed person row (#287): the same lead/total split as the per-link
- *  `fundsCellLabel`, but computed from the row's OR-ed window flag and per-ЕИК-deduped sums — no synthetic
- *  `ConflictLink` and no cast, so it cannot silently drift if `fundsCellLabel` grows a new field read. */
-export function personFundsCell(
-  row: Pick<
-    ConflictPersonRow,
-    'hasContemporaneous' | 'contemporaneousValueEur' | 'contractValueEur'
-  >,
-): FundsCell {
-  return fundsSplit(row.hasContemporaneous, row.contemporaneousValueEur, row.contractValueEur);
 }
 
 /** The NEXUS_ORDER key of a SINGLE link, as an orderable tuple (strongest first). Mirrors the DB's
@@ -643,9 +629,6 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         stakeKind,
         ownInstitution: groupLinks.some((l) => l.ownInstitution),
         hasContemporaneous: groupLinks.some((l) => l.contemporaneousContractCount > 0),
-        hasHistoricalLinks: groupLinks.some((l) =>
-          Boolean(l.laterDeclarationYear || l.registryRoleEndedOn),
-        ),
         declaredInstitutions: groupDeclaredInstitutions(
           groupLinks.flatMap((l) =>
             l.declaredOffices?.length
@@ -691,7 +674,7 @@ export function officialRole(o: {
 
 export type ConflictStakeFilter = 'self' | 'family';
 export type ConflictSignal = 'own' | 'window';
-export type ConflictSort = 'nexus' | 'value' | 'contracts';
+export type ConflictSort = 'period' | 'total' | 'contracts';
 
 export interface ConflictListFilters {
   stake: ConflictStakeFilter | null;
@@ -712,7 +695,7 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
       (s): s is ConflictSignal => s === 'own' || s === 'window',
     ),
     institutions: getMulti(sp, 'institution').map(institutionKey).filter(Boolean),
-    sort: sort === 'value' || sort === 'contracts' ? sort : 'nexus',
+    sort: sort === 'total' || sort === 'contracts' ? sort : 'period',
     q: sp.get('q')?.trim() || null,
   };
 }
@@ -807,15 +790,17 @@ export function filterConflictRows(
   );
 }
 
-/** 'nexus' keeps groupByPerson's own order (strongest link first); the other two rank by the person's
- *  public money or contract count — a missing sum last — with the slug breaking ties so the order is total. */
+/** Each named sort is monotonic by its displayed figure; unknown amounts come last. */
 export function sortConflictRows(
   rows: ConflictPersonRow[],
   sort: ConflictSort,
 ): ConflictPersonRow[] {
-  if (sort === 'nexus') return rows;
   const key = (r: ConflictPersonRow) =>
-    sort === 'value' ? (r.contractValueEur ?? -1) : r.contractCount;
+    sort === 'period'
+      ? (r.contemporaneousValueEur ?? -1)
+      : sort === 'total'
+        ? (r.contractValueEur ?? -1)
+        : r.contractCount;
   return [...rows].sort(
     (a, b) =>
       key(b) - key(a) ||

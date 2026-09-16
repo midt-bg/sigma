@@ -107,7 +107,7 @@ it('shows a later omission separately from the precise end of a cited registry r
   await render([link({ laterDeclarationYear: '2025', registryRoleEndedOn: '2024-03-10' })], {
     '111': [facts()],
   });
-  expect(text()).toContain('исторически данни');
+  expect(text()).not.toContain('исторически данни');
   expect(text()).toContain('по-късна съпоставима декларация');
   expect(text()).toContain('не установява точна дата на прекратяване');
   expect(text()).toContain('лицето е било вписано като съдружник/собственик до 2024-03-10');

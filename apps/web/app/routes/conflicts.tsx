@@ -1,5 +1,5 @@
 import { Link, useSearchParams, data } from 'react-router';
-import { count } from '@sigma/shared';
+import { count, moneyBare } from '@sigma/shared';
 import { authorityIdFromSlug, getAuthorityName, getRelatedPersonRows, getDb } from '@sigma/db';
 import type { Route } from './+types/conflicts';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -20,7 +20,6 @@ import {
   institutionOptions,
   officialHref,
   officialRole,
-  personFundsCell,
   sortConflictRows,
   type ConflictPersonRow,
 } from '../lib/conflicts';
@@ -100,9 +99,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   );
 }
 
-// The six columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
-// (isRank); the person name+institution becomes the card heading (isTitle); the funds cell is a right-aligned
-// two-line lead-plus-„от" figure; the признаци chips live in a secondary column that drops on tablet.
+// The columns of the /conflicts person leaderboard (#287, plan §3.2). Rank is the corner badge on phone
+// (isRank); the person name+institution becomes the card heading (isTitle).
 function personColumns(startRank: number): Column<ConflictPersonRow>[] {
   return [
     { key: 'rank', header: '№', isRank: true, cell: (_r, i) => startRank + i + 1 },
@@ -168,45 +166,32 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
         </ul>
       ),
     },
-    { key: 'contracts', header: 'Договори', align: 'money', cell: (r) => count(r.contractCount) },
     {
-      key: 'funds',
-      header: 'Публични средства',
+      key: 'periodValue',
+      header: 'Стойност в периода',
       align: 'money',
-      // Leads with the conflict-window sum (the „по време на конфликта" figure) and keeps the total beneath as
-      // „от <total>" — the same lead/total split fundsCellLabel encodes per link, here over the person's
-      // per-ЕИК-deduped sums. When nothing was signed in the window there is no split: show only the total.
-      cell: (r) => {
-        const cell = personFundsCell(r);
-        return (
-          <>
-            {cell.primary}
-            {cell.total != null && (
-              <>
-                <br />
-                <span className="small muted">от {cell.total}</span>
-              </>
-            )}
-          </>
-        );
-      },
+      cell: (r) => moneyBare(r.contemporaneousValueEur),
+    },
+    {
+      key: 'totalValue',
+      header: 'Обща стойност',
+      align: 'money',
+      cell: (r) => moneyBare(r.contractValueEur),
+    },
+    {
+      key: 'contracts',
+      header: 'Общ брой договори',
+      align: 'money',
+      cell: (r) => count(r.contractCount),
     },
     {
       key: 'signals',
       header: 'Признаци',
-      // Restrained monochrome chips (no new colour): the two nexus signals, OR-ed across the person's links.
+      // Keep the one signal whose meaning is useful at row level; period coverage is already in its column.
       cell: (r) => (
-        <>
+        <span className="signal-chips">
           {r.ownInstitution && <Chip>от собствената институция</Chip>}
-          {r.ownInstitution && r.hasContemporaneous && ' '}
-          {r.hasContemporaneous && <Chip>съвпадение по години</Chip>}
-          {r.hasHistoricalLinks && (
-            <>
-              {' '}
-              <Chip>исторически данни</Chip>
-            </>
-          )}
-        </>
+        </span>
       ),
     },
   ];
@@ -249,7 +234,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
         },
         {
           value: 'window',
-          label: 'съвпадение по години',
+          label: 'години с данни за длъжността',
           count: facets.window,
         },
       ],
@@ -321,7 +306,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
             <Section
               id="list"
               title="Деклариран дял в компании изпълнители"
-              hint="Лица, декларирали дял — свой или на свързано лице — в дружество, спечелило поръчка. По подразбиране са подредени в три групи: от собствената институция, със съвпадение по години и всички останали. Във всяка група първи са лицата с най-много публични средства."
+              hint="„Стойност в периода“ включва договорите в годините с налична декларация за институция и длъжност на лицето. Това не установява точните дати на мандата. Липсващи години не се запълват. Общата стойност и общият брой договори обхващат всички налични договори на показаните дружества, включително при предходно участие."
             >
               <div className="split">
                 <FilterRail groups={groups} sort={filters.sort} clearHref={clearHref} />
@@ -331,9 +316,9 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                     activeSort={filters.sort}
                     searchLabel="Търсене сред лицата"
                     sorts={[
-                      { value: 'nexus', label: 'сила на връзката' },
-                      { value: 'value', label: 'публични средства' },
-                      { value: 'contracts', label: 'договори' },
+                      { value: 'period', label: 'стойност в периода' },
+                      { value: 'total', label: 'обща стойност' },
+                      { value: 'contracts', label: 'общ брой договори' },
                     ]}
                     count={
                       <>
@@ -349,6 +334,7 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
                   ) : (
                     <>
                       <DataTable
+                        className="conflicts-people-table"
                         columns={columns}
                         rows={pageRows}
                         getKey={(r) => r.officialSlug}

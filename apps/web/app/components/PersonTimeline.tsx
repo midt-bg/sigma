@@ -135,10 +135,10 @@ export function PersonTimeline({
           <Explanation text="Период по регистърните вписвания. Отделните отсечки пазят прекъсванията; отвореният край достига до последната успешна справка." />
         </span>
         <span>
-          <i className="time-symbol eligible" /> с времево съвпадение
+          <i className="time-symbol eligible" /> в години с данни за длъжността
         </span>
         <span>
-          <i className="time-symbol context" /> без установено съвпадение
+          <i className="time-symbol context" /> извън годините с данни за длъжността
         </span>
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
@@ -388,7 +388,7 @@ export function PersonTimeline({
                               <Link
                                 to={contractHref(c.eik, r.year, 'matched')}
                                 className="time-contract eligible"
-                                aria-label={`${r.year}: ${r.eligible} договора с времево съвпадение`}
+                                aria-label={`${r.year}: ${r.eligible} договора в години с данни за длъжността`}
                               >
                                 {count(r.eligible)}
                               </Link>
@@ -397,7 +397,7 @@ export function PersonTimeline({
                               <Link
                                 to={contractHref(c.eik, r.year, 'context')}
                                 className="time-contract context"
-                                aria-label={`${r.year}: ${r.contracts - r.eligible} договора без установено съвпадение`}
+                                aria-label={`${r.year}: ${r.contracts - r.eligible} договора извън годините с данни за длъжността`}
                               >
                                 {count(r.contracts - r.eligible)}
                               </Link>
@@ -448,9 +448,11 @@ export function PersonTimeline({
         </div>
       </div>
       <p className="small muted person-time-note">
-        Числата са брой договори за годината. Съвпадението е по вписана роля или по деклариран
-        период; то не означава личен доход или установено нарушение. Всички договори са достъпни в
-        списъка. При липсващи дати не извеждаме период.
+        Числата са брой договори за годината. Червеното означава година с налична декларация за
+        институция и длъжност на лицето, независимо от периода на участие в дружеството. Това не
+        установява точните дати на мандата; липсата на декларация не доказва липса на длъжност.
+        Черните отсечки показват отделно вписаните роли в дружествата. При липсващи дати не
+        извеждаме период.
       </p>
     </Section>
   );

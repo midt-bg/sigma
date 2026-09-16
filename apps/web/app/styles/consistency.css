@@ -33,6 +33,15 @@
 td .chip {
   margin-inline-start: var(--s-2);
 }
+.signal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  align-items: flex-start;
+}
+.signal-chips .chip {
+  margin: 0;
+}
 .cc-interest .chip {
   margin: 0;
 }
@@ -548,6 +557,8 @@ td .chip {
   text-align: left;
   text-transform: none;
   letter-spacing: normal;
+  white-space: normal;
+  overflow-wrap: break-word;
   box-shadow: 0 5px 18px #0002;
   z-index: 20;
 }

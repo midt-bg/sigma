@@ -34,10 +34,10 @@ function fixture() {
     CREATE TABLE tenders(id,title,authority_id);
     CREATE TABLE authorities(id,name);
     CREATE TABLE authority_totals(authority_id);
-    CREATE TABLE declarations(person_id,institution);
+    CREATE TABLE declarations(person_id,institution,position,declared_year);
     CREATE TABLE declaration_metadata(declaration_id,declaration_type);
     INSERT INTO authority_totals VALUES('auth:1');
-    INSERT INTO declarations VALUES('official','Община');
+    INSERT INTO declarations VALUES('official','Община','Съветник','2020'),('official','Община','Съветник','2021');
     CREATE TABLE contracts(id,contract_subject,bidder_id,tender_id,signed_at,amount_eur);
     INSERT INTO authorities VALUES('auth:1','Община');
     INSERT INTO bidders VALUES('eik:111111111','Компания','111111111');
@@ -162,7 +162,7 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 8, '111111111': 4, '222222222': 4 },
     authority: { '': 8, 'auth:1': 6, 'auth:2': 2 },
     year: { '': 8, '2020': 2, '2021': 1, '2022': 2, '2023': 1 }, // "all" includes unknown dates
-    basis: { all: 8, matched: 6, context: 2, role: 3, declaration: 4, self: 2, family: 2 },
+    basis: { all: 8, matched: 3, context: 5, role: 3, declaration: 4, self: 2, family: 2 },
   });
   const filtered = await getPersonActivity(
     d1,
@@ -175,7 +175,7 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 1, '222222222': 0 },
     authority: { '': 1, 'auth:1': 1, 'auth:2': 0 },
     year: { '': 4, '2020': 1, '2021': 1, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 1, context: 0, role: 1, declaration: 0, self: 0, family: 0 },
+    basis: { all: 1, matched: 0, context: 1, role: 1, declaration: 0, self: 0, family: 0 },
   });
   const family = await getPersonActivity(
     d1,
@@ -188,7 +188,7 @@ it('counts each filter option against the other selections, including zero resul
     company: { '': 1, '111111111': 0, '222222222': 1 },
     authority: { '': 1, 'auth:1': 0, 'auth:2': 1 },
     year: { '': 1, '2020': 0, '2021': 0, '2022': 1, '2023': 0 },
-    basis: { all: 1, matched: 1, context: 0, role: 0, declaration: 1, self: 0, family: 1 },
+    basis: { all: 1, matched: 0, context: 1, role: 0, declaration: 1, self: 0, family: 1 },
   });
   const none = await getPersonActivity(
     d1,
@@ -222,7 +222,7 @@ it('never includes held interests or assigns a family company registry role to t
   expect(declared.total).toBe(2);
 });
 
-it('unifies the valid periods once, with explicit own/family provenance and a strict personal-role filter', async () => {
+it('uses office years for matched contracts while preserving independent role and declaration filters', async () => {
   const d1 = fixture();
   const union = await getPersonActivity(
     d1,
@@ -230,9 +230,9 @@ it('unifies the valid periods once, with explicit own/family provenance and a st
     ['official'],
     new URLSearchParams('basis=matched'),
   );
-  expect(union.contracts.map((r) => r.id).sort()).toEqual(['a', 'b', 'c']);
-  expect(union.total).toBe(3);
-  expect(union.valueEur).toBe(600);
+  expect(union.contracts.map((r) => r.id).sort()).toEqual(['a', 'b']);
+  expect(union.total).toBe(2);
+  expect(union.valueEur).toBe(300);
   expect(union.contracts.find((r) => r.id === 'a')).toMatchObject({
     duringRole: true,
     declarationBasis: 1,
@@ -268,7 +268,7 @@ it('the shared timeline covers all contracts without the 500-card limit and sepa
     contracts: 606,
     role: 606,
     declared: 0,
-    eligible: 606,
+    eligible: 0,
   });
   expect(result.contracts.find((r) => r.year === null)).toMatchObject({
     contracts: 1,
@@ -365,4 +365,35 @@ it('an ambiguous later holder ends the reliable period without claiming a legal 
   expect(
     db.prepare('SELECT removed_on FROM registry_roles WHERE uncertain_after IS NOT NULL').get(),
   ).toEqual({ removed_on: null });
+});
+
+it('highlights observed office years even after a company role ends, without filling gaps or using filing dates', async () => {
+  const d1 = fixture();
+  db.exec(`DELETE FROM declarations;
+    INSERT INTO declarations VALUES
+      ('official','Община','Съветник','2020'),
+      ('alias','Друга институция','Директор','2022'),
+      ('alias','Друга институция','Директор','2022'),
+      ('official','Община','','2021');
+    UPDATE interest_links SET first_declared_year='2018',last_declared_year='2018';
+    UPDATE registry_roles SET removed_on='2019-01-01' WHERE removed_on IS NULL;
+  `);
+  const matched = await getPersonActivity(
+    d1,
+    'person',
+    ['official', 'alias'],
+    new URLSearchParams('basis=matched'),
+  );
+  expect(matched.contracts.map((c) => c.id).sort()).toEqual(['a', 'c']);
+  expect(matched.contracts.find((c) => c.id === 'c')).toMatchObject({
+    duringOfficeYear: true,
+    duringRole: false,
+    duringDeclaration: false,
+  });
+  expect(matched.total).toBe(2);
+  expect(matched.valueEur).toBe(400);
+  const timeline = await getPersonTimeline(d1, 'person', ['official', 'alias']);
+  expect(timeline.contracts.find((c) => c.year === '2021')!.eligible).toBe(0);
+  expect(timeline.contracts.find((c) => c.year === '2022')!.eligible).toBe(1);
+  expect(timeline.contracts.find((c) => c.year === null)!.eligible).toBe(0);
 });

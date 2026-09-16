@@ -289,7 +289,6 @@ a.flag:hover {
 .list-controls p {
   margin: 0;
 }
-
 /* In-table search — a quiet utility field on its own row above the count/sort strip. Deliberately
    lighter than the hero/header .smart-search; it filters the list in place via the `q` URL param. */
 .list-controls-bar {

@@ -1,4 +1,4 @@
-import { declarationWindow } from './declaration-source';
+import { declarationWindow, declaredOfficeYear } from './declaration-source';
 import { publicRole } from './registry';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 
@@ -13,6 +13,7 @@ export interface PersonContractRow {
   valueEur: number | null;
   duringRole: boolean;
   duringDeclaration: boolean;
+  duringOfficeYear: boolean;
   declarationBasis: number; // 1 = own stake, 2 = related person's stake, 3 = both
 }
 export interface PersonActivity {
@@ -77,9 +78,13 @@ export function personActivityScope(indent: string | null, ids: string[]) {
   const cte = `WITH scoped AS (
     SELECT DISTINCT r.eik FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person' AND ${publicRole('r')}
     UNION SELECT il.eik FROM interest_links il WHERE ${gate}
+  ), office_years AS (
+    SELECT DISTINCT d.declared_year year FROM declarations d
+    WHERE d.person_id IN (${placeholders}) AND ${declaredOfficeYear()}
   ), activity AS (
     SELECT c.id, COALESCE(c.contract_subject, t.title) AS subject, b.name AS company, b.eik_normalized AS eik, a.id AS authority_id, a.name AS authority,
       c.signed_at, c.amount_eur,
+      EXISTS (SELECT 1 FROM office_years oy WHERE oy.year=strftime('%Y',c.signed_at)) AS during_office_year,
       EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person'
         AND r.eik=b.eik_normalized AND ${publicRole('r')} AND c.signed_at IS NOT NULL
         AND (r.uncertain_after IS NULL OR date(c.signed_at)<date(r.uncertain_after))
@@ -133,8 +138,8 @@ export async function getPersonActivity(
     self: '(declaration_basis & 1)<>0',
     family: '(declaration_basis & 2)<>0',
     all: '1=1',
-    matched: '(during_role=1 OR during_declaration=1)',
-    context: '(during_role=0 AND during_declaration=0)',
+    matched: 'during_office_year=1',
+    context: 'during_office_year=0',
   };
   const params = [...scope.params, filters.company, filters.authority, filters.year];
   // Bind all selected values once, including when a facet excludes its own selection.
@@ -213,6 +218,7 @@ export async function getPersonActivity(
     amount_eur: number | null;
     during_role: number;
     during_declaration: number;
+    during_office_year: number;
     declaration_basis: number;
   }>(
     `SELECT * FROM activity${where} ORDER BY signed_at DESC, id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
@@ -229,6 +235,7 @@ export async function getPersonActivity(
       valueEur: r.amount_eur,
       duringRole: !!r.during_role,
       duringDeclaration: !!r.during_declaration,
+      duringOfficeYear: !!r.during_office_year,
       declarationBasis: r.declaration_basis,
     })),
     page,

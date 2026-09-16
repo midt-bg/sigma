@@ -206,13 +206,22 @@ describe('/conflicts route — render', () => {
     expect(container.querySelector('table')).toBeNull();
   });
 
-  it('offers the filters and the sorts, and sorts by public money when asked', async () => {
-    await renderConflicts([familyLink, link()], null, '/conflicts?sort=value');
+  it('offers the filters and all three sorts, and sorts by total value when asked', async () => {
+    await renderConflicts([familyLink, link()], null, '/conflicts?sort=total');
     expect(container.querySelector('.filter-rail')).not.toBeNull();
     for (const label of ['Чий е делът', 'Признаци', 'Институция на лицето'])
       expect(text()).toContain(label);
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k
+    for (const label of ['стойност в периода', 'обща стойност', 'общ брой договори'])
+      expect(text()).toContain(label);
+    const sorts = [...container.querySelectorAll('.list-controls p.small a')];
+    expect(
+      sorts.map((a) =>
+        new URL(a.getAttribute('href')!, 'https://example.test').searchParams.get('sort'),
+      ),
+    ).toEqual(['period', 'total', 'contracts']);
+    expect(sorts.filter((a) => a.getAttribute('aria-current') === 'true')).toEqual([sorts[1]]);
   });
 
   it('says which institution the list is narrowed to, and how to widen it', async () => {
@@ -271,10 +280,7 @@ describe('/conflicts route — render', () => {
     expect(occurrences).toBe(1);
   });
 
-  it('ranks by the strongest link: a person whose STRONGEST link is strong is not sunk below a weak person', async () => {
-    // Weak person: no own-institution, no contemporaneous. Strong person: two links, one weak and one strong
-    // (own-institution + contemporaneous). If the sort ever regresses to per-link or to OR-ed flags summed,
-    // the strong person could slip; rank = strongest SINGLE link must keep them first.
+  it('puts a person with a period value above a person without one', async () => {
     const weak = link({
       officialSlug: 'weak',
       official: 'Слаб Тестов',
@@ -311,14 +317,18 @@ describe('/conflicts route — render', () => {
     expect(rows[1].textContent).toContain('Слаб Тестов');
   });
 
-  it('Публични средства shows the contemporaneous sum with the „от" total beneath', async () => {
+  it('shows period and total values in separate columns without a help button', async () => {
     await renderConflicts([link()]); // 30 млн. window, 88 млн. total
     const row = bodyRows()[0];
-    const funds = row.querySelector('td[data-label="Публични средства"]')!;
-    expect(funds.textContent).toContain('30');
-    expect(funds.textContent).toContain('млн.');
-    expect(funds.textContent).toContain('от'); // the „от <total>" context line
-    expect(funds.textContent).toContain('88');
+    const period = row.querySelector('td[data-label="Стойност в периода"]')!;
+    const total = row.querySelector('td[data-label="Обща стойност"]')!;
+    expect(period.textContent).toContain('30');
+    expect(period.textContent).toContain('млн.');
+    expect(period.textContent).not.toContain('договор');
+    expect(total.textContent).toContain('88');
+    expect(
+      container.querySelector('button[aria-label="Как се изчислява стойността на договорите"]'),
+    ).toBeNull();
   });
 
   it('Дружества: every distinct winner is named and linked', async () => {
@@ -382,7 +392,7 @@ describe('/conflicts route — render', () => {
     const signals = row.querySelector('td[data-label="Признаци"]')!;
     expect(signals.classList.contains('col-secondary')).toBe(false);
     expect(signals.textContent).toContain('от собствената институция'); // from the SECOND link
-    expect(signals.textContent).toContain('съвпадение по години');
+    expect(signals.textContent).not.toContain('години с данни за длъжността');
     // Restrained chips, no new colour: chip class present, no inline style attribute.
     const chips = signals.querySelectorAll('.chip');
     expect(chips.length).toBeGreaterThan(0);
@@ -396,11 +406,10 @@ describe('/conflicts route — render', () => {
   it('a zero-contract / null-value person renders 0 договори and no NaN', async () => {
     await renderConflicts([zeroContractLink]);
     const row = bodyRows()[0];
-    expect(row.querySelector('td[data-label="Договори"]')!.textContent).toContain('0');
+    expect(row.querySelector('td[data-label="Общ брой договори"]')!.textContent).toContain('0');
     expect(text()).not.toContain('NaN');
-    // No window money, so no „от" split — only the total (which is „—" for a null value).
-    const funds = row.querySelector('td[data-label="Публични средства"]')!;
-    expect(funds.textContent).not.toContain('NaN');
+    expect(row.querySelector('td[data-label="Стойност в периода"]')!.textContent).toContain('—');
+    expect(row.querySelector('td[data-label="Обща стойност"]')!.textContent).toContain('—');
   });
 
   it('a family-linked person is named on the row, but the relative never is', async () => {

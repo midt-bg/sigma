@@ -1,19 +1,20 @@
-import { declarationWindow } from './declaration-source';
+import { declaredOfficeYear } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
 
 // Canonical identity precedes grouping. Source person ids remain distinct unless the
 // declaration-to-registry bridge proves their public Indent; names are never a join key.
 const CTE = `WITH links AS MATERIALIZED (
-  SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name,
-    EXISTS (SELECT 1 FROM interest_link_history h WHERE h.link_key=il.link_key AND
-      (h.later_declaration_year IS NOT NULL OR h.registry_role_ended_on IS NOT NULL))
-      OR il.first_declared_year IS NULL AS historical
+  SELECT il.*, COALESCE(pl.registry_indent,il.person_id) identity, p.name
   FROM interest_links il JOIN persons p ON p.id=il.person_id
   LEFT JOIN person_registry_links pl ON pl.person_id=il.person_id
   WHERE ${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY}
     AND (?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
       JOIN bidders b ON b.id=c.bidder_id WHERE b.eik_normalized=il.eik AND t.authority_id=?1))
+), office_years AS MATERIALIZED (
+  SELECT DISTINCT COALESCE(pl.registry_indent,d.person_id) identity,d.declared_year year
+  FROM declarations d LEFT JOIN person_registry_links pl ON pl.person_id=d.person_id
+  WHERE ${declaredOfficeYear()}
 ), company_contracts AS MATERIALIZED (
   SELECT c.id, b.eik_normalized eik,c.amount_eur,c.signed_at
   FROM bidders b JOIN contracts c ON c.bidder_id=b.id JOIN tenders t ON t.id=c.tender_id
@@ -21,8 +22,10 @@ const CTE = `WITH links AS MATERIALIZED (
   WHERE b.eik_normalized IN (SELECT eik FROM links)
 ), person_contracts AS (
   SELECT l.identity,c.id,c.eik,c.amount_eur,
-    MAX(${declarationWindow('l', 'c.signed_at')}) in_window
-  FROM links l JOIN company_contracts c ON c.eik=l.eik GROUP BY l.identity,c.id
+    MAX(oy.identity IS NOT NULL) in_window
+  FROM links l JOIN company_contracts c ON c.eik=l.eik
+  LEFT JOIN office_years oy ON oy.identity=l.identity AND oy.year=strftime('%Y',c.signed_at)
+  GROUP BY l.identity,c.id
 ), totals AS (
   SELECT identity,COUNT(*) contract_count,COUNT(DISTINCT eik) company_count,SUM(amount_eur) total_eur,
     SUM(CASE WHEN in_window THEN amount_eur END) window_eur,MAX(in_window) has_window
@@ -31,7 +34,7 @@ const CTE = `WITH links AS MATERIALIZED (
   SELECT *,ROW_NUMBER() OVER (PARTITION BY identity ORDER BY (own_institution='exact') DESC,
     last_declared_year DESC,person_id,link_key) rn FROM links
 ), grouped_people AS (
-  SELECT l.identity,MAX(l.own_institution='exact') own_institution,MAX(l.historical) historical,
+  SELECT l.identity,MAX(l.own_institution='exact') own_institution,
     MAX(l.interest_class='private_ownership') self_stake,MAX(l.interest_class='family_ownership') family_stake
   FROM links l JOIN totals t ON t.identity=l.identity GROUP BY l.identity
 )`;
@@ -65,7 +68,6 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       window_eur: number | null;
       has_window: number;
       own_institution: number;
-      historical: number;
       self_stake: number;
       family_stake: number;
       offices: string;
@@ -94,7 +96,6 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       | 'family',
     ownInstitution: !!r.own_institution,
     hasContemporaneous: !!r.has_window,
-    hasHistoricalLinks: !!r.historical,
     declaredOffices: JSON.parse(r.offices) as {
       institution: string | null;
       position: string | null;
@@ -114,8 +115,10 @@ export async function getRelatedPersonHeadline(
       `${CTE}, selected AS (
     SELECT l.* FROM links l JOIN json_each(?2) j ON j.value=l.identity
   ), contracts_selected AS (
-    SELECT c.id,c.amount_eur,MAX(${declarationWindow('l', 'c.signed_at')}) in_window
-    FROM selected l JOIN company_contracts c ON c.eik=l.eik GROUP BY c.id
+    SELECT c.id,c.amount_eur,MAX(oy.identity IS NOT NULL) in_window
+    FROM selected l JOIN company_contracts c ON c.eik=l.eik
+    LEFT JOIN office_years oy ON oy.identity=l.identity AND oy.year=strftime('%Y',c.signed_at)
+    GROUP BY c.id
   ) SELECT (SELECT COUNT(DISTINCT identity) FROM selected) officialCount,
     (SELECT COUNT(*) FROM (SELECT DISTINCT identity,eik FROM selected)) linkCount,
     COALESCE(SUM(amount_eur),0) totalEur,COALESCE(SUM(CASE WHEN in_window THEN amount_eur END),0) contemporaneousEur

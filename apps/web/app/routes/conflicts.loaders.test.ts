@@ -144,6 +144,7 @@ describe('leaderboard loader (/conflicts)', () => {
         official: `Лице ${i}`,
         officialSlug: `s${i}`,
         personIdentity: `p${i}`,
+        contemporaneousValueEur: 1205 - i,
         declaredOffices: [],
       })),
     );

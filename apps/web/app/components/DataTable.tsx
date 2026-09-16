@@ -19,6 +19,7 @@ export function DataTable<Row>({
   columns,
   rows,
   variant = 'cards',
+  className,
   caption,
   getKey,
   getRowId,
@@ -26,13 +27,14 @@ export function DataTable<Row>({
   columns: Column<Row>[];
   rows: Row[];
   variant?: 'cards' | 'prose';
+  className?: string;
   caption?: string;
   getKey: (row: Row, index: number) => string | number;
   getRowId?: (row: Row) => string;
 }) {
   const labelOf = (c: Column<Row>) => (typeof c.header === 'string' ? c.header : undefined);
   return (
-    <div className={`table-wrap tbl-${variant}`}>
+    <div className={`table-wrap tbl-${variant}${className ? ` ${className}` : ''}`}>
       <table>
         {caption && <caption className="sr-only">{caption}</caption>}
         <thead>
