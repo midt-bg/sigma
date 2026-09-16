@@ -17,8 +17,10 @@ import {
   PUBLIC_ROLES,
   getCompanyPeople,
   getRegistryPerson,
+  orderRoles,
   partidaEik,
   registryRead,
+  roleRank,
 } from './registry';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -396,5 +398,120 @@ describe('non-unique date-of-birth sources', () => {
     ).toHaveLength(2);
     open!.exec(readFileSync(resolve(migrationsDir, '0019_registry_scoped_birthdates.sql'), 'utf8'));
     expect(await getRegistrySourceCompanies(db, ANNA)).toEqual(sources);
+  });
+});
+
+describe('holders and roles at the edges of the register', () => {
+  const DARINA = hash('7');
+  const IVO = hash('8');
+
+  it('names a foreign owner and a company that never won, with no page and no invented ЕИК', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name, share,
+                                  country, entry_number, added_on, removed_on, uncertain_after) VALUES
+        ('222222222', '0000', '00190', 'partner', 'entity', 'FOREIGN HOLDING LTD', 'FOREIGN HOLDING LTD', '100 GBP',
+         'ВЕЛИКОБРИТАНИЯ', 'b3', '2020-05-05', NULL, NULL),
+        ('222222222', '0000', '00190', 'partner', 'entity', '999999999', 'ДРУГО ДРУЖЕСТВО ООД', NULL,
+         'БЪЛГАРИЯ', 'b3', '2020-05-05', NULL, NULL),
+        ('222222222', '0000', '00070', 'manager', 'person', '${BORIS}', 'БОРИС ИВАНОВ', NULL,
+         NULL, 'b0', '2019-01-01', NULL, '2024-01-01');
+    `);
+    const { roles } = await getCompanyPeople(db, 'eik:222222222');
+    // Standing roles by seniority, the two partners of one day by name; the uncertain one with the ended.
+    expect(roles.map((r) => [r.holder.name, r.role])).toEqual([
+      ['ВЕРА ГЕОРГИЕВА', 'representative'],
+      ['АННА ПЕТРОВА', 'board_of_directors'],
+      ['ДРУГО ДРУЖЕСТВО ООД', 'partner'],
+      ['FOREIGN HOLDING LTD', 'partner'],
+      ['БОРИС ИВАНОВ', 'manager'],
+    ]);
+    expect(roles[2]!.holder).toMatchObject({ kind: 'entity', href: null, eik: '999999999' });
+    expect(roles[3]!.holder).toEqual({
+      kind: 'entity',
+      name: 'FOREIGN HOLDING LTD',
+      href: null,
+      eik: null,
+      country: 'ВЕЛИКОБРИТАНИЯ',
+    });
+    // A later holder the register cannot place ends the reliable period — without claiming a removal.
+    expect(roles[4]).toMatchObject({ removedOn: null, uncertainAfter: '2024-01-01' });
+    expect(roles.slice(0, 4).some((r) => 'uncertainAfter' in r)).toBe(false);
+    expect(JSON.stringify(roles)).not.toContain('САМО СОБСТВЕНИК');
+
+    const boris = (await getRegistryPerson(db, BORIS))!;
+    expect(boris.roles.map((r) => [r.company.eik, r.removedOn, r.uncertainAfter])).toEqual([
+      ['222222222', null, '2024-01-01'],
+      ['111111111', '2019-03-12', undefined],
+      ['333333333', '2018-01-01', undefined],
+    ]);
+    expect(boris.network.edges.find((e) => e.to === 'eik:222222222')?.current).toBe(false);
+  });
+
+  it('orders a person’s roles that tie on everything by company name, and the graph by ЕИК', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO bidders (id, name, kind) VALUES
+        ('eik:700000001', 'ЯСЕН ООД', 'company'), ('eik:700000002', 'ЕЛА ООД', 'company');
+      INSERT INTO company_totals (bidder_id, name, kind, won_eur, contracts, authorities) VALUES
+        ('eik:700000001', 'ЯСЕН ООД', 'company', 400, 1, 1), ('eik:700000002', 'ЕЛА ООД', 'company', 400, 1, 1);
+      INSERT INTO registry_deeds (eik, name, outcome, fetched_at) VALUES
+        ('700000001', 'ЯСЕН ООД', 'ok', '2026-09-11T03:00:00Z'),
+        ('700000002', 'ЕЛА ООД', 'ok', '2026-09-11T03:00:00Z');
+      INSERT INTO registry_persons (indent, name, indent_type) VALUES ('${DARINA}', 'ДАРИНА ДИМОВА', 'EGN');
+      INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name,
+                                  entry_number, added_on) VALUES
+        ('700000001', '0000', '00070', 'manager', 'person', '${DARINA}', 'ДАРИНА ДИМОВА', 'd1', '2022-02-02'),
+        ('700000002', '0000', '00070', 'manager', 'person', '${DARINA}', 'ДАРИНА ДИМОВА', 'd2', '2022-02-02');
+    `);
+    const p = (await getRegistryPerson(db, DARINA))!;
+    expect(p.roles.map((r) => r.company.name)).toEqual(['ЕЛА ООД', 'ЯСЕН ООД']);
+    expect(p.network.nodes.map((n) => n.id)).toEqual([
+      `rp:${DARINA}`,
+      'eik:700000001',
+      'eik:700000002',
+    ]);
+    expect(p).toMatchObject({ companies: 2, wonEur: 800, asOf: '2026-09-11' });
+  });
+
+  it('lists a date-of-birth source at a company outside the corpus without a link, and never an actual owner', async () => {
+    const db = served();
+    open!.exec(`
+      INSERT INTO registry_deeds (eik, name, outcome, fetched_at)
+        VALUES ('800000001', 'САМО В РЕГИСТЪРА ООД', 'ok', '2026-09-12T03:00:00Z');
+      INSERT INTO registry_roles (eik, sub_uic, field_ident, role, subject_kind, subject_id, subject_name,
+                                  entry_number, added_on) VALUES
+        ('800000001', '0000', '00070', 'manager', 'person', 'local:800000001:birthdate:${IVO}:ИВО ИВОВ',
+         'ИВО ИВОВ', 'x1', '2020-01-01'),
+        ('111111111', '0000', '05500', 'beneficial_owner', 'person', 'local:111111111:birthdate:${IVO}:ИВО ИВОВ',
+         'ИВО ИВОВ', 'x2', '2020-01-01');
+    `);
+    expect(await getRegistrySourceCompanies(db, IVO)).toEqual([
+      {
+        eik: '800000001',
+        name: 'ИВО ИВОВ',
+        company: 'САМО В РЕГИСТЪРА ООД',
+        fetchedAt: '2026-09-12T03:00:00Z',
+        href: null,
+      },
+    ]);
+  });
+
+  it('ranks a role the site does not show after every role it does', () => {
+    expect(roleRank('beneficial_owner')).toBe(PUBLIC_ROLES.length);
+    expect(orderRoles(['beneficial_owner', 'partner', 'manager', 'partner'])).toEqual([
+      'manager',
+      'partner',
+      'beneficial_owner',
+    ]);
+  });
+
+  it('reads a rejection that is not an Error by its text', async () => {
+    expect(
+      await registryRead(() => Promise.reject('D1_ERROR: no such table: registry_roles'), 'empty'),
+    ).toBe('empty');
+    await expect(registryRead(() => Promise.reject('D1_ERROR: boom'), 'empty')).rejects.toBe(
+      'D1_ERROR: boom',
+    );
   });
 });
