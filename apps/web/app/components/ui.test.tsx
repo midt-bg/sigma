@@ -206,3 +206,51 @@ describe('Section', () => {
     expect(el.querySelector('.section-hint')!.textContent).toBe('пояснение');
   });
 });
+
+describe('Chip — only a plain label is explained', () => {
+  it('draws a static chip for composed content, even when its words have an explanation', () => {
+    const el = render(
+      <Chip>
+        <strong>без ЕИК</strong>
+      </Chip>,
+    );
+    expect(el.querySelector('button')).toBeNull();
+    expect(el.querySelector('span.chip strong')!.textContent).toBe('без ЕИК');
+  });
+});
+
+describe('Explanation — the popover stays on screen', () => {
+  // jsdom lays nothing out, so each test places the trigger or the panel itself; its viewport is 1024 × 768.
+  const at = (box: Partial<DOMRect>) => () => ({ ...new DOMRect(), ...box, toJSON: () => box });
+
+  it('opens by its trigger, but never past the right or bottom edge nor into the margin', () => {
+    const el = render(<Explanation text="Пояснение" />);
+    const button = el.querySelector('button')!;
+    const panel = document.getElementById(button.getAttribute('popovertarget')!)!;
+    const open = (box: Partial<DOMRect>) => {
+      button.getBoundingClientRect = at(box);
+      act(() => button.click());
+      return [panel.style.left, panel.style.top];
+    };
+    expect(open({ left: 100, bottom: 200 })).toEqual(['100px', '208px']);
+    expect(open({ left: 900, bottom: 700 })).toEqual([
+      `${window.innerWidth - 332}px`,
+      `${window.innerHeight - 180}px`,
+    ]);
+    expect(open({ left: -40, bottom: -30 })).toEqual(['12px', '12px']);
+  });
+
+  it('lifts an opened popover above the bottom edge, and leaves a closing one alone', () => {
+    const el = render(<Explanation text="Пояснение" />);
+    const panel = el.querySelector<HTMLElement>('.help-popover')!;
+    panel.getBoundingClientRect = at({ top: 700, height: 100 });
+    const toggle = (newState: string) =>
+      act(() => {
+        panel.dispatchEvent(Object.assign(new Event('toggle'), { newState }));
+      });
+    toggle('closed');
+    expect(panel.style.top).toBe('');
+    toggle('open');
+    expect(panel.style.top).toBe(`${window.innerHeight - 100 - 12}px`);
+  });
+});
