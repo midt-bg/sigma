@@ -15,6 +15,7 @@ import {
   COMPANY_AUTHOR_BASIS,
 } from './declaration-continuity.mjs';
 import { registryCompanyResolver } from './registry-identity.mjs';
+import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 import { documentFingerprint } from './source-identity.mjs';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 import { eikCompanyNameKey } from './resolve-company.mjs';
@@ -79,8 +80,10 @@ const flag = (link, axis, detail) =>
 // Published canonical profiles must agree with durable source membership, not a second name resolver.
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
   const continuity = db
-    .prepare("SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version=?")
-    .all(CONTINUITY_RULE);
+    .prepare(
+      "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version IN (?,?)",
+    )
+    .all(CONTINUITY_RULE, DECLARANT_GUID_RULE);
   if (continuity.length) {
     try {
       const inconsistent = db
@@ -88,10 +91,10 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
           `SELECT count(*) n FROM person_identity_evidence e
         LEFT JOIN person_sources l ON l.id=e.left_source LEFT JOIN person_sources r ON r.id=e.right_source
         LEFT JOIN person_entities p ON p.id=l.entity_id
-        WHERE e.rule_version=? AND e.decision='accepted'
+        WHERE e.rule_version IN (?,?) AND e.decision='accepted'
           AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.id IS NULL)`,
         )
-        .get(CONTINUITY_RULE).n;
+        .get(CONTINUITY_RULE, DECLARANT_GUID_RULE).n;
       if (inconsistent) throw new Error('accepted continuity does not belong to one author');
       const unsupported = db
         .prepare(
@@ -101,21 +104,24 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
           AND NOT EXISTS (SELECT 1 FROM person_identity_evidence e
             JOIN person_sources l ON l.id=e.left_source
             JOIN person_sources r ON r.id=e.right_source
-            WHERE e.rule_version=? AND e.decision='accepted' AND json_extract(e.facts,'$.basis')=?
-              AND l.entity_id=p.id AND r.entity_id=p.id)`,
+            WHERE e.decision='accepted' AND l.entity_id=p.id AND r.entity_id=p.id
+              AND (e.rule_version=? OR (e.rule_version=? AND json_extract(e.facts,'$.basis')=?)))`,
         )
-        .get(CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
+        .get(DECLARANT_GUID_RULE, CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
       if (unsupported)
-        throw new Error('author without a registry identity lacks verified company evidence');
+        throw new Error(
+          'author without a registry identity lacks a declarant identifier or verified company evidence',
+        );
       const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
       const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
       if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))
         throw new Error('declaration continuity input is not the completed extraction');
+      const filings = raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse);
       const expected = new Map(
-        declarationContinuity(
-          raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse),
-          registryCompanyResolver(db),
-        ).map((e) => [e.id, e]),
+        [
+          ...declarantGuidEvidence(filings),
+          ...declarationContinuity(filings, registryCompanyResolver(db)),
+        ].map((e) => [e.id, e]),
       );
       for (const e of continuity) {
         const candidate = expected.get(e.id);

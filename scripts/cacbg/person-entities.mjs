@@ -7,6 +7,7 @@ import {
   IDENTITY_RULES_VERSION,
 } from './registry-identity.mjs';
 import { declarationContinuity, COMPANY_AUTHOR_BASIS } from './declaration-continuity.mjs';
+import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export const declarationSourceId = (rec) => `cacbg:${rec.folder}:${rec.xmlFile}`;
@@ -104,6 +105,8 @@ export function rebuildPersonEntities(
     revoked: 0,
     continuityAccepted: 0,
     continuityCandidates: 0,
+    guidAccepted: 0,
+    guidCandidates: 0,
   };
   db.exec('BEGIN');
   try {
@@ -267,7 +270,11 @@ export function rebuildPersonEntities(
         "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND origin='automatic'",
       )
       .all();
-    const proposed = declarationContinuity(filings, registryCompanyResolver(registry));
+    // The register's own declarant identifier establishes an author like a verified company does.
+    const proposed = [
+      ...declarantGuidEvidence(filings),
+      ...declarationContinuity(filings, registryCompanyResolver(registry)),
+    ];
     // Test the complete proposed graph, including every ambiguous registry candidate.
     // Reject all new edges in a conflicting component, preserving already proven anchors.
     const ambiguous = db
@@ -276,10 +283,10 @@ export function rebuildPersonEntities(
       )
       .all(IDENTITY_RULES_VERSION)
       .map((e) => ({ ...e, decision: 'accepted' }));
+    const authorEdge = (e) =>
+      e.rule_version === DECLARANT_GUID_RULE || JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS;
     const companySources = new Set(
-      proposed
-        .filter((e) => JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS)
-        .flatMap((e) => [e.left_source, e.right_source]),
+      proposed.filter(authorEdge).flatMap((e) => [e.left_source, e.right_source]),
     );
     const blocked = new Set(),
       supported = new Set(),
@@ -305,10 +312,11 @@ export function rebuildPersonEntities(
         e.facts,
         now,
       );
-      stats[conflict ? 'continuityCandidates' : 'continuityAccepted']++;
+      const rule = e.rule_version === DECLARANT_GUID_RULE ? 'guid' : 'continuity';
+      stats[`${rule}${conflict ? 'Candidates' : 'Accepted'}`]++;
       if (!conflict) {
         evidence.push(e);
-        if (JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS) {
+        if (authorEdge(e)) {
           companyAuthors.add(e.left_source);
           companyAuthors.add(e.right_source);
         }
