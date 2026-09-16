@@ -475,3 +475,11 @@ describe('filters — remaining branch coverage', () => {
     expect(nav('cursor=x&page=abc').page).toBe(1); // NaN → || 1
   });
 });
+
+describe('withParams — known params outside the canonical order', () => {
+  it('keeps the person-profile filters and puts them after the ordered params, as given', () => {
+    expect(withParams(sp('company=111111111&sort=total&basis=matched'), { page: 2 })).toBe(
+      '?sort=total&page=2&company=111111111&basis=matched',
+    );
+  });
+});
