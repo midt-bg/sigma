@@ -22,3 +22,13 @@ export interface WorkflowStep {
   do<T>(name: string, callback: () => Promise<T>): Promise<T>;
   do<T>(name: string, config: Record<string, unknown>, callback: () => Promise<T>): Promise<T>;
 }
+
+export class DurableObject<Env = unknown> {
+  constructor(
+    protected ctx: unknown,
+    protected env: Env,
+  ) {}
+}
+
+export { WorkflowEntrypoint as WorkerEntrypoint };
+export const exports = {};

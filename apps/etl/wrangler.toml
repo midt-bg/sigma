@@ -19,6 +19,12 @@ port = 8789
 
 [vars]
 EOP_OPEN_DATA_BASE_URL = "https://storage.eop.bg"
+# The currently published Trade Register API used by the register layer (ADR-0041).
+REGISTRY_API_BASE_URL = "https://api-sigma-cr.registryagency.bg"
+REGISTRY_PORTAL_URL = "https://portal.registryagency.bg/CR/api/Applications/Entries"
+# Enable only during the separately approved writer cutover.
+DECLARATIONS_ENABLED = "false"
+DECLARATIONS_BUCKET = "sigma-declarations-local"
 
 # `database_id` is a zero-UUID placeholder for local dev (miniflare). `pnpm --filter @sigma/etl run
 # deploy` substitutes SIGMA_D1_ID into wrangler.deploy.toml via scripts/wrangler-render.mjs.
@@ -32,6 +38,11 @@ database_id = "00000000-0000-0000-0000-000000000000"
 binding = "REFRESH"
 name = "sigma-refresh"
 class_name = "RefreshWorkflow"
+
+[[workflows]]
+binding = "REGISTRY"
+name = "sigma-registry"
+class_name = "RegistryWorkflow"
 
 [triggers]
 crons = ["0 */6 * * *"]
@@ -50,3 +61,6 @@ invocation_logs = true
 enabled = false
 persist = true
 head_sampling_rate = 1
+
+# The declarations Container/DO/R2 bindings are deliberately absent here. They are provisioned only
+# during their separately approved writer cutover; DECLARATIONS_ENABLED=false keeps the existing job.

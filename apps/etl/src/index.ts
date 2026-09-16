@@ -1,3 +1,6 @@
+export { DeclarationCorpus } from './declaration-corpus';
+import type { DeclarationEnv, DeclarationContainer } from './declarations';
+export { DeclarationContainer } from './declarations';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
@@ -10,6 +13,9 @@ import {
   recordPendingWindow,
   refreshDerivedContractCount,
   refreshSliceStatementGroups,
+  registryClient,
+  registryDay,
+  RegistryError,
   releaseRefreshLease,
   renewRefreshLease,
   runRefreshSliceStatementGroup,
@@ -17,13 +23,35 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
-import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { addDays, computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
 import { runServedIntegrityGate } from './integrity';
+import {
+  acquireRegistryLease,
+  completeEntryBaseline,
+  nextQueued,
+  prepareEntryBaseline,
+  queueNewWinners,
+  releaseRegistryLease,
+  renewRegistryLease,
+  seedEntryPasses,
+  nextEntryPass,
+  recordEntryPage,
+  deferPortal,
+  deferDeed,
+  deferXml,
+  storeDeed,
+} from './registry';
 
-export interface Env {
+export interface Env extends DeclarationEnv {
+  DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
+  DECLARATIONS_ENABLED?: string;
   DB: D1Database;
   REFRESH: Workflow;
   EOP_OPEN_DATA_BASE_URL?: string;
+  /** The register layer (ADR-0041): its Workflow, and the API it reads. Unset → the layer does not run. */
+  REGISTRY?: Workflow;
+  REGISTRY_API_BASE_URL?: string;
+  REGISTRY_PORTAL_URL?: string;
 }
 
 interface RefreshParams {
@@ -439,10 +467,247 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
   }
 }
 
+interface RegistryParams {
+  /** Operator override for tests/manual runs. Normal cron uses UTC today. */
+  today?: string;
+  /** Partidas read per run; the default fills a winners' scope of ~13k in under two days. */
+  maxDeeds?: number;
+  maxPages?: number;
+  portalPaceMs?: number;
+  /** Pause between two reads, under the API's per-client limit; 0 in tests. */
+  paceMs?: number;
+}
+
+interface RegistryResult {
+  skipped?: 'not-configured' | 'lease-held';
+  changeDays: number;
+  changed: number;
+  queuedNew: number;
+  read: number;
+  absent: number;
+  roles: number;
+}
+
+// Partidas per step: small, so a retried step re-reads little (storing is idempotent, the queue is the cursor).
+const REGISTRY_BATCH = 25;
+// Four runs a day at this bound fill the winners' scope in about two days, then only follow the changes.
+const REGISTRY_MAX_DEEDS = 2_500;
+// A bounded amount of persistent portal pagination per run; unfinished passes resume next time.
+const REGISTRY_MAX_PAGES = 600;
+// The published XML API has no configured quota; actual Retry-After responses still apply.
+const REGISTRY_PACE_MS = 0;
+
+// Published XML partidas and portal entry-day passes have their own lease beside procurement.
+// Pending entry signals survive until confirmed by exact timestamps in the XML history.
+export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
+  override async run(
+    event: WorkflowEvent<RegistryParams>,
+    step: WorkflowStep,
+  ): Promise<RegistryResult> {
+    const result: RegistryResult = {
+      changeDays: 0,
+      changed: 0,
+      queuedNew: 0,
+      read: 0,
+      absent: 0,
+      roles: 0,
+    };
+    const baseUrl = this.env.REGISTRY_API_BASE_URL;
+    if (!baseUrl) {
+      console.warn(JSON.stringify({ level: 'warn', event: 'registry_not_configured' }));
+      return { ...result, skipped: 'not-configured' };
+    }
+    const params = event.payload ?? {};
+    const holder = event.instanceId;
+    const startedAt = new Date().toISOString();
+    const acquired = await step.do('acquire-registry-lease', async () =>
+      acquireRegistryLease(this.env.DB, holder, new Date(startedAt)),
+    );
+    if (!acquired) {
+      console.warn(JSON.stringify({ level: 'warn', event: 'registry_lease_held', startedAt }));
+      return { ...result, skipped: 'lease-held' };
+    }
+    // Renewed before every step that writes; losing it is final, as in the refresh.
+    const fenced = <T extends Rpc.Serializable<T>>(
+      name: string,
+      fn: () => Promise<T>,
+    ): Promise<T> =>
+      step.do(name, async () => {
+        if (!(await renewRegistryLease(this.env.DB, holder)))
+          throw new NonRetryableError(`registry lease lost before ${name}`);
+        return fn();
+      });
+    const client = registryClient({ baseUrl, portalUrl: this.env.REGISTRY_PORTAL_URL });
+    const pace = params.paceMs ?? REGISTRY_PACE_MS;
+    const maxDeeds = params.maxDeeds ?? REGISTRY_MAX_DEEDS;
+    try {
+      const today = params.today ?? registryDay(new Date(startedAt));
+      const baseline = await fenced('prepare-entry-baseline', () =>
+        prepareEntryBaseline(this.env.DB, today, holder, startedAt),
+      );
+      if (baseline === 'missing-marker')
+        throw new NonRetryableError(
+          'registry data exists without a verified full-import marker; rebuild or restore its receipt',
+        );
+      if (baseline === 'ready')
+        await fenced('seed-entry-passes', () => seedEntryPasses(this.env.DB, today, startedAt));
+      for (
+        let page = 0;
+        baseline === 'ready' && page < (params.maxPages ?? REGISTRY_MAX_PAGES);
+        page++
+      ) {
+        const pass = await step.do(`entry-pass:${page}`, () =>
+          nextEntryPass(this.env.DB, today, new Date().toISOString()),
+        );
+        if (!pass) break;
+        try {
+          if (page > 0 && (params.portalPaceMs ?? 30_000) > 0)
+            await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 30_000);
+          // Catch inside the durable step: Workflow retries must not bypass Retry-After,
+          // and custom Error properties do not survive durable serialization.
+          const read = await step.do(`portal-read:${page}`, async () => {
+            try {
+              return {
+                response: await client.changes(pass.day, pass.next_page),
+                error: null,
+                retryMs: 0,
+              };
+            } catch (error) {
+              return {
+                response: null,
+                error: String(error),
+                retryMs:
+                  error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000,
+              };
+            }
+          });
+          if (!read.response) {
+            await fenced(`portal-retry-after:${page}`, () =>
+              deferPortal(this.env.DB, new Date(Date.now() + read.retryMs).toISOString()),
+            );
+            console.warn(
+              JSON.stringify({
+                event: 'registry_portal_deferred',
+                day: pass.day,
+                page: pass.next_page,
+                error: read.error,
+              }),
+            );
+            break;
+          }
+          const response = read.response;
+          result.changed += await fenced(`portal-save:${page}`, () =>
+            recordEntryPage(this.env.DB, pass, response, new Date().toISOString()),
+          );
+          if (!response.hasMore) result.changeDays++;
+        } catch (error) {
+          if (error instanceof NonRetryableError) throw error;
+          const wait =
+            error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000;
+          await fenced(`portal-defer:${page}`, () =>
+            deferPortal(this.env.DB, new Date(Date.now() + wait).toISOString()),
+          );
+          console.warn(
+            JSON.stringify({
+              event: 'registry_portal_deferred',
+              day: pass.day,
+              page: pass.next_page,
+              error: String(error),
+            }),
+          );
+          break;
+        }
+      }
+      result.queuedNew = await fenced('queue-new-winners', async () =>
+        queueNewWinners(this.env.DB, new Date().toISOString(), maxDeeds),
+      );
+      for (let b = 0; result.read < maxDeeds; b++) {
+        const batch = await fenced(`deeds:${b}`, async () => {
+          const eiks = await nextQueued(
+            this.env.DB,
+            Math.min(REGISTRY_BATCH, maxDeeds - result.read),
+          );
+          let absent = 0;
+          let roles = 0;
+          for (const [i, eik] of eiks.entries()) {
+            if (i > 0 && pace > 0) await new Promise((r) => setTimeout(r, pace));
+            try {
+              const lookup = await client.deed(eik);
+              if (!(await renewRegistryLease(this.env.DB, holder)))
+                throw new NonRetryableError('registry lease lost after XML read');
+              if (lookup.status === 'absent') absent++;
+              roles += (await storeDeed(this.env.DB, eik, lookup, new Date().toISOString())).roles;
+            } catch (error) {
+              if (error instanceof NonRetryableError) throw error;
+              if (!(await renewRegistryLease(this.env.DB, holder)))
+                throw new NonRetryableError('registry lease lost after failed read');
+              const wait =
+                error instanceof RegistryError
+                  ? Math.max(error.retryMs ?? 0, 6 * 3600000)
+                  : 6 * 3600000;
+              await deferDeed(this.env.DB, eik, new Date(Date.now() + wait).toISOString());
+              if (
+                error instanceof RegistryError &&
+                (error.status === 429 || error.status === 503)
+              ) {
+                await deferXml(
+                  this.env.DB,
+                  new Date(Date.now() + (error.retryMs ?? 180_000)).toISOString(),
+                );
+                break;
+              }
+              console.warn(
+                JSON.stringify({ event: 'registry_deed_deferred', eik, error: String(error) }),
+              );
+            }
+          }
+          return { read: eiks.length, absent, roles };
+        });
+        result.read += batch.read;
+        result.absent += batch.absent;
+        result.roles += batch.roles;
+        if (batch.read < REGISTRY_BATCH) break;
+      }
+      if (baseline === 'building') {
+        const complete = await fenced('complete-entry-baseline', () =>
+          completeEntryBaseline(this.env.DB, holder, new Date().toISOString()),
+        );
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: complete ? 'registry_baseline_complete' : 'registry_baseline_building',
+            runId: holder,
+          }),
+        );
+      }
+      console.log(JSON.stringify({ level: 'info', event: 'registry_refresh_complete', ...result }));
+      return result;
+    } finally {
+      await step.do('release-registry-lease', async () =>
+        releaseRegistryLease(this.env.DB, holder),
+      );
+    }
+  }
+}
+
 export default {
-  // Cron entrypoint: kick one durable refresh run. No public route or HTTP trigger is configured.
+  // Cron entrypoint: kick one durable refresh run, and the register layer beside it where it is configured.
+  // No public route or HTTP trigger is configured.
   async scheduled(_controller, env): Promise<void> {
-    const instance = await env.REFRESH.create();
-    console.log(JSON.stringify({ level: 'info', event: 'etl_scheduled_refresh', id: instance.id }));
+    const jobs: [string, () => Promise<unknown>][] = [['refresh', () => env.REFRESH.create()]];
+    if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
+      jobs.push(['registry', () => env.REGISTRY!.create()]);
+    if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
+      jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
+    const results = await Promise.allSettled(
+      jobs.map(async ([job, start]) => {
+        const result = await start();
+        console.log(JSON.stringify({ event: 'etl_scheduled', job, result }));
+      }),
+    );
+    const failures = results.flatMap((r, i) =>
+      r.status === 'rejected' ? [new Error(`${jobs[i]![0]}: ${String(r.reason)}`)] : [],
+    );
+    if (failures.length) throw new AggregateError(failures, 'ETL scheduled starts failed');
   },
 } satisfies ExportedHandler<Env>;
