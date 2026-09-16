@@ -1,6 +1,6 @@
 // node:test — the libel-critical holder classifier (B4, review #226 / todorkolev 2026-07-30).
 // A holder-name cell is classified against the declarant into THREE states, not a byte-equality binary:
-//   self    — the cell is the declarant's own name (a permutation / initialed / subset variant of it);
+//   self    — the cell is the declarant's own name (a complete permutation of it);
 //   related — the cell is CONFIDENTLY a different person (≥2 name components the declarant does not have);
 //   unknown — anything else: counted NOWHERE (forms no link, so it never reaches the published surface).
 // The old `nameKey(holder)===nameKey(declarant) ? 'self' : 'related'` declared a phantom relative for any
@@ -12,19 +12,19 @@ import { classifyHolder } from './parse.mjs';
 
 const DECLARANT = 'Иван Петров Георгиев';
 
-test('classifyHolder — self: exact, empty, reorder, initials, subset (Todor phantom set)', () => {
-  // empty holder cell ⇒ the declarant's own stake (source convention)
-  assert.equal(classifyHolder('', DECLARANT), 'self');
-  assert.equal(classifyHolder('   ', DECLARANT), 'self');
+test('classifyHolder — self requires a complete name; blanks, initials and subsets stay unknown', () => {
+  // A blank required name cell contains no ownership attribution.
+  assert.equal(classifyHolder('', DECLARANT), 'unknown');
+  assert.equal(classifyHolder('   ', DECLARANT), 'unknown');
   // exact
   assert.equal(classifyHolder('Иван Петров Георгиев', DECLARANT), 'self');
-  // Todor's three empirically-observed phantoms — must be self, not related:
-  assert.equal(classifyHolder('Иван Г. Петров', DECLARANT), 'self'); // initial + reorder
+  // Abbreviations must not manufacture a family link or a personal stake:
+  assert.equal(classifyHolder('Иван Г. Петров', DECLARANT), 'unknown'); // incomplete name, no attribution
   assert.equal(classifyHolder('Георгиев Иван Петров', DECLARANT), 'self'); // full reorder
-  assert.equal(classifyHolder('Иван Георгиев', DECLARANT), 'self'); // subset (given+family)
+  assert.equal(classifyHolder('Иван Георгиев', DECLARANT), 'unknown'); // subset is ambiguous
   // case / spacing / diacritic folding must not change the verdict
   assert.equal(classifyHolder('  иван   петров  ГЕОРГИЕВ ', DECLARANT), 'self');
-  assert.equal(classifyHolder('Г. П. Иван', DECLARANT), 'self'); // all initials + reorder resolvable
+  assert.equal(classifyHolder('Г. П. Иван', DECLARANT), 'unknown'); // initials are compatible, but do not prove identity
 });
 
 test('classifyHolder — related: a confidently different person (≥2 foreign components)', () => {

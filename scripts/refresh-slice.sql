@@ -2609,14 +2609,30 @@ DELETE FROM search_index WHERE kind = 'authority';
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
 SELECT 'authority', at.authority_id, at.name, COALESCE(substr(at.authority_id, 6), ''), COALESCE(at.settlement, ''), at.spent_eur
 FROM authority_totals at;
--- Свързани лица: full delete+reinsert (officials are few) so a withdrawn/left-office official — one with no
--- remaining PUBLISHED link (self or family, ADR-0032) — drops out of search, never lingering as a „current"
--- conflict. Mirrors precompute.
-DELETE FROM search_index WHERE kind = 'official';
+-- @refresh-batch official-search-index
+-- Contract refreshes can only change the displayed amount for officials linked to a touched bidder.
+-- Rebuild those officials from all of their links; a full related-persons publish owns withdrawals and
+-- the full-corpus reindex. Keeping this batch incremental avoids scanning every contract for every official
+-- on every daily EOP run, which exceeds D1's per-query CPU limit on the complete corpus.
+DROP TABLE IF EXISTS refresh_official_reindex_scope;
+CREATE TABLE refresh_official_reindex_scope (person_id TEXT PRIMARY KEY);
+INSERT INTO refresh_official_reindex_scope (person_id)
+SELECT DISTINCT affected.person_id
+FROM interest_links affected
+JOIN bidders affected_bidder ON affected_bidder.eik_normalized = affected.eik
+JOIN refresh_touched_bidders touched ON touched.bidder_id = affected_bidder.id;
+DELETE FROM search_index
+WHERE kind = 'official' AND ref IN (SELECT person_id FROM refresh_official_reindex_scope);
 INSERT INTO search_index (kind, ref, title, ident, subtitle, amount)
-SELECT 'official', il.person_id, p.name, NULL,
-  (SELECT d.institution FROM declarations d WHERE d.person_id = il.person_id
-   ORDER BY d.declared_year DESC LIMIT 1),
+SELECT 'official', il.person_id, p.name,
+  (SELECT group_concat(DISTINCT s.name) FROM person_sources s
+   WHERE s.active=1 AND s.namespace='cacbg' AND (s.entity_id=il.person_id OR (s.entity_id IS NULL AND s.legacy_person_id=il.person_id))),
+  -- subtitle: „позиция · институция" from the official's latest filing — both from the same row.
+  (SELECT CASE WHEN COALESCE(d.position, '') <> '' AND COALESCE(d.institution, '') <> ''
+               THEN d.position || ' · ' || d.institution
+               ELSE COALESCE(NULLIF(d.position, ''), d.institution) END
+   FROM declarations d WHERE d.person_id = il.person_id
+   ORDER BY d.declared_year DESC, d.id DESC LIMIT 1),
   -- amount = the CONTEMPORANEOUS conflict-window € (contracts signed while the stake was declared), the same
   -- per-link subquery as LINK_SELECT.contemporaneous_value_eur, summed across the official's SURFACED links.
   -- The redundant-family collapse (WHERE below) leaves at most one link per (official, ЕИК), so no winner's €
@@ -2629,8 +2645,18 @@ SELECT 'official', il.person_id, p.name, NULL,
        WHERE bb.eik_normalized = il.eik
          AND il.first_declared_year IS NOT NULL AND il.last_declared_year IS NOT NULL
          AND cc.signed_at IS NOT NULL
-         AND CAST(strftime('%Y', cc.signed_at) AS INTEGER)
-             BETWEEN CAST(il.first_declared_year AS INTEGER) AND CAST(il.last_declared_year AS INTEGER)))
+         AND strftime('%Y',cc.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year
+         AND NOT EXISTS (
+  SELECT 1 FROM interest_link_observations missing
+  JOIN interest_links source_link ON source_link.link_key=missing.link_key
+  WHERE missing.timing='not_listed' AND missing.reported_year=strftime('%Y',cc.signed_at)
+    AND source_link.eik=il.eik AND source_link.interest_class=il.interest_class
+    AND source_link.status='published'
+    AND (source_link.person_id=il.person_id OR EXISTS (
+      SELECT 1 FROM person_registry_links source_person JOIN person_registry_links target_person
+        ON target_person.registry_indent=source_person.registry_indent
+      WHERE source_person.person_id=source_link.person_id AND target_person.person_id=il.person_id))
+)))
 FROM interest_links il JOIN persons p ON p.id = il.person_id
 -- Self OR family stake (ADR-0032). Two guards mirror the /conflicts read layer (related-persons.ts):
 --  (N9) index only a link whose winner has LIVE contracts, so a stale-zero-contract link never becomes a dead
@@ -2639,6 +2665,7 @@ FROM interest_links il JOIN persons p ON p.id = il.person_id
 --       rendering both re-identifies the relative via a ТР owner lookup, and the company is already surfaced
 --       by the self row.
 WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'family_ownership')
+  AND il.person_id IN (SELECT person_id FROM refresh_official_reindex_scope)
   -- …and the identity rests on a Trade Register fact (#279, ADR-0033). This predicate is the THIRD copy
   -- of the surface gate — the other two are SURFACED_OWNERSHIP in packages/db/src/queries/related-persons.ts
   -- and the sibling block in the other of precompute.sql / refresh-slice.sql. All three must move
@@ -2653,6 +2680,7 @@ WHERE il.status = 'published' AND il.interest_class IN ('private_ownership', 'fa
     WHERE s.person_id = il.person_id AND s.eik = il.eik
       AND s.status = 'published' AND s.interest_class = 'private_ownership'))
 GROUP BY il.person_id, p.name;
+DROP TABLE refresh_official_reindex_scope;
 
 -- @refresh-batch contract-search-index
 DELETE FROM search_index WHERE kind = 'contract' AND ref IN (SELECT id FROM refresh_touched_contracts);

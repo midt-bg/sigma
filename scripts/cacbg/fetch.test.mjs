@@ -15,9 +15,9 @@ import {
   assessCompleteness,
 } from './fetch.mjs';
 
-test('parseCrawlOptions: defaults — no limit, 6 workers', () => {
+test('parseCrawlOptions: defaults — no limit, 8 workers', () => {
   const o = parseCrawlOptions([]);
-  assert.equal(o.concurrency, 6);
+  assert.equal(o.concurrency, MAX_CONCURRENCY);
   assert.equal(o.limit, Infinity);
   assert.equal(o.folders, '');
 });

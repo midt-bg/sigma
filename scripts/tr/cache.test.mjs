@@ -1,30 +1,24 @@
-// node:test — the deed cache. Its job is to make the crawl resumable and to hold the PII rail.
+// node:test — the verdict cache: the hand-off between the decision pass and the loader, and the PII rail.
 //
-// The rail (ADR-0033 decision 5): the INDEX stores no name at all — only ЕИК, dates, codes, verdicts
-// and a body hash. Names exist solely in the raw JSON under git-ignored scratch/, are read only to
-// produce a boolean, and never enter a public table, a response or a log. The ten-digit refusal below
-// is the ЕГН guard, and it is sound precisely because an ЕИК is 9 or 13 digits — never 10.
+// The rail (ADR-0033 decision 5): the INDEX stores no name at all — only ЕИК, dates, codes and verdicts. A
+// registry fact is read only to produce a boolean and never enters a public table, a response or a log.
+// The ten-digit refusal below is the ЕГН guard, and it is sound precisely because an ЕИК is 9 or 13 digits
+// — never 10.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  VERDICT_RETENTION_DAYS,
   openCache,
   upsertDeed,
   markOutsideTr,
-  pendingEiks,
   readDeed,
   coverage,
-  purgeExpired,
-  RETENTION_DAYS,
   verdictInputsHash,
   upsertVerdict,
   readVerdict,
   verdictIsCurrent,
-  verdictCoverage,
-  pendingVerdictEiks,
 } from './cache.mjs';
 
 function tmpDb() {
@@ -67,10 +61,8 @@ test('openCache is idempotent — re-opening an existing cache preserves rows', 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// A cache that survives between runs (ADR-0037) can arrive damaged, and the failure mode is
-// self-perpetuating: a truncated restore that openCache trusted would be saved back under a NEWER
-// key, and every later run would restore it in preference to the good one. The test above is the
-// control — a HEALTHY cache must never be quarantined — and these two are the two ways it can fail.
+// A cache file can arrive damaged. The test above is the control — a HEALTHY cache must never be
+// quarantined — and these two are the two ways it can fail.
 test('openCache quarantines a corrupt cache and starts empty rather than compounding the damage', () => {
   const { dir, file } = tmpDb();
   fs.writeFileSync(file, 'a truncated restore, not a database');
@@ -118,34 +110,6 @@ test('upsertDeed replaces on re-fetch rather than duplicating', () =>
     assert.equal(readDeed(db, '115536179').seatNormalized, 'СОФИЯ');
   }));
 
-test('pendingEiks returns only what is not yet cached — this is what makes a run resumable', () =>
-  withCache((db) => {
-    upsertDeed(db, deed({ eik: '115536179' }));
-    markOutsideTr(db, '204556676', 'BULSTAT association', new Date(), { unambiguous: true });
-    const want = ['115536179', '204556676', '201122335', '203445566'];
-    assert.deepEqual(pendingEiks(db, want).sort(), ['201122335', '203445566']);
-  }));
-
-test('a PROVISIONAL negative stays pending however fresh — one look is not an answer', () =>
-  withCache((db) => {
-    // Without this the second observation could never happen: the row carries a fetched_at, so a
-    // freshness-only test would read „cached" and never ask again.
-    markOutsideTr(db, '204556676', 'empty body');
-    assert.deepEqual(pendingEiks(db, ['204556676']), ['204556676']);
-    markOutsideTr(db, '204556676', 'empty body');
-    assert.deepEqual(pendingEiks(db, ['204556676']), [], 'confirmed, so it settles');
-  }));
-
-test('a stale deed becomes pending again past the TTL, a fresh one does not', () =>
-  withCache((db) => {
-    upsertDeed(db, deed({ fetchedAt: '2026-01-01T00:00:00Z' })); // long past
-    upsertDeed(db, deed({ eik: '201122335', fetchedAt: '2026-08-05T00:00:00Z' }));
-    const now = new Date('2026-08-05T12:00:00Z');
-    assert.deepEqual(pendingEiks(db, ['115536179', '201122335'], { maxAgeDays: 35, now }), [
-      '115536179',
-    ]);
-  }));
-
 test('coverage reports the fraction cached — the input to the fail-closed load gate', () =>
   withCache((db) => {
     upsertDeed(db, deed({ eik: '115536179' }));
@@ -179,12 +143,9 @@ test('valid 9- and 13-digit codes are NOT caught by the ЕГН guard', () =>
     assert.doesNotThrow(() => markOutsideTr(db, '1155361790001', 'клон'));
   }));
 
-// A 13-digit ЕИК (клон/подразделение) CONTAINS ten-digit substrings, so an unanchored /\d{10}/
-// rejects it — and rawPath on the fetched path is `<eik>.json`, derived from that very ЕИК. This is
-// the exact shape fetch-deeds.mjs writes (path.relative(rawDir, deedPath(eik))), and upsertDeed sits
-// past its JSON.parse/assertUicEcho try-catch, so a throw here aborts the whole crawl on the first
-// branch office that returns a deed. The guard's own stated soundness ("an ЕИК is 9 or 13 digits,
-// never 10") only holds if the run is matched as a WHOLE, which is why the pattern is anchored.
+// A 13-digit ЕИК (клон/подразделение) CONTAINS ten-digit substrings, so an unanchored /\d{10}/ rejects
+// it — and every value derived from that ЕИК with it. The guard's own stated soundness („an ЕИК is 9 or
+// 13 digits, never 10") only holds if the run is matched as a WHOLE, which is why the pattern is anchored.
 test('a 13-digit ЕИК does not trip the ЕГН guard through its own derived rawPath', () =>
   withCache((db) => {
     assert.doesNotThrow(() =>
@@ -260,8 +221,8 @@ test('verdictInputsHash is stable, and blind to the order a Set happened to iter
     verdictInputsHash({ ...INPUT, declaredSeats: ['София', 'Пловдив'] }),
     'declaredSeats comes from a Set spread — insertion order must not look like a change',
   );
-  // The deed side is not hashed: a changed deed is caught by freshness and re-decided outright.
-  assert.equal(verdictInputsHash({ ...INPUT, deed: { a: 1 } }), verdictInputsHash(INPUT));
+  // The registry side is not hashed: every run decides every link again against the registry as it stands.
+  assert.equal(verdictInputsHash({ ...INPUT, registry: { a: 1 } }), verdictInputsHash(INPUT));
   for (const k of Object.keys(INPUT)) {
     const changed = { ...INPUT, [k]: typeof INPUT[k] === 'boolean' ? !INPUT[k] : 'CHANGED' };
     assert.notEqual(
@@ -278,6 +239,30 @@ test('verdictInputsHash REFUSES an input it does not know', () => {
   assert.throws(
     () => verdictInputsHash({ ...INPUT, someNewSignal: true }),
     /unrecognised.*someNewSignal/i,
+  );
+});
+
+test('dated seat evidence is order independent, but swapping its years invalidates a cached verdict', () => {
+  const hash = (pairs) => verdictInputsHash({ ...INPUT, declaredSeatYears: pairs });
+  assert.equal(
+    hash([
+      ['София', 2018],
+      ['Видин', 2021],
+    ]),
+    hash([
+      ['Видин', 2021],
+      ['София', 2018],
+    ]),
+  );
+  assert.notEqual(
+    hash([
+      ['София', 2018],
+      ['Видин', 2021],
+    ]),
+    hash([
+      ['София', 2021],
+      ['Видин', 2018],
+    ]),
   );
 });
 
@@ -299,6 +284,14 @@ test('upsertVerdict replaces on re-decision rather than duplicating', () =>
     const n = db.prepare('SELECT COUNT(*) AS n FROM verdicts').get().n;
     assert.equal(n, 1);
     assert.equal(readVerdict(db, 'person:ИВАН|МВР|201122335').kind, 'refuted');
+  }));
+
+test('a historical role end round-trips and is cleared by a later live verdict', () =>
+  withCache((db) => {
+    upsertVerdict(db, VERDICT({ roleEndedOn: '2022-01-01' }));
+    assert.equal(readVerdict(db, VERDICT().linkKey).roleEndedOn, '2022-01-01');
+    upsertVerdict(db, VERDICT());
+    assert.equal(readVerdict(db, VERDICT().linkKey).roleEndedOn, null);
   }));
 
 test('a verdict is stale when the rules moved, the declaration moved, or it simply aged', () =>
@@ -325,73 +318,6 @@ test('a verdict is stale when the rules moved, the declaration moved, or it simp
     assert.ok(!verdictIsCurrent(null, link, { rulesVersion: RULES }), 'absent is not current');
   }));
 
-test('coverage and pending are computed over LINKS, because one company carries several', () =>
-  withCache((db) => {
-    const hash = verdictInputsHash(INPUT);
-    const links = [
-      { linkKey: 'a', eik: '201122335', inputsHash: hash },
-      { linkKey: 'b', eik: '201122335', inputsHash: hash },
-      { linkKey: 'c', eik: '203445566', inputsHash: hash },
-    ];
-    upsertVerdict(db, VERDICT({ linkKey: 'a' }));
-    const opts = { rulesVersion: RULES };
-
-    const cov = verdictCoverage(db, links, opts);
-    assert.deepEqual(
-      { wanted: cov.wanted, current: cov.current, missing: cov.missing },
-      {
-        wanted: 3,
-        current: 1,
-        missing: 2,
-      },
-    );
-    // 'b' has no verdict yet, so its company must still be fetched even though 'a' on the SAME ЕИК is
-    // decided — a rules bump invalidates links independently of when the deed was last seen.
-    assert.deepEqual(pendingVerdictEiks(db, links, opts), ['201122335', '203445566']);
-
-    upsertVerdict(db, VERDICT({ linkKey: 'b' }));
-    upsertVerdict(db, VERDICT({ linkKey: 'c', eik: '203445566' }));
-    assert.equal(verdictCoverage(db, links, opts).missing, 0);
-    assert.deepEqual(
-      pendingVerdictEiks(db, links, opts),
-      [],
-      'a complete cache costs zero requests',
-    );
-  }));
-
-test('pendingVerdictEiks rotates by staleness — oldest first, never-decided ahead of all', () =>
-  withCache((db) => {
-    // THE anti-starvation property. Sorted by ЕИК, a budget-bounded run serves the same prefix every
-    // time: once the whole set goes stale together — which is what a refresh window does — the tail is
-    // never decided again, loses its rows to the purge, and takes the published links with it. So the
-    // decided-at order here is deliberately the REVERSE of the ЕИК order; a lexicographic
-    // implementation returns them backwards and this test is what says so.
-    const now = new Date('2026-08-19T00:00:00Z');
-    const daysAgo = (n) => new Date(now.getTime() - n * 86_400_000).toISOString();
-    const eiks = ['201122335', '203445566', '204556676'];
-    const hash = verdictInputsHash(INPUT);
-    const links = eiks.map((e) => ({ linkKey: `k:${e}`, eik: e, inputsHash: hash }));
-
-    // Newest first in ЕИК order → oldest is the LAST ЕИК alphabetically.
-    eiks.forEach((e, i) =>
-      upsertVerdict(db, VERDICT({ linkKey: `k:${e}`, eik: e, decidedAt: daysAgo(10 + i * 10) })),
-    );
-    const opts = { rulesVersion: RULES, maxAgeDays: 5, now };
-    assert.deepEqual(
-      pendingVerdictEiks(db, links, opts),
-      [...eiks].reverse(),
-      'oldest lookup must go first, which here is the reverse of the ЕИК order',
-    );
-
-    // A never-decided link outranks every stale one, however old.
-    const fresh = { linkKey: 'k:new', eik: '201122335', inputsHash: hash };
-    assert.equal(
-      pendingVerdictEiks(db, [...links, fresh], opts)[0],
-      '201122335',
-      'its company jumps the queue: no verdict at all beats a merely stale one',
-    );
-  }));
-
 test('the verdicts schema exposes no column that could hold a third party name', () =>
   withCache((db) => {
     const cols = db
@@ -412,7 +338,7 @@ test('the verdicts schema exposes no column that could hold a third party name',
     assert.ok(cols.includes('registry_role'));
   }));
 
-test('the ЕГН guard screens a verdict too — it is the row that CROSSES a run boundary', () =>
+test('the ЕГН guard screens a verdict too — it is the row the served tables are built from', () =>
   withCache((db) => {
     assert.throws(
       () => upsertVerdict(db, VERDICT({ registryRole: 'управител 8011129876' })),
@@ -432,37 +358,38 @@ test('inputsHash is exempt from the ЕГН guard — a digit run in a digest is 
     assert.equal(readVerdict(db, VERDICT().linkKey).inputsHash, digestWithTenDigits);
   }));
 
-test("verdicts age out on their OWN clock, which outlasts the deeds' privacy one", () =>
-  withCache((db, dir) => {
-    // The two windows answer different questions and must not be one number. Purged on the deed's
-    // 35-day privacy clock, a verdict would go before a budget-bounded crawl could refresh it, and the
-    // surface would shrink on the calendar rather than on the evidence.
-    assert.ok(
-      VERDICT_RETENTION_DAYS > RETENTION_DAYS,
-      'freshness window must outlast the privacy one',
+test('canonical link hashes may contain digits without admitting personal data or malformed keys', () =>
+  withCache((db) => {
+    const digest = `ab1234567890${'c'.repeat(52)}`;
+    for (const suffix of ['', '|family']) {
+      const linkKey = `person:identity:${digest}|201122335${suffix}`;
+      assert.doesNotThrow(() => upsertVerdict(db, VERDICT({ linkKey })));
+      assert.ok(readVerdict(db, linkKey));
+    }
+    for (const linkKey of [
+      `person:identity:${digest.slice(1)}|201122335`,
+      `person:identity:${digest}|201122336`,
+      `person:identity:${digest}|201122335|8011129876`,
+      'person:ИВАН 8011129876|МВР|201122335',
+    ])
+      assert.throws(() => upsertVerdict(db, VERDICT({ linkKey })), /REFUSE TO STORE/);
+    assert.throws(
+      () =>
+        upsertVerdict(
+          db,
+          VERDICT({
+            linkKey: `person:identity:${digest}|201122335`,
+            matchedFact: '8011129876',
+          }),
+        ),
+      /ЕГН/,
     );
-    const now = new Date('2026-08-19T00:00:00Z');
-    const daysAgo = (n) => new Date(now.getTime() - n * 86_400_000).toISOString();
-
-    upsertVerdict(
-      db,
-      VERDICT({ linkKey: 'ancient', decidedAt: daysAgo(VERDICT_RETENTION_DAYS + 1) }),
-    );
-    // Past the DEED window but inside the verdict one — the case that decides whether the split works.
-    upsertVerdict(db, VERDICT({ linkKey: 'between', decidedAt: daysAgo(RETENTION_DAYS + 2) }));
-    upsertVerdict(db, VERDICT({ linkKey: 'fresh', decidedAt: daysAgo(1) }));
-
-    const out = purgeExpired(db, path.join(dir, 'deeds'), { now });
-    assert.equal(out.verdicts, 1, 'only the one past the VERDICT window goes');
-    assert.equal(readVerdict(db, 'ancient'), null);
-    assert.ok(readVerdict(db, 'between'), 'a deed-expired verdict survives — different clocks');
-    assert.ok(readVerdict(db, 'fresh'));
   }));
 
-test('upsertVerdict enforces the closed vocabulary where the row CROSSES a run boundary', () =>
+test('upsertVerdict enforces the closed vocabulary where the verdict is written', () =>
   withCache((db) => {
-    // load.mjs refuses to seal a fact outside the vocabulary, but that runs a month later on a row
-    // that has already travelled between runs. The writer has to make the promise the schema states.
+    // load.mjs refuses to seal a fact outside the vocabulary too, but the writer has to make the promise
+    // the schema states.
     assert.throws(() => upsertVerdict(db, VERDICT({ matchedFact: 'name' })), /closed vocabulary/);
     assert.throws(
       () => upsertVerdict(db, VERDICT({ matchedFact: 'ИВАН ПЕТРОВ ТЕСТОВ' })),
@@ -541,127 +468,3 @@ test('an UNAMBIGUOUS negative (404) is permanent on one observation', () =>
     );
     assert.equal(readDeed(db, '204556676').status, 'outside_tr');
   }));
-
-// ── retention (ADR-0033 decision 5) ───────────────────────────────────────────
-// The ADR promises „a 35-day retention and a purge step in the same job". Freshness (pendingEiks'
-// maxAgeDays) only makes a row pending again — it re-REQUESTS, it never deletes. Only this purge
-// removes the third-party names in the raw deed, so these tests are the difference between a stated
-// TTL and an enforced one.
-function withRaw(fn) {
-  const { dir, file } = tmpDb();
-  const rawDir = path.join(dir, 'deeds');
-  fs.mkdirSync(rawDir, { recursive: true });
-  const db = openCache(file);
-  try {
-    return fn(db, rawDir);
-  } finally {
-    db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-const writeRaw = (rawDir, eik) =>
-  fs.writeFileSync(path.join(rawDir, `${eik}.json`), '{"names":"third-party PII"}');
-
-test('purgeExpired deletes the raw deed AND its row past the retention window', () =>
-  withRaw((db, rawDir) => {
-    const now = new Date('2026-08-05T00:00:00Z');
-    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-05-01T00:00:00Z' })); // ~96 days old
-    upsertDeed(db, deed({ eik: '201122335', fetchedAt: '2026-08-01T00:00:00Z' })); // 4 days old
-    writeRaw(rawDir, '115536179');
-    writeRaw(rawDir, '201122335');
-
-    const res = purgeExpired(db, rawDir, { retentionDays: 35, now });
-    assert.equal(res.rows, 1);
-    assert.equal(res.files, 1);
-    assert.equal(fs.existsSync(path.join(rawDir, '115536179.json')), false, 'PII must be gone');
-    assert.equal(readDeed(db, '115536179'), null);
-    // The in-window deed is untouched — a purge that also evicted live cache would force a re-crawl,
-    // which is the one thing the pacing exists to avoid.
-    assert.equal(fs.existsSync(path.join(rawDir, '201122335.json')), true);
-    assert.ok(readDeed(db, '201122335'));
-  }));
-
-test('purgeExpired removes orphaned raw deeds — unreachable data is pure retained PII', () =>
-  withRaw((db, rawDir) => {
-    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-08-01T00:00:00Z' }));
-    writeRaw(rawDir, '115536179');
-    writeRaw(rawDir, '204556676'); // no index row: no read path can ever reach it
-    const res = purgeExpired(db, rawDir, { now: new Date('2026-08-05T00:00:00Z') });
-    assert.equal(res.orphans, 1);
-    assert.equal(fs.existsSync(path.join(rawDir, '204556676.json')), false);
-    assert.equal(fs.existsSync(path.join(rawDir, '115536179.json')), true);
-  }));
-
-test('purgeExpired defaults to the 35-day window and tolerates an already-missing file', () =>
-  withRaw((db, rawDir) => {
-    assert.equal(RETENTION_DAYS, 35);
-    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-06-25T00:00:00Z' })); // 41 days
-    upsertDeed(db, deed({ eik: '201122335', fetchedAt: '2026-07-15T00:00:00Z' })); // 21 days
-    // No raw file on disk for the expired row: already gone is the goal state, not an error.
-    const res = purgeExpired(db, rawDir, { now: new Date('2026-08-05T00:00:00Z') });
-    assert.equal(res.rows, 1);
-    assert.equal(res.files, 0);
-    assert.ok(readDeed(db, '201122335'), 'the 21-day-old deed is inside the window');
-  }));
-
-test('purgeExpired tolerates an orphan that vanished under it, and keeps sweeping', () => {
-  // The benign race: readdirSync lists a name, and it is gone by the time unlink runs (a concurrent
-  // purge, an operator clearing scratch/). The expired loop right above has always tolerated this;
-  // the orphan loop did not, and it throws AFTER the DB DELETE has committed — so the run half-purges,
-  // reports "purge failed", and leaves the operator unable to tell "already gone" from "an orphan
-  // still holding third-party names". Injected rather than staged, because the race cannot be timed
-  // from a test; the injection seam matches the one httpGet/sleep/now already use in this codebase.
-  return withRaw((db, rawDir) => {
-    upsertDeed(db, deed({ eik: '115536179', fetchedAt: '2026-08-01T00:00:00Z' }));
-    writeRaw(rawDir, '115536179');
-    writeRaw(rawDir, '204556676'); // orphan 1 — disappears under us
-    writeRaw(rawDir, '831391124'); // orphan 2 — must still be swept
-
-    const seen = [];
-    const res = purgeExpired(db, rawDir, {
-      now: new Date('2026-08-05T00:00:00Z'),
-      unlink: (p) => {
-        seen.push(path.basename(p));
-        if (p.endsWith('204556676.json')) {
-          const err = new Error('ENOENT: no such file or directory');
-          err.code = 'ENOENT';
-          throw err;
-        }
-        fs.unlinkSync(p);
-      },
-    });
-
-    assert.deepEqual(seen.sort(), ['204556676.json', '831391124.json'], 'both orphans attempted');
-    assert.equal(
-      res.orphans,
-      1,
-      'a file that was already gone was not deleted BY US — do not count it',
-    );
-    assert.equal(fs.existsSync(path.join(rawDir, '831391124.json')), false, 'the sweep continued');
-    assert.equal(
-      fs.existsSync(path.join(rawDir, '115536179.json')),
-      true,
-      'the live deed is untouched',
-    );
-  });
-});
-
-test('purgeExpired still refuses loudly on an orphan it could not delete for a REAL reason', () => {
-  // The other half, and the reason the guard is ENOENT-only. A permission error means retained PII is
-  // still on disk; reporting success would be the failure mode the purge exists to prevent.
-  return withRaw((db, rawDir) => {
-    writeRaw(rawDir, '204556676');
-    assert.throws(
-      () =>
-        purgeExpired(db, rawDir, {
-          now: new Date('2026-08-05T00:00:00Z'),
-          unlink: () => {
-            const err = new Error('EACCES: permission denied');
-            err.code = 'EACCES';
-            throw err;
-          },
-        }),
-      /EACCES/,
-    );
-  });
-});

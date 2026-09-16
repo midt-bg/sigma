@@ -32,6 +32,15 @@ const migration7 = readFileSync(
   'utf8',
 );
 // #306 provenance columns on served `amendments` — promote/refresh-slice write contract_number_raw + link_method.
+// The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
+// person_sources (0018).
+const personMigrations = [
+  '0014_person_profile.sql',
+  '0015_person_observations.sql',
+  '0018_person_entities.sql',
+]
+  .map((f) => readFileSync(resolve(root, 'packages/db/migrations', f), 'utf8'))
+  .join('\n');
 const migration8 = readFileSync(
   resolve(root, 'packages/db/migrations/0008_amendment_provenance.sql'),
   'utf8',
@@ -87,6 +96,7 @@ function build(path: 'normalize' | 'refresh'): DatabaseSync {
   db.exec(schema);
   db.exec(migration2);
   db.exec(migration3 + migration9);
+  db.exec(personMigrations);
   db.exec(migration6);
   db.exec(migration7);
   db.exec(migration8);

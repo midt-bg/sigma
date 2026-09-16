@@ -15,15 +15,16 @@ import { isSealedFact } from '../tr/evidence.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-import { seedVerdicts, readFixtureDeed } from './tr-fixture.mjs';
+import { seedVerdicts, fixtureRegistry, sealFixtureFilings } from './tr-fixture.mjs';
 
 const SUPP_SALT = 'test-salt-9f3a'; // stand-in for the CI secret SUPPRESSION_SALT
 let dir, DB, STAGING, TR_DB, TR_RAW;
 
-function runLoad(extraEnv = {}) {
+function runLoad(extraEnv = {}, args = [], seal = true) {
+  if (seal) sealFixtureFilings(STAGING);
   execFileSync(
     'node',
-    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs')],
+    ['--import', path.join(HERE, 'register-ts.mjs'), path.join(HERE, 'load.mjs'), ...args],
     {
       cwd: ROOT,
       env: {
@@ -40,97 +41,39 @@ function runLoad(extraEnv = {}) {
 }
 
 /**
- * Build a Trade Register cache + raw deeds covering the fixture's winners.
+ * Decide the Trade Register verdicts covering the fixture's winners, from fixture registry facts.
  *
- * `spec[eik]` describes one deed: `owners` / `managers` are full names placed in SEPARATE registry
- * entities (so the entity-boundary rule is exercised end to end), `form` is the numeric legalForm and
- * `suffix` the ЗТРРЮЛНЦ form on fullName. Anything omitted from `spec` is still cached — as a deed
- * naming somebody else — because the loader must FAIL CLOSED on a cache that does not cover every
- * candidate, and a test that silently left ЕИК uncovered would exercise that path by accident.
+ * `spec[eik]` describes one company: `owners` / `managers` are full names of persons standing in those
+ * roles — each its own registered holder — `form` is the legal form (a numeric code, mapped by
+ * fixtureRegistry) and `suffix` the ЗТРРЮЛНЦ form on the name. Anything omitted from `spec` is still read —
+ * as a company naming somebody else — because the loader must FAIL CLOSED on evidence that does not cover
+ * every candidate, and a test that silently left an ЕИК unread would exercise that path by accident.
+ * `omit` leaves an ЕИК unread on purpose.
  */
-function buildTrCache(dbFile, rawDir, spec = {}, { omit = [] } = {}) {
-  fs.mkdirSync(rawDir, { recursive: true });
-  const cache = new DatabaseSync(dbFile);
-  cache.exec(`CREATE TABLE IF NOT EXISTS deeds (
-    eik TEXT PRIMARY KEY, status TEXT NOT NULL, http_status INTEGER, fetched_at TEXT NOT NULL,
-    raw_path TEXT, body_sha256 TEXT, legal_form_code INTEGER, legal_form_verdict TEXT,
-    seat_normalized TEXT, seat_entry_date TEXT, latest_own_entry_date TEXT,
-    attempts INTEGER NOT NULL DEFAULT 1, outside_reason TEXT)`);
-  const src = new DatabaseSync(DB, { readOnly: true });
-  const eiks = src
-    .prepare('SELECT eik_normalized e FROM bidders WHERE eik_normalized IS NOT NULL')
-    .all()
-    .map((r) => r.e);
-  src.close();
-
-  const container = (t) =>
-    `<div class='record-container record-container--preview'><p class='field-text'>${t}</p></div>`;
-  const joinEntities = (names) => names.map(container).join(`<hr class='hr--report' />`);
-
-  for (const eik of eiks) {
-    if (omit.includes(eik)) continue;
-    const d = spec[eik] ?? {};
-    if (d.outsideTr) {
-      cache
-        .prepare(
-          'INSERT OR REPLACE INTO deeds(eik,status,fetched_at,outside_reason) VALUES(?,?,?,?)',
-        )
-        .run(eik, 'outside_tr', '2026-08-05T00:00:00Z', 'HTTP 200, empty body');
-      continue;
-    }
-    const fields = [];
-    const push = (nameCode, names, entryDate) =>
-      names?.length &&
-      fields.push({
-        nameCode,
-        htmlData: joinEntities(names),
-        fieldEntryNumber: '20110502101007',
-        fieldEntryDate: `${entryDate ?? '2011-05-02'}T00:00:00`,
-      });
-    push('CR_F_19_L', d.owners ?? ['НЯКОЙ ДРУГ СОБСТВЕНИК'], d.ownEntryDate);
-    push('CR_F_7_L', d.managers, d.ownEntryDate);
-    if (d.seat) push('CR_F_5_L', [`Населено място: ${d.seat}`], d.seatEntryDate ?? d.ownEntryDate);
-    const deed = {
-      uic: eik,
-      fullName: `"ФИКС" ${d.suffix ?? 'ООД'}`,
-      legalForm: d.form ?? 4,
-      sections: [{ subDeeds: [{ groups: [{ fields }] }] }],
-    };
-    fs.writeFileSync(path.join(rawDir, `${eik}.json`), JSON.stringify(deed));
-    cache
-      .prepare(
-        `INSERT OR REPLACE INTO deeds(eik,status,http_status,fetched_at,raw_path,legal_form_code,
-           legal_form_verdict,seat_normalized,latest_own_entry_date)
-         VALUES(?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        eik,
-        'fetched',
-        200,
-        '2026-08-05T00:00:00Z',
-        `${eik}.json`,
-        d.form ?? 4,
-        d.suffix && /АД|КДА/.test(d.suffix) ? 'joint_stock' : 'closely_held',
-        d.seat ? d.seat.replace(/^гр\.\s*/, '').toUpperCase() : null,
-        d.ownEntryDate ?? '2011-05-02',
-      );
-  }
-  cache.close();
-
-  // The deeds alone decide nothing now: since ADR-0037 the verdict is reached by the crawler and the
-  // loader only reads it. Run the REAL decision over these fixture deeds, so these tests keep
-  // exercising the evidence ladder end to end instead of hand-written verdict rows.
+function buildTrCache(dbFile, _rawDir, spec = {}, { omit = [] } = {}) {
   seedVerdicts({
     workDb: DB,
     staging: STAGING,
     trDb: dbFile,
-    deedFor: (eik) => {
-      if (omit.includes(eik)) return null; // never reached — no verdict, an incomplete cache
-      if ((spec[eik] ?? {}).outsideTr) return { outsideTr: true };
-      return readFixtureDeed(rawDir, eik);
+    registryFor: (eik) => {
+      if (omit.includes(eik)) return null; // never read — no verdict, an incomplete registry
+      const d = spec[eik] ?? {};
+      if (d.outsideTr) return { outsideTr: true };
+      return {
+        registry: fixtureRegistry(eik, {
+          owners: d.owners ?? ['НЯКОЙ ДРУГ СОБСТВЕНИК'],
+          managers: d.managers ?? [],
+          seat: d.seat ?? null,
+          seatEntryDate: d.seatEntryDate ?? null,
+          ownEntryDate: d.ownEntryDate ?? '2011-05-02',
+          form: d.form ?? 4,
+          suffix: d.suffix ?? 'ООД',
+        }),
+      };
     },
   });
 }
+
 const open = () => new DatabaseSync(DB, { readOnly: true });
 
 before(() => {
@@ -742,7 +685,14 @@ before(() => {
   });
   fs.writeFileSync(
     path.join(STAGING, 'filings.jsonl'),
-    filings.map((f) => JSON.stringify(f)).join('\n') + '\n',
+    filings
+      .map((f) =>
+        JSON.stringify({
+          ...f,
+          declarationType: f.template === 'assets' ? 'Annualy' : 'interests',
+        }),
+      )
+      .join('\n') + '\n',
   );
 
   // The Trade Register evidence each link now has to rest on (#279, ADR-0033). Shaped so every
@@ -781,6 +731,43 @@ before(() => {
 });
 
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+test('resolved sibling paths become source URLs without changing declaration IDs', () => {
+  const originals = ['holdings', 'related', 'filings'].map((name) => {
+    const file = path.join(STAGING, name + '.jsonl');
+    return [file, fs.readFileSync(file, 'utf8')];
+  });
+  try {
+    for (const [file, text] of originals)
+      fs.writeFileSync(
+        file,
+        text
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => {
+            const row = JSON.parse(line);
+            return JSON.stringify({ ...row, sourceFolder: row.folder.slice(0, 4) + 'y' });
+          })
+          .join('\n') + '\n',
+      );
+    runLoad();
+    const db = open();
+    const rows = db.prepare('SELECT id, folder_year, xml_file, source_url FROM declarations').all();
+    db.close();
+    assert(rows.length > 0);
+    for (const row of rows) {
+      assert.equal(row.id, `decl:${row.folder_year}:${row.xml_file}`);
+      assert.equal(
+        row.source_url,
+        `https://register.cacbg.bg/${row.folder_year.slice(0, 4)}y/${row.xml_file}`,
+      );
+    }
+  } finally {
+    for (const [file, text] of originals) fs.writeFileSync(file, text);
+    runLoad();
+  }
+});
 
 test('resolves publish/held/quarantine tiers deterministically', () => {
   runLoad();
@@ -848,7 +835,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // his current ДИВЕСТ 2 stake stays published. A later ownership filing that drops a company ends that link.
   const gone = link('666666665', 'Николай Иванов Дивестов');
   const kept = link('777777773', 'Николай Иванов Дивестов');
-  assert.equal(gone.status, 'withdrawn'); // divested — excluded from the published surface
+  assert.equal(gone.status, 'held'); // unconfirmed company; history alone cannot publish
   assert.equal(gone.interest_class, 'private_ownership');
   assert.equal(gone.last_declared_year, '2019'); // dated to its last declaration, never asserted "current"
   assert.equal(kept.status, 'published');
@@ -966,7 +953,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   const divZero = link('101010104', 'Пълен Иванов Дивестов');
   assert.equal(divZero.interest_class, 'private_ownership');
   assert.equal(divZero.last_declared_year, '2019'); // dated to its last declaration, never asserted current
-  assert.equal(divZero.status, 'withdrawn'); // caught by the empty later filing (B1)
+  assert.equal(divZero.status, 'held'); // unconfirmed company remains held despite the dated history
 
   // #226 (Todor B1) PER-TYPE horizon: Интер declared ИНТЕР ТЕХ 8 only in an INTERESTS declaration (2020) and
   // later filed only an ASSET declaration (2023) that, for him, lists no company. A per-person horizon reads
@@ -996,7 +983,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // false and a stake he no longer holds keeps naming him on the public surface. The folder must date it.
   const noYear = link('212121218', 'Безгодин Иванов Дивестов');
   assert.equal(noYear.interest_class, 'private_ownership');
-  assert.equal(noYear.status, 'withdrawn');
+  assert.equal(noYear.status, 'published'); // the proven 2019 link remains historical
   // POSITIVE CONTROL: datable by NEITHER field ⇒ ignored, not guessed. The fallback must not become a
   // licence to invent a horizon — an undatable filing is no evidence of a sale, so this link stays up.
   const noDate = link('232323231', 'Дрънкан Иванов Тестов');
@@ -1211,11 +1198,14 @@ test('a verdict from an OLDER rules version is held, never published', () => {
   cache.exec(`UPDATE verdicts SET rules_version = 'tr-rules-0'`);
   cache.close();
 
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
-    'not one claim may ride a ladder version this code no longer speaks — and the run says so loudly',
+  runLoad({ TR_CACHE_DB: staleDb, TR_RAW_DIR: staleRaw });
+  const checked = open();
+  assert.equal(
+    checked.prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'").get().n,
+    0,
+    'old evidence never publishes, regardless of corpus coverage',
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
 });
 
@@ -1231,7 +1221,7 @@ test('a MOSTLY complete cache still publishes — an incremental crawl has to be
   runLoad(); // restore the full built state for any later reader
 });
 
-test('a substantially incomplete cache refuses EVEN WITH a prior published surface', () => {
+test('missing registry verdicts do not impose a numerical build floor', () => {
   // The floor used to switch off entirely the moment anything had ever been published — so one
   // leftover row from a partial ship, or from the direct UPDATE the suppression runbook sanctions,
   // disabled it. Monotonicity would then dutifully protect that single row while a decimated surface
@@ -1245,41 +1235,18 @@ test('a substantially incomplete cache refuses EVEN WITH a prior published surfa
     .get().n;
   db.close();
   assert.ok(prior > 0, 'there must be a prior surface for this to prove anything');
-  assert.throws(
-    () => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }),
-    /REFUSE TO LOAD[\s\S]*current registry verdict/,
+  assert.doesNotThrow(() => runLoad({ TR_CACHE_DB: partialDb, TR_RAW_DIR: partialRaw }));
+  const checked = open();
+  assert.equal(
+    checked
+      .prepare(
+        "SELECT count(*) n FROM interest_links WHERE status='published' AND eik IN ('444444447','777777773','666666665')",
+      )
+      .get().n,
+    0,
   );
+  checked.close();
   runLoad(); // restore the full built state for any later reader
-});
-
-test('--allow-partial-tr is the deliberate, stated override', () => {
-  // Without an override a single permanently unreachable ЕИК would deadlock the pipeline forever.
-  const partialDb = path.join(dir, 'partial-ok.sqlite');
-  const partialRaw = path.join(dir, 'partial-ok-deeds');
-  buildTrCache(partialDb, partialRaw, {}, { omit: ['121212129'] });
-  assert.doesNotThrow(() =>
-    execFileSync(
-      'node',
-      [
-        '--import',
-        path.join(HERE, 'register-ts.mjs'),
-        path.join(HERE, 'load.mjs'),
-        '--allow-partial-tr',
-      ],
-      {
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          CACBG_DB: DB,
-          CACBG_STAGING: STAGING,
-          TR_CACHE_DB: partialDb,
-          TR_RAW_DIR: partialRaw,
-        },
-        stdio: 'pipe',
-      },
-    ),
-  );
-  runLoad(); // restore the full-cache state for any later reader
 });
 
 test('the candidate ЕИК list is written for the crawler, covering held links too', () => {
@@ -1375,6 +1342,12 @@ test('the published surface is exported BEFORE the wipe, so the audit can gate m
   fs.copyFileSync(DB, firstDb);
   const fdb = new DatabaseSync(firstDb);
   for (const t of [
+    'interest_link_observations',
+    'declaration_identity_evidence',
+    'interest_link_history',
+    'declaration_companies',
+    'person_registry_links',
+    'declaration_metadata',
     'interest_link_evidence',
     'interest_link_authorities',
     'interest_links',
@@ -1614,4 +1587,519 @@ test('corrections are fail-closed on a missing salt, exactly like suppressions',
     () => runLoad({ CACBG_CORRECTIONS_LIST: corrFile, SUPPRESSION_SALT: '' }),
     (err) => /SUPPRESSION_SALT is unset/.test(String(err.stderr ?? '') + String(err.message ?? '')),
   );
+});
+
+test('disposal and pre-appointment facts create historical links without inventing holding years', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const base = JSON.parse(original.trim().split('\n')[0]);
+  try {
+    const rows = ['disposed', 'prior', 'unknown'].map((timing, i) => ({
+      ...base,
+      person: `Исторически Тестов ${i === 0 ? 'Прехвърлител' : 'Предходов'}`,
+      xmlFile: `history-${i}.xml`,
+      controlHash: `history-${i}`,
+      timing,
+    }));
+    fs.writeFileSync(file, original + rows.map((r) => JSON.stringify(r) + '\n').join(''));
+    const isolatedCache = path.join(dir, 'historical-cache.sqlite');
+    fs.copyFileSync(TR_DB, isolatedCache);
+    seedVerdicts({
+      workDb: DB,
+      staging: STAGING,
+      trDb: isolatedCache,
+      registryFor: (eik) =>
+        eik === '111111119'
+          ? { registry: fixtureRegistry(eik, { owners: rows.map((r) => r.person) }) }
+          : null,
+    });
+    runLoad({ TR_CACHE_DB: isolatedCache });
+    const db = open();
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ИСТОРИЧЕСКИ ТЕСТОВ %'",
+        )
+        .get().n,
+      2,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declared_interests WHERE timing IN ('disposed','prior','unknown') AND declaration_id LIKE '%history-%'",
+        )
+        .get().n,
+      3,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declaration_companies WHERE declaration_id LIKE '%history-%'",
+        )
+        .get().n,
+      3,
+      'historical source documents retain their resolved company even without a current link',
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ИСТОРИЧЕСКИ ТЕСТОВ %' AND (first_declared_year IS NOT NULL OR last_declared_year IS NOT NULL)",
+        )
+        .get().n,
+      0,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_link_observations WHERE declaration_id LIKE '%history-%' AND timing IN ('prior','disposed')",
+        )
+        .get().n,
+      2,
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a conflicting stated EIK creates neither a link nor a company-source association', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const base = JSON.parse(original.trim().split('\n')[0]);
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        ...base,
+        person: 'Проверка Противоречив Идентификатор',
+        xmlFile: 'conflicting-eik.xml',
+        controlHash: 'conflicting-eik',
+        entity: 'ДИСТИНКТ ТЕХ 7 ЕООД, ЕИК 222222229',
+      }) + '\n',
+    );
+    runLoad();
+    const db = open();
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declared_interests WHERE declaration_id LIKE '%conflicting-eik.xml'",
+        )
+        .get().n,
+      1,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM declaration_companies WHERE declaration_id LIKE '%conflicting-eik.xml'",
+        )
+        .get().n,
+      0,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM interest_links WHERE person_id LIKE 'person:ПРОВЕРКА ПРОТИВОРЕЧИВ ИДЕНТИФИКАТОР|%'",
+        )
+        .get().n,
+      0,
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later partial change does not erase a family holding absent from its rows', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.link_key, p.name, d.institution FROM interest_links il JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Change',
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after.prepare('SELECT status FROM interest_links WHERE link_key=?').get(link.link_key).status,
+      'published',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a comparable later omission preserves a proven family link as history without extending its years', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      `SELECT il.*, p.name, d.institution FROM interest_links il
+    JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id
+    WHERE il.status='published' AND il.relation='related' LIMIT 1`,
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'later-empty.xml',
+        sourceHash: 'b'.repeat(64),
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Annualy',
+        assetInventoryComparable: true,
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    const historical = after
+      .prepare('SELECT * FROM interest_links WHERE link_key=?')
+      .get(link.link_key);
+    assert.equal(historical.status, 'published');
+    assert.equal(historical.last_declared_year, link.last_declared_year);
+    assert.equal(
+      after
+        .prepare('SELECT later_declaration_year FROM interest_link_history WHERE link_key=?')
+        .get(link.link_key).later_declaration_year,
+      '2030',
+    );
+    assert.equal(
+      after
+        .prepare('SELECT live_status FROM interest_link_evidence WHERE link_key=?')
+        .get(link.link_key).live_status,
+      'terminated',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later document without a visible comparable inventory cannot erase a family holding', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.link_key, p.name, d.institution FROM interest_links il JOIN persons p ON p.id=il.person_id JOIN declarations d ON d.person_id=p.id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2030',
+        xmlFile: 'partial.xml',
+        sourceHash: 'a'.repeat(64),
+        year: '2030',
+        template: 'assets',
+        declarationType: 'Annualy',
+        assetInventoryComparable: false,
+        person: link.name,
+        institution: link.institution,
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after.prepare('SELECT status FROM interest_links WHERE link_key=?').get(link.link_key).status,
+      'published',
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('old staging without disposal semantics is refused before modifying the database', () => {
+  const file = path.join(STAGING, 'manifest.json');
+  const original = fs.readFileSync(file, 'utf8');
+  const db = open();
+  const before = db.prepare('SELECT COUNT(*) n FROM interest_links').get().n;
+  db.close();
+  try {
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 2 }));
+    assert.throws(
+      () => runLoad(),
+      (e) => /Stale declaration staging/.test(String(e.stderr)),
+    );
+    const after = open();
+    assert.equal(after.prepare('SELECT COUNT(*) n FROM interest_links').get().n, before);
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('a later management declaration cannot extend the published ownership period', () => {
+  runLoad();
+  const db = open();
+  const links = db
+    .prepare(
+      "SELECT il.*,p.name FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE il.status='published' AND il.interest_class='private_ownership'",
+    )
+    .all();
+  db.close();
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const original = fs.readFileSync(file, 'utf8');
+  const rows = original.trim().split('\n').map(JSON.parse);
+  const link = links.find((l) => rows.some((h) => h.person === l.name && h.kind === 'shares'));
+  assert.ok(link);
+  const base = rows.find((h) => h.person === link.name && h.kind === 'shares');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        ...base,
+        folder: '2030',
+        year: '2030',
+        xmlFile: 'later-management.xml',
+        kind: 'management',
+        timing: 'current',
+        template: 'interests',
+      }) + '\n',
+    );
+    runLoad();
+    const after = open();
+    assert.equal(
+      after
+        .prepare('SELECT last_declared_year FROM interest_links WHERE link_key=?')
+        .get(link.link_key).last_declared_year,
+      link.last_declared_year,
+    );
+    after.close();
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
+test('same-year inventory differences retain proven links and preserve both sources without asserting timing', () => {
+  runLoad();
+  const db = open();
+  const link = db
+    .prepare(
+      "SELECT il.*,p.name FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE il.status='published' AND il.relation='related' LIMIT 1",
+    )
+    .get();
+  db.close();
+  assert.ok(link);
+  const holdingsFile = path.join(STAGING, 'holdings.jsonl');
+  const filingsFile = path.join(STAGING, 'filings.jsonl');
+  const holdings = fs.readFileSync(holdingsFile, 'utf8');
+  const filings = fs.readFileSync(filingsFile, 'utf8');
+  const base = holdings
+    .trim()
+    .split('\n')
+    .map(JSON.parse)
+    .find((h) => h.person === link.name && h.holderRelation === 'related');
+  assert.ok(base);
+  try {
+    for (const variant of ['duplicate', 'contradictory', 'not_comparable']) {
+      fs.writeFileSync(holdingsFile, holdings);
+      fs.writeFileSync(filingsFile, filings);
+      const extra = {
+        ...base,
+        xmlFile: 'same-year-correction.xml',
+        sourceHash: 'c'.repeat(64),
+        controlHash: 'correction',
+      };
+      fs.appendFileSync(
+        filingsFile,
+        JSON.stringify({
+          ...extra,
+          declarationType: 'Annualy',
+          assetInventoryComparable: variant !== 'not_comparable',
+        }) + '\n',
+      );
+      if (variant === 'duplicate') fs.appendFileSync(holdingsFile, JSON.stringify(extra) + '\n');
+      runLoad();
+      const after = open();
+      const actual = after
+        .prepare(
+          'SELECT status,contract_count,contract_value_eur FROM interest_links WHERE link_key=?',
+        )
+        .get(link.link_key);
+      assert.equal(actual.status, 'published', variant);
+      const omissions = after
+        .prepare(
+          "SELECT declaration_id,reported_year FROM interest_link_observations WHERE link_key=? AND timing='not_listed'",
+        )
+        .all(link.link_key);
+      assert.equal(omissions.length, variant === 'contradictory' ? 1 : 0);
+      if (omissions.length) {
+        assert.equal(omissions[0].declaration_id, `decl:${extra.folder}:${extra.xmlFile}`);
+        assert.equal(omissions[0].reported_year, String(extra.year));
+      }
+      assert.equal(
+        actual.contract_count,
+        link.contract_count,
+        'additional sources never multiply contracts',
+      );
+      assert.equal(actual.contract_value_eur, link.contract_value_eur);
+      after.close();
+    }
+  } finally {
+    fs.writeFileSync(holdingsFile, holdings);
+    fs.writeFileSync(filingsFile, filings);
+  }
+});
+
+test('retains attributed source declarations even without a proven company connection', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  try {
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        folder: '2024',
+        xmlFile: 'source-only.xml',
+        sourceHash: 'd'.repeat(64),
+        year: '2023',
+        template: 'assets',
+        declarationType: 'Annualy',
+        person: 'Източник Иванов Тестов',
+        institution: 'Отделна институция',
+      }) + '\n',
+    );
+    runLoad();
+    const db = open();
+    const row = db
+      .prepare(
+        `SELECT d.person_id,p.name FROM declarations d
+      JOIN persons p ON p.id=d.person_id WHERE d.id='decl:2024:source-only.xml'`,
+      )
+      .get();
+    assert.equal(row?.name, 'Източник Иванов Тестов');
+    assert.equal(
+      db.prepare('SELECT COUNT(*) n FROM interest_links WHERE person_id=?').get(row.person_id).n,
+      0,
+    );
+    assert.ok(
+      db
+        .prepare(
+          "SELECT 1 FROM declaration_metadata WHERE declaration_id='decl:2024:source-only.xml'",
+        )
+        .get(),
+    );
+    db.close();
+  } finally {
+    fs.writeFileSync(file, saved);
+  }
+});
+
+test('a registry-backed rebuild refuses staging that skipped identity evidence before touching the published set', () => {
+  const db = new DatabaseSync(DB);
+  const before = db
+    .prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'")
+    .get().n;
+  const manifestFile = path.join(STAGING, 'manifest.json');
+  const saved = fs.readFileSync(manifestFile, 'utf8');
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(saved), identityRules: null }));
+  try {
+    assert.throws(
+      () => runLoad(),
+      (err) => /Registry identity evidence is required/.test(String(err.stderr)),
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) n FROM interest_links WHERE status='published'").get().n,
+      before,
+    );
+  } finally {
+    fs.writeFileSync(manifestFile, saved);
+    db.close();
+  }
+});
+
+test('a changed listing-group artifact is refused before touching published data', () => {
+  const file = path.join(STAGING, 'source-groups.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const db = new DatabaseSync(DB);
+  const before = db.prepare('SELECT count(*) n FROM interest_links').get().n;
+  try {
+    fs.writeFileSync(file, saved + '{}\n');
+    assert.throws(
+      () => runLoad(),
+      (err) => /Stale declaration staging/.test(String(err.stderr)),
+    );
+    assert.equal(db.prepare('SELECT count(*) n FROM interest_links').get().n, before);
+  } finally {
+    fs.writeFileSync(file, saved);
+    db.close();
+  }
+});
+
+test('a company EIK survives aggregation with name-only declarations in either order', () => {
+  const file = path.join(STAGING, 'holdings.jsonl');
+  const saved = fs.readFileSync(file, 'utf8');
+  const holdings = saved.trim().split('\n').map(JSON.parse);
+  const base = holdings.find((h) => h.entity === 'СИЙ ЕООД');
+  assert.ok(base);
+  const explicit = { ...base, entity: 'СИЙ ЕООД, ЕИК 444444447' };
+  try {
+    for (const pair of [
+      [base, explicit],
+      [explicit, base],
+    ]) {
+      fs.writeFileSync(
+        file,
+        [...holdings.filter((h) => h !== base), ...pair].map(JSON.stringify).join('\n') + '\n',
+      );
+      runLoad({}, ['--emit-candidates']);
+      const candidates = fs
+        .readFileSync(path.join(STAGING, 'candidate-links.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      const merged = candidates.filter(
+        (c) => c.eik === '444444447' && c.declarantName === base.person,
+      );
+      assert.equal(merged.length, 1);
+      assert.equal(merged[0].declaredEik, true);
+    }
+  } finally {
+    fs.writeFileSync(file, saved);
+  }
+});
+
+test('modified identity input without a fresh extraction hash is rejected before rebuilding', () => {
+  const file = path.join(STAGING, 'filings.jsonl');
+  const original = fs.readFileSync(file);
+  sealFixtureFilings(STAGING);
+  const before = fs.readFileSync(DB);
+  try {
+    fs.appendFileSync(file, '\n');
+    assert.throws(() => runLoad({}, [], false), /Stale declaration staging/);
+    assert.deepEqual(fs.readFileSync(DB), before);
+  } finally {
+    fs.writeFileSync(file, original);
+  }
 });

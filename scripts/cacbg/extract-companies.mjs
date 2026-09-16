@@ -12,18 +12,17 @@ const FORM = '(?:КООПЕРАЦИЯ|ФОНДАЦИЯ|СДРУЖЕНИЕ|ЕОО
  */
 export function companyCandidates(text) {
   const out = [];
-  // name (optionally quoted) + a required separator (space or closing quote) + a legal form not glued
-  // to a longer word. The name quantifier is GREEDY: a form-token WORD embedded mid-name (e.g.
-  // „БЪЛГАРСКА АД ГРУП" ООД) must NOT truncate the candidate at the first „АД" — the longest span wins so
-  // the trailing real form matches and the full name is captured. A truncated key („БЪЛГАРСКА АД") could
-  // exact-match an unrelated short bidder = a fabricated conflict (ADR-0016). Both „…" and «…» quote styles
-  // are handled. `\b` is unreliable here — ASCII-only under the /u flag, so Cyrillic breaks it.
-  const re = new RegExp(
-    '[„"“«»]?\\s*([^„"“«»,;]{2,60})[\\s”"«»]+(?:' + FORM + ')(?![А-Яа-яA-Za-z])',
-    'gu',
-  );
+  // Quotes may sit INSIDE the firm's name (ГД „Река“ ЕООД). Match the entire
+  // clause so a known shorter bidder can never steal a prefixed firm's contracts.
+  const re = new RegExp('[^,;\\n]{2,200}[\\s”"«»]+(?:' + FORM + ')(?![А-Яа-яA-Za-z])', 'gu');
   for (const m of String(text).matchAll(re)) {
-    const s = m[0].replace(/^[\s,;]+/, '').trim();
+    const s = m[0]
+      .trim()
+      .replace(
+        /^(?:\d+\s+)?(?:(?:дружествени?\s+)?д[яе]л(?:а|ове)?|участие|акции)\s+(?:на|в|от)\s+/iu,
+        '',
+      )
+      .trim();
     if (s) out.push(s);
   }
   return out;

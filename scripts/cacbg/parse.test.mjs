@@ -3,7 +3,17 @@
 //   <PublicPersonDekl2> interests decl — participation/management/sole-trader (col 2) + related persons.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseList, parseDeclaration } from './parse.mjs';
+import { parseList, parseDeclaration, declarationDate } from './parse.mjs';
+
+test('declaration dates preserve the supplied day and reject missing or impossible dates', () => {
+  assert.equal(declarationDate(' 15. 5. 2026 '), '2026-05-15');
+  assert.equal(declarationDate('06.12.2024г.'), '2024-12-06');
+  assert.equal(declarationDate('2024-02-29T10:00:00'), '2024-02-29');
+  assert.equal(declarationDate('29.02.2023'), null);
+  assert.equal(declarationDate('31.04.2026'), null);
+  assert.equal(declarationDate(''), null);
+  assert.equal(declarationDate({}), null);
+});
 
 const LIST = `<?xml version="1.0"?>
 <root><MainCategory><Category Name="Тест категория">
@@ -30,7 +40,7 @@ function assetDecl({
 <PublicPerson>
   <Personal><Name>${name}</Name><EGN>${egn}</EGN><Address>${address}</Address><Position>Директор</Position></Personal>
   <DeclarationData><Year>${year}</Year><DeclarationType>Годишна</DeclarationType><ControlHash>DEADBEEF</ControlHash></DeclarationData>
-  <Tables><Table Num="11" Description="Прехвърляне на дялове в дружества с ограничена отговорност">${rows}</Table></Tables>
+  <Tables><Table Num="10" Description="Дялове в дружества с ограничена отговорност">${rows}</Table></Tables>
 </PublicPerson>`;
 }
 const selfRow = `<Row>
@@ -83,6 +93,66 @@ test('asset decl: extracts self SHARES, skips empty template rows', () => {
     },
   ]);
   assert.equal(d.familyHoldingCount, 0);
+});
+
+test('asset disposal is retained as an event and cannot masquerade as a holding', () => {
+  const xml = assetDecl({ rows: selfRow }).replace(
+    'Description="Дялове',
+    'Description="Прехвърляне на дялове',
+  );
+  assert.equal(parseDeclaration(xml).interests[0].timing, 'disposed');
+  assert.equal(parseDeclaration(assetDecl({ rows: selfRow })).interests[0].timing, 'annual');
+});
+
+test('official publication flags hide disabled tables, undeclared contents and disabled columns', () => {
+  for (const flag of ['Disabled="True"', 'Disabled="False"', 'Declared="False"']) {
+    const xml = assetDecl({ rows: selfRow }).replace('<Table Num=', `<Table ${flag} Num=`);
+    assert.equal(parseDeclaration(xml).interests.length, 0, flag);
+  }
+  const hiddenCompany = selfRow.replace(
+    'Num="4" Description=',
+    'Num="4" Disabled="True" Description=',
+  );
+  assert.equal(parseDeclaration(assetDecl({ rows: hiddenCompany })).interests.length, 0);
+  // The header hides the whole column, including subsequent rows without the attribute.
+  const hiddenHolder = selfRow.replace(
+    'Num="7" Description=',
+    'Num="7" Disabled="True" Description=',
+  );
+  const d = parseDeclaration(assetDecl({ rows: hiddenHolder + familyRow }));
+  assert.ok(d.interests.every((r) => r.holderRelation === 'unknown'));
+  assert.equal(d.assetInventoryComparable, false);
+});
+
+test('a comparable inventory needs a visible recognised holding table, even when explicitly empty', () => {
+  assert.equal(parseDeclaration(assetDecl({ rows: selfRow })).assetInventoryComparable, true);
+  const empty = assetDecl({ rows: selfRow }).replace('<Table Num=', '<Table Declared="False" Num=');
+  assert.equal(parseDeclaration(empty).assetInventoryComparable, true);
+  assert.equal(parseDeclaration(assetDecl()).assetInventoryComparable, false);
+  const disposed = assetDecl({ rows: selfRow }).replace(
+    'Description="Дялове',
+    'Description="Прехвърляне на дялове',
+  );
+  assert.equal(parseDeclaration(disposed).assetInventoryComparable, false);
+});
+
+test('a change form without an explicit time basis remains unknown; unrecognised versions do not publish', () => {
+  const xml = `<PublicPersonDekl3><Personal><Name>Иван Петров Тестов</Name></Personal>
+    <DeclarationData><DeclarationDate>12.09.2026</DeclarationDate></DeclarationData>
+    <Tables><Table Num="4" Declared="True" Description="Имам / нямам участие в следните търговски дружества">
+      <Row><Cell Num="2" Description="Дружество">Тест ЕООД</Cell></Row>
+    </Table></Tables></PublicPersonDekl3>`;
+  const d = parseDeclaration(xml);
+  assert.equal(d.declarationType, 'Change');
+  assert.equal(d.interests[0].timing, 'unknown');
+  assert.equal(
+    parseDeclaration(xml.replaceAll('PublicPersonDekl3', 'PublicPersonDekl99')).templateType,
+    'unknown',
+  );
+  assert.equal(
+    parseDeclaration(xml.replace('Declared="True"', 'Declared="False"')).interests.length,
+    0,
+  );
 });
 
 test('asset year comes from <Year>, not the folder (off-by-one guard)', () => {
@@ -256,7 +326,7 @@ test('§1.4: an UNRESOLVABLE holder column is unknown, not an own stake', () => 
   // stake then enters the OWN-only path and publishes as the official's private_ownership — the surface's
   // worst failure, since the official did not declare that stake as theirs.
   //
-  // The required distinction is column RESOLVABLE-BUT-EMPTY (→ self, a blank cell means the declarant)
+  // Neither a resolvable-but-empty holder nor an unresolved column proves ownership
   // versus column NOT RESOLVABLE (→ unknown, we have not read the holder at all).
   const renumbered = `<Row>
     <Cell Num="1" Description="Ном. по ред">1</Cell>
@@ -266,14 +336,13 @@ test('§1.4: an UNRESOLVABLE holder column is unknown, not an own stake', () => 
   const it = d.interests.find((i) => i.entity === '"РЕНОМЕР" ЕООД');
   assert.equal(it.holderRelation, 'unknown');
 
-  // POSITIVE CONTROL 1 — the column resolves and the cell is genuinely EMPTY: still the declarant's own
-  // stake. Collapsing both cases to 'unknown' would silently drop every stake declared this way.
+  // A resolvable but empty column is also unknown; it does not identify the holder.
   const blankHolder = `<Row>
     <Cell Num="1" Description="Ном. по ред">1</Cell>
     <Cell Num="4" Description="Наименование на дружеството">"ПРАЗНА" ЕООД</Cell>
     <Cell Num="7" Description="Име: собствено, бащино, фамилно"></Cell></Row>`;
   const blank = parseDeclaration(assetDecl({ rows: blankHolder }), 'BLK.xml');
-  assert.equal(blank.interests[0].holderRelation, 'self');
+  assert.equal(blank.interests[0].holderRelation, 'unknown');
 
   // POSITIVE CONTROL 2 — a resolvable column still classifies a relative and the declarant correctly, so
   // the change bounds one case rather than blanketing the parser.

@@ -8,20 +8,34 @@ const here = dirname(fileURLToPath(import.meta.url));
 const loader = resolve(here, 'cacbg/register-ts.mjs');
 const script = resolve(here, 'emit-refresh-group.mjs');
 
-const emit = (group) =>
+const emit = (group, extraEnv = {}) =>
   execFileSync('node', ['--import', loader, script, group], {
     encoding: 'utf8',
     cwd: resolve(here, '..'),
+    env: { ...process.env, ...extraEnv },
   });
 
-test('emits the entity-search-index group as runnable SQL (what the ETL cron runs)', () => {
-  const out = emit('entity-search-index');
-  // The officials INSERT is present, intact, and terminated — this is exactly the batch the reindex step
-  // pipes into `wrangler d1 execute`, so a break here is a broken production reindex.
+test('emits the incremental official-search-index group as runnable SQL', () => {
+  const out = emit('official-search-index');
+  // The officials INSERT and touched-bidder scope are present and intact. This is exactly the batch the
+  // ETL cron runs, so a break here either leaves stale amounts or restores the full-corpus D1 timeout.
   assert.match(out, /INSERT INTO search_index[\s\S]*'official'/);
+  assert.match(out, /JOIN refresh_touched_bidders touched/);
+  assert.match(out, /DROP TABLE refresh_official_reindex_scope;/);
   assert.match(out, /GROUP BY il\.person_id, p\.name;/);
   // Every statement is semicolon-terminated (d1 execute --file needs terminators).
   assert.ok(out.trim().endsWith(';'), 'ends with a statement terminator');
+});
+
+test('can scope the official reindex to explicit person ids for chunked publication', () => {
+  const out = emit('official-search-index', {
+    SIGMA_OFFICIAL_PERSON_IDS_JSON: JSON.stringify(['person-1', "person'2"]),
+  });
+  assert.match(
+    out,
+    /INSERT INTO refresh_official_reindex_scope \(person_id\) VALUES \('person-1'\),\('person''2'\);/,
+  );
+  assert.doesNotMatch(out, /JOIN refresh_touched_bidders touched/);
 });
 
 test('unknown group name fails loudly (no silent empty reindex)', () => {

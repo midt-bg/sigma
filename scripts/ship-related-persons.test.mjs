@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import {
-  assertShipFloor,
   assertD1TargetAuthorized,
   SHIP_TARGETS,
-  parseMinLinks,
   resolveD1Name,
   insertStatements,
   chunkStatements,
@@ -171,26 +170,6 @@ test('assertD1TargetAuthorized: declared env + allowlisted name + (name↔id) be
   assert.ok(SHIP_TARGETS.production.includes('sigma-blue'));
   assert.ok(SHIP_TARGETS.production.includes('sigma-green'));
   assert.ok(!SHIP_TARGETS.production.includes('sigma')); // there is no slot named `sigma` (#226)
-});
-
-test('assertShipFloor refuses to wipe the live surface below the floor (empty/partial staging)', () => {
-  assert.throws(() => assertShipFloor(0, 50), /refusing to ship: 0 published links/); // the empty-wipe case
-  assert.throws(() => assertShipFloor(49, 50), /< floor 50/);
-  assert.doesNotThrow(() => assertShipFloor(50, 50)); // exactly at the floor is allowed
-  assert.doesNotThrow(() => assertShipFloor(256, 50)); // healthy count
-  assert.doesNotThrow(() => assertShipFloor(3, 3)); // an intentional small set via --min-links=3
-  assert.throws(() => assertShipFloor(2, 3)); // …but one below it still refuses
-});
-
-test('parseMinLinks rejects the valueless-flag footgun and non-positive-integers', () => {
-  // the footgun: a bare `--min-links` → arg() returns `true` → Number(true)=1 collapses the floor 50→1
-  assert.throws(() => parseMinLinks(true), /requires a value/);
-  assert.throws(() => parseMinLinks('abc'), /positive integer/); // non-numeric
-  assert.throws(() => parseMinLinks('0'), /positive integer/); // zero disables the floor
-  assert.throws(() => parseMinLinks('-5'), /positive integer/);
-  assert.throws(() => parseMinLinks('2.5'), /positive integer/); // non-integer
-  assert.equal(parseMinLinks(50), 50); // default (flag absent) passes through
-  assert.equal(parseMinLinks('25'), 25); // --min-links=25
 });
 
 test('resolveD1Name refuses the prod default on a remote ship but keeps it for --local', () => {
@@ -722,33 +701,159 @@ const shipHarness = (over = {}) => {
   return { calls, naps, run: () => runShip(opts) };
 };
 
-test('runShip wipes, then ships every table in request-sized chunks, in order', () => {
+test('runShip uploads staging before atomic promotion and paces every request', () => {
   const h = shipHarness();
-  const summary = h.run();
-
-  assert.deepEqual(
-    h.calls.map(([name]) => name),
-    ['0_wipe', 'persons.1', 'persons.2', 'persons.3', 'declarations'],
-    'wipe first, chunks numbered so a failed request is identifiable, single-chunk table stays bare',
-  );
-  assert.deepEqual(
-    h.calls.map(([, sql]) => sql),
-    ['DELETE FROM persons;', 'A;B;', 'C;D;', 'E;', 'F;'],
-  );
-  assert.deepEqual(summary, { persons: 5, declarations: 1 });
+  assert.deepEqual(h.run(), { persons: 5, declarations: 1 });
+  const names = h.calls.map(([name]) => name);
+  assert.equal(names[0], 'prepare_persons');
+  assert.ok(names.indexOf('prepare_publish') > names.indexOf('declarations.0'));
+  assert.equal(names.at(-2), 'publish');
+  assert.ok(!names.includes('0_wipe'));
+  assert.equal(h.naps.length, h.calls.length - 1);
 });
 
-// THE regression this exists to prevent: the counter used to restart per table, so every table
-// boundary — including wipe → first insert, the most destructive transition in the run — was unpaced.
-test('runShip paces every request boundary, including wipe → first insert', () => {
-  const h = shipHarness();
-  h.run();
-  assert.equal(h.calls.length, 5);
-  assert.deepEqual(
-    h.naps,
-    [500, 500, 500, 500],
-    'one gap between each pair of requests: none before the first, none after the last, and none skipped at a table boundary',
-  );
+test('atomic promotion preserves the live tables on a short staging table or a foreign-key failure', () => {
+  for (const [failure, keyed] of ['short', 'foreign-key'].flatMap((f) => [
+    [f, false],
+    [f, true],
+  ])) {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`PRAGMA foreign_keys=ON;
+        CREATE TABLE persons(id PRIMARY KEY);
+        CREATE TABLE declarations(id PRIMARY KEY,person_id REFERENCES persons(id));
+        INSERT INTO persons VALUES(1); INSERT INTO declarations VALUES(1,1);`);
+      assert.throws(
+        () =>
+          runShip({
+            tables: ['persons', 'declarations'],
+            wipeTables: ['declarations', 'persons'],
+            paceMs: 0,
+            sleep() {},
+            readCounts: (x) => x,
+            readTable(table) {
+              return {
+                rowCount: 1,
+                ...(keyed
+                  ? {
+                      columns: table === 'persons' ? ['id'] : ['id', 'person_id'],
+                      primaryKey: ['id'],
+                    }
+                  : {}),
+                statements: [
+                  table === 'persons'
+                    ? 'INSERT INTO "persons" VALUES(2);'
+                    : `INSERT INTO "declarations" VALUES(2,${failure === 'foreign-key' ? 999 : 2});`,
+                ],
+              };
+            },
+            apply(label, sql) {
+              if (label === 'publish' && failure === 'short')
+                db.exec('DELETE FROM rp_next_declarations');
+              db.exec(sql);
+            },
+          }),
+        failure === 'short' ? /incomplete staging/ : /FOREIGN KEY/,
+      );
+      assert.equal(db.prepare('SELECT id FROM persons').get().id, 1);
+      assert.equal(db.prepare('SELECT person_id FROM declarations').get().person_id, 1);
+    } finally {
+      db.close();
+    }
+  }
+});
+
+test('keyed promotion updates only differences and preserves foreign keys while moving children', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`PRAGMA foreign_keys=ON;
+      CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
+      CREATE TABLE declarations(id INTEGER PRIMARY KEY,person_id REFERENCES persons(id));
+      CREATE TABLE memberships(person_id REFERENCES persons(id),declaration_id REFERENCES declarations(id),PRIMARY KEY(person_id,declaration_id));
+      CREATE TABLE writes(table_name TEXT, id INTEGER);
+      CREATE TRIGGER person_updated AFTER UPDATE ON persons BEGIN INSERT INTO writes VALUES('persons',new.id); END;
+      CREATE TRIGGER declaration_updated AFTER UPDATE ON declarations BEGIN INSERT INTO writes VALUES('declarations',new.id); END;
+      INSERT INTO persons VALUES(1,'unchanged'),(2,'old name'),(3,'obsolete');
+      INSERT INTO declarations VALUES(1,1),(2,2),(3,3),(4,3);
+      INSERT INTO memberships VALUES(1,1),(3,3),(3,4);`);
+    const rows = {
+      persons: [
+        { id: 1, name: 'unchanged' },
+        { id: 2, name: 'new name' },
+        { id: 4, name: null },
+      ],
+      declarations: [
+        { id: 1, person_id: 1 },
+        { id: 2, person_id: 4 },
+        { id: 3, person_id: 4 },
+      ],
+      memberships: [
+        { person_id: 1, declaration_id: 1 },
+        { person_id: 4, declaration_id: 3 },
+      ],
+    };
+    const ship = () =>
+      runShip({
+        tables: Object.keys(rows),
+        wipeTables: ['memberships', 'declarations', 'persons'],
+        paceMs: 0,
+        sleep() {},
+        maxStatements: 5,
+        readCounts: (expected) =>
+          Object.fromEntries(
+            Object.keys(expected).map((t) => [
+              t,
+              db.prepare(`SELECT count(*) n FROM "${t}"`).get().n,
+            ]),
+          ),
+        readTable(table) {
+          const info = db.prepare(`PRAGMA table_info("${table}")`).all();
+          const columns = info.map((c) => c.name);
+          return {
+            rowCount: rows[table].length,
+            columns,
+            primaryKey: info
+              .filter((c) => c.pk)
+              .sort((a, b) => a.pk - b.pk)
+              .map((c) => c.name),
+            statements: insertStatements(table, columns, rows[table]),
+          };
+        },
+        apply(_label, sql) {
+          db.exec(sql);
+        },
+      });
+    ship();
+    for (const [table, expected] of Object.entries(rows)) {
+      assert.deepEqual(
+        db
+          .prepare(`SELECT * FROM "${table}" ORDER BY 1,2`)
+          .all()
+          .map((r) => ({ ...r })),
+        expected,
+      );
+    }
+    const writes = db
+      .prepare('SELECT * FROM writes ORDER BY table_name,id')
+      .all()
+      .map((r) => ({ ...r }));
+    assert.deepEqual(writes, [
+      { table_name: 'declarations', id: 2 },
+      { table_name: 'declarations', id: 3 },
+      { table_name: 'persons', id: 2 },
+    ]);
+    ship();
+    assert.deepEqual(
+      db
+        .prepare('SELECT * FROM writes ORDER BY table_name,id')
+        .all()
+        .map((r) => ({ ...r })),
+      writes,
+    );
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    db.close();
+  }
 });
 
 test('runShip verifies what landed — a short table fails the run', () => {
@@ -790,12 +895,8 @@ test('a swallowing prototype setter cannot drop a table out of the verification'
   }
 });
 
-test('runShip skips a table absent from the work DB without shipping or verifying it', () => {
+test('runShip refuses a missing source table before any request', () => {
   const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
-  const summary = h.run();
-  assert.equal(summary.ghost, 'absent (skipped)');
-  assert.ok(
-    !h.calls.some(([name]) => name.startsWith('ghost')),
-    'an absent table must issue no request',
-  );
+  assert.throws(() => h.run(), /missing ghost/);
+  assert.equal(h.calls.length, 0);
 });

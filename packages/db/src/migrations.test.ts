@@ -12,6 +12,13 @@ const migration1 = resolve(root, 'packages/db/migrations/0001_flow_pairs_bidder_
 const migration2 = resolve(root, 'packages/db/migrations/0002_current_value_currency.sql');
 const migration3 = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 const migration9 = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
+// person_sources (0018).
+const personMigrationPaths = [
+  'packages/db/migrations/0014_person_profile.sql',
+  'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0018_person_entities.sql',
+].map((p) => resolve(root, p));
 const migration10 = resolve(root, 'packages/db/migrations/0010_publishing_gate_constraints.sql');
 const backfill = resolve(root, 'scripts/backfill-current-value-currency.sql');
 const precompute = resolve(root, 'scripts/precompute.sql');
@@ -134,6 +141,7 @@ describe('served migrations', () => {
       readScript(dbPath, migration2);
       readScript(dbPath, migration3);
       readScript(dbPath, migration9);
+      for (const path of personMigrationPaths) readScript(dbPath, path);
       readScript(dbPath, backfill);
       readScript(dbPath, precompute);
 

@@ -21,13 +21,22 @@ function spkiSha256(x509) {
   return crypto.createHash('sha256').update(der).digest('base64');
 }
 
+export const MAX_CONCURRENCY = 8;
+
 // One keep-alive agent; verification happens per-socket below (agents can't verify).
 // Intentional and strictly tighter than default: NOT a global bypass. This agent only ever serves
 // getPinned(), which refuses any host but register.cacbg.bg (line 33) and fails closed on leaf-SPKI
 // mismatch per-socket (lines 58-82). rejectUnauthorized:false is required because the host omits the
 // Sectigo intermediate, so we pin the leaf ourselves. See header (lines 1-11); reviewer-accepted.
 // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
-const agent = new https.Agent({ keepAlive: true, maxSockets: 4, rejectUnauthorized: false });
+const agent = new https.Agent({
+  keepAlive: true,
+  maxSockets: MAX_CONCURRENCY,
+  // Resumed TLS sessions can omit the peer X509 certificate required by our per-socket pin.
+  // Keep-alive still reuses verified sockets; a new socket performs a full handshake.
+  maxCachedSessions: 0,
+  rejectUnauthorized: false,
+});
 
 /**
  * GET a register.cacbg.bg URL with leaf-SPKI pinning. Rejects on pin mismatch BEFORE reading the body.
@@ -50,7 +59,12 @@ export function getPinned(url, { headers = {}, timeoutMs = 30000 } = {}) {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+            address: res.socket?.remoteAddress,
+          }),
         );
         res.on('error', reject);
       },
