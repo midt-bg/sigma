@@ -22,6 +22,9 @@ const migrations = [
   'packages/db/migrations/0000_init.sql',
   'packages/db/migrations/0003_related_persons_foundation.sql',
   'packages/db/migrations/0009_interest_link_evidence.sql',
+  // The surface reads the V2 link history (0014) and per-declaration observations (0015).
+  'packages/db/migrations/0014_person_profile.sql',
+  'packages/db/migrations/0015_person_observations.sql',
 ].map((m) => resolve(root, m));
 const seed = resolve(root, 'scripts/seed.sql');
 

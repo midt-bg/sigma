@@ -32,6 +32,13 @@ const migration2Path = resolve(root, 'packages/db/migrations/0002_current_value_
 const migration3Path = resolve(root, 'packages/db/migrations/0003_related_persons_foundation.sql');
 // …and 0006, joined by the officials block for the Trade Register evidence gate (#279, ADR-0033).
 const migration9Path = resolve(root, 'packages/db/migrations/0009_interest_link_evidence.sql');
+// The officials search rows read person_registry_links (0014), interest_link_observations (0015) and
+// person_sources (0018).
+const personMigrationPaths = [
+  'packages/db/migrations/0014_person_profile.sql',
+  'packages/db/migrations/0015_person_observations.sql',
+  'packages/db/migrations/0018_person_entities.sql',
+].map((p) => resolve(root, p));
 const precomputePath = resolve(root, 'scripts/precompute.sql');
 
 function sqlite(dbPath: string, sql: string): void {
@@ -76,6 +83,7 @@ function freshDb(): string {
   readScript(dbPath, migration2Path);
   readScript(dbPath, migration3Path);
   readScript(dbPath, migration9Path);
+  for (const path of personMigrationPaths) readScript(dbPath, path);
   sqlite(dbPath, CLEAN_FIXTURE);
   return dbPath;
 }

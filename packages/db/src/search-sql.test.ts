@@ -291,8 +291,13 @@ describe('search свързани-лица SQL', () => {
     const pc = officialsBlock('scripts/precompute.sql');
     const rs = officialsBlock('scripts/refresh-slice.sql');
     // Sanity: the block really is the contemporaneous windowed sum, not a lifetime column.
-    expect(pc).toContain('BETWEEN CAST(il.first_declared_year AS INTEGER)');
+    expect(pc).toContain(
+      "strftime('%Y',cc.signed_at) BETWEEN il.first_declared_year AND il.last_declared_year",
+    );
     expect(pc).not.toContain('SUM(il.contract_value_eur)');
-    expect(norm(rs)).toBe(norm(pc));
+    // The slice rebuilds only the officials its window touched; the row itself stays identical.
+    const scope = 'AND il.person_id IN (SELECT person_id FROM refresh_official_reindex_scope)';
+    expect(rs).toContain(scope);
+    expect(norm(rs.replace(scope, ''))).toBe(norm(pc));
   });
 });
