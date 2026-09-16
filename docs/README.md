@@ -24,7 +24,10 @@
 - [`spec/ai-assistant.md`](spec/ai-assistant.md) — спецификация на разговорния аналитичен слой над СИГМА (BgGPT, текст и глас).
 - [`spec/assistant-contracts.md`](spec/assistant-contracts.md) — контрактите BE↔FE за AI асистента (Фаза 1 → Фаза 2).
 - [`spec/related-persons-foundation.md`](spec/related-persons-foundation.md) — спецификация на „свързани лица" (декларирани интереси × обществени поръчки): обхват, модел на данните, съпоставяне, гаранции.
-- [`spec/related-persons-lia.md`](spec/related-persons-lia.md) — оценка на законния интерес и баланса за публикуване на дял на свързано лице (ЗДОИ чл. 41и, C-184/20, Wypych/Satamedia); придружава [ADR-0032](adr/0032-family-ownership-published-under-public-interest.md).
+- [`spec/related-persons-lia.md`](spec/related-persons-lia.md) — лични данни в СИГМА: администратор, основание, източници, какво се публикува и какво не, права на субектите
+
+- [`spec/declaration-semantics.md`](spec/declaration-semantics.md) — проверени източници, времеви смисъл, разграничаване на декларатор и притежател и изисквания за точност.
+- [`spec/person-profiles.md`](spec/person-profiles.md) — общи профили, декларации с приоритет, единен списък с договори и правила за представяне.
 
 ## Стандарти за ревю
 
