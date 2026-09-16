@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it } from 'vitest';
-import { d1FromSqlite } from '@sigma/test-support';
-import { getPersonActivity, getRegistryOfficials } from './person-activity';
+import { d1FromSqlite, throwingD1 } from '@sigma/test-support';
+import { getPersonActivity, getRegistryIdentity, getRegistryOfficials } from './person-activity';
 import { getPersonTimeline } from './person-timeline';
 let db: DatabaseSync;
 afterEach(() => db?.close());
@@ -396,4 +396,48 @@ it('highlights observed office years even after a company role ends, without fil
   expect(timeline.contracts.find((c) => c.year === '2021')!.eligible).toBe(0);
   expect(timeline.contracts.find((c) => c.year === '2022')!.eligible).toBe(1);
   expect(timeline.contracts.find((c) => c.year === null)!.eligible).toBe(0);
+});
+
+it('resolves a declarant to the register identity only through the evidenced bridge, and soft-fails without it', async () => {
+  const d1 = fixture();
+  db.exec("INSERT INTO person_registry_links VALUES('official','canonical')");
+  expect(await getRegistryIdentity(d1, 'official')).toBe('canonical');
+  expect(await getRegistryIdentity(d1, 'stranger')).toBeNull();
+  db.exec('DROP TABLE person_registry_links');
+  expect(await getRegistryIdentity(d1, 'official')).toBeNull();
+  expect(await getRegistryOfficials(d1, 'canonical')).toEqual([]);
+});
+
+it('rethrows every other failure of the identity reads', async () => {
+  const d1 = fixture();
+  db.exec('DROP TABLE interest_links');
+  await expect(getRegistryOfficials(d1, 'canonical')).rejects.toThrow(
+    /no such table: interest_links/,
+  );
+  const locked = throwingD1(new Error('D1_ERROR: database is locked'));
+  await expect(getRegistryIdentity(locked.db, 'official')).rejects.toThrow(/locked/);
+});
+
+it('reads a page that is not a positive whole number as the first', async () => {
+  const d1 = fixture();
+  for (const page of ['0', '-2', '1.5', 'x']) {
+    const activity = await getPersonActivity(
+      d1,
+      'person',
+      ['official'],
+      new URLSearchParams({ page }),
+    );
+    expect(activity.page, page).toBe(1);
+    expect(activity.contracts, page).toHaveLength(4);
+  }
+});
+
+it('gives a declarant the register does not identify no registry reads and no role on the timeline', async () => {
+  const d1 = fixture();
+  const identified = await getPersonTimeline(d1, 'person', ['official']);
+  expect(identified.reads).toEqual([{ eik: '111111111', asOf: '2026-08-30T12:00:00Z' }]);
+  const declared = await getPersonTimeline(d1, null, ['official']);
+  expect(declared.reads).toEqual([]);
+  expect(declared.contracts.reduce((n, r) => n + r.contracts, 0)).toBe(4);
+  expect(declared.contracts.every((r) => r.role === 0)).toBe(true);
 });
