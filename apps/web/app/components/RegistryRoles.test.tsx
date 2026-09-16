@@ -161,3 +161,45 @@ describe('RegistrySource', () => {
     expect(c.querySelector('a[href="/conflicts/methodology#contest"]')).not.toBeNull();
   });
 });
+
+describe('RegistryRoles — uncertain and unlinked entries', () => {
+  const ended = () => container.querySelector('.registry-ended')!;
+
+  it('files a role whose evidence turns uncertain under history, without inventing an end date', () => {
+    render(<CompanyRolesTables roles={[role({ uncertainAfter: '2024-01-15' })]} />);
+    expect(container.textContent).toContain('Няма вписани роли, които да са в сила.');
+    expect(ended().querySelector('h3')!.textContent).toBe('История на ролите (1)');
+    expect(cells(ended().querySelector('table')!, 'До')).toEqual(['Неустановено след 15.01.2024']);
+  });
+
+  it('gives the registered end date once there is one, and keeps the history heading', () => {
+    render(
+      <CompanyRolesTables
+        roles={[
+          role({ uncertainAfter: '2024-01-15', removedOn: '2024-06-01' }),
+          role({ entryNumber: 'e-old', removedOn: '2020-02-02' }),
+        ]}
+      />,
+    );
+    expect(ended().querySelector('h3')!.textContent).toBe('История на ролите (2)');
+    expect(cells(ended().querySelector('table')!, 'До')).toEqual(['01.06.2024', '02.02.2020']);
+  });
+
+  it('names a company with no page here as plain text, and says when the reading date is unknown', () => {
+    const r: PersonRole = {
+      company: { name: 'ДЕЛТА ЕООД', eik: '333333333', href: null },
+      role: 'manager',
+      share: null,
+      sharePct: null,
+      addedOn: '2020-02-02',
+      removedOn: null,
+      entryNumber: 'e2',
+      fetchedAt: '',
+    };
+    render(<PersonRolesTables roles={[r]} />);
+    const table = container.querySelector('table')!;
+    expect(cells(table, 'Дружество')).toEqual(['ДЕЛТА ЕООД']);
+    expect(table.querySelector('td[data-label="Дружество"] a')).toBeNull();
+    expect(cells(table, 'Партида')[0]).toContain('Извлечено на неизвестна дата');
+  });
+});
