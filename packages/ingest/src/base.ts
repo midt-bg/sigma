@@ -48,7 +48,7 @@ function maxDataYear(): number {
   return new Date().getUTCFullYear() + 1;
 }
 
-function validYear(year: number): boolean {
+export function validYear(year: number): boolean {
   return Number.isInteger(year) && year >= MIN_DATA_YEAR && year <= maxDataYear();
 }
 

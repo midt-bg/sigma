@@ -7,15 +7,7 @@ import {
   LOT_STAGING_COLS,
   PARTY_STAGING_COLS,
 } from './ocds';
-import {
-  upsertAmendmentStaging,
-  upsertBaseAmendmentStaging,
-  upsertBaseContractStaging,
-  upsertBaseTenderStaging,
-  upsertContractStaging,
-  upsertLotStaging,
-  upsertPartyStaging,
-} from './staging';
+import { BASE_STAGING, OCDS_STAGING, upsertStagingRows, type StagingTarget } from './staging';
 
 // Capturing D1 over the shared recording double. The staging layer's whole job is statement
 // construction (scoped DELETE, chunked INSERTs, null-fill) against arbitrary generated SQL, so there
@@ -50,11 +42,11 @@ function captureDb(): { db: D1Database; batches: Captured[][] } {
 const row = (cols: readonly string[], overrides: Record<string, unknown> = {}) =>
   Object.fromEntries(cols.map((c) => [c, overrides[c] ?? `${c}-val`]));
 
-describe('upsertContractStaging', () => {
+describe('upsertStagingRows', () => {
   it('deletes the source scope then inserts, all in one batch, returning the row count', async () => {
     const { db, batches } = captureDb();
     const rows = [row(CONTRACT_STAGING_COLS), row(CONTRACT_STAGING_COLS)] as never;
-    const n = await upsertContractStaging(db, 'aop', rows);
+    const n = await upsertStagingRows(db, OCDS_STAGING.contracts, 'aop', rows);
 
     expect(n).toBe(2);
     expect(batches).toHaveLength(1);
@@ -74,7 +66,7 @@ describe('upsertContractStaging', () => {
     const partial = row(CONTRACT_STAGING_COLS);
     delete partial[CONTRACT_STAGING_COLS[1]!]; // absent key
     delete partial[CONTRACT_STAGING_COLS[2]!]; // absent key
-    await upsertContractStaging(db, 'aop', [partial] as never);
+    await upsertStagingRows(db, OCDS_STAGING.contracts, 'aop', [partial] as never);
 
     const insert = batches[0]![1]!;
     expect(insert.binds[0]).toBe(`${CONTRACT_STAGING_COLS[0]}-val`); // present column keeps its value
@@ -85,7 +77,7 @@ describe('upsertContractStaging', () => {
 
   it('issues a lone scoped DELETE and inserts nothing for an empty set', async () => {
     const { db, batches } = captureDb();
-    const n = await upsertContractStaging(db, 'aop', []);
+    const n = await upsertStagingRows(db, OCDS_STAGING.contracts, 'aop', []);
 
     expect(n).toBe(0);
     expect(batches).toHaveLength(1);
@@ -99,7 +91,7 @@ describe('chunking at CHUNK=100', () => {
 
   it('keeps a full 100-row set (plus the DELETE) in a single batch', async () => {
     const { db, batches } = captureDb();
-    const n = await upsertContractStaging(db, 's', make(100));
+    const n = await upsertStagingRows(db, OCDS_STAGING.contracts, 's', make(100));
     expect(n).toBe(100);
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(101); // DELETE + 100 inserts
@@ -107,7 +99,7 @@ describe('chunking at CHUNK=100', () => {
 
   it('splits 101 rows into [DELETE+100] then [1], DELETE only in the first batch', async () => {
     const { db, batches } = captureDb();
-    const n = await upsertContractStaging(db, 's', make(101));
+    const n = await upsertStagingRows(db, OCDS_STAGING.contracts, 's', make(101));
     expect(n).toBe(101);
     expect(batches).toHaveLength(2);
     expect(batches[0]).toHaveLength(101);
@@ -124,7 +116,7 @@ describe('chunking at CHUNK=100', () => {
 
   it('splits 250 rows into three batches (101, 100, 50)', async () => {
     const { db, batches } = captureDb();
-    const n = await upsertContractStaging(db, 's', make(250));
+    const n = await upsertStagingRows(db, OCDS_STAGING.contracts, 's', make(250));
     expect(n).toBe(250);
     expect(batches.map((b) => b.length)).toEqual([101, 100, 50]);
   });
@@ -133,42 +125,47 @@ describe('chunking at CHUNK=100', () => {
 describe('table + column routing per staging target', () => {
   const cases: Array<{
     name: string;
-    fn: (db: D1Database, source: string, rows: never) => Promise<number>;
+    target: StagingTarget;
     table: string;
     cols: readonly string[];
   }> = [
     {
       name: 'amendment',
-      fn: upsertAmendmentStaging,
+      target: OCDS_STAGING.amendments,
       table: 'raw_amendments',
       cols: AMENDMENT_STAGING_COLS,
     },
-    { name: 'party', fn: upsertPartyStaging, table: 'raw_ocds_parties', cols: PARTY_STAGING_COLS },
-    { name: 'lot', fn: upsertLotStaging, table: 'raw_ocds_lots', cols: LOT_STAGING_COLS },
+    {
+      name: 'party',
+      target: OCDS_STAGING.parties,
+      table: 'raw_ocds_parties',
+      cols: PARTY_STAGING_COLS,
+    },
+    { name: 'lot', target: OCDS_STAGING.lots, table: 'raw_ocds_lots', cols: LOT_STAGING_COLS },
     {
       name: 'base-contract',
-      fn: upsertBaseContractStaging,
+      target: BASE_STAGING.contracts,
       table: 'raw_contracts',
       cols: BASE_CONTRACT_COLS,
     },
     {
       name: 'base-tender',
-      fn: upsertBaseTenderStaging,
+      target: BASE_STAGING.tenders,
       table: 'raw_tenders',
       cols: BASE_TENDER_COLS,
     },
     {
       name: 'base-amendment',
-      fn: upsertBaseAmendmentStaging,
+      target: BASE_STAGING.annexes,
       table: 'raw_amendments',
       cols: BASE_AMENDMENT_COLS,
     },
   ];
 
-  for (const { name, fn, table, cols } of cases) {
+  for (const { name, target, table, cols } of cases) {
     it(`${name} → ${table} with its own column set`, async () => {
       const { db, batches } = captureDb();
-      const n = await fn(db, 'src', [row(cols)] as never);
+      const n = await upsertStagingRows(db, target, 'src', [row(cols)] as never);
       expect(n).toBe(1);
       expect(batches[0]![0]!.sql).toBe(`DELETE FROM ${table} WHERE source = ?`);
       expect(batches[0]![1]!.sql).toContain(`INSERT INTO ${table} (${cols.join(', ')})`);

@@ -23,7 +23,7 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
-import { addDays, computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
 import { runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
@@ -99,6 +99,19 @@ function stagedRows(results: Awaited<ReturnType<typeof ingestBucketWindow>>): nu
   );
 }
 
+// Every step that WRITES runs behind the fence: renew the lease, and if it is no longer ours,
+// stop before touching anything. Workflows resume a run from cached step results after retries
+// that can outlast the TTL, so "acquired" at step one proves nothing at step twenty — the data
+// path may belong to a newer instance by then. Losing the lease is final for this run.
+function fence(step: WorkflowStep, lostLease: (name: string) => Promise<string | null>) {
+  return <T extends Rpc.Serializable<T>>(name: string, fn: () => Promise<T>): Promise<T> =>
+    step.do(name, async () => {
+      const lost = await lostLease(name);
+      if (lost !== null) throw new NonRetryableError(lost);
+      return fn();
+    });
+}
+
 // The on-platform daily refresh reads storage.eop.bg buckets directly. It is intentionally a small
 // steady-state job: if D1 is many days behind, the Workflow caps to a recent window and logs a
 // warning; the large first-run/backfill catch-up is the CLI's job to avoid D1/CPU/subrequest limits.
@@ -147,23 +160,12 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         leaseHolder: lease.holder ?? undefined,
       };
     }
-    // Every step that WRITES runs behind the fence: renew the lease, and if it is no longer ours,
-    // stop before touching anything. Workflows resume a run from cached step results after retries
-    // that can outlast the TTL, so "acquired" at step one proves nothing at step twenty — the data
-    // path may belong to a newer instance by then. Losing the lease is final for this run.
-    const fenced = <T extends Rpc.Serializable<T>>(
-      name: string,
-      fn: () => Promise<T>,
-    ): Promise<T> =>
-      step.do(name, async () => {
-        const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
-        if (!held.acquired) {
-          throw new NonRetryableError(
-            `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`,
-          );
-        }
-        return fn();
-      });
+    const fenced = fence(step, async (name) => {
+      const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
+      return held.acquired
+        ? null
+        : `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`;
+    });
     let results: Awaited<ReturnType<typeof ingestBucketWindow>> = [];
     let staged = 0;
     let derived = 0;
@@ -177,9 +179,25 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     // throwing finally REPLACE the original error, and the gate's verdict must never be hidden
     // behind a staging-drop hiccup.
     let failed = false;
-    let failure: unknown = null;
-    let dropFailed = false;
-    let dropFailure: unknown = null;
+    // The FIRST failure inside finally, boxed rather than a null sentinel: a thrown `null` or
+    // `undefined` is still a failure. Later cleanup failures are logged, never allowed to REPLACE
+    // the run's error (or an earlier cleanup's).
+    let cleanupFailure = null as { error: unknown } | null;
+    const swallow = async (event: string, fn: () => Promise<unknown>): Promise<void> => {
+      try {
+        await fn();
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            event,
+            error: err instanceof Error ? err.message : String(err),
+            afterFailure: failed || cleanupFailure !== null,
+          }),
+        );
+        cleanupFailure ??= { error: err };
+      }
+    };
 
     try {
       await fenced('drop-stale-transient-staging', async () => dropTransientStaging(this.env.DB));
@@ -400,14 +418,13 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       return outcome;
     } catch (err) {
       failed = true;
-      failure = err;
       throw err;
     } finally {
-      try {
-        // The staging tables are ours to drop only while the lease is ours: if a newer instance took
-        // it over, they are ITS tables now. A lost lease here is logged, not thrown — the run has
-        // already failed or finished, and the release below must still happen.
-        await step.do('drop-transient-staging', async () => {
+      // The staging tables are ours to drop only while the lease is ours: if a newer instance took
+      // it over, they are ITS tables now. A lost lease here is logged, not thrown — the run has
+      // already failed or finished, and the release below must still happen.
+      await swallow('etl_refresh_staging_drop_failed', () =>
+        step.do('drop-transient-staging', async () => {
           const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
           if (!held.acquired) {
             console.warn(
@@ -420,46 +437,16 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
             return;
           }
           await dropTransientStaging(this.env.DB);
-        });
-      } catch (dropErr) {
-        dropFailed = true;
-        dropFailure = dropErr;
-        console.error(
-          JSON.stringify({
-            level: 'error',
-            event: 'etl_refresh_staging_drop_failed',
-            error: dropErr instanceof Error ? dropErr.message : String(dropErr),
-            afterFailure: failed,
-          }),
-        );
-      }
-      // The lease is released whatever happened above. Its own failure is logged, never allowed to
-      // REPLACE the run's error (or the drop's): the TTL bounds a lease that could not be released.
-      let releaseFailed = false;
-      let releaseFailure: unknown = null;
-      try {
-        await step.do('release-refresh-lease', async () =>
-          releaseRefreshLease(this.env.DB, leaseHolder),
-        );
-      } catch (releaseErr) {
-        releaseFailed = true;
-        releaseFailure = releaseErr;
-        console.error(
-          JSON.stringify({
-            level: 'error',
-            event: 'etl_refresh_lease_release_failed',
-            error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
-            afterFailure: failed || dropFailed,
-          }),
-        );
-      }
+        }),
+      );
+      // The lease is released whatever happened above: the TTL bounds a lease that could not be
+      // released.
+      await swallow('etl_refresh_lease_release_failed', () =>
+        step.do('release-refresh-lease', async () => releaseRefreshLease(this.env.DB, leaseHolder)),
+      );
       // The run's own error (already propagating) always wins; on an otherwise successful run the
       // FIRST failure inside finally is the run's result.
-      if (!failed) {
-        // Explicit flags, not null sentinels: a thrown `null` or `undefined` is still a failure.
-        if (dropFailed) throw dropFailure;
-        if (releaseFailed) throw releaseFailure;
-      }
+      if (!failed && cleanupFailure) throw cleanupFailure.error;
       if (outcome) {
         console.log(JSON.stringify({ level: 'info', event: 'etl_refresh_complete', ...outcome }));
       }
@@ -528,15 +515,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
       return { ...result, skipped: 'lease-held' };
     }
     // Renewed before every step that writes; losing it is final, as in the refresh.
-    const fenced = <T extends Rpc.Serializable<T>>(
-      name: string,
-      fn: () => Promise<T>,
-    ): Promise<T> =>
-      step.do(name, async () => {
-        if (!(await renewRegistryLease(this.env.DB, holder)))
-          throw new NonRetryableError(`registry lease lost before ${name}`);
-        return fn();
-      });
+    const fenced = fence(step, async (name) =>
+      (await renewRegistryLease(this.env.DB, holder)) ? null : `registry lease lost before ${name}`,
+    );
     const client = registryClient({ baseUrl, portalUrl: this.env.REGISTRY_PORTAL_URL });
     const pace = params.paceMs ?? REGISTRY_PACE_MS;
     const maxDeeds = params.maxDeeds ?? REGISTRY_MAX_DEEDS;
@@ -560,6 +541,20 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           nextEntryPass(this.env.DB, today, new Date().toISOString()),
         );
         if (!pass) break;
+        // Both ways the portal closes a pass early: its Retry-After answer, or any other failed read.
+        const deferPass = async (name: string, retryMs: number, error: string | null) => {
+          await fenced(name, () =>
+            deferPortal(this.env.DB, new Date(Date.now() + retryMs).toISOString()),
+          );
+          console.warn(
+            JSON.stringify({
+              event: 'registry_portal_deferred',
+              day: pass.day,
+              page: pass.next_page,
+              error,
+            }),
+          );
+        };
         try {
           if (page > 0 && (params.portalPaceMs ?? 30_000) > 0)
             await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 30_000);
@@ -582,17 +577,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
             }
           });
           if (!read.response) {
-            await fenced(`portal-retry-after:${page}`, () =>
-              deferPortal(this.env.DB, new Date(Date.now() + read.retryMs).toISOString()),
-            );
-            console.warn(
-              JSON.stringify({
-                event: 'registry_portal_deferred',
-                day: pass.day,
-                page: pass.next_page,
-                error: read.error,
-              }),
-            );
+            await deferPass(`portal-retry-after:${page}`, read.retryMs, read.error);
             break;
           }
           const response = read.response;
@@ -604,17 +589,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           if (error instanceof NonRetryableError) throw error;
           const wait =
             error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000;
-          await fenced(`portal-defer:${page}`, () =>
-            deferPortal(this.env.DB, new Date(Date.now() + wait).toISOString()),
-          );
-          console.warn(
-            JSON.stringify({
-              event: 'registry_portal_deferred',
-              day: pass.day,
-              page: pass.next_page,
-              error: String(error),
-            }),
-          );
+          await deferPass(`portal-defer:${page}`, wait, String(error));
           break;
         }
       }

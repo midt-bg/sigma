@@ -2,6 +2,7 @@ import {
   BASE_AMENDMENT_COLS,
   BASE_CONTRACT_COLS,
   BASE_TENDER_COLS,
+  type BaseCategory,
   type BaseStagingRow,
 } from './base';
 import {
@@ -24,11 +25,30 @@ type StagingRow =
   | LotStagingRow
   | BaseStagingRow;
 
-async function upsertStagingRows<T extends StagingRow>(
+/** Where one mapped row set lands: the raw table and its insert column list. */
+export interface StagingTarget {
+  table: string;
+  cols: readonly string[];
+}
+
+export const OCDS_STAGING = {
+  contracts: { table: 'raw_contracts', cols: CONTRACT_STAGING_COLS },
+  amendments: { table: 'raw_amendments', cols: AMENDMENT_STAGING_COLS },
+  parties: { table: 'raw_ocds_parties', cols: PARTY_STAGING_COLS },
+  lots: { table: 'raw_ocds_lots', cols: LOT_STAGING_COLS },
+} satisfies Record<string, StagingTarget>;
+
+export const BASE_STAGING: Record<BaseCategory, StagingTarget> = {
+  contracts: { table: 'raw_contracts', cols: BASE_CONTRACT_COLS },
+  tenders: { table: 'raw_tenders', cols: BASE_TENDER_COLS },
+  annexes: { table: 'raw_amendments', cols: BASE_AMENDMENT_COLS },
+};
+
+/** Scoped DELETE + batched INSERT into one staging target for one source tag. */
+export async function upsertStagingRows<T extends StagingRow>(
   db: D1Database,
-  table: string,
+  { table, cols }: StagingTarget,
   source: string,
-  cols: readonly string[],
   rows: T[],
 ): Promise<number> {
   const deleteStmt = db.prepare(`DELETE FROM ${table} WHERE source = ?`).bind(source);
@@ -48,61 +68,4 @@ async function upsertStagingRows<T extends StagingRow>(
     await db.batch(stmts);
   }
   return rows.length;
-}
-
-/** Scoped DELETE + batched INSERT into raw_contracts for one OCDS source tag. */
-export async function upsertContractStaging(
-  db: D1Database,
-  source: string,
-  rows: ContractStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_contracts', source, CONTRACT_STAGING_COLS, rows);
-}
-
-export async function upsertAmendmentStaging(
-  db: D1Database,
-  source: string,
-  rows: AmendmentStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_amendments', source, AMENDMENT_STAGING_COLS, rows);
-}
-
-export async function upsertPartyStaging(
-  db: D1Database,
-  source: string,
-  rows: PartyStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_ocds_parties', source, PARTY_STAGING_COLS, rows);
-}
-
-export async function upsertLotStaging(
-  db: D1Database,
-  source: string,
-  rows: LotStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_ocds_lots', source, LOT_STAGING_COLS, rows);
-}
-
-export async function upsertBaseContractStaging(
-  db: D1Database,
-  source: string,
-  rows: BaseStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_contracts', source, BASE_CONTRACT_COLS, rows);
-}
-
-export async function upsertBaseTenderStaging(
-  db: D1Database,
-  source: string,
-  rows: BaseStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_tenders', source, BASE_TENDER_COLS, rows);
-}
-
-export async function upsertBaseAmendmentStaging(
-  db: D1Database,
-  source: string,
-  rows: BaseStagingRow[],
-): Promise<number> {
-  return upsertStagingRows(db, 'raw_amendments', source, BASE_AMENDMENT_COLS, rows);
 }

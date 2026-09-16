@@ -1,7 +1,7 @@
 // The registry layer's D1 side (ADR-0041): which partidas still need reading, the run's lease, and writing one
 // partida's facts. The register itself is read through @sigma/ingest's client; nothing here touches the net.
 import type { DeedLookup, RegistryPerson, RegistryRole } from '@sigma/ingest';
-import { companyNamesFromDeed, deedFacts, rolesFromDeed } from '@sigma/ingest';
+import { addDays, companyNamesFromDeed, deedFacts, rolesFromDeed } from '@sigma/ingest';
 
 export const REGISTRY_LEASE_TTL_MS = 30 * 60 * 1000;
 
@@ -58,18 +58,21 @@ async function leaseHolder(db: D1Database): Promise<string | null> {
 const queued = async (db: D1Database) =>
   (await db.prepare('SELECT COUNT(*) AS n FROM registry_queue').first<{ n: number }>())?.n ?? 0;
 
+/** Every company in scope: winners with a partida ЕИК and a contract, plus the explicitly requested. */
+const REQUESTED_COMPANIES = `(
+         SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
+         WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
+           AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
+         UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
+       ) requested`;
+
 /** Queue the winners never read: companies with a partida ЕИК and at least one contract. */
 export async function queueNewWinners(db: D1Database, now: string, limit: number): Promise<number> {
   const before = await queued(db);
   await db
     .prepare(
       `INSERT OR IGNORE INTO registry_queue (eik, reason, queued_at)
-       SELECT eik, 'new', ?1 FROM (
-         SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
-         WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
-           AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
-         UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
-       ) requested
+       SELECT eik, 'new', ?1 FROM ${REQUESTED_COMPANIES}
        WHERE (NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
          OR (EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok')
            AND (NOT EXISTS (SELECT 1 FROM registry_identity_snapshots s WHERE s.eik=requested.eik)
@@ -263,8 +266,6 @@ export async function storeDeed(
 }
 
 export const ENTRY_DELAYS = [1, 14] as const;
-const dayPlus = (day: string, n: number) =>
-  new Date(Date.parse(`${day}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
 export type EntryBaseline = 'building' | 'ready' | 'missing-marker';
 
@@ -289,7 +290,7 @@ export async function prepareEntryBaseline(
     )
     .first<{ n: number }>();
   if (state || (existing?.n ?? 0) > 0) return 'missing-marker';
-  const through = dayPlus(today, -1);
+  const through = addDays(today, -1);
   await db
     .prepare(
       `INSERT INTO registry_entry_state
@@ -314,12 +315,7 @@ export async function completeEntryBaseline(
        WHERE id=1 AND baseline_status='building'
        AND NOT EXISTS (SELECT 1 FROM registry_queue)
        AND NOT EXISTS (
-         SELECT 1 FROM (
-           SELECT DISTINCT b.eik_normalized AS eik FROM bidders b
-           WHERE b.eik_valid=1 AND length(b.eik_normalized)=9
-             AND EXISTS (SELECT 1 FROM contracts c WHERE c.bidder_id=b.id)
-           UNION SELECT eik FROM registry_requested_companies WHERE length(eik)=9
-         ) requested
+         SELECT 1 FROM ${REQUESTED_COMPANIES}
          WHERE NOT EXISTS (SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik)
             OR EXISTS (
               SELECT 1 FROM registry_deeds d WHERE d.eik=requested.eik AND d.outcome='ok'
@@ -349,14 +345,14 @@ export async function seedEntryPasses(db: D1Database, today: string, now: string
     )
     .first<{ seeded_through: string }>();
   if (!state) throw new Error('registry full-import marker is missing');
-  for (let day = dayPlus(state!.seeded_through, 1); day < today; day = dayPlus(day, 1)) {
+  for (let day = addDays(state!.seeded_through, 1); day < today; day = addDays(day, 1)) {
     await db.batch([
       ...ENTRY_DELAYS.map((delay) =>
         db
           .prepare(
             'INSERT OR IGNORE INTO registry_entry_passes(day,delay,due_on) VALUES (?1,?2,?3)',
           )
-          .bind(day, delay, dayPlus(day, delay)),
+          .bind(day, delay, addDays(day, delay)),
       ),
       db.prepare('UPDATE registry_entry_state SET seeded_through=?1 WHERE id=1').bind(day),
     ]);

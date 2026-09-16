@@ -1,6 +1,8 @@
 // Run the scoped re-derive (scripts/refresh-slice.sql) inside D1. The SQL string is injected by the
 // caller (the Worker imports it as a bundled text asset) so this stays a pure, testable function.
 
+import { addDays } from './fx.ts';
+
 /** Split a multi-statement SQL script into individual statements. Strips `--` line comments outside
  *  single-quoted string literals, and splits on `;` only outside literals. */
 export function splitSqlStatements(sql: string): string[] {
@@ -355,12 +357,6 @@ const PENDING_WINDOW_DDL = `CREATE TABLE IF NOT EXISTS refresh_pending_window (
   PRIMARY KEY (holder, window_from)
 )`;
 
-function shiftDay(day: string, days: number): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 /** Every window an earlier run started and never settled, oldest first; [] when none. */
 export async function pendingWindows(db: D1Database): Promise<PendingWindow[]> {
   const present = await db
@@ -410,8 +406,8 @@ export function subtractCovered(
 ): { from: string; to: string }[] {
   if (window.to < covered.from || window.from > covered.to) return [window]; // disjoint
   const out: { from: string; to: string }[] = [];
-  if (window.from < covered.from) out.push({ from: window.from, to: shiftDay(covered.from, -1) });
-  if (window.to > covered.to) out.push({ from: shiftDay(covered.to, 1), to: window.to });
+  if (window.from < covered.from) out.push({ from: window.from, to: addDays(covered.from, -1) });
+  if (window.to > covered.to) out.push({ from: addDays(covered.to, 1), to: window.to });
   return out;
 }
 

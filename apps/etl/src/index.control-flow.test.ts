@@ -60,12 +60,6 @@ const { ingest, eop, integrity } = vi.hoisted(() => ({
   eop: {
     computeWorkerCatchupPlan: vi.fn(),
     ingestBucketWindow: vi.fn(),
-    // real arithmetic: the residual window is computed from it
-    addDays: (day: string, days: number) => {
-      const d = new Date(`${day}T00:00:00Z`);
-      d.setUTCDate(d.getUTCDate() + days);
-      return d.toISOString().slice(0, 10);
-    },
   },
   integrity: {
     runServedIntegrityGate: vi.fn(async (_db: unknown, _log: GateLog) => {}),

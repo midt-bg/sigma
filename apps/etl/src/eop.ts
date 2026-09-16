@@ -1,19 +1,18 @@
 import {
+  addDays,
+  assertSameFinalHost,
+  BASE_STAGING,
   classifyBucketKey,
   computeCatchupWindow,
   daysInWindow,
+  discardBody,
   mapBaseRecord,
+  OCDS_STAGING,
   releaseToAmendments,
   releaseToContracts,
   releaseToLots,
   releaseToParties,
-  upsertAmendmentStaging,
-  upsertBaseAmendmentStaging,
-  upsertBaseContractStaging,
-  upsertBaseTenderStaging,
-  upsertContractStaging,
-  upsertLotStaging,
-  upsertPartyStaging,
+  upsertStagingRows,
   type BucketKeyKind,
   type OcdsMeta,
   type OcdsPackage,
@@ -72,27 +71,6 @@ const dayUrl = (baseUrl: string, day: string): string =>
 const objectUrl = (bucketUrl: string, key: string): string =>
   `${bucketUrl}${encodeURIComponent(key)}`;
 
-function disallowedFinalHost(requestUrl: string, responseUrl: string): string | null {
-  const requested = new URL(requestUrl);
-  const final = new URL(responseUrl || requestUrl);
-  if (final.host === requested.host) return null;
-  return `blocked redirected EOP fetch from ${requested.host} to ${final.host}`;
-}
-
-// A response body that is never read keeps its stream open for the rest of the invocation; the
-// collector is not a substitute for releasing it. Every path below that walks away from a response
-// without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it here.
-// Deliberately NOT awaited: cancelling only needs to be INITIATED for the runtime to release the
-// stream, and awaiting it would make every caller hostage to a cancel() that never settles, which
-// is precisely the failure mode this file exists to reduce.
-function discardBody(res: Response): void {
-  try {
-    void res.body?.cancel().catch(() => {});
-  } catch {
-    // Already consumed, locked, or errored - there is nothing left to release either way.
-  }
-}
-
 function releaseAndFail(res: Response, message: string): never {
   discardBody(res);
   throw new Error(message);
@@ -113,12 +91,6 @@ export function parseBucketKeys(xml: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) keys.push(decodeXml(m[1] ?? ''));
   return keys;
-}
-
-export function addDays(day: string, days: number): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 function enumerateDays(from: string, to: string): string[] {
@@ -186,26 +158,14 @@ export async function computeWorkerCatchupPlan(
   // A manual `today` in the future is clamped above; the start must not outrun the clamped end.
   const window = { from: widenedFrom > to ? to : widenedFrom, to };
   const originalGapDays = daysInWindow(window.from, window.to);
-  if (originalGapDays <= maxWindowDays) {
-    return {
-      maxLoadedDate,
-      from: window.from,
-      to: window.to,
-      gapDays: originalGapDays,
-      capped: false,
-      originalFrom: window.from,
-      originalGapDays,
-      replayFrom,
-    };
-  }
-
-  const cappedFrom = addDays(window.to, -(maxWindowDays - 1));
+  const capped = originalGapDays > maxWindowDays;
+  const from = capped ? addDays(window.to, -(maxWindowDays - 1)) : window.from;
   return {
     maxLoadedDate,
-    from: cappedFrom,
+    from,
     to: window.to,
-    gapDays: daysInWindow(cappedFrom, window.to),
-    capped: true,
+    gapDays: daysInWindow(from, window.to),
+    capped,
     originalFrom: window.from,
     originalGapDays,
     replayFrom,
@@ -218,8 +178,12 @@ export async function listBucketForDay(
 ): Promise<BucketListing | null> {
   const bucketUrl = dayUrl(opts.baseUrl ?? DEFAULT_BASE_URL, day);
   const res = await fetch(bucketUrl);
-  const blocked = disallowedFinalHost(bucketUrl, res.url);
-  if (blocked) return releaseAndFail(res, blocked);
+  try {
+    assertSameFinalHost(bucketUrl, res.url, 'EOP');
+  } catch (err) {
+    discardBody(res);
+    throw err;
+  }
   if (res.status === 403 || res.status === 404) {
     discardBody(res);
     return null;
@@ -236,8 +200,12 @@ export async function listBucketForDay(
 
 async function fetchJson(url: string): Promise<unknown> {
   const res = await fetch(url);
-  const blocked = disallowedFinalHost(url, res.url);
-  if (blocked) return releaseAndFail(res, blocked);
+  try {
+    assertSameFinalHost(url, res.url, 'EOP');
+  } catch (err) {
+    discardBody(res);
+    throw err;
+  }
   if (!res.ok) return releaseAndFail(res, `${url}: HTTP ${res.status}`);
   return res.json();
 }
@@ -251,10 +219,10 @@ export async function stageOcdsFromBucket(
   const source = `ocds:${listing.day}`;
   if (!key) {
     await Promise.all([
-      upsertContractStaging(db, source, []),
-      upsertAmendmentStaging(db, source, []),
-      upsertPartyStaging(db, source, []),
-      upsertLotStaging(db, source, []),
+      upsertStagingRows(db, OCDS_STAGING.contracts, source, []),
+      upsertStagingRows(db, OCDS_STAGING.amendments, source, []),
+      upsertStagingRows(db, OCDS_STAGING.parties, source, []),
+      upsertStagingRows(db, OCDS_STAGING.lots, source, []),
     ]);
     return { ocdsContracts: 0, ocdsAmendments: 0, parties: 0, lots: 0 };
   }
@@ -276,10 +244,10 @@ export async function stageOcdsFromBucket(
   const parties = releases.flatMap((rel) => releaseToParties(rel, meta));
   const lots = releases.flatMap((rel) => releaseToLots(rel, meta));
 
-  await upsertContractStaging(db, source, contracts);
-  await upsertAmendmentStaging(db, source, amendments);
-  await upsertPartyStaging(db, source, parties);
-  await upsertLotStaging(db, source, lots);
+  await upsertStagingRows(db, OCDS_STAGING.contracts, source, contracts);
+  await upsertStagingRows(db, OCDS_STAGING.amendments, source, amendments);
+  await upsertStagingRows(db, OCDS_STAGING.parties, source, parties);
+  await upsertStagingRows(db, OCDS_STAGING.lots, source, lots);
 
   return {
     ocdsContracts: contracts.length,
@@ -288,6 +256,13 @@ export async function stageOcdsFromBucket(
     lots: lots.length,
   };
 }
+
+// Bucket key kind → its count field, in staging order.
+const BASE_STAGES = [
+  ['contracts', 'baseContracts'],
+  ['tenders', 'baseTenders'],
+  ['annexes', 'baseAmendments'],
+] as const;
 
 function jsonArray(value: unknown, label: string): Record<string, unknown>[] {
   if (!Array.isArray(value)) throw new Error(`${label}: object JSON is not an array`);
@@ -301,40 +276,19 @@ export async function stageBaseFromBucket(
 ): Promise<BaseStageCounts> {
   const counts: BaseStageCounts = { baseContracts: 0, baseTenders: 0, baseAmendments: 0 };
 
-  if (listing.keys.contracts) {
+  for (const [cat, count] of BASE_STAGES) {
+    const key = listing.keys[cat];
+    if (!key) continue;
     const rows = jsonArray(
-      await fetchJson(objectUrl(listing.bucketUrl, listing.keys.contracts)),
-      `contracts ${listing.day}`,
+      await fetchJson(objectUrl(listing.bucketUrl, key)),
+      `${cat} ${listing.day}`,
     )
-      .map((record) => mapBaseRecord('contracts', record, { day: listing.day, fetchedAt }))
+      .map((record) => mapBaseRecord(cat, record, { day: listing.day, fetchedAt }))
       .filter((row): row is NonNullable<typeof row> => row !== null);
-    counts.baseContracts = await upsertBaseContractStaging(
+    counts[count] = await upsertStagingRows(
       db,
-      `eop:contracts:${listing.day}`,
-      rows,
-    );
-  }
-
-  if (listing.keys.tenders) {
-    const rows = jsonArray(
-      await fetchJson(objectUrl(listing.bucketUrl, listing.keys.tenders)),
-      `tenders ${listing.day}`,
-    )
-      .map((record) => mapBaseRecord('tenders', record, { day: listing.day, fetchedAt }))
-      .filter((row): row is NonNullable<typeof row> => row !== null);
-    counts.baseTenders = await upsertBaseTenderStaging(db, `eop:tenders:${listing.day}`, rows);
-  }
-
-  if (listing.keys.annexes) {
-    const rows = jsonArray(
-      await fetchJson(objectUrl(listing.bucketUrl, listing.keys.annexes)),
-      `annexes ${listing.day}`,
-    )
-      .map((record) => mapBaseRecord('annexes', record, { day: listing.day, fetchedAt }))
-      .filter((row): row is NonNullable<typeof row> => row !== null);
-    counts.baseAmendments = await upsertBaseAmendmentStaging(
-      db,
-      `eop:annexes:${listing.day}`,
+      BASE_STAGING[cat],
+      `eop:${cat}:${listing.day}`,
       rows,
     );
   }
