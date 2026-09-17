@@ -359,7 +359,10 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
    `SIGMA_REBUILD_WORKFLOW_NAME` и `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
    `SUPPRESSION_KEY_VERSION` като променлива). Деплоят ги подава на etl worker-а като секрети.
 3. **Деплой.** `wrangler deploy` строи образа от `containers/declarations/Dockerfile` (изпълнителят
-   има Docker) и създава Durable Object namespace-а с миграцията `v1-declarations`.
+   има Docker) и създава Durable Object namespace-а с миграцията `v1-declarations`. Инстанцията е
+   2 ядра, 6 GiB памет и 12 GB диск — измерените върхове на цял ход са около 2,3 GB памет и 5,5 GB
+   диск, а Cloudflare изисква поне 3 GiB памет на ядро и диск не повече от двойната памет, тоест това
+   е най-малката допустима форма при две ядра.
 4. **Първи ход на ръка:** `wrangler workflows trigger <SIGMA_DECLARATIONS_WORKFLOW_NAME>` от
    `apps/etl` с `--config wrangler.deploy.toml`. Workflow-ът приключва с реалния резултат на хода;
    `declarations/corpus-v2/accepted.json` в bucket-а е разписката за одитирано и публикувано.
