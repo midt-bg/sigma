@@ -296,3 +296,41 @@ describe('declaration coordinator guards and status handling', () => {
     expect(f.run()).toMatchObject({ state: 'failed', reason: 'load failed' });
   });
 });
+
+it('rebuilds only an idle slot, passes both slots to the container and follows the rebuild stages', async () => {
+  const f = fixture();
+  const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555' };
+  await expect(f.job().startRun('r', { name: 'test', id: idle.id })).rejects.toThrow('idle slot');
+  await expect(f.job().startRun('r', { name: idle.name, id: 'not-an-id' })).rejects.toThrow(
+    'idle slot',
+  );
+  const run = await f.job().startRun('r', idle);
+  expect(run).toMatchObject({ target: idle, stage: 'import' });
+  await f.job().alarm();
+  const env = (f.container.start.mock.calls[0] as unknown as [{ env: Record<string, string> }])[0]
+    .env;
+  expect(env).toMatchObject({
+    SIGMA_D1_NAME: idle.name,
+    SIGMA_D1_ID: idle.id,
+    SIGMA_LIVE_D1_NAME: 'test',
+    SIGMA_LIVE_D1_ID: 'test',
+    SIGMA_REBUILD: '1',
+  });
+  for (const [stage, completed] of [
+    ['registry', 5],
+    ['extract', 10],
+    ['ship', 3],
+  ] as const) {
+    f.answer({ state: 'running', stage, completed });
+    await f.job().alarm();
+    expect(f.run()).toMatchObject({ stage, completed });
+  }
+  // A network stage is retried; the build restarts in a new attempt.
+  f.answer({ state: 'failed', stage: 'registry', completed: 3, reason: 'timeout' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', reason: 'timeout' });
+  await f.resume();
+  f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'complete', target: idle });
+});

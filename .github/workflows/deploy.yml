@@ -79,6 +79,7 @@ jobs:
       SIGMA_WORKFLOW_NAME: ${{ vars.SIGMA_WORKFLOW_NAME }}
       SIGMA_REGISTRY_WORKFLOW_NAME: ${{ vars.SIGMA_REGISTRY_WORKFLOW_NAME }}
       SIGMA_DECLARATIONS_WORKFLOW_NAME: ${{ vars.SIGMA_DECLARATIONS_WORKFLOW_NAME }}
+      SIGMA_REBUILD_WORKFLOW_NAME: ${{ vars.SIGMA_REBUILD_WORKFLOW_NAME }}
       SIGMA_DECLARATIONS_BUCKET: ${{ vars.SIGMA_DECLARATIONS_BUCKET }}
       # The environment the declarations container declares when it ships (assertD1TargetAuthorized).
       SIGMA_SHIP_ENV: ${{ needs.detect.outputs.env }}
@@ -130,6 +131,7 @@ jobs:
           check "$SIGMA_WORKFLOW_NAME"  sigma-refresh   SIGMA_WORKFLOW_NAME
           check "$SIGMA_REGISTRY_WORKFLOW_NAME" sigma-registry SIGMA_REGISTRY_WORKFLOW_NAME
           check "$SIGMA_DECLARATIONS_WORKFLOW_NAME" sigma-declarations SIGMA_DECLARATIONS_WORKFLOW_NAME
+          check "$SIGMA_REBUILD_WORKFLOW_NAME" sigma-rebuild SIGMA_REBUILD_WORKFLOW_NAME
           check "$SIGMA_DECLARATIONS_BUCKET" sigma-declarations SIGMA_DECLARATIONS_BUCKET
           check "$SIGMA_D1_NAME"        sigma           SIGMA_D1_NAME
           check "$SIGMA_CSV_CACHE_NAME" sigma-csv-cache SIGMA_CSV_CACHE_NAME

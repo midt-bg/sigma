@@ -57,6 +57,7 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_WORKFLOW_NAME` | *(незададена → `sigma-refresh`)* | `sigma-refresh-stage` | render → `[[workflows]] name` |
 | `SIGMA_REGISTRY_WORKFLOW_NAME` | *(незададена → `sigma-registry`)* | `sigma-registry-stage` | render → registry `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_WORKFLOW_NAME` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → declarations `[[workflows]] name` |
+| `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
 | `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
 | `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
 | `SIGMA_D1_NAME` | *(незададена → `sigma`)* | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
@@ -343,8 +344,8 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
 1. **R2 bucket:** `wrangler r2 bucket create <SIGMA_DECLARATIONS_BUCKET>` (staging:
    `sigma-declarations-stage`; production: `sigma-declarations`). Bucket-ът е празен; първият ход
    изтегля целия корпус (няколко часа, в няколко опита на контейнера, всеки до 60 минути изтегляне).
-2. **GitHub Environment:** променливите `SIGMA_DECLARATIONS_WORKFLOW_NAME` и
-   `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
+2. **GitHub Environment:** променливите `SIGMA_DECLARATIONS_WORKFLOW_NAME`,
+   `SIGMA_REBUILD_WORKFLOW_NAME` и `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
    `SUPPRESSION_KEY_VERSION` като променлива). Деплоят ги подава на etl worker-а като секрети.
 3. **Деплой.** `wrangler deploy` строи образа от `containers/declarations/Dockerfile` (изпълнителят
    има Docker) и създава Durable Object namespace-а с миграцията `v1-declarations`.
@@ -523,6 +524,30 @@ in-place отдалеченият път не е приложим за пъле�
 > за връщане назад. Освен това гейтът за монотонност, подът `--min-links` и хидратацията на корпуса на
 > ЕОП черпят базата си за сравнение от целевата база, така че простото пренасочване към празния слот би
 > ги обезсилило тихо. Какво трябва да се промени и защо: [ADR-0038](adr/0038-reseed-writes-idle-slot-gates-read-live.md).
+
+## Пълно изграждане на неактивния слот в контейнера
+
+[ADR-0048](adr/0048-rebuild-the-idle-slot-in-the-container.md) замества ръчните стъпки 3–6 от процедурата
+по-долу с един ход в контейнера за декларациите.
+
+1. **Еднократно за средата:** GitHub Environment променлива `SIGMA_REBUILD_WORKFLOW_NAME` (например
+   `sigma-rebuild-stage`). Деплоят създава работния поток заедно с etl worker-а.
+2. **Пускане.** Работният поток получава името и id-то на **неактивния** слот. Координаторът отказва
+   живия.
+
+   ```bash
+   wrangler workflows trigger <SIGMA_REBUILD_WORKFLOW_NAME> \
+     '{"targetName":"<неактивен слот>","targetId":"<id на неактивния слот>"}'
+   ```
+
+3. **Наблюдение.** Използвайте `wrangler workflows instances describe <име> <instance>`. Етапите са
+   `import` → `registry` → `precompute` → `declarations` (с етапите на хода за декларациите) → `search` →
+   `ship` → `verify`. Ходът трае часове и прекъснат опит започва отначало. Не го пускайте в нощта срещу
+   понеделник, когато тръгва седмичният ход на декларациите.
+4. **Резултат.** Ходът е `complete`, когато броят на редовете във всяка изпратена таблица съвпада със
+   снимката и проверката за цялост е минала. Живият слот не е пипнат.
+5. **Превключване:** стъпки 6–10 от процедурата по-долу (preview на web, redeploy на ETL и web с новия
+   `SIGMA_D1_ID` и `SIGMA_D1_NAME`, проверка). Предишният слот остава за връщане назад.
 
 ## Процедура: blue/green reseed (идентична за staging и prod)
 

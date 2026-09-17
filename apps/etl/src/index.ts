@@ -48,6 +48,7 @@ export interface Env extends DeclarationEnv {
   DECLARATIONS_ENABLED?: string;
   /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
   DECLARATIONS_RUN?: Workflow;
+  REBUILD_RUN?: Workflow;
   DB: D1Database;
   REFRESH: Workflow;
   EOP_OPEN_DATA_BASE_URL?: string;
@@ -712,6 +713,50 @@ export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
       if (run.state === 'complete') return run;
       if (run.state !== 'running')
         throw new NonRetryableError(`Declaration run ${run.state}: ${run.reason ?? ''}`);
+    }
+  }
+}
+
+/** An operator-started rebuild of the idle blue/green slot (ADR-0048): the payload names the idle slot, and
+ *  the container refuses the live one. The flip stays a redeploy. */
+export class RebuildWorkflow extends WorkflowEntrypoint<
+  Env,
+  { targetName?: string; targetId?: string }
+> {
+  override async run(
+    event: WorkflowEvent<{ targetName?: string; targetId?: string }>,
+    step: WorkflowStep,
+  ) {
+    const containers = this.env.DECLARATIONS;
+    if (!containers) throw new NonRetryableError('The declarations container is not bound');
+    const { targetName, targetId } = event.payload ?? {};
+    if (!targetName || !targetId)
+      throw new NonRetryableError('Name the idle slot: { "targetName": …, "targetId": … }');
+    const start = await step.do('start-rebuild', async () => {
+      const { runId, state } = await containers
+        .getByName('rebuild')
+        .startRun(event.instanceId, { name: targetName, id: targetId });
+      return { runId, state };
+    });
+    for (let poll = 0; ; poll++) {
+      await step.sleep(`wait-${poll}`, '10 minutes');
+      const run = await step.do(`status-${poll}`, async () => {
+        const current = await containers.getByName('rebuild').getRun();
+        return current
+          ? {
+              runId: current.runId,
+              state: current.state,
+              reason: current.reason ?? null,
+              stage: current.stage,
+              completed: current.completed,
+              attempt: current.attempt,
+            }
+          : null;
+      });
+      if (!run || run.runId !== start.runId) throw new NonRetryableError('Rebuild run changed');
+      if (run.state === 'complete') return run;
+      if (run.state !== 'running')
+        throw new NonRetryableError(`Rebuild ${run.state}: ${run.reason ?? ''}`);
     }
   }
 }

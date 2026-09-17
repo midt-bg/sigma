@@ -6,6 +6,7 @@
 // writes a sibling `wrangler.deploy.<ext>` that the package `deploy` script passes via
 // `--config`. Optional deploy-time name env vars (`SIGMA_WEB_NAME`, `SIGMA_ETL_NAME`,
 // `SIGMA_WORKFLOW_NAME`, `SIGMA_REGISTRY_WORKFLOW_NAME`, `SIGMA_DECLARATIONS_WORKFLOW_NAME`,
+// `SIGMA_REBUILD_WORKFLOW_NAME`,
 // `SIGMA_DECLARATIONS_BUCKET`, `SIGMA_SHIP_ENV`, `SIGMA_D1_NAME`,
 // `SIGMA_CSV_CACHE_NAME`, `SIGMA_REPORTS_NAME`, `SIGMA_VECTORIZE_NAME`) explicitly override
 // resource names for alternate environments while leaving committed names unchanged when unset.
@@ -89,6 +90,7 @@ if (ext === '.json' || ext === '.jsonc') {
     workflowName: process.env.SIGMA_WORKFLOW_NAME || '',
     registryWorkflowName: process.env.SIGMA_REGISTRY_WORKFLOW_NAME || '',
     declarationsWorkflowName: process.env.SIGMA_DECLARATIONS_WORKFLOW_NAME || '',
+    rebuildWorkflowName: process.env.SIGMA_REBUILD_WORKFLOW_NAME || '',
     declarationsBucket: process.env.SIGMA_DECLARATIONS_BUCKET || '',
     shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
@@ -188,6 +190,7 @@ function renderToml(text, names) {
           {
             REGISTRY: names.registryWorkflowName,
             DECLARATIONS_RUN: names.declarationsWorkflowName,
+            REBUILD_RUN: names.rebuildWorkflowName,
           }[workflowBinding] ?? names.workflowName;
         if (workflowName) line = replaceTomlStringValue(line, 'name', workflowName);
       } else if (section === '[[r2_buckets]]' && names.declarationsBucket) {

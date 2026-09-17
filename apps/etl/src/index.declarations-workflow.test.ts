@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import worker, { DeclarationsWorkflow, DECLARATIONS_CRON } from './index';
+import worker, { DeclarationsWorkflow, DECLARATIONS_CRON, RebuildWorkflow } from './index';
 import type { Env } from './index';
 
 it('starts one declarations run and waits for the container outcome', async () => {
@@ -53,4 +53,26 @@ it('the weekly cron starts only the declarations; every other tick refreshes pro
   );
   expect(startRun).toHaveBeenCalledOnce();
   log.mockRestore();
+});
+
+it('starts a rebuild of the named idle slot and waits for it', async () => {
+  const startRun = vi.fn(async () => ({ runId: 'rb', state: 'running' }));
+  const getRun = vi.fn().mockResolvedValue({ runId: 'rb', state: 'complete', stage: 'verify' });
+  const getByName = vi.fn(() => ({ startRun, getRun }));
+  const step = { do: async (_name: string, fn: () => unknown) => fn(), sleep: vi.fn() };
+  const run = (payload: object) =>
+    new RebuildWorkflow({} as never, { DECLARATIONS: { getByName } } as never).run(
+      { instanceId: 'wf', payload } as never,
+      step as never,
+    );
+  await expect(run({})).rejects.toThrow('Name the idle slot');
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).resolves.toMatchObject({
+    state: 'complete',
+  });
+  expect(getByName).toHaveBeenCalledWith('rebuild');
+  expect(startRun).toHaveBeenCalledWith('wf', { name: 'sigma-idle', id: 'x' });
+  getRun.mockResolvedValue({ runId: 'rb', state: 'failed', reason: 'counts' });
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).rejects.toThrow(
+    'Rebuild failed: counts',
+  );
 });

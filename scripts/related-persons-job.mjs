@@ -74,7 +74,12 @@ if (remote) {
   copyFileSync('apps/web/wrangler.deploy.jsonc', 'apps/web/wrangler.jsonc');
 }
 const r2 = flag('r2');
-if (r2 && (!remote || env.CACBG_CORPUS_URL !== 'http://declarations.r2' || !env.SIGMA_RUN_ID))
+// A slot rebuild (ADR-0048) reads the corpus from R2 but publishes nothing itself.
+const rebuild = env.SIGMA_REBUILD === '1';
+if (
+  r2 &&
+  ((!remote && !rebuild) || env.CACBG_CORPUS_URL !== 'http://declarations.r2' || !env.SIGMA_RUN_ID)
+)
   throw Error('R2 requires a logical run ID and the private Container corpus binding');
 const corpus = corpusStore(raw);
 let sourceStamp;
@@ -98,7 +103,10 @@ if (!sourceStamp && !flag('skip-fetch')) {
   setStage('fetch');
   run(
     'scripts/cacbg/fetch.mjs',
-    r2 ? ['--deadline-minutes', '60', '--yield-on-deadline'] : ['--deadline-minutes', '180'],
+    // A rebuild cannot yield: its container holds the whole build, so the fetch runs to the end.
+    r2 && !rebuild
+      ? ['--deadline-minutes', '60', '--yield-on-deadline']
+      : ['--deadline-minutes', rebuild ? '600' : '180'],
   );
 }
 if (r2) {

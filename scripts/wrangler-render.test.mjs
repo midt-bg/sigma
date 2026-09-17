@@ -58,6 +58,11 @@ binding = "DECLARATIONS_RUN"
 name = "sigma-declarations"
 class_name = "DeclarationsWorkflow"
 
+[[workflows]]
+binding = "REBUILD_RUN"
+name = "sigma-rebuild"
+class_name = "RebuildWorkflow"
+
 [[r2_buckets]]
 binding = "DECLARATIONS_CORPUS"
 bucket_name = "sigma-declarations"
@@ -70,6 +75,7 @@ bucket_name = "sigma-declarations"
   process.env.SIGMA_SHIP_ENV = 'staging';
   process.env.SIGMA_DECLARATIONS_WORKFLOW_NAME = 'sigma-declarations-stage';
   process.env.SIGMA_DECLARATIONS_BUCKET = 'sigma-declarations-stage';
+  process.env.SIGMA_REBUILD_WORKFLOW_NAME = 'sigma-rebuild-stage';
   await import(`./wrangler-render.mjs?test=${Date.now()}`);
   const rendered = readFileSync(join(dir, 'wrangler.deploy.toml'), 'utf8');
   assert.match(rendered, /^DECLARATIONS_BUCKET = "sigma-declarations-stage"$/m);
@@ -79,4 +85,5 @@ bucket_name = "sigma-declarations"
   assert.match(rendered, /^database_name = "sigma-stage-green"$/m);
   assert.match(rendered, /binding = "DECLARATIONS_RUN"\nname = "sigma-declarations-stage"/);
   assert.match(rendered, /^bucket_name = "sigma-declarations-stage"$/m);
+  assert.match(rendered, /binding = "REBUILD_RUN"\nname = "sigma-rebuild-stage"/);
 });

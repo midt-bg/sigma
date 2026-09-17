@@ -54,6 +54,12 @@ binding = "DECLARATIONS_RUN"
 name = "sigma-declarations"
 class_name = "DeclarationsWorkflow"
 
+# An operator's rebuild of the idle blue/green slot (ADR-0048), in the same container.
+[[workflows]]
+binding = "REBUILD_RUN"
+name = "sigma-rebuild"
+class_name = "RebuildWorkflow"
+
 # The declarations job: one container per run, coordinated by its Durable Object, the corpus in R2.
 [[containers]]
 class_name = "DeclarationContainer"

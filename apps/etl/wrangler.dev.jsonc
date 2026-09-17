@@ -30,6 +30,7 @@
       "name": "sigma-declarations-dev",
       "class_name": "DeclarationsWorkflow",
     },
+    { "binding": "REBUILD_RUN", "name": "sigma-rebuild-dev", "class_name": "RebuildWorkflow" },
   ],
   "containers": [
     {

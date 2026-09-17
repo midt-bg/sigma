@@ -1,12 +1,18 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-export function supervise(child, runId, attempt, outputs = [process.stdout, process.stderr]) {
+export function supervise(
+  child,
+  runId,
+  attempt,
+  outputs = [process.stdout, process.stderr],
+  stage = 'fetch',
+) {
   const status = {
     runId,
     attempt,
     state: 'running',
-    stage: 'fetch',
+    stage,
     completed: 0,
     reason: null,
   };
@@ -56,19 +62,26 @@ export function supervise(child, runId, attempt, outputs = [process.stdout, proc
 }
 
 if (import.meta.main) {
+  // A slot rebuild (ADR-0048) or the weekly declarations run.
+  const rebuild = process.env.SIGMA_REBUILD === '1';
   const child = spawn(
     process.execPath,
     [
       '--import',
       './scripts/cacbg/register-ts.mjs',
-      'scripts/related-persons-job.mjs',
-      '--remote',
-      '--yes',
-      '--r2',
+      ...(rebuild
+        ? ['scripts/rebuild-slot.mjs']
+        : ['scripts/related-persons-job.mjs', '--remote', '--yes', '--r2']),
     ],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  const status = supervise(child, process.env.SIGMA_RUN_ID, Number(process.env.SIGMA_ATTEMPT));
+  const status = supervise(
+    child,
+    process.env.SIGMA_RUN_ID,
+    Number(process.env.SIGMA_ATTEMPT),
+    undefined,
+    rebuild ? 'import' : 'fetch',
+  );
   createServer((req, res) => {
     if (req.url !== '/status') {
       res.writeHead(404).end();

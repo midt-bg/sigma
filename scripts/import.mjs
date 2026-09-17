@@ -467,6 +467,11 @@ async function runWorkBackfill() {
   // contract-level invariants and the staging→domain reconciliation before shipping.
   await assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
 
+  // The slot rebuild ships the whole snapshot itself, after the registry and the declarations.
+  if (cli['no-ship']) {
+    console.log('\n==> work import complete (not shipped).');
+    return;
+  }
   const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
   if (remote) shipArgs.push('--remote', '--yes');
   if (cli.replace) shipArgs.push('--replace');
