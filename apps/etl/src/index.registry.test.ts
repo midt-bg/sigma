@@ -19,6 +19,7 @@ const { client, reg } = vi.hoisted(() => ({
     queueNewWinners: vi.fn(),
     nextQueued: vi.fn(),
     storeDeed: vi.fn(),
+    derivePublicOwnership: vi.fn(),
   },
 }));
 vi.mock('@sigma/ingest', async (importOriginal) => ({

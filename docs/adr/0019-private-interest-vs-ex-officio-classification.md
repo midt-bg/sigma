@@ -1,6 +1,6 @@
 # ADR-0019: Separate private financial interest from ex-officio public-board roles
 
-- Status: Accepted (display superseded by [ADR-0022](0022-public-surface-private-ownership-only.md) — the ex-officio *list* is no longer shown; the classification stands and now gates the public surface to private ownership only)
+- Status: Accepted · classification amended by [ADR-0047](0047-public-enterprises-and-private-management.md): public enterprises from the agency's list and the Trade Register, no multi-declarant tell (display superseded by [ADR-0022](0022-public-surface-private-ownership-only.md) — the ex-officio *list* is no longer shown; the classification stands and now gates the public surface to private ownership only)
 - Date: 2026-07-06
 - Deciders: lb, Claude
 - Related: [ADR-0014](0014-match-output-layers-and-interpretation.md), [ADR-0007](0007-scope-and-certainty-bar.md); `scripts/cacbg/load.mjs`, `packages/db/migrations/0003_related_persons_foundation.sql`

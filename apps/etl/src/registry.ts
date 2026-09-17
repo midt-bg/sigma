@@ -448,3 +448,52 @@ export async function deferXml(db: D1Database, until: string): Promise<void> {
     .bind(until)
     .run();
 }
+
+/** Public ownership the Trade Register records (ADR-0047), for the refresh to read: a company whose standing
+ *  sole owner, or partner with more than half of the partners' capital, is the state, a ministry, a
+ *  municipality or a company already public. Municipal when a municipality holds it, directly or through its
+ *  companies. The register writes these owners in capitals. */
+export const PUBLIC_OWNERSHIP_SQL = [
+  `CREATE TABLE IF NOT EXISTS state_owned_eik (
+    eik TEXT PRIMARY KEY,
+    ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),
+    canonical_name TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS public_owned_eik (
+    eik TEXT PRIMARY KEY,
+    ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal')))`,
+  `DELETE FROM public_owned_eik`,
+  `INSERT INTO public_owned_eik (eik, ownership_kind)
+  WITH RECURSIVE owners AS (
+    SELECT r.eik, r.subject_id owner, r.subject_name name, r.role,
+      CAST(REPLACE(REPLACE(trim(r.share), ' ', ''), ',', '.') AS REAL) amount
+    FROM registry_roles r
+    WHERE r.subject_kind = 'entity' AND r.role IN ('sole_owner', 'partner')
+      AND r.removed_on IS NULL AND r.uncertain_after IS NULL
+  ), capital AS (
+    SELECT eik, SUM(CAST(REPLACE(REPLACE(trim(share), ' ', ''), ',', '.') AS REAL)) total
+    FROM registry_roles
+    WHERE role = 'partner' AND removed_on IS NULL AND uncertain_after IS NULL
+    GROUP BY eik
+  ), controlled AS (
+    SELECT o.eik, o.owner, o.name FROM owners o LEFT JOIN capital c ON c.eik = o.eik
+    WHERE o.role = 'sole_owner' OR o.amount * 2 > c.total
+  ), public_owned(eik, kind, depth) AS (
+    SELECT eik,
+      CASE WHEN name LIKE 'ОБЩИНА%' OR name LIKE 'СТОЛИЧНА ОБЩИНА%' THEN 'municipal' ELSE 'state' END, 0
+    FROM controlled
+    WHERE name LIKE 'ОБЩИНА%' OR name LIKE 'СТОЛИЧНА ОБЩИНА%' OR name LIKE '%МИНИСТЕРСТВО%'
+      OR name LIKE '%МИНИСТЪР%' OR name LIKE '%ДЪРЖАВАТА%' OR name LIKE 'ДЪРЖАВА%'
+      OR owner IN (SELECT eik FROM state_owned_eik WHERE ownership_kind = 'state')
+    UNION
+    SELECT c.eik, p.kind, p.depth + 1 FROM controlled c JOIN public_owned p ON p.eik = c.owner
+    WHERE p.depth < 4
+  )
+  SELECT eik, MIN(kind) FROM public_owned GROUP BY eik`,
+];
+
+export async function derivePublicOwnership(db: D1Database): Promise<number> {
+  await db.batch(PUBLIC_OWNERSHIP_SQL.map((sql) => db.prepare(sql)));
+  return (
+    (await db.prepare('SELECT COUNT(*) AS n FROM public_owned_eik').first<{ n: number }>())?.n ?? 0
+  );
+}

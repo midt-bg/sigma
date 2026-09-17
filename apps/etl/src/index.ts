@@ -40,6 +40,7 @@ import {
   deferDeed,
   deferXml,
   storeDeed,
+  derivePublicOwnership,
 } from './registry';
 
 export interface Env extends DeclarationEnv {
@@ -475,6 +476,7 @@ interface RegistryResult {
   read: number;
   absent: number;
   roles: number;
+  publicOwned?: number;
 }
 
 // Partidas per step: small, so a retried step re-reads little (storing is idempotent, the queue is the cursor).
@@ -645,6 +647,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
         result.roles += batch.roles;
         if (batch.read < REGISTRY_BATCH) break;
       }
+      result.publicOwned = await fenced('derive-public-ownership', () =>
+        derivePublicOwnership(this.env.DB),
+      );
       if (baseline === 'building') {
         const complete = await fenced('complete-entry-baseline', () =>
           completeEntryBaseline(this.env.DB, holder, new Date().toISOString()),
