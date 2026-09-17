@@ -1,3 +1,4 @@
+import type { RegistryRoleKind } from '@sigma/api-contract';
 import { registryCompanyName } from '@sigma/shared';
 import { companySlug, personSlug } from './identity';
 import { publicRole, registryRead } from './registry';
@@ -69,6 +70,10 @@ export interface PersonRelative {
   indent: string;
   company: { name: string; eik: string };
   href: string | null;
+  /** The relative's roles at the company, as registered; `ended` once the register ended the role. */
+  roles: { role: RegistryRoleKind; ended: boolean }[];
+  /** The years of the declarations that name the stake. */
+  years: string[];
 }
 
 /** The same fact from the register's side: the officials whose declarations name this person. */
@@ -95,19 +100,36 @@ const companyName = (r: CompanyNameRow) =>
 /** Relatives the official declared a stake for, whom the register lists at that company (ADR-0044). */
 export async function getPersonRelatives(db: D1Database, ids: string[]): Promise<PersonRelative[]> {
   if (!ids.length) return [];
+  const marks = ids.map(() => '?').join(',');
   const rows = await registryRead(
     () =>
       db
         .prepare(
           `SELECT pr.relative_name name, pr.relative_indent indent, pr.eik,
-            b.name bidder_name, rd.name registry_name, rd.legal_form, ${RELATIVE_PAGE} has_page
+            b.name bidder_name, rd.name registry_name, rd.legal_form, ${RELATIVE_PAGE} has_page,
+            (SELECT json_group_array(DISTINCT r.role || CASE WHEN r.removed_on IS NULL THEN '' ELSE ':ended' END)
+              FROM registry_roles r WHERE r.subject_id=pr.relative_indent AND r.eik=pr.eik
+              AND r.subject_kind='person' AND ${publicRole('r')}) roles,
+            (SELECT json_group_array(DISTINCT o.reported_year) FROM interest_links il
+              JOIN interest_link_observations o ON o.link_key=il.link_key
+              WHERE il.person_id IN (${marks}) AND il.eik=pr.eik
+                AND il.interest_class='family_ownership' AND o.reported_year IS NOT NULL) years
           FROM person_relatives pr LEFT JOIN bidders b ON b.eik_normalized=pr.eik
           LEFT JOIN registry_deeds rd ON rd.eik=pr.eik
-          WHERE pr.person_id IN (${ids.map(() => '?').join(',')})
+          WHERE pr.person_id IN (${marks})
           GROUP BY pr.relative_indent, pr.eik ORDER BY pr.relative_name, pr.eik`,
         )
-        .bind(...ids)
-        .all<{ name: string; indent: string; eik: string; has_page: number } & CompanyNameRow>()
+        .bind(...ids, ...ids)
+        .all<
+          {
+            name: string;
+            indent: string;
+            eik: string;
+            has_page: number;
+            roles: string;
+            years: string;
+          } & CompanyNameRow
+        >()
         .then((r) => r.results),
     [],
   );
@@ -116,6 +138,15 @@ export async function getPersonRelatives(db: D1Database, ids: string[]): Promise
     indent: r.indent,
     company: { name: companyName(r), eik: r.eik },
     href: r.has_page ? `/persons/${r.indent}` : null,
+    roles: (JSON.parse(r.roles) as string[])
+      .sort()
+      .map((v) => {
+        const [role, ended] = v.split(':');
+        return { role: role as RegistryRoleKind, ended: !!ended };
+      })
+      // A role standing again after it once ended is standing.
+      .filter((x, _, all) => !x.ended || !all.some((y) => y.role === x.role && !y.ended)),
+    years: (JSON.parse(r.years) as string[]).sort(),
   }));
 }
 

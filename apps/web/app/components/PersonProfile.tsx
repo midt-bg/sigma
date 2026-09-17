@@ -15,6 +15,7 @@ import { PersonActivity } from './PersonActivity';
 import { declaredStakeNoun } from '../lib/conflicts';
 import { tieColumns, tieRows } from '../lib/entity-tables';
 import { personName } from '../lib/person-name';
+import { ROLE_LABEL } from '../lib/registry-roles';
 
 export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) {
   // Declared stakes make the person a related-persons case; any declaration makes them an official.
@@ -140,16 +141,38 @@ export function PersonProfile({ profile: p }: { profile: LoadedPersonProfile }) 
             title="Свързани лица по декларация"
             hint="Близки, за които лицето е декларирало дял, и които Търговският регистър вписва в същото дружество. Видът на връзката не се твърди."
           >
-            <ul className="entity-list">
-              {p.relatives.map((r) => (
-                <li key={`${r.indent}-${r.company.eik}`}>
-                  {r.href ? <Link to={r.href}>{personName(r.name)}</Link> : personName(r.name)}
-                  <div className="small muted">
-                    <Link to={`/companies/${r.company.eik}`}>{r.company.name}</Link>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <DataTable
+              rows={p.relatives}
+              caption="Свързани лица по декларация"
+              getKey={(r) => `${r.indent}-${r.company.eik}`}
+              columns={[
+                {
+                  key: 'person',
+                  header: 'Лице',
+                  cell: (r) =>
+                    r.href ? <Link to={r.href}>{personName(r.name)}</Link> : personName(r.name),
+                },
+                {
+                  key: 'role',
+                  header: 'Роля по регистъра',
+                  cell: (r) =>
+                    r.roles
+                      .map((x) => `${ROLE_LABEL[x.role]}${x.ended ? ' (прекратена)' : ''}`)
+                      .join(', ') || '—',
+                },
+                {
+                  key: 'company',
+                  header: 'Дружество',
+                  cell: (r) => <Link to={`/companies/${r.company.eik}`}>{r.company.name}</Link>,
+                },
+                {
+                  key: 'years',
+                  header: 'Декларации',
+                  align: 'num',
+                  cell: (r) => r.years.join(', ') || '—',
+                },
+              ]}
+            />
           </Section>
         )}
         {p.namedBy.length > 0 && (

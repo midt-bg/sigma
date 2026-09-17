@@ -187,6 +187,10 @@ describe('PersonProfile', () => {
       ['Анна Петрова', null],
     ]);
     expect(nav()).toEqual(['#timeline', '#network', '#roles', '#contracts']);
+    // No declarations, so no office years to mark on the time axis.
+    expect(section('timeline')!.querySelector('.person-time-legend')!.textContent).not.toContain(
+      'длъжността',
+    );
 
     const graph = section('network')!;
     expect(graph.querySelector('svg a[href="/companies/111111111"]')).not.toBeNull();
@@ -214,6 +218,40 @@ describe('PersonProfile', () => {
     expect(section('network')!.textContent).toContain(
       'Още 4 дружества са извън схемата; ролите и договорите включват целия наличен набор.',
     );
+  });
+
+  it('lists declared relatives in a table: person, registered role, company and declaration years', () => {
+    render(
+      profile({
+        relatives: [
+          {
+            name: 'МАРИЯ ПЕТРОВА',
+            indent: 'm'.repeat(64),
+            company: { name: 'ГАМА ООД', eik: '333333333' },
+            href: `/persons/${'m'.repeat(64)}`,
+            roles: [
+              { role: 'manager', ended: true },
+              { role: 'partner', ended: false },
+            ],
+            years: ['2020', '2021'],
+          },
+        ],
+      }),
+    );
+    const table = section('relatives')!;
+    expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+      'Лице',
+      'Роля по регистъра',
+      'Дружество',
+      'Декларации',
+    ]);
+    expect([...table.querySelectorAll('tbody td')].map((td) => td.textContent)).toEqual([
+      'Мария Петрова',
+      'управител (прекратена), съдружник',
+      'ГАМА ООД',
+      '2020, 2021',
+    ]);
+    expect(table.querySelector('a[href="/companies/333333333"]')).not.toBeNull();
   });
 
   it('presents an office-holder with no register match by the declarations alone, and says so', () => {

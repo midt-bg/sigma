@@ -111,14 +111,19 @@ describe('relatives the register confirms', () => {
         CREATE TABLE person_relatives(person_id,relative_indent,eik,relative_name);
         CREATE TABLE bidders(id,eik_normalized,name);
         CREATE TABLE company_totals(bidder_id,contracts);
-        CREATE TABLE registry_roles(eik,subject_id,subject_kind,role);
+        CREATE TABLE registry_roles(eik,subject_id,subject_kind,role,removed_on);
         CREATE TABLE registry_deeds(eik,name,legal_form);
+        CREATE TABLE interest_links(link_key,person_id,eik,interest_class);
+        CREATE TABLE interest_link_observations(link_key,reported_year);
+        INSERT INTO interest_links VALUES('p|111|family','p','111','family_ownership'),('p|222','p','222','private_ownership');
+        INSERT INTO interest_link_observations VALUES('p|111|family','2021'),('p|111|family','2020'),('p|111|family',NULL),('p|222','2019');
         INSERT INTO registry_deeds VALUES('222','БЕТА','EOOD');
         INSERT INTO persons VALUES('p','Иван Петров'),('q','Георги Иванов');
         INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова');
         INSERT INTO bidders VALUES('eik:111','111','АЛФА');
         INSERT INTO company_totals VALUES('eik:111',3);
-        INSERT INTO registry_roles VALUES('111','${H}','person','partner');`);
+        INSERT INTO registry_roles VALUES('111','${H}','person','partner',NULL),('111','${H}','person','partner','2019-01-01'),
+          ('111','${H}','person','manager','2018-01-01'),('111','${H}','person','beneficial_owner',NULL);`);
       const d1 = d1FromSqlite(db);
       expect(await getPersonRelatives(d1, ['p'])).toEqual([
         {
@@ -126,12 +131,19 @@ describe('relatives the register confirms', () => {
           indent: 'z'.repeat(64),
           company: { name: 'БЕТА ЕООД', eik: '222' },
           href: null,
+          roles: [],
+          years: [],
         },
         {
           name: 'Мария Петрова',
           indent: H,
           company: { name: 'АЛФА', eik: '111' },
           href: `/persons/${H}`,
+          roles: [
+            { role: 'manager', ended: true },
+            { role: 'partner', ended: false },
+          ],
+          years: ['2020', '2021'],
         },
       ]);
       expect(await getPersonRelatives(d1, [])).toEqual([]);
