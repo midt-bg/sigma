@@ -895,5 +895,21 @@ test('leftover staging tables are dropped children first, so a parent drop never
     CREATE TABLE rp_next_declarations(id PRIMARY KEY, person_id REFERENCES rp_next_persons(id));
     INSERT INTO rp_next_persons VALUES(1); INSERT INTO rp_next_declarations VALUES(1,1);`);
   db.exec(stagedDropSql(['persons', 'declarations'], ['declarations', 'persons']));
-  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE name LIKE 'rp_next_%'").get().n, 0);
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM sqlite_master WHERE name LIKE 'rp_next_%'").get().n,
+    0,
+  );
+});
+
+test('runShip reports progress in a container run, so a long upload is not a stall', (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  process.env.SIGMA_RUN_ID = 'test-run';
+  t.after(() => delete process.env.SIGMA_RUN_ID);
+  shipHarness().run();
+  assert.deepEqual(JSON.parse(lines[0]), {
+    event: 'declarations_progress',
+    stage: 'publish',
+    completed: 1,
+  });
 });

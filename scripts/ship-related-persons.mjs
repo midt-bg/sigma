@@ -13,6 +13,7 @@
 //   node scripts/ship-related-persons.mjs --work-db data/work/backfill.sqlite --emit out/rp   # SQL only
 //   node scripts/ship-related-persons.mjs --work-db … --remote --yes                          # apply to D1
 import { assertAuditedBuild } from './cacbg/build-proof.mjs';
+import { progress } from './cacbg/progress.mjs';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -144,6 +145,8 @@ export function runShip({
   const send = (label, sql) => {
     if (requests++) sleep(paceMs);
     apply(label, sql);
+    // Each applied request is progress, so a long upload is not taken for a stalled container.
+    progress('publish', requests);
   };
   const summary = {};
   const reads = tables.map((table) => {
