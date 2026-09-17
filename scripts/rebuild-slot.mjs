@@ -108,8 +108,22 @@ function step(name, args, extraEnv = {}) {
   });
 }
 
-const sqlite = (db, sql) =>
-  execFileSync('sqlite3', [db], { input: sql, stdio: ['pipe', 'inherit', 'inherit'] });
+/** SQL through the sqlite3 shell. Its progress handler prints a line every ten million VM steps; each
+ * counts as progress of `name`, so a long rollup is not taken for a stalled container. */
+export const sqlite = (name, db, sql) =>
+  new Promise((done, failed) => {
+    const child = spawn('sqlite3', [db], { stdio: ['pipe', 'pipe', 'inherit'] });
+    let beats = 0;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      if (/^Progress \d+$/.test(line)) progress(name, ++beats);
+      else process.stdout.write(line + '\n');
+    });
+    child.on('error', failed);
+    child.on('close', (code) =>
+      code === 0 ? done() : failed(new Error(`sqlite3 exited with code ${code}`)),
+    );
+    child.stdin.end(`.progress 10000000\n${sql}`);
+  });
 const wrangler = (args, output = false) =>
   execFileSync('wrangler', args, {
     cwd: webDir,
@@ -166,10 +180,18 @@ async function main() {
   // 3. Public ownership, then the rollups and the entity search index.
   stage('precompute');
   const { PUBLIC_OWNERSHIP_SQL } = await import('../apps/etl/src/registry.ts');
-  sqlite(db, readFileSync(resolve(root, 'scripts/seed-state-owned.sql'), 'utf8'));
-  sqlite(db, PUBLIC_OWNERSHIP_SQL.map((s) => `${s};`).join('\n'));
-  sqlite(db, ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')));
-  sqlite(db, readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'));
+  await sqlite(
+    'precompute',
+    db,
+    readFileSync(resolve(root, 'scripts/seed-state-owned.sql'), 'utf8'),
+  );
+  await sqlite('precompute', db, PUBLIC_OWNERSHIP_SQL.map((s) => `${s};`).join('\n'));
+  await sqlite(
+    'precompute',
+    db,
+    ownershipStatements(readFileSync(resolve(root, 'scripts/refresh-slice.sql'), 'utf8')),
+  );
+  await sqlite('precompute', db, readFileSync(resolve(root, 'scripts/precompute.sql'), 'utf8'));
 
   // 4. The published links the live slot serves, so the declarations gate compares against them.
   try {
@@ -187,7 +209,7 @@ async function main() {
       '--output',
       prior,
     ]);
-    sqlite(db, readFileSync(prior, 'utf8'));
+    await sqlite('precompute', db, readFileSync(prior, 'utf8'));
   } catch (error) {
     console.warn(
       JSON.stringify({ event: 'rebuild_no_live_links', reason: String(error).slice(0, 300) }),
@@ -231,9 +253,13 @@ async function main() {
         env: { ...process.env, SIGMA_OFFICIAL_PERSON_IDS_JSON: JSON.stringify(officials) },
       },
     );
-    sqlite(snapshot, sql);
+    await sqlite('search', snapshot, sql);
   }
-  sqlite(snapshot, readFileSync(resolve(root, 'scripts/person-search-index.sql'), 'utf8'));
+  await sqlite(
+    'search',
+    snapshot,
+    readFileSync(resolve(root, 'scripts/person-search-index.sql'), 'utf8'),
+  );
 
   // 7. The idle slot: emptied, shaped by the migrations and the snapshot's DDL, then filled parents first.
   stage('ship');

@@ -1,8 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ifNotExists, ownershipStatements, parentsFirst, shippedTables } from './rebuild-slot.mjs';
+import {
+  ifNotExists,
+  ownershipStatements,
+  parentsFirst,
+  shippedTables,
+  sqlite,
+} from './rebuild-slot.mjs';
 
 test('the slot takes the served tables only, parents first, with DDL safe on a migrated slot', () => {
   const staging = readFileSync('scripts/work-staging-schema.sql', 'utf8');
@@ -81,4 +89,27 @@ test('the refresh still carries the ownership statements the rebuild replays, an
     ],
   );
   assert.throws(() => ownershipStatements('SELECT 1'), /ownership statements/);
+});
+
+test('a long sqlite3 statement reports progress and a failing one rejects', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'rebuild-sqlite-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  process.env.SIGMA_RUN_ID = 'test-run';
+  t.after(() => delete process.env.SIGMA_RUN_ID);
+  const db = join(dir, 'x.sqlite');
+  await sqlite(
+    'precompute',
+    db,
+    `CREATE TABLE n AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000000)
+     SELECT x FROM c;`,
+  );
+  assert.equal(new DatabaseSync(db).prepare('SELECT count(*) n FROM n').get().n, 2000000);
+  assert.deepEqual(JSON.parse(lines[0]), {
+    event: 'declarations_progress',
+    stage: 'precompute',
+    completed: 1,
+  });
+  await assert.rejects(sqlite('precompute', db, 'SELECT * FROM missing;'), /sqlite3 exited/);
 });
