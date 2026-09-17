@@ -344,6 +344,17 @@ worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); ко
 1. **R2 bucket:** `wrangler r2 bucket create <SIGMA_DECLARATIONS_BUCKET>` (staging:
    `sigma-declarations-stage`; production: `sigma-declarations`). Bucket-ът е празен; първият ход
    изтегля целия корпус (няколко часа, в няколко опита на контейнера, всеки до 60 минути изтегляне).
+   Веднага след създаването — двете правила за живот на обектите, защото посредникът нарочно не
+   разрешава триене на нищо освен печата на корпуса
+   ([ADR-0049](adr/0049-a-run-that-survives-a-stopped-container.md)):
+
+   ```sh
+   wrangler r2 bucket lifecycle add <bucket> --name checkpoints --prefix declarations/corpus-v2/checkpoints/ --expire-days 7 -y
+   wrangler r2 bucket lifecycle add <bucket> --name fetch-events --prefix declarations/corpus-v2/fetch-events/ --expire-days 30 -y
+   ```
+
+   Записите на подновяемия ход (около 60–70 MB на ход) и събитията от обхождането не се четат след
+   края на хода; без тези правила биха останали в bucket-а завинаги.
 2. **GitHub Environment:** променливите `SIGMA_DECLARATIONS_WORKFLOW_NAME`,
    `SIGMA_REBUILD_WORKFLOW_NAME` и `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
    `SUPPRESSION_KEY_VERSION` като променлива). Деплоят ги подава на etl worker-а като секрети.
