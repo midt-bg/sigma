@@ -19,6 +19,8 @@ import {
   TABLES,
   WIPE_ORDER,
   stagedDropSql,
+  swapSql,
+  ShipYield,
 } from './ship-related-persons.mjs';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
@@ -703,7 +705,7 @@ const shipHarness = (over = {}) => {
     maxStatements: over.maxStatements ?? 2,
     paceMs: 500,
   };
-  return { calls, naps, run: () => runShip(opts) };
+  return { calls, naps, opts, run: () => runShip(opts) };
 };
 
 test('runShip uploads staging before the swap and paces every request', () => {
@@ -912,4 +914,48 @@ test('runShip reports progress in a container run, so a long upload is not a sta
     stage: 'publish',
     completed: 1,
   });
+});
+
+test('the publish receipt rides in the swap and makes a second attempt a no-op', () => {
+  const schema = {
+    persons: { sql: 'CREATE TABLE persons(id)', indexes: [] },
+    declarations: { sql: 'CREATE TABLE declarations(id)', indexes: [] },
+  };
+  const reads = [
+    { table: 'persons', rowCount: 1 },
+    { table: 'declarations', rowCount: 0 },
+  ];
+  const sql = swapSql(schema, reads, ['declarations', 'persons'], 'run-42');
+  const statements = sql.split('\n');
+  // The receipt is written after the renames, inside the same batch.
+  const receipt = statements.findIndex((line) => line.startsWith('INSERT INTO rp_generation'));
+  const lastRename = statements.findLastIndex((line) => line.includes('RENAME TO "persons"'));
+  assert.ok(receipt > lastRename && lastRename > 0);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS rp_generation/);
+  assert.match(sql, /INSERT INTO rp_generation VALUES\('run-42'/);
+  assert.ok(!swapSql(schema, reads, ['declarations', 'persons']).includes('rp_generation'));
+
+  // A target already serving this run is left alone: no requests, no re-verification.
+  const h = shipHarness();
+  assert.deepEqual(runShip({ ...h.opts, runId: 'run-42', published: 'run-42' }), {});
+  assert.equal(h.calls.length, 0);
+});
+
+test('a container stop between two requests yields instead of leaving half an upload', () => {
+  const h = shipHarness();
+  let sent = 0;
+  assert.throws(
+    () =>
+      runShip({
+        ...h.opts,
+        apply: (name, sql) => {
+          sent++;
+          h.calls.push([name, sql]);
+        },
+        yielding: () => sent >= 3,
+      }),
+    ShipYield,
+  );
+  assert.equal(h.calls.length, 3);
+  assert.ok(!h.calls.some(([name]) => name === 'publish'));
 });

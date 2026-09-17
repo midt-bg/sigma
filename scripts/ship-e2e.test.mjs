@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -133,7 +134,8 @@ function fakeWrangler(dir) {
   const target = join(dir, 'target.sqlite');
   // Seeded with STALE rows on purpose: against an empty target a wipe that deletes nothing is
   // indistinguishable from a correct one, and that mutation escaped the first cut of this test.
-  sqlite(target, SCHEMA + STALE);
+  // Only on the first fake in a directory: a test that ships twice keeps the same served target.
+  if (!existsSync(target)) sqlite(target, SCHEMA + STALE);
   const exe = join(bin, 'wrangler');
   writeFileSync(
     exe,
@@ -426,4 +428,43 @@ test('--emit writes ordered staging and swap SQL without touching a database', (
         : (EXPECTED_ROWS[table] ?? 0),
       table,
     );
+});
+
+test('a published generation is recognised, so a restarted container does not ship it twice', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-receipt-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const run = { SIGMA_RUN_ID: '00000000-0000-4000-8000-00000000abcd' };
+  // The fake target lives in `dir` and must survive all three ships; the work DB is rebuilt each time.
+  const ship = (env) => {
+    rmSync(join(dir, 'work.sqlite'), { force: true });
+    rmSync(join(dir, 'calls.jsonl'), { force: true }); // each ship's own requests, nothing carried over
+    return runShip(dir, { env });
+  };
+
+  const first = ship(run);
+  assert.equal(first.res.status, 0, `ship failed:\n${first.res.stderr}`);
+  assert.equal(
+    sqlite(first.fake.target, 'SELECT run_id FROM rp_generation;').toString().trim(),
+    run.SIGMA_RUN_ID,
+  );
+
+  // Same run, same target: nothing is sent and the served surface is untouched.
+  const again = ship(run);
+  assert.equal(again.res.status, 0, `second ship failed:\n${again.res.stderr}`);
+  assert.equal(
+    again.fake.calls().filter((c) => c.file).length,
+    0,
+    'a published generation must not be shipped again',
+  );
+  assert.match(again.res.stdout, /already published/);
+
+  // A different run ships normally, and the receipt moves to it.
+  const next = ship({ SIGMA_RUN_ID: '00000000-0000-4000-8000-00000000dcba' });
+  assert.equal(next.res.status, 0, `third ship failed:\n${next.res.stderr}`);
+  assert.ok(next.fake.calls().filter((c) => c.file).length > 0);
+  assert.equal(
+    Number(sqlite(next.fake.target, 'SELECT count(*) FROM rp_generation;')),
+    1,
+    'exactly one generation is on record',
+  );
 });

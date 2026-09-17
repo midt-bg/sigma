@@ -145,7 +145,15 @@ export function runShip({
   maxStatements,
   paceMs,
   yielding = () => false,
+  runId = null,
+  published = null,
 }) {
+  // A published receipt for this very run means the swap already ran: the generation was verified by
+  // rp_staging_guard before it moved, so there is nothing left to do and nothing to re-check.
+  if (runId && published === runId) {
+    console.log(`ship: generation ${runId} is already published`);
+    return {};
+  }
   let requests = 0;
   const send = (label, sql) => {
     // The platform can stop the container at any moment. Between two requests is the only safe place
@@ -188,7 +196,7 @@ export function runShip({
   assertShippedCounts(stagedCounts, readCounts(stagedCounts));
   // The generation before is no longer served; retiring it on its own keeps the swap batch small.
   send('retire_previous', retireSql(reads, wipeTables));
-  send('publish', swapSql(schema, reads, wipeTables));
+  send('publish', swapSql(schema, reads, wipeTables, runId));
   assertShippedCounts(summary, readCounts(summary));
   return summary;
 }
@@ -235,7 +243,7 @@ export function retireSql(reads, wipeTables = WIPE_ORDER) {
   );
 }
 
-export function swapSql(schema, reads, wipeTables = WIPE_ORDER) {
+export function swapSql(schema, reads, wipeTables = WIPE_ORDER, runId = null) {
   const shipped = new Set(reads.map((r) => r.table));
   const prev = (t) => sqlIdent(`rp_prev_${t}`);
   const next = (t) => sqlIdent(`rp_next_${t}`);
@@ -259,6 +267,16 @@ export function swapSql(schema, reads, wipeTables = WIPE_ORDER) {
     // The trigger-based promotion of earlier versions leaves nothing behind.
     'DROP TRIGGER IF EXISTS rp_publish_apply;',
     'DROP TABLE IF EXISTS rp_publish;',
+    // The receipt rides in the swap's own transaction: if it names this run, the generation IS served.
+    // Without it a container stopped during the swap leaves nobody able to tell whether it happened,
+    // and the next attempt republishes the same generation an hour and a half later.
+    ...(runId
+      ? [
+          'CREATE TABLE IF NOT EXISTS rp_generation (run_id TEXT PRIMARY KEY, published_at TEXT NOT NULL);',
+          'DELETE FROM rp_generation;',
+          `INSERT INTO rp_generation VALUES(${sqlLiteral(runId)}, ${sqlLiteral(new Date().toISOString())});`,
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -494,6 +512,31 @@ export function chunkTables(tables, size = READBACK_MAX_TABLES) {
 // a recording sleep, and a small budget to pin the retry WIRING — that readShippedCounts actually wraps
 // the read in readCountsWithRetry with a real backoff, and not a one-shot — without touching wrangler.
 // `readOnce` receives the group it is being asked about, so a test can answer per chunk.
+/** The run id the target says it is serving, or null when it has never been published this way.
+ * A target without the receipt table answers null, which is the honest "unknown". */
+export function readPublishedGeneration(d1Name, remote, deps = {}) {
+  const exec =
+    deps.exec ??
+    ((args) => execFileSync('wrangler', args, { cwd: resolve('apps/web'), encoding: 'utf8' }));
+  try {
+    const rows =
+      parseWranglerJson(
+        exec([
+          'd1',
+          'execute',
+          d1Name,
+          remote ? '--remote' : '--local',
+          '--json',
+          '--command',
+          "SELECT run_id FROM rp_generation WHERE (SELECT 1 FROM sqlite_master WHERE name='rp_generation')",
+        ]),
+      )[0]?.results ?? [];
+    return typeof rows[0]?.run_id === 'string' ? rows[0].run_id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readShippedCounts(d1Name, remote, expected, deps = {}) {
   const tables = Object.entries(expected)
     .filter(([, n]) => typeof n === 'number')
@@ -750,6 +793,8 @@ async function main() {
       maxStatements,
       paceMs,
       yielding: () => yieldRequested,
+      runId: emit ? null : (process.env.SIGMA_RUN_ID ?? null),
+      published: emit ? null : readPublishedGeneration(d1Name, remote),
     });
   } catch (error) {
     if (!(error instanceof ShipYield)) throw error;
