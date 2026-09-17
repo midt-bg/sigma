@@ -263,7 +263,8 @@ jobs:
           for migration in \
             0018_person_entities \
             0019_registry_scoped_birthdates \
-            0020_registry_company_history
+            0020_registry_company_history \
+            0022_person_relatives
           do
             pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
               --config wrangler.deploy.jsonc --remote --yes \
