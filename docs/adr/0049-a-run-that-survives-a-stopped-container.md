@@ -5,7 +5,8 @@
 - **Обхват:** `scripts/cacbg/extract.mjs`, `scripts/cacbg/extract-checkpoint.mjs`,
   `scripts/cacbg/corpus.mjs`, `apps/etl/src/declaration-corpus.ts`, `apps/etl/src/declarations.ts`,
   `apps/etl/src/index.ts`, `containers/declarations/server.mjs`, `scripts/related-persons-job.mjs`,
-  `scripts/ship-related-persons.mjs`. Допълва
+  `scripts/ship-related-persons.mjs`, `scripts/rebuild-slot.mjs`, `scripts/tr/rebuild-registry.mjs`.
+  Допълва
   [ADR-0045](0045-declarations-in-a-cloudflare-container.md) и
   [ADR-0048](0048-rebuild-the-idle-slot-in-the-container.md).
 
@@ -60,5 +61,8 @@ Cloudflare спира контейнерна инстанция, когато п
   `docs/deploy.md`.
 - Работната база не се пази: повторното ѝ изнасяне е три минути, а проверката „нищо не изчезва“
   нарочно се сравнява със свежа снимка.
-- Пълното изграждане на слот (ADR-0048) остава уязвимо на същите спирания; неговият трайн склад е
-  самият неактивен слот и това е следваща стъпка.
+- Пълното изграждане на слот (ADR-0048) ползва същото решение с друг склад: трайното място е самият
+  неактивен слот. Той се изпразва и оформя веднъж в началото, всеки завършен етап оставя в него редовете
+  си и разписка в `rebuild_state`, а вносът на регистъра изсипва всяка партида от партиди заедно с
+  показалците, които казват какво остава. Нов опит чете разписките, изнася слота в локална база (около
+  три минути) и продължава със следващия етап, вместо да строи часове отначало.

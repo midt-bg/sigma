@@ -17,7 +17,9 @@ import {
   insertStatements,
   parseWranglerJson,
   sqlIdent,
+  sqlLiteral,
 } from './ship-related-persons.mjs';
+import { importSql } from './cacbg/import-sql.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const webDir = resolve(root, 'apps/web');
@@ -136,6 +138,188 @@ const d1Json = (name, sql) =>
     wrangler(['d1', 'execute', name, '--remote', '--json', '--command', sql], true),
   )[0]?.results ?? [];
 
+// The rebuild is hours long and the container can be stopped at any moment (ADR-0049). Its durable
+// store is the idle slot itself: the data is going there anyway, and one file execution in D1 is one
+// transaction, so a receipt written with the data cannot disagree with it.
+const REBUILD_STATE_DDL =
+  'CREATE TABLE IF NOT EXISTS rebuild_state (stage TEXT PRIMARY KEY, run_id TEXT NOT NULL, done_at TEXT NOT NULL, detail TEXT);';
+
+/** What this run has already put in the slot. A slot without the table has nothing to offer. */
+export function slotState(name, runId, read = d1Json) {
+  if (!read(name, "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length)
+    return new Map();
+  return new Map(
+    read(name, `SELECT stage, detail FROM rebuild_state WHERE run_id=${sqlLiteral(runId)}`).map(
+      (r) => [r.stage, r.detail],
+    ),
+  );
+}
+
+/** A batch of partidas, straight into the slot: its rows, the queue entries it cleared or added, and
+ * the registry's own cursors. The rebuild then resumes at the batch, not at the first partida. */
+export function slotFlusher(name, snapshot, apply) {
+  const tables = registryTables(snapshot);
+  const cursors = ['registry_sync', 'registry_entry_state', 'registry_entry_passes'].filter((t) =>
+    snapshot.prepare(`SELECT 1 FROM sqlite_master WHERE name=${sqlLiteral(t)}`).get(),
+  );
+  let since = null;
+  const send =
+    apply ??
+    ((label, sql) => {
+      const file = join(resolve(root, 'data/work/rebuild'), `${label}.sql`);
+      writeFileSync(file, sql);
+      wrangler(['d1', 'execute', name, '--remote', '--yes', '--file', file]);
+      rmSync(file, { force: true });
+    });
+  return async (eiks) => {
+    send('registry-batch', registryBatchSql(snapshot, eiks, tables, cursors, since));
+    since = new Date().toISOString();
+  };
+}
+
+/** Empty the slot of everything but the full-text shadow tables, which SQLite owns. */
+export function emptySlot(name, apply, read = d1Json) {
+  const drops = read(
+    name,
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
+  )
+    .map((t) => t.name)
+    .filter((n) => !/^search_index_/.test(n))
+    .map((n) => `DROP TABLE IF EXISTS ${sqlIdent(n)};`);
+  if (drops.length) apply('wipe', `PRAGMA defer_foreign_keys=ON;\n${drops.join('\n')}\n`);
+}
+
+/** Put a whole local snapshot into the slot: the snapshot's own DDL where the migrations left a gap,
+ * then every table emptied children-first and filled parents-first, in chunks of twenty thousand rows.
+ * Used twice — once after a long stage, so its hours are durable, and once for the finished build. */
+export function fillSlot(name, snapshotPath, work, { label, apply }) {
+  const snap = new DatabaseSync(snapshotPath, { readOnly: true });
+  try {
+    const master = snap
+      .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL')
+      .all();
+    const tables = shippedTables(
+      master.filter((m) => m.type === 'table').map((m) => m.name),
+      readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'),
+    );
+    apply(
+      `${label}-schema`,
+      master
+        .filter((m) => tables.includes(m.tbl_name) && (m.type === 'table' || m.type === 'index'))
+        .sort((a, b) => (a.type === b.type ? 0 : a.type === 'table' ? -1 : 1))
+        .map((m) => `${ifNotExists(m.sql)};`)
+        .join('\n') + '\n',
+    );
+    const foreignKeys = new Map(
+      tables.map((t) => [
+        t,
+        snap
+          .prepare(`PRAGMA foreign_key_list(${sqlIdent(t)})`)
+          .all()
+          .map((f) => f.table),
+      ]),
+    );
+    const ordered = parentsFirst(tables, foreignKeys);
+    // The internal related-persons table never leaves the build (ADR-0032).
+    const withRows = ordered.filter((t) => t !== 'related_persons_internal');
+    apply(
+      `${label}-clear`,
+      `PRAGMA defer_foreign_keys=ON;\n` +
+        [...withRows]
+          .reverse()
+          .map((t) => `DELETE FROM ${sqlIdent(t)};`)
+          .join('\n') +
+        '\n',
+    );
+    const counts = {};
+    let shipped = 0;
+    for (const table of withRows) {
+      const cols = snap
+        .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
+        .all()
+        .map((c) => c.name);
+      const n = snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(table)}`).get().n;
+      counts[table] = n;
+      for (let offset = 0, part = 0; offset < n; offset += 20_000, part++) {
+        const rows = snap
+          .prepare(
+            `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} LIMIT 20000 OFFSET ${offset}`,
+          )
+          .all();
+        apply(
+          `ship-${table}-${String(part).padStart(3, '0')}`,
+          `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}`,
+        );
+        shipped += rows.length;
+        progress(label === 'ship' ? 'ship' : label, shipped);
+      }
+    }
+    return { counts, withRows, shipped };
+  } finally {
+    snap.close();
+  }
+}
+
+/** The registry tables keyed by company, as the local build holds them. */
+export function registryTables(snapshot) {
+  return snapshot
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'registry_%' ORDER BY name",
+    )
+    .all()
+    .map((r) => r.name)
+    .filter((name) =>
+      snapshot
+        .prepare(`PRAGMA table_info(${sqlIdent(name)})`)
+        .all()
+        .some((c) => c.name === 'eik'),
+    );
+}
+
+/** Rows for one batch of companies, as statements that replace whatever the slot holds for them. */
+export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) {
+  const list = eiks.map(sqlLiteral).join(',');
+  const out = [`DELETE FROM registry_queue WHERE eik IN (${list});`];
+  // Reading a partida can queue another company; anything queued since the last flush travels too.
+  if (since) {
+    const cols = snapshot
+      .prepare('PRAGMA table_info(registry_queue)')
+      .all()
+      .map((c) => c.name);
+    const added = snapshot
+      .prepare(
+        `SELECT ${cols.map(sqlIdent).join(',')} FROM registry_queue WHERE queued_at > ${sqlLiteral(since)} AND eik NOT IN (${list})`,
+      )
+      .all();
+    out.push(
+      ...insertStatements('registry_queue', cols, added).map((sql) =>
+        sql.replace(/^INSERT INTO/, 'INSERT OR REPLACE INTO'),
+      ),
+    );
+  }
+  for (const table of [...tables, ...cursors]) {
+    const cols = snapshot
+      .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
+      .all()
+      .map((c) => c.name);
+    if (!cols.length) continue;
+    const rows = cursors.includes(table)
+      ? snapshot.prepare(`SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`).all()
+      : snapshot
+          .prepare(
+            `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
+          )
+          .all();
+    if (cursors.includes(table)) out.push(`DELETE FROM ${sqlIdent(table)};`);
+    out.push(
+      ...insertStatements(table, cols, rows).map((sql) =>
+        sql.replace(/^INSERT INTO/, 'INSERT OR REPLACE INTO'),
+      ),
+    );
+  }
+  return `PRAGMA defer_foreign_keys=ON;\n${out.join('')}`;
+}
+
 async function main() {
   const target = { name: process.env.SIGMA_D1_NAME, id: process.env.SIGMA_D1_ID };
   const live = { name: process.env.SIGMA_LIVE_D1_NAME, id: process.env.SIGMA_LIVE_D1_ID };
@@ -150,6 +334,19 @@ async function main() {
     throw new Error(
       'A rebuild writes only the idle slot: set both slots, and never the live one as the target',
     );
+  // The web config the wrangler CLI reads is rendered before any remote call: the rebuild writes the
+  // slot from its very first stage now, not only at the end.
+  execFileSync(
+    process.execPath,
+    [
+      '--import',
+      './scripts/cacbg/register-ts.mjs',
+      'scripts/wrangler-render.mjs',
+      'apps/web/wrangler.jsonc',
+    ],
+    { cwd: root, stdio: 'inherit' },
+  );
+  copyFileSync(resolve(webDir, 'wrangler.deploy.jsonc'), resolve(webDir, 'wrangler.jsonc'));
   const info = JSON.parse(wrangler(['d1', 'info', target.name, '--json'], true));
   assertD1TargetAuthorized({
     remote: true,
@@ -164,18 +361,58 @@ async function main() {
   mkdirSync(work, { recursive: true });
   const db = join(work, 'slot.sqlite');
   const today = new Date().toISOString().slice(0, 10);
+  const runId = process.env.SIGMA_RUN_ID ?? '';
+  const apply = (label, sql) => {
+    const file = join(work, `${label}.sql`);
+    writeFileSync(file, sql);
+    wrangler(['d1', 'execute', target.name, '--remote', '--yes', '--file', file]);
+    rmSync(file, { force: true });
+  };
+  const record = (name, detail = null) =>
+    apply(
+      `state-${name}`,
+      `${REBUILD_STATE_DDL}\nINSERT OR REPLACE INTO rebuild_state VALUES(${sqlLiteral(name)},${sqlLiteral(runId)},${sqlLiteral(new Date().toISOString())},${sqlLiteral(detail)});`,
+    );
+
+  // 0. The slot is the durable store of this rebuild. It is emptied and shaped once; from there on
+  // every finished stage leaves its rows and its receipt in it, so a stopped container resumes from
+  // the slot instead of building for hours again.
+  const done = slotState(target.name, runId);
+  if (done.has('prepare')) {
+    stage('import');
+    const dump = join(work, 'slot-dump.sql');
+    rmSync(dump, { force: true });
+    wrangler(['d1', 'export', target.name, '--remote', '--output', dump]);
+    importSql(db, dump);
+    rmSync(dump, { force: true });
+    console.log(`resumed from the slot after: ${[...done.keys()].join(', ')}`);
+  } else {
+    stage('import');
+    emptySlot(target.name, apply);
+    wrangler(['d1', 'migrations', 'apply', target.name, '--remote']);
+    record('prepare');
+  }
 
   // 1. The procurement corpus, from the open data, into a fresh file with every migration.
-  await step('import', [
-    'scripts/import.mjs',
-    `--work-db=${db}`,
-    '--from=2020-01-01',
-    `--to=${today}`,
-    '--no-ship',
-  ]);
+  if (!done.has('import')) {
+    await step('import', [
+      'scripts/import.mjs',
+      `--work-db=${db}`,
+      '--from=2020-01-01',
+      `--to=${today}`,
+      '--no-ship',
+    ]);
+    fillSlot(target.name, db, work, { label: 'import', apply });
+    record('import');
+  }
 
-  // 2. The Trade Register: every winner's partida, through the daily ETL's own reader and writer.
-  await step('registry', ['scripts/tr/rebuild-registry.mjs', '--db', db]);
+  // 2. The Trade Register: every winner's partida, through the daily ETL's own reader and writer. Each
+  // batch of partidas goes straight into the slot with the queue that names what is left, so a stop
+  // costs the batch and not the hours before it.
+  if (!done.has('registry')) {
+    await step('registry', ['scripts/tr/rebuild-registry.mjs', '--db', db, '--slot', target.name]);
+    record('registry');
+  }
 
   // 3. Public ownership, then the rollups and the entity search index.
   stage('precompute');
@@ -261,89 +498,13 @@ async function main() {
     readFileSync(resolve(root, 'scripts/person-search-index.sql'), 'utf8'),
   );
 
-  // 7. The idle slot: emptied, shaped by the migrations and the snapshot's DDL, then filled parents first.
+  // 7. The slot takes the finished snapshot: its own DDL where the migrations left a gap, then every
+  // table emptied and filled parents first. The rows an earlier stage already put there are replaced.
   stage('ship');
-  execFileSync(
-    process.execPath,
-    [
-      '--import',
-      './scripts/cacbg/register-ts.mjs',
-      'scripts/wrangler-render.mjs',
-      'apps/web/wrangler.jsonc',
-    ],
-    { cwd: root, stdio: 'inherit' },
-  );
-  copyFileSync(resolve(webDir, 'wrangler.deploy.jsonc'), resolve(webDir, 'wrangler.jsonc'));
-  const existing = d1Json(
-    target.name,
-    "SELECT name, type FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
-  );
-  const drops = existing
-    .map((t) => t.name)
-    .filter((n) => !/^search_index_/.test(n))
-    .map((n) => `DROP TABLE IF EXISTS ${sqlIdent(n)};`);
-  if (drops.length) {
-    const file = join(work, 'wipe.sql');
-    writeFileSync(file, `PRAGMA defer_foreign_keys=ON;\n${drops.join('\n')}\n`);
-    wrangler(['d1', 'execute', target.name, '--remote', '--yes', '--file', file]);
-  }
-  wrangler(['d1', 'migrations', 'apply', target.name, '--remote']);
-
-  const snap = new DatabaseSync(snapshot, { readOnly: true });
-  const master = snap
-    .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL')
-    .all();
-  const tables = shippedTables(
-    master.filter((m) => m.type === 'table').map((m) => m.name),
-    readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'),
-  );
-  const ddl = master
-    .filter((m) => tables.includes(m.tbl_name) && (m.type === 'table' || m.type === 'index'))
-    .sort((a, b) => (a.type === b.type ? 0 : a.type === 'table' ? -1 : 1))
-    .map((m) => `${ifNotExists(m.sql)};`);
-  const ddlFile = join(work, 'schema.sql');
-  writeFileSync(ddlFile, ddl.join('\n') + '\n');
-  wrangler(['d1', 'execute', target.name, '--remote', '--yes', '--file', ddlFile]);
-
-  const foreignKeys = new Map(
-    tables.map((t) => [
-      t,
-      snap
-        .prepare(`PRAGMA foreign_key_list(${sqlIdent(t)})`)
-        .all()
-        .map((f) => f.table),
-    ]),
-  );
-  const counts = {};
-  const ordered = parentsFirst(tables, foreignKeys);
-  // The internal related-persons table never leaves the build (ADR-0032).
-  const withRows = ordered.filter((t) => t !== 'related_persons_internal');
-  let shipped = 0;
-  for (const table of withRows) {
-    const cols = snap
-      .prepare(`PRAGMA table_info(${sqlIdent(table)})`)
-      .all()
-      .map((c) => c.name);
-    const n = snap.prepare(`SELECT COUNT(*) n FROM ${sqlIdent(table)}`).get().n;
-    counts[table] = n;
-    for (let offset = 0, part = 0; offset < n; offset += 20_000, part++) {
-      const rows = snap
-        .prepare(
-          `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} LIMIT 20000 OFFSET ${offset}`,
-        )
-        .all();
-      const file = join(work, `ship-${table}-${String(part).padStart(3, '0')}.sql`);
-      writeFileSync(
-        file,
-        `PRAGMA defer_foreign_keys=ON;\n${insertStatements(table, cols, rows).join('')}`,
-      );
-      wrangler(['d1', 'execute', target.name, '--remote', '--yes', '--file', file]);
-      rmSync(file);
-      shipped += rows.length;
-      progress('ship', shipped);
-    }
-  }
-  snap.close();
+  const { counts, withRows, shipped } = fillSlot(target.name, snapshot, work, {
+    label: 'ship',
+    apply,
+  });
 
   // 8. The slot answers for what it holds.
   stage('verify');

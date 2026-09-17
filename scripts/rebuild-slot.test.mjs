@@ -8,7 +8,11 @@ import {
   ifNotExists,
   ownershipStatements,
   parentsFirst,
+  registryBatchSql,
+  registryTables,
   shippedTables,
+  slotFlusher,
+  slotState,
   sqlite,
 } from './rebuild-slot.mjs';
 
@@ -112,4 +116,59 @@ test('a long sqlite3 statement reports progress and a failing one rejects', asyn
     completed: 1,
   });
   await assert.rejects(sqlite('precompute', db, 'SELECT * FROM missing;'), /sqlite3 exited/);
+});
+
+test('the slot says which stages this run already finished', () => {
+  const answers = {
+    "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'": [{ found: 1 }],
+    "SELECT stage, detail FROM rebuild_state WHERE run_id='run-7'": [
+      { stage: 'prepare', detail: null },
+      { stage: 'import', detail: '2026-09-17' },
+    ],
+  };
+  const read = (name, sql) => answers[sql] ?? [];
+  assert.deepEqual(
+    [...slotState('slot', 'run-7', read).keys()],
+    ['prepare', 'import'],
+    'a recorded stage is not repeated',
+  );
+  // A slot that has never been prepared offers nothing, and must not be queried further.
+  assert.equal(slotState('slot', 'run-7', () => []).size, 0);
+});
+
+test('a registry batch carries its rows, the queue it cleared and what it queued, and the cursors', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE registry_deeds(eik TEXT PRIMARY KEY, name TEXT);
+    CREATE TABLE registry_roles(eik TEXT, subject_id TEXT);
+    CREATE TABLE registry_queue(eik TEXT PRIMARY KEY, reason TEXT, queued_at TEXT);
+    CREATE TABLE registry_sync(id INTEGER PRIMARY KEY, changes_through TEXT);
+    INSERT INTO registry_deeds VALUES('111111111','А ООД'),('222222222','Б ООД');
+    INSERT INTO registry_roles VALUES('111111111','hash-1');
+    INSERT INTO registry_queue VALUES('333333333','new','2026-09-17T10:00:00Z');
+    INSERT INTO registry_sync VALUES(1,'2026-09-17');`);
+  assert.deepEqual(registryTables(db), ['registry_deeds', 'registry_queue', 'registry_roles']);
+  const sql = registryBatchSql(
+    db,
+    ['111111111'],
+    ['registry_deeds', 'registry_roles'],
+    ['registry_sync'],
+    '2026-09-17T09:00:00Z',
+  );
+  assert.match(sql, /DELETE FROM registry_queue WHERE eik IN \('111111111'\);/);
+  assert.match(sql, /INSERT OR REPLACE INTO "registry_deeds"[\s\S]*'111111111'/);
+  assert.ok(!sql.includes('222222222'), 'only the batch travels');
+  assert.match(sql, /INSERT OR REPLACE INTO "registry_queue"[\s\S]*'333333333'/);
+  assert.match(sql, /DELETE FROM "registry_sync";/);
+  assert.match(sql, /INSERT OR REPLACE INTO "registry_sync"/);
+
+  // The flusher sends one file per batch and only asks for what the batch touched.
+  const sent = [];
+  const flush = slotFlusher('slot', db, (label, body) => sent.push([label, body]));
+  return flush(['222222222']).then(() => {
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0][0], 'registry-batch');
+    assert.match(sent[0][1], /'222222222'/);
+    assert.ok(!sent[0][1].includes('111111111'));
+    db.close();
+  });
 });
