@@ -11,7 +11,11 @@ import { personSlug } from './identity';
 
 // `officialBestRank` drives the relevance gate: FTS bm25 rank is negative, lower = better. Company's best is
 // -5 below, so an official best of -6 LEADS (stronger) and -1 SINKS (weaker/incidental) — the two gate arms.
-function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
+function searchDb(
+  officialBestRank = -6,
+  hasConflictTable = true,
+  personBestRank: number | null = null,
+): D1Database {
   const officialRows = [
     {
       ref: 'person:ИВАН МИНЕВ',
@@ -86,8 +90,27 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
     rank: -4 + i * 0.1,
   }));
 
+  const personRows =
+    personBestRank == null
+      ? []
+      : [
+          {
+            ref: 'a'.repeat(64),
+            title: 'МАРИЯ ПЕТРОВА',
+            subtitle: 'АЛФА ООД',
+            rank: personBestRank,
+          },
+          {
+            ref: 'person:МАРИЯ ПЕТРОВА|ОБЩИНА',
+            title: 'Мария Петрова',
+            subtitle: 'Кмет · Община',
+            rank: personBestRank + 0.1,
+          },
+        ].map((r) => ({ ...r, ident: '', amount: null, has_conflict: 0 }));
+
   const byKind: Record<string, object[]> = {
     official: officialRows,
+    person: personRows,
     company: companyRows,
     contract: contractRows,
   };
@@ -105,6 +128,7 @@ function searchDb(officialBestRank = -6, hasConflictTable = true): D1Database {
       when: ['FROM search_index', 'GROUP BY kind'],
       all: [
         { kind: 'official', n: 2 },
+        ...(personBestRank == null ? [] : [{ kind: 'person', n: 9 }]),
         { kind: 'company', n: 7 },
         { kind: 'contract', n: 6 },
       ],
@@ -217,6 +241,21 @@ describe('search', () => {
     const nonEmpty = results.groups.filter((g) => g.total > 0);
     expect(nonEmpty[0]?.kind).not.toBe('official');
     expect(nonEmpty.at(-1)?.kind).toBe('official');
+  });
+
+  it('finds every other person with a page, after the officials, without a listing link', async () => {
+    const results = await search(searchDb(-6, true, -5.5), 'мария');
+    const kinds = results.groups.filter((g) => g.total > 0).map((g) => g.kind);
+    expect(kinds.slice(0, 2)).toEqual(['official', 'person']);
+    const people = results.groups.find((g) => g.kind === 'person')!;
+    expect(people).toMatchObject({ label: 'Лица', total: 9, moreHref: null });
+    expect(people.hits.map((h) => [h.href, h.ident, h.subtitle])).toEqual([
+      [`/persons/${'a'.repeat(64)}`, null, 'АЛФА ООД'],
+      [`/persons/${personSlug('person:МАРИЯ ПЕТРОВА|ОБЩИНА')}`, null, 'Кмет · Община'],
+    ]);
+    // A weaker person match trails the other groups.
+    const weak = await search(searchDb(-6, true, -1), 'мария');
+    expect(weak.groups.filter((g) => g.total > 0).at(-1)?.kind).toBe('person');
   });
 
   it('flags the company that appears in the свързани-лица surface, and only that one', async () => {

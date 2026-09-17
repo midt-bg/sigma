@@ -53,7 +53,10 @@ function highlight(text: string | null, re: RegExp | null): ReactNode {
 }
 
 function renderTitle(hit: SearchHit, re: RegExp | null) {
-  return highlight(hit.kind === 'official' ? personName(hit.title) : hit.title, re);
+  return highlight(
+    hit.kind === 'official' || hit.kind === 'person' ? personName(hit.title) : hit.title,
+    re,
+  );
 }
 
 // Search results are whole-card links; explanations remain on the destination profile.
@@ -208,10 +211,12 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                       )}
                     </p>
                   </span>
-                  <span className="amt">
-                    <span className="num">{h.amountEur != null ? money(h.amountEur) : '—'}</span>
-                    <span className="lab">{h.amountLabel}</span>
-                  </span>
+                  {h.kind !== 'person' && (
+                    <span className="amt">
+                      <span className="num">{h.amountEur != null ? money(h.amountEur) : '—'}</span>
+                      <span className="lab">{h.amountLabel}</span>
+                    </span>
+                  )}
                 </Link>
               ))}
             </section>

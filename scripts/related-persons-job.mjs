@@ -293,6 +293,16 @@ if (remote) {
        WHERE status='published' AND interest_class IN ('private_ownership','family_ownership')
      )`,
   ]);
+  // Everyone else with a page, after the officials are final.
+  wrangler([
+    'd1',
+    'execute',
+    d1,
+    '--remote',
+    '--yes',
+    '--file',
+    resolve('scripts/person-search-index.sql'),
+  ]);
   if (r2) {
     const stamp = await corpus.get(CORPUS_STAMP);
     if (!stamp || digest(stamp) !== digest(sourceStamp))

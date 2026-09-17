@@ -7,7 +7,7 @@ import type { EntityKind, OwnershipKind, SearchHit, SearchResults } from '@sigma
 import { cleanName, entityName, parseConsortiumMembers, searchTokens } from '@sigma/shared';
 import { hrefForEntity } from './identity';
 
-export type SearchKind = 'official' | 'authority' | 'company' | 'contract';
+export type SearchKind = 'official' | 'person' | 'authority' | 'company' | 'contract';
 
 // The tokenizer and its caps live in @sigma/shared so the FTS query builder and the search UI agree
 // on what counts as searchable. Re-exported here for existing @sigma/db consumers.
@@ -30,6 +30,9 @@ const GROUPS: {
     limit: 6,
     path: '/conflicts',
   },
+  // Everyone else with a page: declarants without a published stake and people the Trade Register records.
+  // No listing page, so no „виж всички".
+  { kind: 'person', label: 'Лица', amountLabel: '', limit: 6, path: '' },
   {
     kind: 'authority',
     label: 'Институции',
@@ -217,7 +220,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           slug: href.split('/').pop()!,
           href,
           title: isCompany ? entityName(cleanName(r.title), companyKind) : r.title,
-          ident: g.kind === 'official' ? null : r.ident || null,
+          ident: g.kind === 'official' || g.kind === 'person' ? null : r.ident || null,
           ...(isCompany
             ? {
                 isConsortium,
@@ -238,7 +241,7 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
           label: g.label,
           total,
           hits,
-          moreHref: total > hits.length ? searchMoreHref(g.kind, query) : null,
+          moreHref: total > hits.length && g.path ? searchMoreHref(g.kind, query) : null,
         },
         // Best (lowest bm25) rank in the group = its top row, for the relevance gate below.
         bestRank: results.length ? results[0]!.rank : Infinity,
@@ -251,11 +254,17 @@ export async function search(db: D1Database, rawQuery: string): Promise<SearchRe
   // it goes first; otherwise it sinks to last (still shown, just not hijacking the top over a stronger
   // company/contract match). Empty groups are hidden downstream, so „first when matched, absent otherwise"
   // falls out for free.
-  const official = built.find((b) => b.group.kind === 'official')!;
-  const rest = built.filter((b) => b.group.kind !== 'official');
+  // The people groups lead the same way, officials first.
+  const people: SearchKind[] = ['official', 'person'];
+  const rest = built.filter((b) => !people.includes(b.group.kind));
   const bestOther = Math.min(Infinity, ...rest.map((b) => b.bestRank));
-  const officialLeads = official.group.total > 0 && official.bestRank <= bestOther;
-  const groups = (officialLeads ? [official, ...rest] : [...rest, official]).map((b) => b.group);
+  const lead: typeof built = [];
+  const trail: typeof built = [];
+  for (const kind of people) {
+    const b = built.find((x) => x.group.kind === kind)!;
+    (b.group.total > 0 && b.bestRank <= bestOther ? lead : trail).push(b);
+  }
+  const groups = [...lead, ...rest, ...trail].map((b) => b.group);
 
   return { query, groups, empty: groups.every((g) => g.total === 0) };
 }

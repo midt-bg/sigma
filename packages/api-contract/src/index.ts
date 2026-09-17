@@ -782,7 +782,7 @@ export interface CompetitionData {
 // ── Search ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface SearchHit {
-  kind: 'authority' | 'company' | 'contract' | 'official';
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person';
   slug: string;
   href: string;
   title: string;
@@ -798,7 +798,7 @@ export interface SearchHit {
 }
 
 export interface SearchGroup {
-  kind: 'authority' | 'company' | 'contract' | 'official';
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person';
   label: string;
   total: number;
   hits: SearchHit[];

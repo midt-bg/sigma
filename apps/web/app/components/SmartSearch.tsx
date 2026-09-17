@@ -10,6 +10,7 @@ export const KIND_LABEL: Record<SearchHit['kind'], string> = {
   // The hit IS the office-holder — a длъжностно лице. „свързано лице" (related person) means the RELATIVE,
   // never the official themselves; mislabeling the official that way is a category error (todorkolev #226 — C14).
   official: 'длъжностно лице',
+  person: 'лице',
   authority: 'институция',
   company: 'компания',
   contract: 'договор',
@@ -226,7 +227,9 @@ export function SmartSearch({
                       <span className="smart-search-option-kind">{KIND_LABEL[hit.kind]}</span>
                       <span className="smart-search-option-body">
                         <span className="smart-search-option-title">
-                          {hit.kind === 'official' ? personName(hit.title) : hit.title}
+                          {hit.kind === 'official' || hit.kind === 'person'
+                            ? personName(hit.title)
+                            : hit.title}
                         </span>
                         {meta && <span className="smart-search-option-meta">{meta}</span>}
                       </span>

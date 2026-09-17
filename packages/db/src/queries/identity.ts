@@ -115,11 +115,12 @@ export function contractIdFromSlug(slug: string): string {
 
 /** Map a raw domain id to its explorer route. Used to turn FTS `ref`s into hrefs. */
 export function hrefForEntity(
-  kind: 'authority' | 'company' | 'contract' | 'official',
+  kind: 'authority' | 'company' | 'contract' | 'official' | 'person',
   id: string,
 ): string {
   if (kind === 'authority') return `/authorities/${authoritySlug(id)}`;
   if (kind === 'company') return `/companies/${companySlug(id)}`;
   if (kind === 'official') return `/persons/${personSlug(id)}`;
+  if (kind === 'person') return `/persons/${registryPersonIdFromSlug(id) ?? personSlug(id)}`;
   return `/contracts/${contractSlug(id)}`;
 }
