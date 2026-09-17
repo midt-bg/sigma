@@ -76,6 +76,8 @@ export function personActivityScope(indent: string | null, ids: string[]) {
   const gate = `${SURFACED_OWNERSHIP} AND ${NOT_REDUNDANT_FAMILY} AND il.person_id IN (${placeholders})`;
   const cte = `WITH scoped AS (
     SELECT DISTINCT r.eik FROM registry_roles r WHERE r.subject_id=?1 AND r.subject_kind='person' AND ${publicRole('r')}
+      -- A role in a public enterprise is a held position; its contracts are not the person's (ADR-0047).
+      AND NOT EXISTS (SELECT 1 FROM bidders pb WHERE pb.id='eik:' || r.eik AND pb.ownership_kind IS NOT NULL)
     UNION SELECT il.eik FROM interest_links il WHERE ${gate}
   ), office_years AS (
     SELECT DISTINCT d.declared_year year FROM declarations d
@@ -93,7 +95,8 @@ export function personActivityScope(indent: string | null, ids: string[]) {
             AND date(c.signed_at)<=date(rd.fetched_at))))) AS during_role,
       EXISTS (SELECT 1 FROM interest_links il WHERE ${gate} AND il.eik=b.eik_normalized
         AND c.signed_at IS NOT NULL AND ${declarationWindow('il', 'c.signed_at')}) AS during_declaration,
-      (SELECT COALESCE(SUM(DISTINCT CASE WHEN il.interest_class='private_ownership' THEN 1 ELSE 2 END),0)
+      (SELECT COALESCE(SUM(DISTINCT CASE WHEN il.interest_class='family_ownership' THEN 2
+          WHEN il.relation='manages' THEN 4 ELSE 1 END),0)
         FROM interest_links il WHERE ${gate} AND il.eik=b.eik_normalized AND c.signed_at IS NOT NULL
         AND ${declarationWindow('il', 'c.signed_at')}) AS declaration_basis
     FROM contracts c JOIN bidders b ON b.id=c.bidder_id
@@ -134,7 +137,7 @@ export async function getPersonActivity(
   const basisConditions = {
     role: 'during_role=1',
     declaration: 'during_declaration=1',
-    self: '(declaration_basis & 1)<>0',
+    self: '(declaration_basis & 5)<>0',
     family: '(declaration_basis & 2)<>0',
     all: '1=1',
     matched: 'during_office_year=1',

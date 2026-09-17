@@ -578,7 +578,8 @@ export interface CompanyPeople {
 
 /** One role a person holds, or held, at one company. */
 export interface PersonRole {
-  company: { name: string; eik: string; href: string | null };
+  /** `ownershipKind`: a public enterprise, where a role is a held position (ADR-0047). */
+  company: { name: string; eik: string; href: string | null; ownershipKind?: OwnershipKind };
   role: RegistryRoleKind;
   share: string | null;
   sharePct: number | null;

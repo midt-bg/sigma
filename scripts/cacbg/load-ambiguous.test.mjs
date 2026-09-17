@@ -37,11 +37,11 @@ function buildAndLoad(bidderRows) {
 
   const db = new DatabaseSync(DB);
   db.exec(`
-    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT);
+    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT, ownership_kind TEXT);
     CREATE TABLE authorities(id TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE tenders(id TEXT PRIMARY KEY, authority_id TEXT);
     CREATE TABLE contracts(id TEXT PRIMARY KEY, tender_id TEXT, bidder_id TEXT, signed_at TEXT, amount_eur REAL);
-    ${bidderRows.map((r) => `INSERT INTO bidders VALUES (${r});`).join('\n')}
+    ${bidderRows.map((r) => `INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES (${r});`).join('\n')}
   `);
   db.close();
   fs.writeFileSync(path.join(STAGING, 'holdings.jsonl'), '');

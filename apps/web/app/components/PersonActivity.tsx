@@ -36,6 +36,7 @@ const columns: Column<PersonContractRow>[] = [
         {r.duringOfficeYear && <Chip tone="window">година с данни за длъжността</Chip>}
         {r.duringRole && <Chip>лична роля в ТР</Chip>}
         {(r.declarationBasis & 1) !== 0 && <Chip>деклариран собствен дял</Chip>}
+        {(r.declarationBasis & 4) !== 0 && <Chip>декларирано управление</Chip>}
         {(r.declarationBasis & 2) !== 0 && <Chip>дял на свързано лице</Chip>}
         {!r.signedAt ? (
           'Без дата'
@@ -225,7 +226,7 @@ export function PersonActivity({
                   Само в декларирания период{optionCount('basis', 'declaration')}
                 </option>
                 <option value="self" disabled={!hasDeclarations}>
-                  Деклариран собствен дял{optionCount('basis', 'self')}
+                  Деклариран собствен дял или управление{optionCount('basis', 'self')}
                 </option>
                 <option value="family" disabled={!hasDeclarations}>
                   Дял на свързано лице{optionCount('basis', 'family')}

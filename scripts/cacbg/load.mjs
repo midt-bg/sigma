@@ -298,7 +298,9 @@ const isSuppressed = (linkKey) => {
 
 // --- bidder index + libel gate ------------------------------------------------------------------
 const bidders = db
-  .prepare('SELECT id, name, eik_normalized eik, eik_valid valid, settlement FROM bidders')
+  .prepare(
+    'SELECT id, name, eik_normalized eik, eik_valid valid, settlement, ownership_kind FROM bidders',
+  )
   .all();
 const byKey = new Map();
 const bidderByEik = new Map(); // valid winners, for declared-ЕИК-in-text matching
@@ -904,20 +906,14 @@ const trLookupFallback = (() => {
   return row?.m ? String(row.m).slice(0, 10) : new Date().toISOString().slice(0, 10);
 })();
 
-const declarantsByEik = new Map();
-for (const rec of agg.values()) {
-  if (rec.scope !== 'self') continue; // ex-officio tell counts SELF declarants of a public board only
-  let s = declarantsByEik.get(rec.eik);
-  if (!s) declarantsByEik.set(rec.eik, (s = new Set()));
-  s.add(rec.pid);
-}
-// Interpretation class for the published surface — separates genuine private financial interest from
-// ex-officio public-board roles so the headline never treats an appointed civil servant as a conflict.
-// A family-scope link is its own class (relative's declared stake, official anonymized as свързано лице).
+// Interpretation class (ADR-0047). A stake is a private interest. So is running a private company: its
+// manager is treated as its owner, the relation says which. Running a public enterprise — one the state or a
+// municipality controls (bidders.ownership_kind) — is a held position, never a private interest. A family-scope
+// link is its own class (relative's declared stake).
 function interestClass(rec, relation) {
   if (rec.scope === 'family') return 'family_ownership';
-  if (relation === 'owns' || relation === 'owns+manages') return 'private_ownership';
-  return (declarantsByEik.get(rec.eik)?.size ?? 1) > 1 ? 'ex_officio_board' : 'management_role';
+  if (relation === 'manages' && rec.bidder.ownership_kind) return 'ex_officio_board';
+  return 'private_ownership';
 }
 db.exec('BEGIN');
 for (const rec of agg.values()) {
@@ -1043,7 +1039,8 @@ for (const rec of agg.values()) {
   // says only „свързано лице". § 2 ал. 3 ПЗР (asset declaration not public for some admin staff) is honored
   // BY CONSTRUCTION: family_ownership can arise only from the ASSET declaration (parse.mjs parseAssets /
   // <PublicPerson>), so a person whose asset declaration is not published at source has no family link to
-  // surface — we never exceed the source. ex_officio_board / management_role never surface. Non-surfaced
+  // surface — we never exceed the source. A public enterprise's management (ex_officio_board) never surfaces
+  // as an interest; it is a held position (ADR-0047). Non-surfaced
   // classes that would otherwise publish get 'internal'; suppressed/withdrawn/held still take precedence.
   // Zero-contract gate (I5): the surface's whole premise is „a stake in a company that WON public money".
   // A match to a bidder with no recorded contracts (cCount===0 — a winner row with every contract deduped/

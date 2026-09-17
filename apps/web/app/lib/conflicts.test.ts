@@ -440,6 +440,15 @@ describe('declaredStakeNoun — page prose must not out-claim the cards', () => 
     expect(declaredStakeNoun([])).toBe('собствен дял'); // no links → nothing to qualify
   });
 
+  it('names a declared management for what it is', () => {
+    const manages = { relation: 'manages' };
+    expect(declaredStakeNoun([manages])).toBe('управление на дружество');
+    expect(declaredStakeNoun([manages, self])).toBe('собствен дял или управление');
+    expect(declaredStakeNoun([manages, family])).toBe(
+      'управление на дружество и дял на свързано лице',
+    );
+  });
+
   it('says „дял на свързано лице" on a family-only page', () => {
     // Asserting an OWN stake above cards that read „свързано лице" is a false claim about a named
     // individual — the second source of truth this function exists to remove.

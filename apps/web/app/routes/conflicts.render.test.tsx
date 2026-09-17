@@ -208,7 +208,7 @@ describe('/conflicts route — render', () => {
   it('offers the filters and all three sorts, and sorts by total value when asked', async () => {
     await renderConflicts([familyLink, link()], null, '/conflicts?sort=total');
     expect(container.querySelector('.filter-rail')).not.toBeNull();
-    for (const label of ['Чий е делът', 'Признаци', 'Институция на лицето'])
+    for (const label of ['Основание', 'Признаци', 'Институция на лицето'])
       expect(text()).toContain(label);
     const names = bodyRows().map((r) => r.querySelector('a')?.textContent);
     expect(names).toEqual(['Иван Петров', 'Кмет Тестов']); // €88M before €250k

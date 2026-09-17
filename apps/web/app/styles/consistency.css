@@ -311,6 +311,14 @@ td .chip {
 .time-institution {
   padding-block: 6px;
 }
+.person-time-section {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 22px 0 4px;
+  position: sticky;
+  left: 0;
+}
 .person-time-company {
   border-top: 1px solid #d9d5ce;
   padding: 14px 0;

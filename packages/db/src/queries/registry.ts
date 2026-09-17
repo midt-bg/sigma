@@ -9,6 +9,7 @@ import type {
   CompanyRole,
   CompanyTieEdge,
   CompanyTieNode,
+  OwnershipKind,
   PersonProfile,
   PersonRole,
   RegistryRoleKind,
@@ -279,6 +280,7 @@ interface PersonRoleRow {
   bidder_name: string | null;
   bidder_kind: 'company' | 'consortium' | null;
   won_eur: number | null;
+  ownership_kind: OwnershipKind | null;
 }
 
 const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
@@ -286,7 +288,8 @@ const PERSON_SQL = `SELECT name FROM registry_persons WHERE indent = ?1`;
 const PERSON_ROLES_SQL = `
   SELECT r.eik, r.role, r.share, ${sharePct('r')} AS share_pct,
          r.entry_number, r.added_on, r.removed_on, r.uncertain_after, d.name AS deed_name,
-         d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur
+         d.fetched_at, b.id AS bidder_id, b.name AS bidder_name, b.kind AS bidder_kind, ct.won_eur,
+         b.ownership_kind
   FROM registry_roles r
   JOIN registry_deeds d ON d.eik = r.eik
   JOIN bidders b ON b.id = 'eik:' || r.eik
@@ -314,6 +317,7 @@ export async function getRegistryPerson(
           name: cleanName(r.bidder_name ?? r.deed_name ?? r.eik),
           eik: r.eik,
           href: r.bidder_id ? `/companies/${companySlug(r.bidder_id)}` : null,
+          ...(r.ownership_kind ? { ownershipKind: r.ownership_kind } : {}),
         },
         role: r.role,
         share: r.share,

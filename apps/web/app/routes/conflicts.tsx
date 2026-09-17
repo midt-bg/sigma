@@ -176,9 +176,18 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
                   <Chip>{c.self ? 'собствен и свързан дял' : 'дял на свързано лице'}</Chip>
                 </div>
               )}
+              {!c.self && !c.family && !!c.manages && (
+                <div>
+                  <Chip>декларирано управление</Chip>
+                </div>
+              )}
               {c.registry && (
                 <div>
-                  <Chip>дял по Търговския регистър</Chip>
+                  <Chip>
+                    {c.registryRole === 'manager'
+                      ? 'управление по Търговския регистър'
+                      : 'дял по Търговския регистър'}
+                  </Chip>
                   {c.missingYears?.length ? (
                     <div className="small muted">
                       не е посочено в годишната декларация за {c.missingYears.join(', ')} г.
@@ -229,24 +238,24 @@ export default function Conflicts({ loaderData }: Route.ComponentProps) {
   const groups: FilterGroup[] = [
     {
       key: 'stake',
-      label: 'Чий е делът',
+      label: 'Основание',
       type: 'radio',
       allLabel: 'всички',
       selected: filters.stake ? [filters.stake] : [],
       options: [
         {
           value: 'self',
-          label: 'собствен',
+          label: 'собствен дял или управление',
           count: facets.self,
         },
         {
           value: 'family',
-          label: 'на свързано лице',
+          label: 'дял на свързано лице',
           count: facets.family,
         },
         {
           value: 'registry',
-          label: 'дял по Търговския регистър',
+          label: 'роля по Търговския регистър',
           count: facets.registry,
         },
       ],

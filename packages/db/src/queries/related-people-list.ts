@@ -45,8 +45,9 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
     .prepare(
       `${CTE}
     SELECT p.*,r.name,r.person_id,t.*,
-      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family)) FROM (
-        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.interest_class='private_ownership') self,MAX(l.interest_class='family_ownership') family
+      (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',co.self,'family',co.family,'manages',co.manages)) FROM (
+        SELECT l.eik,COALESCE(b.name,l.eik) company,MAX(l.relation IN ('owns','owns+manages')) self,
+          MAX(l.interest_class='family_ownership') family,MAX(l.relation='manages') manages
         FROM links l JOIN bidders b ON b.eik_normalized=l.eik WHERE l.identity=p.identity GROUP BY l.eik ORDER BY b.name
       ) co) companies,
       (SELECT b.name FROM bidders b WHERE b.eik_normalized=r.eik ORDER BY b.id LIMIT 1) company,r.eik,
@@ -86,6 +87,7 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
       eik: string;
       self: number;
       family: number;
+      manages: number;
     }[],
     soleCompany: r.company_count === 1 ? { company: r.company, eik: r.eik } : null,
     contractCount: r.contract_count,
@@ -105,10 +107,10 @@ export async function getRelatedPersonRows(db: D1Database, authorityId?: string)
   }));
 }
 
-/** People with declarations whom the register records as an OWNER of a procurement winner — partner, sole
- *  owner or sole trader — and who have no published declared stake: the same row shape as the declared
- *  list, so the two read as one. Management seats are left out: at a state-owned company they are held by
- *  appointment (ADR-0019), and a manager owns nothing. The period figures follow the declared office years. */
+/** People with declarations whom the register records as an owner — partner, sole owner or sole trader — or
+ *  a manager of a private procurement winner, and who have no published declared interest: the same row shape
+ *  as the declared list, so the two read as one. A public enterprise is left out: a role there is a held
+ *  position (ADR-0047). The period figures follow the declared office years. */
 export async function getRegistryRolePersonRows(db: D1Database, authorityId?: string) {
   const result = await db
     .prepare(
@@ -118,12 +120,14 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     WHERE NOT EXISTS (SELECT 1 FROM interest_links il WHERE il.person_id=pl.person_id AND il.status='published'
         AND il.interest_class IN ('private_ownership','family_ownership'))
   ), roles AS MATERIALIZED (
-    SELECT DISTINCT pe.person_id, r.eik
+    SELECT pe.person_id, r.eik, MAX(r.role IN ('sole_owner','partner','trader')) owner
     FROM people pe JOIN registry_roles r ON r.subject_id=pe.identity AND r.subject_kind='person'
-      AND r.role IN ('sole_owner','partner','trader')
-    JOIN bidders b ON b.eik_normalized=r.eik JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
+      AND r.role IN ('sole_owner','partner','trader','manager')
+    JOIN bidders b ON b.eik_normalized=r.eik AND b.ownership_kind IS NULL
+    JOIN company_totals ct ON ct.bidder_id=b.id AND ct.contracts>0
     WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM contracts c JOIN tenders t ON t.id=c.tender_id
       JOIN bidders bb ON bb.id=c.bidder_id WHERE bb.eik_normalized=r.eik AND t.authority_id=?1)
+    GROUP BY pe.person_id, r.eik
   ), office_years AS MATERIALIZED (
     SELECT DISTINCT d.person_id, d.declared_year year FROM declarations d
     WHERE d.person_id IN (SELECT person_id FROM roles) AND ${declaredOfficeYear()}
@@ -143,8 +147,9 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
     (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
-      'annual',json(co.annual))) FROM (
+      'registryRole',co.registry_role,'annual',json(co.annual))) FROM (
       SELECT ro.eik, COALESCE(b.name, ro.eik) company,
+        CASE WHEN ro.owner THEN 'owner' ELSE 'manager' END registry_role,
         -- The annual declarations for a year the register records the ownership that do not tie to this ЕИК,
         -- with what each names; the name comparison is made below.
         (SELECT json_group_array(json_object('year',d.declared_year,'named',json((SELECT json_group_array(di.entity_raw)
@@ -192,6 +197,7 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
         self: number;
         family: number;
         registry: number;
+        registryRole: 'owner' | 'manager';
         annual: { year: string; named: string[] }[];
       }[]
     ).map(({ annual, ...c }) => ({

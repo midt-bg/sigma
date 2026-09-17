@@ -76,15 +76,15 @@ before(() => {
 
   const db = new DatabaseSync(DB);
   db.exec(`
-    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT);
+    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT, ownership_kind TEXT);
     CREATE TABLE authorities(id TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE tenders(id TEXT PRIMARY KEY, authority_id TEXT);
     CREATE TABLE contracts(id TEXT PRIMARY KEY, tender_id TEXT, bidder_id TEXT, signed_at TEXT, amount_eur REAL);
     INSERT INTO authorities VALUES ('auth:1','ВЕДОМСТВО ТЕСТ');
     INSERT INTO tenders VALUES ('t1','auth:1'),('t2','auth:1');
     -- Two distinctive single-ЕИК winners (number token + matching seat → published, no ambiguity).
-    INSERT INTO bidders VALUES ('eik:100000001','ДИВ ТЕХ 5 ЕООД','100000001',1,'София');
-    INSERT INTO bidders VALUES ('eik:200000002','ДРУГ ВИН 6 ЕООД','200000002',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:100000001','ДИВ ТЕХ 5 ЕООД','100000001',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:200000002','ДРУГ ВИН 6 ЕООД','200000002',1,'София');
     INSERT INTO contracts VALUES ('c1','t1','eik:100000001','2019-05-01',50000);
     INSERT INTO contracts VALUES ('c2','t2','eik:200000002','2019-06-01',60000);
   `);

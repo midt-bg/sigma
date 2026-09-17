@@ -295,3 +295,61 @@ it('shows one company for multiple source identities, sequential sections and hi
     el.remove();
   }
 });
+
+it('puts offices and public enterprises under „Заемани длъжности", private companies under „Дружества"', () => {
+  const role = (eik: string, name: string, ownershipKind?: 'municipal') => ({
+    company: { eik, name, href: `/companies/${eik}`, ...(ownershipKind ? { ownershipKind } : {}) },
+    role: 'manager' as const,
+    share: null,
+    sharePct: null,
+    addedOn: '2020-01-01',
+    removedOn: null,
+    entryNumber: 'e',
+    fetchedAt: '2026-09-01',
+  });
+  const p = {
+    person: {
+      slug: 'a'.repeat(64),
+      name: 'АННА ПЕТРОВА',
+      roles: [role('222222222', 'ЧАСТНО ООД'), role('111111111', 'ОБЩИНСКО ЕООД', 'municipal')],
+      companies: 2,
+      wonEur: 0,
+      asOf: '2026-09-01',
+      network: { center: null, nodes: [], edges: [], omitted: 0 },
+    },
+    name: 'АННА ПЕТРОВА',
+    links: [],
+    declarations: [],
+    timeline: { reads: [], buyers: [], institutionProfiles: [], observations: [], contracts: [] },
+    activity: emptyActivity,
+    totals: { companies: 2, contracts: 0, valueEur: null, declaredCount: 0, declaredEur: null },
+    tieLayout: null,
+    aliases: [],
+    relatives: [],
+    namedBy: [],
+  } as LoadedPersonProfile;
+  const companies = timelineCompanies(p);
+  expect(companies.map((c) => [c.eik, c.publicEnterprise])).toEqual([
+    ['111111111', true],
+    ['222222222', false],
+  ]);
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  const Stub = createRoutesStub([
+    { path: '/', Component: () => <PersonTimeline profile={p} companies={companies} /> },
+  ]);
+  try {
+    act(() => root.render(<Stub />));
+    const order = [...el.querySelectorAll('.person-time-section, .person-time-company')].map((n) =>
+      n.textContent!.slice(0, 20),
+    );
+    expect(order[0]).toBe('Заемани длъжности');
+    expect(order[1]).toContain('ОБЩИНСКО');
+    expect(order[2]).toBe('Дружества');
+    expect(order[3]).toContain('ЧАСТНО');
+  } finally {
+    act(() => root.unmount());
+    el.remove();
+  }
+});

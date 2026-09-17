@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useRef, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { count, date, money } from '@sigma/shared';
 import type { PersonDeclaration } from '@sigma/api-contract';
@@ -205,6 +205,9 @@ export function PersonTimeline({
               )),
               'time-axis',
             )}
+          {(p.declarations.length > 0 || companies.some((c) => c.publicEnterprise)) && (
+            <h3 className="person-time-section">Заемани длъжности</h3>
+          )}
           {groupDeclaredInstitutions(p.declarations).map((institution, i) => {
             const authorityId = institutionProfiles.find(
               (a) => institutionKey(a.institution) === institutionKey(institution.institution),
@@ -230,7 +233,11 @@ export function PersonTimeline({
               'time-institution',
             );
           })}
-          {companies.map((c) => {
+          {companies.map((c, i) => {
+            const heading =
+              !c.publicEnterprise && (i === 0 || companies[i - 1]!.publicEnterprise) ? (
+                <h3 className="person-time-section">Дружества</h3>
+              ) : null;
             const roleKinds = [...new Set(c.roles.map((r) => r.role))];
             const noRole = !c.roles.length && c.links.length > 0;
             const history = c.observations.filter((o) =>
@@ -240,217 +247,222 @@ export function PersonTimeline({
             const undated = c.contracts.filter((r) => !r.year).reduce((n, r) => n + r.contracts, 0);
 
             return (
-              <div className="person-time-company" key={c.eik} id={`company-${c.eik}`}>
-                <div className="time-company-heading">
-                  <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>
-                  <div className="person-time-notes">
-                    {noRole && (
-                      <p>
-                        Лична роля в ТР не е установена
-                        {c.links.every((l) => l.relation === 'related')
-                          ? ' — декларираният дял е на друго свързано лице.'
-                          : ' за декларатора в наличните регистърни данни.'}
-                      </p>
-                    )}
-                    {disputed.length > 0 && (
-                      <p>
-                        <strong>Разминаване в декларациите.</strong> За{' '}
-                        {[...new Set(disputed.map((o) => o.reportedYear))]
-                          .filter(Boolean)
-                          .sort()
-                          .join(', ')}{' '}
-                        г. дялът е посочен в един документ и липсва в друг. Връзката остава видима;
-                        времевото съвпадение за тези години изисква отделно основание.{' '}
-                        {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
-                          const d = p.declarations.find((d) => d.id === id);
-                          return d ? (
-                            <span className="history-source" key={id}>
-                              {declarationLink(
-                                d,
-                                `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
-                              )}{' '}
-                            </span>
-                          ) : null;
-                        })}
-                      </p>
-                    )}
-                    {history.length > 0 && (
-                      <p>
-                        <strong>Исторически данни.</strong> Предходно участие / прехвърляне ·
-                        периодът се установява отделно.{' '}
-                        {[...new Set(history.map((o) => o.declarationId))].map((id) => {
-                          const d = p.declarations.find((d) => d.id === id);
-                          return d ? (
-                            <span className="history-source" key={id}>
-                              {declarationLink(
-                                d,
-                                `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
-                              )}{' '}
-                            </span>
-                          ) : null;
-                        })}
-                      </p>
-                    )}
-                    {undated > 0 && (
-                      <p>Договори без дата: {count(undated)} — не могат да се поставят на оста.</p>
-                    )}
+              <Fragment key={c.eik}>
+                {heading}
+                <div className="person-time-company" id={`company-${c.eik}`}>
+                  <div className="time-company-heading">
+                    <strong>{c.href ? <Link to={c.href}>{c.name}</Link> : c.name}</strong>
+                    <div className="person-time-notes">
+                      {noRole && (
+                        <p>
+                          Лична роля в ТР не е установена
+                          {c.links.every((l) => l.relation === 'related')
+                            ? ' — декларираният дял е на друго свързано лице.'
+                            : ' за декларатора в наличните регистърни данни.'}
+                        </p>
+                      )}
+                      {disputed.length > 0 && (
+                        <p>
+                          <strong>Разминаване в декларациите.</strong> За{' '}
+                          {[...new Set(disputed.map((o) => o.reportedYear))]
+                            .filter(Boolean)
+                            .sort()
+                            .join(', ')}{' '}
+                          г. дялът е посочен в един документ и липсва в друг. Връзката остава
+                          видима; времевото съвпадение за тези години изисква отделно основание.{' '}
+                          {[...new Set(disputed.map((o) => o.declarationId))].map((id) => {
+                            const d = p.declarations.find((d) => d.id === id);
+                            return d ? (
+                              <span className="history-source" key={id}>
+                                {declarationLink(
+                                  d,
+                                  `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
+                                )}{' '}
+                              </span>
+                            ) : null;
+                          })}
+                        </p>
+                      )}
+                      {history.length > 0 && (
+                        <p>
+                          <strong>Исторически данни.</strong> Предходно участие / прехвърляне ·
+                          периодът се установява отделно.{' '}
+                          {[...new Set(history.map((o) => o.declarationId))].map((id) => {
+                            const d = p.declarations.find((d) => d.id === id);
+                            return d ? (
+                              <span className="history-source" key={id}>
+                                {declarationLink(
+                                  d,
+                                  `${d.year ?? 'Декларация'} · ${date(d.declaredOn)}`,
+                                )}{' '}
+                              </span>
+                            ) : null;
+                          })}
+                        </p>
+                      )}
+                      {undated > 0 && (
+                        <p>
+                          Договори без дата: {count(undated)} — не могат да се поставят на оста.
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-                {(['self', 'family', 'management'] as const).map((scope) => {
-                  const observations = c.observations.filter(
-                    (o) =>
-                      positiveObservation(o) &&
-                      (scope === 'management'
-                        ? o.scope === 'self' && o.kind === 'management'
-                        : o.scope === scope &&
-                          ['shares', 'participation', 'sole_trader'].includes(o.kind)),
-                  );
-                  const ids = new Set(observations.map((o) => o.declarationId));
-                  const docs = p.declarations.filter((d) => ids.has(d.id));
-                  const label =
-                    scope === 'management'
-                      ? 'Декларирано управление'
-                      : scope === 'self'
-                        ? 'Деклариран собствен дял'
-                        : 'Дял на свързано лице';
-                  return docs.length
-                    ? row(
-                        `${c.eik}-${scope}`,
-                        label,
-                        documents(
-                          docs,
-                          scope === 'family'
-                            ? 'time-family'
-                            : scope === 'management'
-                              ? 'time-management'
-                              : '',
-                          observations.filter((o) => o.disputed).map((o) => o.declarationId),
-                        ),
-                      )
-                    : null;
-                })}
-                {roleKinds.map((kind) =>
-                  row(
-                    `${c.eik}-${kind}`,
-                    ROLE_LABEL[kind],
-                    c.roles
-                      .filter((r) => r.role === kind)
-                      .map((r, i) => {
-                        const end = r.removedOn ?? r.uncertainAfter ?? c.asOf?.slice(0, 10);
-                        const valid =
-                          r.addedOn &&
-                          end &&
-                          Number.isFinite(Date.parse(r.addedOn)) &&
-                          Number.isFinite(Date.parse(end)) &&
-                          r.addedOn <= end;
-                        const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}`;
-                        return valid ? (
-                          <a
-                            key={i}
-                            href={`#${roleRowId(r)}`}
-                            onClick={(event) => {
-                              if (
-                                event.button !== 0 ||
-                                event.metaKey ||
-                                event.ctrlKey ||
-                                event.shiftKey ||
-                                event.altKey
-                              )
-                                return;
-                              event.preventDefault();
-                              revealProfileTarget(roleRowId(r));
-                            }}
-                            className={`time-role ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
-                            style={{
-                              left: `${x(r.addedOn)}%`,
-                              width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,
-                            }}
-                            title={label}
-                            aria-label={label}
-                          />
-                        ) : (
-                          <span key={i} className="small muted">
-                            Няма установен период
-                          </span>
-                        );
-                      }),
-                  ),
-                )}
-                {c.contracts.some((r) => r.year) &&
-                  row(
-                    `${c.eik}-contracts`,
-                    'Сключени договори',
-                    c.contracts
-                      .filter((r) => r.year)
-                      .map((r) => {
-                        const ownBuyers = (p.timeline.buyers ?? []).filter(
-                          (b) => b.eik === c.eik && b.year === r.year && ownIds.has(b.id),
-                        );
-                        return (
-                          <span
-                            key={r.year}
-                            className="time-contract-bin"
-                            style={yearStyle(+r.year!)}
-                          >
-                            {r.eligible > 0 && (
-                              <Link
-                                to={contractHref(c.eik, r.year, 'matched')}
-                                className="time-contract eligible"
-                                aria-label={`${r.year}: ${r.eligible} договора в години с данни за длъжността`}
-                              >
-                                {count(r.eligible)}
-                              </Link>
-                            )}
-                            {r.contracts > r.eligible && (
-                              <Link
-                                to={contractHref(c.eik, r.year, 'context')}
-                                className="time-contract context"
-                                aria-label={`${r.year}: ${r.contracts - r.eligible} договора извън годините с данни за длъжността`}
-                              >
-                                {count(r.contracts - r.eligible)}
-                              </Link>
-                            )}
-                            {ownBuyers.length > 0 && (
-                              <Explanation
-                                label={`${r.year}: възложител от институциите в декларациите · ${c.name}`}
-                                trigger={<InstitutionSymbol />}
-                                triggerClassName="time-institution-trigger"
-                                text={
-                                  <>
-                                    <strong>{r.year} · Институции от декларациите</strong>
-                                    <ul className="entity-list time-buyers-list">
-                                      {ownBuyers.map((b) => (
-                                        <li key={b.id}>
-                                          <Link
-                                            to={contractHref(c.eik, r.year, 'all', b.id)}
-                                            onClick={(event) =>
-                                              event.currentTarget
-                                                .closest<HTMLElement>('[popover]')
-                                                ?.hidePopover()
-                                            }
-                                          >
-                                            {b.name}
-                                          </Link>{' '}
-                                          · {count(b.contracts)}{' '}
-                                          {b.contracts === 1 ? 'договор' : 'договора'} ·{' '}
-                                          {money(b.valueEur)}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                    <small>
-                                      Съвпадението е по институция. Периодът на длъжността се
-                                      установява отделно.
-                                    </small>
-                                  </>
-                                }
-                              />
-                            )}
-                          </span>
-                        );
-                      }),
-                    'time-contracts',
+                  {(['self', 'family', 'management'] as const).map((scope) => {
+                    const observations = c.observations.filter(
+                      (o) =>
+                        positiveObservation(o) &&
+                        (scope === 'management'
+                          ? o.scope === 'self' && o.kind === 'management'
+                          : o.scope === scope &&
+                            ['shares', 'participation', 'sole_trader'].includes(o.kind)),
+                    );
+                    const ids = new Set(observations.map((o) => o.declarationId));
+                    const docs = p.declarations.filter((d) => ids.has(d.id));
+                    const label =
+                      scope === 'management'
+                        ? 'Декларирано управление'
+                        : scope === 'self'
+                          ? 'Деклариран собствен дял'
+                          : 'Дял на свързано лице';
+                    return docs.length
+                      ? row(
+                          `${c.eik}-${scope}`,
+                          label,
+                          documents(
+                            docs,
+                            scope === 'family'
+                              ? 'time-family'
+                              : scope === 'management'
+                                ? 'time-management'
+                                : '',
+                            observations.filter((o) => o.disputed).map((o) => o.declarationId),
+                          ),
+                        )
+                      : null;
+                  })}
+                  {roleKinds.map((kind) =>
+                    row(
+                      `${c.eik}-${kind}`,
+                      ROLE_LABEL[kind],
+                      c.roles
+                        .filter((r) => r.role === kind)
+                        .map((r, i) => {
+                          const end = r.removedOn ?? r.uncertainAfter ?? c.asOf?.slice(0, 10);
+                          const valid =
+                            r.addedOn &&
+                            end &&
+                            Number.isFinite(Date.parse(r.addedOn)) &&
+                            Number.isFinite(Date.parse(end)) &&
+                            r.addedOn <= end;
+                          const label = `${ROLE_LABEL[kind]} · ${date(r.addedOn)} — ${r.removedOn ? date(r.removedOn) : r.uncertainAfter ? `неустановено след ${date(r.uncertainAfter)}` : `вписана към ${date(c.asOf)}`}`;
+                          return valid ? (
+                            <a
+                              key={i}
+                              href={`#${roleRowId(r)}`}
+                              onClick={(event) => {
+                                if (
+                                  event.button !== 0 ||
+                                  event.metaKey ||
+                                  event.ctrlKey ||
+                                  event.shiftKey ||
+                                  event.altKey
+                                )
+                                  return;
+                                event.preventDefault();
+                                revealProfileTarget(roleRowId(r));
+                              }}
+                              className={`time-role ${!r.removedOn && !r.uncertainAfter ? 'time-open' : ''}`}
+                              style={{
+                                left: `${x(r.addedOn)}%`,
+                                width: `${Math.max(0.15, x(end!) - x(r.addedOn))}%`,
+                              }}
+                              title={label}
+                              aria-label={label}
+                            />
+                          ) : (
+                            <span key={i} className="small muted">
+                              Няма установен период
+                            </span>
+                          );
+                        }),
+                    ),
                   )}
-              </div>
+                  {c.contracts.some((r) => r.year) &&
+                    row(
+                      `${c.eik}-contracts`,
+                      'Сключени договори',
+                      c.contracts
+                        .filter((r) => r.year)
+                        .map((r) => {
+                          const ownBuyers = (p.timeline.buyers ?? []).filter(
+                            (b) => b.eik === c.eik && b.year === r.year && ownIds.has(b.id),
+                          );
+                          return (
+                            <span
+                              key={r.year}
+                              className="time-contract-bin"
+                              style={yearStyle(+r.year!)}
+                            >
+                              {r.eligible > 0 && (
+                                <Link
+                                  to={contractHref(c.eik, r.year, 'matched')}
+                                  className="time-contract eligible"
+                                  aria-label={`${r.year}: ${r.eligible} договора в години с данни за длъжността`}
+                                >
+                                  {count(r.eligible)}
+                                </Link>
+                              )}
+                              {r.contracts > r.eligible && (
+                                <Link
+                                  to={contractHref(c.eik, r.year, 'context')}
+                                  className="time-contract context"
+                                  aria-label={`${r.year}: ${r.contracts - r.eligible} договора извън годините с данни за длъжността`}
+                                >
+                                  {count(r.contracts - r.eligible)}
+                                </Link>
+                              )}
+                              {ownBuyers.length > 0 && (
+                                <Explanation
+                                  label={`${r.year}: възложител от институциите в декларациите · ${c.name}`}
+                                  trigger={<InstitutionSymbol />}
+                                  triggerClassName="time-institution-trigger"
+                                  text={
+                                    <>
+                                      <strong>{r.year} · Институции от декларациите</strong>
+                                      <ul className="entity-list time-buyers-list">
+                                        {ownBuyers.map((b) => (
+                                          <li key={b.id}>
+                                            <Link
+                                              to={contractHref(c.eik, r.year, 'all', b.id)}
+                                              onClick={(event) =>
+                                                event.currentTarget
+                                                  .closest<HTMLElement>('[popover]')
+                                                  ?.hidePopover()
+                                              }
+                                            >
+                                              {b.name}
+                                            </Link>{' '}
+                                            · {count(b.contracts)}{' '}
+                                            {b.contracts === 1 ? 'договор' : 'договора'} ·{' '}
+                                            {money(b.valueEur)}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                      <small>
+                                        Съвпадението е по институция. Периодът на длъжността се
+                                        установява отделно.
+                                      </small>
+                                    </>
+                                  }
+                                />
+                              )}
+                            </span>
+                          );
+                        }),
+                      'time-contracts',
+                    )}
+                </div>
+              </Fragment>
             );
           })}
         </div>

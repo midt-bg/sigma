@@ -20,9 +20,17 @@ import { getMulti } from './filters';
 export function declaredStakeNoun(links: { relation: string }[]): string {
   const anyFamily = links.some((l) => l.relation === 'related');
   const anySelf = links.some((l) => l.relation !== 'related');
+  const onlyManages =
+    anySelf && links.every((l) => l.relation === 'manages' || l.relation === 'related');
   if (anyFamily && !anySelf) return 'дял на свързано лице';
-  if (anyFamily && anySelf) return 'деклариран дял — собствен или на свързано лице';
-  return 'собствен дял';
+  if (anyFamily && anySelf)
+    return onlyManages
+      ? 'управление на дружество и дял на свързано лице'
+      : 'деклариран дял — собствен или на свързано лице';
+  if (onlyManages) return 'управление на дружество';
+  return links.some((l) => l.relation === 'manages')
+    ? 'собствен дял или управление'
+    : 'собствен дял';
 }
 
 // Defense in depth: the slug is base64url and the ЕИК numeric today (so encoding is a no-op), but if either
@@ -101,6 +109,10 @@ export interface ConflictPersonRow {
     self: number;
     family: number;
     registry?: number;
+    /** Registry group: whether the register records an ownership or only a management of the company. */
+    registryRole?: 'owner' | 'manager';
+    /** A declared management of the company, with no declared stake in it. */
+    manages?: number;
     /** Registry group: the years whose annual declaration does not name the registered company. */
     missingYears?: string[];
   }[];
@@ -243,8 +255,13 @@ export function groupByPerson(links: ConflictLink[]): ConflictPersonRow[] {
         companies: [...new Set(groupLinks.map((l) => l.eik))].map((eik) => ({
           eik,
           company: groupLinks.find((l) => l.eik === eik)!.company,
-          self: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'owns')),
+          self: Number(
+            groupLinks.some(
+              (l) => l.eik === eik && (l.relation === 'owns' || l.relation === 'owns+manages'),
+            ),
+          ),
           family: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'related')),
+          manages: Number(groupLinks.some((l) => l.eik === eik && l.relation === 'manages')),
         })),
         contractCount,
         contractValueEur,
