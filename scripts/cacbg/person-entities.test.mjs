@@ -433,6 +433,23 @@ test('a declarant under a variant of the registered name keeps the proof; anothe
     const married = filing('1.xml', 'Мария Георгиева Тестова-Петрова');
     assert.equal(married.identityEvidence[0].registryIndent, a);
     assert.equal(rebuildPersonEntities(db, db, [married], legacy).stats.resolved, 1);
+    // A typo in the document, with the listing spelling the registered name, is the same person.
+    const doc = {
+      declarant: 'Мария Георгиева Тестува',
+      interests: [
+        { entity: 'Тест информация ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
+      ],
+    };
+    const identity = registryIdentityResolver(db)(doc, ['Мария Георгиева Тестова']);
+    assert.equal(identity.attribution, 'registry_alias');
+    const typo = {
+      folder: '2025',
+      xmlFile: '2.xml',
+      person: doc.declarant,
+      sourceHash: 'e'.repeat(64),
+      identityEvidence: identity.evidence,
+    };
+    assert.equal(rebuildPersonEntities(db, db, [married, typo], legacy).stats.resolved, 2);
     // The same proof presented for a document by a different person is refused.
     const other = { ...married, person: 'Мария Иванова Тестова' };
     other.identityEvidence = married.identityEvidence.map((p) => ({

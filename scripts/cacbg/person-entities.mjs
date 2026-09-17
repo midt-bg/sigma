@@ -80,14 +80,26 @@ export function rebuildPersonEntities(
   const companyNames = new Map();
   const observationByLocator = new Map();
   for (const r of observations) {
-    const key = `${r.eik}|${declarantNameKey(r.subject_name)}`;
-    if (!companyNames.has(key)) companyNames.set(key, new Set());
-    companyNames.get(key).add(r.subject_id);
+    const names = companyNames.get(r.eik) ?? new Map();
+    const key = declarantNameKey(r.subject_name);
+    names.set(key, (names.get(key) ?? new Set()).add(r.subject_id));
+    companyNames.set(r.eik, names);
     observationByLocator.set(
       JSON.stringify([r.eik, r.sub_uic, r.field_ident, r.entry_number, r.holder_index]),
       r,
     );
   }
+  // The identifiers a company registers under a name: the exact spelling, else its variants.
+  const namedIds = (eik, name) => {
+    const names = companyNames.get(eik);
+    const exact = names?.get(declarantNameKey(name));
+    if (exact) return exact;
+    return new Set(
+      [...(names ?? [])]
+        .filter(([registered]) => personNamesAlike(name, registered))
+        .flatMap(([, ids]) => [...ids]),
+    );
+  };
   const previous = new Map(
     db
       .prepare('SELECT id,entity_id FROM person_sources')
@@ -176,7 +188,7 @@ export function rebuildPersonEntities(
               new Set(proofs.map((p) => p.registryIndent)).size !== 1 ||
               !proofs.some((candidate) =>
                 [f.person, ...p.listedNames].every((alias) => {
-                  const ids = companyNames.get(`${candidate.eik}|${declarantNameKey(alias)}`);
+                  const ids = namedIds(candidate.eik, alias);
                   return ids?.size === 1 && ids.has(p.registryIndent);
                 }),
               )
