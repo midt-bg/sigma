@@ -14,7 +14,7 @@ import type {
   RegistryRoleKind,
   RoleHolder,
 } from '@sigma/api-contract';
-import { cleanName } from '@sigma/shared';
+import { cleanName, registryCompanyName } from '@sigma/shared';
 import { companySlug, registryPersonSlug } from './identity';
 import { companyNode, personNode } from './tie-node';
 
@@ -225,6 +225,40 @@ export async function getCompanyPeople(db: D1Database, bidderId: string): Promis
       .sort(byStanding((x) => x.holder.name));
     return { roles, asOf: deed.fetched_at.slice(0, 10) };
   }, noPeople());
+}
+
+/** A company the site knows only from its partida: the фирма with its form, the seat, and whether a
+ *  liquidator stands — the facts the register states plainly. */
+export async function getRegistryCompany(db: D1Database, bidderId: string) {
+  const eik = partidaEik(bidderId);
+  if (!eik) return null;
+  return registryRead(async () => {
+    const r = await db
+      .prepare(
+        `SELECT d.name, d.legal_form, d.seat_settlement, d.fetched_at,
+          EXISTS (SELECT 1 FROM registry_roles r WHERE r.eik=d.eik AND r.role='liquidator'
+            AND r.removed_on IS NULL AND r.uncertain_after IS NULL) in_liquidation
+        FROM registry_deeds d WHERE d.eik=?1 AND d.outcome='ok'`,
+      )
+      .bind(eik)
+      .first<{
+        name: string | null;
+        legal_form: string | null;
+        seat_settlement: string | null;
+        fetched_at: string;
+        in_liquidation: number;
+      }>();
+    return r
+      ? {
+          eik,
+          name: registryCompanyName(r.name ?? eik, r.legal_form),
+          legalForm: r.legal_form,
+          seat: r.seat_settlement,
+          inLiquidation: !!r.in_liquidation,
+          asOf: r.fetched_at.slice(0, 10),
+        }
+      : null;
+  }, null);
 }
 
 /** Companies drawn around a person. */

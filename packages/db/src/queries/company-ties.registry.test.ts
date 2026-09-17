@@ -289,3 +289,27 @@ describe('an environment without the registry tables', () => {
     expect(company.omitted).toBe(0);
   });
 });
+
+describe('a company known only from its partida', () => {
+  it('is the centre of its registered people, named with its legal form', async () => {
+    const db = served(
+      [
+        `INSERT INTO registry_deeds (eik, name, legal_form, seat_settlement, outcome, fetched_at)
+         VALUES ('300000003', 'САМО РЕГИСТЪР', 'EOOD', 'гр. Русе', 'ok', '2026-09-01T00:00:00Z'),
+                ('300000004', NULL, NULL, NULL, 'absent', '2026-09-01T00:00:00Z');`,
+        bidders([['200000001', 'ФИРМА 1 ООД', 500]]),
+        roles('person', [
+          ['300000003', 'manager', ANGEL, 'АНГЕЛ АНГЕЛОВ'],
+          ['200000001', 'partner', ANGEL, 'АНГЕЛ АНГЕЛОВ'],
+        ]),
+      ].join('\n'),
+    );
+    const net = await getCompanyTies(db, 'eik:300000003');
+    expect(net.center).toMatchObject({ id: 'eik:300000003', label: 'САМО РЕГИСТЪР ЕООД' });
+    expect(net.nodes.map((n) => n.id)).toEqual(
+      expect.arrayContaining([node(ANGEL), 'eik:200000001']),
+    );
+    expect((await getCompanyTies(db, 'eik:300000004')).center).toBeNull();
+    expect((await getCompanyTies(db, 'eik:300000005')).center).toBeNull();
+  });
+});
