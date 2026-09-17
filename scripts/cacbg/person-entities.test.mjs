@@ -425,6 +425,25 @@ test('exact observation hash and holder locator are revalidated before assignmen
     db.close();
   }
 });
+test('a declarant under a variant of the registered name keeps the proof; another person does not', () => {
+  const { db, filing, add, a } = fixture();
+  try {
+    db.exec('DELETE FROM registry_identity_observations');
+    add(a, 'Мария Георгиева Тестова');
+    const married = filing('1.xml', 'Мария Георгиева Тестова-Петрова');
+    assert.equal(married.identityEvidence[0].registryIndent, a);
+    assert.equal(rebuildPersonEntities(db, db, [married], legacy).stats.resolved, 1);
+    // The same proof presented for a document by a different person is refused.
+    const other = { ...married, person: 'Мария Иванова Тестова' };
+    other.identityEvidence = married.identityEvidence.map((p) => ({
+      ...p,
+      documentName: other.person,
+    }));
+    assert.throws(() => rebuildPersonEntities(db, db, [other], legacy), /no longer matches/);
+  } finally {
+    db.close();
+  }
+});
 test('automatic evidence connects only its scoped sources and an explicit difference blocks the component', () => {
   const sources = ['one', 'two', 'professional'].map((id) => ({
     id,

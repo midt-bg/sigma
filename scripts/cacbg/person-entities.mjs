@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
+import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 import {
   registryIdentityRows,
   registryCompanyResolver,
@@ -161,7 +162,8 @@ export function rebuildPersonEntities(
           !row ||
           row.source_hash !== o.sourceHash ||
           row.subject_id !== p.registryIndent ||
-          declarantNameKey(row.subject_name) !== declarantNameKey(f.person)
+          (declarantNameKey(row.subject_name) !== declarantNameKey(f.person) &&
+            !personNamesAlike(row.subject_name, f.person))
         )
           throw new Error(`Identity proof no longer matches its source: ${id}`);
         // The listing and XML must be the same person, including independently evidenced name changes.
