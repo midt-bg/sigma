@@ -10,6 +10,3 @@ CREATE TABLE IF NOT EXISTS person_relatives (
   PRIMARY KEY (person_id, relative_indent, eik)
 );
 CREATE INDEX IF NOT EXISTS idx_person_relatives_relative ON person_relatives(relative_indent);
--- The register's identifier is how every person feature reaches the entity; the profile, the company's
--- roles and the list all look it up per row.
-CREATE INDEX IF NOT EXISTS idx_person_entities_indent ON person_entities(registry_indent);

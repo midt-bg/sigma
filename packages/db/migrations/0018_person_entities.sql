@@ -26,3 +26,6 @@ CREATE TABLE IF NOT EXISTS person_source_aliases (
   alias_id TEXT NOT NULL, source_id TEXT NOT NULL REFERENCES person_sources(id),
   PRIMARY KEY(alias_id,source_id)
 );
+-- The register's identifier is how every person feature reaches the entity; the profile, the company's
+-- roles and the list all look it up per row.
+CREATE INDEX IF NOT EXISTS idx_person_entities_indent ON person_entities(registry_indent);
