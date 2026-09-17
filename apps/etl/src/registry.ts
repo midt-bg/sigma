@@ -449,10 +449,36 @@ export async function deferXml(db: D1Database, until: string): Promise<void> {
     .run();
 }
 
+// SQLite folds case for ASCII only, and the register writes an owner in capitals or not: each word in all
+// three spellings.
+const nameHas = (patterns: string[]) =>
+  `(${patterns
+    .flatMap((p) => [p.toUpperCase(), p.replace(/\p{L}/u, (c) => c.toUpperCase()), p])
+    .map((p) => `name LIKE '${p}'`)
+    .join(' OR ')})`;
+const MUNICIPALITY = nameHas(['община%', 'столична община%']);
+const STATE = nameHas([
+  '%министерство%',
+  '%министър%',
+  '%държавата%',
+  'държава%',
+  '%народна банка%',
+]);
+// A contracting authority of these kinds, with no partida of a trade company, is a public body.
+const PUBLIC_BODY_TYPES = [
+  'Публичноправна организация',
+  'Министерство или всякакъв друг национален или федерален орган, включително техни регионални или местни подразделения',
+  'Орган на централната власт',
+  'Национална или федерална агенция/служба',
+  'Регионален или местен орган',
+  'Местен орган',
+  'Регионална или местна агенция/служба',
+];
+
 /** Public ownership the Trade Register records (ADR-0047), for the refresh to read: a company whose standing
  *  sole owner, or partner with more than half of the partners' capital, is the state, a ministry, a
- *  municipality or a company already public. Municipal when a municipality holds it, directly or through its
- *  companies. The register writes these owners in capitals. */
+ *  municipality, another public body or a company already public. Municipal when a municipality holds it, directly or through its
+ *  companies. */
 export const PUBLIC_OWNERSHIP_SQL = [
   `CREATE TABLE IF NOT EXISTS state_owned_eik (
     eik TEXT PRIMARY KEY,
@@ -477,13 +503,15 @@ export const PUBLIC_OWNERSHIP_SQL = [
   ), controlled AS (
     SELECT o.eik, o.owner, o.name FROM owners o LEFT JOIN capital c ON c.eik = o.eik
     WHERE o.role = 'sole_owner' OR o.amount * 2 > c.total
+  ), public_body AS (
+    SELECT substr(id, 6) eik, type_group = 'община' municipal FROM authorities
+    WHERE id GLOB 'auth:[0-9]*' AND type IN (${PUBLIC_BODY_TYPES.map((t) => `'${t}'`).join(', ')})
+      AND substr(id, 6) NOT IN (SELECT eik FROM registry_deeds WHERE outcome = 'ok')
   ), public_owned(eik, kind, depth) AS (
-    SELECT eik,
-      CASE WHEN name LIKE 'ОБЩИНА%' OR name LIKE 'СТОЛИЧНА ОБЩИНА%' THEN 'municipal' ELSE 'state' END, 0
-    FROM controlled
-    WHERE name LIKE 'ОБЩИНА%' OR name LIKE 'СТОЛИЧНА ОБЩИНА%' OR name LIKE '%МИНИСТЕРСТВО%'
-      OR name LIKE '%МИНИСТЪР%' OR name LIKE '%ДЪРЖАВАТА%' OR name LIKE 'ДЪРЖАВА%'
-      OR owner IN (SELECT eik FROM state_owned_eik WHERE ownership_kind = 'state')
+    SELECT c.eik, CASE WHEN ${MUNICIPALITY} OR pb.municipal THEN 'municipal' ELSE 'state' END, 0
+    FROM controlled c LEFT JOIN public_body pb ON pb.eik = c.owner
+    WHERE pb.eik IS NOT NULL OR ${MUNICIPALITY} OR ${STATE}
+      OR c.owner IN (SELECT eik FROM state_owned_eik WHERE ownership_kind = 'state')
     UNION
     SELECT c.eik, p.kind, p.depth + 1 FROM controlled c JOIN public_owned p ON p.eik = c.owner
     WHERE p.depth < 4
