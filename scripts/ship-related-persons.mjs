@@ -155,6 +155,9 @@ export function runShip({
   const schema = readSchema([...new Set([...tables, ...wipeTables])]);
   for (const table of tables)
     if (!schema[table]?.sql) throw new Error(`target lacks table ${table}`);
+  // A failed earlier run leaves staged tables behind. Children go first: dropping a staged parent that
+  // staged children still reference makes SQLite check every child row, which D1 does not finish.
+  send('clear_staging', stagedDropSql(tables, wipeTables));
   for (const { table, statements } of reads) {
     const staged = `rp_next_${table}`;
     send(
@@ -201,6 +204,15 @@ const indexName = (sql) =>
  * generation, the staged ones take their names (parents first) and their indexes. A staged table
  * short of its expected rows fails the batch before any rename. Wipe-only tables are emptied, never
  * swapped. The previous generation stays until the next publication: rollback is the swap in reverse. */
+/** Every staged table, children first. */
+export function stagedDropSql(tables, wipeTables = WIPE_ORDER) {
+  const order = [
+    ...wipeTables.filter((t) => tables.includes(t)),
+    ...tables.filter((t) => !wipeTables.includes(t)),
+  ];
+  return order.map((t) => `DROP TABLE IF EXISTS ${sqlIdent(`rp_next_${t}`)};`).join('\n') + '\n';
+}
+
 /** The previous generation, children first. */
 export function retireSql(reads, wipeTables = WIPE_ORDER) {
   const shipped = new Set(reads.map((r) => r.table));

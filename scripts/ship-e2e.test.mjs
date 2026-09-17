@@ -256,7 +256,8 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
   }
 
   const applies = calls.filter((c) => c.file);
-  assert.equal(applies[0].file, 'prepare_persons.sql');
+  assert.equal(applies[0].file, 'clear_staging.sql');
+  assert.equal(applies[1].file, 'prepare_persons.sql');
   assert.equal(applies.at(-1).file, 'publish.sql');
 
   // Chunking: a table past the batch budget must arrive as several CONTIGUOUSLY numbered requests.
@@ -409,7 +410,8 @@ test('--emit writes ordered staging and swap SQL without touching a database', (
   assert.ok(noWrites(fake), '--emit must not touch a database');
   const files = readdirSync(out).sort();
   const sql = files.map((f) => readFileSync(join(out, f), 'utf8')).join('\n');
-  assert.match(files[0], /prepare_persons/);
+  assert.match(files[0], /clear_staging/);
+  assert.match(files[1], /prepare_persons/);
   for (const table of TABLES) {
     assert.match(sql, new RegExp(`ALTER TABLE "${table}" RENAME TO "rp_prev_${table}"`));
     assert.match(sql, new RegExp(`ALTER TABLE "rp_next_${table}" RENAME TO "${table}"`));

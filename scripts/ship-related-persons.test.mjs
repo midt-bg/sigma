@@ -18,6 +18,7 @@ import {
   sqlIdent,
   TABLES,
   WIPE_ORDER,
+  stagedDropSql,
 } from './ship-related-persons.mjs';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
@@ -709,7 +710,8 @@ test('runShip uploads staging before the swap and paces every request', () => {
   const h = shipHarness();
   assert.deepEqual(h.run(), { persons: 5, declarations: 1 });
   const names = h.calls.map(([name]) => name);
-  assert.equal(names[0], 'prepare_persons');
+  assert.equal(names[0], 'clear_staging');
+  assert.equal(names[1], 'prepare_persons');
   assert.equal(names.at(-1), 'publish');
   assert.ok(names.indexOf('publish') > names.indexOf('declarations.0'));
   assert.ok(!names.includes('0_wipe'));
@@ -884,4 +886,14 @@ test('runShip refuses a missing source table before any request', () => {
   const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
   assert.throws(() => h.run(), /missing ghost/);
   assert.equal(h.calls.length, 0);
+});
+
+test('leftover staging tables are dropped children first, so a parent drop never trips a staged foreign key', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE rp_next_persons(id PRIMARY KEY);
+    CREATE TABLE rp_next_declarations(id PRIMARY KEY, person_id REFERENCES rp_next_persons(id));
+    INSERT INTO rp_next_persons VALUES(1); INSERT INTO rp_next_declarations VALUES(1,1);`);
+  db.exec(stagedDropSql(['persons', 'declarations'], ['declarations', 'persons']));
+  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE name LIKE 'rp_next_%'").get().n, 0);
 });
