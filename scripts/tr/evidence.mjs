@@ -137,13 +137,23 @@ function findPerson(registry, name, fields, registryIndent) {
     : null;
 }
 
+const day = (v) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
+  Number.isFinite(Date.parse(v)) &&
+  new Date(v).toISOString().slice(0, 10) === v;
+/** An ended role with a real entry that lasted: dated, and ended after it began. A role of unclear end has no
+ *  end date to check. */
+const lasted = (h) =>
+  h.endedOn == null ||
+  (!!h.entryNumber && day(h.entryDate) && day(h.endedOn) && h.entryDate < h.endedOn);
+
 /** The person in one of the fields at any time: standing first, else the role that ended last. */
 function findEverPerson(registry, name, fields, registryIndent) {
   const live = findPerson(registry, name, fields, registryIndent);
   if (live) return { ...live, endedOn: null };
   const matches = personMatch(registry, name, registryIndent);
   const past = (registry.endedHolders ?? [])
-    .filter((h) => fields.includes(h.field) && matches(h))
+    .filter((h) => fields.includes(h.field) && lasted(h) && matches(h))
     .sort((a, b) => String(b.endedOn ?? '9999').localeCompare(String(a.endedOn ?? '9999')))[0];
   return past
     ? {

@@ -196,7 +196,15 @@ test('past matches need one full person name in a field the ladder reads', () =>
   assert.equal(evidenceVerdict({ ...base, registry: past }).kind, 'document');
   for (const declarantName of ['Иван Тестов', 'Иван Петров Другов'])
     assert.notEqual(evidenceVerdict({ ...base, registry: past, declarantName }).kind, 'document');
-  for (const over of [{ subject_kind: 'entity' }, { field_ident: '05500' }]) {
+  for (const over of [
+    { subject_kind: 'entity' },
+    { field_ident: '05500' },
+    // A role ended the day it was entered, or without a real entry, is no evidence.
+    { added_on: '2022-01-01' },
+    { added_on: '2022-02-01' },
+    { entry_number: null },
+    { added_on: '2021-02-30' },
+  ]) {
     const other = registry([
       holder('00190', base.declarantName, '2020-01-01', { removed_on: '2022-01-01', ...over }),
     ]);
