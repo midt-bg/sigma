@@ -768,7 +768,20 @@ export default {
     // The weekly cron owns the declarations; every other tick refreshes procurement and the register.
     const weekly = controller?.cron === DECLARATIONS_CRON;
     const jobs: [string, () => Promise<unknown>][] = [];
-    if (!weekly) {
+    // A declarations run takes a fresh snapshot on every container attempt, and its resumed work is
+    // only valid against the registry it started with. So the six-hourly writers stand aside while it
+    // runs. The refresh carries its own catch-up window, so a skipped tick is made up by the next one;
+    // the age bound keeps a wedged run from freezing procurement for good.
+    const live = env.DECLARATIONS
+      ? await env.DECLARATIONS.getByName('declarations').getRun()
+      : undefined;
+    const declarationsRunning =
+      live?.state === 'running' && Date.now() - live.startedAt < 8 * 60 * 60_000;
+    if (!weekly && declarationsRunning) {
+      console.log(
+        JSON.stringify({ event: 'etl_scheduled', skipped: 'declarations_running', job: 'refresh' }),
+      );
+    } else if (!weekly) {
       jobs.push(['refresh', () => env.REFRESH.create()]);
       if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
         jobs.push(['registry', () => env.REGISTRY!.create()]);

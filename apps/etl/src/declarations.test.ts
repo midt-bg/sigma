@@ -52,7 +52,18 @@ function fixture() {
     vi.setSystemTime(run().retryAt);
     await job().alarm();
   };
-  return { job, container, run, answer, resume };
+  const owner = (status?: string) => {
+    env.DECLARATIONS_RUN = (
+      status
+        ? { get: async () => ({ status: async () => ({ status }) }) }
+        : {
+            get: async () => {
+              throw new Error('lookup failed');
+            },
+          }
+    ) as never;
+  };
+  return { job, container, run, answer, resume, owner };
 }
 
 it('survives two yields and DO eviction, keeps one logical run, and accepts only audited publication', async () => {
@@ -333,4 +344,23 @@ it('rebuilds only an idle slot, passes both slots to the container and follows t
   f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
   await f.job().alarm();
   expect(f.run()).toMatchObject({ state: 'complete', target: idle });
+});
+
+it('stops the container when the workflow instance that started the run is gone', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-1');
+  await f.job().alarm();
+  f.owner('running'); // A live owner changes nothing.
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running' });
+  f.owner(); // A failed lookup says nothing, so the run carries on.
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running' });
+  f.owner('terminated');
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({
+    state: 'failed',
+    reason: 'The workflow instance that started this run is gone',
+  });
+  expect(f.container.running).toBe(false);
 });

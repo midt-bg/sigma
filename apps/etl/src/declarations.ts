@@ -3,6 +3,9 @@ import { DurableObject, exports as workerExports } from 'cloudflare:workers';
 export interface DeclarationEnv {
   DECLARATIONS_CORPUS?: R2Bucket;
   DECLARATIONS_BUCKET?: string;
+  // The workflow that asked for the run owns it: when the instance is gone, so is the run.
+  DECLARATIONS_RUN?: Workflow;
+  REBUILD_RUN?: Workflow;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   SIGMA_D1_ID?: string;
@@ -164,6 +167,19 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       finishedAt: new Date().toISOString(),
     });
   }
+  /** The workflow instance that asked for this run is its owner. Terminate the instance and the
+   * container stops too — otherwise the alarm would keep restarting a run nobody waits for. A
+   * lookup that fails says nothing, so a healthy run is never stopped on a transient error. */
+  private async ownerGone(run: DeclarationRun): Promise<boolean> {
+    const workflow = run.target ? this.env.REBUILD_RUN : this.env.DECLARATIONS_RUN;
+    if (!run.requestId || !workflow) return false;
+    try {
+      const { status } = await (await workflow.get(run.requestId)).status();
+      return ['terminated', 'errored', 'complete'].includes(status);
+    } catch {
+      return false;
+    }
+  }
   private async retry(run: DeclarationRun, reason: string, yielded = false) {
     const failures = run.progressVersion > run.attemptProgressVersion ? 0 : run.failures + 1;
     if (failures >= MAX_FAILURES) {
@@ -179,6 +195,10 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     const run = await this.getRun();
     if (!run || run.state !== 'running') return;
     const container = this.ctx.container!;
+    if (await this.ownerGone(run)) {
+      await this.finish(run, 'failed', 'The workflow instance that started this run is gone');
+      return;
+    }
     if (run.retryAt && Date.now() < run.retryAt) {
       await this.ctx.storage.setAlarm(run.retryAt);
       return;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { declarantNameKey, declarationAttribution } from './source-identity.mjs';
 import { companyCandidates } from './extract-companies.mjs';
 import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
@@ -50,6 +51,31 @@ export function registryIdentityRows(registry) {
     .all();
 }
 
+/** A digest of every registry fact the resolver reads, in one fixed order. An interrupted extract may
+ * only resume against the same facts: the six-hourly registry run can move them under a long job, and
+ * two halves decided under different facts must never be glued together. */
+export function identityInputsDigest(registry) {
+  const hash = createHash('sha256').update(IDENTITY_RULES_VERSION);
+  const table = (name) =>
+    registry.prepare(`SELECT 1 FROM sqlite_master WHERE name='${name}'`).get();
+  for (const r of registryIdentityRows(registry)) hash.update(JSON.stringify(Object.values(r)));
+  if (table('registry_deeds'))
+    for (const r of registry
+      .prepare("SELECT eik,name,legal_form FROM registry_deeds WHERE outcome='ok' ORDER BY eik")
+      .all())
+      hash.update(JSON.stringify(Object.values(r)));
+  if (table('registry_company_history'))
+    for (const r of registry
+      .prepare(
+        `SELECT h.eik,h.source_hash,h.names_json FROM registry_company_history h
+         JOIN registry_identity_snapshots s USING(eik) WHERE h.source_hash=s.source_hash
+         ORDER BY h.eik,h.source_hash`,
+      )
+      .all())
+      hash.update(JSON.stringify(Object.values(r)));
+  return hash.digest('hex');
+}
+
 /** Each company's registered people with a full name: ЕИК → name → identifier → observation. */
 function peopleByCompany(registry) {
   const people = new Map();
@@ -90,7 +116,7 @@ export function registryCompanyResolver(registry, people = peopleByCompany(regis
   if (registry.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_company_history'").get()) {
     for (const r of registry
       .prepare(
-        'SELECT h.* FROM registry_company_history h JOIN registry_identity_snapshots s USING(eik) WHERE h.source_hash=s.source_hash',
+        'SELECT h.* FROM registry_company_history h JOIN registry_identity_snapshots s USING(eik) WHERE h.source_hash=s.source_hash ORDER BY h.eik',
       )
       .all())
       history.set(
@@ -99,7 +125,7 @@ export function registryCompanyResolver(registry, people = peopleByCompany(regis
       );
   }
   for (const r of registry
-    .prepare("SELECT eik,name,legal_form FROM registry_deeds WHERE outcome='ok'")
+    .prepare("SELECT eik,name,legal_form FROM registry_deeds WHERE outcome='ok' ORDER BY eik")
     .all()) {
     const suffix = {
       OOD: 'ООД',

@@ -2,7 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { registryIdentityResolver, mixedScriptCompanyKey } from './registry-identity.mjs';
+import {
+  registryIdentityResolver,
+  mixedScriptCompanyKey,
+  identityInputsDigest,
+} from './registry-identity.mjs';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
@@ -234,4 +238,42 @@ test('visual comparison retains phonetic spellings, punctuation, forms and purel
   } finally {
     db.close();
   }
+});
+
+test('the identity input digest follows the facts, not the physical row order', () => {
+  const rows = [
+    ['123456789', 'a'.repeat(64), 'Ивана Петрова Тестова', '1'],
+    ['987654321', 'b'.repeat(64), 'Иван Петров Тестов', '2'],
+  ];
+  const seed = (order) => {
+    const { db } = fixture();
+    const insert = db.prepare(
+      'INSERT INTO registry_identity_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    );
+    for (const [eik, id, name, entry] of order)
+      insert.run(
+        eik,
+        '1',
+        '00190',
+        entry,
+        '2019-01-01',
+        0,
+        id,
+        'EGN',
+        name,
+        name,
+        'person',
+        'f'.repeat(64),
+        '2026-01-01',
+      );
+    return db;
+  };
+  const a = seed(rows);
+  const b = seed([...rows].reverse());
+  const before = identityInputsDigest(a);
+  assert.equal(before, identityInputsDigest(b));
+  b.exec("UPDATE registry_deeds SET name='ДРУГО ИМЕ' WHERE eik='987654321'");
+  assert.notEqual(before, identityInputsDigest(b));
+  a.close();
+  b.close();
 });
