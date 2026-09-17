@@ -1,6 +1,20 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { readFileSync, statfsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+
+/** Memory and free disk in MiB. An out-of-memory restart leaves no other trace in the logs. */
+export function resources(meminfo = readFileSync('/proc/meminfo', 'utf8'), dir = '.') {
+  const mib = (key) =>
+    Math.floor(Number(meminfo.match(new RegExp(`^${key}:\\s+(\\d+) kB`, 'm'))?.[1]) / 1024);
+  const disk = statfsSync(dir);
+  return {
+    memoryTotalMb: mib('MemTotal'),
+    memoryAvailableMb: mib('MemAvailable'),
+    diskFreeMb: Math.floor((disk.bavail * disk.bsize) / 1048576),
+  };
+}
+
 export function supervise(
   child,
   runId,
@@ -47,6 +61,10 @@ export function supervise(
     status.reason = error.message;
   });
   child.on('close', (code, signal) => {
+    outputs[0].write(
+      JSON.stringify({ event: 'declarations_child_exit', stage: status.stage, code, signal }) +
+        '\n',
+    );
     status.exitCode = code;
     status.signal = signal ?? status.signal;
     status.state =
@@ -90,5 +108,13 @@ if (import.meta.main) {
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(status));
   }).listen(8080, '0.0.0.0');
-  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
+  const report = (event, extra = {}) =>
+    console.log(JSON.stringify({ event, stage: status.stage, ...extra, ...resources() }));
+  setInterval(() => report('container_resources'), 60_000).unref();
+  for (const signal of ['SIGTERM', 'SIGINT'])
+    process.on(signal, () => {
+      // A platform stop is otherwise silent too.
+      report('container_signal', { signal });
+      child.kill(signal);
+    });
 }

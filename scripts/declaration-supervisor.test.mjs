@@ -2,16 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { supervise } from '../containers/declarations/server.mjs';
+import { resources, supervise } from '../containers/declarations/server.mjs';
 
 function childStatus() {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
-  const sink = { write() {} };
+  const lines = [];
+  const sink = { write: (line) => lines.push(line) };
   const status = supervise(child, 'logical-run', 2, [sink, sink]);
   const event = (value) => child.stdout.write(JSON.stringify(value) + '\n');
-  return { child, status, event };
+  return { child, status, event, lines };
 }
 
 test('supervisor preserves progress and a useful error or intentional yield', () => {
@@ -53,4 +54,21 @@ test('nested process signal survives the wrapper exit so the coordinator can res
   assert.equal(status.state, 'failed');
   assert.equal(status.signal, 'SIGKILL');
   assert.match(status.reason, /load.mjs.*SIGKILL/);
+});
+
+test('a child exit and the machine resources are logged, so a lost attempt leaves a trace', () => {
+  const { child, event, lines } = childStatus();
+  event({ event: 'declarations_progress', stage: 'extract', completed: 3 });
+  child.emit('close', null, 'SIGTERM');
+  assert.deepEqual(JSON.parse(lines.at(-1)), {
+    event: 'declarations_child_exit',
+    stage: 'extract',
+    code: null,
+    signal: 'SIGTERM',
+  });
+  const meminfo = 'MemTotal:       10485760 kB\nMemFree:  1 kB\nMemAvailable:    2097152 kB\n';
+  const found = resources(meminfo);
+  assert.equal(found.memoryTotalMb, 10240);
+  assert.equal(found.memoryAvailableMb, 2048);
+  assert.ok(found.diskFreeMb > 0);
 });
