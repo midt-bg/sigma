@@ -1,3 +1,4 @@
+import { companyNamesAlike } from '@sigma/shared';
 import { declaredOfficeYear } from './declaration-source';
 import { SURFACED_OWNERSHIP, NOT_REDUNDANT_FAMILY } from './related-persons';
 import { personSlug } from './identity';
@@ -141,8 +142,22 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     FROM person_contracts GROUP BY person_id
   )
   SELECT pe.person_id, pe.identity, pe.name, t.*,
-    (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1)) FROM (
-      SELECT ro.eik, COALESCE(b.name, ro.eik) company FROM roles ro
+    (SELECT json_group_array(json_object('eik',co.eik,'company',co.company,'self',0,'family',0,'registry',1,
+      'annual',json(co.annual))) FROM (
+      SELECT ro.eik, COALESCE(b.name, ro.eik) company,
+        -- The annual declarations for a year the register records the ownership that do not tie to this ЕИК,
+        -- with what each names; the name comparison is made below.
+        (SELECT json_group_array(json_object('year',d.declared_year,'named',json((SELECT json_group_array(di.entity_raw)
+          FROM declared_interests di WHERE di.declaration_id=d.id)))) FROM declarations d
+          JOIN declaration_metadata m ON m.declaration_id=d.id AND lower(m.declaration_type) IN ('annualy','annual','yearly')
+          WHERE d.person_id=pe.person_id AND d.declared_year IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM declaration_companies dc WHERE dc.declaration_id=d.id AND dc.eik=ro.eik)
+            AND EXISTS (SELECT 1 FROM registry_roles r WHERE r.subject_id=pe.identity AND r.subject_kind='person'
+              AND r.eik=ro.eik AND r.role IN ('sole_owner','partner','trader') AND r.added_on<>''
+              AND date(r.added_on)<=date(d.declared_year||'-12-31')
+              AND (r.removed_on IS NULL OR date(r.removed_on)>date(d.declared_year||'-12-31'))
+              AND (r.uncertain_after IS NULL OR date(r.uncertain_after)>date(d.declared_year||'-12-31')))) annual
+      FROM roles ro
       LEFT JOIN bidders b ON b.eik_normalized=ro.eik WHERE ro.person_id=pe.person_id GROUP BY ro.eik ORDER BY b.name
     ) co) companies,
     (SELECT json_group_array(json_object('institution',d.institution,'position',d.position,'year',d.declared_year))
@@ -170,13 +185,26 @@ export async function getRegistryRolePersonRows(db: D1Database, authorityId?: st
     institution: null,
     position: null,
     companyCount: r.company_count,
-    companies: JSON.parse(r.companies) as {
-      company: string;
-      eik: string;
-      self: number;
-      family: number;
-      registry: number;
-    }[],
+    companies: (
+      JSON.parse(r.companies) as {
+        company: string;
+        eik: string;
+        self: number;
+        family: number;
+        registry: number;
+        annual: { year: string; named: string[] }[];
+      }[]
+    ).map(({ annual, ...c }) => ({
+      ...c,
+      // A document naming the company under any spelling names it; a blank one names nothing.
+      missingYears: [
+        ...new Set(
+          annual
+            .filter((d) => !d.named.some((n) => companyNamesAlike(n, c.company)))
+            .map((d) => d.year),
+        ),
+      ].sort(),
+    })),
     soleCompany: null,
     contractCount: r.contract_count,
     contractValueEur: r.total_eur,

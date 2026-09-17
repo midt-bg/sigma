@@ -124,3 +124,42 @@ describe('/conflicts — the second page', () => {
     expect(container.querySelector('nav.paging a[rel="next"]')).toBeNull();
   });
 });
+
+describe('/conflicts — the registry group', () => {
+  it('says which annual declarations do not name the registered company, and nothing when all do', async () => {
+    await mount([
+      row({
+        officialSlug: 'gap',
+        stakeKind: 'registry',
+        companies: [
+          {
+            company: 'АЛФА ООД',
+            eik: '111111111',
+            self: 0,
+            family: 0,
+            registry: 1,
+            missingYears: ['2019', '2020'],
+          },
+        ],
+      }),
+      row({
+        officialSlug: 'named',
+        stakeKind: 'registry',
+        companies: [
+          {
+            company: 'БЕТА ООД',
+            eik: '222222222',
+            self: 0,
+            family: 0,
+            registry: 1,
+            missingYears: [],
+          },
+        ],
+      }),
+    ]);
+    const [gap, named] = bodyRows().map((tr) => cell(tr, 'Дружества').textContent);
+    expect(gap).toContain('дял по Търговския регистър');
+    expect(gap).toContain('не е посочено в годишната декларация за 2019, 2020 г.');
+    expect(named).not.toContain('не е посочено');
+  });
+});

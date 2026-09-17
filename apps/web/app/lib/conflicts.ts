@@ -95,7 +95,15 @@ export interface ConflictPersonRow {
   position: string | null;
   /** Distinct winner ЕИК the person is linked to. „Дружества" cell shows this, or the name when it is 1. */
   companyCount: number;
-  companies?: { company: string; eik: string; self: number; family: number; registry?: number }[];
+  companies?: {
+    company: string;
+    eik: string;
+    self: number;
+    family: number;
+    registry?: number;
+    /** Registry group: the years whose annual declaration does not name the registered company. */
+    missingYears?: string[];
+  }[];
   /** The single winner's name+ЕИК when companyCount === 1 (issue: „брой, или името, ако е едно"); else null. */
   soleCompany: { company: string; eik: string } | null;
   /** The person's winners' contracts — per-ЕИК-deduped (contract_count is a company-level winner total,

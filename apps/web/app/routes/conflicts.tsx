@@ -179,6 +179,11 @@ function personColumns(startRank: number): Column<ConflictPersonRow>[] {
               {c.registry && (
                 <div>
                   <Chip>дял по Търговския регистър</Chip>
+                  {c.missingYears?.length ? (
+                    <div className="small muted">
+                      не е посочено в годишната декларация за {c.missingYears.join(', ')} г.
+                    </div>
+                  ) : null}
                 </div>
               )}
             </li>

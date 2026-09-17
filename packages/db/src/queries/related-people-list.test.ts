@@ -136,8 +136,11 @@ it('lists people the register records as owners of a winner without a declared s
     db.exec(`CREATE TABLE persons(id PRIMARY KEY,name);
       CREATE TABLE person_registry_links(person_id PRIMARY KEY,registry_indent);
       CREATE TABLE interest_links(person_id,status,interest_class);
-      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik);
-      CREATE TABLE declarations(person_id,institution,position,declared_year);
+      CREATE TABLE registry_roles(subject_id,subject_kind,role,eik,added_on DEFAULT '2019-01-01',removed_on,uncertain_after);
+      CREATE TABLE declarations(id,person_id,institution,position,declared_year);
+      CREATE TABLE declaration_metadata(declaration_id,declaration_type);
+      CREATE TABLE declared_interests(declaration_id,entity_raw);
+      CREATE TABLE declaration_companies(declaration_id,eik);
       CREATE TABLE bidders(id PRIMARY KEY,eik_normalized,name);
       CREATE TABLE company_totals(bidder_id,contracts);
       CREATE TABLE contracts(id PRIMARY KEY,bidder_id,tender_id,signed_at,amount_eur);
@@ -145,9 +148,15 @@ it('lists people the register records as owners of a winner without a declared s
       INSERT INTO persons VALUES('p','Лице Роля'),('q','Лице Дял'),('r','Лице Без');
       INSERT INTO person_registry_links VALUES('p','${H}'),('q','${'q'.repeat(64)}');
       INSERT INTO interest_links VALUES('q','published','private_ownership');
-      INSERT INTO registry_roles VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
+      INSERT INTO registry_roles(subject_id,subject_kind,role,eik) VALUES('${H}','person','partner','111111111'),('${H}','person','manager','222222222'),
         ('${'q'.repeat(64)}','person','partner','111111111'),('${'r'.repeat(64)}','person','partner','111111111');
-      INSERT INTO declarations VALUES('p','Община','Кмет','2020');
+      INSERT INTO declarations VALUES('d20','p','Община','Кмет','2020'),('d21','p','Община','','2021'),
+        ('d22','p','Община','','2022'),('d18','p','Община','','2018'),('e20','p','Община','Кмет','2020');
+      -- 2020 is blank, 2021 names the company in its own spelling, 2022 is tied to the ЕИК, 2018 precedes
+      -- the ownership, and e20 is not an annual declaration.
+      INSERT INTO declaration_metadata VALUES('d20','Annualy'),('d21','Annualy'),('d22','Annualy'),('d18','Annualy'),('e20','Entry');
+      INSERT INTO declared_interests VALUES('d21','„Изпълнител“ ЕООД');
+      INSERT INTO declaration_companies VALUES('d22','111111111');
       INSERT INTO bidders VALUES('b1','111111111','Изпълнител'),('b2','222222222','Друг');
       INSERT INTO company_totals VALUES('b1',2),('b2',1);
       INSERT INTO tenders VALUES('t','a'),('t2','other');
@@ -163,7 +172,16 @@ it('lists people the register records as owners of a winner without a declared s
       contractValueEur: 150,
       contemporaneousValueEur: 100,
       hasContemporaneous: true,
-      companies: [{ eik: '111111111', company: 'Изпълнител', self: 0, family: 0, registry: 1 }],
+      companies: [
+        {
+          eik: '111111111',
+          company: 'Изпълнител',
+          self: 0,
+          family: 0,
+          registry: 1,
+          missingYears: ['2020'],
+        },
+      ],
     });
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'other')).toHaveLength(1);
     expect(await getRegistryRolePersonRows(d1FromSqlite(db), 'nobody')).toEqual([]);
