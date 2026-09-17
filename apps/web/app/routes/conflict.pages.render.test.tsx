@@ -244,12 +244,16 @@ describe('/persons/:id — render', () => {
           indent: 'a'.repeat(64),
           company: { name: 'АЛФА', eik: '111' },
           href: `/persons/${'a'.repeat(64)}`,
+          roles: [{ role: 'partner', ended: false }],
+          years: ['2021'],
         },
         {
           name: 'ЗОЯ ИВАНОВА',
           indent: 'b'.repeat(64),
           company: { name: 'БЕТА', eik: '222' },
           href: null,
+          roles: [],
+          years: [],
         },
       ],
       namedBy: [
@@ -403,16 +407,17 @@ describe('/conflicts/methodology — render', () => {
     // rung 1 — the joint-stock bar and its reason (the „11 акции" trap)
     expect(t).toContain('Акционерна форма');
     expect(t).toContain('не е публична');
-    // rung 2 — all three names, one registered person, and the two refusals
-    expect(t).toContain('пълно съвпадение и на трите имена');
+    // rung 2 — all three names, one registered person, and the variants a name may take
+    expect(t).toContain('и трите имена');
     expect(t).toContain('едно и също вписано лице');
-    // ADR-0035 — the company gate, the part a reader most needs to judge the claim
-    expect(t).toContain('Съвпадението по име само по себе си не стига');
-    // R10 — the seat's temporal guard, both halves
-    expect(t).toContain('вписано преди декларирания период');
-    expect(t).toContain('когато този период е известен');
+    expect(t).toContain('вариантът пасва на точно едно вписано лице');
+    // ADR-0046 — the company is its ЕИК, the register decides, the seat proves nothing
+    expect(t).toContain('Дружеството е неговият');
+    expect(t).toContain('Седалището не се използва като доказателство');
+    // a relative's stake is confirmed by the relative the register shows, never named from the declaration
+    expect(t).toContain('лицето, което декларацията посочва за притежател');
     // the honest limit: no ЕГН, so a homonym is possible
-    expect(t).toContain('не съдържа ЕГН');
+    expect(t).toContain('не публикува ЕГН');
     expect(t).toContain('съименник');
     // what the register proves and what it does not — the distinction the whole surface rests on
     expect(t).toContain('самоличността на дружеството');
