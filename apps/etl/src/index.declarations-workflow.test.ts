@@ -38,7 +38,7 @@ it('the weekly cron starts only the declarations; every other tick refreshes pro
     REGISTRY: { create },
     REGISTRY_API_BASE_URL: 'https://published.test',
     DECLARATIONS_ENABLED: 'true',
-    DECLARATIONS: { getByName: () => ({ startRun }) },
+    DECLARATIONS: { getByName: () => ({ startRun, getRun: async () => null }) },
   } as unknown as Env;
   await worker.scheduled({ cron: DECLARATIONS_CRON } as never, env);
   expect(startRun).toHaveBeenCalledOnce();

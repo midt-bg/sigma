@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { corpusStore, corpusFiles, CORPUS_STAMP, digest } from './corpus.mjs';
+import { corpusStore, corpusFiles, CORPUS_STAMP, digest, safeKey } from './corpus.mjs';
+import { ACCEPTED_KEYS, REJECTED_KEYS, REJECTED_TRAVERSAL_KEYS } from './corpus-key-samples.mjs';
 import { run as crawl } from './fetch.mjs';
 
 test('two time slices resume the same durable XML set and only the complete pass seals it', async () => {
@@ -219,4 +220,10 @@ test('R2 crawl resumes per object, extracts the same records without a disk corp
     delete process.env.CACBG_RAW;
     delete process.env.CACBG_STAGING;
   }
+});
+
+test('the client accepts exactly the shared corpus key list', () => {
+  for (const key of ACCEPTED_KEYS) assert.equal(safeKey(key), key);
+  for (const key of [...REJECTED_KEYS, ...REJECTED_TRAVERSAL_KEYS])
+    assert.throws(() => safeKey(key), /Invalid|unsafe/);
 });

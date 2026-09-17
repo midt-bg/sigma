@@ -3,8 +3,10 @@ import type { DeclarationEnv } from './declarations';
 
 const prefix = 'declarations/corpus-v2/';
 const folder = /^20\d{2}[A-Za-z0-9_]{0,8}\/$/;
+// Mirrors safeKey in scripts/cacbg/corpus.mjs, including the checkpoint namespace a resumable
+// extract writes; the shared accept/reject list is asserted from both sides in the tests.
 const keyPattern =
-  /^(?:\.corpus-complete\.json|accepted\.json|fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json|20\d{2}[A-Za-z0-9_]{0,8}\/(?:[A-Za-z0-9._-]+\.xml|\.index\.json))$/;
+  /^(?:\.corpus-complete\.json|accepted\.json|fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json|checkpoints\/[0-9a-f-]{36}\/(?:head\.json|[0-9a-f]{16}\/20\d{2}[A-Za-z0-9_]{0,8}\/(?:holdings|related|filings|source-groups|registry-requests|source-quarantine)\.jsonl\.gz)|20\d{2}[A-Za-z0-9_]{0,8}\/(?:[A-Za-z0-9._-]+\.xml|\.index\.json))$/;
 
 // A loopback entrypoint used only by the Container's private outbound handler.
 export class DeclarationCorpus extends WorkerEntrypoint<DeclarationEnv> {
@@ -51,7 +53,11 @@ export class DeclarationCorpus extends WorkerEntrypoint<DeclarationEnv> {
         sha256,
         customMetadata: { sha256 },
         httpMetadata: {
-          contentType: key.endsWith('.xml') ? 'application/xml' : 'application/json',
+          contentType: key.endsWith('.xml')
+            ? 'application/xml'
+            : key.endsWith('.gz')
+              ? 'application/gzip'
+              : 'application/json',
         },
       });
       return new Response(null, { status: 204 });
