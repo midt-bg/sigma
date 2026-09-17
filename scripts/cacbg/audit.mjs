@@ -17,8 +17,8 @@ import {
 import { registryCompanyResolver } from './registry-identity.mjs';
 import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 import { documentFingerprint } from './source-identity.mjs';
-import { companyCandidates, declaredEiks } from './extract-companies.mjs';
-import { eikCompanyNameKey } from './resolve-company.mjs';
+import { declaredEiks } from './extract-companies.mjs';
+import { namesCompany } from './resolve-company.mjs';
 import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -341,23 +341,18 @@ const rawForPerson = db.prepare(`
   WHERE d.person_id = ?`);
 
 const provenance = [];
+const bidderNames = db.prepare(
+  'SELECT DISTINCT name FROM bidders WHERE eik_normalized = ? AND eik_valid = 1',
+);
 for (const l of nonExact) {
   const rows = rawForPerson.all(l.person_id);
-  const winnerKey = companyNameKey(l.bidder_name);
+  const names = [...new Set([l.bidder_name, ...bidderNames.all(l.eik).map((b) => b.name)])];
   const hit = rows.find((r) => {
     const t = r.entity_raw || '';
-    const eikHit = declaredEiks(t).includes(l.eik);
-    // Boundary-safe name confirmation (mirrors load.mjs resolveEntity): the winner фирма must appear as a
-    // „NAME" ФОРМА candidate. The raw `companyNameKey(t).includes(winnerKey)` leg was removed — it had the
-    // same mid-token over-merge risk as the resolver, so the audit gate would rubber-stamp it (ADR-0016).
-    const nameHit = companyCandidates(t).some((c) =>
-      l.match_method === 'declared_eik'
-        ? eikCompanyNameKey(c) === eikCompanyNameKey(winnerKey)
-        : companyNameKey(c) === winnerKey,
-    );
+    // Boundary-safe, the same test the resolver applied (ADR-0016); a stated ЕИК must be this one.
     return (
-      (l.match_method === 'declared_eik' && eikHit && nameHit) ||
-      (l.match_method === 'extracted_name' && nameHit)
+      (l.match_method !== 'declared_eik' || declaredEiks(t).includes(l.eik)) &&
+      namesCompany(t, l.match_method, names)
     );
   });
   // A_eik's identity rests on the declarant-provided ЕИК, so the double-lock MUST be independently re-provable:

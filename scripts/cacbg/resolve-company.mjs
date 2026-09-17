@@ -21,6 +21,21 @@ export function stemIndex(companies) {
   return index;
 }
 
+/** Does one declared field name the winner under `method`? `names` are the winner's names as a bidder.
+ * The audit re-proves every non-exact link with it; the ЕИК itself is checked by the caller. */
+export function namesCompany(entity, method, names) {
+  const named = companyCandidates(entity);
+  if (method === 'declared_eik')
+    return named.some((c) => names.some((n) => eikCompanyNameKey(c) === eikCompanyNameKey(n)));
+  if (method === 'extracted_name')
+    return named.some((c) => names.some((n) => companyNameKey(c) === companyNameKey(n)));
+  if (method === 'name_stem') {
+    const stem = companyNameStem(named.length ? named[0] : entity);
+    return stem.length >= 4 && names.some((n) => companyNameStem(n) === stem);
+  }
+  return false;
+}
+
 /** Resolve one company-bearing field without choosing between contradictory identities.
  * `byStem` adds a last, weaker step (`name_stem`): the фирма without its legal form and punctuation. A
  * stem match names a company only; the register has to show the declarant in it before anything is

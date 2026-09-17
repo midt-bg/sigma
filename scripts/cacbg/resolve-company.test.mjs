@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { companyNameKey } from '../../packages/shared/src/company-name-key.ts';
-import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
+import { namesCompany, resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
 const companies = [
   ['111111119', 'АЛФА ЕООД'],
   ['222222229', 'БЕТА ЕООД'],
@@ -93,4 +93,16 @@ test('the stem step names a company only when every exact step found nothing', (
   assert.equal(stem('ГД „Алфа“ ЕООД'), null);
   // Stems under four letters are not indexed.
   assert.equal(stem('Ива ЕТ'), null);
+});
+
+test('namesCompany re-proves a link by the method that made it', () => {
+  const names = ['ТЕСТИЛОН - ПЪРВИ И СИЕ ЕТ', 'ТЕСТИЛОН ЕООД'];
+  assert.ok(namesCompany('„Тестилон – Първи и сие“ ЕТ', 'name_stem', names));
+  assert.ok(namesCompany('„Тестилон“ ЕООД, ЕИК 555555556', 'declared_eik', names));
+  assert.ok(namesCompany('„Тестилон“ ЕООД', 'extracted_name', names));
+  assert.ok(!namesCompany('съдружник в Тестилон ЕООД', 'extracted_name', names));
+  assert.ok(!namesCompany('„Тестилон – Първи и сие“ ЕТ', 'extracted_name', names));
+  assert.ok(!namesCompany('„Бета“ ООД', 'name_stem', names));
+  assert.ok(!namesCompany('Ива ЕТ', 'name_stem', ['ИВА ООД']));
+  assert.ok(!namesCompany('Тестилон ЕООД', 'exact_name_key', names));
 });
