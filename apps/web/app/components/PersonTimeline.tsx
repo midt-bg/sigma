@@ -134,12 +134,20 @@ export function PersonTimeline({
           <i className="time-symbol role" /> вписана роля{' '}
           <Explanation text="Период по регистърните вписвания. Отделните отсечки пазят прекъсванията; отвореният край достига до последната успешна справка." />
         </span>
-        <span>
-          <i className="time-symbol eligible" /> в години с данни за длъжността
-        </span>
-        <span>
-          <i className="time-symbol context" /> извън годините с данни за длъжността
-        </span>
+        {hasDeclarations ? (
+          <>
+            <span>
+              <i className="time-symbol eligible" /> в години с данни за длъжността
+            </span>
+            <span>
+              <i className="time-symbol context" /> извън годините с данни за длъжността
+            </span>
+          </>
+        ) : (
+          <span>
+            <i className="time-symbol context" /> договори
+          </span>
+        )}
         {(p.timeline.buyers ?? []).some((b) => ownIds.has(b.id)) && (
           <span>
             <InstitutionSymbol /> възложител от институциите в декларациите

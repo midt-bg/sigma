@@ -277,9 +277,23 @@ describe('PersonActivity — the contract list', () => {
       `2 през вписана роля · ${money(3000)}`,
     ]);
 
+    const officeYears = () =>
+      ['matched', 'context'].map(
+        (v) => !!container.querySelector(`select[name="basis"] option[value="${v}"]`),
+      );
+    expect(officeYears()).toEqual([true, true]);
+    expect(container.querySelector('.profile-period-note')!.textContent).toContain(
+      'Годините с данни за длъжността',
+    );
+
     render(role, { hasDeclarations: false });
     expect(emptyNote()).toBe('Няма договори за избраното основание и условия.');
     expect(declared()).toEqual([true, true, true]);
+    // Without declarations there are no office years to filter or explain.
+    expect(officeYears()).toEqual([false, false]);
+    expect(container.querySelector('.profile-period-note')!.textContent).not.toContain(
+      'длъжността',
+    );
     expect(summary()).toEqual([
       '0 договора',
       '— обща стойност',
