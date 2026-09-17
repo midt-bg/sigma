@@ -53,7 +53,8 @@ function buildTrCache(owners) {
       eik in owners
         ? {
             registry: fixtureRegistry(eik, {
-              owners: [].concat(owners[eik]),
+              owners: [].concat(owners[eik].now ?? owners[eik]),
+              pastOwners: owners[eik].past ?? [],
               seat: 'София',
               form: 4,
               suffix: 'ЕООД',
@@ -153,7 +154,7 @@ before(() => {
   buildTrCache({
     // Диан DIVESTED, so the live deed must name somebody else — otherwise §7's reconciliation
     // correctly overturns his declared termination and the case stops testing what it is for.
-    100000001: 'НОВ ИВАНОВ СОБСТВЕНИК',
+    100000001: { now: 'НОВ ИВАНОВ СОБСТВЕНИК', past: ['ДИАН ИВАНОВ ДИВЕСТОВ'] },
     200000002: 'ВЕРЕН ИВАНОВ ДЪРЖАТЕЛЕВ',
   });
   // filings.jsonl — one record per declaration (as extract.mjs emits it), carrying the declaration type. The
@@ -190,7 +191,7 @@ test('a later non-winner filing dates proven history without withdrawing it', ()
   const dian = link('100000001', 'Диан Иванов Дивестов');
   const veren = link('200000002', 'Верен Иванов Държателев');
 
-  // The company is independently confirmed by the declared seat. A later omission
+  // The register shows Диан as a past owner, which establishes the company. A later omission
   // does not invalidate the earlier ownership observation or extend its period.
   assert.equal(dian.status, 'published');
   assert.equal(dian.last_declared_year, '2019');

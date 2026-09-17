@@ -87,9 +87,12 @@ export async function run({ store = corpusStore(RAW) } = {}) {
   let processed = 0;
   fs.mkdirSync(STAGING, { recursive: true });
   let identify;
+  let identityRules = null;
   if (process.env.CACBG_REGISTRY_DB) {
     await import('./register-ts.mjs');
-    const { registryIdentityResolver } = await import('./registry-identity.mjs');
+    const { registryIdentityResolver, IDENTITY_RULES_VERSION } =
+      await import('./registry-identity.mjs');
+    identityRules = IDENTITY_RULES_VERSION;
     const registry = new DatabaseSync(path.resolve(process.env.CACBG_REGISTRY_DB), {
       readOnly: true,
     });
@@ -371,7 +374,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           fs.readFileSync(path.join(STAGING, 'source-groups.jsonl')),
         ),
         corpusComplete: !process.argv.includes('--allow-partial-corpus'),
-        identityRules: identify ? 'registry-identity-3' : null,
+        identityRules,
         extractedAt: new Date().toISOString(),
         raw: store.remote ? 'r2:declarations/corpus-v2' : RAW,
         filings: stats.filings,

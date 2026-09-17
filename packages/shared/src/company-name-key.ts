@@ -1,4 +1,5 @@
 import { cleanName } from './format';
+import { editDistance } from './person-identity';
 
 /**
  * Deterministic match key for a Bulgarian company name — the libel-safety surface of the
@@ -92,20 +93,6 @@ export function companyNameStem(raw: string): string {
   // keyboard; a real Latin name keeps its letters.
   if (s.match(/[A-Z]/g)?.every((c) => LOOKALIKE[c])) s = s.replace(/[A-Z]/g, (c) => LOOKALIKE[c]!);
   return s.replace(FORM_TOKEN, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function editDistance(a: string, b: string): number {
-  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let diagonal = row[0]!;
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const above = row[j]!;
-      row[j] = Math.min(above + 1, row[j - 1]! + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diagonal = above;
-    }
-  }
-  return row[b.length]!;
 }
 
 /**

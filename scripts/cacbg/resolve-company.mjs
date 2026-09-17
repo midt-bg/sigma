@@ -1,12 +1,34 @@
-import { companyNameKey, isMatchableKey } from '../../packages/shared/src/company-name-key.ts';
+import {
+  companyNameKey,
+  companyNameStem,
+  isMatchableKey,
+} from '../../packages/shared/src/company-name-key.ts';
 import { companyCandidates, declaredEiks } from './extract-companies.mjs';
 
 /** With an explicit EIK, spacing around an existing hyphen is presentation, not a name-only alias.
  * Keep every letter, number, hyphen and legal form; never use this key for name-only matching. */
 export const eikCompanyNameKey = (name) => companyNameKey(name).replace(/\s*-\s*/g, '-');
 
-/** Resolve one company-bearing field without choosing between contradictory identities. */
-export function resolveDeclaredCompany(entity, { byKey, bidderByEik, nameKey = companyNameKey }) {
+/** Index companies by `companyNameStem`; stems under four letters are left out. */
+export function stemIndex(companies) {
+  const index = new Map();
+  for (const { eik, name } of companies) {
+    const stem = companyNameStem(name);
+    if (stem.length < 4) continue;
+    if (!index.has(stem)) index.set(stem, new Set());
+    index.get(stem).add(eik);
+  }
+  return index;
+}
+
+/** Resolve one company-bearing field without choosing between contradictory identities.
+ * `byStem` adds a last, weaker step (`name_stem`): the фирма without its legal form and punctuation. A
+ * stem match names a company only; the register has to show the declarant in it before anything is
+ * published. */
+export function resolveDeclaredCompany(
+  entity,
+  { byKey, bidderByEik, nameKey = companyNameKey, byStem },
+) {
   const validEiks = (key) =>
     new Set(
       [...(byKey.get(key)?.values() ?? [])].filter((b) => b.eik && b.valid).map((b) => b.eik),
@@ -38,5 +60,10 @@ export function resolveDeclaredCompany(entity, { byKey, bidderByEik, nameKey = c
   if (candidates.length > 1) return { ambiguous: true };
   const matches = validEiks(candidates[0]);
   if (matches.size > 1) return { ambiguous: true };
-  return matches.size === 1 ? { eik: [...matches][0], method: 'extracted_name' } : null;
+  if (matches.size === 1) return { eik: [...matches][0], method: 'extracted_name' };
+  if (!byStem) return null;
+  const named = companyCandidates(entity);
+  const stems = byStem.get(companyNameStem(named.length ? named[0] : entity));
+  if (!stems) return null;
+  return stems.size === 1 ? { eik: [...stems][0], method: 'name_stem' } : { ambiguous: true };
 }

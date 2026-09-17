@@ -191,12 +191,6 @@ const historyRows = db
     `SELECT il.link_key, il.eik, il.first_declared_year,
   il.last_declared_year, e.evidence_kind, e.entry_number, e.entry_date, e.live_status,
   h.later_declaration_year, h.registry_role_ended_on,
-  ${
-    observationsPresent
-      ? `(SELECT MIN(o.reported_year) FROM interest_link_observations o
-    WHERE o.link_key=il.link_key AND o.timing IN ('prior','disposed'))`
-      : 'NULL'
-  } AS historical_year,
   ${observationsPresent ? '(SELECT COUNT(*) FROM interest_link_observations o WHERE o.link_key=il.link_key)' : 'NULL'} AS observation_count
   FROM interest_links il JOIN interest_link_evidence e USING(link_key)
   LEFT JOIN interest_link_history h USING(link_key) WHERE il.status='published'`,
@@ -207,7 +201,6 @@ const validDay = (v) =>
   Number.isFinite(Date.parse(v)) &&
   new Date(v).toISOString().slice(0, 10) === v;
 for (const l of historyRows) {
-  const proofYear = l.first_declared_year ?? l.historical_year;
   if (l.first_declared_year == null && observationsPresent && !l.observation_count)
     flag(
       l,
@@ -236,17 +229,9 @@ for (const l of historyRows) {
       !l.entry_number ||
       !validDay(l.entry_date) ||
       !validDay(l.registry_role_ended_on) ||
-      l.entry_date >= l.registry_role_ended_on ||
-      !/^\d{4}$/.test(proofYear ?? '') ||
-      l.entry_date > `${proofYear}-12-31` ||
-      (l.first_declared_year != null &&
-        l.registry_role_ended_on <= `${l.first_declared_year}-01-01`))
+      l.entry_date >= l.registry_role_ended_on)
   )
-    flag(
-      l,
-      'H_registry_period',
-      'Historical registry evidence needs a dated entry overlapping the first declared year',
-    );
+    flag(l, 'H_registry_period', 'An ended registry role needs a dated entry before its end');
 }
 const conflictsFile = path.join(STAGING, 'inventory-conflicts.jsonl');
 if (fs.existsSync(conflictsFile)) {

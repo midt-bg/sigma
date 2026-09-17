@@ -111,7 +111,10 @@ test('historic forms resolve only through observed name/form pairs on the same E
     );
     db.exec("UPDATE registry_deeds SET legal_form='EOOD' WHERE eik='123456789'");
     add('123456789', 'a'.repeat(64), name);
-    assert.equal(registryIdentityResolver(db)(doc, [name]).evidence.length, 0);
+    // Without the history the other form is only a stem match, which names the company because the
+    // declarant stands in it.
+    const method = () => registryIdentityResolver(db)(doc, [name]).companies[0]?.method;
+    assert.equal(method(), 'registry_name_stem');
     const historic = {
       name: 'А Тест Про',
       legalForm: 'ООД',
@@ -143,8 +146,8 @@ test('historic forms resolve only through observed name/form pairs on the same E
     }
     db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('d'.repeat(64));
     assert.equal(
-      registryIdentityResolver(db)(doc, [name]).evidence.length,
-      0,
+      method(),
+      'registry_name_stem',
       'history from a superseded snapshot is not current evidence',
     );
     db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('c'.repeat(64));
@@ -154,6 +157,26 @@ test('historic forms resolve only through observed name/form pairs on the same E
       0,
       'another EIK carrying this full name is ambiguous',
     );
+  } finally {
+    db.close();
+  }
+});
+
+test('a stem match needs the declarant in the partida; the seat plays no part', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    const stem = { ...doc, interests: [{ ...doc.interests[0], entity: '„А-Тест Про“ ЕООД' }] };
+    add('123456789', 'b'.repeat(64), 'Друга Петрова Тестова');
+    assert.deepEqual(registryIdentityResolver(db)(stem, [name]).companies, []);
+    add('123456789', 'a'.repeat(64), name);
+    for (const seat of ['София', 'Варна', '']) {
+      const declared = { ...stem, interests: [{ ...stem.interests[0], seat }] };
+      const found = registryIdentityResolver(db)(declared, [name]);
+      assert.equal(found.companies[0].method, 'registry_name_stem', seat);
+      assert.equal(found.evidence[0].registryIndent, 'a'.repeat(64), seat);
+    }
+    const related = { ...stem, interests: [{ ...stem.interests[0], holderRelation: 'related' }] };
+    assert.deepEqual(registryIdentityResolver(db)(related, [name]).companies, []);
   } finally {
     db.close();
   }

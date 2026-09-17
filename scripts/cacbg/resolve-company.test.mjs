@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { companyNameKey } from '../../packages/shared/src/company-name-key.ts';
-import { resolveDeclaredCompany } from './resolve-company.mjs';
+import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
 const companies = [
   ['111111119', 'АЛФА ЕООД'],
   ['222222229', 'БЕТА ЕООД'],
@@ -74,4 +74,23 @@ test('hyphen spacing is tolerated only behind a single corroborated EIK', () => 
     'ТЕСТ-42 ЕООД, ЕИК 111111119',
   ])
     assert.deepEqual(resolveDeclaredCompany(input, indexes), { ambiguous: true });
+});
+
+test('the stem step names a company only when every exact step found nothing', () => {
+  const byStem = stemIndex([
+    ...companies.map(([eik, name]) => ({ eik, name })),
+    { eik: '555555556', name: 'ТЕСТИЛОН - ПЪРВИ И СИЕ ЕТ' },
+    { eik: '666666665', name: 'ИВА' },
+  ]);
+  const stem = (text) => resolveDeclaredCompany(text, { byKey, bidderByEik, byStem });
+  assert.deepEqual(stem('„Алфа“ ЕООД'), { eik: '111111119', method: 'exact_name_key' });
+  assert.deepEqual(stem('Алфа ООД'), { eik: '111111119', method: 'name_stem' });
+  assert.deepEqual(stem('„Тестилон – Първи и сие“ ЕТ'), {
+    eik: '555555556',
+    method: 'name_stem',
+  });
+  assert.deepEqual(stem('Генерик ЕООД'), { ambiguous: true });
+  assert.equal(stem('ГД „Алфа“ ЕООД'), null);
+  // Stems under four letters are not indexed.
+  assert.equal(stem('Ива ЕТ'), null);
 });

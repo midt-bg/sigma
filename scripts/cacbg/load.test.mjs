@@ -62,6 +62,7 @@ function buildTrCache(dbFile, _rawDir, spec = {}, { omit = [] } = {}) {
       return {
         registry: fixtureRegistry(eik, {
           owners: d.owners ?? ['НЯКОЙ ДРУГ СОБСТВЕНИК'],
+          pastOwners: d.pastOwners ?? [],
           managers: d.managers ?? [],
           seat: d.seat ?? null,
           seatEntryDate: d.seatEntryDate ?? null,
@@ -140,11 +141,9 @@ before(() => {
     -- ignored, never guessed — an undatable filing is no evidence of a sale, so this stake stays published.
     INSERT INTO bidders VALUES ('eik:232323231','ДРЪНКАН ТЕХ 10 ЕООД','232323231',1,'София');
     INSERT INTO contracts VALUES ('c18','t1','eik:232323231','2019-05-01',110000);
-    -- ADR-0035 winner-vs-non-winner homonym: „ХОМОНИМ ТРЕЙД" is a GENERIC фирма (two content words) and the
-    -- sole WINNER holding it. Хомоним Иванов Тестов declared a stake in a company of that name — but the one
-    -- he owns never bid, so the resolver lands on this winner instead. This winner's deed happens to name a
-    -- HOMONYM (identical three tokens), which under a name-only rung 2 „proves" a link false in both halves.
-    -- Nothing corroborates the company (no declared ЕИК, no declared seat), so it must be withheld.
+    -- „ХОМОНИМ ТРЕЙД" is a generic фирма and the sole WINNER holding it: the name leads to this ЕИК, and the
+    -- deed names a person with the declarant's three names, so the link publishes (tr-rules-8). A фирма is
+    -- nationally unique, and the declared company and person both matching another is not a case we hold for.
     INSERT INTO bidders VALUES ('eik:242424248','ХОМОНИМ ТРЕЙД ЕООД','242424248',1,'София');
     INSERT INTO contracts VALUES ('c19','t1','eik:242424248','2023-05-01',95000);
     -- N10 canonicalization: Канонов owns КАНОН ТЕХ 5, filing „МВР" one year and the full ministry name the
@@ -164,10 +163,10 @@ before(() => {
     -- not twice — the load-side sibling of the UI conflictHeadline per-ЕИК money dedup.
     INSERT INTO bidders VALUES ('eik:181818187','ПАРТНЬОРИ 5 ЕООД','181818187',1,'София');
     INSERT INTO contracts VALUES ('c15','t1','eik:181818187','2022-06-01',600000);
-    -- FAMILY positive control (#279): identical in shape to Кмет's case but the official DECLARED the
-    -- company's seat, which is what confirms the company's identity when the registered owner is the
-    -- relative whose name we never hold. Without this case „family published: 0" would be
-    -- indistinguishable from a structurally dead path (ADR-0027's false-zero lesson).
+    -- FAMILY positive control (#279): identical in shape to Кмет's case but the register shows the relative
+    -- the declaration names for the stake, which confirms the company when the official holds no role in it.
+    -- Without this case „family published: 0" would be indistinguishable from a structurally dead path
+    -- (ADR-0027's false-zero lesson).
     INSERT INTO bidders VALUES ('eik:191919199','СЕМЕЕН ДОМ ЕООД','191919199',1,'Русе');
     INSERT INTO contracts VALUES ('c16','t4','eik:191919199','2023-07-01',180000);
   `);
@@ -364,7 +363,7 @@ before(() => {
       holderRelation: 'related',
       controlHash: 'H11',
     },
-    // FAMILY positive control: same as Кмет, but with the seat declared → rung 3 confirms the company.
+    // FAMILY positive control: same as Кмет, but the register shows the relative the declaration names.
     {
       folder: '2024',
       xmlFile: 'K2.xml',
@@ -630,7 +629,21 @@ before(() => {
     path.join(STAGING, 'holdings.jsonl'),
     holdings.map((h) => JSON.stringify(h)).join('\n') + '\n',
   );
-  fs.writeFileSync(path.join(STAGING, 'related.jsonl'), '');
+  // The holder Кметица's declaration names for her family stake — internal, read to confirm it (ADR-0044).
+  fs.writeFileSync(
+    path.join(STAGING, 'related.jsonl'),
+    JSON.stringify({
+      folder: '2024',
+      xmlFile: 'K2.xml',
+      year: '2023',
+      person: 'Кметица Иванова Втора',
+      institution: 'ОБЩИНА ТЕСТ',
+      related_name: 'Роднина Втора Тестова',
+      related_kind: 'stake_holder',
+      info: 'СЕМЕЕН ДОМ ЕООД',
+      timing: 'annual',
+    }) + '\n',
+  );
   // filings.jsonl (B1): one record per DECLARATION — every holding's filing PLUS empty/no-material filings.
   // Derive a filing from each holding, then add Пълен's later EMPTY 2023 filing (no holdings row) so his
   // 2019 stake is caught as divest-to-zero.
@@ -698,12 +711,13 @@ before(() => {
   // The Trade Register evidence each link now has to rest on (#279, ADR-0033). Shaped so every
   // existing case keeps the INTENT it was written for, under the new rule rather than the old one:
   //   • a person the register names as owner/manager  → „Документ"
-  //   • a declared seat matching the registered seat  → „Потвърдено"
   //   • a declared ЕИК                                → „Потвърдено" (never name-gated, ADR-0028)
+  //   • a relative the declaration names, registered  → „Потвърдено" (family stakes)
   //   • nobody we can match and nothing to confirm    → „Неизвестна", held
   buildTrCache(TR_DB, TR_RAW, {
     111111119: { managers: ['ИВАН ПЕТРОВ ТЕСТОВ'] }, // manages → document/manager (class keeps it internal)
-    444444447: { seat: 'гр. Бургас' }, // Петър declared Бургас → confirmed; Георги declared none → held
+    // Петър is registered → document; Георги is not, and his declared seat changes nothing → held
+    444444447: { owners: ['ПЕТЪР ИВАНОВ НИКОЛОВ'], seat: 'гр. Бургас' },
     555555556: {
       managers: ['БОРИС ИВАНОВ МАНОЛОВ', 'ВИКТОР ИВАНОВ АСЕНОВ'],
       suffix: 'ЕАД',
@@ -718,14 +732,13 @@ before(() => {
     161616163: { owners: ['ИНТЕР ИВАНОВ ТЕСТОВ'] },
     181818187: { owners: ['АЛФА ИВАНОВ ПАРТНЬОРОВ', 'БЕТА ИВАНОВ ПАРТНЬОРОВ'] },
     121212129: { owners: ['НУЛА ИВАНОВ ТЕСТОВ'] },
-    191919199: { owners: ['РОДНИНА ВТОРА'], seat: 'гр. Русе' }, // family + declared seat → confirmed
-    // Безгодин is ABSENT from the deed (so §7 reconciliation cannot reverse the divestment) but his
-    // declared seat matches the registered one, so rung 3 says „Потвърдено" and the link PUBLISHES.
-    // Only the folder-dated divestment withdraws it — making the pre-fix failure the dangerous one.
-    212121218: { owners: ['ДРУГ СОБСТВЕНИК СЪВСЕМ'], seat: 'гр. София' },
+    191919199: { owners: ['РОДНИНА ВТОРА ТЕСТОВА'] }, // family + the named relative registered → confirmed
+    // Безгодин no longer stands in the deed (so §7 reconciliation cannot reverse the divestment) but the
+    // register shows him as a past owner, so rung 2 says „Документ" and the link PUBLISHES. Only the
+    // folder-dated divestment dates it — making the pre-fix failure the dangerous one.
+    212121218: { owners: ['ДРУГ СОБСТВЕНИК СЪВСЕМ'], pastOwners: ['БЕЗГОДИН ИВАНОВ ДИВЕСТОВ'] },
     232323231: { owners: ['ДРЪНКАН ИВАНОВ ТЕСТОВ'] }, // still the owner → the undatable filing changes nothing
-    // The homonym: the deed names someone with Хомоним's exact three tokens. Rung 2 matches — and must
-    // still withhold, because nothing says this is the company he declared.
+    // The deed names someone with Хомоним's exact three tokens: rung 2 matches and publishes.
     242424248: { owners: ['ХОМОНИМ ИВАНОВ ТЕСТОВ'] },
   });
 });
@@ -813,7 +826,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   );
 
   const petar = link('444444447', 'Петър Иванов Николов');
-  assert.equal(petar.publish_tier, 'confirmed'); // declared seat == registered seat
+  assert.equal(petar.publish_tier, 'document'); // the register names him in the company
   assert.equal(petar.status, 'published');
   assert.equal(petar.interest_class, 'private_ownership'); // declared a share → the headline conflict signal
 
@@ -828,7 +841,7 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(viktor.status, 'internal');
 
   const georgi = link('444444447', 'Георги Иванов Стоянов');
-  assert.equal(georgi.publish_tier, 'unknown'); // same company, but he declared no seat → nothing confirms
+  assert.equal(georgi.publish_tier, 'unknown'); // same company, but the register does not show him
   assert.equal(georgi.status, 'held');
 
   // E11 divestment: Николай's 2019 stake in ДИВЕСТ 1 is superseded by a 2022 filing that omits it → withdrawn;
@@ -865,9 +878,9 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(family.interest_class, 'family_ownership');
   // #279 NARROWS the family surface, and this is where it shows. The registered owner of a family
   // stake is the RELATIVE, whose name we deliberately never store (ADR-0010 item 4, ADR-0032 #2) — so
-  // rung 2 („Документ") can never fire for a family link, by construction. Its identity can only be
-  // confirmed by something the OFFICIAL declared: the seat, or the ЕИК. Кмет declared neither, so his
-  // link is now HELD rather than published. ADR-0032's decision is untouched — family publishes on the
+  // rung 2 („Документ") fires for a family link only if the official is registered too. Otherwise the
+  // company is confirmed by the declared ЕИК or by the register showing the relative the declaration
+  // names. Кмет's declaration names no holder and no ЕИК, so his link is HELD rather than published. ADR-0032's decision is untouched — family publishes on the
   // named surface exactly like self — but it now needs the same registry evidence as everything else.
   assert.equal(family.status, 'held');
   assert.equal(family.publish_tier, 'unknown');
@@ -875,9 +888,8 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   assert.equal(family.contemporaneous, 1);
   assert.equal(family.contract_value_eur, 250000);
   assert.equal(family.link_key, family.person_id + '|888888884|family'); // distinct from any self link
-  // NON-NEGOTIABLE (ADR-0032 #1): the relative's identity is NEVER stored — no family holder name reaches the
-  // DB, not even now that the link is public. Only holderRelation flows through; the name never leaves parse.
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM related_persons_internal').get().n, 0);
+  // The holder names stay in the internal table (ADR-0044): the one staged row, and nothing more.
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM related_persons_internal').get().n, 1);
   // §2 ал.3 ПЗР canary (rail #3): the build report buckets material family holdings by source template — every
   // family holding in this corpus is declared in an ASSET declaration, so the only bucket is 'assets'. A
   // non-'assets' bucket would mean a relative's stake leaked from a non-public source (consent/libel breach).
@@ -960,23 +972,17 @@ test('resolves publish/held/quarantine tiers deterministically', () => {
   // that asset-declaration silence as a sale and WITHDRAWS the stake; the per-type horizon must not — no later
   // INTERESTS filing omits the company. This link must stay PUBLISHED. (Guards against dropping a true link:
   // 13% of holders declare a stake only in the interests declaration.)
-  // ADR-0035 — the CRITICAL, end to end. Хомоним declared a stake in „ХОМОНИМ ТРЕЙД ЕООД"; the company he
-  // actually owns never bid, so `resolveEntity` resolved his declaration to the same-named WINNER, whose
-  // deed names a person with his exact three tokens. Rung 2 matches. It must NOT publish: the register
-  // proves someone of that name owns THIS company, not that this is the company he declared. `nameGlobally-
-  // Unique` cannot catch it — it ranges over bidders, and this winner is the only bidder with the name.
+  // tr-rules-8: the name leads to one ЕИК and the register shows a person with the declarant's three names
+  // in it — the link publishes with the registered role.
   const homonym = link('242424248', 'Хомоним Иванов Тестов');
-  assert.equal(homonym.publish_tier, 'document_uncorroborated');
-  assert.notEqual(homonym.status, 'published');
-  // The seal must record WHY it was withheld, and must not carry the role the rung refused to assert.
-  const homonymSeal = db
-    .prepare(
-      'SELECT evidence_kind, registry_role, matched_fact FROM interest_link_evidence WHERE link_key=?',
-    )
-    .get(homonym.link_key);
-  assert.equal(homonymSeal.evidence_kind, 'document_uncorroborated');
-  assert.equal(homonymSeal.registry_role, null);
-  assert.equal(homonymSeal.matched_fact, null);
+  assert.equal(homonym.publish_tier, 'document');
+  assert.equal(homonym.status, 'published');
+  assert.equal(
+    db
+      .prepare('SELECT registry_role FROM interest_link_evidence WHERE link_key=?')
+      .get(homonym.link_key).registry_role,
+    'owner',
+  );
 
   // §1.3 unparseable filing YEAR: Безгодин's later declaration has an unreadable <year> ('н/д') but a 2023
   // FOLDER. Dropping that record — the pre-fix behaviour — leaves his horizon at 2019, so `divested` stays
@@ -1053,8 +1059,8 @@ test('re-run is idempotent and honors the suppression list (contested link stays
   // idempotent: still exactly the same number of links + persons after a clean rebuild.
   // 20 links: 15 self (incl. withdrawn/held + the zero-contract 'internal' + Пълен's divest-to-zero
   // 'withdrawn' + Безгодин's folder-dated 'withdrawn' + Дрънкан's undatable-filing 'published' +
-  // Хомоним's ADR-0035 'document_uncorroborated' hold + Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of registry evidence,
-  // and Кметица's seat-confirmed one) + Канонов's canonicalized single link +
+  // Хомоним's published link + Интер's per-type-kept published link) + 2 family (Кмет's, now held for want of registry evidence,
+  // and Кметица's relative-confirmed one) + Канонов's canonicalized single link +
   // Алфа & Бета (two officials on one winner, ПАРТНЬОРИ 5); Мария (quarantined), Акционер (securities),
   // Двусмислен (unknown holder) & Безинст (empty institution) none.
   assert.equal(db.prepare('SELECT COUNT(*) n FROM interest_links').get().n, 20);
@@ -1300,26 +1306,25 @@ test('every link carries an evidence seal, and no seal carries a name', () => {
   db.close();
 });
 
-test('a family stake publishes ONLY when the official confirmed the company themselves', () => {
-  // The positive control for the narrowest published path. A family link can never earn „Документ" —
-  // the registered owner is the relative, whose name we never hold — so it stands or falls on the seat
-  // or ЕИК the OFFICIAL declared. Without this case „family published: 0" would be indistinguishable
-  // from a structurally dead path (ADR-0027).
+test('a family stake publishes when the register shows the relative its declaration names', () => {
+  // The positive control for the narrowest published path. Without this case „family published: 0" would
+  // be indistinguishable from a structurally dead path (ADR-0027).
   runLoad();
   const db = open();
-  const withSeat = db
+  const named = db
     .prepare(
       "SELECT il.status, il.publish_tier FROM interest_links il JOIN persons p ON p.id=il.person_id WHERE il.eik='191919199' AND p.name='Кметица Иванова Втора'",
     )
     .get();
-  assert.equal(withSeat.status, 'published');
-  assert.equal(withSeat.publish_tier, 'confirmed');
+  assert.equal(named.status, 'published');
+  assert.equal(named.publish_tier, 'confirmed');
   const seal = db
     .prepare(
-      "SELECT matched_fact FROM interest_link_evidence WHERE link_key LIKE '%191919199|family'",
+      "SELECT matched_fact, registry_role FROM interest_link_evidence WHERE link_key LIKE '%191919199|family'",
     )
     .get();
-  assert.equal(seal.matched_fact, 'seat:РУСЕ');
+  assert.equal(seal.matched_fact, 'relative:owner:00190');
+  assert.equal(seal.registry_role, null);
   db.close();
 });
 

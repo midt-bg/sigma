@@ -1,11 +1,10 @@
 import { declarantNameKey, declarationAttribution } from './source-identity.mjs';
 import { companyCandidates } from './extract-companies.mjs';
-import { resolveDeclaredCompany } from './resolve-company.mjs';
-import { companyNameKey } from '../../packages/shared/src/company-name-key.ts';
-import { nameDistinctiveness } from './classify.mjs';
-import { normalizeSettlement } from '../tr/deed.mjs';
+import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
+import { companyNameKey, companyNameStem } from '../../packages/shared/src/company-name-key.ts';
+import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 
-export const IDENTITY_RULES_VERSION = 'registry-identity-3';
+export const IDENTITY_RULES_VERSION = 'registry-identity-4';
 const HASH = /^[a-f0-9]{64}$/i;
 // Visual Latin/Cyrillic equivalents only, in a Cyrillic-dominant name. This is NOT phonetic transliteration.
 export function mixedScriptCompanyKey(raw) {
@@ -51,22 +50,43 @@ export function registryIdentityRows(registry) {
     .all();
 }
 
-/** Resolve declared companies against registry data, including declarations of related-person stakes. */
-export function registryCompanyResolver(registry) {
+/** Each company's registered people with a full name: ЕИК → name → identifier → observation. */
+function peopleByCompany(registry) {
+  const people = new Map();
+  for (const r of registryIdentityRows(registry)) {
+    if (!HASH.test(r.subject_id)) continue;
+    const name = declarantNameKey(r.subject_name);
+    if (name.split(' ').length < 3) continue;
+    const company = people.get(r.eik) ?? new Map();
+    const subjects = company.get(name) ?? new Map();
+    subjects.set(r.subject_id.toLowerCase(), r);
+    company.set(name, subjects);
+    people.set(r.eik, company);
+  }
+  return people;
+}
+
+/** The people a company registers under this name: the exact spelling, else its variants (a surname added,
+ * dropped or taken on marriage, one typo). */
+function subjectsNamed(company, person) {
+  const exact = company?.get(declarantNameKey(person ?? ''));
+  if (exact?.size) return exact;
+  return new Map(
+    [...(company ?? [])]
+      .filter(([name]) => personNamesAlike(person ?? '', name))
+      .flatMap(([, subjects]) => [...subjects]),
+  );
+}
+
+/** Resolve declared companies against registry data, including declarations of related-person stakes.
+ * The company is its ЕИК: the declared one, or the one the declared name leads to. */
+export function registryCompanyResolver(registry, people = peopleByCompany(registry)) {
   const fullName = (name, suffix) =>
     suffix && !companyNameKey(name).endsWith(` ${suffix}`) ? `${name} ${suffix}` : name;
   const byKey = new Map();
   const bidderByEik = new Map();
-  const seats = new Map();
   const history = new Map();
   const folded = new Map();
-  const names = new Map();
-  for (const r of registryIdentityRows(registry)) {
-    if (!HASH.test(r.subject_id)) continue;
-    const key = JSON.stringify([r.eik, declarantNameKey(r.subject_name)]);
-    if (!names.has(key)) names.set(key, new Set());
-    names.get(key).add(r.subject_id.toLowerCase());
-  }
   if (registry.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_company_history'").get()) {
     for (const r of registry
       .prepare(
@@ -79,7 +99,7 @@ export function registryCompanyResolver(registry) {
       );
   }
   for (const r of registry
-    .prepare("SELECT eik,name,legal_form,seat_settlement FROM registry_deeds WHERE outcome='ok'")
+    .prepare("SELECT eik,name,legal_form FROM registry_deeds WHERE outcome='ok'")
     .all()) {
     const suffix = {
       OOD: 'ООД',
@@ -96,7 +116,6 @@ export function registryCompanyResolver(registry) {
     const aliases = (history.get(r.eik) ?? []).map((n) => fullName(n.name, n.legalForm));
     const company = { eik: r.eik, name: registeredName, names: aliases, valid: true };
     bidderByEik.set(r.eik, company);
-    seats.set(r.eik, normalizeSettlement(r.seat_settlement));
     for (const name of [registeredName, ...aliases]) {
       for (const [index, key] of [
         [byKey, companyNameKey(name)],
@@ -108,9 +127,15 @@ export function registryCompanyResolver(registry) {
       }
     }
   }
+  const byStem = stemIndex(
+    [...bidderByEik.values()].flatMap((c) =>
+      [c.name, ...c.names].map((name) => ({ eik: c.eik, name })),
+    ),
+  );
   return (interest, authorName) => {
     let resolved = resolveDeclaredCompany(interest.entity, { byKey, bidderByEik });
     let mixed = false;
+    let stem = false;
     if (!resolved) {
       resolved = resolveDeclaredCompany(interest.entity, {
         byKey: folded,
@@ -119,61 +144,49 @@ export function registryCompanyResolver(registry) {
       });
       mixed = !!resolved && !resolved.ambiguous;
     }
+    if (!resolved) {
+      resolved = resolveDeclaredCompany(interest.entity, { byKey: new Map(), bidderByEik, byStem });
+      stem = !!resolved && !resolved.ambiguous;
+    }
     if (!resolved || resolved.ambiguous) return { reason: 'company_not_resolved' };
     const company = bidderByEik.get(resolved.eik);
-    const seat = normalizeSettlement(interest.seat);
-    const authorIds = names.get(JSON.stringify([resolved.eik, declarantNameKey(authorName ?? '')]));
-    // A visual spelling alone is not company evidence: require the original declarant's personal
-    // registry observation in this same partida. Related-person declarations cannot borrow that role.
-    if (mixed && !(interest.holderRelation === 'self' && authorIds?.size === 1))
+    const authorIds = subjectsNamed(people.get(resolved.eik), authorName);
+    // A visual spelling or a stem alone is not company evidence: require the original declarant's
+    // personal registry observation in this same partida. Related-person declarations cannot borrow it.
+    if ((mixed || stem) && !(interest.holderRelation === 'self' && authorIds.size === 1))
       return { reason: 'company_evidence_insufficient' };
-    const nameKey = mixed ? mixedScriptCompanyKey : companyNameKey;
+    const nameKey = mixed ? mixedScriptCompanyKey : stem ? companyNameStem : companyNameKey;
     const keys = new Set([interest.entity, ...companyCandidates(interest.entity)].map(nameKey));
     const currentName = keys.has(nameKey(company.name));
     const historic = (history.get(resolved.eik) ?? []).find((n) =>
       keys.has(nameKey(fullName(n.name, n.legalForm))),
     );
-    const companyProof = mixed
-      ? (historic ?? { name: company.name })
-      : !currentName && historic
-        ? historic
-        : null;
-    if (
-      resolved.method !== 'declared_eik' &&
-      !(seat && seat === seats.get(resolved.eik)) &&
-      nameDistinctiveness(companyNameKey(company.name)) !== 'distinctive'
-    )
-      return { reason: 'company_evidence_insufficient' };
+    const companyProof =
+      mixed || stem
+        ? (historic ?? { name: company.name })
+        : !currentName && historic
+          ? historic
+          : null;
     return {
       ...resolved,
       ...(mixed
         ? { method: 'registry_mixed_script' }
-        : companyProof
-          ? { method: 'registry_name_history' }
-          : {}),
+        : stem
+          ? { method: 'registry_name_stem' }
+          : companyProof
+            ? { method: 'registry_name_history' }
+            : {}),
       ...(companyProof ? { registryCompany: companyProof } : {}),
       reason: 'personal_name_not_observed',
-      authorNameConflict:
-        (names.get(JSON.stringify([resolved.eik, declarantNameKey(authorName ?? '')]))?.size ?? 0) >
-        1,
+      authorNameConflict: authorIds.size > 1,
     };
   };
 }
 
 /** Public registry identities, read once. Names select evidence; they never become identity keys. */
 export function registryIdentityResolver(registry) {
-  const resolveCompany = registryCompanyResolver(registry);
-  const namesByCompany = new Map();
-  for (const r of registryIdentityRows(registry)) {
-    if (!HASH.test(r.subject_id)) continue;
-    const name = declarantNameKey(r.subject_name);
-    if (name.split(' ').length < 3) continue;
-    const company = namesByCompany.get(r.eik) ?? new Map();
-    const subjects = company.get(name) ?? new Map();
-    subjects.set(r.subject_id.toLowerCase(), r);
-    company.set(name, subjects);
-    namesByCompany.set(r.eik, company);
-  }
+  const namesByCompany = peopleByCompany(registry);
+  const resolveCompany = registryCompanyResolver(registry, namesByCompany);
   return (declaration, listedNames) => {
     const attribution = declarationAttribution(declaration.declarant, listedNames);
     const name = declarantNameKey(declaration.declarant);
@@ -200,8 +213,8 @@ export function registryIdentityResolver(registry) {
       reason = resolved.reason;
       if (!resolved.eik) continue;
       const names = namesByCompany.get(resolved.eik);
-      const candidates = names?.get(name);
-      if (!candidates?.size) continue;
+      const candidates = subjectsNamed(names, declaration.declarant);
+      if (!candidates.size) continue;
       for (const [indent, observation] of candidates) {
         proofs.set(`${indent}|${resolved.eik}`, {
           registryIndent: indent,

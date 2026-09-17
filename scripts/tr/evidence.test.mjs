@@ -57,18 +57,12 @@ test('a proven identity survives a changed surname and never falls back to a dif
     registry: facts,
     declarantName: 'Мария Петрова Стара',
     registryIndent,
-    companyNameDistinctive: true,
     firstDeclaredYear: 2020,
   };
   assert.equal(evidenceVerdict(input).kind, 'document');
   assert.equal(reconcileTermination(input).label, 'owner_today');
   assert.notEqual(evidenceVerdict({ ...input, registryIndent: 'c'.repeat(64) }).kind, 'document');
   assert.equal(reconcileTermination({ ...input, registryIndent: 'c'.repeat(64) }).label, null);
-  assert.notEqual(
-    evidenceVerdict({ ...input, companyNameDistinctive: false }).kind,
-    'document',
-    'identity alone does not prove the declared company',
-  );
 });
 const seatIn = (settlement, entryOn = '2011-05-02') => ({
   seat_settlement: settlement,
@@ -83,14 +77,9 @@ const OWNER = registry(
 const base = {
   registry: OWNER,
   declarantName: 'Иван Петров Тестов',
-  declaredSeats: [],
   declaredEik: false,
   firstDeclaredYear: 2021,
   scope: 'self',
-  nameGloballyUnique: true,
-  // The company was resolved by a name unlikely to have a national twin. The rung-2 tests below are about
-  // NAME matching, so they hold this dimension fixed; the gate itself is tested separately.
-  companyNameDistinctive: true,
 };
 
 test('RULES_VERSION is a stable, non-empty identifier — §8 hangs off it', () => {
@@ -161,11 +150,28 @@ test('rung 2 — the match must fall inside ONE registered person (the libel gua
   assert.notEqual(v.kind, 'document');
 });
 
-test('rung 2 — an ended role outside the declared year cannot produce a document match', () => {
+test('rung 2 — a role that ended before the declared years still shows the company is theirs', () => {
   const gone = registry([
     holder('00230', 'ИВАН ПЕТРОВ ТЕСТОВ', '2013-07-16', { removed_on: '2015-01-01' }),
   ]);
-  assert.notEqual(evidenceVerdict({ ...base, registry: gone }).kind, 'document');
+  const v = evidenceVerdict({ ...base, registry: gone });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.roleEndedOn, '2015-01-01');
+});
+
+test('rung 2 — a role whose end the register leaves unclear shows the company, with no end asserted', () => {
+  const unclear = registry([
+    holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2009-01-15', { uncertain_after: '2012-09-13' }),
+  ]);
+  const v = evidenceVerdict({ ...base, registry: unclear });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.registryRole, 'owner');
+  assert.equal(v.roleEndedOn, null);
+  // Not a standing role: who is registered now is a separate question.
+  assert.equal(
+    reconcileTermination({ registry: unclear, declarantName: base.declarantName }).label,
+    null,
+  );
 });
 
 test('a documented past owner corroborates historical identity without becoming a current owner', () => {
@@ -183,55 +189,63 @@ test('a documented past owner corroborates historical identity without becoming 
   });
 });
 
-test('historical matches still require company corroboration and one exact full person name', () => {
+test('past matches need one full person name in a field the ladder reads', () => {
   const past = registry([
     holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2013-07-16', { removed_on: '2022-01-01' }),
   ]);
+  assert.equal(evidenceVerdict({ ...base, registry: past }).kind, 'document');
+  for (const declarantName of ['Иван Тестов', 'Иван Петров Другов'])
+    assert.notEqual(evidenceVerdict({ ...base, registry: past, declarantName }).kind, 'document');
+  for (const over of [{ subject_kind: 'entity' }, { field_ident: '05500' }]) {
+    const other = registry([
+      holder('00190', base.declarantName, '2020-01-01', { removed_on: '2022-01-01', ...over }),
+    ]);
+    assert.notEqual(evidenceVerdict({ ...base, registry: other }).kind, 'document');
+  }
+  const manager = registry([
+    holder('00070', base.declarantName, '2021-12-31', { removed_on: '2022-01-01' }),
+  ]);
+  assert.equal(evidenceVerdict({ ...base, registry: manager }).registryRole, 'manager');
   assert.equal(
-    evidenceVerdict({ ...base, registry: past, companyNameDistinctive: false }).kind,
-    'document_uncorroborated',
-  );
-  assert.notEqual(
-    evidenceVerdict({ ...base, registry: past, declarantName: 'Иван Тестов' }).kind,
-    'document',
-  );
-  assert.notEqual(
-    evidenceVerdict({ ...base, registry: past, declarantName: 'Иван Петров Другов' }).kind,
-    'document',
-  );
-  assert.equal(
-    evidenceVerdict({ ...base, registry: past, companyNameDistinctive: false, declaredEik: true })
-      .kind,
+    evidenceVerdict({ ...base, registry: manager, firstDeclaredYear: null }).kind,
     'document',
   );
 });
 
-test('historical identity requires valid dates, a real entry and overlap with the first declared year', () => {
-  for (const over of [
-    { added_on: null },
-    { added_on: '2021-02-30' },
-    { removed_on: '2021-02-30' },
-    { added_on: '2022-01-01' },
-    { removed_on: '2021-01-01' },
-    { added_on: '2022-02-01', removed_on: '2022-01-01' },
-    { entry_number: null },
-    { subject_kind: 'entity' },
-  ]) {
-    const past = registry([
-      holder('00190', base.declarantName, '2020-01-01', { removed_on: '2022-01-01', ...over }),
-    ]);
-    assert.notEqual(
-      evidenceVerdict({ ...base, registry: past }).kind,
-      'document',
-      JSON.stringify(over),
-    );
-  }
-  const past = registry([
-    holder('00070', base.declarantName, '2021-12-31', { removed_on: '2022-01-01' }),
+test('rung 2 — a spelling variant of the name designates the one person it fits', () => {
+  const married = registry([
+    holder('00070', 'ИВАНА ПЕТРОВА ТЕСТОВА', '2010-01-01', {
+      removed_on: '2016-01-01',
+      subject_id: 'a'.repeat(64),
+    }),
   ]);
-  assert.equal(evidenceVerdict({ ...base, registry: past }).registryRole, 'manager');
+  const v = evidenceVerdict({
+    ...base,
+    registry: married,
+    declarantName: 'Ивана Петрова Тестова-Примерова',
+  });
+  assert.equal(v.kind, 'document');
+  assert.equal(v.registryRole, 'manager');
+  // Two people who fit the variant designate nobody.
+  const two = registry([
+    holder('00190', 'ИВАНА ПЕТРОВА ТЕСТОВА', '2010-01-01', { subject_id: 'a'.repeat(64) }),
+    holder('00190', 'ИВАНА ПЕТРОВА ПРИМЕРОВА', '2010-01-01', { subject_id: 'b'.repeat(64) }),
+  ]);
   assert.notEqual(
-    evidenceVerdict({ ...base, registry: past, firstDeclaredYear: null }).kind,
+    evidenceVerdict({ ...base, registry: two, declarantName: 'Ивана Петрова Тестова-Примерова' })
+      .kind,
+    'document',
+  );
+  // The exact spelling wins over a variant.
+  const exact = registry([
+    holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2010-01-01', { subject_id: 'a'.repeat(64) }),
+    holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ ДРУГ', '2010-01-01', { subject_id: 'b'.repeat(64) }),
+  ]);
+  assert.equal(evidenceVerdict({ ...base, registry: exact }).kind, 'document');
+  // Siblings are not variants of each other.
+  const sister = registry([holder('00190', 'СТЕФАНА ПЕТРОВА ИВАНОВА')]);
+  assert.notEqual(
+    evidenceVerdict({ ...base, registry: sister, declarantName: 'Стефан Петров Иванов' }).kind,
     'document',
   );
 });
@@ -258,12 +272,10 @@ test('rung 2 — a Latin homoglyph in the name is a NON-match, and is counted', 
 // ── rung 3: „Потвърдено" ──────────────────────────────────────────────────────
 const somebodyElse = (over = {}) => registry([holder('00190', 'НЯКОЙ ДРУГ ЧОВЕК')], over);
 
-test('rung 3 — a declared seat matching the registered seat confirms the company', () => {
-  const other = somebodyElse(seatIn('гр. Пловдив', '2015-01-01'));
-  const v = evidenceVerdict({ ...base, registry: other, declaredSeats: ['Пловдив'] });
-  assert.equal(v.kind, 'confirmed');
-  assert.equal(v.publishable, true);
-  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
+test('rung 3 — a seat confirms nothing: without the declarant in the partida the link is held', () => {
+  const v = evidenceVerdict({ ...base, registry: somebodyElse(seatIn('гр. Пловдив')) });
+  assert.equal(v.kind, 'unknown');
+  assert.equal(v.publishable, false);
 });
 
 test('rung 3 — a declared ЕИК confirms the company on its own', () => {
@@ -272,141 +284,26 @@ test('rung 3 — a declared ЕИК confirms the company on its own', () => {
   assert.equal(v.matchedFact, 'eik');
 });
 
-test('rung 3 — an EMPTY declared seat never confirms', () => {
-  const v = evidenceVerdict({ ...base, registry: somebodyElse(), declaredSeats: ['', '   '] });
-  assert.notEqual(v.kind, 'confirmed');
-});
-
-test('rung 3 — a seat registered AFTER the declared period does not confirm', () => {
-  // R10, and W0 measured that seats move: a company that relocated INTO the declared settlement after
-  // the fact would otherwise produce a false „Потвърдено".
-  const moved = somebodyElse(seatIn('гр. Пловдив', '2024-06-01'));
-  const v = evidenceVerdict({
+test('rung 3 — a relative the declaration names for the stake, in the partida, confirms it', () => {
+  const family = {
     ...base,
-    registry: moved,
-    declaredSeats: ['Пловдив'],
-    firstDeclaredYear: 2021,
-  });
-  assert.notEqual(v.kind, 'confirmed');
-});
-
-test('seat corroboration keeps each source year paired with its own settlement after author merging', () => {
-  const moved = somebodyElse(seatIn('гр. Пловдив', '2021-06-01'));
-  const input = {
-    ...base,
-    registry: moved,
-    firstDeclaredYear: 2018,
-    declaredSeats: ['Видин', 'Пловдив'],
+    scope: 'family',
+    registry: registry([holder('00230', 'МАРИЯ ГЕОРГИЕВА ТЕСТОВА', '2015-01-01')]),
   };
-  assert.equal(
-    evidenceVerdict({
-      ...input,
-      declaredSeatYears: [
-        ['Видин', 2018],
-        ['Пловдив', 2021],
-      ],
-    }).kind,
-    'confirmed',
-  );
+  assert.equal(evidenceVerdict(family).kind, 'unknown');
+  const v = evidenceVerdict({ ...family, relativeNames: ['Мария Георгиева Тестова-Петрова'] });
+  assert.equal(v.kind, 'confirmed');
+  assert.equal(v.publishable, true);
+  // The official holds no role here, and the fact never says who the relative is.
+  assert.equal(v.registryRole, null);
+  assert.equal(v.matchedFact, 'relative:owner:00230');
+  assert.equal(v.entryDate, '2015-01-01');
+  for (const relativeNames of [['Мария Тестова'], ['Мария Иванова Тестова']])
+    assert.equal(evidenceVerdict({ ...family, relativeNames }).kind, 'unknown');
+  // An own stake is never confirmed through a relative.
   assert.notEqual(
-    evidenceVerdict({
-      ...input,
-      declaredSeatYears: [
-        ['Пловдив', 2018],
-        ['Видин', 2021],
-      ],
-    }).kind,
+    evidenceVerdict({ ...family, scope: 'self', relativeNames: ['Мария Георгиева Тестова'] }).kind,
     'confirmed',
-  );
-  assert.notEqual(
-    evidenceVerdict({
-      ...input,
-      declaredSeatYears: [
-        ['Пловдив', null],
-        ['Видин', 2021],
-      ],
-    }).kind,
-    'confirmed',
-  );
-  assert.notEqual(evidenceVerdict({ ...input, declaredSeatYears: [] }).kind, 'confirmed');
-});
-
-test('rung 3 — an UNKNOWN first declared year cannot confirm on a seat', () => {
-  // R10 again, from the other side. A null year means the temporal check has NOTHING to compare
-  // against — not that the seat covers the period. An unknown guard is a failed guard.
-  const moved = somebodyElse(seatIn('гр. Пловдив', '2024-06-01'));
-  const v = evidenceVerdict({
-    ...base,
-    registry: moved,
-    declaredSeats: ['Пловдив'],
-    firstDeclaredYear: null,
-  });
-  assert.notEqual(v.kind, 'confirmed');
-});
-
-test('rung 3 — an unknown year holds a seat match even when the seat has NO entry date', () => {
-  // Two unknowns and zero evidence about the period: rung 4 already refuses to run without a year, and
-  // the seat leg must refuse on the same ground, or the weakest rung is the one with no temporal check.
-  const undated = somebodyElse(seatIn('гр. Пловдив', null));
-  const v = evidenceVerdict({
-    ...base,
-    registry: undated,
-    declaredSeats: ['Пловдив'],
-    firstDeclaredYear: null,
-  });
-  assert.notEqual(v.kind, 'confirmed', 'two unknowns must not multiply into a public claim');
-});
-
-test('rung 3 — a KNOWN year with an undated seat still confirms (the guard is not a blanket)', () => {
-  const undated = somebodyElse(seatIn('гр. Пловдив', null));
-  const v = evidenceVerdict({
-    ...base,
-    registry: undated,
-    declaredSeats: ['Пловдив'],
-    firstDeclaredYear: 2021,
-  });
-  assert.equal(v.kind, 'confirmed');
-  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
-});
-
-test('rung 3 — the weakest rung ALSO requires global name uniqueness (ADR-0017 carried forward)', () => {
-  const v = evidenceVerdict({
-    ...base,
-    registry: somebodyElse(seatIn('гр. Пловдив')),
-    declaredSeats: ['Пловдив'],
-    nameGloballyUnique: false,
-  });
-  assert.notEqual(v.kind, 'confirmed', 'a nationally shared name cannot ride the weakest rung');
-});
-
-test('rung 3 — a declared ЕИК is NOT gated by name uniqueness (ADR-0028)', () => {
-  const v = evidenceVerdict({
-    ...base,
-    registry: somebodyElse(),
-    declaredEik: true,
-    nameGloballyUnique: false,
-  });
-  assert.equal(v.kind, 'confirmed');
-  assert.equal(v.matchedFact, 'eik');
-});
-
-test('rung 3 — the seat rung DOES rescue a merely generic name; it is uniqueness that gates it', () => {
-  const v = evidenceVerdict({
-    ...base,
-    registry: somebodyElse(seatIn('гр. Пловдив')),
-    declaredSeats: ['Пловдив'],
-    nameGloballyUnique: true,
-  });
-  assert.equal(v.kind, 'confirmed');
-  assert.equal(v.matchedFact, 'seat:ПЛОВДИВ');
-});
-
-test('rung 3 — name uniqueness does NOT gate the stronger „Документ" rung', () => {
-  const v = evidenceVerdict({ ...base, nameGloballyUnique: false });
-  assert.equal(
-    v.kind,
-    'document',
-    'the registry named the person in THIS company; the name key is moot',
   );
 });
 
@@ -437,75 +334,34 @@ test('rung 2 — every OWNERSHIP field can carry the match: partners, sole owner
   assert.notEqual(evidenceVerdict({ ...base, registry: other }).kind, 'document');
 });
 
-// ── rung 2's company gate: the winner-vs-non-winner homonym (ADR-0035) ────────
-test('rung 2 — a GENERIC company name with no corroboration cannot publish on a name match alone', () => {
-  const v = evidenceVerdict({ ...base, companyNameDistinctive: false });
-  assert.equal(v.kind, 'document_uncorroborated');
-  assert.equal(v.publishable, false);
-  // It must not fall through to `unknown`, and it must carry neither a role nor a fact.
-  assert.equal(v.registryRole, null);
-  assert.equal(v.matchedFact, null);
-});
-
-test('rung 2 — a declared ЕИК corroborates the company, so the name match publishes', () => {
-  const v = evidenceVerdict({ ...base, companyNameDistinctive: false, declaredEik: true });
+// ── rung 2 needs nothing about the company beyond its ЕИК ─────────────────────
+test('rung 2 — the register naming the declarant publishes, whatever the company is called or where', () => {
+  const v = evidenceVerdict(base);
   assert.equal(v.kind, 'document');
   assert.equal(v.publishable, true);
   assert.equal(v.registryRole, 'owner');
 });
 
-test('rung 2 — a declared seat matching the registered seat corroborates the company', () => {
-  const v = evidenceVerdict({
-    ...base,
-    companyNameDistinctive: false,
-    declaredSeats: ['гр. Пловдив'],
-  });
-  assert.equal(v.kind, 'document');
-  assert.equal(v.publishable, true);
+test('rung 2 — the declarant matched by registry identifier, in either role', () => {
+  const id = 'd'.repeat(64);
+  for (const field of ['00190', '00070']) {
+    const facts = registry([holder(field, 'ИВАН ПЕТРОВ ТЕСТОВ', '2011-05-02', { subject_id: id })]);
+    const v = evidenceVerdict({ ...base, registry: facts, registryIndent: id });
+    assert.equal(v.kind, 'document');
+    // Another identifier in the same partida proves nothing about this declarant.
+    assert.notEqual(
+      evidenceVerdict({ ...base, registry: facts, registryIndent: 'e'.repeat(64) }).kind,
+      'document',
+    );
+  }
 });
 
-test('rung 2 — a DISTINCTIVE company name publishes uncorroborated (the gate is not a blanket)', () => {
-  const v = evidenceVerdict({ ...base, companyNameDistinctive: true });
-  assert.equal(v.kind, 'document');
-  assert.equal(v.publishable, true);
-});
-
-test('rung 2 — a seat that does NOT match cannot corroborate a generic name', () => {
-  const v = evidenceVerdict({
-    ...base,
-    companyNameDistinctive: false,
-    declaredSeats: ['гр. Бургас'], // the register says Пловдив
-  });
-  assert.equal(v.kind, 'document_uncorroborated');
-  assert.equal(v.publishable, false);
-});
-
-test('rung 2 — the seat corroborator carries the SAME temporal guard as rung 3 (R10)', () => {
-  const moved = registry(
-    [holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ')],
-    seatIn('гр. Пловдив', '2023-07-01'),
-  );
-  const v = evidenceVerdict({
-    ...base,
-    registry: moved,
-    companyNameDistinctive: false,
-    declaredSeats: ['гр. Пловдив'],
-    firstDeclaredYear: 2021,
-  });
-  assert.equal(v.kind, 'document_uncorroborated');
-});
-
-test('rung 2 — the company gate never rescues a link rung 1 has barred', () => {
+test('rung 2 — nothing rescues a link rung 1 has barred', () => {
   const ad = registry([holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ')], {
     legal_form: 'AD',
     name: '"ГАМА ИНВЕСТ" АД',
   });
-  const v = evidenceVerdict({
-    ...base,
-    registry: ad,
-    companyNameDistinctive: true,
-    declaredEik: true,
-  });
+  const v = evidenceVerdict({ ...base, registry: ad, declaredEik: true });
   assert.equal(v.kind, 'bar_joint_stock');
 });
 
@@ -517,15 +373,22 @@ test('rung 4 — registered nowhere, in a company whose ownership predates the d
   assert.equal(v.publishable, false);
 });
 
-test('rung 4 — a role that ENDED before the period is not a role now', () => {
+test('rung 4 — a declarant the register ever showed in the company is never refuted', () => {
   const sold = registry([
     holder('00190', 'ИВАН ПЕТРОВ ТЕСТОВ', '2009-01-01', { removed_on: '2014-01-01' }),
     holder('00190', 'СЪВСЕМ ДРУГ СОБСТВЕНИК', '2014-01-01'),
   ]);
   assert.equal(
     evidenceVerdict({ ...base, registry: sold, firstDeclaredYear: 2021 }).kind,
-    'refuted',
+    'document',
   );
+  const shortName = {
+    ...base,
+    registry: sold,
+    declarantName: 'Иван Петров',
+    firstDeclaredYear: 2021,
+  };
+  assert.equal(evidenceVerdict(shortName).kind, 'refuted');
 });
 
 test('rung 4 — the comparison is date-to-DATE, not date-to-year', () => {
@@ -593,6 +456,8 @@ test('MATCHED_FACT_RE bounds a settlement to two tokens and a field to its code 
     'role:owner:CR_F_19_L', // sealed before tr-rules-3
     'role:manager:CR_F_7_L',
     'role:owner:CR_F_23_L',
+    'relative:owner:00230',
+    'relative:manager:00070',
     'eik',
   ])
     assert.equal(MATCHED_FACT_RE.test(ok), true, `wrongly rejected: ${ok}`);
@@ -605,6 +470,7 @@ test('MATCHED_FACT_RE bounds a settlement to two tokens and a field to its code 
     'role:owner:0019', // not a field ident
     'role:owner:001900',
     'role:cashier:00190', // a role outside the vocabulary
+    'relative:owner:МАРИЯ ПЕТРОВА', // a relative's name where a field code belongs
     'seat:', // an empty settlement asserts nothing
     'eik:201122335', // the ЕИК itself is never stored, only the fact that one matched
   ])
@@ -622,13 +488,14 @@ test('matched_fact stays inside the closed vocabulary — it can never carry a n
     evidenceVerdict({ ...base, declaredEik: true }),
     evidenceVerdict({
       ...base,
-      registry: somebodyElse(seatIn('гр. Пловдив')),
-      declaredSeats: ['Пловдив'],
+      scope: 'family',
+      registry: registry([holder('00190', 'МАРИЯ ИВАНОВА ПЕТРОВА')]),
+      relativeNames: ['Мария Иванова Петрова'],
     }),
   ]) {
     if (v.matchedFact == null) continue;
     assert.ok(isSealedFact(v.matchedFact), `matched_fact escaped the vocabulary: ${v.matchedFact}`);
-    assert.ok(!/ИВАН|ПЕТРОВ|ТЕСТОВ/.test(v.matchedFact), 'a NAME reached matched_fact');
+    assert.ok(!/ИВАН|ПЕТРОВ|ТЕСТОВ|МАРИЯ/.test(v.matchedFact), 'a NAME reached matched_fact');
   }
 });
 
@@ -681,32 +548,15 @@ test('reconcileTermination — a FAMILY stake is never reconciled, by an early b
   assert.equal(r.label, null);
 });
 
-test('a prior ownership fact can use a ended role without manufacturing a declaration window', () => {
+test('a past role is evidence whatever the declared years', () => {
   const past = registry([
     holder('00190', base.declarantName, '2010-01-01', {
       removed_on: '2018-01-01',
       subject_id: 'a'.repeat(64),
     }),
   ]);
-  const historical = evidenceVerdict({
-    ...base,
-    registry: past,
-    firstDeclaredYear: null,
-    historicalDeclaredYear: 2021,
-    declaredEik: true,
-  });
-  assert.equal(historical.kind, 'document');
-  assert.notEqual(evidenceVerdict({ ...base, registry: past, declaredEik: true }).kind, 'document');
-  assert.notEqual(
-    evidenceVerdict({
-      ...base,
-      registry: past,
-      firstDeclaredYear: null,
-      historicalDeclaredYear: 2009,
-      declaredEik: true,
-    }).kind,
-    'document',
-  );
+  for (const firstDeclaredYear of [null, 2009, 2021])
+    assert.equal(evidenceVerdict({ ...base, registry: past, firstDeclaredYear }).kind, 'document');
 });
 test('same-company Indent follows a changed name, while same-name distinct Idents cannot prove a person', () => {
   const old = holder('00190', base.declarantName, '2010-01-01', {

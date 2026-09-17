@@ -38,3 +38,28 @@ test('names a relative only when the register lists them at the declared company
   assert.equal(buildPersonRelatives(db), 1); // rebuilt, not duplicated
   db.close();
 });
+
+test('a variant of the declared name names the relative only when it fits one registered person', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE interest_links(link_key,person_id,eik,status,interest_class);
+    CREATE TABLE interest_link_observations(link_key,declaration_id);
+    CREATE TABLE related_persons_internal(declaration_id,related_name,related_kind);
+    CREATE TABLE registry_roles(eik,subject_kind,subject_id,subject_name);
+    CREATE TABLE registry_persons(indent,name);
+    CREATE TABLE persons(id PRIMARY KEY);
+    INSERT INTO persons VALUES('p');
+    INSERT INTO interest_links VALUES('f','p','111','published','family_ownership'),('g','p','222','published','family_ownership');
+    INSERT INTO interest_link_observations VALUES('f','d1'),('g','d1');
+    INSERT INTO related_persons_internal VALUES('d1','Ивана Петрова Тестова-Примерова','stake_holder');
+    INSERT INTO registry_roles VALUES('111','person','${'a'.repeat(64)}','ИВАНА ПЕТРОВА ТЕСТОВА'),
+      ('222','person','${'b'.repeat(64)}','ИВАНА ПЕТРОВА ТЕСТОВА'),('222','person','${'c'.repeat(64)}','ИВАНА ПЕТРОВА ПРИМЕРОВА');`);
+  db.exec(
+    fs.readFileSync(
+      new URL('../../packages/db/migrations/0022_person_relatives.sql', import.meta.url),
+      'utf8',
+    ),
+  );
+  assert.equal(buildPersonRelatives(db), 1);
+  assert.equal(db.prepare('SELECT eik FROM person_relatives').get().eik, '111');
+  db.close();
+});

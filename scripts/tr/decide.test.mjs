@@ -48,12 +48,9 @@ function fixture() {
   db.close();
   const link = (over) => ({
     declarantName: 'Иван Петров Тестов',
-    declaredSeats: [],
     declaredEik: false,
     firstDeclaredYear: 2021,
     scope: 'self',
-    nameGloballyUnique: true,
-    companyNameDistinctive: true,
     ...over,
   });
   const links = [
@@ -100,8 +97,11 @@ test('decides each link against the registry as it stands, dated by the day the 
     assert.equal(ivan.rulesVersion, RULES_VERSION);
     assert.equal(ivan.decidedAt, '2026-09-10T02:00:00.000Z');
     assert.equal(ivan.reconTerminated, false);
-    // A manager whose role ended, and an actual owner, are registered in no role the ladder reads.
-    assert.equal(readVerdict(cache, 'person:georgi|201122335').kind, 'refuted');
+    // A manager whose role ended still shows the company is his; an actual owner is no role the ladder reads.
+    const georgi = readVerdict(cache, 'person:georgi|201122335');
+    assert.equal(georgi.kind, 'document');
+    assert.equal(georgi.registryRole, 'manager');
+    assert.equal(georgi.roleEndedOn, '2019-01-01');
     assert.notEqual(readVerdict(cache, 'person:maria|201122335').kind, 'document');
     assert.equal(readVerdict(cache, 'person:ivan|201122336').kind, 'bar_joint_stock');
     assert.equal(readDeed(cache, '201122335').legalFormVerdict, 'closely_held');

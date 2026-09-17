@@ -263,14 +263,10 @@ export function readDeed(db, eik) {
 const HASHED_INPUTS = [
   'declarantName',
   'registryIndent',
-  'declaredSeats',
-  'declaredSeatYears',
   'declaredEik',
   'firstDeclaredYear',
-  'historicalDeclaredYear',
   'scope',
-  'nameGloballyUnique',
-  'companyNameDistinctive',
+  'relativeNames',
 ];
 const REGISTRY_SIDE_INPUTS = new Set(['registry', 'outsideTr']);
 
@@ -296,7 +292,7 @@ export function verdictInputsHash(input) {
   }
   const canonical = HASHED_INPUTS.map((k) => {
     const v = input[k];
-    // Sorted, because `declaredSeats` arrives from a Set spread: iteration order is an accident of
+    // Sorted, because a list arrives from a Set spread: iteration order is an accident of
     // insertion and must not make an unchanged input look changed.
     return [
       k,

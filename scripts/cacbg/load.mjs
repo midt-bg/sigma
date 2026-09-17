@@ -20,15 +20,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-// nameDistinctiveness is deliberately NOT imported: the evidence ladder replaced it in the publish
-// path (ADR-0033). It survives in classify.mjs for the review queue, not for a publishing decision.
-import {
-  temporalStatus,
-  localityToken,
-  closelyHeldForm,
-  nameDistinctiveness,
-  norm,
-} from './classify.mjs';
+import { temporalStatus, localityToken, closelyHeldForm, norm } from './classify.mjs';
 import {
   openCache,
   coverage,
@@ -41,7 +33,7 @@ import { TR_DB } from '../tr/paths.mjs';
 // which the decision pass (scripts/tr/decide.mjs) reads and this pass does not. It calls them; this pass
 // reads what they decided.
 import { isSealedFact, RULES_VERSION } from '../tr/evidence.mjs';
-import { resolveDeclaredCompany } from './resolve-company.mjs';
+import { resolveDeclaredCompany, stemIndex } from './resolve-company.mjs';
 import {
   fingerprint,
   loadCorrections,
@@ -328,23 +320,18 @@ for (const b of bidders) {
 //                     (cross-check blocks a typo'd ЕИК pointing at the wrong company).
 //   extracted_name  — a „NAME"-ФОРМА pulled from prose normalizes to exactly one winner ЕИК.
 // Returns {eik, method} | {ambiguous:true} | null. Never guesses across >1 ЕИК.
-const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik });
+//   name_stem       — the фирма without legal form and punctuation names exactly one winner; publishes only
+//                     where the register shows the declarant in that company (evidence.mjs rung 2).
+const byStem = stemIndex([...bidderByEik.values()]);
+const resolveEntity = (entity) => resolveDeclaredCompany(entity, { byKey, bidderByEik, byStem });
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='registry_requested_companies'").get()) {
   db.exec('DELETE FROM registry_requested_companies');
   const putRequest = db.prepare('INSERT OR IGNORE INTO registry_requested_companies VALUES(?,?,?)');
   for (const r of readJsonl(path.join(STAGING, 'registry-requests.jsonl')))
     putRequest.run(r.eik, r.declarationId, r.declaredName);
 }
-// Is this name key backed by exactly one valid winner ЕИК across the whole bidder set? The distinctiveness
-// tier rests on this being true; declared_eik/extracted_name bypass the resolver's own single-ЕИК guard,
-// so the tier layer must re-assert global name-uniqueness itself.
-const nameGloballyUnique = (key) => {
-  const m = byKey.get(key);
-  if (!m) return false;
-  return new Set([...m.values()].filter((v) => v.eik && v.valid).map((v) => v.eik)).size === 1;
-};
 // An explicit, name-checked EIK remains stronger when another declaration supplies only a name.
-const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1 };
+const METHOD_RANK = { declared_eik: 3, exact_name_key: 2, extracted_name: 1, name_stem: 0 };
 // Ambiguous name keys — TELEMETRY, not a gate (ADR-0027). A companyNameKey that maps to >1 distinct
 // valid winner ЕИК. The resolver already QUARANTINES these (resolveEntity → {ambiguous:true}); they
 // never publish, so they carry no libel exposure — this only sizes the ambiguous tail for Phase 0. On the
@@ -609,11 +596,9 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
         hasMaterialOwn: false,
         declYears: new Set(),
         ownYears: new Set(),
-        historicalYears: new Set(),
         observations: new Map(),
         templates: new Set(), // declaration types this stake was declared under — its divest horizon (B1/#226)
-        seats: new Set(),
-        seatYears: new Map(),
+        relativeNames: new Set(), // family: the holders the declarations name for this stake (internal)
         institutions: new Set(),
         annualDocuments: new Map(),
         method: res.method,
@@ -624,7 +609,6 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
   if (h.template) rec.templates.add(h.template);
   const y = yr(h.year);
   if (Number.isFinite(y) && !historical) rec.declYears.add(y);
-  if (Number.isFinite(y) && historical) rec.historicalYears.add(y);
   rec.observations.set(`${did}|${h.kind}|${h.timing ?? 'annual'}`, {
     declarationId: did,
     kind: h.kind,
@@ -646,8 +630,6 @@ for (const h of readJsonl(path.join(STAGING, 'holdings.jsonl'))) {
       rec.annualDocuments.set(inventoryKey, docs);
     }
   }
-  if (h.seat) rec.seats.add(h.seat);
-  if (h.seat && Number.isFinite(y)) rec.seatYears.set(JSON.stringify([h.seat, y]), [h.seat, y]);
   const declaredInstitution = declarationInstitution(h);
   if (declaredInstitution) rec.institutions.add(declaredInstitution);
 }
@@ -704,6 +686,11 @@ for (const r of readJsonl(path.join(STAGING, 'related.jsonl'))) {
       '',
       `https://register.cacbg.bg/${r.sourceFolder ?? r.folder}/${r.xmlFile}`,
     );
+  }
+  if (r.related_kind === 'stake_holder') {
+    const res = resolveEntity(r.info ?? '');
+    const rec = res?.eik ? agg.get(`${personOf(r)}|${res.eik}|family`) : null;
+    if (rec) rec.relativeNames.add(r.related_name);
   }
   insRP.run(
     `rp:${did}:${rpN++}`,
@@ -817,7 +804,8 @@ fs.writeFileSync(path.join(STAGING, 'candidate-eiks.txt'), candidateEiks.join('\
  * undecided — a silently emptied surface, not an error.
  *
  * Carries the DECLARANT's name: a public official, published by the source register and by our own
- * surface. Never a relative (ADR-0032 does not name them) and never anyone from a deed.
+ * surface. For a relative's stake also the holder names the declaration gives for it — internal staging,
+ * read by the decision pass only to produce a boolean (ADR-0044). Never anyone from a deed.
  */
 const provenIdentities = new Map(
   db
@@ -836,15 +824,10 @@ function linkRecordFor(rec) {
     eik: rec.eik,
     declarantName: rec.person,
     registryIndent: provenIdentities.get(rec.pid) ?? null,
-    declaredSeats: [...rec.seats],
-    declaredSeatYears: [...rec.seatYears.values()],
     declaredEik: rec.method === 'declared_eik',
     firstDeclaredYear: declYears.length ? Math.min(...declYears) : null,
-    historicalDeclaredYear:
-      !declYears.length && rec.historicalYears.size ? Math.min(...rec.historicalYears) : null,
     scope: rec.scope,
-    nameGloballyUnique: nameGloballyUnique(rec.key),
-    companyNameDistinctive: nameDistinctiveness(rec.key) === 'distinctive',
+    relativeNames: [...rec.relativeNames].sort(),
   };
 }
 const candidateLinks = [...agg.values()].map(linkRecordFor).filter(Boolean);
@@ -967,26 +950,7 @@ for (const rec of agg.values()) {
     if (r.eur != null) a.value += r.eur;
   }
   // ── the evidence ladder replaces the publish tiers (ADR-0033 decision 1) ────────────────────────
-  // rec.seats is keyed on `pid|eik|scope`, so it already holds ONLY the seats this person declared for
-  // THIS company — which is what #279 §5 rung 3 requires: 4.9% of company-name keys carry more than one
-  // distinct declared seat, so a company-only key would let one person's seat confirm another's link.
-
-  // A declarant-provided ЕИК is the national unique identifier (ЗТРРЮЛНЦ) — it resolves the winner
-  // deterministically even behind a generic or winner-colliding name, so a declared_eik match publishes
-  // on its own basis (A_eik), never held for name-genericness. This is at least as certain as the seat
-  // proof that rescues an otherwise-generic name (A_seat) — the ЕИК IS the identity, not a heuristic.
-  // Name-only methods (exact_name_key / extracted_name) still ride the distinctiveness/seat gate below:
-  // a globally non-unique winner name (e.g. „Водоснабдяване и канализация ЕАД" → 2 valid ЕИК in different
-  // towns) can never be name-distinctive, so it publishes only if the declared SEAT disambiguates, else held.
-  // The filters that can only WITHHOLD are retained as an AND-gate on the weakest rung only
-  // (ADR-0033 decision 2): a nationally shared company name cannot ride „Потвърдено". The stronger
-  // „Документ" rung is deliberately not gated — the register named this person in THIS company, which
-  // makes the name key moot. Near-zero recall cost, and it preserves ADR-0017's outcome.
-  // ADR-0017 carried forward, and NARROWED to what it actually held: a name backing more than one valid
-  // ЕИК cannot support a name-derived identity claim. It gates the SEAT leg of rung 3 only — never the
-  // declared-ЕИК leg (ADR-0028: the ЕИК is the identity), and never rung 2 (the register named this
-  // person in THIS company). nameDistinctiveness is deliberately NOT part of this gate: the seat rung
-  // exists precisely to rescue a generic name, so requiring distinctiveness would empty it.
+  // The company is the resolved ЕИК; a name leading to more than one is quarantined before this point.
   // „Неизвестна" — the withholding verdict, used for every way of ending up with no usable evidence.
   const noEvidence = () => ({
     kind: 'unknown',

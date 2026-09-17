@@ -1,6 +1,6 @@
 # ADR-0016: Free-text entity resolution (declared ЕИК + prose company extraction)
 
-- Status: Accepted
+- Status: Accepted · amended by [ADR-0046](0046-company-is-its-eik-register-confirms.md): a last, stem-only step
 - Date: 2026-07-05
 - Deciders: lb, Claude
 - Related: [ADR-0008](0008-deterministic-name-to-eik-resolution.md), [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md); `scripts/cacbg/extract-companies.mjs`
