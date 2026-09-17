@@ -172,6 +172,8 @@ export function runShip({
   }
   const stagedCounts = Object.fromEntries(reads.map((r) => [`rp_next_${r.table}`, r.rowCount]));
   assertShippedCounts(stagedCounts, readCounts(stagedCounts));
+  // The generation before is no longer served; retiring it on its own keeps the swap batch small.
+  send('retire_previous', retireSql(reads, wipeTables));
   send('publish', swapSql(schema, reads, wipeTables));
   assertShippedCounts(summary, readCounts(summary));
   return summary;
@@ -199,6 +201,17 @@ const indexName = (sql) =>
  * generation, the staged ones take their names (parents first) and their indexes. A staged table
  * short of its expected rows fails the batch before any rename. Wipe-only tables are emptied, never
  * swapped. The previous generation stays until the next publication: rollback is the swap in reverse. */
+/** The previous generation, children first. */
+export function retireSql(reads, wipeTables = WIPE_ORDER) {
+  const shipped = new Set(reads.map((r) => r.table));
+  return (
+    wipeTables
+      .filter((t) => shipped.has(t))
+      .map((t) => `DROP TABLE IF EXISTS ${sqlIdent(`rp_prev_${t}`)};`)
+      .join('\n') + '\n'
+  );
+}
+
 export function swapSql(schema, reads, wipeTables = WIPE_ORDER) {
   const shipped = new Set(reads.map((r) => r.table));
   const prev = (t) => sqlIdent(`rp_prev_${t}`);
@@ -633,15 +646,26 @@ async function main() {
 
   // Upload staging tables, verify, then publish with one rename swap.
   const tmp = emit ? null : mkdtempSync(join(tmpdir(), 'sigma-ship-'));
+  // Each file is one transaction: a failed one leaves the target as it was, so a transient D1 failure
+  // (7009, a reset Durable Object) is retried as is.
   const applyFile = (name, sql) => {
     const f = join(tmp, `${name}.sql`);
     writeFileSync(f, sql);
     try {
-      execFileSync(
-        'wrangler',
-        ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--yes', '--file', f],
-        { cwd: resolve('apps/web'), stdio: 'inherit' },
-      );
+      for (let attempt = 1; ; attempt++) {
+        try {
+          execFileSync(
+            'wrangler',
+            ['d1', 'execute', d1Name, remote ? '--remote' : '--local', '--yes', '--file', f],
+            { cwd: resolve('apps/web'), stdio: 'inherit' },
+          );
+          return;
+        } catch (error) {
+          if (attempt >= 3) throw error;
+          console.error(`ship: ${name} failed (attempt ${attempt}/3); retrying`);
+          sleepSync(30_000 * attempt);
+        }
+      }
     } finally {
       rmSync(f, { force: true });
     }
