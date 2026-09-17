@@ -130,6 +130,10 @@ const sleepSync = (ms) => {
  * and the staged ones take their names, in one atomic batch. Staged tables carry the served schema
  * (constraints, foreign keys to their staged parents), so a bad row fails while staging and never
  * touches served rows; an interrupted upload leaves the served tables as they were. */
+/** An intentional stop between two requests: the caller exits 75 and the next attempt continues. */
+export class ShipYield extends Error {}
+let yieldRequested = false;
+
 export function runShip({
   tables,
   wipeTables = WIPE_ORDER,
@@ -140,9 +144,13 @@ export function runShip({
   readCounts,
   maxStatements,
   paceMs,
+  yielding = () => false,
 }) {
   let requests = 0;
   const send = (label, sql) => {
+    // The platform can stop the container at any moment. Between two requests is the only safe place
+    // to stop by choice: every request is one transaction, so nothing is left half applied.
+    if (yielding()) throw new ShipYield(`yielded before ${label}`);
     if (requests++) sleep(paceMs);
     apply(label, sql);
     // Each applied request is progress, so a long upload is not taken for a stalled container.
@@ -741,7 +749,13 @@ async function main() {
         : (expected) => readShippedCounts(d1Name, remote, expected),
       maxStatements,
       paceMs,
+      yielding: () => yieldRequested,
     });
+  } catch (error) {
+    if (!(error instanceof ShipYield)) throw error;
+    console.log(`ship: ${error.message}`);
+    process.exitCode = 75;
+    return;
   } finally {
     sourceDb.close();
     if (tmp) rmSync(tmp, { recursive: true, force: true });
@@ -759,4 +773,10 @@ async function main() {
 // Only run when invoked directly (importing for tests has no side effects). pathToFileURL — not a raw
 // `file://` template — so a repo path with spaces or non-ASCII (which import.meta.url percent-encodes)
 // still matches and the CLI runs.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (const signal of ['SIGTERM', 'SIGINT'])
+    process.on(signal, () => {
+      yieldRequested = true;
+    });
+  await main();
+}

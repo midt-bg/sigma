@@ -91,7 +91,9 @@ if (import.meta.main) {
         ? ['scripts/rebuild-slot.mjs']
         : ['scripts/related-persons-job.mjs', '--remote', '--yes', '--r2']),
     ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+    // Its own process group: the platform signals only this process, and the work happens two levels
+    // down (job → stage). Signalling the group is the only way the worker hears "yield".
+    { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
   );
   const status = supervise(
     child,
@@ -113,8 +115,13 @@ if (import.meta.main) {
   setInterval(() => report('container_resources'), 60_000).unref();
   for (const signal of ['SIGTERM', 'SIGINT'])
     process.on(signal, () => {
-      // A platform stop is otherwise silent too.
+      // A platform stop is otherwise silent too. The run then has up to fifteen minutes to accept
+      // what it has and exit 75, which the coordinator reads as an intentional yield.
       report('container_signal', { signal });
-      child.kill(signal);
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
     });
 }

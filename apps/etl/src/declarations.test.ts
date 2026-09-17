@@ -364,3 +364,23 @@ it('stops the container when the workflow instance that started the run is gone'
   });
   expect(f.container.running).toBe(false);
 });
+
+it('retries a yield at any stage, and keeps a data refusal final', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-yield');
+  await f.job().alarm();
+  // An accepted checkpoint mid-extract: progress advanced, so the attempt is not counted as failed.
+  f.answer({ state: 'yielded', stage: 'extract', completed: 5000, reason: 'container stop' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', failures: 0, completed: 5000 });
+  await f.resume();
+  // A yield that advanced nothing still costs an attempt.
+  f.answer({ state: 'yielded', stage: 'extract', completed: 1, reason: 'container stop' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', failures: 1 });
+  await f.resume();
+  // A refusal is not a yield: the run ends.
+  f.answer({ state: 'failed', stage: 'audit', completed: 1, reason: 'audit findings' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'failed', reason: 'audit findings' });
+});

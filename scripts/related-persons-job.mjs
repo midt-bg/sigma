@@ -25,6 +25,12 @@ const env = {
   CACBG_STAGING: staging,
   TR_CACHE_DB: join(work, 'verdicts.sqlite'),
 };
+// The container is stopped with a signal to its whole process group. `execFileSync` blocks the event
+// loop, so without a handler Node's default disposition would kill this process before the stage that
+// is doing the work can accept what it has and exit 75. The handler is deliberately empty: the stage
+// below gets the same signal and its exit code carries the decision up.
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {});
+
 let stage = 'fetch';
 const setStage = (next) => {
   stage = next;

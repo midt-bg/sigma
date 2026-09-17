@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { resources, supervise } from '../containers/declarations/server.mjs';
 
@@ -71,4 +73,24 @@ test('a child exit and the machine resources are logged, so a lost attempt leave
   assert.equal(found.memoryTotalMb, 10240);
   assert.equal(found.memoryAvailableMb, 2048);
   assert.ok(found.diskFreeMb > 0);
+});
+
+test('a signal reaches the grandchild that does the work, not only the process it is sent to', async () => {
+  // The platform signals the container's main process; the work sits two levels down (job → stage).
+  const grandchild =
+    'const c=require("child_process").spawn(process.execPath,["-e",' +
+    '\'process.on("SIGTERM",()=>{console.log("stage-yielded");process.exit(75)});setInterval(()=>{},50)\'' +
+    '],{stdio:["ignore","inherit","inherit"]});' +
+    'process.on("SIGTERM",()=>{});c.on("close",(code)=>process.exit(code));';
+  const child = spawn(process.execPath, ['-e', grandchild], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+    detached: true,
+  });
+  let out = '';
+  child.stdout.on('data', (chunk) => (out += chunk));
+  await new Promise((done) => setTimeout(done, 300));
+  process.kill(-child.pid, 'SIGTERM');
+  const [code] = await once(child, 'close');
+  assert.equal(code, 75);
+  assert.match(out, /stage-yielded/);
 });

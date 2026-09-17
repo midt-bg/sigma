@@ -294,8 +294,13 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       }
       if (status.state === 'yielded' || status.state === 'failed') {
         const reason = status.reason || `${status.stage} ${status.state}`;
-        // Network stages are retried; a data or audit refusal is final.
-        if (['fetch', 'import', 'registry'].includes(status.stage) || status.signal)
+        // A yield is our own code stopping on purpose, with its work accepted — retry it wherever it
+        // happens. Network stages are retried too; a data or audit refusal is final.
+        if (
+          status.state === 'yielded' ||
+          ['fetch', 'import', 'registry'].includes(status.stage) ||
+          status.signal
+        )
           await this.retry(run, reason, status.state === 'yielded');
         else await this.finish(run, 'failed', reason); // A data/audit refusal is not a transient failure.
         return;
