@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { fakeD1 } from '@sigma/test-support';
 import {
   FALLBACK_END_YEAR,
   START_YEAR,
@@ -34,14 +35,12 @@ describe('coverage labels', () => {
 });
 
 describe('getCoverageMeta', () => {
-  const dbReturning = (row: unknown) => {
-    const first = vi.fn().mockResolvedValue(row);
-    const prepare = vi.fn(() => ({ first }));
-    return { db: { prepare } as unknown as D1Database, prepare, first };
-  };
+  // The binding comes from the shared double: a cast to D1Database outside packages/test-support is
+  // what `pnpm check:fake-d1` forbids (#325).
+  const dbReturning = (row: object | null) => fakeD1([{ when: 'FROM home_totals', first: row }]);
 
   it('reads the singleton metadata row and derives its end year', async () => {
-    const { db, prepare, first } = dbReturning({
+    const { db, sql } = dbReturning({
       as_of: '2025-12-15',
       refreshed_at: '2026-01-02T03:04:05Z',
     });
@@ -51,10 +50,7 @@ describe('getCoverageMeta', () => {
       refreshedAt: '2026-01-02T03:04:05Z',
       coverageEndYear: 2025,
     });
-    expect(prepare).toHaveBeenCalledWith(
-      'SELECT as_of, refreshed_at FROM home_totals WHERE id = 1',
-    );
-    expect(first).toHaveBeenCalledOnce();
+    expect(sql).toEqual(['SELECT as_of, refreshed_at FROM home_totals WHERE id = 1']);
   });
 
   it('uses null metadata and the fallback year when the singleton row is absent', async () => {
