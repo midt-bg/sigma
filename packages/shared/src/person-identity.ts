@@ -1,3 +1,17 @@
+/**
+ * Academic and rank titles the register writes in front of a name („д-р Иван Петров Иванов",
+ * „ПРОФ. Д-Р ..."). They are presentation, not identity, and left in they are fatal to comparison:
+ * `personNameKey` keeps letters only, so „д-р" becomes the two leading name components and every
+ * comparison then reads the title as the given and father's name. Stripped for COMPARISON only — the
+ * stored and displayed name stays exactly as the source wrote it.
+ */
+const PERSON_TITLE =
+  /^(?:\s*(?:д-?р|доц|проф|акад|инж|арх|адв|ген|полк|подп|кап|м-?р|ст\.?\s*н\.?\s*с)\.?\s+)+/iu;
+export const withoutPersonTitle = (value: unknown): string =>
+  String(value ?? '')
+    .normalize('NFC')
+    .replace(PERSON_TITLE, '');
+
 /** Comparison only; original source names and frontend presentation stay separate. */
 export const personNameKey = (value: unknown): string =>
   String(value ?? '')
@@ -33,7 +47,18 @@ export function editDistance(a: string, b: string): number {
   return row[b.length]!;
 }
 
-const typo = (a: string, b: string) => a.length >= 5 && b.length >= 5 && editDistance(a, b) <= 1;
+/** Two adjacent letters swapped („Георгиев" → „Герогиев"). Levenshtein charges a swap as two edits, so
+ * without this the commonest typing slip of all reads as a different person. Same weight as one edit. */
+const transposed = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  const differing: number[] = [];
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && differing.push(i) > 2) return false;
+  const [i, j] = differing;
+  return differing.length === 2 && j === i! + 1 && a[i!] === b[j!] && a[j!] === b[i!];
+};
+
+const typo = (a: string, b: string) =>
+  a.length >= 5 && b.length >= 5 && (editDistance(a, b) <= 1 || transposed(a, b));
 
 /**
  * One person under two spellings of a full name: [given, father's, ...surnames]. Given and father's

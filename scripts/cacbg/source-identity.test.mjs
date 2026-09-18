@@ -24,7 +24,7 @@ test('attribution requires the same complete name in document and listing', () =
     ]),
     'matched',
   );
-  for (const other of ['Иван Тестов', 'И. П. Тестов', 'Иван Петров Тестев', 'Георги Петров Тестов'])
+  for (const other of ['Иван Тестов', 'И. П. Тестов', 'Георги Петров Тестов'])
     assert.equal(declarationAttribution(name, [other]), 'declarant_mismatch');
   assert.equal(
     declarationAttribution(name, [name, 'Георги Николов Примеров']),
@@ -32,4 +32,32 @@ test('attribution requires the same complete name in document and listing', () =
   );
   assert.equal(declarationAttribution(name, []), 'unlisted_document');
   assert.equal(declarationAttribution('', [name]), 'missing_declarant');
+});
+
+// The register writes the same person's name two ways — one spelling in its listing, another inside the
+// document. Byte equality threw 2.6% of the 2026 set away, ministers and MPs among them, so a title and
+// the register's own slips are accepted as a variant — but as their OWN verdict, never as an exact match.
+test('a title or the register’s own slip is a name variant, not a foreign declarant', () => {
+  const name = 'Иван Петров Тестов';
+  // A title is presentation on one side only: still an exact match, not a variant.
+  for (const titled of [
+    'д-р Иван Петров Тестов',
+    'Д-Р ИВАН ПЕТРОВ ТЕСТОВ',
+    'проф. д-р Иван Петров Тестов',
+  ])
+    assert.equal(declarationAttribution(titled, [name]), 'matched');
+
+  for (const [declarant, listed] of [
+    ['Иван Петров Тестев', 'Иван Петров Тестов'], // one mistyped letter in the surname
+    ['Иван Петрвов Тестов', 'Иван Петров Тестов'], // one mistyped letter in the father's name
+    ['Ивана Петрова Тестова-Примерова', 'Ивана Петрова Тестова'], // a second surname on one side only
+    ['Ивана Петрова Тестова', 'Ивана Петрова Примерова'], // a surname taken on marriage
+  ]) {
+    assert.equal(declarationAttribution(declarant, [listed]), 'name_variant');
+    assert.equal(declarationAttribution(listed, [declarant]), 'name_variant');
+  }
+
+  // The rail still holds: a different person is never a variant.
+  for (const other of ['Георги Николов Примеров', 'Петър Иванов Тестов', 'Иван Георгиев Примеров'])
+    assert.equal(declarationAttribution(name, [other]), 'declarant_mismatch');
 });
