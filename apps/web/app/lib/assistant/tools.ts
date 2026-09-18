@@ -165,7 +165,10 @@ const eopFetchTool: AssistantTool = {
     const files = await fetchEopDay(v.day, ctx.fetchImpl ?? ((u) => fetch(u)));
     const summary = files
       .map((f) =>
-        f.error ? `${f.label}: грешка (${f.error})` : `${f.label}: ${f.rows?.length ?? 0} реда`,
+        // Presence, not truthiness: a failure must never be reported to the model as „0 реда".
+        f.error !== undefined
+          ? `${f.label}: грешка (${f.error || 'неизвестна'})`
+          : `${f.label}: ${f.rows?.length ?? 0} реда`,
       )
       .join('\n');
     // EOP data is untrusted external content and is NOT a server-executed result set, so it has no R-handle

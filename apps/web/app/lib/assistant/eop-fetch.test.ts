@@ -50,6 +50,16 @@ describe('fetchEopDay', () => {
     expect(files.every((f) => f.error === 'HTTP 403' && f.rows === undefined)).toBe(true);
   });
 
+  it('never reports a failure with an empty message, which would read as success', async () => {
+    // `new Error('')` is a real shape (an aborted fetch, a thrown non-message error). Its message is
+    // falsy, and a falsy error downstream turns a failed file into „0 реда".
+    const fetchImpl: FetchImpl = async () => {
+      throw new Error('');
+    };
+    const files = await fetchEopDay('2023-05-01', fetchImpl);
+    expect(files.every((f) => f.error === 'fetch error' && f.rows === undefined)).toBe(true);
+  });
+
   it('withholds an oversized response instead of parsing it to the model', async () => {
     const huge = JSON.stringify(Array.from({ length: 5000 }, (_, i) => ({ i })));
     const fetchImpl: FetchImpl = async () => ({ ok: true, status: 200, text: async () => huge });
