@@ -161,6 +161,13 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
   assert.match(sql, /DELETE FROM "registry_sync";/);
   assert.match(sql, /INSERT OR REPLACE INTO "registry_sync"/);
 
+  // The accepted baseline is written after the last batch, so an empty batch carries the cursors alone.
+  const cursorsOnly = registryBatchSql(db, [], ['registry_deeds'], ['registry_sync'], null);
+  assert.ok(!cursorsOnly.includes('registry_queue'), 'no batch, no queue statement');
+  assert.ok(!cursorsOnly.includes('registry_deeds'), 'no batch, no company rows');
+  assert.match(cursorsOnly, /DELETE FROM "registry_sync";/);
+  assert.match(cursorsOnly, /INSERT OR REPLACE INTO "registry_sync"/);
+
   // The flusher sends one file per batch and only asks for what the batch touched.
   const sent = [];
   const flush = slotFlusher('slot', db, (label, body) => sent.push([label, body]));

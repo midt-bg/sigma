@@ -279,7 +279,8 @@ export function registryTables(snapshot) {
 /** Rows for one batch of companies, as statements that replace whatever the slot holds for them. */
 export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) {
   const list = eiks.map(sqlLiteral).join(',');
-  const out = [`DELETE FROM registry_queue WHERE eik IN (${list});`];
+  // No batch: the cursors alone, for the accepted baseline written after the last one.
+  const out = eiks.length ? [`DELETE FROM registry_queue WHERE eik IN (${list});`] : [];
   // Reading a partida can queue another company; anything queued since the last flush travels too.
   if (since) {
     const cols = snapshot
@@ -305,11 +306,13 @@ export function registryBatchSql(snapshot, eiks, tables, cursors, since = null) 
     if (!cols.length) continue;
     const rows = cursors.includes(table)
       ? snapshot.prepare(`SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)}`).all()
-      : snapshot
-          .prepare(
-            `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
-          )
-          .all();
+      : eiks.length
+        ? snapshot
+            .prepare(
+              `SELECT ${cols.map(sqlIdent).join(',')} FROM ${sqlIdent(table)} WHERE eik IN (${list})`,
+            )
+            .all()
+        : [];
     if (cursors.includes(table)) out.push(`DELETE FROM ${sqlIdent(table)};`);
     out.push(
       ...insertStatements(table, cols, rows).map((sql) =>
@@ -411,6 +414,9 @@ async function main() {
   // costs the batch and not the hours before it.
   if (!done.has('registry')) {
     await step('registry', ['scripts/tr/rebuild-registry.mjs', '--db', db, '--slot', target.name]);
+    // The accepted baseline is written after the last batch, so the cursors travel once more — a
+    // resumed rebuild must not inherit a registry that still calls itself "building".
+    await slotFlusher(target.name, new DatabaseSync(db, { readOnly: true }), apply)([]);
     record('registry');
   }
 
