@@ -49,15 +49,27 @@ test('a title or the register’s own slip is a name variant, not a foreign decl
 
   for (const [declarant, listed] of [
     ['Иван Петров Тестев', 'Иван Петров Тестов'], // one mistyped letter in the surname
-    ['Иван Петрвов Тестов', 'Иван Петров Тестов'], // one mistyped letter in the father's name
-    ['Ивана Петрова Тестова-Примерова', 'Ивана Петрова Тестова'], // a second surname on one side only
-    ['Ивана Петрова Тестова', 'Ивана Петрова Примерова'], // a surname taken on marriage
+    ['Иван Петрвов Тестов', 'Иван Петров Тестов'], // two adjacent letters swapped
+    ['Иван Петров Тесстов', 'Иван Петров Тестов'], // one letter too many
   ]) {
     assert.equal(declarationAttribution(declarant, [listed]), 'name_variant');
     assert.equal(declarationAttribution(listed, [declarant]), 'name_variant');
   }
 
-  // The rail still holds: a different person is never a variant.
-  for (const other of ['Георги Николов Примеров', 'Петър Иванов Тестов', 'Иван Георгиев Примеров'])
-    assert.equal(declarationAttribution(name, [other]), 'declarant_mismatch');
+  // The rails still hold. A NAME CHANGE is not a slip: only the Trade Register may establish that two
+  // names are one person, and the registry resolver answers that before this ever runs (ADR-0033).
+  for (const other of [
+    'Ивана Петрова Тестова-Примерова', // a second surname on one side only
+    'Ивана Петрова Примерова', // a surname taken on marriage
+    'Георги Николов Примеров',
+    'Петър Иванов Тестов',
+    'Иван Георгиев Примеров',
+    'Иван Петров Васасилев', // two letters apart is no longer one slip
+  ])
+    assert.equal(
+      declarationAttribution(other === 'Ивана Петрова Примерова' ? 'Ивана Петрова Тестова' : name, [
+        other,
+      ]),
+      'declarant_mismatch',
+    );
 });

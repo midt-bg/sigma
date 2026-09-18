@@ -57,8 +57,13 @@ const transposed = (a: string, b: string): boolean => {
   return differing.length === 2 && j === i! + 1 && a[i!] === b[j!] && a[j!] === b[i!];
 };
 
-const typo = (a: string, b: string) =>
+/** One name component written with a single slip: one letter changed, added or dropped, or two adjacent
+ * letters swapped. Short components are excluded — in a three-letter word a single edit is a different
+ * word, not a slip. */
+export const oneSlipApart = (a: string, b: string): boolean =>
   a.length >= 5 && b.length >= 5 && (editDistance(a, b) <= 1 || transposed(a, b));
+
+const typo = oneSlipApart;
 
 /**
  * One person under two spellings of a full name: [given, father's, ...surnames]. Given and father's
