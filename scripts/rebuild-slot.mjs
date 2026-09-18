@@ -274,12 +274,24 @@ export async function rehydrate(db, name, work, deps = {}) {
     .sort())
     await apply('import', db, readFileSync(join(migrationsDir, file), 'utf8'));
   await apply('import', db, readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
+  // Only tables the local schema knows: the slot also carries this rebuild's own bookkeeping, and the
+  // search index is a virtual table D1 refuses to export at all.
+  const local = new DatabaseSync(db, { readOnly: true });
+  const known = new Set(
+    local
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map((r) => r.name),
+  );
+  local.close();
   const tables = read(
     name,
     `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
        AND name NOT LIKE '_cf_%' AND name NOT LIKE 'search_index%' AND name <> 'd1_migrations'
      ORDER BY name`,
-  ).map((r) => r.name);
+  )
+    .map((r) => r.name)
+    .filter((t) => known.has(t));
   const dump = join(work, 'slot-dump.sql');
   rmSync(dump, { force: true });
   run([

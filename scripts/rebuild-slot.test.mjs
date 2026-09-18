@@ -201,7 +201,8 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
   const tables = await rehydrate(db, 'sigma-idle', dir, {
     read: (_name, sql) => {
       asked = sql;
-      return [{ name: 'contracts' }];
+      // The slot also carries the rebuild's own bookkeeping, which the local schema knows nothing of.
+      return [{ name: 'contracts' }, { name: 'rebuild_state' }];
     },
     wrangler: (args) => {
       exported = args;
@@ -212,7 +213,7 @@ test('a resumed rebuild takes the schema from the migrations and only the data f
       new DatabaseSync(file).exec(sql);
     },
   });
-  assert.deepEqual(tables, ['contracts']);
+  assert.deepEqual(tables, ['contracts'], 'only tables the local schema knows travel back');
   assert.ok(exported.includes('--no-schema'), 'the slot gives rows, never its schema');
   // The virtual search index and the platform's own tables are never asked for: D1 refuses to export
   // a database that holds a virtual table, and nothing else needs them.
