@@ -53,15 +53,10 @@ describe('personalRegistryIndent', () => {
 
 describe('personNamesAlike', () => {
   it('accepts an added or dropped surname, one typo, and a surname taken on marriage', () => {
-    expect(personNamesAlike('Ивана Петрова Тестова-Примерова', 'ИВАНА ПЕТРОВА ТЕСТОВА')).toBe(
+    expect(personNamesAlike('Ивана Петрова Тестова-Примерова', 'ИВАНА ПЕТРОВА ТЕСТОВА')).toBe(true);
+    expect(personNamesAlike('Ивана Петрова Иванова Тестов', 'Ивана Петрова Иванова Тестова')).toBe(
       true,
     );
-    expect(
-      personNamesAlike(
-        'Ивана Петрова Иванова Тестов',
-        'Ивана Петрова Иванова Тестова',
-      ),
-    ).toBe(true);
     expect(personNamesAlike('Георги Боянов Примеров', 'Георги Боянов Примееров')).toBe(true);
     expect(personNamesAlike('Мария Петрова Иванова', 'Мария Петрова Георгиева')).toBe(true);
     expect(personNamesAlike('Иван Петров Иванов', 'ИВАН ПЕТРОВ ИВАНОВ')).toBe(true);
