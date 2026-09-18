@@ -59,11 +59,13 @@ jobs:
     needs: detect
     if: needs.detect.outputs.env != ''
     runs-on: ubuntu-latest
-    # Explicit cap instead of the 360-min GitHub default: a full build + two-Worker wrangler deploy
-    # runs in single-digit minutes, so a job past 10 min is hung (stalled network I/O, wedged
-    # wrangler) — fail fast rather than burn a 6-hour slot. The required-reviewers wait on
-    # `production` does NOT count against this; the timer starts only once the job hits a runner.
-    timeout-minutes: 10
+    # Explicit cap instead of the 360-min GitHub default: fail fast on a hung job (stalled network
+    # I/O, wedged wrangler) rather than burn a 6-hour slot. Raised from 10 for the declarations
+    # container (ADR-0045): its image is built here — base image, a full install inside it, a push to
+    # Cloudflare's registry — on top of the schema steps and both Workers, which alone ran in
+    # single-digit minutes. The required-reviewers wait on `production` does NOT count against this;
+    # the timer starts only once the job hits a runner.
+    timeout-minutes: 30
     environment: ${{ needs.detect.outputs.env }}
     concurrency:
       group: deploy-${{ needs.detect.outputs.env }}
@@ -78,6 +80,14 @@ jobs:
       SIGMA_ETL_NAME: ${{ vars.SIGMA_ETL_NAME }}
       SIGMA_WORKFLOW_NAME: ${{ vars.SIGMA_WORKFLOW_NAME }}
       SIGMA_REGISTRY_WORKFLOW_NAME: ${{ vars.SIGMA_REGISTRY_WORKFLOW_NAME }}
+      SIGMA_DECLARATIONS_WORKFLOW_NAME: ${{ vars.SIGMA_DECLARATIONS_WORKFLOW_NAME }}
+      SIGMA_REBUILD_WORKFLOW_NAME: ${{ vars.SIGMA_REBUILD_WORKFLOW_NAME }}
+      SIGMA_DECLARATIONS_BUCKET: ${{ vars.SIGMA_DECLARATIONS_BUCKET }}
+      # The environment the declarations container declares when it ships (assertD1TargetAuthorized).
+      SIGMA_SHIP_ENV: ${{ needs.detect.outputs.env }}
+      # The container's takedown-list keying (ADR-0031), handed to the ETL Worker as secrets below.
+      SUPPRESSION_SALT: ${{ secrets.SUPPRESSION_SALT }}
+      SUPPRESSION_KEY_VERSION: ${{ vars.SUPPRESSION_KEY_VERSION || '1' }}
       SIGMA_D1_NAME: ${{ vars.SIGMA_D1_NAME }}
       SIGMA_CSV_CACHE_NAME: ${{ vars.SIGMA_CSV_CACHE_NAME }}
       SIGMA_REPORTS_NAME: ${{ vars.SIGMA_REPORTS_NAME }}
@@ -122,6 +132,9 @@ jobs:
           check "$SIGMA_ETL_NAME"       sigma-etl       SIGMA_ETL_NAME
           check "$SIGMA_WORKFLOW_NAME"  sigma-refresh   SIGMA_WORKFLOW_NAME
           check "$SIGMA_REGISTRY_WORKFLOW_NAME" sigma-registry SIGMA_REGISTRY_WORKFLOW_NAME
+          check "$SIGMA_DECLARATIONS_WORKFLOW_NAME" sigma-declarations SIGMA_DECLARATIONS_WORKFLOW_NAME
+          check "$SIGMA_REBUILD_WORKFLOW_NAME" sigma-rebuild SIGMA_REBUILD_WORKFLOW_NAME
+          check "$SIGMA_DECLARATIONS_BUCKET" sigma-declarations SIGMA_DECLARATIONS_BUCKET
           check "$SIGMA_D1_NAME"        sigma           SIGMA_D1_NAME
           check "$SIGMA_CSV_CACHE_NAME" sigma-csv-cache SIGMA_CSV_CACHE_NAME
           check "$SIGMA_REPORTS_NAME"   sigma-reports   SIGMA_REPORTS_NAME
@@ -254,7 +267,8 @@ jobs:
           for migration in \
             0018_person_entities \
             0019_registry_scoped_birthdates \
-            0020_registry_company_history
+            0020_registry_company_history \
+            0022_person_relatives
           do
             pnpm --filter @sigma/web exec wrangler d1 execute "${SIGMA_D1_NAME:-sigma}" \
               --config wrangler.deploy.jsonc --remote --yes \
@@ -463,3 +477,15 @@ jobs:
       - name: Deploy refresh Workflow (sigma-etl)
         if: steps.guard.outputs.ok == 'true'
         run: pnpm --filter @sigma/etl run deploy
+
+      # The declarations container ships to D1 with the same scoped token this job deploys with, and keys
+      # the takedown list with the same salt. `secret put` overwrites, so a rotated value lands on the next
+      # deploy. SIGMA_ETL_NAME is unset in production (the committed default).
+      - name: ETL Worker secrets for the declarations container
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SUPPRESSION_SALT SUPPRESSION_KEY_VERSION; do
+            value="${!name}"
+            [ -n "$value" ] || { echo "$name is empty; leaving the Worker secret unchanged."; continue; }
+            printf '%s' "$value" | pnpm --filter @sigma/etl exec wrangler secret put "$name" --config wrangler.deploy.toml
+          done
