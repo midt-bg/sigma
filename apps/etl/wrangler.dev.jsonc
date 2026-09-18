@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "sigma-etl-dev",
-  "main": "src/dev.ts",
+  "main": "src/index.ts",
   "compatibility_date": "2026-09-14",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "subrequests": 100000 },
@@ -28,8 +28,9 @@
     {
       "binding": "DECLARATIONS_RUN",
       "name": "sigma-declarations-dev",
-      "class_name": "DevDeclarationsWorkflow",
+      "class_name": "DeclarationsWorkflow",
     },
+    { "binding": "REBUILD_RUN", "name": "sigma-rebuild-dev", "class_name": "RebuildWorkflow" },
   ],
   "containers": [
     {

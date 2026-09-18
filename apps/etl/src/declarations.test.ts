@@ -52,7 +52,18 @@ function fixture() {
     vi.setSystemTime(run().retryAt);
     await job().alarm();
   };
-  return { job, container, run, answer, resume };
+  const owner = (status?: string) => {
+    env.DECLARATIONS_RUN = (
+      status
+        ? { get: async () => ({ status: async () => ({ status }) }) }
+        : {
+            get: async () => {
+              throw new Error('lookup failed');
+            },
+          }
+    ) as never;
+  };
+  return { job, container, run, answer, resume, owner };
 }
 
 it('survives two yields and DO eviction, keeps one logical run, and accepts only audited publication', async () => {
@@ -295,4 +306,81 @@ describe('declaration coordinator guards and status handling', () => {
     await f.job().alarm();
     expect(f.run()).toMatchObject({ state: 'failed', reason: 'load failed' });
   });
+});
+
+it('rebuilds only an idle slot, passes both slots to the container and follows the rebuild stages', async () => {
+  const f = fixture();
+  const idle = { name: 'sigma-idle', id: '11111111-2222-3333-4444-555555555555' };
+  await expect(f.job().startRun('r', { name: 'test', id: idle.id })).rejects.toThrow('idle slot');
+  await expect(f.job().startRun('r', { name: idle.name, id: 'not-an-id' })).rejects.toThrow(
+    'idle slot',
+  );
+  const run = await f.job().startRun('r', idle);
+  expect(run).toMatchObject({ target: idle, stage: 'import' });
+  await f.job().alarm();
+  const env = (f.container.start.mock.calls[0] as unknown as [{ env: Record<string, string> }])[0]
+    .env;
+  expect(env).toMatchObject({
+    SIGMA_D1_NAME: idle.name,
+    SIGMA_D1_ID: idle.id,
+    SIGMA_LIVE_D1_NAME: 'test',
+    SIGMA_LIVE_D1_ID: 'test',
+    SIGMA_REBUILD: '1',
+  });
+  for (const [stage, completed] of [
+    ['registry', 5],
+    ['extract', 10],
+    ['ship', 3],
+  ] as const) {
+    f.answer({ state: 'running', stage, completed });
+    await f.job().alarm();
+    expect(f.run()).toMatchObject({ stage, completed });
+  }
+  // A network stage is retried; the build restarts in a new attempt.
+  f.answer({ state: 'failed', stage: 'registry', completed: 3, reason: 'timeout' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', reason: 'timeout' });
+  await f.resume();
+  f.answer({ state: 'complete', stage: 'verify', audit: true, published: true });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'complete', target: idle });
+});
+
+it('stops the container when the workflow instance that started the run is gone', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-1');
+  await f.job().alarm();
+  f.owner('running'); // A live owner changes nothing.
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running' });
+  f.owner(); // A failed lookup says nothing, so the run carries on.
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running' });
+  f.owner('terminated');
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({
+    state: 'failed',
+    reason: 'The workflow instance that started this run is gone',
+  });
+  expect(f.container.running).toBe(false);
+});
+
+it('retries a yield at any stage, and keeps a data refusal final', async () => {
+  const f = fixture();
+  await f.job().startRun('workflow-yield');
+  await f.job().alarm();
+  // An accepted checkpoint mid-extract: progress advanced, so the attempt is not counted as failed.
+  f.answer({ state: 'yielded', stage: 'extract', completed: 5000, reason: 'container stop' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', failures: 0, completed: 5000 });
+  await f.resume();
+  // A yield that advanced nothing still costs an attempt.
+  f.answer({ state: 'yielded', stage: 'extract', completed: 1, reason: 'container stop' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'running', failures: 1 });
+  await f.resume();
+  // A refusal is not a yield: the run ends.
+  f.answer({ state: 'failed', stage: 'audit', completed: 1, reason: 'audit findings' });
+  await f.job().alarm();
+  expect(f.run()).toMatchObject({ state: 'failed', reason: 'audit findings' });
 });

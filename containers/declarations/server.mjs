@@ -1,12 +1,32 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { readFileSync, statfsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-export function supervise(child, runId, attempt, outputs = [process.stdout, process.stderr]) {
+
+/** Memory and free disk in MiB. An out-of-memory restart leaves no other trace in the logs. */
+export function resources(meminfo = readFileSync('/proc/meminfo', 'utf8'), dir = '.') {
+  const mib = (key) =>
+    Math.floor(Number(meminfo.match(new RegExp(`^${key}:\\s+(\\d+) kB`, 'm'))?.[1]) / 1024);
+  const disk = statfsSync(dir);
+  return {
+    memoryTotalMb: mib('MemTotal'),
+    memoryAvailableMb: mib('MemAvailable'),
+    diskFreeMb: Math.floor((disk.bavail * disk.bsize) / 1048576),
+  };
+}
+
+export function supervise(
+  child,
+  runId,
+  attempt,
+  outputs = [process.stdout, process.stderr],
+  stage = 'fetch',
+) {
   const status = {
     runId,
     attempt,
     state: 'running',
-    stage: 'fetch',
+    stage,
     completed: 0,
     reason: null,
   };
@@ -41,6 +61,10 @@ export function supervise(child, runId, attempt, outputs = [process.stdout, proc
     status.reason = error.message;
   });
   child.on('close', (code, signal) => {
+    outputs[0].write(
+      JSON.stringify({ event: 'declarations_child_exit', stage: status.stage, code, signal }) +
+        '\n',
+    );
     status.exitCode = code;
     status.signal = signal ?? status.signal;
     status.state =
@@ -56,19 +80,28 @@ export function supervise(child, runId, attempt, outputs = [process.stdout, proc
 }
 
 if (import.meta.main) {
+  // A slot rebuild (ADR-0048) or the weekly declarations run.
+  const rebuild = process.env.SIGMA_REBUILD === '1';
   const child = spawn(
     process.execPath,
     [
       '--import',
       './scripts/cacbg/register-ts.mjs',
-      'scripts/related-persons-job.mjs',
-      '--remote',
-      '--yes',
-      '--r2',
+      ...(rebuild
+        ? ['scripts/rebuild-slot.mjs']
+        : ['scripts/related-persons-job.mjs', '--remote', '--yes', '--r2']),
     ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+    // Its own process group: the platform signals only this process, and the work happens two levels
+    // down (job → stage). Signalling the group is the only way the worker hears "yield".
+    { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
   );
-  const status = supervise(child, process.env.SIGMA_RUN_ID, Number(process.env.SIGMA_ATTEMPT));
+  const status = supervise(
+    child,
+    process.env.SIGMA_RUN_ID,
+    Number(process.env.SIGMA_ATTEMPT),
+    undefined,
+    rebuild ? 'import' : 'fetch',
+  );
   createServer((req, res) => {
     if (req.url !== '/status') {
       res.writeHead(404).end();
@@ -77,5 +110,18 @@ if (import.meta.main) {
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(status));
   }).listen(8080, '0.0.0.0');
-  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
+  const report = (event, extra = {}) =>
+    console.log(JSON.stringify({ event, stage: status.stage, ...extra, ...resources() }));
+  setInterval(() => report('container_resources'), 60_000).unref();
+  for (const signal of ['SIGTERM', 'SIGINT'])
+    process.on(signal, () => {
+      // A platform stop is otherwise silent too. The run then has up to fifteen minutes to accept
+      // what it has and exit 75, which the coordinator reads as an intentional yield.
+      report('container_signal', { signal });
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
+    });
 }

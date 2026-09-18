@@ -8,6 +8,7 @@ vi.mock('cloudflare:workers', () => ({
   },
 }));
 import { DeclarationCorpus } from './declaration-corpus';
+import { ACCEPTED_KEYS, REJECTED_KEYS } from '../../../scripts/cacbg/corpus-key-samples.mjs';
 
 it('streams checksummed objects through the private R2 binding and confines every operation', async () => {
   const put = vi.fn(async () => ({}));
@@ -77,6 +78,27 @@ it('streams checksummed objects through the private R2 binding and confines ever
   );
   expect((await call(eventKey, { method: 'DELETE' })).status).toBe(405);
   expect((await call('fetch-events/invalid/1.json')).status).toBe(400);
+  // One shared list of keys, asserted from both sides: the proxy and scripts/cacbg/corpus.mjs.
+  for (const key of ACCEPTED_KEYS) expect((await call(key)).status, key).not.toBe(400);
+  for (const key of REJECTED_KEYS) expect((await call(key)).status, key).toBe(400);
+  // A checkpoint is written and read, never listed or deleted through the proxy.
+  const part = `checkpoints/${'0'.repeat(8)}-0000-4000-8000-000000000000/${'0123456789abcdef'}/2025/filings.jsonl.gz`;
+  expect(
+    (
+      await call(part, {
+        method: 'PUT',
+        body: 'gz',
+        headers: { 'x-corpus-sha256': 'a'.repeat(64) },
+      })
+    ).status,
+  ).toBe(204);
+  expect(put).toHaveBeenLastCalledWith(
+    'declarations/corpus-v2/' + part,
+    expect.anything(),
+    expect.objectContaining({ httpMetadata: { contentType: 'application/gzip' } }),
+  );
+  expect((await call(part, { method: 'DELETE' })).status).toBe(405);
+  expect((await call('?prefix=checkpoints/')).status).toBe(400);
   expect(remove).not.toHaveBeenCalled();
   expect((await call('.corpus-complete.json', { method: 'DELETE' })).status).toBe(204);
   expect(remove).toHaveBeenCalledWith('declarations/corpus-v2/.corpus-complete.json');

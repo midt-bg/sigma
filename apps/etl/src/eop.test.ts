@@ -24,18 +24,8 @@ vi.mock('@sigma/ingest', async (importOriginal) => {
     releaseToLots: () => [{ id: 'l' }],
     mapBaseRecord: (kind: string, rec: Record<string, unknown>) =>
       rec.skip ? null : { kind, ...rec },
-    upsertContractStaging: vi.fn(async () => {}),
-    upsertAmendmentStaging: vi.fn(async () => {}),
-    upsertPartyStaging: vi.fn(async () => {}),
-    upsertLotStaging: vi.fn(async () => {}),
-    upsertBaseContractStaging: vi.fn(
-      async (_db: unknown, _src: string, rows: unknown[]) => rows.length,
-    ),
-    upsertBaseTenderStaging: vi.fn(
-      async (_db: unknown, _src: string, rows: unknown[]) => rows.length,
-    ),
-    upsertBaseAmendmentStaging: vi.fn(
-      async (_db: unknown, _src: string, rows: unknown[]) => rows.length,
+    upsertStagingRows: vi.fn(
+      async (_db: unknown, _target: unknown, _src: string, rows: unknown[]) => rows.length,
     ),
   };
 });

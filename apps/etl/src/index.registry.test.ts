@@ -19,6 +19,7 @@ const { client, reg } = vi.hoisted(() => ({
     queueNewWinners: vi.fn(),
     nextQueued: vi.fn(),
     storeDeed: vi.fn(),
+    derivePublicOwnership: vi.fn(),
   },
 }));
 vi.mock('@sigma/ingest', async (importOriginal) => ({
@@ -107,12 +108,11 @@ describe('published registry Workflow', () => {
     expect(reg.deferXml).toHaveBeenCalled();
     expect(reg.storeDeed).not.toHaveBeenCalled();
   });
-  it('starts all cron jobs even when the procurement start fails', async () => {
+  it('starts the register even when the procurement start fails', async () => {
     const create = vi.fn().mockResolvedValue({ id: 'registry' });
-    const startRun = vi.fn().mockResolvedValue({ runId: 'declarations' });
     await expect(
       worker.scheduled(
-        {} as never,
+        { cron: '0 */6 * * *' } as never,
         {
           REFRESH: {
             create: async () => {
@@ -121,13 +121,10 @@ describe('published registry Workflow', () => {
           },
           REGISTRY: { create },
           REGISTRY_API_BASE_URL: 'https://published.test',
-          DECLARATIONS_ENABLED: 'true',
-          DECLARATIONS: { getByName: () => ({ startRun }) },
         } as unknown as Env,
       ),
     ).rejects.toThrow('scheduled starts failed');
     expect(create).toHaveBeenCalledOnce();
-    expect(startRun).toHaveBeenCalledOnce();
   });
 });
 

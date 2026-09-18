@@ -3,6 +3,9 @@ import { DurableObject, exports as workerExports } from 'cloudflare:workers';
 export interface DeclarationEnv {
   DECLARATIONS_CORPUS?: R2Bucket;
   DECLARATIONS_BUCKET?: string;
+  // The workflow that asked for the run owns it: when the instance is gone, so is the run.
+  DECLARATIONS_RUN?: Workflow;
+  REBUILD_RUN?: Workflow;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   SIGMA_D1_ID?: string;
@@ -11,9 +14,17 @@ export interface DeclarationEnv {
   SUPPRESSION_SALT?: string;
   SUPPRESSION_KEY_VERSION?: string;
 }
+/** The idle blue/green slot a rebuild writes (ADR-0048); absent for the weekly declarations run.
+ * `resume` continues whatever the slot already holds from an earlier rebuild instead of emptying it. */
+export interface RebuildTarget {
+  name: string;
+  id: string;
+  resume?: boolean;
+}
 interface DeclarationRun {
   runId: string;
   requestId?: string;
+  target?: RebuildTarget;
   state: 'running' | 'complete' | 'failed';
   audit?: true;
   published?: true;
@@ -56,6 +67,17 @@ const stages = [
   'publish',
   'reindex',
 ];
+// A slot rebuild builds everything locally first, runs the declarations job in its local mode, then ships.
+const rebuildStages = [
+  'import',
+  'registry',
+  'precompute',
+  'declarations',
+  ...stages.slice(0, stages.indexOf('publish')),
+  'search',
+  'ship',
+  'verify',
+];
 const MINUTE = 60_000;
 // Restart a stalled attempt; three attempts without advancing the durable high-water mark stop.
 const STALL_MS = 20 * MINUTE;
@@ -66,7 +88,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
   getRun() {
     return this.ctx.storage.get<DeclarationRun>('run');
   }
-  private settings() {
+  private settings(target?: RebuildTarget) {
     if (!this.ctx.container || !this.env.DECLARATIONS_CORPUS)
       throw new Error('Declaration container and corpus binding are required');
     const env: Record<string, string> = { CACBG_CORPUS_URL: 'http://declarations.r2' };
@@ -84,10 +106,28 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     }
     for (const key of ['SUPPRESSION_SALT', 'SUPPRESSION_KEY_VERSION'] as const)
       if (this.env[key]) env[key] = this.env[key];
+    if (target) {
+      // The live slot is only read; the idle one is the only target. Never the same database.
+      if (
+        !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(target.id) ||
+        !/^[a-z0-9][a-z0-9-]{0,62}$/.test(target.name) ||
+        target.id === env.SIGMA_D1_ID ||
+        target.name === env.SIGMA_D1_NAME
+      )
+        throw new Error('A rebuild targets the idle slot, never the live one');
+      Object.assign(env, {
+        SIGMA_LIVE_D1_ID: env.SIGMA_D1_ID,
+        SIGMA_LIVE_D1_NAME: env.SIGMA_D1_NAME,
+        SIGMA_D1_ID: target.id,
+        SIGMA_D1_NAME: target.name,
+        SIGMA_REBUILD: '1',
+        ...(target.resume ? { SIGMA_REBUILD_RESUME: '1' } : {}),
+      });
+    }
     return env;
   }
-  async startRun(requestId?: string): Promise<DeclarationRun> {
-    this.settings();
+  async startRun(requestId?: string, target?: RebuildTarget): Promise<DeclarationRun> {
+    this.settings(target);
     if (requestId !== undefined && (!requestId || requestId.length > 256))
       throw new Error('Invalid request ID');
     // Only storage is inside the transaction. The alarm owns all container I/O.
@@ -103,12 +143,13 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       const run: DeclarationRun = {
         runId: crypto.randomUUID(),
         ...(requestId ? { requestId } : {}),
+        ...(target ? { target } : {}),
         state: 'running',
         startedAt: now,
         attempt: 0,
         attemptStartedAt: now,
         failures: 0,
-        stage: 'fetch',
+        stage: target ? 'import' : 'fetch',
         completed: 0,
         progressVersion: 0,
         attemptProgressVersion: 0,
@@ -129,6 +170,19 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       finishedAt: new Date().toISOString(),
     });
   }
+  /** The workflow instance that asked for this run is its owner. Terminate the instance and the
+   * container stops too — otherwise the alarm would keep restarting a run nobody waits for. A
+   * lookup that fails says nothing, so a healthy run is never stopped on a transient error. */
+  private async ownerGone(run: DeclarationRun): Promise<boolean> {
+    const workflow = run.target ? this.env.REBUILD_RUN : this.env.DECLARATIONS_RUN;
+    if (!run.requestId || !workflow) return false;
+    try {
+      const { status } = await (await workflow.get(run.requestId)).status();
+      return ['terminated', 'errored', 'complete'].includes(status);
+    } catch {
+      return false;
+    }
+  }
   private async retry(run: DeclarationRun, reason: string, yielded = false) {
     const failures = run.progressVersion > run.attemptProgressVersion ? 0 : run.failures + 1;
     if (failures >= MAX_FAILURES) {
@@ -144,6 +198,10 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
     const run = await this.getRun();
     if (!run || run.state !== 'running') return;
     const container = this.ctx.container!;
+    if (await this.ownerGone(run)) {
+      await this.finish(run, 'failed', 'The workflow instance that started this run is gone');
+      return;
+    }
     if (run.retryAt && Date.now() < run.retryAt) {
       await this.ctx.storage.setAlarm(run.retryAt);
       return;
@@ -166,7 +224,11 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         );
         container.start({
           enableInternet: true,
-          env: { ...this.settings(), SIGMA_RUN_ID: run.runId, SIGMA_ATTEMPT: String(run.attempt) },
+          env: {
+            ...this.settings(run.target),
+            SIGMA_RUN_ID: run.runId,
+            SIGMA_ATTEMPT: String(run.attempt),
+          },
         });
         await container.setInactivityTimeout(10 * MINUTE);
       } catch (error) {
@@ -194,8 +256,9 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         await this.finish(run, 'failed', 'Container run or attempt mismatch');
         return;
       }
-      const next = stages.indexOf(status.stage),
-        previous = stages.indexOf(run.stage);
+      const order = run.target ? rebuildStages : stages;
+      const next = order.indexOf(status.stage),
+        previous = order.indexOf(run.stage);
       if (
         next < 0 ||
         !Number.isSafeInteger(status.completed) ||
@@ -214,7 +277,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         run.progressVersion++;
       }
       // Replaying a previous attempt is live progress, even below the durable high-water mark.
-      const attemptStage = stages.indexOf(run.attemptStage ?? '');
+      const attemptStage = order.indexOf(run.attemptStage ?? '');
       if (
         next > attemptStage ||
         (next === attemptStage && status.completed > (run.attemptCompleted ?? -1))
@@ -234,7 +297,13 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
       }
       if (status.state === 'yielded' || status.state === 'failed') {
         const reason = status.reason || `${status.stage} ${status.state}`;
-        if (status.stage === 'fetch' || status.signal)
+        // A yield is our own code stopping on purpose, with its work accepted — retry it wherever it
+        // happens. Network stages are retried too; a data or audit refusal is final.
+        if (
+          status.state === 'yielded' ||
+          ['fetch', 'import', 'registry'].includes(status.stage) ||
+          status.signal
+        )
           await this.retry(run, reason, status.state === 'yielded');
         else await this.finish(run, 'failed', reason); // A data/audit refusal is not a transient failure.
         return;

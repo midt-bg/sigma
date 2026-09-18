@@ -23,7 +23,7 @@ import {
 } from '@sigma/ingest';
 import refreshSliceSql from '../../../scripts/refresh-slice.sql';
 import workStagingSchemaSql from '../../../scripts/work-staging-schema.sql';
-import { addDays, computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
+import { computeWorkerCatchupPlan, ingestBucketWindow, type CatchupPlan } from './eop';
 import { runServedIntegrityGate } from './integrity';
 import {
   acquireRegistryLease,
@@ -40,11 +40,18 @@ import {
   deferDeed,
   deferXml,
   storeDeed,
+  derivePublicOwnership,
 } from './registry';
 
 export interface Env extends DeclarationEnv {
   DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
   DECLARATIONS_ENABLED?: string;
+  /** How long the six-hourly writers stand aside for a live declarations run. Default 8 hours; raised
+   * for a first, cold run, which builds the corpus from an empty bucket. */
+  DECLARATIONS_STAND_ASIDE_HOURS?: string;
+  /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
+  DECLARATIONS_RUN?: Workflow;
+  REBUILD_RUN?: Workflow;
   DB: D1Database;
   REFRESH: Workflow;
   EOP_OPEN_DATA_BASE_URL?: string;
@@ -99,6 +106,19 @@ function stagedRows(results: Awaited<ReturnType<typeof ingestBucketWindow>>): nu
   );
 }
 
+// Every step that WRITES runs behind the fence: renew the lease, and if it is no longer ours,
+// stop before touching anything. Workflows resume a run from cached step results after retries
+// that can outlast the TTL, so "acquired" at step one proves nothing at step twenty — the data
+// path may belong to a newer instance by then. Losing the lease is final for this run.
+function fence(step: WorkflowStep, lostLease: (name: string) => Promise<string | null>) {
+  return <T extends Rpc.Serializable<T>>(name: string, fn: () => Promise<T>): Promise<T> =>
+    step.do(name, async () => {
+      const lost = await lostLease(name);
+      if (lost !== null) throw new NonRetryableError(lost);
+      return fn();
+    });
+}
+
 // The on-platform daily refresh reads storage.eop.bg buckets directly. It is intentionally a small
 // steady-state job: if D1 is many days behind, the Workflow caps to a recent window and logs a
 // warning; the large first-run/backfill catch-up is the CLI's job to avoid D1/CPU/subrequest limits.
@@ -147,23 +167,12 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
         leaseHolder: lease.holder ?? undefined,
       };
     }
-    // Every step that WRITES runs behind the fence: renew the lease, and if it is no longer ours,
-    // stop before touching anything. Workflows resume a run from cached step results after retries
-    // that can outlast the TTL, so "acquired" at step one proves nothing at step twenty — the data
-    // path may belong to a newer instance by then. Losing the lease is final for this run.
-    const fenced = <T extends Rpc.Serializable<T>>(
-      name: string,
-      fn: () => Promise<T>,
-    ): Promise<T> =>
-      step.do(name, async () => {
-        const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
-        if (!held.acquired) {
-          throw new NonRetryableError(
-            `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`,
-          );
-        }
-        return fn();
-      });
+    const fenced = fence(step, async (name) => {
+      const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
+      return held.acquired
+        ? null
+        : `refresh lease lost before ${name}: now held by ${held.holder ?? 'nobody'}`;
+    });
     let results: Awaited<ReturnType<typeof ingestBucketWindow>> = [];
     let staged = 0;
     let derived = 0;
@@ -177,9 +186,25 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
     // throwing finally REPLACE the original error, and the gate's verdict must never be hidden
     // behind a staging-drop hiccup.
     let failed = false;
-    let failure: unknown = null;
-    let dropFailed = false;
-    let dropFailure: unknown = null;
+    // The FIRST failure inside finally, boxed rather than a null sentinel: a thrown `null` or
+    // `undefined` is still a failure. Later cleanup failures are logged, never allowed to REPLACE
+    // the run's error (or an earlier cleanup's).
+    let cleanupFailure = null as { error: unknown } | null;
+    const swallow = async (event: string, fn: () => Promise<unknown>): Promise<void> => {
+      try {
+        await fn();
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            event,
+            error: err instanceof Error ? err.message : String(err),
+            afterFailure: failed || cleanupFailure !== null,
+          }),
+        );
+        cleanupFailure ??= { error: err };
+      }
+    };
 
     try {
       await fenced('drop-stale-transient-staging', async () => dropTransientStaging(this.env.DB));
@@ -400,14 +425,13 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
       return outcome;
     } catch (err) {
       failed = true;
-      failure = err;
       throw err;
     } finally {
-      try {
-        // The staging tables are ours to drop only while the lease is ours: if a newer instance took
-        // it over, they are ITS tables now. A lost lease here is logged, not thrown — the run has
-        // already failed or finished, and the release below must still happen.
-        await step.do('drop-transient-staging', async () => {
+      // The staging tables are ours to drop only while the lease is ours: if a newer instance took
+      // it over, they are ITS tables now. A lost lease here is logged, not thrown — the run has
+      // already failed or finished, and the release below must still happen.
+      await swallow('etl_refresh_staging_drop_failed', () =>
+        step.do('drop-transient-staging', async () => {
           const held = await renewRefreshLease(this.env.DB, leaseHolder, new Date());
           if (!held.acquired) {
             console.warn(
@@ -420,46 +444,16 @@ export class RefreshWorkflow extends WorkflowEntrypoint<Env, RefreshParams> {
             return;
           }
           await dropTransientStaging(this.env.DB);
-        });
-      } catch (dropErr) {
-        dropFailed = true;
-        dropFailure = dropErr;
-        console.error(
-          JSON.stringify({
-            level: 'error',
-            event: 'etl_refresh_staging_drop_failed',
-            error: dropErr instanceof Error ? dropErr.message : String(dropErr),
-            afterFailure: failed,
-          }),
-        );
-      }
-      // The lease is released whatever happened above. Its own failure is logged, never allowed to
-      // REPLACE the run's error (or the drop's): the TTL bounds a lease that could not be released.
-      let releaseFailed = false;
-      let releaseFailure: unknown = null;
-      try {
-        await step.do('release-refresh-lease', async () =>
-          releaseRefreshLease(this.env.DB, leaseHolder),
-        );
-      } catch (releaseErr) {
-        releaseFailed = true;
-        releaseFailure = releaseErr;
-        console.error(
-          JSON.stringify({
-            level: 'error',
-            event: 'etl_refresh_lease_release_failed',
-            error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
-            afterFailure: failed || dropFailed,
-          }),
-        );
-      }
+        }),
+      );
+      // The lease is released whatever happened above: the TTL bounds a lease that could not be
+      // released.
+      await swallow('etl_refresh_lease_release_failed', () =>
+        step.do('release-refresh-lease', async () => releaseRefreshLease(this.env.DB, leaseHolder)),
+      );
       // The run's own error (already propagating) always wins; on an otherwise successful run the
       // FIRST failure inside finally is the run's result.
-      if (!failed) {
-        // Explicit flags, not null sentinels: a thrown `null` or `undefined` is still a failure.
-        if (dropFailed) throw dropFailure;
-        if (releaseFailed) throw releaseFailure;
-      }
+      if (!failed && cleanupFailure) throw cleanupFailure.error;
       if (outcome) {
         console.log(JSON.stringify({ level: 'info', event: 'etl_refresh_complete', ...outcome }));
       }
@@ -486,6 +480,7 @@ interface RegistryResult {
   read: number;
   absent: number;
   roles: number;
+  publicOwned?: number;
 }
 
 // Partidas per step: small, so a retried step re-reads little (storing is idempotent, the queue is the cursor).
@@ -528,15 +523,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
       return { ...result, skipped: 'lease-held' };
     }
     // Renewed before every step that writes; losing it is final, as in the refresh.
-    const fenced = <T extends Rpc.Serializable<T>>(
-      name: string,
-      fn: () => Promise<T>,
-    ): Promise<T> =>
-      step.do(name, async () => {
-        if (!(await renewRegistryLease(this.env.DB, holder)))
-          throw new NonRetryableError(`registry lease lost before ${name}`);
-        return fn();
-      });
+    const fenced = fence(step, async (name) =>
+      (await renewRegistryLease(this.env.DB, holder)) ? null : `registry lease lost before ${name}`,
+    );
     const client = registryClient({ baseUrl, portalUrl: this.env.REGISTRY_PORTAL_URL });
     const pace = params.paceMs ?? REGISTRY_PACE_MS;
     const maxDeeds = params.maxDeeds ?? REGISTRY_MAX_DEEDS;
@@ -560,6 +549,20 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           nextEntryPass(this.env.DB, today, new Date().toISOString()),
         );
         if (!pass) break;
+        // Both ways the portal closes a pass early: its Retry-After answer, or any other failed read.
+        const deferPass = async (name: string, retryMs: number, error: string | null) => {
+          await fenced(name, () =>
+            deferPortal(this.env.DB, new Date(Date.now() + retryMs).toISOString()),
+          );
+          console.warn(
+            JSON.stringify({
+              event: 'registry_portal_deferred',
+              day: pass.day,
+              page: pass.next_page,
+              error,
+            }),
+          );
+        };
         try {
           if (page > 0 && (params.portalPaceMs ?? 30_000) > 0)
             await step.sleep(`portal-pace:${page}`, params.portalPaceMs ?? 30_000);
@@ -582,17 +585,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
             }
           });
           if (!read.response) {
-            await fenced(`portal-retry-after:${page}`, () =>
-              deferPortal(this.env.DB, new Date(Date.now() + read.retryMs).toISOString()),
-            );
-            console.warn(
-              JSON.stringify({
-                event: 'registry_portal_deferred',
-                day: pass.day,
-                page: pass.next_page,
-                error: read.error,
-              }),
-            );
+            await deferPass(`portal-retry-after:${page}`, read.retryMs, read.error);
             break;
           }
           const response = read.response;
@@ -604,17 +597,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
           if (error instanceof NonRetryableError) throw error;
           const wait =
             error instanceof RegistryError ? (error.retryMs ?? 6 * 3600000) : 6 * 3600000;
-          await fenced(`portal-defer:${page}`, () =>
-            deferPortal(this.env.DB, new Date(Date.now() + wait).toISOString()),
-          );
-          console.warn(
-            JSON.stringify({
-              event: 'registry_portal_deferred',
-              day: pass.day,
-              page: pass.next_page,
-              error: String(error),
-            }),
-          );
+          await deferPass(`portal-defer:${page}`, wait, String(error));
           break;
         }
       }
@@ -668,6 +651,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
         result.roles += batch.roles;
         if (batch.read < REGISTRY_BATCH) break;
       }
+      result.publicOwned = await fenced('derive-public-ownership', () =>
+        derivePublicOwnership(this.env.DB),
+      );
       if (baseline === 'building') {
         const complete = await fenced('complete-entry-baseline', () =>
           completeEntryBaseline(this.env.DB, holder, new Date().toISOString()),
@@ -690,14 +676,141 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
   }
 }
 
+/** The cron that starts the declarations run: Sundays 03:00 UTC — a bad run then leaves the working
+ * week to fix it, and the register is quiet at the weekend. */
+export const DECLARATIONS_CRON = '0 3 * * 0';
+
+/** An operator-started declarations run that waits for the container's outcome, so `wrangler workflows
+ * trigger` reports the real result instead of a fire-and-forget. The cron starts the same run. */
+export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
+  override async run(event: WorkflowEvent<unknown>, step: WorkflowStep) {
+    const declarations = this.env.DECLARATIONS;
+    if (!declarations) throw new NonRetryableError('The declarations container is not bound');
+    const start = await step.do('start-declarations', async () => {
+      const { runId, state } = await declarations
+        .getByName('declarations')
+        .startRun(event.instanceId);
+      return { runId, state };
+    });
+    for (let poll = 0; ; poll++) {
+      await step.sleep(`wait-${poll}`, '5 minutes');
+      const run = await step.do(`status-${poll}`, async () => {
+        const current = await declarations.getByName('declarations').getRun();
+        return current
+          ? {
+              runId: current.runId,
+              state: current.state,
+              audit: current.audit ?? false,
+              published: current.published ?? false,
+              reason: current.reason ?? null,
+              startedAt: current.startedAt ?? null,
+              finishedAt: current.finishedAt ?? null,
+              attempt: current.attempt,
+              stage: current.stage,
+              completed: current.completed,
+              lastProgressAt: current.lastProgressAt,
+              retryAt: current.retryAt ?? null,
+            }
+          : null;
+      });
+      if (!run || run.runId !== start.runId) throw new NonRetryableError('Declaration run changed');
+      if (run.state === 'complete') return run;
+      if (run.state !== 'running')
+        throw new NonRetryableError(`Declaration run ${run.state}: ${run.reason ?? ''}`);
+    }
+  }
+}
+
+/** An operator-started rebuild of the idle blue/green slot (ADR-0048): the payload names the idle slot, and
+ *  the container refuses the live one. The flip stays a redeploy. */
+export class RebuildWorkflow extends WorkflowEntrypoint<
+  Env,
+  { targetName?: string; targetId?: string; resume?: boolean }
+> {
+  override async run(
+    event: WorkflowEvent<{ targetName?: string; targetId?: string; resume?: boolean }>,
+    step: WorkflowStep,
+  ) {
+    const containers = this.env.DECLARATIONS;
+    if (!containers) throw new NonRetryableError('The declarations container is not bound');
+    const { targetName, targetId, resume } = event.payload ?? {};
+    if (!targetName || !targetId)
+      throw new NonRetryableError('Name the idle slot: { "targetName": …, "targetId": … }');
+    const start = await step.do('start-rebuild', async () => {
+      const { runId, state } = await containers.getByName('rebuild').startRun(event.instanceId, {
+        name: targetName,
+        id: targetId,
+        ...(resume === true ? { resume: true } : {}),
+      });
+      return { runId, state };
+    });
+    for (let poll = 0; ; poll++) {
+      await step.sleep(`wait-${poll}`, '10 minutes');
+      const run = await step.do(`status-${poll}`, async () => {
+        const current = await containers.getByName('rebuild').getRun();
+        return current
+          ? {
+              runId: current.runId,
+              state: current.state,
+              reason: current.reason ?? null,
+              stage: current.stage,
+              completed: current.completed,
+              attempt: current.attempt,
+            }
+          : null;
+      });
+      if (!run || run.runId !== start.runId) throw new NonRetryableError('Rebuild run changed');
+      if (run.state === 'complete') return run;
+      if (run.state !== 'running')
+        throw new NonRetryableError(`Rebuild ${run.state}: ${run.reason ?? ''}`);
+    }
+  }
+}
+
 export default {
   // Cron entrypoint: kick one durable refresh run, and the register layer beside it where it is configured.
   // No public route or HTTP trigger is configured.
-  async scheduled(_controller, env): Promise<void> {
-    const jobs: [string, () => Promise<unknown>][] = [['refresh', () => env.REFRESH.create()]];
-    if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
-      jobs.push(['registry', () => env.REGISTRY!.create()]);
-    if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
+  async scheduled(controller, env): Promise<void> {
+    // The weekly cron owns the declarations; every other tick refreshes procurement and the register.
+    const weekly = controller?.cron === DECLARATIONS_CRON;
+    const jobs: [string, () => Promise<unknown>][] = [];
+    // A declarations run takes a fresh snapshot on every container attempt, and its resumed work is
+    // only valid against the registry it started with. So the six-hourly writers stand aside while it
+    // runs. The refresh carries its own catch-up window, so a skipped tick is made up by the next one;
+    // the age bound keeps a wedged run from freezing procurement for good.
+    // Asking is best-effort: a Durable Object that refuses to answer (an RPC error, a migration that
+    // has not landed) must not take procurement down with it. An unknown answer means „no run", which
+    // is the same state this handler was in before the declarations existed.
+    let live: Awaited<ReturnType<DeclarationContainer['getRun']>>;
+    try {
+      live = env.DECLARATIONS
+        ? await env.DECLARATIONS.getByName('declarations').getRun()
+        : undefined;
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          event: 'etl_scheduled',
+          declarations_state_unavailable: String(error).slice(0, 200),
+        }),
+      );
+    }
+    // The bound is on the run's AGE, not on its health: a wedged run must not freeze procurement for
+    // good. A first, cold run builds the whole corpus from an empty bucket and takes far longer than a
+    // weekly one on a warm bucket, so the bound is a setting — raised for that run, and only for it.
+    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_HOURS ?? '8');
+    const declarationsRunning =
+      live?.state === 'running' &&
+      Date.now() - live.startedAt <
+        (Number.isFinite(standAsideHours) ? standAsideHours : 8) * 3_600_000;
+    if (!weekly && declarationsRunning) {
+      console.log(
+        JSON.stringify({ event: 'etl_scheduled', skipped: 'declarations_running', job: 'refresh' }),
+      );
+    } else if (!weekly) {
+      jobs.push(['refresh', () => env.REFRESH.create()]);
+      if (env.REGISTRY && env.REGISTRY_API_BASE_URL)
+        jobs.push(['registry', () => env.REGISTRY!.create()]);
+    } else if (env.DECLARATIONS_ENABLED === 'true' && env.DECLARATIONS)
       jobs.push(['declarations', () => env.DECLARATIONS!.getByName('declarations').startRun()]);
     const results = await Promise.allSettled(
       jobs.map(async ([job, start]) => {
