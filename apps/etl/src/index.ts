@@ -673,8 +673,9 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
   }
 }
 
-/** The cron that starts the declarations run: Mondays 03:00 UTC, as the register is quiet then. */
-export const DECLARATIONS_CRON = '0 3 * * 1';
+/** The cron that starts the declarations run: Sundays 03:00 UTC — a bad run then leaves the working
+ * week to fix it, and the register is quiet at the weekend. */
+export const DECLARATIONS_CRON = '0 3 * * 0';
 
 /** An operator-started declarations run that waits for the container's outcome, so `wrangler workflows
  * trigger` reports the real result instead of a fire-and-forget. The cron starts the same run. */

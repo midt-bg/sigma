@@ -80,9 +80,9 @@ new_sqlite_classes = ["DeclarationContainer"]
 binding = "DECLARATIONS_CORPUS"
 bucket_name = "sigma-declarations"
 
-# Six-hourly: procurement and the register. Mondays 03:00 UTC: the declarations (DECLARATIONS_CRON).
+# Six-hourly: procurement and the register. Sundays 03:00 UTC: the declarations (DECLARATIONS_CRON).
 [triggers]
-crons = ["0 */6 * * *", "0 3 * * 1"]
+crons = ["0 */6 * * *", "0 3 * * 0"]
 
 [observability]
 enabled = true
