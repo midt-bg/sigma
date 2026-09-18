@@ -41,9 +41,9 @@ const hasFormToken = (s) => s.split(/[^А-ЯЁ]+/).some((t) => FORM_TOKENS.has(t
 const SUFFIX_FORMS = new Set(['ЕООД', 'ООД', 'ЕАД', 'АД', 'АДСИЦ', 'КДА', 'ДЗЗД']);
 
 // Cut everything after the LAST фирма-terminating form token. This is the case the comma-peel and the
-// marker strip both miss: „ТРЕЙС ГРУП ХОЛД АД София" has neither a comma nor a „гр." dot, so it survived
+// marker strip both miss: „ТЕСТ ГРУП ХОЛД АД София" has neither a comma nor a „гр." dot, so it survived
 // both, stopped ending in its form, and defeated every end-anchored form test downstream. Token-exact
-// (never a substring), so „КАДИЕВ ГЛОБАЛ ЕООД" and „АД-ХОК ЕООД" are untouched.
+// (never a substring), so „НАДЕЖДА ГЛОБАЛ ЕООД" and „АД-ХОК ЕООД" are untouched.
 function stripAfterSuffixForm(s) {
   const re = /[А-ЯЁ]+/gu;
   let last = null;
@@ -83,7 +83,7 @@ export function nameDistinctiveness(key) {
   return tokens.length >= 3 ? 'distinctive' : 'generic';
 }
 
-const norm = (s) =>
+export const norm = (s) =>
   String(s ?? '')
     .normalize('NFC')
     .toUpperCase()

@@ -3,10 +3,11 @@
 //
 // Six outcomes, FIRST MATCH WINS:
 //   1 bar_joint_stock  АД / ЕАД / КДА — never published, whatever follows
-//   2 document         the declarant's full name is a person standing in an ownership or manager role
-//   3 confirmed        declared seat == registered seat, or the declarant wrote the ЕИК
-//   4 refuted          own stake only: registered in no role now, and the ownership record as it stands
-//                      predates the declared period — the register covers it and does not name them
+//   2 document         the register shows the declarant in an ownership or manager role, now or before
+//   3 confirmed        the declarant wrote the ЕИК, or — for a relative's stake — the register shows a
+//                      holder the declaration names for that stake
+//   4 refuted          own stake only: registered in no role at any time, and the ownership record as it
+//                      stands predates the declared period — the register covers it and does not name them
 //   5 unknown          everything else — held
 //   6 outside_tr       not in the register at all (ДЗЗД, БУЛСТАТ associations) — held
 //
@@ -19,20 +20,18 @@
 // filters that can only withhold are kept (ADR-0033 decision 2).
 //
 // The facts are the registry layer's (ADR-0041, deed.mjs): the register's own records of who holds which
-// role since which entry, the legal form, the seat — never the register asked from here.
+// role since which entry, the legal form — never the register asked from here.
 
 import {
   liveHolders,
   personTokens,
-  normalizeSettlement,
-  registrySeat,
   registryLegalForm,
   latestOwnershipEntryDate,
   OWNERSHIP_FIELDS,
   MANAGER_FIELD,
-  ROLE_FIELDS,
 } from './deed.mjs';
 import { declarantNameKey } from '../cacbg/source-identity.mjs';
+import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 
 /**
  * Version of the RULES, not of the code. §8's monotonicity gate keys on this: a previously published
@@ -54,14 +53,22 @@ import { declarantNameKey } from '../cacbg/source-identity.mjs';
 // corroborate company identity. The company gate is unchanged. Absence today
 // does not refute a documented past role; current-role reconciliation stays separate.
 // r6 preserves distinguishing company-name prefixes and excludes collective holders from personal-role evidence.
-export const RULES_VERSION = 'tr-rules-6';
+// r7: the declarant identifier joins one person's documents across offices (ADR-0042); links follow the
+// merged person ids, so a key published under r6 may reappear under a new id. Old addresses resolve
+// through the aliases.
+// r8: the company is its ЕИК and the register's people are the only evidence that it is the declared one.
+// The seat and the name-distinctiveness gate are gone; a person matches at any time (standing, ended, or
+// of unclear end) and under a spelling variant of the name; a relative's stake is confirmed by the
+// register showing the relative the declaration names.
+export const RULES_VERSION = 'tr-rules-8';
 
 /** Rung 2 needs a real three-part Bulgarian name (ЗГР чл. 9). Two tokens is the homonym risk itself. */
 const MIN_NAME_TOKENS = 3;
 
 /**
- * The CLOSED vocabulary a sealed `matched_fact` may take: `seat:<SETTLEMENT>`, `role:owner:<FIELD>`,
- * `role:manager:<FIELD>`, or `eik`. `<FIELD>` is the register field that named the holder — its
+ * The CLOSED vocabulary a sealed `matched_fact` may take: `role:owner:<FIELD>`, `role:manager:<FIELD>`,
+ * `relative:owner:<FIELD>`, `relative:manager:<FIELD>`, `eik`, or — sealed before `tr-rules-8` —
+ * `seat:<SETTLEMENT>`. `<FIELD>` is the register field that named the holder — its
  * five-digit ident (`00190`) or, on a verdict sealed before `tr-rules-3`, the portal's code
  * (`CR_F_19_L`). It must NEVER carry the matched NAME: names are read only to produce a boolean
  * (#279 §9, ADR-0033 decision 5).
@@ -78,7 +85,7 @@ const MIN_NAME_TOKENS = 3;
  * a state where the gate permits what the writer emits.
  */
 export const MATCHED_FACT_RE =
-  /^(?:seat:\p{Lu}[\p{Lu}-]*(?: \p{Lu}[\p{Lu}-]*)?|role:(?:owner|manager):(?:\d{5}|CR_F_\d+[a-z]?_L)|eik)$/u;
+  /^(?:seat:\p{Lu}[\p{Lu}-]*(?: \p{Lu}[\p{Lu}-]*)?|(?:role|relative):(?:owner|manager):(?:\d{5}|CR_F_\d+[a-z]?_L)|eik)$/u;
 
 /** True when `fact` is a member of the closed vocabulary. `null` is legal — a rung may match no fact. */
 export function isSealedFact(fact) {
@@ -93,29 +100,36 @@ export function isSealedFact(fact) {
 const REREGISTRATION_START = '2011-01-01';
 const REREGISTRATION_END = '2012-12-31';
 
+const HASH = /^[a-f0-9]{64}$/i;
+
 /**
- * Find the declarant among the persons standing in the given fields.
+ * The one registered person a name designates in this partida. By identifier when the declarant's is
+ * proven; otherwise every holder — standing, ended or of unclear end — whose name is the declared one, or
+ * failing that a spelling variant of it (a surname added, dropped or taken on marriage, one typo). They
+ * must all be one person: two identifiers under the name designate nobody.
  * Matching happens per HOLDER — never across two — because combining tokens across the people of one
  * field is the libel bug.
- * @returns {{field:string, entryNumber:string|null, entryDate:string|null}|null}
  */
 function personMatch(registry, name, registryIndent) {
   if (registryIndent != null) {
     if (!/^[a-f0-9]{64}$/.test(registryIndent)) throw new Error('Invalid proven registry identity');
     return (holder) => holder.subjectId === registryIndent;
   }
-  const key = declarantNameKey(name);
   const all = [...(registry.holders ?? []), ...(registry.endedHolders ?? [])];
+  const key = declarantNameKey(name);
+  const exact = all.filter((h) => declarantNameKey(h.name) === key);
+  const named = exact.length ? exact : all.filter((h) => personNamesAlike(name, h.name));
   const ids = new Set(
-    all
-      .filter((h) => declarantNameKey(h.name) === key && /^[a-f0-9]{64}$/i.test(h.subjectId ?? ''))
-      .map((h) => h.subjectId.toLowerCase()),
+    named.filter((h) => HASH.test(h.subjectId ?? '')).map((h) => h.subjectId.toLowerCase()),
   );
   if (ids.size > 1) return () => false;
-  const indent = [...ids][0];
-  return (holder) =>
-    indent ? holder.subjectId?.toLowerCase() === indent : declarantNameKey(holder.name) === key;
+  const [indent] = ids;
+  if (indent) return (holder) => holder.subjectId?.toLowerCase() === indent;
+  const names = new Set(named.map((h) => declarantNameKey(h.name)));
+  return names.size === 1 ? (holder) => names.has(declarantNameKey(holder.name)) : () => false;
 }
+
+/** The person standing now in one of the fields. */
 function findPerson(registry, name, fields, registryIndent) {
   const holder = liveHolders(registry, fields).find(personMatch(registry, name, registryIndent));
   return holder
@@ -123,87 +137,66 @@ function findPerson(registry, name, fields, registryIndent) {
     : null;
 }
 
-function findHistoricalPerson(
-  registry,
-  name,
-  fields,
-  year,
-  historicalOnly = false,
-  registryIndent,
-) {
-  if (!Number.isInteger(year) || year < 1900 || year > 2100) return null;
+const day = (v) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
+  Number.isFinite(Date.parse(v)) &&
+  new Date(v).toISOString().slice(0, 10) === v;
+/** An ended role with a real entry that lasted: dated, and ended after it began. A role of unclear end has no
+ *  end date to check. */
+const lasted = (h) =>
+  h.endedOn == null ||
+  (!!h.entryNumber && day(h.entryDate) && day(h.endedOn) && h.entryDate < h.endedOn);
+
+/** The person in one of the fields at any time: standing first, else the role that ended last. */
+function findEverPerson(registry, name, fields, registryIndent) {
+  const live = findPerson(registry, name, fields, registryIndent);
+  if (live) return { ...live, endedOn: null };
   const matches = personMatch(registry, name, registryIndent);
-  const day = (v) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(v ?? '') &&
-    Number.isFinite(Date.parse(v)) &&
-    new Date(v).toISOString().slice(0, 10) === v;
-  return (
-    (registry.endedHolders ?? []).find(
-      (h) =>
-        fields.includes(h.field) &&
-        matches(h) &&
-        h.entryNumber &&
-        day(h.entryDate) &&
-        day(h.endedOn) &&
-        h.entryDate < h.endedOn &&
-        h.entryDate <= `${year}-12-31` &&
-        (historicalOnly || h.endedOn > `${year}-01-01`),
-    ) ?? null
-  );
+  const past = (registry.endedHolders ?? [])
+    .filter((h) => fields.includes(h.field) && lasted(h) && matches(h))
+    .sort((a, b) => String(b.endedOn ?? '9999').localeCompare(String(a.endedOn ?? '9999')))[0];
+  return past
+    ? {
+        field: past.field,
+        entryNumber: past.entryNumber,
+        entryDate: past.entryDate,
+        endedOn: past.endedOn ?? null,
+      }
+    : null;
 }
 
-/**
- * The registered seat, when it matches one THIS person declared for THIS company and was in force for the
- * declared period. Shared by rung 3 (which publishes on it) and rung 2's company-identity corroborator.
- *
- * R10: seats move. A company that relocated INTO the declared settlement afterwards would confirm falsely,
- * so the registered seat must predate the period.
- *
- * A seat with an unknown declaration year fails the temporal guard. The loader keeps each settlement
- * paired with that source's year; firstDeclaredYear is the fallback for older callers only. A registry
- * seat with no entry date can still match when the declaration supplies a known year.
- *
- * @returns {{settlement:string, entryDate:string|null}|null}
- */
-function matchDeclaredSeat(registry, declaredSeats, firstDeclaredYear, declaredSeatYears) {
-  const seat = registrySeat(registry);
-  // Empty NEVER matches — otherwise every link with no seat data on either side rubber-stamps itself.
-  if (seat.settlement === '') return null;
-  // Each seat belongs to its own declaration year. Adding an older document must neither
-  // invalidate a later proof nor let a later year corroborate a seat found only in an older one.
-  const observations = declaredSeatYears ?? declaredSeats.map((s) => [s, firstDeclaredYear]);
-  return observations.some(
-    ([value, year]) =>
-      Number.isInteger(year) &&
-      year >= 1900 &&
-      year <= 2100 &&
-      (seat.entryDate == null || seat.entryDate <= `${year}-12-31`) &&
-      normalizeSettlement(value) === seat.settlement,
-  )
-    ? seat
-    : null;
+/** Owner before manager, each standing before past. */
+function findRole(registry, name, registryIndent) {
+  const at = (fields) => findPerson(registry, name, fields, registryIndent);
+  const ever = (fields) => findEverPerson(registry, name, fields, registryIndent);
+  const owner = at(OWNERSHIP_FIELDS);
+  if (owner) return { role: 'owner', ...owner, endedOn: null };
+  const manager = at([MANAGER_FIELD]);
+  if (manager) return { role: 'manager', ...manager, endedOn: null };
+  const pastOwner = ever(OWNERSHIP_FIELDS);
+  if (pastOwner) return { role: 'owner', ...pastOwner };
+  const pastManager = ever([MANAGER_FIELD]);
+  return pastManager ? { role: 'manager', ...pastManager } : null;
 }
 
 /**
  * Decide the evidence for one link.
+ *
+ * The company is its ЕИК — declared, or the one the declared name leads to (load.mjs). What is left to
+ * establish is that the register agrees the company is the declared one, and only the register's own
+ * record of the people in it can say so; a seat says nothing an ЕИК does not.
  *
  * @param {object} input
  * @param {object|null} input.registry          the company's registry facts (deed.mjs `registryFacts`);
  *                                              null only when `outsideTr`
  * @param {boolean}     [input.outsideTr]       the ЕИК is not in the register at all
  * @param {string}      input.declarantName     the office-holder's name as filed
- * @param {string[]}    [input.declaredSeats]   seats declared BY THIS PERSON FOR THIS COMPANY only —
- *                                              4.9% of company-name keys carry more than one distinct
- *                                              declared seat, so a company-only key would let one
- *                                              person's seat confirm another person's link
- * @param {Array<[string, number]>} [input.declaredSeatYears] each settlement paired with its source year
+ * @param {string|null} [input.registryIndent]  the declarant's proven registry identifier
  * @param {boolean}     [input.declaredEik]     the declarant wrote the ЕИК in the declaration
  * @param {number|null} [input.firstDeclaredYear]
  * @param {'self'|'family'} [input.scope]
- * @param {boolean}     [input.nameGloballyUnique] AND-gate on the WEAKEST rung only
- * @param {boolean}     [input.companyNameDistinctive] the declared фирма is unlikely to have a national
- *                                              twin. Gates an UNCORROBORATED rung 2 (ADR-0035).
- *                                              Defaults to FALSE: a caller that forgets it withholds.
+ * @param {string[]}    [input.relativeNames]   family only: the holders the declaration names for this
+ *                                              stake. Internal — read to produce a boolean, never kept
  * @returns {{kind:string, publishable:boolean, registryRole:string|null, matchedFact:string|null,
  *            entryNumber:string|null, entryDate:string|null, rulesVersion:string,
  *            shortName:boolean, latinInName:boolean}}
@@ -214,18 +207,10 @@ export function evidenceVerdict(input) {
     outsideTr = false,
     declarantName,
     registryIndent,
-    declaredSeats = [],
-    declaredSeatYears,
     declaredEik = false,
     firstDeclaredYear = null,
-    historicalDeclaredYear = null,
     scope = 'self',
-    nameGloballyUnique = true,
-    // Fail-CLOSED, unlike `nameGloballyUnique` above. That one's permissive default is bounded — it gates
-    // only the weakest rung. This one gates the PRIMARY publishing rung, so a caller that forgets to pass
-    // it must withhold rather than publish a claim naming a real person against a company we did not
-    // establish. There is exactly one production caller (load.mjs) and it passes it explicitly.
-    companyNameDistinctive = false,
+    relativeNames = [],
   } = input;
 
   const tokens = personTokens(declarantName);
@@ -261,117 +246,49 @@ export function evidenceVerdict(input) {
   if (form.verdict === 'joint_stock') return verdict('bar_joint_stock', false);
   if (form.verdict === 'unknown') return verdict('unknown', false);
 
-  // The registered seat, matched against what THIS person declared for THIS company, with R10's temporal
-  // guard applied. Computed once and consumed by two rungs: rung 3 publishes „Потвърдено" on it, and rung 2
-  // uses it as a COMPANY-IDENTITY corroborator. One implementation, because two copies of "what counts as a
-  // seat match" would eventually disagree about which links may be published.
-  const evidenceYear = firstDeclaredYear ?? historicalDeclaredYear;
-  const historicalOnly = firstDeclaredYear == null && historicalDeclaredYear != null;
-  const matchedSeat = matchDeclaredSeat(registry, declaredSeats, evidenceYear, declaredSeatYears);
-
   // ── rung 2 ──────────────────────────────────────────────────────────────────
-  // Only a full three-token name may assert. A Latin homoglyph makes the name a non-match rather than
-  // a false match — company-name-key.ts's posture, applied to people.
-  //
-  // The company gate (ADR-0035). A name match proves someone with these three tokens is registered in the
-  // company we LOOKED UP — never that this is the company the official declared. `resolveEntity` picks the
-  // sole WINNER holding the declared name and `nameGloballyUnique` ranges over bidders only, so an official
-  // whose real company never bid resolves to a same-named winner, and a homonym registered in that winner
-  // completes a link false in both halves. Before rung 2 may assert, something other than the фирма must
-  // say the company is the declared one:
-  //   • the declarant wrote the ЕИК — the national identifier resolves it outright (ADR-0028); or
-  //   • the declared seat matches the registered one — a twin in another town is excluded; or
-  //   • the фирма is distinctive enough that a national twin is improbable in the first place.
-  // The third is a bound, not a proof, and it is COUNTED (`documentUncorroborated`) so F8 can decide from
-  // the measured residual whether to tighten to the first two.
-  const companyCorroborated = declaredEik || matchedSeat != null;
-  const eligibleForDocument = !telemetry.shortName && !telemetry.latinInName;
-  if (eligibleForDocument) {
-    const liveOwner = findPerson(registry, declarantName, OWNERSHIP_FIELDS, registryIndent);
-    const liveManager = liveOwner
-      ? null
-      : findPerson(registry, declarantName, [MANAGER_FIELD], registryIndent);
-    const owner =
-      liveOwner ??
-      (liveManager
-        ? null
-        : findHistoricalPerson(
-            registry,
-            declarantName,
-            OWNERSHIP_FIELDS,
-            evidenceYear,
-            historicalOnly,
-            registryIndent,
-          ));
-    const manager = owner
-      ? null
-      : (liveManager ??
-        findHistoricalPerson(
-          registry,
-          declarantName,
-          [MANAGER_FIELD],
-          evidenceYear,
-          historicalOnly,
-          registryIndent,
-        ));
-    const hit = owner ?? manager;
-    if (hit && !companyCorroborated && !companyNameDistinctive) {
-      // A DISTINCT withholding kind, not a fall-through to `unknown`. „We matched a person but could not
-      // establish the company" and „we matched nothing" are different facts about a link, and the review
-      // queue (which is sealed for held links precisely to be reviewable) has to be able to tell them
-      // apart. It never publishes, and it carries no role or fact — asserting either would leak the very
-      // claim the rung just refused to make.
-      return verdict('document_uncorroborated', false);
-    }
-    if (owner) {
+  // The register shows the declarant in this partida, now or at any time: the company is theirs. Only a
+  // full three-token name may assert. A Latin homoglyph makes the name a non-match rather than a false
+  // match — company-name-key.ts's posture, applied to people.
+  if (!telemetry.shortName && !telemetry.latinInName) {
+    const hit = findRole(registry, declarantName, registryIndent);
+    if (hit)
       return verdict('document', true, {
-        registryRole: 'owner',
-        matchedFact: `role:owner:${owner.field}`,
-        entryNumber: owner.entryNumber,
-        entryDate: owner.entryDate,
-        roleEndedOn: owner.endedOn ?? null,
+        registryRole: hit.role,
+        matchedFact: `role:${hit.role}:${hit.field}`,
+        entryNumber: hit.entryNumber,
+        entryDate: hit.entryDate,
+        roleEndedOn: hit.endedOn,
       });
-    }
-    if (manager) {
-      return verdict('document', true, {
-        registryRole: 'manager',
-        matchedFact: `role:manager:${manager.field}`,
-        entryNumber: manager.entryNumber,
-        entryDate: manager.entryDate,
-        roleEndedOn: manager.endedOn ?? null,
-      });
-    }
   }
 
   // ── rung 3 ──────────────────────────────────────────────────────────────────
-  // The weakest publishing rung, so it carries the extra AND-gate: a nationally shared company name
-  // cannot ride it (ADR-0017's holding, carried forward). The stronger „Документ" rung above is not
-  // gated — the register named this person in THIS company, which makes the name key moot.
-  // The declared-ЕИК leg is NOT name-gated. ADR-0028: the ЕИК is the identity, not the name, so it
-  // resolves the company deterministically even behind a nationally shared фирма — which is exactly the
-  // case ADR-0017 was written about.
+  // ADR-0028: a declared ЕИК is the company's identity.
   if (declaredEik) return verdict('confirmed', true, { matchedFact: 'eik' });
-
-  // The SEAT leg is name-gated, and only this one. ADR-0017's holding carried forward: a name shared by
-  // two ЕИК cannot support a name-derived identity claim. The seat still rescues a GENERIC name — that
-  // is the whole point of the rung — it just cannot rescue a NATIONALLY SHARED one.
-  if (nameGloballyUnique && matchedSeat != null) {
-    return verdict('confirmed', true, {
-      matchedFact: `seat:${matchedSeat.settlement}`,
-      entryDate: matchedSeat.entryDate,
-    });
+  // A relative's stake: the register shows a holder the declaration names for it. The fact records the
+  // relative's role and field, never who they are, and the link carries no role of the official's.
+  if (scope === 'family') {
+    for (const name of relativeNames) {
+      if (personTokens(name).length < MIN_NAME_TOKENS) continue;
+      const hit = findRole(registry, name, null);
+      if (hit)
+        return verdict('confirmed', true, {
+          matchedFact: `relative:${hit.role}:${hit.field}`,
+          entryNumber: hit.entryNumber,
+          entryDate: hit.entryDate,
+        });
+    }
   }
 
   // ── rung 4 ──────────────────────────────────────────────────────────────────
-  // OWN stakes only. For a family stake the registered owner is the relative, whose name we neither
-  // store nor check, so absence of the OFFICIAL from the register is evidence of nothing. An early branch,
-  // not a caller convention.
+  // OWN stakes only. For a family stake the registered owner is the relative, so absence of the OFFICIAL
+  // from the register is evidence of nothing. An early branch, not a caller convention.
   if (scope === 'self' && firstDeclaredYear != null) {
-    const stillPresent = findPerson(registry, declarantName, ROLE_FIELDS, registryIndent);
+    const everPresent = findRole(registry, declarantName, registryIndent);
     const latest = latestOwnershipEntryDate(registry);
     const inRereg =
       latest != null && latest >= REREGISTRATION_START && latest <= REREGISTRATION_END;
-    if (!stillPresent && latest != null && !inRereg && latest < `${firstDeclaredYear}-01-01`) {
+    if (!everPresent && latest != null && !inRereg && latest < `${firstDeclaredYear}-01-01`) {
       return verdict('refuted', false, { entryDate: latest });
     }
   }

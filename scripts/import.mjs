@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import {
   computeCatchupWindow,
   daysInWindow,
@@ -44,21 +45,15 @@ const apiDir = resolve(root, 'apps/web');
 const DEFAULT_FROM = '2020-01-01';
 const DEFAULT_LOOKBACK_DAYS = 3;
 
+const { values: cli } = parseArgs({ strict: false, allowPositionals: true });
 const remote = process.argv.includes('--remote');
 const reset = process.argv.includes('--reset');
 const catchup = process.argv.includes('--catchup');
 const planOnly = process.argv.includes('--plan-only') || process.argv.includes('--dry-run');
 const loc = remote ? '--remote' : '--local';
-const persistTo = arg('persist-to');
+const persistTo = cli['persist-to'];
 const passthru = remote ? ['--remote'] : persistTo ? [`--persist-to=${String(persistTo)}`] : [];
 const d1Name = process.env.SIGMA_D1_NAME || 'sigma';
-
-function arg(name) {
-  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
-  if (!hit) return undefined;
-  const eq = hit.indexOf('=');
-  return eq === -1 ? true : hit.slice(eq + 1);
-}
 
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
@@ -71,7 +66,7 @@ function rangeFlags(from, to) {
 function explicitRangeFlags() {
   const flags = [];
   for (const name of ['from', 'to']) {
-    const value = arg(name);
+    const value = cli[name];
     if (value !== undefined && value !== true) flags.push(`--${name}=${value}`);
   }
   return flags;
@@ -222,9 +217,9 @@ function servedCorpusRows() {
 }
 
 function resolveCatchupPlan() {
-  const rawFrom = arg('from');
-  const today = String(arg('today') || todayUtc());
-  const lookbackDays = Number(arg('lookback-days') || DEFAULT_LOOKBACK_DAYS);
+  const rawFrom = cli.from;
+  const today = String(cli.today || todayUtc());
+  const lookbackDays = Number(cli['lookback-days'] || DEFAULT_LOOKBACK_DAYS);
   const maxLoadedDate = latestLoadedDate();
   if (!maxLoadedDate) {
     // No watermark. That reads as „nothing is loaded" — and for a first run it IS, so the full backfill
@@ -267,21 +262,21 @@ function resolveCatchupPlan() {
       );
     }
     const from = String(explicitFrom || DEFAULT_FROM);
-    const to = String(arg('to') || today);
+    const to = String(cli.to || today);
     // Honour an explicit --derive here too. This branch defaults to `full` because its default window
     // starts at the feed's beginning — but the refusal above sends an operator here WITH a --from, and a
     // narrow window forced to a full derive is exactly the combination assertDeriveWindowSafe refuses.
     // Hardcoding `full` made the advertised recovery unusable: the plan printed fine and the live run
     // then refused it. So the recovery `--from=… --derive=slice` has to reach the dispatcher intact.
-    const requestedDerive = arg('derive');
+    const requestedDerive = cli.derive;
     const derive = requestedDerive && requestedDerive !== true ? String(requestedDerive) : 'full';
     return { from, to, maxLoadedDate, gapDays: daysInWindow(from, to), derive };
   }
   const window = computeCatchupWindow({ maxLoadedDate, today, lookbackDays });
-  const from = String(arg('from') || window.from);
-  const to = String(arg('to') || window.to);
+  const from = String(cli.from || window.from);
+  const to = String(cli.to || window.to);
   const gapDays = daysInWindow(from, to);
-  const requestedDerive = arg('derive');
+  const requestedDerive = cli.derive;
   // The catch-up window is gap-aware, so it only ever covers the tail of the feed. A full derive
   // rebuilds `contracts` from staging (normalize-raw.sql opens with DELETE FROM contracts), which
   // would drop every contract older than the window — so catch-up always derives a slice, however
@@ -393,7 +388,7 @@ function runRefreshSliceBatches() {
 }
 
 async function runWorkBackfill() {
-  const rawWorkDb = arg('work-db');
+  const rawWorkDb = cli['work-db'];
   const workDb =
     rawWorkDb === true
       ? resolve(root, 'data/work/backfill.sqlite')
@@ -472,10 +467,15 @@ async function runWorkBackfill() {
   // contract-level invariants and the staging→domain reconciliation before shipping.
   await assertIntegrity((sql) => sqliteJson(workDb, sql), { label: 'work backfill (sqlite)' });
 
+  // The slot rebuild ships the whole snapshot itself, after the registry and the declarations.
+  if (cli['no-ship']) {
+    console.log('\n==> work import complete (not shipped).');
+    return;
+  }
   const shipArgs = ['scripts/ship-domain.mjs', `--work-db=${workDb}`];
   if (remote) shipArgs.push('--remote', '--yes');
-  if (arg('replace')) shipArgs.push('--replace');
-  if (arg('allow-shrink')) shipArgs.push('--allow-shrink');
+  if (cli.replace) shipArgs.push('--replace');
+  if (cli['allow-shrink']) shipArgs.push('--allow-shrink');
   if (persistTo) shipArgs.push(`--persist-to=${persistTo}`);
   run('node', shipArgs);
   console.log('\n==> work import complete.');
@@ -510,7 +510,7 @@ if (reset) {
   }
 }
 
-if (arg('work-db') !== undefined) {
+if (cli['work-db'] !== undefined) {
   await runWorkBackfill();
   process.exit(0);
 }
@@ -521,10 +521,10 @@ execSqlStatements(dropTransientStagingStatements(), 'drop-stale-transient-stagin
 // Must precede resolveCatchupPlan(): latestLoadedDate() reads raw_contracts, which lives here.
 execSql(resolve(root, 'scripts/work-staging-schema.sql'));
 
-let deriveMode = String(arg('derive') || 'full');
+let deriveMode = String(cli.derive || 'full');
 let loadFlags = explicitRangeFlags();
 // Mirrors load-eop.mjs, which also falls back to DEFAULT_FROM when no --from is given.
-let windowFrom = String(arg('from') || DEFAULT_FROM);
+let windowFrom = String(cli.from || DEFAULT_FROM);
 if (catchup) {
   const plan = resolveCatchupPlan();
   deriveMode = plan.derive;

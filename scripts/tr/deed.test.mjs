@@ -43,7 +43,7 @@ const role = (field, name, over = {}) => ({
 test('only a natural person standing in a role the ladder reads is a holder', () => {
   const f = registryFacts(deedRow(), [
     role('00190', 'ИВАН ПЕТРОВ ТЕСТОВ'),
-    role('00190', 'ГЕОРГИ ДИМИТРОВ ПЕТКОВ', { removed_on: '2019-01-01' }), // ended
+    role('00190', 'ГЕОРГИ ДИМИТРОВ ТЕСТОВ', { removed_on: '2019-01-01' }), // ended
     role('00190', 'ХОЛДИНГ АД', { subject_kind: 'entity' }), // a company
     role('00100', 'ПРЕДСТАВИТЕЛ ЕДИН ДРУГ'), // a field the ladder does not read
     role('05500', 'ДЕЙСТВИТЕЛЕН СОБСТВЕНИК ТУК'), // an actual owner

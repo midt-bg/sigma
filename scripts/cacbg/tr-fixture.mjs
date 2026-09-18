@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { openCache, upsertDeed, markOutsideTr, readDeed } from '../tr/cache.mjs';
 import { readLinksFile, decideLinks } from '../tr/decide.mjs';
 import { registryFacts } from '../tr/deed.mjs';
+import { IDENTITY_RULES_VERSION } from './registry-identity.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -69,7 +70,7 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
   if (!fs.existsSync(manifest))
     fs.writeFileSync(
       manifest,
-      JSON.stringify({ schemaVersion: 8, identityRules: 'registry-identity-3' }),
+      JSON.stringify({ schemaVersion: 8, identityRules: IDENTITY_RULES_VERSION }),
     );
   const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
   const groupsFile = path.join(staging, 'source-groups.jsonl');
@@ -80,7 +81,7 @@ export function emitLinkRecords({ workDb, staging, trDb }) {
       manifest,
       JSON.stringify({
         ...m,
-        identityRules: 'registry-identity-3',
+        identityRules: IDENTITY_RULES_VERSION,
         filingsHash: createHash('sha256')
           .update(fs.readFileSync(path.join(staging, 'filings.jsonl')))
           .digest('hex'),
@@ -117,6 +118,7 @@ export function fixtureRegistry(
   eik,
   {
     owners = [],
+    pastOwners = [],
     managers = [],
     seat = null,
     seatEntryDate = null,
@@ -126,13 +128,13 @@ export function fixtureRegistry(
   } = {},
 ) {
   const code = typeof form === 'number' ? (FORM[form] ?? `CODE${form}`) : form;
-  const holder = (field, name) => ({
+  const holder = (field, name, removedOn = null) => ({
     field_ident: field,
     subject_kind: 'person',
     subject_name: name,
     entry_number: '20110502101007',
     added_on: ownEntryDate,
-    removed_on: null,
+    removed_on: removedOn,
   });
   return registryFacts(
     {
@@ -143,7 +145,11 @@ export function fixtureRegistry(
       seat_entry_on: seat ? (seatEntryDate ?? ownEntryDate) : null,
       owners_entry_on: owners.length ? ownEntryDate : null,
     },
-    [...owners.map((n) => holder('00190', n)), ...managers.map((n) => holder('00070', n))],
+    [
+      ...owners.map((n) => holder('00190', n)),
+      ...pastOwners.map((n) => holder('00190', n, '2020-06-30')),
+      ...managers.map((n) => holder('00070', n)),
+    ],
   );
 }
 

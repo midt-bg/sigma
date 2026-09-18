@@ -56,10 +56,15 @@ export function registryFacts(deed, roles) {
         String(a.entryDate).localeCompare(String(b.entryDate)) ||
         a.name.localeCompare(b.name),
     );
-  // Preserve ended roles separately: they can corroborate a historical declaration,
-  // but must never answer the independent question of who is registered now.
+  // Roles not standing now — ended, or of an end the register leaves unclear (`endedOn` null). They show
+  // who was in the company, and must never answer the independent question of who is registered now.
   const endedHolders = roles
-    .filter((r) => read.has(r.field_ident) && r.subject_kind === 'person' && r.removed_on != null)
+    .filter(
+      (r) =>
+        read.has(r.field_ident) &&
+        r.subject_kind === 'person' &&
+        (r.removed_on != null || r.uncertain_after),
+    )
     .map((r) => ({
       field: String(r.field_ident),
       name: String(r.subject_name ?? ''),

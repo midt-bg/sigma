@@ -2,13 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { registryIdentityResolver, mixedScriptCompanyKey } from './registry-identity.mjs';
+import {
+  registryIdentityResolver,
+  mixedScriptCompanyKey,
+  identityInputsDigest,
+} from './registry-identity.mjs';
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE registry_deeds(eik,name,legal_form,seat_settlement,outcome);
     CREATE TABLE registry_roles(eik,subject_id,subject_name,entry_number,subject_kind,role);
-    INSERT INTO registry_deeds VALUES('123456789','А ДЕЙТА ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
+    INSERT INTO registry_deeds VALUES('123456789','А ТЕСТ ПРО','OOD','София','ok'),('987654321','ДРУГА ФИРМА','OOD','Пловдив','ok');`);
   db.exec(
     readFileSync(
       new URL(
@@ -42,7 +46,7 @@ function fixture() {
   const doc = {
     declarant: name,
     interests: [
-      { entity: 'А Дейта Про ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
+      { entity: 'А Тест Про ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
     ],
   };
   return { db, add, name, alias, doc };
@@ -111,9 +115,12 @@ test('historic forms resolve only through observed name/form pairs on the same E
     );
     db.exec("UPDATE registry_deeds SET legal_form='EOOD' WHERE eik='123456789'");
     add('123456789', 'a'.repeat(64), name);
-    assert.equal(registryIdentityResolver(db)(doc, [name]).evidence.length, 0);
+    // Without the history the other form is only a stem match, which names the company because the
+    // declarant stands in it.
+    const method = () => registryIdentityResolver(db)(doc, [name]).companies[0]?.method;
+    assert.equal(method(), 'registry_name_stem');
     const historic = {
-      name: 'А Дейта Про',
+      name: 'А Тест Про',
       legalForm: 'ООД',
       from: '2010-01-01T12:00:00',
       until: '2020-01-01T12:00:00',
@@ -132,7 +139,7 @@ test('historic forms resolve only through observed name/form pairs on the same E
       'c'.repeat(64),
       '2026-01-01',
     );
-    for (const entity of ['А Дейта Про ООД', 'А Дейта Про ООД, ЕИК 123456789']) {
+    for (const entity of ['А Тест Про ООД', 'А Тест Про ООД, ЕИК 123456789']) {
       const r = registryIdentityResolver(db)(
         { ...doc, interests: [{ ...doc.interests[0], entity }] },
         [name],
@@ -143,17 +150,37 @@ test('historic forms resolve only through observed name/form pairs on the same E
     }
     db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('d'.repeat(64));
     assert.equal(
-      registryIdentityResolver(db)(doc, [name]).evidence.length,
-      0,
+      method(),
+      'registry_name_stem',
       'history from a superseded snapshot is not current evidence',
     );
     db.prepare('UPDATE registry_identity_snapshots SET source_hash=?').run('c'.repeat(64));
-    db.exec("UPDATE registry_deeds SET name='А ДЕЙТА ПРО', legal_form='OOD' WHERE eik='987654321'");
+    db.exec("UPDATE registry_deeds SET name='А ТЕСТ ПРО', legal_form='OOD' WHERE eik='987654321'");
     assert.equal(
       registryIdentityResolver(db)(doc, [name]).evidence.length,
       0,
       'another EIK carrying this full name is ambiguous',
     );
+  } finally {
+    db.close();
+  }
+});
+
+test('a stem match needs the declarant in the partida; the seat plays no part', () => {
+  const { db, add, name, doc } = fixture();
+  try {
+    const stem = { ...doc, interests: [{ ...doc.interests[0], entity: '„А-Тест Про“ ЕООД' }] };
+    add('123456789', 'b'.repeat(64), 'Друга Петрова Тестова');
+    assert.deepEqual(registryIdentityResolver(db)(stem, [name]).companies, []);
+    add('123456789', 'a'.repeat(64), name);
+    for (const seat of ['София', 'Варна', '']) {
+      const declared = { ...stem, interests: [{ ...stem.interests[0], seat }] };
+      const found = registryIdentityResolver(db)(declared, [name]);
+      assert.equal(found.companies[0].method, 'registry_name_stem', seat);
+      assert.equal(found.evidence[0].registryIndent, 'a'.repeat(64), seat);
+    }
+    const related = { ...stem, interests: [{ ...stem.interests[0], holderRelation: 'related' }] };
+    assert.deepEqual(registryIdentityResolver(db)(related, [name]).companies, []);
   } finally {
     db.close();
   }
@@ -211,4 +238,42 @@ test('visual comparison retains phonetic spellings, punctuation, forms and purel
   } finally {
     db.close();
   }
+});
+
+test('the identity input digest follows the facts, not the physical row order', () => {
+  const rows = [
+    ['123456789', 'a'.repeat(64), 'Ивана Петрова Тестова', '1'],
+    ['987654321', 'b'.repeat(64), 'Иван Петров Тестов', '2'],
+  ];
+  const seed = (order) => {
+    const { db } = fixture();
+    const insert = db.prepare(
+      'INSERT INTO registry_identity_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    );
+    for (const [eik, id, name, entry] of order)
+      insert.run(
+        eik,
+        '1',
+        '00190',
+        entry,
+        '2019-01-01',
+        0,
+        id,
+        'EGN',
+        name,
+        name,
+        'person',
+        'f'.repeat(64),
+        '2026-01-01',
+      );
+    return db;
+  };
+  const a = seed(rows);
+  const b = seed([...rows].reverse());
+  const before = identityInputsDigest(a);
+  assert.equal(before, identityInputsDigest(b));
+  b.exec("UPDATE registry_deeds SET name='ДРУГО ИМЕ' WHERE eik='987654321'");
+  assert.notEqual(before, identityInputsDigest(b));
+  a.close();
+  b.close();
 });

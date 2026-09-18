@@ -25,10 +25,42 @@ const env = {
   CACBG_STAGING: staging,
   TR_CACHE_DB: join(work, 'verdicts.sqlite'),
 };
+// The container is stopped with a signal to its whole process group. `execFileSync` blocks the event
+// loop, so without a handler Node's default disposition would kill this process before the stage that
+// is doing the work can accept what it has and exit 75. The handler is deliberately empty: the stage
+// below gets the same signal and its exit code carries the decision up.
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {});
+
 let stage = 'fetch';
 const setStage = (next) => {
   stage = next;
   progress(stage, 0, undefined, true);
+};
+// A slot rebuild runs the job in two halves: `--until candidates` writes the companies the declarations
+// name, the register is read for them, and `--from decide` finishes against the fuller register. Both
+// halves share one work directory, so the second one keeps the snapshot and the extraction of the first.
+const ORDER = [
+  'fetch',
+  'snapshot',
+  'extract',
+  'candidates',
+  'decide',
+  'load',
+  'audit',
+  'publish',
+  'reindex',
+];
+const bound = (name, fallback) => {
+  const given = value(name) ?? fallback;
+  if (!ORDER.includes(given)) throw Error(`--${name} takes one of: ${ORDER.join(', ')}`);
+  return ORDER.indexOf(given);
+};
+const first = bound('from', 'fetch');
+const last = bound('until', 'reindex');
+if (first > last) throw Error('--from comes after --until');
+const doing = (name) => {
+  const at = ORDER.indexOf(name);
+  return at >= first && at <= last;
 };
 const run = (script, args = []) => {
   try {
@@ -74,7 +106,12 @@ if (remote) {
   copyFileSync('apps/web/wrangler.deploy.jsonc', 'apps/web/wrangler.jsonc');
 }
 const r2 = flag('r2');
-if (r2 && (!remote || env.CACBG_CORPUS_URL !== 'http://declarations.r2' || !env.SIGMA_RUN_ID))
+// A slot rebuild (ADR-0048) reads the corpus from R2 but publishes nothing itself.
+const rebuild = env.SIGMA_REBUILD === '1';
+if (
+  r2 &&
+  ((!remote && !rebuild) || env.CACBG_CORPUS_URL !== 'http://declarations.r2' || !env.SIGMA_RUN_ID)
+)
   throw Error('R2 requires a logical run ID and the private Container corpus binding');
 const corpus = corpusStore(raw);
 let sourceStamp;
@@ -94,11 +131,14 @@ if (r2) {
   )
     sourceStamp = stamp;
 }
-if (!sourceStamp && !flag('skip-fetch')) {
+if (doing('fetch') && !sourceStamp && !flag('skip-fetch')) {
   setStage('fetch');
   run(
     'scripts/cacbg/fetch.mjs',
-    r2 ? ['--deadline-minutes', '60', '--yield-on-deadline'] : ['--deadline-minutes', '180'],
+    // A rebuild cannot yield: its container holds the whole build, so the fetch runs to the end.
+    r2 && !rebuild
+      ? ['--deadline-minutes', '60', '--yield-on-deadline']
+      : ['--deadline-minutes', rebuild ? '600' : '180'],
   );
 }
 if (r2) {
@@ -106,8 +146,10 @@ if (r2) {
   if (!sourceStamp || JSON.parse(sourceStamp).runId !== env.SIGMA_RUN_ID)
     throw Error('No complete corpus for this logical run');
 }
-setStage('snapshot');
-if (remote) {
+if (doing('snapshot')) {
+  setStage('snapshot');
+}
+if (doing('snapshot') && remote) {
   for (const name of [
     '0003_related_persons_foundation',
     '0009_interest_link_evidence',
@@ -116,6 +158,7 @@ if (remote) {
     '0014_person_profile',
     '0015_person_observations',
     '0018_person_entities',
+    '0022_person_relatives',
   ])
     wrangler([
       'd1',
@@ -152,24 +195,16 @@ if (remote) {
       '--command',
       'ALTER TABLE registry_roles ADD COLUMN uncertain_after TEXT',
     ]);
-  wrangler([
-    'd1',
-    'execute',
-    d1,
-    '--remote',
-    '--yes',
-    '--file',
-    resolve('packages/db/migrations/0019_registry_scoped_birthdates.sql'),
-  ]);
-  wrangler([
-    'd1',
-    'execute',
-    d1,
-    '--remote',
-    '--yes',
-    '--file',
-    resolve('packages/db/migrations/0020_registry_company_history.sql'),
-  ]);
+  for (const name of ['0019_registry_scoped_birthdates', '0020_registry_company_history'])
+    wrangler([
+      'd1',
+      'execute',
+      d1,
+      '--remote',
+      '--yes',
+      '--file',
+      resolve(`packages/db/migrations/${name}.sql`),
+    ]);
   const tables = [
     ...new Set([
       'bidders',
@@ -223,9 +258,11 @@ if (remote) {
   localSource.prepare('VACUUM INTO ?').run(db);
   localSource.close();
 }
-setStage('extract');
-run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
-if (env.CACBG_COMPANY_CATALOG)
+if (doing('extract')) {
+  setStage('extract');
+  run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
+}
+if (doing('extract') && env.CACBG_COMPANY_CATALOG)
   run('scripts/cacbg/request-companies.mjs', [
     '--catalog',
     env.CACBG_COMPANY_CATALOG,
@@ -234,20 +271,28 @@ if (env.CACBG_COMPANY_CATALOG)
     '--staging',
     staging,
   ]);
-setStage('candidates');
-run('scripts/cacbg/load.mjs', ['--emit-candidates']);
-setStage('decide');
-run('scripts/tr/decide.mjs', [
-  '--links-file',
-  join(staging, 'candidate-links.jsonl'),
-  '--registry-db',
-  db,
-]);
-setStage('load');
-run('scripts/cacbg/load.mjs');
-setStage('audit');
-run('scripts/cacbg/audit.mjs');
-if (remote) {
+if (doing('candidates')) {
+  setStage('candidates');
+  run('scripts/cacbg/load.mjs', ['--emit-candidates']);
+}
+if (doing('decide')) {
+  setStage('decide');
+  run('scripts/tr/decide.mjs', [
+    '--links-file',
+    join(staging, 'candidate-links.jsonl'),
+    '--registry-db',
+    db,
+  ]);
+}
+if (doing('load')) {
+  setStage('load');
+  run('scripts/cacbg/load.mjs');
+}
+if (doing('audit')) {
+  setStage('audit');
+  run('scripts/cacbg/audit.mjs');
+}
+if (doing('publish') && remote) {
   setStage('publish');
   run('scripts/ship-related-persons.mjs', ['--work-db', db, '--remote', '--yes']);
   setStage('reindex');
@@ -300,6 +345,16 @@ if (remote) {
        WHERE status='published' AND interest_class IN ('private_ownership','family_ownership')
      )`,
   ]);
+  // Everyone else with a page, after the officials are final.
+  wrangler([
+    'd1',
+    'execute',
+    d1,
+    '--remote',
+    '--yes',
+    '--file',
+    resolve('scripts/person-search-index.sql'),
+  ]);
   if (r2) {
     const stamp = await corpus.get(CORPUS_STAMP);
     if (!stamp || digest(stamp) !== digest(sourceStamp))
@@ -318,12 +373,18 @@ if (remote) {
       ),
     );
   }
-} else run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
+} else if (doing('audit'))
+  run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
+// A half-run carries no receipt: only the stage that audited what it loaded may claim one.
 console.log(
-  JSON.stringify({
-    event: 'declarations_job_complete',
-    runId: env.SIGMA_RUN_ID ?? null,
-    audit: true,
-    published: remote,
-  }),
+  JSON.stringify(
+    doing('audit')
+      ? {
+          event: 'declarations_job_complete',
+          runId: env.SIGMA_RUN_ID ?? null,
+          audit: true,
+          published: doing('publish') && remote,
+        }
+      : { event: 'declarations_job_paused', runId: env.SIGMA_RUN_ID ?? null, stage },
+  ),
 );

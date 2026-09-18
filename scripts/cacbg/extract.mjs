@@ -18,6 +18,16 @@ import { safeFolder, safeXmlFile } from './guard.mjs';
 import { documentFingerprint, declarationAttribution } from './source-identity.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { declaredEiks } from './extract-companies.mjs';
+import {
+  checkpointFingerprint,
+  commitFolder,
+  concatParts,
+  partPath,
+  readHead,
+  restoreParts,
+  seenHashFrom,
+  STREAMS,
+} from './extract-checkpoint.mjs';
 
 // Overridable for tests, mirroring load.mjs's CACBG_DB/CACBG_STAGING. Defaults are the real scratch, so
 // production behaviour is unchanged when they are unset.
@@ -80,36 +90,57 @@ async function assertCorpusComplete(store) {
   );
 }
 
-export async function run({ store = corpusStore(RAW) } = {}) {
+// The platform asks a container to stop with SIGTERM and then waits. The answer is to accept the
+// current folder and exit 75 — the code the coordinator reads as an intentional yield and retries at
+// once. Without a handler Node would die mid-folder and the work of that folder would be lost.
+let yielding = false;
+export function requestYield() {
+  yielding = true;
+}
+
+export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infinity } = {}) {
   assertScratchIgnored();
   const stamp = await assertCorpusComplete(store);
   progress('extract');
   let processed = 0;
   fs.mkdirSync(STAGING, { recursive: true });
   let identify;
+  let identityRules = null;
+  let registryDigest = 'no-registry';
   if (process.env.CACBG_REGISTRY_DB) {
     await import('./register-ts.mjs');
-    const { registryIdentityResolver } = await import('./registry-identity.mjs');
+    const { registryIdentityResolver, IDENTITY_RULES_VERSION, identityInputsDigest } =
+      await import('./registry-identity.mjs');
+    identityRules = IDENTITY_RULES_VERSION;
     const registry = new DatabaseSync(path.resolve(process.env.CACBG_REGISTRY_DB), {
       readOnly: true,
     });
     try {
       identify = registryIdentityResolver(registry);
+      registryDigest = identityInputsDigest(registry);
     } finally {
       registry.close();
     }
   }
   // A failed rerun must not leave an old completion marker beside partial output.
   fs.rmSync(path.join(STAGING, 'manifest.json'), { force: true });
-  const holdingsOut = fs.createWriteStream(path.join(STAGING, 'holdings.jsonl'));
-  const relatedOut = fs.createWriteStream(path.join(STAGING, 'related.jsonl'));
-  // filings.jsonl — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
-  // The loader builds each person's latest-filing horizon from this to catch a divest-to-ZERO (B1, #226).
-  const filingsOut = fs.createWriteStream(path.join(STAGING, 'filings.jsonl'));
-  const groupsOut = fs.createWriteStream(path.join(STAGING, 'source-groups.jsonl'));
-  const requestsOut = fs.createWriteStream(path.join(STAGING, 'registry-requests.jsonl'));
-  const quarantineOut = fs.createWriteStream(path.join(STAGING, 'source-quarantine.jsonl'));
-  const stats = {
+  // Every folder writes its own six parts; the final files are the parts concatenated in folder order.
+  // That way an interrupted pass leaves whole folders behind, not half a file (see extract-checkpoint).
+  // filings — one record per DECLARATION (incl. empty / no-material ones that emit no holdings row).
+  // The loader builds each person's latest-filing horizon from it to catch a divest-to-ZERO (B1, #226).
+  const partsDir = path.join(STAGING, 'parts');
+  let holdingsOut, relatedOut, filingsOut, groupsOut, requestsOut, quarantineOut;
+  let parts = [];
+  const openParts = (folder) => {
+    parts = STREAMS.map((stream) => fs.createWriteStream(partPath(partsDir, folder, stream)));
+    [holdingsOut, relatedOut, filingsOut, groupsOut, requestsOut, quarantineOut] = parts;
+  };
+  const closeParts = async () => {
+    for (const stream of parts) stream.end();
+    await Promise.all(parts.map((stream) => finished(stream)));
+    parts = [];
+  };
+  let stats = {
     decls: 0,
     assets: 0,
     interests: 0,
@@ -124,7 +155,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
 
   // Deduplicate only identical source bytes; ControlHash is not a unique document ID.
   // Attribution is checked before deduplication, so a bad first listing cannot mask a valid copy.
-  const seenHash = new Map();
+  let seenHash = new Map();
   const folderRe = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
   const folders = store.remote
     ? stamp.inventory.map((entry) => safeFolder(entry.folder)).sort()
@@ -134,8 +165,45 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           .filter((f) => folderRe.test(f))
           .sort()
       : [];
+  // The checkpoint lives with the corpus and is bound to this logical run and to its inputs: the
+  // stamped corpus, the identity rules, the output schema, and the registry facts the resolver read.
+  const runId = process.env.SIGMA_RUN_ID;
+  const checkpointing = Boolean(store.remote && runId);
+  const fingerprint = checkpointFingerprint([
+    digest(Buffer.from(JSON.stringify(stamp?.inventory ?? []))),
+    identityRules ?? 'no-identity',
+    'schema-8',
+    registryDigest,
+  ]);
+  let head = { fingerprint, folders: [] };
+  fs.rmSync(partsDir, { recursive: true, force: true });
+  fs.mkdirSync(partsDir, { recursive: true });
+  if (checkpointing) {
+    const accepted = await readHead(store, runId, fingerprint);
+    if (accepted?.folders.length) {
+      // Restoring is progress too: without these reports the coordinator sees a silent container.
+      await restoreParts(store, {
+        runId,
+        fingerprint,
+        dir: partsDir,
+        head: accepted,
+        onFolder: (folder) => progress('extract', accepted.processed ?? 0, undefined, true),
+      });
+      head = accepted;
+      seenHash = seenHashFrom(partsDir, accepted.folders);
+      stats = accepted.stats ?? stats;
+      processed = accepted.processed ?? 0;
+      console.log(
+        `resumed after ${accepted.folders.length} folder(s): ${processed} declarations already read`,
+      );
+    }
+  }
+  const done = new Set(head.folders);
+  const order = [...head.folders];
+  let folderCount = 0;
   try {
     for (const folder of folders) {
+      if (done.has(folder)) continue;
       let index;
       const indexBytes = await store.get(`${folder}/.index.json`);
       if (store.remote) {
@@ -151,6 +219,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         continue;
       }
       if (index && digest(list) !== index.listHash) throw Error(`Corpus list changed: ${folder}`);
+      openParts(folder);
       // xmlFile → context (first listing wins; a person with multiple positions shares one filing)
       const ctx = new Map();
       const listedNames = new Map();
@@ -300,7 +369,16 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           stats.holdings++;
           stats.byKind[it.kind] = (stats.byKind[it.kind] ?? 0) + 1;
         }
-        for (const rp of d.relatedPersons) {
+        // A family stake's holder: internal only, so the register can confirm the relative (ADR-0044).
+        const stakeHolders = d.interests
+          .filter((it) => it.holderRelation === 'related' && it.holder)
+          .map((it) => ({
+            name: it.holder,
+            kind: 'stake_holder',
+            info: it.entity,
+            timing: it.timing,
+          }));
+        for (const rp of [...d.relatedPersons, ...stakeHolders]) {
           relatedOut.write(
             JSON.stringify({
               folder,
@@ -338,20 +416,30 @@ export async function run({ store = corpusStore(RAW) } = {}) {
         stats.sourceGroups = (stats.sourceGroups ?? 0) + 1;
       }
       console.log(`  ${folder}: ${n} declarations parsed`);
+      // The folder boundary is the only clean cut: its groups are written, and its input was pinned by
+      // the stamped index. Accept it, then stop if the platform asked us to.
+      await closeParts();
+      order.push(folder);
+      if (checkpointing)
+        head = await commitFolder(store, {
+          runId,
+          fingerprint,
+          dir: partsDir,
+          head,
+          folder,
+          stats,
+          processed,
+        });
+      if (++folderCount >= yieldAfterFolders || yielding) {
+        console.log(`yielding after ${folder}: ${processed} declarations read`);
+        return 75;
+      }
     }
   } finally {
-    holdingsOut.end();
-    relatedOut.end();
-    filingsOut.end();
-    quarantineOut.end();
-    requestsOut.end();
-    groupsOut.end();
-    await Promise.all(
-      [holdingsOut, relatedOut, filingsOut, quarantineOut, requestsOut, groupsOut].map((stream) =>
-        finished(stream),
-      ),
-    );
+    await closeParts();
   }
+  concatParts(partsDir, order, (stream) => path.join(STAGING, `${stream}.jsonl`));
+  fs.rmSync(partsDir, { recursive: true, force: true });
   fs.writeFileSync(
     path.join(STAGING, 'manifest.json'),
     JSON.stringify(
@@ -362,7 +450,7 @@ export async function run({ store = corpusStore(RAW) } = {}) {
           fs.readFileSync(path.join(STAGING, 'source-groups.jsonl')),
         ),
         corpusComplete: !process.argv.includes('--allow-partial-corpus'),
-        identityRules: identify ? 'registry-identity-3' : null,
+        identityRules,
         extractedAt: new Date().toISOString(),
         raw: store.remote ? 'r2:declarations/corpus-v2' : RAW,
         filings: stats.filings,
@@ -373,8 +461,17 @@ export async function run({ store = corpusStore(RAW) } = {}) {
   );
   console.log('\n=== extract summary ===');
   console.log(JSON.stringify(stats, null, 2));
+  return 0;
 }
 
 // Only run when invoked directly — importing the module (e.g. a future unit test of a pure helper) must
-// not trigger a real extraction pass over the raw cache. Matches the guard in fetch.mjs.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await run();
+// not trigger a real extraction pass over the raw cache. Matches the guard in fetch.mjs: run() returns
+// the exit code and it is assigned to process.exitCode, so stdout drains naturally.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, requestYield);
+  const after = process.argv.indexOf('--yield-after-folders');
+  const code = await run({
+    yieldAfterFolders: after > 0 ? Number(process.argv[after + 1]) : Infinity,
+  });
+  process.exitCode = code;
+}

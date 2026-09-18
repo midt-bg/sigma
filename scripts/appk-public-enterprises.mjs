@@ -1,0 +1,146 @@
+// The state public enterprises from the list the Public Enterprises and Control Agency publishes
+// (https://appk.government.bg/bg/162) → scripts/seed-state-owned.sql. Municipal and holding-owned companies
+// are derived from the Trade Register in the refresh (ADR-0047), so the list is the only curated input.
+//
+//   node scripts/appk-public-enterprises.mjs <list.pdf>
+//
+// Needs `pdftotext` (poppler-utils). The generated file is committed; re-run when the agency updates the list.
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+
+/**
+ * The list from `pdftotext -tsv` word boxes. Each enterprise is a row number at the left edge and an ЕИК at the
+ * right; a long name wraps above and below that line, so every line of name words belongs to the entry nearest
+ * to it on the page. A line starting further right, with neither, is a ministry heading.
+ */
+export function parseList(tsv) {
+  const words = tsv
+    .split('\n')
+    .slice(1)
+    .map((l) => l.split('\t'))
+    .filter((c) => c[0] === '5' && c[11] && !c[11].startsWith('###'))
+    .map((c) => ({ page: +c[1], left: +c[6], top: +c[7], text: c[11] }));
+  const date = words
+    .map((w) => w.text)
+    .join(' ')
+    .match(/ПУБЛИЧНИТЕ ПРЕДПРИЯТИЯ КЪМ (\d{2}\.\d{2}\.\d{4})/)?.[1];
+  const lines = [];
+  for (const w of words.sort((a, b) => a.page - b.page || a.top - b.top || a.left - b.left)) {
+    const line = lines.find((l) => l.page === w.page && Math.abs(l.top - w.top) < 3);
+    if (line) line.words.push(w);
+    else lines.push({ page: w.page, top: w.top, words: [w] });
+  }
+  const isEik = (w) => w.left > 350 && /^(\d{9}|\d{13})$/.test(w.text);
+  const isNumber = (w) => w.left < 80 && /^\d+$/.test(w.text);
+  const entries = [];
+  const names = [];
+  let principal = null;
+  for (const line of lines) {
+    const ws = line.words.sort((a, b) => a.left - b.left);
+    if (ws.some((w) => w.text === 'СПИСЪК')) continue;
+    const eik = ws.find(isEik);
+    const text = ws.filter((w) => !isEik(w) && !isNumber(w));
+    if (eik) {
+      entries.push({ eik: eik.text, page: line.page, top: line.top, principal, name: [] });
+      if (text.length) names.push({ page: line.page, top: line.top, text });
+    } else if (!ws.some(isNumber) && ws[0].left > 120) {
+      principal = ws.map((w) => w.text).join(' ');
+    } else if (text.length) names.push({ page: line.page, top: line.top, text });
+  }
+  for (const n of names) {
+    const near = entries
+      .filter((e) => e.page === n.page)
+      .sort((a, b) => Math.abs(a.top - n.top) - Math.abs(b.top - n.top))[0];
+    if (near) near.name.push(n);
+  }
+  const rows = entries.map((e) => ({
+    eik: e.eik,
+    principal: e.principal,
+    name: e.name
+      .sort((a, b) => a.top - b.top)
+      .flatMap((n) => n.text.map((w) => w.text))
+      .join(' '),
+  }));
+  if (rows.some((r) => !r.principal || !r.name))
+    throw new Error('An entry without a heading or name');
+  const seen = new Set();
+  return { date, rows: rows.filter((r) => !seen.has(r.eik) && seen.add(r.eik)) };
+}
+
+const sql = (s) => `'${s.replaceAll("'", "''")}'`;
+
+/**
+ * Public bodies NEITHER source reaches. The Agency's list carries public ENTERPRISES under the Public
+ * Enterprises Act, so a university, a BAN institute, a national broadcaster or a state agency is never
+ * on it; and ADR-0047's registry pass derives the rest from the Trade Register, which has no partida
+ * for a body created by law. Without them the site stops calling them public: their contracts read as
+ * an ordinary company's, and — the reason this list is not cosmetic — a declared MANAGEMENT role in one
+ * would surface as a PRIVATE interest in a state body, because `load.mjs` classifies „manages" plus an
+ * `ownership_kind` as ex-officio (never published) and only private and family ownership reach the
+ * public surface. Hand-kept and deliberately tiny: every entry is a body created by law or owned
+ * outright by a public body, and each one still wins public contracts today.
+ */
+export const PUBLIC_BODIES = [
+  ['000670634', 'state', 'Лесотехнически университет'],
+  ['000670919', 'state', 'Национален археологически институт с музей на БАН'],
+  ['000672343', 'state', 'Българско национално радио'],
+  ['000672350', 'state', 'Българска национална телевизия'],
+  ['000695089', 'state', 'Агенция „Пътна инфраструктура“'],
+  ['112107477', 'municipal', 'ВиК Белово ЕООД'],
+  ['129009105', 'state', 'Държавен авиационен оператор'],
+  ['130339616', 'state', 'Национална служба за съвети в земеделието'],
+  ['130800278', 'state', 'Печатница на Българска народна банка АД'],
+  ['131063188', 'state', 'Национална агенция за приходите'],
+  [
+    '175134459',
+    'state',
+    'Национален център за повишаване на квалификацията на педагогическите специалисти',
+  ],
+  ['175905823', 'state', 'Национален институт по геофизика, геодезия и география — БАН'],
+  ['176182033', 'municipal', 'Общинска фондация „Пловдив 2019“'],
+  ['202880940', 'state', 'Българска независима енергийна борса ЕАД'],
+];
+
+export function seedSql({ date, rows }) {
+  const out = [
+    '-- Sigma - state public enterprises, generated by scripts/appk-public-enterprises.mjs from the list the',
+    `-- Public Enterprises and Control Agency publishes (https://appk.government.bg/bg/162), as of ${date}.`,
+    '-- Do not edit by hand. Municipal and holding-owned companies come from the Trade Register (ADR-0047).',
+    '-- `ownership_kind`: state | municipal | mixed (the table keeps the wider vocabulary).',
+    '',
+    'CREATE TABLE IF NOT EXISTS state_owned_eik (',
+    '  eik TEXT PRIMARY KEY,',
+    "  ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal', 'mixed')),",
+    '  canonical_name TEXT NOT NULL',
+    ');',
+    '',
+    'DELETE FROM state_owned_eik;',
+    '',
+    'INSERT INTO state_owned_eik (eik, ownership_kind, canonical_name) VALUES',
+  ];
+  const values = [];
+  let principal = null;
+  for (const r of rows) {
+    if (r.principal !== principal) {
+      principal = r.principal;
+      values.push(`  -- ${principal}`);
+    }
+    values.push(`  (${sql(r.eik)}, 'state', ${sql(r.name)}),`);
+  }
+  values.push('  -- ПУБЛИЧНИ ОРГАНИ ИЗВЪН СПИСЪКА НА АППК (създадени със закон, без партида в ТР)');
+  for (const [eik, kind, name] of PUBLIC_BODIES)
+    values.push(`  (${sql(eik)}, '${kind}', ${sql(name)}),`);
+  const last = values.findLastIndex((v) => !v.trimStart().startsWith('--'));
+  values[last] = values[last].replace(/,$/, ';');
+  return [...out, ...values, ''].join('\n');
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const pdf = process.argv[2];
+  if (!pdf) throw new Error('usage: appk-public-enterprises.mjs <list.pdf>');
+  const list = parseList(execFileSync('pdftotext', ['-tsv', pdf, '-'], { encoding: 'utf8' }));
+  if (!list.date || list.rows.length < 100)
+    throw new Error(`Unexpected list: date ${list.date}, ${list.rows.length} rows`);
+  writeFileSync(new URL('./seed-state-owned.sql', import.meta.url), seedSql(list));
+  console.log(`${list.rows.length} enterprises as of ${list.date}`);
+}

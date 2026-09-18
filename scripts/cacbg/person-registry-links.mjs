@@ -1,8 +1,4 @@
 // Compatibility projection for existing reads. All decisions are made once by person-entities.mjs.
-import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
-import { resolve } from 'node:path';
-
 export function buildPersonRegistryLinks(db, _registry, now = new Date().toISOString()) {
   db.exec('BEGIN');
   try {
@@ -19,15 +15,5 @@ export function buildPersonRegistryLinks(db, _registry, now = new Date().toISOSt
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
-  }
-}
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const i = process.argv.indexOf('--db');
-  if (i < 0 || !process.argv[i + 1]) throw new Error('--db local file required');
-  const db = new DatabaseSync(resolve(process.argv[i + 1]));
-  try {
-    console.log(JSON.stringify(buildPersonRegistryLinks(db)));
-  } finally {
-    db.close();
   }
 }

@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { declarantNameKey } from './source-identity.mjs';
+import { personNamesAlike } from '../../packages/shared/src/person-identity.ts';
 import {
   registryIdentityRows,
   registryCompanyResolver,
   IDENTITY_RULES_VERSION,
 } from './registry-identity.mjs';
 import { declarationContinuity, COMPANY_AUTHOR_BASIS } from './declaration-continuity.mjs';
+import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export const declarationSourceId = (rec) => `cacbg:${rec.folder}:${rec.xmlFile}`;
@@ -78,14 +80,26 @@ export function rebuildPersonEntities(
   const companyNames = new Map();
   const observationByLocator = new Map();
   for (const r of observations) {
-    const key = `${r.eik}|${declarantNameKey(r.subject_name)}`;
-    if (!companyNames.has(key)) companyNames.set(key, new Set());
-    companyNames.get(key).add(r.subject_id);
+    const names = companyNames.get(r.eik) ?? new Map();
+    const key = declarantNameKey(r.subject_name);
+    names.set(key, (names.get(key) ?? new Set()).add(r.subject_id));
+    companyNames.set(r.eik, names);
     observationByLocator.set(
       JSON.stringify([r.eik, r.sub_uic, r.field_ident, r.entry_number, r.holder_index]),
       r,
     );
   }
+  // The identifiers a company registers under a name: the exact spelling, else its variants.
+  const namedIds = (eik, name) => {
+    const names = companyNames.get(eik);
+    const exact = names?.get(declarantNameKey(name));
+    if (exact) return exact;
+    return new Set(
+      [...(names ?? [])]
+        .filter(([registered]) => personNamesAlike(name, registered))
+        .flatMap(([, ids]) => [...ids]),
+    );
+  };
   const previous = new Map(
     db
       .prepare('SELECT id,entity_id FROM person_sources')
@@ -104,6 +118,8 @@ export function rebuildPersonEntities(
     revoked: 0,
     continuityAccepted: 0,
     continuityCandidates: 0,
+    guidAccepted: 0,
+    guidCandidates: 0,
   };
   db.exec('BEGIN');
   try {
@@ -158,7 +174,8 @@ export function rebuildPersonEntities(
           !row ||
           row.source_hash !== o.sourceHash ||
           row.subject_id !== p.registryIndent ||
-          declarantNameKey(row.subject_name) !== declarantNameKey(f.person)
+          (declarantNameKey(row.subject_name) !== declarantNameKey(f.person) &&
+            !personNamesAlike(row.subject_name, f.person))
         )
           throw new Error(`Identity proof no longer matches its source: ${id}`);
         // The listing and XML must be the same person, including independently evidenced name changes.
@@ -171,7 +188,7 @@ export function rebuildPersonEntities(
               new Set(proofs.map((p) => p.registryIndent)).size !== 1 ||
               !proofs.some((candidate) =>
                 [f.person, ...p.listedNames].every((alias) => {
-                  const ids = companyNames.get(`${candidate.eik}|${declarantNameKey(alias)}`);
+                  const ids = namedIds(candidate.eik, alias);
                   return ids?.size === 1 && ids.has(p.registryIndent);
                 }),
               )
@@ -267,7 +284,11 @@ export function rebuildPersonEntities(
         "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND origin='automatic'",
       )
       .all();
-    const proposed = declarationContinuity(filings, registryCompanyResolver(registry));
+    // The register's own declarant identifier establishes an author like a verified company does.
+    const proposed = [
+      ...declarantGuidEvidence(filings),
+      ...declarationContinuity(filings, registryCompanyResolver(registry)),
+    ];
     // Test the complete proposed graph, including every ambiguous registry candidate.
     // Reject all new edges in a conflicting component, preserving already proven anchors.
     const ambiguous = db
@@ -276,10 +297,10 @@ export function rebuildPersonEntities(
       )
       .all(IDENTITY_RULES_VERSION)
       .map((e) => ({ ...e, decision: 'accepted' }));
+    const authorEdge = (e) =>
+      e.rule_version === DECLARANT_GUID_RULE || JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS;
     const companySources = new Set(
-      proposed
-        .filter((e) => JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS)
-        .flatMap((e) => [e.left_source, e.right_source]),
+      proposed.filter(authorEdge).flatMap((e) => [e.left_source, e.right_source]),
     );
     const blocked = new Set(),
       supported = new Set(),
@@ -305,10 +326,11 @@ export function rebuildPersonEntities(
         e.facts,
         now,
       );
-      stats[conflict ? 'continuityCandidates' : 'continuityAccepted']++;
+      const rule = e.rule_version === DECLARANT_GUID_RULE ? 'guid' : 'continuity';
+      stats[`${rule}${conflict ? 'Candidates' : 'Accepted'}`]++;
       if (!conflict) {
         evidence.push(e);
-        if (JSON.parse(e.facts).basis === COMPANY_AUTHOR_BASIS) {
+        if (authorEdge(e)) {
           companyAuthors.add(e.left_source);
           companyAuthors.add(e.right_source);
         }

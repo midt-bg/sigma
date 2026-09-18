@@ -425,6 +425,42 @@ test('exact observation hash and holder locator are revalidated before assignmen
     db.close();
   }
 });
+test('a declarant under a variant of the registered name keeps the proof; another person does not', () => {
+  const { db, filing, add, a } = fixture();
+  try {
+    db.exec('DELETE FROM registry_identity_observations');
+    add(a, 'Мария Георгиева Тестова');
+    const married = filing('1.xml', 'Мария Георгиева Тестова-Петрова');
+    assert.equal(married.identityEvidence[0].registryIndent, a);
+    assert.equal(rebuildPersonEntities(db, db, [married], legacy).stats.resolved, 1);
+    // A typo in the document, with the listing spelling the registered name, is the same person.
+    const doc = {
+      declarant: 'Мария Георгиева Тестува',
+      interests: [
+        { entity: 'Тест информация ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
+      ],
+    };
+    const identity = registryIdentityResolver(db)(doc, ['Мария Георгиева Тестова']);
+    assert.equal(identity.attribution, 'registry_alias');
+    const typo = {
+      folder: '2025',
+      xmlFile: '2.xml',
+      person: doc.declarant,
+      sourceHash: 'e'.repeat(64),
+      identityEvidence: identity.evidence,
+    };
+    assert.equal(rebuildPersonEntities(db, db, [married, typo], legacy).stats.resolved, 2);
+    // The same proof presented for a document by a different person is refused.
+    const other = { ...married, person: 'Мария Иванова Тестова' };
+    other.identityEvidence = married.identityEvidence.map((p) => ({
+      ...p,
+      documentName: other.person,
+    }));
+    assert.throws(() => rebuildPersonEntities(db, db, [other], legacy), /no longer matches/);
+  } finally {
+    db.close();
+  }
+});
 test('automatic evidence connects only its scoped sources and an explicit difference blocks the component', () => {
   const sources = ['one', 'two', 'professional'].map((id) => ({
     id,
@@ -584,6 +620,70 @@ test('conflicting identities in one listing group are quarantined, including amb
     ]);
     assert.equal(components.length, 4);
     assert.ok(components.every((c) => c.conflict));
+  } finally {
+    db.close();
+  }
+});
+
+test('the declarant identifier joins documents across offices and yields to two registry identities', () => {
+  const { db, filing, name, a, b } = fixture();
+  try {
+    const guid = '0008C66A-3C73-47DF-9135-A095CAC6EA07';
+    const first = { ...filing(`${guid}1.xml`), identityEvidence: [], folder: '2024', year: 2024 };
+    const second = { ...first, xmlFile: `${guid}2.xml`, folder: '2025', work: 'Друга институция' };
+    const stranger = { ...first, xmlFile: 'other.xml', person: 'Георги Иванов Примеров' };
+    const r = rebuildPersonEntities(db, db, [first, second, stranger], legacy);
+    const id = r.assignments.get(declarationSourceId(first));
+    assert.match(id, /^person:identity:/);
+    assert.equal(r.assignments.get(declarationSourceId(second)), id);
+    assert.equal(r.assignments.get(declarationSourceId(stranger)), legacy(stranger));
+    assert.equal(r.stats.guidAccepted, 1);
+    assert.equal(
+      db.prepare('SELECT registry_indent FROM person_entities WHERE id=?').get(id).registry_indent,
+      null,
+    );
+    // The same GUID under two proven registry identities never merges them; each keeps its anchor.
+    db.exec(`INSERT INTO registry_deeds VALUES('987654321','ДРУГА ФИРМА','OOD','София','ok')`);
+    db.prepare('INSERT INTO registry_identity_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+      '987654321',
+      '1',
+      '00190',
+      '20190101120000',
+      '2019-01-01',
+      0,
+      b,
+      'EGN',
+      name,
+      name,
+      'person',
+      'f'.repeat(64),
+      '2026-01-01',
+    );
+    const anchoredA = { ...filing(`${guid}1.xml`), folder: '2024', year: 2024 };
+    const anchoredB = {
+      ...anchoredA,
+      xmlFile: `${guid}2.xml`,
+      folder: '2025',
+      identityEvidence: registryIdentityResolver(db)(
+        {
+          declarant: name,
+          interests: [
+            { entity: 'Друга фирма ООД', kind: 'shares', holderRelation: 'self', seat: 'София' },
+          ],
+        },
+        [name],
+      ).evidence,
+    };
+    const split = rebuildPersonEntities(db, db, [anchoredA, anchoredB], legacy);
+    assert.equal(split.stats.resolved, 2);
+    assert.equal(split.stats.guidCandidates, 1);
+    const indents = [anchoredA, anchoredB].map(
+      (f) =>
+        db
+          .prepare('SELECT registry_indent FROM person_entities WHERE id=?')
+          .get(split.assignments.get(declarationSourceId(f))).registry_indent,
+    );
+    assert.deepEqual(indents, [a, b]);
   } finally {
     db.close();
   }

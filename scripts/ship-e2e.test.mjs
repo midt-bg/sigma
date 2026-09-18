@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -77,6 +78,7 @@ CREATE TABLE authorities(id TEXT PRIMARY KEY);
 .read ${resolve(ROOT, 'packages/db/migrations/0013_registry.sql')}
 .read ${resolve(ROOT, 'packages/db/migrations/0017_registry_identity_observations.sql')}
 .read ${resolve(ROOT, 'packages/db/migrations/0018_person_entities.sql')}
+.read ${resolve(ROOT, 'packages/db/migrations/0022_person_relatives.sql')}
 INSERT INTO bidders(id) VALUES('eik:1');
 INSERT INTO authorities(id) VALUES('auth:1');`;
 
@@ -132,7 +134,8 @@ function fakeWrangler(dir) {
   const target = join(dir, 'target.sqlite');
   // Seeded with STALE rows on purpose: against an empty target a wipe that deletes nothing is
   // indistinguishable from a correct one, and that mutation escaped the first cut of this test.
-  sqlite(target, SCHEMA + STALE);
+  // Only on the first fake in a directory: a test that ships twice keeps the same served target.
+  if (!existsSync(target)) sqlite(target, SCHEMA + STALE);
   const exe = join(bin, 'wrangler');
   writeFileSync(
     exe,
@@ -152,7 +155,7 @@ try {
     const skip = process.env.SHIP_FAKE_SKIP;
     if (!skip || !file.endsWith(skip)) run('.read ' + file);
   } else if (command) {
-    if (process.env.SHIP_FAKE_READFAIL) { process.stderr.write('read-back exploded'); process.exit(1); }
+    if (process.env.SHIP_FAKE_READFAIL && /COUNT\\(\\*\\)/.test(command)) { process.stderr.write('read-back exploded'); process.exit(1); }
     const rows = JSON.parse(run('.mode json\\n' + command) || '[]');
     const shaped = process.env.SHIP_FAKE_NULLN
       ? rows.map((r) => (r.t === process.env.SHIP_FAKE_NULLN ? { ...r, n: null } : r))
@@ -255,8 +258,9 @@ test('a real ship run leaves the target holding exactly what the work DB held', 
   }
 
   const applies = calls.filter((c) => c.file);
-  assert.equal(applies[0].file, 'prepare_persons.sql');
-  assert.equal(applies.at(-1).file, 'cleanup_publish.sql');
+  assert.equal(applies[0].file, 'clear_staging.sql');
+  assert.equal(applies[1].file, 'prepare_persons.sql');
+  assert.equal(applies.at(-1).file, 'publish.sql');
 
   // Chunking: a table past the batch budget must arrive as several CONTIGUOUSLY numbered requests.
   const nums = applies
@@ -399,7 +403,7 @@ test('a read-back that cannot answer at all fails the run', (t) => {
   assert.match(res.stderr, /no answer/);
 });
 
-test('--emit writes ordered staging and atomic promotion SQL without touching a database', (t) => {
+test('--emit writes ordered staging and swap SQL without touching a database', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-emit-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const out = join(dir, 'emitted');
@@ -408,10 +412,12 @@ test('--emit writes ordered staging and atomic promotion SQL without touching a 
   assert.ok(noWrites(fake), '--emit must not touch a database');
   const files = readdirSync(out).sort();
   const sql = files.map((f) => readFileSync(join(out, f), 'utf8')).join('\n');
-  assert.match(files[0], /prepare_persons/);
-  assert.match(sql, /CREATE TRIGGER/);
-  assert.match(sql, /INSERT OR REPLACE INTO rp_publish/);
-  for (const table of TABLES) assert.match(sql, new RegExp(`DELETE FROM "${table}"`));
+  assert.match(files[0], /clear_staging/);
+  assert.match(files[1], /prepare_persons/);
+  for (const table of TABLES) {
+    assert.match(sql, new RegExp(`ALTER TABLE "${table}" RENAME TO "rp_prev_${table}"`));
+    assert.match(sql, new RegExp(`ALTER TABLE "rp_next_${table}" RENAME TO "${table}"`));
+  }
   // The artifact is also executable in its documented filename order.
   sqlite(fake.target, 'PRAGMA foreign_keys=ON;\n' + sql);
   for (const table of TABLES)
@@ -422,4 +428,43 @@ test('--emit writes ordered staging and atomic promotion SQL without touching a 
         : (EXPECTED_ROWS[table] ?? 0),
       table,
     );
+});
+
+test('a published generation is recognised, so a restarted container does not ship it twice', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ship-e2e-receipt-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const run = { SIGMA_RUN_ID: '00000000-0000-4000-8000-00000000abcd' };
+  // The fake target lives in `dir` and must survive all three ships; the work DB is rebuilt each time.
+  const ship = (env) => {
+    rmSync(join(dir, 'work.sqlite'), { force: true });
+    rmSync(join(dir, 'calls.jsonl'), { force: true }); // each ship's own requests, nothing carried over
+    return runShip(dir, { env });
+  };
+
+  const first = ship(run);
+  assert.equal(first.res.status, 0, `ship failed:\n${first.res.stderr}`);
+  assert.equal(
+    sqlite(first.fake.target, 'SELECT run_id FROM rp_generation;').toString().trim(),
+    run.SIGMA_RUN_ID,
+  );
+
+  // Same run, same target: nothing is sent and the served surface is untouched.
+  const again = ship(run);
+  assert.equal(again.res.status, 0, `second ship failed:\n${again.res.stderr}`);
+  assert.equal(
+    again.fake.calls().filter((c) => c.file).length,
+    0,
+    'a published generation must not be shipped again',
+  );
+  assert.match(again.res.stdout, /already published/);
+
+  // A different run ships normally, and the receipt moves to it.
+  const next = ship({ SIGMA_RUN_ID: '00000000-0000-4000-8000-00000000dcba' });
+  assert.equal(next.res.status, 0, `third ship failed:\n${next.res.stderr}`);
+  assert.ok(next.fake.calls().filter((c) => c.file).length > 0);
+  assert.equal(
+    Number(sqlite(next.fake.target, 'SELECT count(*) FROM rp_generation;')),
+    1,
+    'exactly one generation is on record',
+  );
 });

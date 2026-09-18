@@ -6,8 +6,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { assertIntegrity } from './integrity-checks.mjs';
-import { assertD1TargetAuthorized, resolveD1Name } from './ship-related-persons.mjs';
+import {
+  assertD1TargetAuthorized,
+  insertStatements,
+  resolveD1Name,
+  sqlIdent,
+} from './ship-related-persons.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = resolve(root, 'apps/web');
@@ -24,26 +30,20 @@ const TABLES = [
   'nuts_regions',
   'data_freshness',
 ];
-const MAX_BATCH_BYTES = 90_000;
 const MAX_BATCH_ROWS = 400;
 const MAX_FILE_BYTES = Number(process.env.SHIP_MAX_FILE_BYTES) || 64 * 1024 * 1024;
 
-function arg(name) {
-  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
-  if (!hit) return undefined;
-  const eq = hit.indexOf('=');
-  return eq === -1 ? true : hit.slice(eq + 1);
-}
+const { values: cli } = parseArgs({ strict: false, allowPositionals: true });
 
-const workDb = arg('work-db') || arg('source');
+const workDb = cli['work-db'] || cli.source;
 if (!workDb || workDb === true) throw new Error('ship-domain requires --work-db=<path>');
-const remote = !!arg('remote');
+const remote = !!cli.remote;
 const d1Name = resolveD1Name({ remote, envName: process.env.SIGMA_D1_NAME });
-if (remote && !arg('yes')) throw new Error('--remote requires --yes');
-const replaceRemote = !!arg('replace');
-const allowShrink = !!arg('allow-shrink');
-const persistTo = arg('persist-to');
-const outDir = resolve(root, String(arg('out-dir') || '/tmp/sigma-ship-domain'));
+if (remote && !cli.yes) throw new Error('--remote requires --yes');
+const replaceRemote = !!cli.replace;
+const allowShrink = !!cli['allow-shrink'];
+const persistTo = cli['persist-to'];
+const outDir = resolve(root, String(cli['out-dir'] || '/tmp/sigma-ship-domain'));
 
 function d1Args(extra) {
   const loc = remote ? '--remote' : '--local';
@@ -91,16 +91,6 @@ function d1Json(sql) {
 const sourceDb = new DatabaseSync(String(workDb), { readOnly: true });
 const sqliteJson = (sql) => sourceDb.prepare(sql).all();
 
-function sqlIdent(s) {
-  return `"${String(s).replaceAll('"', '""')}"`;
-}
-
-function sqlLiteral(v) {
-  if (v === null || v === undefined) return 'NULL';
-  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
-  return `'${String(v).replaceAll('\x00', '').replaceAll("'", "''")}'`;
-}
-
 function tableColumns(table) {
   return sqliteJson(`PRAGMA table_info(${sqlIdent(table)})`).map((r) => r.name);
 }
@@ -135,29 +125,6 @@ function applySqlChunks(label, statementSource) {
     fileSql += stmt;
   }
   flush();
-}
-
-function insertStatements(table, cols, rows) {
-  const prefix = `INSERT INTO ${sqlIdent(table)} (${cols.map(sqlIdent).join(', ')}) VALUES\n`;
-  const statements = [];
-  let batch = [];
-  let bytes = Buffer.byteLength(prefix) + 2;
-  const flush = () => {
-    if (!batch.length) return;
-    statements.push(prefix + batch.join(',\n') + ';\n');
-    batch = [];
-    bytes = Buffer.byteLength(prefix) + 2;
-  };
-  for (const row of rows) {
-    const tuple = `(${cols.map((c) => sqlLiteral(row[c])).join(',')})`;
-    const tupleBytes = Buffer.byteLength(tuple) + 2;
-    if (batch.length && (batch.length >= MAX_BATCH_ROWS || bytes + tupleBytes > MAX_BATCH_BYTES))
-      flush();
-    batch.push(tuple);
-    bytes += tupleBytes;
-  }
-  flush();
-  return statements;
 }
 
 console.log(`==> shipping ${workDb} to D1 ${remote ? 'remote' : 'local'}`);

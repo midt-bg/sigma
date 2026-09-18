@@ -53,7 +53,8 @@ function buildTrCache(owners) {
       eik in owners
         ? {
             registry: fixtureRegistry(eik, {
-              owners: [].concat(owners[eik]),
+              owners: [].concat(owners[eik].now ?? owners[eik]),
+              pastOwners: owners[eik].past ?? [],
               seat: 'София',
               form: 4,
               suffix: 'ЕООД',
@@ -75,15 +76,15 @@ before(() => {
 
   const db = new DatabaseSync(DB);
   db.exec(`
-    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT);
+    CREATE TABLE bidders(id TEXT PRIMARY KEY, name TEXT, eik_normalized TEXT, eik_valid INT, settlement TEXT, ownership_kind TEXT);
     CREATE TABLE authorities(id TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE tenders(id TEXT PRIMARY KEY, authority_id TEXT);
     CREATE TABLE contracts(id TEXT PRIMARY KEY, tender_id TEXT, bidder_id TEXT, signed_at TEXT, amount_eur REAL);
     INSERT INTO authorities VALUES ('auth:1','ВЕДОМСТВО ТЕСТ');
     INSERT INTO tenders VALUES ('t1','auth:1'),('t2','auth:1');
     -- Two distinctive single-ЕИК winners (number token + matching seat → published, no ambiguity).
-    INSERT INTO bidders VALUES ('eik:100000001','ДИВ ТЕХ 5 ЕООД','100000001',1,'София');
-    INSERT INTO bidders VALUES ('eik:200000002','ДРУГ ВИН 6 ЕООД','200000002',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:100000001','ДИВ ТЕХ 5 ЕООД','100000001',1,'София');
+    INSERT INTO bidders(id,name,eik_normalized,eik_valid,settlement) VALUES ('eik:200000002','ДРУГ ВИН 6 ЕООД','200000002',1,'София');
     INSERT INTO contracts VALUES ('c1','t1','eik:100000001','2019-05-01',50000);
     INSERT INTO contracts VALUES ('c2','t2','eik:200000002','2019-06-01',60000);
   `);
@@ -153,7 +154,7 @@ before(() => {
   buildTrCache({
     // Диан DIVESTED, so the live deed must name somebody else — otherwise §7's reconciliation
     // correctly overturns his declared termination and the case stops testing what it is for.
-    100000001: 'НОВ ИВАНОВ СОБСТВЕНИК',
+    100000001: { now: 'НОВ ИВАНОВ СОБСТВЕНИК', past: ['ДИАН ИВАНОВ ДИВЕСТОВ'] },
     200000002: 'ВЕРЕН ИВАНОВ ДЪРЖАТЕЛЕВ',
   });
   // filings.jsonl — one record per declaration (as extract.mjs emits it), carrying the declaration type. The
@@ -190,7 +191,7 @@ test('a later non-winner filing dates proven history without withdrawing it', ()
   const dian = link('100000001', 'Диан Иванов Дивестов');
   const veren = link('200000002', 'Верен Иванов Държателев');
 
-  // The company is independently confirmed by the declared seat. A later omission
+  // The register shows Диан as a past owner, which establishes the company. A later omission
   // does not invalidate the earlier ownership observation or extend its period.
   assert.equal(dian.status, 'published');
   assert.equal(dian.last_declared_year, '2019');

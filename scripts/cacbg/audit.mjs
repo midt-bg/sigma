@@ -15,9 +15,10 @@ import {
   COMPANY_AUTHOR_BASIS,
 } from './declaration-continuity.mjs';
 import { registryCompanyResolver } from './registry-identity.mjs';
+import { declarantGuidEvidence, DECLARANT_GUID_RULE } from './declarant-guid.mjs';
 import { documentFingerprint } from './source-identity.mjs';
-import { companyCandidates, declaredEiks } from './extract-companies.mjs';
-import { eikCompanyNameKey } from './resolve-company.mjs';
+import { declaredEiks } from './extract-companies.mjs';
+import { namesCompany } from './resolve-company.mjs';
 import { RULES_VERSION, isSealedFact } from '../tr/evidence.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -79,8 +80,10 @@ const flag = (link, axis, detail) =>
 // Published canonical profiles must agree with durable source membership, not a second name resolver.
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get()) {
   const continuity = db
-    .prepare("SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version=?")
-    .all(CONTINUITY_RULE);
+    .prepare(
+      "SELECT * FROM person_identity_evidence WHERE decision='accepted' AND rule_version IN (?,?)",
+    )
+    .all(CONTINUITY_RULE, DECLARANT_GUID_RULE);
   if (continuity.length) {
     try {
       const inconsistent = db
@@ -88,10 +91,10 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
           `SELECT count(*) n FROM person_identity_evidence e
         LEFT JOIN person_sources l ON l.id=e.left_source LEFT JOIN person_sources r ON r.id=e.right_source
         LEFT JOIN person_entities p ON p.id=l.entity_id
-        WHERE e.rule_version=? AND e.decision='accepted'
+        WHERE e.rule_version IN (?,?) AND e.decision='accepted'
           AND (l.entity_id IS NULL OR r.entity_id IS NOT l.entity_id OR p.id IS NULL)`,
         )
-        .get(CONTINUITY_RULE).n;
+        .get(CONTINUITY_RULE, DECLARANT_GUID_RULE).n;
       if (inconsistent) throw new Error('accepted continuity does not belong to one author');
       const unsupported = db
         .prepare(
@@ -101,21 +104,24 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='person_sources'").get())
           AND NOT EXISTS (SELECT 1 FROM person_identity_evidence e
             JOIN person_sources l ON l.id=e.left_source
             JOIN person_sources r ON r.id=e.right_source
-            WHERE e.rule_version=? AND e.decision='accepted' AND json_extract(e.facts,'$.basis')=?
-              AND l.entity_id=p.id AND r.entity_id=p.id)`,
+            WHERE e.decision='accepted' AND l.entity_id=p.id AND r.entity_id=p.id
+              AND (e.rule_version=? OR (e.rule_version=? AND json_extract(e.facts,'$.basis')=?)))`,
         )
-        .get(CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
+        .get(DECLARANT_GUID_RULE, CONTINUITY_RULE, COMPANY_AUTHOR_BASIS).n;
       if (unsupported)
-        throw new Error('author without a registry identity lacks verified company evidence');
+        throw new Error(
+          'author without a registry identity lacks a declarant identifier or verified company evidence',
+        );
       const raw = fs.readFileSync(path.join(STAGING, 'filings.jsonl'));
       const manifest = JSON.parse(fs.readFileSync(path.join(STAGING, 'manifest.json')));
       if (manifest.schemaVersion !== 8 || manifest.filingsHash !== documentFingerprint(raw))
         throw new Error('declaration continuity input is not the completed extraction');
+      const filings = raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse);
       const expected = new Map(
-        declarationContinuity(
-          raw.toString().trim().split('\n').filter(Boolean).map(JSON.parse),
-          registryCompanyResolver(db),
-        ).map((e) => [e.id, e]),
+        [
+          ...declarantGuidEvidence(filings),
+          ...declarationContinuity(filings, registryCompanyResolver(db)),
+        ].map((e) => [e.id, e]),
       );
       for (const e of continuity) {
         const candidate = expected.get(e.id);
@@ -185,12 +191,6 @@ const historyRows = db
     `SELECT il.link_key, il.eik, il.first_declared_year,
   il.last_declared_year, e.evidence_kind, e.entry_number, e.entry_date, e.live_status,
   h.later_declaration_year, h.registry_role_ended_on,
-  ${
-    observationsPresent
-      ? `(SELECT MIN(o.reported_year) FROM interest_link_observations o
-    WHERE o.link_key=il.link_key AND o.timing IN ('prior','disposed'))`
-      : 'NULL'
-  } AS historical_year,
   ${observationsPresent ? '(SELECT COUNT(*) FROM interest_link_observations o WHERE o.link_key=il.link_key)' : 'NULL'} AS observation_count
   FROM interest_links il JOIN interest_link_evidence e USING(link_key)
   LEFT JOIN interest_link_history h USING(link_key) WHERE il.status='published'`,
@@ -201,7 +201,6 @@ const validDay = (v) =>
   Number.isFinite(Date.parse(v)) &&
   new Date(v).toISOString().slice(0, 10) === v;
 for (const l of historyRows) {
-  const proofYear = l.first_declared_year ?? l.historical_year;
   if (l.first_declared_year == null && observationsPresent && !l.observation_count)
     flag(
       l,
@@ -230,17 +229,9 @@ for (const l of historyRows) {
       !l.entry_number ||
       !validDay(l.entry_date) ||
       !validDay(l.registry_role_ended_on) ||
-      l.entry_date >= l.registry_role_ended_on ||
-      !/^\d{4}$/.test(proofYear ?? '') ||
-      l.entry_date > `${proofYear}-12-31` ||
-      (l.first_declared_year != null &&
-        l.registry_role_ended_on <= `${l.first_declared_year}-01-01`))
+      l.entry_date >= l.registry_role_ended_on)
   )
-    flag(
-      l,
-      'H_registry_period',
-      'Historical registry evidence needs a dated entry overlapping the first declared year',
-    );
+    flag(l, 'H_registry_period', 'An ended registry role needs a dated entry before its end');
 }
 const conflictsFile = path.join(STAGING, 'inventory-conflicts.jsonl');
 if (fs.existsSync(conflictsFile)) {
@@ -350,23 +341,18 @@ const rawForPerson = db.prepare(`
   WHERE d.person_id = ?`);
 
 const provenance = [];
+const bidderNames = db.prepare(
+  'SELECT DISTINCT name FROM bidders WHERE eik_normalized = ? AND eik_valid = 1',
+);
 for (const l of nonExact) {
   const rows = rawForPerson.all(l.person_id);
-  const winnerKey = companyNameKey(l.bidder_name);
+  const names = [...new Set([l.bidder_name, ...bidderNames.all(l.eik).map((b) => b.name)])];
   const hit = rows.find((r) => {
     const t = r.entity_raw || '';
-    const eikHit = declaredEiks(t).includes(l.eik);
-    // Boundary-safe name confirmation (mirrors load.mjs resolveEntity): the winner фирма must appear as a
-    // „NAME" ФОРМА candidate. The raw `companyNameKey(t).includes(winnerKey)` leg was removed — it had the
-    // same mid-token over-merge risk as the resolver, so the audit gate would rubber-stamp it (ADR-0016).
-    const nameHit = companyCandidates(t).some((c) =>
-      l.match_method === 'declared_eik'
-        ? eikCompanyNameKey(c) === eikCompanyNameKey(winnerKey)
-        : companyNameKey(c) === winnerKey,
-    );
+    // Boundary-safe, the same test the resolver applied (ADR-0016); a stated ЕИК must be this one.
     return (
-      (l.match_method === 'declared_eik' && eikHit && nameHit) ||
-      (l.match_method === 'extracted_name' && nameHit)
+      (l.match_method !== 'declared_eik' || declaredEiks(t).includes(l.eik)) &&
+      namesCompany(t, l.match_method, names)
     );
   });
   // A_eik's identity rests on the declarant-provided ЕИК, so the double-lock MUST be independently re-provable:

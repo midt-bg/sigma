@@ -8,6 +8,7 @@ import {
   insertStatements,
   chunkStatements,
   runShip,
+  schemaFromRows,
   assertShippedCounts,
   readCountsWithRetry,
   readShippedCounts,
@@ -17,6 +18,9 @@ import {
   sqlIdent,
   TABLES,
   WIPE_ORDER,
+  stagedDropSql,
+  swapSql,
+  ShipYield,
 } from './ship-related-persons.mjs';
 
 test('sqlLiteral escapes quotes, strips NUL, and NULLs non-finite/absent', () => {
@@ -691,32 +695,39 @@ const shipHarness = (over = {}) => {
   const opts = {
     tables: over.tables ?? ['persons', 'declarations'],
     readTable: (t) => source[t] ?? null,
-    wipeSql: 'DELETE FROM persons;',
+    readSchema:
+      over.readSchema ??
+      ((ts) =>
+        Object.fromEntries(ts.map((t) => [t, { sql: `CREATE TABLE ${t}(id)`, indexes: [] }]))),
     apply: (name, sql) => calls.push([name, sql]),
     sleep: (ms) => naps.push(ms),
     readCounts: over.readCounts ?? ((expected) => ({ ...expected })),
     maxStatements: over.maxStatements ?? 2,
     paceMs: 500,
   };
-  return { calls, naps, run: () => runShip(opts) };
+  return { calls, naps, opts, run: () => runShip(opts) };
 };
 
-test('runShip uploads staging before atomic promotion and paces every request', () => {
+test('runShip uploads staging before the swap and paces every request', () => {
   const h = shipHarness();
   assert.deepEqual(h.run(), { persons: 5, declarations: 1 });
   const names = h.calls.map(([name]) => name);
-  assert.equal(names[0], 'prepare_persons');
-  assert.ok(names.indexOf('prepare_publish') > names.indexOf('declarations.0'));
-  assert.equal(names.at(-2), 'publish');
+  assert.equal(names[0], 'clear_staging');
+  assert.equal(names[1], 'prepare_persons');
+  assert.equal(names.at(-1), 'publish');
+  assert.ok(names.indexOf('publish') > names.indexOf('declarations.0'));
   assert.ok(!names.includes('0_wipe'));
   assert.equal(h.naps.length, h.calls.length - 1);
 });
 
-test('atomic promotion preserves the live tables on a short staging table or a foreign-key failure', () => {
-  for (const [failure, keyed] of ['short', 'foreign-key'].flatMap((f) => [
-    [f, false],
-    [f, true],
-  ])) {
+test('runShip refuses a target that lacks a shipped table before any request', () => {
+  const h = shipHarness({ readSchema: () => ({}) });
+  assert.throws(() => h.run(), /target lacks table persons/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('the swap preserves the live tables on a short staging table or a foreign-key failure', () => {
+  for (const failure of ['short', 'foreign-key']) {
     const db = new DatabaseSync(':memory:');
     try {
       db.exec(`PRAGMA foreign_keys=ON;
@@ -731,15 +742,14 @@ test('atomic promotion preserves the live tables on a short staging table or a f
             paceMs: 0,
             sleep() {},
             readCounts: (x) => x,
+            readSchema: (tables) =>
+              schemaFromRows(
+                db.prepare('SELECT type, tbl_name, sql FROM sqlite_master').all(),
+                tables,
+              ),
             readTable(table) {
               return {
                 rowCount: 1,
-                ...(keyed
-                  ? {
-                      columns: table === 'persons' ? ['id'] : ['id', 'person_id'],
-                      primaryKey: ['id'],
-                    }
-                  : {}),
                 statements: [
                   table === 'persons'
                     ? 'INSERT INTO "persons" VALUES(2);'
@@ -753,7 +763,7 @@ test('atomic promotion preserves the live tables on a short staging table or a f
               db.exec(sql);
             },
           }),
-        failure === 'short' ? /incomplete staging/ : /FOREIGN KEY/,
+        failure === 'short' ? /incomplete_staging/ : /FOREIGN KEY/,
       );
       assert.equal(db.prepare('SELECT id FROM persons').get().id, 1);
       assert.equal(db.prepare('SELECT person_id FROM declarations').get().person_id, 1);
@@ -763,39 +773,22 @@ test('atomic promotion preserves the live tables on a short staging table or a f
   }
 });
 
-test('keyed promotion updates only differences and preserves foreign keys while moving children', () => {
+test('the swap moves whole generations: children follow their parents and the replaced one stays', () => {
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(`PRAGMA foreign_keys=ON;
       CREATE TABLE persons(id INTEGER PRIMARY KEY, name TEXT);
       CREATE TABLE declarations(id INTEGER PRIMARY KEY,person_id REFERENCES persons(id));
-      CREATE TABLE memberships(person_id REFERENCES persons(id),declaration_id REFERENCES declarations(id),PRIMARY KEY(person_id,declaration_id));
-      CREATE TABLE writes(table_name TEXT, id INTEGER);
-      CREATE TRIGGER person_updated AFTER UPDATE ON persons BEGIN INSERT INTO writes VALUES('persons',new.id); END;
-      CREATE TRIGGER declaration_updated AFTER UPDATE ON declarations BEGIN INSERT INTO writes VALUES('declarations',new.id); END;
-      INSERT INTO persons VALUES(1,'unchanged'),(2,'old name'),(3,'obsolete');
-      INSERT INTO declarations VALUES(1,1),(2,2),(3,3),(4,3);
-      INSERT INTO memberships VALUES(1,1),(3,3),(3,4);`);
+      CREATE INDEX idx_declarations_person ON declarations(person_id);
+      INSERT INTO persons VALUES(1,'old'); INSERT INTO declarations VALUES(1,1);`);
     const rows = {
-      persons: [
-        { id: 1, name: 'unchanged' },
-        { id: 2, name: 'new name' },
-        { id: 4, name: null },
-      ],
-      declarations: [
-        { id: 1, person_id: 1 },
-        { id: 2, person_id: 4 },
-        { id: 3, person_id: 4 },
-      ],
-      memberships: [
-        { person_id: 1, declaration_id: 1 },
-        { person_id: 4, declaration_id: 3 },
-      ],
+      persons: [{ id: 2, name: 'new' }],
+      declarations: [{ id: 2, person_id: 2 }],
     };
     const ship = () =>
       runShip({
         tables: Object.keys(rows),
-        wipeTables: ['memberships', 'declarations', 'persons'],
+        wipeTables: ['declarations', 'persons'],
         paceMs: 0,
         sleep() {},
         maxStatements: 5,
@@ -806,16 +799,15 @@ test('keyed promotion updates only differences and preserves foreign keys while 
               db.prepare(`SELECT count(*) n FROM "${t}"`).get().n,
             ]),
           ),
+        readSchema: (tables) =>
+          schemaFromRows(db.prepare('SELECT type, tbl_name, sql FROM sqlite_master').all(), tables),
         readTable(table) {
-          const info = db.prepare(`PRAGMA table_info("${table}")`).all();
-          const columns = info.map((c) => c.name);
+          const columns = db
+            .prepare(`PRAGMA table_info("${table}")`)
+            .all()
+            .map((c) => c.name);
           return {
             rowCount: rows[table].length,
-            columns,
-            primaryKey: info
-              .filter((c) => c.pk)
-              .sort((a, b) => a.pk - b.pk)
-              .map((c) => c.name),
             statements: insertStatements(table, columns, rows[table]),
           };
         },
@@ -824,33 +816,30 @@ test('keyed promotion updates only differences and preserves foreign keys while 
         },
       });
     ship();
-    for (const [table, expected] of Object.entries(rows)) {
-      assert.deepEqual(
-        db
-          .prepare(`SELECT * FROM "${table}" ORDER BY 1,2`)
-          .all()
-          .map((r) => ({ ...r })),
-        expected,
-      );
-    }
-    const writes = db
-      .prepare('SELECT * FROM writes ORDER BY table_name,id')
-      .all()
-      .map((r) => ({ ...r }));
-    assert.deepEqual(writes, [
-      { table_name: 'declarations', id: 2 },
-      { table_name: 'declarations', id: 3 },
-      { table_name: 'persons', id: 2 },
-    ]);
-    ship();
     assert.deepEqual(
       db
-        .prepare('SELECT * FROM writes ORDER BY table_name,id')
+        .prepare('SELECT * FROM declarations')
         .all()
         .map((r) => ({ ...r })),
-      writes,
+      rows.declarations,
+    );
+    assert.equal(db.prepare('SELECT name FROM rp_prev_persons').get().name, 'old');
+    const ddl = Object.fromEntries(
+      db
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => [r.name, r.sql]),
+    );
+    assert.match(ddl.declarations, /REFERENCES "?persons"?\(id\)/);
+    assert.match(ddl.rp_prev_declarations, /REFERENCES "rp_prev_persons"\(id\)/);
+    assert.equal(
+      db.prepare("SELECT tbl_name FROM sqlite_master WHERE name='idx_declarations_person'").get()
+        .tbl_name,
+      'declarations',
     );
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    ship(); // a second publication replaces the previous generation without a name clash
+    assert.equal(db.prepare('SELECT name FROM rp_prev_persons').get().name, 'new');
   } finally {
     db.close();
   }
@@ -899,4 +888,74 @@ test('runShip refuses a missing source table before any request', () => {
   const h = shipHarness({ tables: ['persons', 'declarations', 'ghost'] });
   assert.throws(() => h.run(), /missing ghost/);
   assert.equal(h.calls.length, 0);
+});
+
+test('leftover staging tables are dropped children first, so a parent drop never trips a staged foreign key', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE rp_next_persons(id PRIMARY KEY);
+    CREATE TABLE rp_next_declarations(id PRIMARY KEY, person_id REFERENCES rp_next_persons(id));
+    INSERT INTO rp_next_persons VALUES(1); INSERT INTO rp_next_declarations VALUES(1,1);`);
+  db.exec(stagedDropSql(['persons', 'declarations'], ['declarations', 'persons']));
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM sqlite_master WHERE name LIKE 'rp_next_%'").get().n,
+    0,
+  );
+});
+
+test('runShip reports progress in a container run, so a long upload is not a stall', (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  process.env.SIGMA_RUN_ID = 'test-run';
+  t.after(() => delete process.env.SIGMA_RUN_ID);
+  shipHarness().run();
+  assert.deepEqual(JSON.parse(lines[0]), {
+    event: 'declarations_progress',
+    stage: 'publish',
+    completed: 1,
+  });
+});
+
+test('the publish receipt rides in the swap and makes a second attempt a no-op', () => {
+  const schema = {
+    persons: { sql: 'CREATE TABLE persons(id)', indexes: [] },
+    declarations: { sql: 'CREATE TABLE declarations(id)', indexes: [] },
+  };
+  const reads = [
+    { table: 'persons', rowCount: 1 },
+    { table: 'declarations', rowCount: 0 },
+  ];
+  const sql = swapSql(schema, reads, ['declarations', 'persons'], 'run-42');
+  const statements = sql.split('\n');
+  // The receipt is written after the renames, inside the same batch.
+  const receipt = statements.findIndex((line) => line.startsWith('INSERT INTO rp_generation'));
+  const lastRename = statements.findLastIndex((line) => line.includes('RENAME TO "persons"'));
+  assert.ok(receipt > lastRename && lastRename > 0);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS rp_generation/);
+  assert.match(sql, /INSERT INTO rp_generation VALUES\('run-42'/);
+  assert.ok(!swapSql(schema, reads, ['declarations', 'persons']).includes('rp_generation'));
+
+  // A target already serving this run is left alone: no requests, no re-verification.
+  const h = shipHarness();
+  assert.deepEqual(runShip({ ...h.opts, runId: 'run-42', published: 'run-42' }), {});
+  assert.equal(h.calls.length, 0);
+});
+
+test('a container stop between two requests yields instead of leaving half an upload', () => {
+  const h = shipHarness();
+  let sent = 0;
+  assert.throws(
+    () =>
+      runShip({
+        ...h.opts,
+        apply: (name, sql) => {
+          sent++;
+          h.calls.push([name, sql]);
+        },
+        yielding: () => sent >= 3,
+      }),
+    ShipYield,
+  );
+  assert.equal(h.calls.length, 3);
+  assert.ok(!h.calls.some(([name]) => name === 'publish'));
 });

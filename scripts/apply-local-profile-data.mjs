@@ -8,6 +8,8 @@ import {
   TABLES as PROFILE_TABLES,
   WIPE_ORDER as PROFILE_WIPE_ORDER,
 } from './ship-related-persons.mjs';
+await import('./cacbg/register-ts.mjs');
+const { IDENTITY_RULES_VERSION } = await import('./cacbg/registry-identity.mjs');
 const TABLES = [
   'registry_deeds',
   'registry_persons',
@@ -52,7 +54,7 @@ if (source === target) throw new Error('Source and target must differ');
 if (
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).schemaVersion !== 8 ||
   JSON.parse(fs.readFileSync(path.join(staging, 'manifest.json'), 'utf8')).identityRules !==
-    'registry-identity-3' ||
+    IDENTITY_RULES_VERSION ||
   !fs.existsSync(path.join(staging, 'published-snapshot.json'))
 )
   throw new Error('A current extraction and the prior-publication snapshot are required');

@@ -187,12 +187,10 @@ test('the schema exposes no column that could hold a person name', () =>
 const RULES = 'ev-1';
 const INPUT = {
   declarantName: 'ИВАН ПЕТРОВ ТЕСТОВ',
-  declaredSeats: ['Пловдив', 'София'],
   declaredEik: false,
   firstDeclaredYear: 2019,
-  scope: 'self',
-  nameGloballyUnique: true,
-  companyNameDistinctive: true,
+  scope: 'family',
+  relativeNames: ['МАРИЯ ИВАНОВА ТЕСТОВА', 'ГЕОРГИ ИВАНОВ ТЕСТОВ'],
 };
 const VERDICT = (over = {}) => ({
   linkKey: 'person:ИВАН|МВР|201122335',
@@ -218,8 +216,8 @@ test('verdictInputsHash is stable, and blind to the order a Set happened to iter
   assert.equal(verdictInputsHash(INPUT), verdictInputsHash({ ...INPUT }));
   assert.equal(
     verdictInputsHash(INPUT),
-    verdictInputsHash({ ...INPUT, declaredSeats: ['София', 'Пловдив'] }),
-    'declaredSeats comes from a Set spread — insertion order must not look like a change',
+    verdictInputsHash({ ...INPUT, relativeNames: [...INPUT.relativeNames].reverse() }),
+    'relativeNames comes from a Set spread — insertion order must not look like a change',
   );
   // The registry side is not hashed: every run decides every link again against the registry as it stands.
   assert.equal(verdictInputsHash({ ...INPUT, registry: { a: 1 } }), verdictInputsHash(INPUT));
@@ -239,30 +237,6 @@ test('verdictInputsHash REFUSES an input it does not know', () => {
   assert.throws(
     () => verdictInputsHash({ ...INPUT, someNewSignal: true }),
     /unrecognised.*someNewSignal/i,
-  );
-});
-
-test('dated seat evidence is order independent, but swapping its years invalidates a cached verdict', () => {
-  const hash = (pairs) => verdictInputsHash({ ...INPUT, declaredSeatYears: pairs });
-  assert.equal(
-    hash([
-      ['София', 2018],
-      ['Видин', 2021],
-    ]),
-    hash([
-      ['Видин', 2021],
-      ['София', 2018],
-    ]),
-  );
-  assert.notEqual(
-    hash([
-      ['София', 2018],
-      ['Видин', 2021],
-    ]),
-    hash([
-      ['София', 2021],
-      ['Видин', 2018],
-    ]),
   );
 });
 

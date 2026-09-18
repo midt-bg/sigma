@@ -27,9 +27,16 @@ export async function* corpusFiles(store, folder, files, width = 16) {
   }
 }
 
-function safeKey(key) {
+// The checkpoint namespace of a resumable extract: one head per run, one part per folder and stream.
+// Kept in step with `keyPattern` in apps/etl/src/declaration-corpus.ts — the shared list is asserted
+// from both sides in corpus.test.mjs and declaration-corpus.test.ts.
+export const CHECKPOINT_KEY =
+  /^checkpoints\/[0-9a-f-]{36}\/(?:head\.json|[0-9a-f]{16}\/20\d{2}[A-Za-z0-9_]{0,8}\/(?:holdings|related|filings|source-groups|registry-requests|source-quarantine)\.jsonl\.gz)$/;
+
+export function safeKey(key) {
   if ([CORPUS_STAMP, 'accepted.json'].includes(key)) return key;
   if (/^fetch-events\/[0-9a-f-]{36}\/[1-9]\d*\.json$/.test(key)) return key;
+  if (CHECKPOINT_KEY.test(key)) return key;
   const parts = key.split('/');
   if (parts.length !== 2) throw Error('Invalid corpus key');
   safeFolder(parts[0]);
@@ -101,7 +108,11 @@ export function corpusStore(rawDir, endpoint = process.env.CACBG_CORPUS_URL, htt
         body,
         headers: {
           'x-corpus-sha256': digest(body),
-          'content-type': key.endsWith('.xml') ? 'application/xml' : 'application/json',
+          'content-type': key.endsWith('.xml')
+            ? 'application/xml'
+            : key.endsWith('.gz')
+              ? 'application/gzip'
+              : 'application/json',
         },
       });
       if (!res.ok) throw Error(`Corpus write failed: ${key}`);

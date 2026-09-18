@@ -758,6 +758,18 @@ SET ownership_kind = (
   LIMIT 1
 );
 
+-- Public ownership the Trade Register records (ADR-0047), derived by the registry workflow, for a company the
+-- curated list does not name.
+CREATE TABLE IF NOT EXISTS public_owned_eik (
+  eik TEXT PRIMARY KEY,
+  ownership_kind TEXT NOT NULL CHECK (ownership_kind IN ('state', 'municipal'))
+);
+
+UPDATE bidders
+SET ownership_kind = (SELECT p.ownership_kind FROM public_owned_eik p WHERE p.eik = bidders.eik_normalized)
+WHERE ownership_kind IS NULL AND eik_valid = 1
+  AND eik_normalized IN (SELECT eik FROM public_owned_eik);
+
 INSERT OR IGNORE INTO refresh_touched_bidders (bidder_id)
 SELECT b.id
 FROM bidders b
