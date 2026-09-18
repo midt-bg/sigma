@@ -55,6 +55,30 @@ it('the weekly cron starts only the declarations; every other tick refreshes pro
   log.mockRestore();
 });
 
+it('passes the operator resume flag to the rebuild', async () => {
+  const startRun = vi.fn(async () => ({ runId: 'rb', state: 'running' }));
+  const getRun = vi.fn().mockResolvedValue({ runId: 'rb', state: 'complete', stage: 'verify' });
+  const env = {
+    DECLARATIONS: { getByName: () => ({ startRun, getRun }) },
+  } as unknown as Env;
+  const step = {
+    do: async (_name: string, fn: () => Promise<unknown>) => fn(),
+    sleep: async () => {},
+  };
+  await new RebuildWorkflow({} as never, env).run(
+    {
+      instanceId: 'wf-resume',
+      payload: { targetName: 'sigma-green', targetId: 'x', resume: true },
+    } as never,
+    step as never,
+  );
+  expect(startRun).toHaveBeenCalledWith('wf-resume', {
+    name: 'sigma-green',
+    id: 'x',
+    resume: true,
+  });
+});
+
 it('starts a rebuild of the named idle slot and waits for it', async () => {
   const startRun = vi.fn(async () => ({ runId: 'rb', state: 'running' }));
   const getRun = vi.fn().mockResolvedValue({ runId: 'rb', state: 'complete', stage: 'verify' });

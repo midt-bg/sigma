@@ -14,10 +14,12 @@ export interface DeclarationEnv {
   SUPPRESSION_SALT?: string;
   SUPPRESSION_KEY_VERSION?: string;
 }
-/** The idle blue/green slot a rebuild writes (ADR-0048); absent for the weekly declarations run. */
+/** The idle blue/green slot a rebuild writes (ADR-0048); absent for the weekly declarations run.
+ * `resume` continues whatever the slot already holds from an earlier rebuild instead of emptying it. */
 export interface RebuildTarget {
   name: string;
   id: string;
+  resume?: boolean;
 }
 interface DeclarationRun {
   runId: string;
@@ -119,6 +121,7 @@ export class DeclarationContainer extends DurableObject<DeclarationEnv> {
         SIGMA_D1_ID: target.id,
         SIGMA_D1_NAME: target.name,
         SIGMA_REBUILD: '1',
+        ...(target.resume ? { SIGMA_REBUILD_RESUME: '1' } : {}),
       });
     }
     return env;

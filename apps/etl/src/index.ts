@@ -721,21 +721,23 @@ export class DeclarationsWorkflow extends WorkflowEntrypoint<Env> {
  *  the container refuses the live one. The flip stays a redeploy. */
 export class RebuildWorkflow extends WorkflowEntrypoint<
   Env,
-  { targetName?: string; targetId?: string }
+  { targetName?: string; targetId?: string; resume?: boolean }
 > {
   override async run(
-    event: WorkflowEvent<{ targetName?: string; targetId?: string }>,
+    event: WorkflowEvent<{ targetName?: string; targetId?: string; resume?: boolean }>,
     step: WorkflowStep,
   ) {
     const containers = this.env.DECLARATIONS;
     if (!containers) throw new NonRetryableError('The declarations container is not bound');
-    const { targetName, targetId } = event.payload ?? {};
+    const { targetName, targetId, resume } = event.payload ?? {};
     if (!targetName || !targetId)
       throw new NonRetryableError('Name the idle slot: { "targetName": …, "targetId": … }');
     const start = await step.do('start-rebuild', async () => {
-      const { runId, state } = await containers
-        .getByName('rebuild')
-        .startRun(event.instanceId, { name: targetName, id: targetId });
+      const { runId, state } = await containers.getByName('rebuild').startRun(event.instanceId, {
+        name: targetName,
+        id: targetId,
+        ...(resume === true ? { resume: true } : {}),
+      });
       return { runId, state };
     });
     for (let poll = 0; ; poll++) {

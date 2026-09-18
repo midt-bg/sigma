@@ -145,13 +145,14 @@ const REBUILD_STATE_DDL =
   'CREATE TABLE IF NOT EXISTS rebuild_state (stage TEXT PRIMARY KEY, run_id TEXT NOT NULL, done_at TEXT NOT NULL, detail TEXT);';
 
 /** What this run has already put in the slot. A slot without the table has nothing to offer. */
-export function slotState(name, runId, read = d1Json) {
+export function slotState(name, runId, read = d1Json, anyRun = false) {
   if (!read(name, "SELECT 1 AS found FROM sqlite_master WHERE name='rebuild_state'").length)
     return new Map();
+  // By default a rebuild only trusts its own receipts: a fresh run empties the slot and starts clean.
+  // An operator who asks to resume adopts what an earlier run of the same rebuild left behind.
+  const where = anyRun ? '' : ` WHERE run_id=${sqlLiteral(runId)}`;
   return new Map(
-    read(name, `SELECT stage, detail FROM rebuild_state WHERE run_id=${sqlLiteral(runId)}`).map(
-      (r) => [r.stage, r.detail],
-    ),
+    read(name, `SELECT stage, detail FROM rebuild_state${where}`).map((r) => [r.stage, r.detail]),
   );
 }
 
@@ -380,7 +381,7 @@ async function main() {
   // 0. The slot is the durable store of this rebuild. It is emptied and shaped once; from there on
   // every finished stage leaves its rows and its receipt in it, so a stopped container resumes from
   // the slot instead of building for hours again.
-  const done = slotState(target.name, runId);
+  const done = slotState(target.name, runId, d1Json, process.env.SIGMA_REBUILD_RESUME === '1');
   if (done.has('prepare')) {
     stage('import');
     const dump = join(work, 'slot-dump.sql');

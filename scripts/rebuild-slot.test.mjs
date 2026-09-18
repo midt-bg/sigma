@@ -134,6 +134,17 @@ test('the slot says which stages this run already finished', () => {
   );
   // A slot that has never been prepared offers nothing, and must not be queried further.
   assert.equal(slotState('slot', 'run-7', () => []).size, 0);
+
+  // Another run's receipts are ignored unless the operator asks to resume that build.
+  const asked = [];
+  const readAll = (name, sql) => {
+    asked.push(sql);
+    return sql.startsWith('SELECT 1') ? [{ found: 1 }] : [{ stage: 'import', detail: null }];
+  };
+  assert.equal(slotState('slot', 'run-9', readAll).size, 1);
+  assert.match(asked.at(-1), /WHERE run_id='run-9'/);
+  assert.equal(slotState('slot', 'run-9', readAll, true).size, 1);
+  assert.ok(!asked.at(-1).includes('WHERE'), 'a resume adopts whatever the slot holds');
 });
 
 test('a registry batch carries its rows, the queue it cleared and what it queued, and the cursors', () => {
