@@ -102,8 +102,16 @@ function step(name, args, extraEnv = {}) {
       [child.stderr, process.stderr],
     ])
       createInterface({ input: stream }).on('line', (line) => {
+        // The child names its own stages ('extract', 'registry'), which belong to a different order than
+        // this one ('declarations'). Reported as they are, they move the coordinator's stage backwards and
+        // a live step reads as a stalled one. So a child's progress travels as detail and this stage
+        // stays the run's stage; anything else is simply a heartbeat of it.
+        if (line.startsWith('{"event":"declarations_progress"')) {
+          out.write(line.replace('"declarations_progress"', '"rebuild_detail"') + '\n');
+          progress(name, ++lines);
+          return;
+        }
         out.write(line + '\n');
-        // The declarations job reports its own stages; anything else is a heartbeat of this one.
         if (!line.startsWith('{"event":"declarations_')) progress(name, ++lines);
       });
     child.on('close', (code) => (code === 0 ? done() : fail(name, code)));
@@ -460,7 +468,17 @@ async function main() {
   // batch of partidas goes straight into the slot with the queue that names what is left, so a stop
   // costs the batch and not the hours before it.
   if (!done.has('registry')) {
-    await step('registry', ['scripts/tr/rebuild-registry.mjs', '--db', db, '--slot', target.name]);
+    // `--defer-baseline`: the winners are only half the register. The rest — the companies the
+    // declarations name — are known after stage 5 reads them, and the catch-up pass there accepts the
+    // baseline for both sets. A baseline accepted here would call the register complete too early.
+    await step('registry', [
+      'scripts/tr/rebuild-registry.mjs',
+      '--db',
+      db,
+      '--slot',
+      target.name,
+      '--defer-baseline',
+    ]);
     // The accepted baseline is written after the last batch, so the cursors travel once more — a
     // resumed rebuild must not inherit a registry that still calls itself "building".
     await slotFlusher(target.name, new DatabaseSync(db, { readOnly: true }), apply)([]);
@@ -506,16 +524,32 @@ async function main() {
     );
   }
 
-  // 5. The declarations, in the job's local mode, against this snapshot.
+  // 5. The declarations, in the job's local mode, against this snapshot — in two halves, because the
+  // register was read for the winners and the declarations name companies no winner list contains
+  // (measured on the first full rebuild: 13,121 partidas against the live slot's 14,118, and 33 published
+  // links lost). The first half stops once the declarations have said which companies they mean; the
+  // register is read for those; the second half decides against the fuller register.
   const jobDir = join(work, 'declarations');
-  await step(
-    'declarations',
-    ['scripts/related-persons-job.mjs', '--source-db', db, '--work-dir', jobDir, '--r2'],
-    {
-      SIGMA_REBUILD: '1',
-    },
-  );
   const snapshot = join(jobDir, 'backfill.sqlite');
+  const declarations = (...extra) =>
+    step(
+      'declarations',
+      [
+        'scripts/related-persons-job.mjs',
+        '--source-db',
+        db,
+        '--work-dir',
+        jobDir,
+        '--r2',
+        ...extra,
+      ],
+      { SIGMA_REBUILD: '1' },
+    );
+  await declarations('--until', 'candidates');
+  // The catch-up pass reads the requested companies and accepts the baseline for winners and requested
+  // together. It writes the snapshot, which stage 7 ships whole, so the new partidas travel with it.
+  await step('declarations', ['scripts/tr/rebuild-registry.mjs', '--db', snapshot]);
+  await declarations('--from', 'decide');
 
   // 6. The people in the search index.
   stage('search');

@@ -36,6 +36,32 @@ const setStage = (next) => {
   stage = next;
   progress(stage, 0, undefined, true);
 };
+// A slot rebuild runs the job in two halves: `--until candidates` writes the companies the declarations
+// name, the register is read for them, and `--from decide` finishes against the fuller register. Both
+// halves share one work directory, so the second one keeps the snapshot and the extraction of the first.
+const ORDER = [
+  'fetch',
+  'snapshot',
+  'extract',
+  'candidates',
+  'decide',
+  'load',
+  'audit',
+  'publish',
+  'reindex',
+];
+const bound = (name, fallback) => {
+  const given = value(name) ?? fallback;
+  if (!ORDER.includes(given)) throw Error(`--${name} takes one of: ${ORDER.join(', ')}`);
+  return ORDER.indexOf(given);
+};
+const first = bound('from', 'fetch');
+const last = bound('until', 'reindex');
+if (first > last) throw Error('--from comes after --until');
+const doing = (name) => {
+  const at = ORDER.indexOf(name);
+  return at >= first && at <= last;
+};
 const run = (script, args = []) => {
   try {
     return execFileSync(
@@ -105,7 +131,7 @@ if (r2) {
   )
     sourceStamp = stamp;
 }
-if (!sourceStamp && !flag('skip-fetch')) {
+if (doing('fetch') && !sourceStamp && !flag('skip-fetch')) {
   setStage('fetch');
   run(
     'scripts/cacbg/fetch.mjs',
@@ -120,8 +146,10 @@ if (r2) {
   if (!sourceStamp || JSON.parse(sourceStamp).runId !== env.SIGMA_RUN_ID)
     throw Error('No complete corpus for this logical run');
 }
-setStage('snapshot');
-if (remote) {
+if (doing('snapshot')) {
+  setStage('snapshot');
+}
+if (doing('snapshot') && remote) {
   for (const name of [
     '0003_related_persons_foundation',
     '0009_interest_link_evidence',
@@ -230,9 +258,11 @@ if (remote) {
   localSource.prepare('VACUUM INTO ?').run(db);
   localSource.close();
 }
-setStage('extract');
-run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
-if (env.CACBG_COMPANY_CATALOG)
+if (doing('extract')) {
+  setStage('extract');
+  run('scripts/cacbg/extract.mjs'); // registry was hydrated before identity extraction
+}
+if (doing('extract') && env.CACBG_COMPANY_CATALOG)
   run('scripts/cacbg/request-companies.mjs', [
     '--catalog',
     env.CACBG_COMPANY_CATALOG,
@@ -241,20 +271,28 @@ if (env.CACBG_COMPANY_CATALOG)
     '--staging',
     staging,
   ]);
-setStage('candidates');
-run('scripts/cacbg/load.mjs', ['--emit-candidates']);
-setStage('decide');
-run('scripts/tr/decide.mjs', [
-  '--links-file',
-  join(staging, 'candidate-links.jsonl'),
-  '--registry-db',
-  db,
-]);
-setStage('load');
-run('scripts/cacbg/load.mjs');
-setStage('audit');
-run('scripts/cacbg/audit.mjs');
-if (remote) {
+if (doing('candidates')) {
+  setStage('candidates');
+  run('scripts/cacbg/load.mjs', ['--emit-candidates']);
+}
+if (doing('decide')) {
+  setStage('decide');
+  run('scripts/tr/decide.mjs', [
+    '--links-file',
+    join(staging, 'candidate-links.jsonl'),
+    '--registry-db',
+    db,
+  ]);
+}
+if (doing('load')) {
+  setStage('load');
+  run('scripts/cacbg/load.mjs');
+}
+if (doing('audit')) {
+  setStage('audit');
+  run('scripts/cacbg/audit.mjs');
+}
+if (doing('publish') && remote) {
   setStage('publish');
   run('scripts/ship-related-persons.mjs', ['--work-db', db, '--remote', '--yes']);
   setStage('reindex');
@@ -335,12 +373,18 @@ if (remote) {
       ),
     );
   }
-} else run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
+} else if (doing('audit'))
+  run('scripts/ship-related-persons.mjs', ['--work-db', db, '--emit', join(work, 'ship')]);
+// A half-run carries no receipt: only the stage that audited what it loaded may claim one.
 console.log(
-  JSON.stringify({
-    event: 'declarations_job_complete',
-    runId: env.SIGMA_RUN_ID ?? null,
-    audit: true,
-    published: remote,
-  }),
+  JSON.stringify(
+    doing('audit')
+      ? {
+          event: 'declarations_job_complete',
+          runId: env.SIGMA_RUN_ID ?? null,
+          audit: true,
+          published: doing('publish') && remote,
+        }
+      : { event: 'declarations_job_paused', runId: env.SIGMA_RUN_ID ?? null, stage },
+  ),
 );
