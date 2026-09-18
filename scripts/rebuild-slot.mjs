@@ -7,7 +7,7 @@
 //   SIGMA_D1_NAME/SIGMA_D1_ID           the idle slot, the only one written
 //   SIGMA_LIVE_D1_NAME/SIGMA_LIVE_D1_ID the live slot, read for the published-link gate
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
@@ -261,6 +261,42 @@ export function fillSlot(name, snapshotPath, work, { label, apply }) {
   }
 }
 
+/** A fresh local build with the migrations' schema and the slot's rows. */
+export async function rehydrate(db, name, work, deps = {}) {
+  const read = deps.read ?? d1Json;
+  const run = deps.wrangler ?? wrangler;
+  const load = deps.importSql ?? importSql;
+  const apply = deps.sqlite ?? sqlite;
+  rmSync(db, { force: true });
+  const migrationsDir = resolve(root, 'packages/db/migrations');
+  for (const file of readdirSync(migrationsDir)
+    .filter((n) => /^\d+.*\.sql$/.test(n))
+    .sort())
+    await apply('import', db, readFileSync(join(migrationsDir, file), 'utf8'));
+  await apply('import', db, readFileSync(resolve(root, 'scripts/work-staging-schema.sql'), 'utf8'));
+  const tables = read(
+    name,
+    `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
+       AND name NOT LIKE '_cf_%' AND name NOT LIKE 'search_index%' AND name <> 'd1_migrations'
+     ORDER BY name`,
+  ).map((r) => r.name);
+  const dump = join(work, 'slot-dump.sql');
+  rmSync(dump, { force: true });
+  run([
+    'd1',
+    'export',
+    name,
+    '--remote',
+    '--no-schema',
+    ...tables.flatMap((t) => ['--table', t]),
+    '--output',
+    dump,
+  ]);
+  load(db, dump);
+  rmSync(dump, { force: true });
+  return tables;
+}
+
 /** The registry tables keyed by company, as the local build holds them. */
 export function registryTables(snapshot) {
   return snapshot
@@ -384,11 +420,9 @@ async function main() {
   const done = slotState(target.name, runId, d1Json, process.env.SIGMA_REBUILD_RESUME === '1');
   if (done.has('prepare')) {
     stage('import');
-    const dump = join(work, 'slot-dump.sql');
-    rmSync(dump, { force: true });
-    wrangler(['d1', 'export', target.name, '--remote', '--output', dump]);
-    importSql(db, dump);
-    rmSync(dump, { force: true });
+    // The schema comes from the migrations, the rows from the slot: D1 refuses to export a database
+    // that holds a virtual table, and the search index is one. Named tables, data only.
+    await rehydrate(db, target.name, work);
     console.log(`resumed from the slot after: ${[...done.keys()].join(', ')}`);
   } else {
     stage('import');

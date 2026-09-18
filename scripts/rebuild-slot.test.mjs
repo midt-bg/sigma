@@ -10,6 +10,7 @@ import {
   parentsFirst,
   registryBatchSql,
   registryTables,
+  rehydrate,
   shippedTables,
   slotFlusher,
   slotState,
@@ -189,4 +190,39 @@ test('a registry batch carries its rows, the queue it cleared and what it queued
     assert.ok(!sent[0][1].includes('111111111'));
     db.close();
   });
+});
+
+test('a resumed rebuild takes the schema from the migrations and only the data from the slot', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'rebuild-rehydrate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = join(dir, 'slot.sqlite');
+  let exported = null;
+  let asked = '';
+  const tables = await rehydrate(db, 'sigma-idle', dir, {
+    read: (_name, sql) => {
+      asked = sql;
+      return [{ name: 'contracts' }];
+    },
+    wrangler: (args) => {
+      exported = args;
+    },
+    importSql: () => {},
+    sqlite: async (_label, file, sql) => {
+      // The migrations really run: the local build must end up with the served schema.
+      new DatabaseSync(file).exec(sql);
+    },
+  });
+  assert.deepEqual(tables, ['contracts']);
+  assert.ok(exported.includes('--no-schema'), 'the slot gives rows, never its schema');
+  // The virtual search index and the platform's own tables are never asked for: D1 refuses to export
+  // a database that holds a virtual table, and nothing else needs them.
+  for (const excluded of ["NOT LIKE 'search_index%'", "NOT LIKE '_cf_%'", "<> 'd1_migrations'"])
+    assert.ok(asked.includes(excluded), `${excluded} must be excluded`);
+  const local = new DatabaseSync(db, { readOnly: true });
+  const names = local
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name);
+  local.close();
+  assert.ok(names.includes('contracts') && names.includes('search_index'));
 });
