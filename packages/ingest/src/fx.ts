@@ -5,12 +5,11 @@
 // its coverage guard are D1-based and pure-fetch, safe for workerd (no Node APIs).
 
 // A response body that is never read keeps its stream - and the connection behind it - open for the
-// rest of the invocation; the collector is not a substitute. Deliberately NOT awaited: cancelling only
-// needs to be INITIATED for the runtime to release the stream, and awaiting it would make the caller
-// hostage to a cancel() that never settles. Kept private here rather than shared with apps/etl: this
-// file is also loaded as raw TypeScript by the Node CLI (scripts/load-fx.mjs), where an extensionless
-// relative import does not resolve and a `.ts` one needs allowImportingTsExtensions repo-wide.
-function discardBody(res: Response): void {
+// rest of the invocation; the collector is not a substitute. Every path that walks away from a
+// response without reading it - a blocked redirect, a missing bucket, any non-OK status - releases it
+// here. Deliberately NOT awaited: cancelling only needs to be INITIATED for the runtime to release the
+// stream, and awaiting it would make the caller hostage to a cancel() that never settles.
+export function discardBody(res: Response): void {
   try {
     void res.body?.cancel().catch(() => {});
   } catch {
@@ -36,13 +35,13 @@ export function addDays(iso: string, days: number): string {
   return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
 }
 
-/** Reject cross-host redirects on an FX fetch (same hardening as the EOP bucket fetches in
- *  apps/etl/src/eop.ts): a redirected frankfurter response must never feed rates into fx_rates. */
-export function assertSameFinalHost(requestUrl: string, responseUrl: string): void {
+/** Reject cross-host redirects on a host-pinned fetch (`what` names it in the error: FX rates,
+ *  EOP buckets): a redirected response must never feed rates into fx_rates or rows into staging. */
+export function assertSameFinalHost(requestUrl: string, responseUrl: string, what = 'FX'): void {
   const requested = new URL(requestUrl);
   const final = new URL(responseUrl || requestUrl);
   if (final.host !== requested.host) {
-    throw new Error(`blocked redirected FX fetch from ${requested.host} to ${final.host}`);
+    throw new Error(`blocked redirected ${what} fetch from ${requested.host} to ${final.host}`);
   }
 }
 

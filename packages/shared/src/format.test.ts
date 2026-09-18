@@ -3,7 +3,6 @@ import {
   cleanName,
   count,
   date,
-  eik,
   entityName,
   isNaturalPersonProfileName,
   longDate,
@@ -17,7 +16,6 @@ import {
   signedMoney,
   signedPct,
   tradeRegisterLegalForm,
-  unp,
 } from './format';
 
 const NBSP = ' '; // count()/money() use a non-breaking space so figures never wrap
@@ -113,8 +111,8 @@ describe('dates', () => {
 
 describe('entityName', () => {
   it('collapses a consortium member list to first + „и др."', () => {
-    expect(entityName('МЕДЕКС ООД; АЛТА ФАРМАСЮТИКЪЛС ООД; ЕКОФАРМ ЕООД', 'consortium')).toBe(
-      'МЕДЕКС ООД и др.',
+    expect(entityName('МЕДПРИМЕР ООД; АЛФА ФАРМА ООД; ЕКОПРИМЕР ЕООД', 'consortium')).toBe(
+      'МЕДПРИМЕР ООД и др.',
     );
   });
   it('passes company names through as source truth', () => {
@@ -181,7 +179,7 @@ describe('parseConsortiumMembers', () => {
 
 describe('isNaturalPersonProfileName', () => {
   it('detects sole-trader names that embed a natural person', () => {
-    expect(isNaturalPersonProfileName('ЕТ ДРИФТ - НИКОЛАЙ КИРОВ')).toBe(true);
+    expect(isNaturalPersonProfileName('ЕТ ДРИФТ - ИВАН ТЕСТОВ')).toBe(true);
     expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ET')).toBe(true);
     expect(isNaturalPersonProfileName('ИВАН ПЕТРОВ', 'ФИЗИЧЕСКО ЛИЦЕ')).toBe(true);
     expect(isNaturalPersonProfileName('ФИРМА', 'EOOD')).toBe(false);
@@ -289,18 +287,6 @@ describe('periodRange', () => {
     expect(periodRange(null, null)).toBe('—');
     expect(periodRange(undefined, undefined)).toBe('—');
     expect(periodRange('', '')).toBe('—');
-  });
-});
-
-describe('eik / unp passthrough', () => {
-  it('trims a present value and returns empty string for absent', () => {
-    expect(eik('  831634121  ')).toBe('831634121');
-    expect(eik(null)).toBe('');
-    expect(eik(undefined)).toBe('');
-    expect(eik('')).toBe('');
-    expect(unp('  00073-2024-0012  ')).toBe('00073-2024-0012');
-    expect(unp(null)).toBe('');
-    expect(unp('')).toBe('');
   });
 });
 

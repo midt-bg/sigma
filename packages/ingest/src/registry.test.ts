@@ -86,6 +86,50 @@ it('uses Bulgarian calendar days including both DST transitions', () => {
   expect(registryDayBoundary('2026-10-25')).toBe('2026-10-25T00:00:00+03:00');
   expect(registryDayBoundary('2026-10-25', true)).toBe('2026-10-25T23:59:59.999+02:00');
 });
+
+it('searches holders by name on either generation of the service, normalised to one shape', async () => {
+  const hit = { uic: '000000001', companyName: 'АЛФА', fieldIdent: '00190', name: 'ИВАН ПЕТРОВ' };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('', { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ total: 101, items: [hit] }))
+    .mockResolvedValueOnce(Response.json({ total: 101, items: [] }));
+  vi.stubGlobal('fetch', fetch);
+  const c = registryClient({ baseUrl: 'https://registry.test' });
+  const first = await c.holdersNamed(' Иван Петров ');
+  expect(first).toEqual({ items: [hit], total: 101, hasMore: true });
+  expect(new URL(fetch.mock.calls[0]?.[0]).pathname).toBe('/deeds/search');
+  const legacy = new URL(fetch.mock.calls[1]?.[0]);
+  expect(legacy.pathname).toBe('/deeds/fields/summary');
+  expect(Object.fromEntries(legacy.searchParams)).toEqual({
+    name: 'Иван Петров',
+    page: '1',
+    pageSize: '100',
+  });
+  expect((await c.holdersNamed('Иван Петров', 2)).hasMore).toBe(false);
+  expect(fetch).toHaveBeenCalledTimes(3); // the old route is remembered
+
+  const current = vi.fn().mockResolvedValueOnce(
+    Response.json({
+      total: 1,
+      hasMore: false,
+      items: [{ ...hit, fieldIdent: undefined, field: '00190', role: 'Partner' }],
+    }),
+  );
+  vi.stubGlobal('fetch', current);
+  const fresh = registryClient({ baseUrl: 'https://registry.test' });
+  expect(await fresh.holdersNamed('Иван Петров')).toEqual({
+    items: [hit],
+    total: 1,
+    hasMore: false,
+  });
+  expect(Object.fromEntries(new URL(current.mock.calls[0]?.[0]).searchParams)).toEqual({
+    target: 'Иван Петров',
+    limit: '100',
+    offset: '0',
+  });
+  await expect(fresh.holdersNamed('')).rejects.toThrow('invalid search name');
+});
 it('passes over sub-partida children that are not register fields', () => {
   const xml = XML.replace(
     '<SubDeed SubUIC="01">',

@@ -1,6 +1,9 @@
 // OCDS adapter helpers for the procurement ETL. The pure release flatteners here are the single
 // source of truth used by both the Worker-side ingest package and the CLI loaders.
 
+import { clean, toISODate, validYear } from './base.ts';
+import { addDays } from './fx.ts';
+
 const KIND_CATEGORY: Record<string, string> = {
   goods: 'Доставки',
   services: 'Услуги',
@@ -8,59 +11,8 @@ const KIND_CATEGORY: Record<string, string> = {
 };
 
 const MS_PER_DAY = 86_400_000;
-const MIN_DATA_YEAR = 1990;
-const MIN_DATA_DAY = `${MIN_DATA_YEAR}-01-01`;
 
-function maxDataYear(): number {
-  return new Date().getUTCFullYear() + 1;
-}
-
-function validYear(year: number): boolean {
-  return Number.isInteger(year) && year >= MIN_DATA_YEAR && year <= maxDataYear();
-}
-
-function clean(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  const s = String(v).trim();
-  return s === '' ? null : s;
-}
-
-function validDateOnly(day: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
-  const d = new Date(`${day}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === day;
-}
-
-function normalizedDateOnly(v: unknown): string | null {
-  const s = clean(v);
-  if (s === null) return null;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\b)/);
-  let day: string | null = null;
-  if (iso) day = `${iso[1]!}-${iso[2]!}-${iso[3]!}`;
-  const m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
-  if (!day && m) day = `${m[3]!}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`;
-  if (!day) {
-    const t = Date.parse(s);
-    if (!Number.isFinite(t)) return null;
-    day = new Date(t).toISOString().slice(0, 10);
-  }
-  return validDateOnly(day) && day >= MIN_DATA_DAY ? day : null;
-}
-
-function saneDateCeiling(now: Date): string {
-  return `${now.getUTCFullYear() + 50}-12-31`;
-}
-
-function toISODate(v: unknown, now: Date = new Date()): string | null {
-  const day = normalizedDateOnly(v);
-  return day !== null && day <= saneDateCeiling(now) ? day : null;
-}
-
-function toEventDate(v: unknown, now: Date = new Date()): string | null {
-  return toISODate(v, now);
-}
-
-const dateOnly = (s: unknown): string | null => toEventDate(s);
+const dateOnly = (s: unknown): string | null => toISODate(s);
 const finiteNum = (v: unknown): number | null => {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string' && v.trim() === '') return null;
@@ -86,12 +38,8 @@ function validateDay(day: string, label: string): void {
   }
 }
 
-function subtractDays(day: string, days: number): string {
-  validateDay(day, 'day');
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - Math.max(0, Math.floor(days)));
-  return d.toISOString().slice(0, 10);
-}
+const subtractDays = (day: string, days: number): string =>
+  addDays(day, -Math.max(0, Math.floor(days)));
 
 // Minimal shapes of the OCDS fields we read (the feed carries far more; keep it loose on purpose).
 export interface OcdsRelease {

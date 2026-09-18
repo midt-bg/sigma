@@ -48,7 +48,7 @@ function maxDataYear(): number {
   return new Date().getUTCFullYear() + 1;
 }
 
-function validYear(year: number): boolean {
+export function validYear(year: number): boolean {
   return Number.isInteger(year) && year >= MIN_DATA_YEAR && year <= maxDataYear();
 }
 
@@ -122,14 +122,6 @@ export function toBool(v: unknown): number | null {
 export function toISODate(v: unknown, now: Date = new Date()): string | null {
   const day = normalizedDateOnly(v);
   return day !== null && day <= saneDateCeiling(now) ? day : null;
-}
-
-export function toEventDate(v: unknown, now: Date = new Date()): string | null {
-  return toISODate(v, now);
-}
-
-export function toPeriodDate(v: unknown, now: Date = new Date()): string | null {
-  return toISODate(v, now);
 }
 
 function toSecuredFinancing(v: unknown): number | null {

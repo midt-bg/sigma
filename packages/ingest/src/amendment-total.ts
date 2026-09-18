@@ -200,17 +200,6 @@ export function classifyAmendmentValue(input: AmendmentValueInput): AmendmentVal
   return { kind: 'none' };
 }
 
-// The single value the ETL needs: the corrected value_after when the text confirms a double-count, else
-// null (leave value_after as the source gave it).
-export function restatedValueAfter(input: AmendmentValueInput): number | null {
-  const t = classifyAmendmentValue(input);
-  return t.kind === 'total_restated' || t.kind === 'unchanged_restated' ? t.correctedAfter : null;
-}
-
-export function isGenuineIncrement(input: AmendmentValueInput): boolean {
-  return classifyAmendmentValue(input).kind === 'genuine_increment';
-}
-
 // Convenience for the ETL staging: the treatment label to store on the raw amendment row (NULL when no
 // signal), and the corrected value_after (NULL unless a double-count was confirmed). A non-null treatment
 // tells derive/normalize NOT to arithmetic-flag the row (it is either corrected or confirmed-genuine).

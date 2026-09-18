@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { companyNameKey, isMatchableKey } from './company-name-key';
+import {
+  companyNameKey,
+  companyNamesAlike,
+  isMatchableKey,
+  registryCompanyName,
+} from './company-name-key';
 
 // The libel proof. Fixture rows are labelled by `companyId` (the real-world entity).
 // PROPERTY: no normalized key may span two distinct companyId values (zero over-merge).
@@ -124,5 +129,31 @@ describe('companyNameKey', () => {
         expect(isMatchableKey(companyNameKey(raw)), raw).toBe(true);
       }
     });
+  });
+});
+
+describe('companyNamesAlike', () => {
+  it('reads the register name and the declared spelling as one company', () => {
+    expect(companyNamesAlike('НАДЕЖДА ГЛОБАЛ', 'Надежда Глобал ЕООД')).toBe(true);
+    expect(companyNamesAlike('ТЕСТИЛОН - ПЪРВИ С-ИЕ', 'Тестилон-Първи с-ие СД')).toBe(true);
+    expect(companyNamesAlike('ИВА - ИВАН ИВАНОВ', 'ЕТ „Ива – Иван Иванов“')).toBe(true);
+    expect(companyNamesAlike('ЕПСИЛОН ИНЖЕНЕРИНГ', 'Епсилон Инжинеринг ЕООД')).toBe(true);
+    expect(companyNamesAlike('СТЕНАТА', 'CTEHATA ООД')).toBe(true);
+  });
+  it('keeps distinct firms apart, however similar', () => {
+    expect(companyNamesAlike('ТЕСТИЛОН', 'Тестилон-А ООД')).toBe(false);
+    expect(companyNamesAlike('ТЕСТИЛОН', 'Тестилон - Първи с-ие СД')).toBe(false);
+    expect(companyNamesAlike('АЛФА', 'АЛМА ЕООД')).toBe(false);
+    expect(companyNamesAlike('', 'АЛФА')).toBe(false);
+  });
+});
+
+describe('registryCompanyName', () => {
+  it('spells the legal form the register keeps as a code', () => {
+    expect(registryCompanyName('НАДЕЖДА ГЛОБАЛ', 'EOOD')).toBe('НАДЕЖДА ГЛОБАЛ ЕООД');
+    expect(registryCompanyName('ИВА - ИВАН ИВАНОВ', 'ET')).toBe('ЕТ ИВА - ИВАН ИВАНОВ');
+    expect(registryCompanyName('АЛФА ООД', 'OOD')).toBe('АЛФА ООД');
+    expect(registryCompanyName('АЛФА', 'CC')).toBe('АЛФА');
+    expect(registryCompanyName('АЛФА', null)).toBe('АЛФА');
   });
 });
