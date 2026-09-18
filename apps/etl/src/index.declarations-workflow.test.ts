@@ -84,17 +84,46 @@ it('starts a rebuild of the named idle slot and waits for it', async () => {
   const getRun = vi.fn().mockResolvedValue({ runId: 'rb', state: 'complete', stage: 'verify' });
   const getByName = vi.fn(() => ({ startRun, getRun }));
   const step = { do: async (_name: string, fn: () => unknown) => fn(), sleep: vi.fn() };
-  const run = (payload: object) =>
+  const run = (payload?: object) =>
     new RebuildWorkflow({} as never, { DECLARATIONS: { getByName } } as never).run(
       { instanceId: 'wf', payload } as never,
       step as never,
     );
-  await expect(run({})).rejects.toThrow('Name the idle slot');
+  await expect(
+    new RebuildWorkflow({} as never, {} as never).run(
+      {
+        instanceId: 'wf',
+        payload: { targetName: 'sigma-idle', targetId: 'x' },
+      } as never,
+      step as never,
+    ),
+  ).rejects.toThrow('not bound');
+  await expect(run()).rejects.toThrow('Name the idle slot');
   await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).resolves.toMatchObject({
     state: 'complete',
   });
   expect(getByName).toHaveBeenCalledWith('rebuild');
   expect(startRun).toHaveBeenCalledWith('wf', { name: 'sigma-idle', id: 'x' });
+
+  getRun
+    .mockReset()
+    .mockResolvedValueOnce({ runId: 'rb', state: 'running', stage: 'import' })
+    .mockResolvedValue({ runId: 'rb', state: 'complete', stage: 'verify' });
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).resolves.toMatchObject({
+    state: 'complete',
+  });
+  expect(step.sleep).toHaveBeenCalledWith('wait-1', '10 minutes');
+
+  getRun.mockResolvedValue(null);
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).rejects.toThrow(
+    'Rebuild run changed',
+  );
+  getRun.mockResolvedValue({ runId: 'another-run', state: 'running' });
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).rejects.toThrow(
+    'Rebuild run changed',
+  );
+  getRun.mockResolvedValue({ runId: 'rb', state: 'failed' });
+  await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).rejects.toThrow(/Rebuild failed:/);
   getRun.mockResolvedValue({ runId: 'rb', state: 'failed', reason: 'counts' });
   await expect(run({ targetName: 'sigma-idle', targetId: 'x' })).rejects.toThrow(
     'Rebuild failed: counts',

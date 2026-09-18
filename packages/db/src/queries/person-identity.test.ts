@@ -2,7 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { d1FromSqlite } from '@sigma/test-support';
 import { getPersonRelatives, getPersonNamedBy } from './person-identity';
-import { getPersonDestinations, getPersonScope, getPersonSourceArchive } from './person-identity';
+import {
+  getPersonDestinations,
+  getPersonScope,
+  getPersonSourceArchive,
+  getPersonSourceNames,
+} from './person-identity';
 
 it('keeps unresolved source archives alongside a proven profile when an old URL splits', async () => {
   const db = new DatabaseSync(':memory:');
@@ -102,6 +107,29 @@ describe('getPersonSourceArchive', () => {
   });
 });
 
+describe('getPersonSourceNames', () => {
+  it('returns the active declaration names for every source in the profile', async () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`CREATE TABLE person_sources(id,name,active,namespace,entity_id,legacy_person_id);
+        INSERT INTO person_sources VALUES
+          ('current','Иван Петров Тестов',1,'cacbg','person-a','legacy-a'),
+          ('legacy','Иван Петров Тестов — архив',1,'cacbg',NULL,'person-b'),
+          ('inactive','Неактивно Име Тестово',0,'cacbg','person-a',NULL),
+          ('foreign','Чуждо Име Тестово',1,'other','person-a',NULL);`);
+      const d1 = d1FromSqlite(db);
+
+      expect(await getPersonSourceNames(d1, [])).toEqual([]);
+      expect(await getPersonSourceNames(d1, ['person-a', 'person-b'])).toEqual([
+        'Иван Петров Тестов',
+        'Иван Петров Тестов — архив',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('relatives the register confirms', () => {
   it('names each relative once per company and links only those with a page here, both ways', async () => {
     const db = new DatabaseSync(':memory:');
@@ -119,7 +147,7 @@ describe('relatives the register confirms', () => {
         INSERT INTO interest_link_observations VALUES('p|111|family','2021'),('p|111|family','2020'),('p|111|family',NULL),('p|222','2019');
         INSERT INTO registry_deeds VALUES('222','БЕТА','EOOD');
         INSERT INTO persons VALUES('p','Иван Петров'),('q','Георги Иванов');
-        INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова');
+        INSERT INTO person_relatives VALUES('p','${H}','111','Мария Петрова'),('q','${H}','111','Мария Петрова'),('p','${'z'.repeat(64)}','222','Зоя Иванова'),('p','${'y'.repeat(64)}','333','Тестова Роднина');
         INSERT INTO bidders VALUES('eik:111','111','АЛФА');
         INSERT INTO company_totals VALUES('eik:111',3);
         INSERT INTO registry_roles VALUES('111','${H}','person','partner',NULL),('111','${H}','person','partner','2019-01-01'),
@@ -144,6 +172,14 @@ describe('relatives the register confirms', () => {
             { role: 'partner', ended: false },
           ],
           years: ['2020', '2021'],
+        },
+        {
+          name: 'Тестова Роднина',
+          indent: 'y'.repeat(64),
+          company: { name: '333', eik: '333' },
+          href: null,
+          roles: [],
+          years: [],
         },
       ]);
       expect(await getPersonRelatives(d1, [])).toEqual([]);

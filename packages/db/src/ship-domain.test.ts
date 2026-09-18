@@ -25,17 +25,7 @@ const wranglerBin = resolve(apiDir, 'node_modules/.bin/wrangler');
 function d1Json<T>(persistTo: string, sql: string): T[] {
   const out = execFileSync(
     wranglerBin,
-    [
-      'd1',
-      'execute',
-      'sigma',
-      '--local',
-      '--persist-to',
-      persistTo,
-      '--json',
-      '--command',
-      sql,
-    ],
+    ['d1', 'execute', 'sigma', '--local', '--persist-to', persistTo, '--json', '--command', sql],
     { cwd: apiDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   ).trim();
   return (JSON.parse(out)[0]?.results ?? []) as T[];
