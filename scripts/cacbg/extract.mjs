@@ -156,6 +156,15 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   // Deduplicate only identical source bytes; ControlHash is not a unique document ID.
   // Attribution is checked before deduplication, so a bad first listing cannot mask a valid copy.
   let seenHash = new Map();
+  // Every attribution that sends a document to the quarantine file instead of a table.
+  const QUARANTINE_REASONS = [
+    'declarant_mismatch',
+    'ambiguous_listing',
+    'unlisted_document',
+    'missing_declarant',
+  ];
+  // Above this share of the documents seen, the source or the matcher has changed and somebody must look.
+  const QUARANTINE_WARN_RATE = 0.005;
   const folderRe = /^20\d{2}[A-Za-z0-9_]{0,8}$/;
   const folders = store.remote
     ? stamp.inventory.map((entry) => safeFolder(entry.folder)).sort()
@@ -464,6 +473,30 @@ export async function run({ store = corpusStore(RAW), yieldAfterFolders = Infini
   );
   console.log('\n=== extract summary ===');
   console.log(JSON.stringify(stats, null, 2));
+  // The quarantine is the pipeline's quiet loss: a document that is fetched, parsed and then dropped
+  // never reaches a table, and the completeness gate — which only reconciles ANNOUNCED against FETCHED —
+  // stays green while it happens. A rate is printed as its own event, and a rate above the threshold is
+  // warned about, so „2.6% of the set, ministers among them" cannot sit unnoticed in a summary again.
+  const quarantined = QUARANTINE_REASONS.reduce((n, r) => n + (stats[r] ?? 0), 0);
+  const seen = quarantined + stats.decls + (stats.dupSkipped ?? 0) + (stats.parseErrors ?? 0);
+  const rate = seen ? quarantined / seen : 0;
+  const report = {
+    event: 'declarations_quarantine',
+    quarantined,
+    seen,
+    rate: Number(rate.toFixed(4)),
+    byReason: Object.fromEntries(
+      QUARANTINE_REASONS.map((r) => [r, stats[r] ?? 0]).filter((e) => e[1]),
+    ),
+    nameVariants: stats.nameVariants ?? 0,
+    parseErrors: stats.parseErrors ?? 0,
+  };
+  console.log(JSON.stringify(report));
+  if (rate > QUARANTINE_WARN_RATE)
+    console.warn(
+      `! ${(rate * 100).toFixed(2)}% of the declarations were quarantined (${quarantined} of ${seen}) ` +
+        `— above ${(QUARANTINE_WARN_RATE * 100).toFixed(1)}%. See ${path.join(STAGING, 'source-quarantine.jsonl')}.`,
+    );
   return 0;
 }
 
