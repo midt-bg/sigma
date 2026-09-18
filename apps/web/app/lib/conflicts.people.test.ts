@@ -96,8 +96,22 @@ describe('groupByPerson — edges', () => {
 describe('institutionKey', () => {
   it('reads Latin look-alike letters in a Cyrillic name as Cyrillic', () => {
     // „OБЩИНА PУСE" with a Latin O, P and E — a common data-entry slip — is the same institution.
-    expect(institutionKey('OБЩИНА PУСE')).toBe('ОБЩИНА РУСЕ');
     expect(institutionKey('OБЩИНА PУСE')).toBe(institutionKey('Община  Русе '));
+    expect(institutionKey('OБЩИНА PУСE')).toBe('РУСЕ');
+  });
+
+  it('folds the spellings of one body the way the pipeline does', () => {
+    // The same key as the pipeline's, so the filter and a person's timeline no longer split one body:
+    // the assembly under its number, and a municipality under its council's name or its bare town.
+    for (const spellings of [
+      ['Народно събрание', '47-мо Народно събрание', '51-во Народно събрание', 'Народно събраниe'],
+      ['Община Благоевград', 'ОБЩИНА БЛАГОЕВГРАД', 'Общински съвет Благоевград', 'Благоевград'],
+    ])
+      expect(new Set(spellings.map(institutionKey)).size).toBe(1);
+    // Folds that must NOT happen: an oblast is not its municipality, and another body in the same town
+    // is its own institution.
+    expect(institutionKey('Област Русе')).not.toBe(institutionKey('Община Русе'));
+    expect(institutionKey('РЗИ Русе')).not.toBe(institutionKey('Община Русе'));
   });
 
   it('leaves a name with no Cyrillic in it as written, upper-cased', () => {
@@ -149,7 +163,7 @@ describe('institutionOptions — edges', () => {
       ],
       [],
     );
-    expect(options).toEqual([{ value: 'ОБЩИНА РУСЕ', label: 'Община Русе', count: 1 }]);
+    expect(options).toEqual([{ value: 'РУСЕ', label: 'Община Русе', count: 1 }]);
   });
 
   it('orders institutions with as many officials alphabetically', () => {
@@ -160,7 +174,7 @@ describe('institutionOptions — edges', () => {
       ],
       [],
     );
-    expect(options.map((o) => o.value)).toEqual(['НАРОДНО СЪБРАНИЕ', 'ОБЩИНА РУСЕ']);
+    expect(options.map((o) => o.value)).toEqual(['НАРОДНО СЪБРАНИЕ', 'РУСЕ']);
   });
 });
 

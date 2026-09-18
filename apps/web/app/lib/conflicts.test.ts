@@ -502,7 +502,7 @@ describe('/conflicts list filters', () => {
       institutionOptions(rows, [])
         .map((i) => i.value)
         .sort(),
-    ).toEqual(['НАРОДНО СЪБРАНИЕ', 'ОБЩИНА РУСЕ']);
+    ).toEqual(['НАРОДНО СЪБРАНИЕ', 'РУСЕ']);
   });
   const row = (over: Partial<ConflictPersonRow>): ConflictPersonRow => ({
     official: 'Иван Минев',
@@ -529,7 +529,7 @@ describe('/conflicts list filters', () => {
     ).toEqual({
       stake: 'family',
       signals: ['own'],
-      institutions: ['ОБЩИНА РУСЕ'],
+      institutions: ['РУСЕ'],
       sort: 'total',
       q: 'Иван',
     });
@@ -633,13 +633,10 @@ describe('/conflicts list filters', () => {
       row({ officialSlug: '5', institution: null }),
     ];
     expect(institutionOptions(rows, [])).toEqual([
-      { value: 'ОБЩИНА РУСЕ', label: 'Община Русе', count: 3 },
-      { value: 'ОБЩИНА ВАРНА', label: 'Община Варна', count: 1 },
+      { value: 'РУСЕ', label: 'Община Русе', count: 3 },
+      { value: 'ВАРНА', label: 'Община Варна', count: 1 },
     ]);
-    expect(institutionOptions(rows, ['ОБЩИНА ВАРНА'], 1).map((o) => o.value)).toEqual([
-      'ОБЩИНА РУСЕ',
-      'ОБЩИНА ВАРНА',
-    ]);
+    expect(institutionOptions(rows, ['ВАРНА'], 1).map((o) => o.value)).toEqual(['РУСЕ', 'ВАРНА']);
   });
 });
 

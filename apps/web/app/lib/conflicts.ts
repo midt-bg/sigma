@@ -1,4 +1,5 @@
 import type { ConflictContract, ConflictLink } from '@sigma/api-contract';
+import { identityInstitution } from '@sigma/shared';
 import { getMulti } from './filters';
 
 // Pure presentation logic for the свързани-лица (conflict-of-interest) surface. Everything the conflict
@@ -340,28 +341,12 @@ export function conflictListFilters(sp: URLSearchParams): ConflictListFilters {
   };
 }
 
-/** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together. */
-export function institutionKey(name: string | null | undefined): string {
-  let value = (name ?? '').replace(/\s+/g, ' ').trim().toLocaleUpperCase('bg');
-  if (/[А-Я]/u.test(value)) {
-    const lookalikes: Record<string, string> = {
-      A: 'А',
-      B: 'В',
-      C: 'С',
-      E: 'Е',
-      H: 'Н',
-      K: 'К',
-      M: 'М',
-      O: 'О',
-      P: 'Р',
-      T: 'Т',
-      X: 'Х',
-      Y: 'У',
-    };
-    value = value.replace(/[ABCEHKMOPTXY]/g, (c) => lookalikes[c]!);
-  }
-  return value;
-}
+/** One spelling-insensitive key per institution, so „Община Ямбол" and „ОБЩИНА ЯМБОЛ" filter together.
+ * The pipeline's own key, not a second implementation: a poorer one here left „47-мо Народно събрание",
+ * „51-во Народно събрание" and „Народно събрание" as three separate rows in the filter, and showed one
+ * municipality twice on a person's timeline. The displayed label stays the source's own spelling. */
+export const institutionKey = (name: string | null | undefined): string =>
+  identityInstitution(name);
 
 export interface DeclaredInstitution {
   institution: string;
