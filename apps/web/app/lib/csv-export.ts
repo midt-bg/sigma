@@ -92,6 +92,7 @@ function responseFromR2Object(
   obj: R2Object | R2ObjectBody,
   route: CsvExportRoute,
   cache: CsvCacheState,
+  ranged = true,
 ) {
   if (!hasBody(obj)) {
     return markCsvCache(
@@ -100,7 +101,10 @@ function responseFromR2Object(
     );
   }
 
-  const range = rangeInfo(obj);
+  // The STATUS follows the request, not the object. Real R2 fills `range` on a full read too, so
+  // deciding by the object alone answered every plain GET with 206 Partial Content and a Content-Range
+  // spanning the whole file — correct bytes under an incorrect status, which a strict client may refuse.
+  const range = ranged ? rangeInfo(obj) : null;
   const headers = new Headers({
     'Content-Type': CSV_CONTENT_TYPE,
     'Content-Disposition': `attachment; filename="${FILENAMES[route]}"`,
@@ -210,7 +214,8 @@ export async function servedCsvExport({
   const key = `csv/${route}/${version}`;
   // Only pass `range` when the client actually sent a Range header — otherwise R2 (miniflare)
   // returns the full object with `obj.range` set, which would make a plain GET a 206 instead of 200.
-  const getOpts: R2GetOptions = request.headers.has('Range')
+  const wantsRange = request.headers.has('Range');
+  const getOpts: R2GetOptions = wantsRange
     ? { onlyIf: request.headers, range: request.headers }
     : { onlyIf: request.headers };
   let obj = await env.CSV_CACHE.get(key, getOpts);
@@ -218,8 +223,8 @@ export async function servedCsvExport({
     await putStreamMultipart(env.CSV_CACHE, key, stream().body!, CSV_CONTENT_TYPE);
     obj = await env.CSV_CACHE.get(key, getOpts);
     if (obj === null) throw new Error(`CSV cache object missing after put: ${key}`);
-    return responseFromR2Object(obj, route, 'MISS');
+    return responseFromR2Object(obj, route, 'MISS', wantsRange);
   }
 
-  return responseFromR2Object(obj, route, 'HIT');
+  return responseFromR2Object(obj, route, 'HIT', wantsRange);
 }

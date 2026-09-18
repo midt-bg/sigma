@@ -93,4 +93,15 @@ describe('servedCsvExport — the object R2 returns', () => {
     expect(upload.abort).not.toHaveBeenCalled();
     expect(bucket.get).toHaveBeenCalledTimes(2); // the miss, then the read-back after the upload
   });
+
+  // Real R2 fills `range` on a full read as well, so deciding the status by the object answered a plain
+  // GET with 206 and a Content-Range spanning the whole file. The status has to follow the REQUEST.
+  it('answers a plain GET with 200, even when the object reports a full-length range', async () => {
+    const bucket = bucketWith({ offset: 0, length: CSV.length }, CSV);
+    const res = await serve(bucket);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Range')).toBeNull();
+    expect(res.headers.get('Content-Length')).toBe(String(CSV.length));
+    expect(await res.text()).toBe(CSV);
+  });
 });
