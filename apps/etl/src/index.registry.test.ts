@@ -93,7 +93,9 @@ describe('published registry Workflow', () => {
       .mockResolvedValueOnce(['111111111', '222222222'])
       .mockResolvedValue([]);
     client.deed.mockRejectedValueOnce(new Error('timeout'));
-    expect(await run()).toMatchObject({ read: 2, roles: 2 });
+    // `read` counts the partidas actually read, `attempted` those taken off the queue: one of the two
+    // failed, and reporting both as read overstates what the pass covered.
+    expect(await run()).toMatchObject({ read: 1, attempted: 2, roles: 2 });
     expect(reg.deferDeed).toHaveBeenCalled();
     expect(reg.storeDeed).toHaveBeenCalledTimes(1);
   });

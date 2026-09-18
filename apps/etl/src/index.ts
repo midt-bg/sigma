@@ -477,7 +477,10 @@ interface RegistryResult {
   changeDays: number;
   changed: number;
   queuedNew: number;
+  /** Partidas actually read. A batch can end early on a rate limit, so this is NOT the number tried. */
   read: number;
+  /** Partidas taken off the queue — what the budget and the drained-queue test are counted in. */
+  attempted: number;
   absent: number;
   roles: number;
   publicOwned?: number;
@@ -504,6 +507,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
       changed: 0,
       queuedNew: 0,
       read: 0,
+      attempted: 0,
       absent: 0,
       roles: 0,
     };
@@ -604,14 +608,15 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
       result.queuedNew = await fenced('queue-new-winners', async () =>
         queueNewWinners(this.env.DB, new Date().toISOString(), maxDeeds),
       );
-      for (let b = 0; result.read < maxDeeds; b++) {
+      for (let b = 0; result.attempted < maxDeeds; b++) {
         const batch = await fenced(`deeds:${b}`, async () => {
           const eiks = await nextQueued(
             this.env.DB,
-            Math.min(REGISTRY_BATCH, maxDeeds - result.read),
+            Math.min(REGISTRY_BATCH, maxDeeds - result.attempted),
           );
           let absent = 0;
           let roles = 0;
+          let read = 0;
           for (const [i, eik] of eiks.entries()) {
             if (i > 0 && pace > 0) await new Promise((r) => setTimeout(r, pace));
             try {
@@ -620,6 +625,7 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
                 throw new NonRetryableError('registry lease lost after XML read');
               if (lookup.status === 'absent') absent++;
               roles += (await storeDeed(this.env.DB, eik, lookup, new Date().toISOString())).roles;
+              read++;
             } catch (error) {
               if (error instanceof NonRetryableError) throw error;
               if (!(await renewRegistryLease(this.env.DB, holder)))
@@ -644,12 +650,16 @@ export class RegistryWorkflow extends WorkflowEntrypoint<Env, RegistryParams> {
               );
             }
           }
-          return { read: eiks.length, absent, roles };
+          // A rate limit breaks out of the loop above with partidas still unread: counting the whole
+          // batch as read overstated the run in the logs, which is what the operator reads to decide
+          // whether a pass covered the register.
+          return { read, attempted: eiks.length, absent, roles };
         });
         result.read += batch.read;
+        result.attempted += batch.attempted;
         result.absent += batch.absent;
         result.roles += batch.roles;
-        if (batch.read < REGISTRY_BATCH) break;
+        if (batch.attempted < REGISTRY_BATCH) break;
       }
       result.publicOwned = await fenced('derive-public-ownership', () =>
         derivePublicOwnership(this.env.DB),
