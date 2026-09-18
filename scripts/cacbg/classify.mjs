@@ -1,6 +1,8 @@
 // Pure classification helpers for the hardened matcher. Each is deterministic; the ONE heuristic
 // (name distinctiveness) is conservative — it only ever *withholds* a match, never fabricates one.
 
+import { institutionMatchKey } from './institutions.mjs';
+
 // Legal-form abbreviations, matched as WHOLE tokens (not a boundary regex). companyNameKey keeps
 // punctuation (commas, periods, quotes, hyphens — e.g. „X ООД, гр.Y", the standard registry form), and a
 // boundary/lookaround regex can't cover every punctuation neighbour: any it misses leaves the form token
@@ -164,6 +166,38 @@ export function temporalStatus(declYears, contractYear) {
  * „Област - Русе" / „Община Русе" → „РУСЕ"; ministries and national bodies → null (no locality).
  */
 export function localityToken(institution) {
-  const m = String(institution ?? '').match(/(?:Област|Община|Район)\s*[-–—]?\s*([А-Яа-яЁё]+)/);
+  // Case-insensitive on purpose: the register writes „Община Благоевград", „ОБЩИНА БЛАГОЕВГРАД" and
+  // „община благоевград" for one body, and a Title-case-only match read the last two as no place at
+  // all. The separator after the keyword is required, so „Районна прокуратура" is not „Район" + „на".
+  const m = String(institution ?? '').match(
+    /(?:област|община|общински\s+съвет|общ\.?\s*съвет|обс|район)(?=[\s.,;:–—-])[\s.,;:–—-]*([А-Яа-яЁё]+)/iu,
+  );
   return m ? norm(m[1]) : null;
+}
+
+// classify one authority (whose name may be a ';'-joined blob) against the official's institutions.
+// exact = deterministic name equality; name_contains/locality = DISCLOSED heuristics (candidate, not proof).
+export const OWN_RANK = { exact: 3, name_contains: 2, locality: 1, none: 0 };
+export function authOwn(authorityName, instNorms, instNormsLong, locTokens, instWords = new Set()) {
+  const parts = String(authorityName)
+    .split(';')
+    .map((s) => institutionMatchKey(s))
+    .filter(Boolean);
+  if (parts.some((p) => instNorms.includes(p))) return 'exact';
+  // heuristic: a LONG institution name (≥12 chars — guards against short-abbreviation false positives)
+  // that is a normalized substring of an authority component or vice versa (e.g. „Народно събрание"
+  // ⊂ „Народно събрание на Република България"). Disclosed, not deterministic.
+  if (
+    instNormsLong.length &&
+    parts.some((p) => instNormsLong.some((i) => p.includes(i) || i.includes(p)))
+  )
+    return 'name_contains';
+  if (locTokens.length && parts.some((p) => locTokens.some((t) => p.includes(t))))
+    return 'locality';
+  // The place read from the AUTHORITY's side. The declarant's own field often carries the bare town
+  // („Благоевград", not „Община Благоевград"), which names no place on its own; the authority always
+  // spells the body out, so its town is the reliable one to look for among the declared institutions.
+  const authLocality = localityToken(authorityName);
+  if (authLocality && instWords.has(authLocality)) return 'locality';
+  return 'none';
 }

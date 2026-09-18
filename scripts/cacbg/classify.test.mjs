@@ -6,6 +6,8 @@ import {
   localityToken,
   closelyHeldForm,
   JOINT_STOCK,
+  authOwn,
+  OWN_RANK,
 } from './classify.mjs';
 
 test('nameDistinctiveness: numbers / Latin / ≥3 words are distinctive; bare 1-2 word Cyrillic is generic', () => {
@@ -155,4 +157,24 @@ test('localityToken: regional bodies yield a town; ministries yield null', () =>
   assert.equal(localityToken('Община Русе'), 'РУСЕ');
   assert.equal(localityToken('Министерство на здравеопазването'), null);
   assert.equal(localityToken('51-во Народно събрание'), null);
+});
+
+test('authOwn: the authority’s own town counts even when the declarant wrote only the town', () => {
+  // „Община Благоевград" as the authority, „Благоевград" as the declared institution: the declarant's
+  // side names no place on its own, so the verdict has to come from the authority's spelling.
+  const inst = ['БЛАГОЕВГРАД'];
+  const words = new Set(['БЛАГОЕВГРАД']);
+  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', inst, [], [], words), 'locality');
+  // An 11-letter town is below the substring heuristic's floor, so without the town it stays foreign.
+  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', inst, [], [], new Set()), 'none');
+  // A different town never matches.
+  assert.equal(authOwn('ОБЩИНА СМОЛЯН', inst, [], [], words), 'none');
+  // Exact and the substring heuristic keep precedence over the place.
+  assert.equal(authOwn('ОБЩИНА БЛАГОЕВГРАД', ['ОБЩИНА БЛАГОЕВГРАД'], [], [], words), 'exact');
+  assert.equal(
+    authOwn('НАРОДНО СЪБРАНИЕ НА РЕПУБЛИКА БЪЛГАРИЯ', [], ['НАРОДНО СЪБРАНИЕ'], [], new Set()),
+    'name_contains',
+  );
+  assert.equal(OWN_RANK.exact > OWN_RANK.name_contains, true);
+  assert.equal(OWN_RANK.name_contains > OWN_RANK.locality, true);
 });

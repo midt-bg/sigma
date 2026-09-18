@@ -20,7 +20,14 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { temporalStatus, localityToken, closelyHeldForm, norm } from './classify.mjs';
+import {
+  temporalStatus,
+  localityToken,
+  closelyHeldForm,
+  norm,
+  authOwn,
+  OWN_RANK,
+} from './classify.mjs';
 import {
   openCache,
   coverage,
@@ -762,27 +769,6 @@ const insEvidence = db.prepare(
 );
 const insHistory = db.prepare('INSERT INTO interest_link_history VALUES(?,?,?)');
 const insObservation = db.prepare('INSERT INTO interest_link_observations VALUES(?,?,?,?,?)');
-// classify one authority (whose name may be a ';'-joined blob) against the official's institutions.
-// exact = deterministic name equality; name_contains/locality = DISCLOSED heuristics (candidate, not proof).
-const OWN_RANK = { exact: 3, name_contains: 2, locality: 1, none: 0 };
-function authOwn(authorityName, instNorms, instNormsLong, locTokens) {
-  const parts = String(authorityName)
-    .split(';')
-    .map((s) => institutionMatchKey(s))
-    .filter(Boolean);
-  if (parts.some((p) => instNorms.includes(p))) return 'exact';
-  // heuristic: a LONG institution name (≥12 chars — guards against short-abbreviation false positives)
-  // that is a normalized substring of an authority component or vice versa (e.g. „Народно събрание"
-  // ⊂ „Народно събрание на Република България"). Disclosed, not deterministic.
-  if (
-    instNormsLong.length &&
-    parts.some((p) => instNormsLong.some((i) => p.includes(i) || i.includes(p)))
-  )
-    return 'name_contains';
-  if (locTokens.length && parts.some((p) => locTokens.some((t) => p.includes(t))))
-    return 'locality';
-  return 'none';
-}
 // Distinct officials who declared each company (ЕИК). A private interest has ONE owner-declarant; a
 // public body's board is declared by MANY rotating members — the deterministic ex-officio tell (ADR-0019).
 // ── Trade Register evidence: the candidate set, the fail-closed gate, and the deed reader ─────────
@@ -925,6 +911,10 @@ for (const rec of agg.values()) {
   const instNorms = [...rec.institutions].map(institutionMatchKey).filter(Boolean);
   const instNormsLong = instNorms.filter((i) => i.length >= 12);
   const locTokens = [...rec.institutions].map(localityToken).filter(Boolean);
+  // Every word of every declared institution, for the place read from the authority's side.
+  const instWords = new Set(
+    instNorms.flatMap((i) => i.split(/[^А-ЯЁ]+/u)).filter((w) => w.length >= 4),
+  );
   const years = new Set();
   let cCount = 0,
     cValue = 0,
@@ -996,7 +986,7 @@ for (const rec of agg.values()) {
   // link-level own_institution = strongest per-authority verdict (exact > name_contains > locality > none)
   let ownInst = 'none';
   for (const [, a] of perAuth) {
-    a.own = authOwn(a.name, instNorms, instNormsLong, locTokens);
+    a.own = authOwn(a.name, instNorms, instNormsLong, locTokens, instWords);
     if (OWN_RANK[a.own] > OWN_RANK[ownInst]) ownInst = a.own;
   }
   // Family scope = the official's declaration discloses a related person's stake (relation 'related').
