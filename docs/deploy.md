@@ -56,6 +56,10 @@ wrangler deploy --config build/server/wrangler.deploy.json      # изпраща
 | `SIGMA_ETL_NAME` | *(незададена → `sigma-etl`)* | `sigma-etl-stage` | render → име на etl worker |
 | `SIGMA_WORKFLOW_NAME` | *(незададена → `sigma-refresh`)* | `sigma-refresh-stage` | render → `[[workflows]] name` |
 | `SIGMA_REGISTRY_WORKFLOW_NAME` | *(незададена → `sigma-registry`)* | `sigma-registry-stage` | render → registry `[[workflows]] name` |
+| `SIGMA_DECLARATIONS_WORKFLOW_NAME` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → declarations `[[workflows]] name` |
+| `SIGMA_REBUILD_WORKFLOW_NAME` | *(незададена → `sigma-rebuild`)* | `sigma-rebuild-stage` | render → rebuild `[[workflows]] name` |
+| `SIGMA_DECLARATIONS_BUCKET` | *(незададена → `sigma-declarations`)* | `sigma-declarations-stage` | render → `r2_buckets[].bucket_name` и `DECLARATIONS_BUCKET` на etl worker-а |
+| `SUPPRESSION_SALT` / `SUPPRESSION_KEY_VERSION` | prod salt / версия | staging salt / версия | секрети на etl worker-а за контейнера на декларациите |
 | `SIGMA_D1_NAME` | *(незададена → `sigma`)* | активният `sigma-stage-blue` или `sigma-stage-green` | render → `database_name` **+** provisioning/seed скриптовете |
 | `SIGMA_CSV_CACHE_NAME` | *(незададена → `sigma-csv-cache`)* | `sigma-csv-cache-stage` | render → `r2_buckets[].bucket_name` на web worker-а |
 
@@ -331,6 +335,77 @@ Workflow-а `sigma-refresh`; големите догонвания остава�
 > единственият текущ източник е EOP MinIO (`storage.eop.bg`). Обмислете разместване на staging
 > графика (напр. `30 */6 * * *`), за да не удря източника в същата минута като prod.
 
+## Декларациите: контейнер в Cloudflare
+
+Заданието за свързаните лица върви в Cloudflare Container, координиран от Durable Object в etl
+worker-а ([ADR-0045](adr/0045-declarations-in-a-cloudflare-container.md)); корпусът от декларации
+живее в R2. GitHub само деплойва кода. Еднократно за всяка среда:
+
+1. **R2 bucket:** `wrangler r2 bucket create <SIGMA_DECLARATIONS_BUCKET>` (staging:
+   `sigma-declarations-stage`; production: `sigma-declarations`). Bucket-ът е празен; първият ход
+   изтегля целия корпус (няколко часа, в няколко опита на контейнера, всеки до 60 минути изтегляне).
+   Веднага след създаването — двете правила за живот на обектите, защото посредникът нарочно не
+   разрешава триене на нищо освен печата на корпуса
+   ([ADR-0049](adr/0049-a-run-that-survives-a-stopped-container.md)):
+
+   ```sh
+   wrangler r2 bucket lifecycle add <bucket> --name checkpoints --prefix declarations/corpus-v2/checkpoints/ --expire-days 7 -y
+   wrangler r2 bucket lifecycle add <bucket> --name fetch-events --prefix declarations/corpus-v2/fetch-events/ --expire-days 30 -y
+   ```
+
+   Записите на подновяемия ход (около 60–70 MB на ход) и събитията от обхождането не се четат след
+   края на хода; без тези правила биха останали в bucket-а завинаги.
+2. **GitHub Environment:** променливите `SIGMA_DECLARATIONS_WORKFLOW_NAME`,
+   `SIGMA_REBUILD_WORKFLOW_NAME` и `SIGMA_DECLARATIONS_BUCKET` (таблицата по-горе) и секретът `SUPPRESSION_SALT` (плюс
+   `SUPPRESSION_KEY_VERSION` като променлива). Деплоят ги подава на etl worker-а като секрети.
+3. **Деплой.** `wrangler deploy` строи образа от `containers/declarations/Dockerfile` (изпълнителят
+   има Docker) и създава Durable Object namespace-а с миграцията `v1-declarations`. Инстанцията е
+   2 ядра, 10 GiB памет и 20 GB диск. Размерът се определя от пълното изграждане, не от седмичния ход:
+   седмичният стига до около 2,3 GB памет и 5,5 GB диск, но изграждането държи едновременно слотовата
+   база, копието ѝ за декларациите и работното копие на етапа с кандидатите — при 12 GB дискът свърши
+   и зареждането се спъна в „database or disk is full". Cloudflare иска поне 3 GiB памет на ядро и диск
+   не повече от двойната памет, затова 20 GB диск изискват 10 GiB памет.
+4. **Първи ход на ръка:** `wrangler workflows trigger <SIGMA_DECLARATIONS_WORKFLOW_NAME>` от
+   `apps/etl` с `--config wrangler.deploy.toml`. Workflow-ът приключва с реалния резултат на хода;
+   `declarations/corpus-v2/accepted.json` в bucket-а е разписката за одитирано и публикувано.
+5. **Оттам нататък** седмичният cron (неделя, 03:00 UTC) стартира хода сам. Едновременно
+   с него може да тече само един ход: Durable Object-ът връща текущия, ако вече има такъв.
+
+Публикуването в D1 е размяна на таблици в една атомарна партида (`rp_next_*` → обслужвани →
+`rp_prev_*`), затова не зависи от обема на промяната; предишното поколение стои до следващата
+публикация.
+
+### Първо пускане на среда след ADR-0045 (staging, после production)
+
+Редът е един и същ за двете среди; production се пуска едва след като staging е минала целия път.
+
+1. **Преди merge-а:** създайте R2 bucket-а на средата (стъпка 1 по-горе) и задайте в GitHub
+   Environment-а двете нови променливи (стъпка 2). `SUPPRESSION_SALT` и `SUPPRESSION_KEY_VERSION` вече
+   са там от предишното задание. Нищо друго от старото задание не се пренася: workflow-ът и кешът
+   му на корпуса са премахнати с ADR-0045, а корпусът се тегли наново в R2.
+2. **Merge и деплой.** Деплоят строи образа на контейнера, създава Durable Object namespace-а, подава
+   секретите на etl worker-а и прилага схемата (включително `0022_person_relatives`). Web worker-ът
+   работи и преди първия ход: заявките към липсващи или празни таблици на свързаните лица връщат
+   празен резултат.
+3. **Първи ход на ръка** (стъпка 4). Очаквайте няколко часа: корпусът (~180 000 документа) се
+   тегли в R2 на опити по 60 минути, всеки следващ опит продължава от записаното; после извличане,
+   регистърна снимка от D1 на средата, решения, одит, публикуване, търсещ индекс. Ходът се следи с
+   `wrangler workflows instances describe <име> <instance>`; крайният резултат е `complete` с
+   `audit` и `published`. Ако ходът спре на етап, различен от `fetch`, причината е в данните или
+   одита и се чете от статуса, не се повтаря сляпо.
+4. **Първото публикуване с правила `tr-rules-8`** ([ADR-0042](adr/0042-declarant-identifier-as-identity-evidence.md),
+   [ADR-0046](adr/0046-company-is-its-eik-register-confirms.md)) слива лица, мести всички документи
+   между тях и решава всички връзки без седалище. Размяната на таблици го прави като всяко друго
+   публикуване; сравняващата промоция от по-старите версии не би го понесла. Публикуваните връзки
+   се решават наново под новата версия на правилата; гейтът за монотонност сравнява с предишното
+   поколение.
+5. **Проверка:** `declarations/corpus-v2/accepted.json` в bucket-а; smoke по публичните пътища;
+   профил на длъжностно лице с декларации и регистърни роли; страница на компания с група
+   „длъжностни лица“; `/conflicts?stake=registry`. Предишното поколение стои като `rp_prev_*` до
+   следващата публикация — при нужда връщането назад е размяната в обратна посока.
+6. **Оттам нататък** cron-ът поема (стъпка 5). Следващата неделя проверете, че ходът е
+   тръгнал сам и е завършил.
+
 ## Бележки
 
 - **Runtime секрети.** Explorer-ът не се нуждае от нито един (read-only публични данни). **ETL-ът**
@@ -465,6 +540,30 @@ in-place отдалеченият път не е приложим за пъле�
 > за връщане назад. Освен това гейтът за монотонност, подът `--min-links` и хидратацията на корпуса на
 > ЕОП черпят базата си за сравнение от целевата база, така че простото пренасочване към празния слот би
 > ги обезсилило тихо. Какво трябва да се промени и защо: [ADR-0038](adr/0038-reseed-writes-idle-slot-gates-read-live.md).
+
+## Пълно изграждане на неактивния слот в контейнера
+
+[ADR-0048](adr/0048-rebuild-the-idle-slot-in-the-container.md) замества ръчните стъпки 3–6 от процедурата
+по-долу с един ход в контейнера за декларациите.
+
+1. **Еднократно за средата:** GitHub Environment променлива `SIGMA_REBUILD_WORKFLOW_NAME` (например
+   `sigma-rebuild-stage`). Деплоят създава работния поток заедно с etl worker-а.
+2. **Пускане.** Работният поток получава името и id-то на **неактивния** слот. Координаторът отказва
+   живия.
+
+   ```bash
+   wrangler workflows trigger <SIGMA_REBUILD_WORKFLOW_NAME> \
+     '{"targetName":"<неактивен слот>","targetId":"<id на неактивния слот>"}'
+   ```
+
+3. **Наблюдение.** Използвайте `wrangler workflows instances describe <име> <instance>`. Етапите са
+   `import` → `registry` → `precompute` → `declarations` (с етапите на хода за декларациите) → `search` →
+   `ship` → `verify`. Ходът трае часове и прекъснат опит започва отначало. Не го пускайте в нощта срещу
+   неделя, когато тръгва седмичният ход на декларациите.
+4. **Резултат.** Ходът е `complete`, когато броят на редовете във всяка изпратена таблица съвпада със
+   снимката и проверката за цялост е минала. Живият слот не е пипнат.
+5. **Превключване:** стъпки 6–10 от процедурата по-долу (preview на web, redeploy на ETL и web с новия
+   `SIGMA_D1_ID` и `SIGMA_D1_NAME`, проверка). Предишният слот остава за връщане назад.
 
 ## Процедура: blue/green reseed (идентична за staging и prod)
 

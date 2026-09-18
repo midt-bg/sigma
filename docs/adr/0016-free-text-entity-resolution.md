@@ -1,6 +1,6 @@
 # ADR-0016: Free-text entity resolution (declared ЕИК + prose company extraction)
 
-- Status: Accepted
+- Status: Accepted · amended by [ADR-0046](0046-company-is-its-eik-register-confirms.md): a last, stem-only step
 - Date: 2026-07-05
 - Deciders: lb, Claude
 - Related: [ADR-0008](0008-deterministic-name-to-eik-resolution.md), [ADR-0009](0009-name-uniqueness-guard-and-publish-tiers.md); `scripts/cacbg/extract-companies.mjs`
@@ -9,7 +9,7 @@
 
 Many officials do not type a clean фирма in the company field. They write a sentence
 ("2 дружествени дяла на „ЕН-ФРЕШ" ООД, прехвърлени нотариално…"), append the town
-("„Кристална вода" АД София"), or write the ЕИК inline ("„ТРАНСПОМЕД" ЕООД, ЕИК 101677351").
+("„Бистра вода" АД София"), or write the ЕИК inline ("„ТРАНСПОМЕД" ЕООД, ЕИК 101677351").
 The whole-string normalizer then keys the entire prose and misses a real winner — a recall loss.
 ~530 declared entries are prose; the signal is recoverable **without** sacrificing the certainty bar.
 

@@ -1,6 +1,6 @@
 # ADR-0022: Public conflict surface shows ONLY declared private ownership
 
-- Status: Accepted — amended by [ADR-0023](0023-anonymized-family-ownership-surface.md)
+- Status: Accepted — amended by [ADR-0023](0023-anonymized-family-ownership-surface.md) and [ADR-0047](0047-public-enterprises-and-private-management.md) (a private company's management is shown like a stake)
 - Date: 2026-07-06
 - Deciders: lb, Claude
 - Amended by: [ADR-0023](0023-anonymized-family-ownership-surface.md) — the public surface also shows **anonymized family** ownership (the „private ownership only" scope below now means private + anonymized close-relative stakes, never ex-officio/management)
