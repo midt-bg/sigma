@@ -902,4 +902,49 @@ describe('scheduled handler', () => {
       expect(create.mock.calls.length).toBe(started ? 1 : 0);
     }
   });
+
+  it('runs procurement even when the declarations state cannot be read', async () => {
+    // A Durable Object that refuses to answer must not take the six-hourly writers down with it.
+    const create = vi.fn(async () => ({ id: 'wf-1' }));
+    const env = {
+      DB: fakeD1([]).db,
+      REFRESH: { create } as unknown as Workflow,
+      DECLARATIONS: {
+        getByName: () => ({
+          getRun: async () => {
+            throw new Error('RPC unavailable');
+          },
+        }),
+      } as never,
+    };
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await worker.scheduled?.({} as never, env);
+      expect(create).toHaveBeenCalledOnce();
+      expect(
+        log.mock.calls.some((c) => String(c[0]).includes('declarations_state_unavailable')),
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('stands aside longer when the setting says so, for a first cold run', async () => {
+    const run = { state: 'running', startedAt: Date.now() - 9 * 60 * 60_000 };
+    for (const [hours, started] of [
+      [undefined, true], // past the 8-hour default: the run reads as wedged
+      ['24', false], // a cold run is expected to be long, so the writers keep standing aside
+      ['not-a-number', true], // a malformed setting falls back to the default
+    ] as const) {
+      const create = vi.fn(async () => ({ id: 'wf-1' }));
+      const env = {
+        DB: fakeD1([]).db,
+        REFRESH: { create } as unknown as Workflow,
+        DECLARATIONS: { getByName: () => ({ getRun: async () => run }) } as never,
+        ...(hours ? { DECLARATIONS_STAND_ASIDE_HOURS: hours } : {}),
+      };
+      await worker.scheduled?.({} as never, env);
+      expect(create.mock.calls.length, String(hours)).toBe(started ? 1 : 0);
+    }
+  });
 });

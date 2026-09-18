@@ -46,6 +46,9 @@ import {
 export interface Env extends DeclarationEnv {
   DECLARATIONS?: DurableObjectNamespace<DeclarationContainer>;
   DECLARATIONS_ENABLED?: string;
+  /** How long the six-hourly writers stand aside for a live declarations run. Default 8 hours; raised
+   * for a first, cold run, which builds the corpus from an empty bucket. */
+  DECLARATIONS_STAND_ASIDE_HOURS?: string;
   /** The operator's trigger for one declarations run; the weekly cron starts the same run. */
   DECLARATIONS_RUN?: Workflow;
   REBUILD_RUN?: Workflow;
@@ -775,11 +778,30 @@ export default {
     // only valid against the registry it started with. So the six-hourly writers stand aside while it
     // runs. The refresh carries its own catch-up window, so a skipped tick is made up by the next one;
     // the age bound keeps a wedged run from freezing procurement for good.
-    const live = env.DECLARATIONS
-      ? await env.DECLARATIONS.getByName('declarations').getRun()
-      : undefined;
+    // Asking is best-effort: a Durable Object that refuses to answer (an RPC error, a migration that
+    // has not landed) must not take procurement down with it. An unknown answer means „no run", which
+    // is the same state this handler was in before the declarations existed.
+    let live: Awaited<ReturnType<DeclarationContainer['getRun']>>;
+    try {
+      live = env.DECLARATIONS
+        ? await env.DECLARATIONS.getByName('declarations').getRun()
+        : undefined;
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          event: 'etl_scheduled',
+          declarations_state_unavailable: String(error).slice(0, 200),
+        }),
+      );
+    }
+    // The bound is on the run's AGE, not on its health: a wedged run must not freeze procurement for
+    // good. A first, cold run builds the whole corpus from an empty bucket and takes far longer than a
+    // weekly one on a warm bucket, so the bound is a setting — raised for that run, and only for it.
+    const standAsideHours = Number(env.DECLARATIONS_STAND_ASIDE_HOURS ?? '8');
     const declarationsRunning =
-      live?.state === 'running' && Date.now() - live.startedAt < 8 * 60 * 60_000;
+      live?.state === 'running' &&
+      Date.now() - live.startedAt <
+        (Number.isFinite(standAsideHours) ? standAsideHours : 8) * 3_600_000;
     if (!weekly && declarationsRunning) {
       console.log(
         JSON.stringify({ event: 'etl_scheduled', skipped: 'declarations_running', job: 'refresh' }),
