@@ -87,3 +87,44 @@ bucket_name = "sigma-declarations"
   assert.match(rendered, /^bucket_name = "sigma-declarations-stage"$/m);
   assert.match(rendered, /binding = "REBUILD_RUN"\nname = "sigma-rebuild-stage"/);
 });
+
+// Both rails fail OPEN when they break: the deploy still produces a config, only one carrying the
+// committed PRODUCTION names, so the mistake stays invisible until it targets the wrong resource.
+test('renames for a config that sets only the newer names, and only the named bucket', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sigma-wrangler-render-'));
+  const config = join(dir, 'wrangler.toml');
+  writeFileSync(
+    config,
+    `name = "sigma-etl"
+
+[[r2_buckets]]
+binding = "DECLARATIONS_CORPUS"
+bucket_name = "sigma-declarations"
+
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "sigma-reports"
+`,
+  );
+
+  process.argv[2] = config;
+  for (const k of [
+    'SIGMA_ETL_NAME',
+    'SIGMA_WORKFLOW_NAME',
+    'SIGMA_REGISTRY_WORKFLOW_NAME',
+    'SIGMA_DECLARATIONS_WORKFLOW_NAME',
+    'SIGMA_REBUILD_WORKFLOW_NAME',
+    'SIGMA_D1_NAME',
+    'SIGMA_SHIP_ENV',
+  ])
+    delete process.env[k];
+  process.env.SIGMA_DECLARATIONS_BUCKET = 'sigma-declarations-stage';
+  await import(`./wrangler-render.mjs?test=${Date.now()}`);
+
+  const rendered = readFileSync(join(dir, 'wrangler.deploy.toml'), 'utf8');
+  assert.match(
+    rendered,
+    /binding = "DECLARATIONS_CORPUS"\nbucket_name = "sigma-declarations-stage"/,
+  );
+  assert.match(rendered, /binding = "REPORTS"\nbucket_name = "sigma-reports"/);
+});

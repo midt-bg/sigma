@@ -95,7 +95,10 @@ if (ext === '.json' || ext === '.jsonc') {
     shipEnv: process.env.SIGMA_SHIP_ENV || '',
     d1Name: process.env.SIGMA_D1_NAME || '',
   };
-  if (names.etlName || names.workflowName || names.registryWorkflowName || names.d1Name) {
+  // Every name that renderToml can substitute has to open the gate. Listing only the older four made
+  // this fail OPEN: a config that sets just the newer ones skipped the rendering without a word, and the
+  // deploy went out carrying the committed PRODUCTION names.
+  if (Object.values(names).some(Boolean)) {
     out = renderToml(out, names);
   }
 }
@@ -169,6 +172,7 @@ function stripJsonLineComments(text) {
 function renderToml(text, names) {
   let section = '';
   let workflowBinding = '';
+  let bucketBinding = '';
   return text
     .split('\n')
     .map((line) => {
@@ -176,12 +180,12 @@ function renderToml(text, names) {
       if (sectionMatch) {
         section = sectionMatch[1];
         workflowBinding = '';
+        bucketBinding = '';
       }
 
-      if (section === '[[workflows]]') {
-        const bindingMatch = line.match(/^\s*binding\s*=\s*"([^"]+)"/);
-        if (bindingMatch) workflowBinding = bindingMatch[1];
-      }
+      const bindingMatch = line.match(/^\s*binding\s*=\s*"([^"]+)"/);
+      if (bindingMatch && section === '[[workflows]]') workflowBinding = bindingMatch[1];
+      if (bindingMatch && section === '[[r2_buckets]]') bucketBinding = bindingMatch[1];
 
       if (section === '' && names.etlName) {
         line = replaceTomlStringValue(line, 'name', names.etlName);
@@ -193,7 +197,13 @@ function renderToml(text, names) {
             REBUILD_RUN: names.rebuildWorkflowName,
           }[workflowBinding] ?? names.workflowName;
         if (workflowName) line = replaceTomlStringValue(line, 'name', workflowName);
-      } else if (section === '[[r2_buckets]]' && names.declarationsBucket) {
+      } else if (
+        section === '[[r2_buckets]]' &&
+        names.declarationsBucket &&
+        // By BINDING, as the JSONC path already does: renaming every bucket in the file would hand the
+        // declarations name to the next bucket this config gains.
+        bucketBinding === 'DECLARATIONS_CORPUS'
+      ) {
         line = replaceTomlStringValue(line, 'bucket_name', names.declarationsBucket);
       } else if (section === '[vars]') {
         // The declarations container reads its target from these vars (ADR-0045).
