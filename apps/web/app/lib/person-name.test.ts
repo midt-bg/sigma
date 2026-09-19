@@ -20,7 +20,7 @@ it.each([
 // The register's own spelling carries stray runs of whitespace, which show as a visible gap on a page
 // that names a person. Identity keys are built from the source value, never from this one.
 it('collapses the register’s stray whitespace without touching the spelling', () => {
-  expect(personName('МАРИЯ  ВАСИЛЕВА  КАПОН')).toBe('Мария Василева Капон');
+  expect(personName('ИВАНА  ПЕТРОВА  ТЕСТОВА')).toBe('Ивана Петрова Тестова');
   expect(personName('  Иван Петров Тестов  ')).toBe('Иван Петров Тестов');
   expect(personName('Иван\tПетров\nТестов')).toBe('Иван Петров Тестов');
   expect(personName('Иван Петров Тестов')).toBe('Иван Петров Тестов');
